@@ -4,19 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sandboxing AI Agents, Part 1: Foundations: h5i</title>
-  <meta name="description" content="Learn AI agent sandboxing basics: threat models, isolation layers, enforcement boundaries, and why permission prompts are not enough.">
-  <meta name="keywords" content="AI agent sandbox, sandboxing basics, threat model, isolation, seccomp, Landlock, containers, microVMs">
+  <meta name="description" content="AI agent sandboxing from first principles: the threat model (untrusted code, exfiltration, privilege escalation, resource exhaustion) and the Linux primitives (namespaces, seccomp, Landlock, cgroups) that contain it.">
+  <meta name="keywords" content="AI agent sandbox, threat model, defense in depth, fail closed, seccomp, Landlock, namespaces, cgroups, rlimits, containers, microVMs">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
   <link rel="canonical" href="https://h5i.dev/blog/sandboxing-ai-agents-foundations/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
   <link rel="icon" type="image/png" href="/_static/logo.png">
   <link rel="apple-touch-icon" href="/_static/logo.png">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="Sandboxing AI Agents, Part 1: Foundations">
-  <meta property="og:description" content="Threat models, isolation layers, enforcement boundaries, and why AI coding agents need real sandboxes.">
+  <meta property="og:description" content="The threat model for autonomous coding agents and the OS primitives that contain it: namespaces, seccomp, Landlock, cgroups, composed with fail-closed defaults.">
   <meta property="og:url" content="https://h5i.dev/blog/sandboxing-ai-agents-foundations/">
   <meta property="og:image" content="https://h5i.dev/_static/sandbox-series-card.png">
   <meta property="og:image:width" content="1200">
@@ -26,17 +27,20 @@
   <meta property="article:tag" content="Threat model">
   <meta property="article:tag" content="Isolation">
   <meta property="article:published_time" content="2026-06-12">
-  <meta property="article:modified_time" content="2026-06-12">
+  <meta property="article:modified_time" content="2026-06-26">
   <meta property="article:author" content="Koukyosyumei">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Sandboxing AI Agents, Part 1: Foundations">
-  <meta name="twitter:description" content="Threat models, isolation layers, and enforcement boundaries for AI coding agents.">
+  <meta name="twitter:description" content="The agent threat model and the Linux primitives that contain it. Each primitive contains one thing; only their composition is a sandbox.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-series-card.png">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 1: Foundations","description":"Learn AI agent sandboxing basics: threat models, isolation layers, enforcement boundaries, and why permission prompts are not enough.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":2233,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox","threat model","process isolation","sandbox enforcement"],"keywords":"AI agent sandbox, threat model, isolation, containment"}
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 1: Foundations","description":"AI agent sandboxing from first principles: the threat model (untrusted code, exfiltration, privilege escalation, resource exhaustion) and the Linux primitives (namespaces, seccomp, Landlock, cgroups) that contain it.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-26","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":2600,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox","threat model","process isolation","sandbox enforcement"],"keywords":"AI agent sandbox, threat model, defense in depth, fail closed, seccomp, Landlock, namespaces, cgroups"}
   </script>
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://h5i.dev/blog/"},{"@type":"ListItem","position":3,"name":"Sandboxing AI Agents, Part 1","item":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"}]}
+  </script>
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"FAQPage","dateModified":"2026-06-26","mainEntity":[{"@type":"Question","name":"Is a permission prompt the same as a sandbox?","acceptedAnswer":{"@type":"Answer","text":"No. A prompt asks the user to approve a tool call before it runs; a sandbox enforces a rule regardless of what the user, model, dependency, or shell decides. Prompts are a useful workflow control and depend on a human catching the right moment — they are not a containment boundary, and they do nothing once a command has been approved or once untrusted text has steered the agent."}},{"@type":"Question","name":"What does each Linux primitive actually contain?","acceptedAnswer":{"@type":"Answer","text":"Each contains one axis of authority. Landlock restricts filesystem reach (which paths a process may read or write). seccomp-bpf restricts the syscall surface (which kernel calls are even reachable). Namespaces restrict visibility (private PID, mount, network, user views). cgroups and rlimits bound resources (memory, process count, CPU, file size, wall time). Network namespaces plus an egress policy bound where packets can go. Only their composition is a meaningful sandbox; any single one leaves the other axes wide open."}},{"@type":"Question","name":"Why isn't a container enough for untrusted code?","acceptedAnswer":{"@type":"Answer","text":"A standard container shares the host kernel. If the workload can reach a vulnerable kernel surface through an allowed syscall, a kernel exploit can become a host escape. Containers, Landlock, seccomp, and namespaces are the right tools for containing accidents and most prompt-injection payloads, but they are a different category from a microVM (such as Firecracker) or a user-space kernel (such as gVisor) that interposes a separate guest kernel between the workload and the host."}},{"@type":"Question","name":"What does \"fail closed\" mean for a sandbox?","acceptedAnswer":{"@type":"Answer","text":"It means that when a requested boundary cannot be enforced, the tool refuses to run instead of silently continuing without it. The dangerous alternative is a silent downgrade: the kernel reports that Landlock, seccomp, and user namespaces are present, but a confined command cannot actually execute (for example, AppArmor restricts unprivileged user namespaces), and the tool runs anyway. That produces a false security claim you will later rely on, which is worse than no sandbox at all. The right pattern is a functional self-test that verifies confinement actually holds before granting it."}}]}
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -70,8 +74,20 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>No single primitive is a sandbox: Landlock contains filesystem reach, seccomp the syscall surface, namespaces visibility, cgroups resources — only their composition is a security property.</li>
+        <li>"Bits present" is not "confinement works": verify functionally and fail closed rather than silently downgrade.</li>
+        <li>Name the ceiling — shared-kernel confinement contains accidents and most prompt injection, but is a different category from a microVM with its own guest kernel.</li>
+  </ul>
+</div>
     <p>
       An AI coding agent is a strange security subject. It is not exactly malware, because you invited it in. It is not exactly a normal developer tool, because it reads untrusted project text and then chooses commands. It is not exactly a compiler, because it can browse your repository, run package managers, inspect environment variables, invoke shells, and decide that the next step is a network request. Sandboxing is the discipline of making that power conditional, and it is the confinement pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>: the place where you can say the agent physically could not reach certain resources, provably.
+    </p>
+    <p>
+      The argument of this post is narrow and, I think, defensible: sandboxing an autonomous agent is a <strong>containment problem with a concrete threat model</strong> — untrusted code execution, data exfiltration, privilege escalation, resource exhaustion — and it is solved by <strong>composing operating-system primitives</strong> behind defense-in-depth and fail-closed defaults, not by toggling a single flag. No one primitive is a sandbox. A filesystem allowlist does nothing about network egress; a network namespace does nothing about a fork bomb; a syscall filter does nothing about reading <code>~/.aws/credentials</code>. Each primitive contains exactly one axis of authority. Only their composition is a security property worth the name.
     </p>
 
     <div class="callout">
@@ -156,6 +172,14 @@
 <span class="t-out">egress</span>      <span class="t-cmt"># outbound channel: this process may contact only these destinations</span></pre></div>
     </div>
 
+    <h2>Why "bits present" is not "confinement works"</h2>
+    <p>
+      A subtle and underappreciated failure mode: the kernel can advertise a primitive that does not actually enforce anything in your environment. <code>/sys/kernel/security/lsm</code> can list Landlock, <code>seccomp</code> can be a valid prctl, and unprivileged user namespaces can be compiled in — and yet a confined process can still fail to launch. A common cause is an AppArmor or sysctl policy that restricts unprivileged user namespaces (Ubuntu and some CI runners ship this), so the <code>unshare(CLONE_NEWUSER)</code> that the sandbox relies on returns <code>EPERM</code> at runtime even though every feature bit reads "supported."
+    </p>
+    <p>
+      The honest response is a <strong>functional self-test</strong>, not a feature probe. h5i's process tier does exactly this: before it will create a kernel-confined environment, it runs a trivial command (<code>true</code>) inside the full confinement and checks that it actually executes. If the probe fails, <code>env create</code> refuses with a specific message ("the kernel reports Landlock/user-namespace/seccomp support, but a confined command could not execute") and tells you to re-request the weaker, clearly-labeled <code>workspace</code> tier. The principle generalizes: never infer enforcement from capability bits; verify it, and <strong>fail closed</strong> — refuse to run rather than silently downgrade to a sandbox that is not there. A silent downgrade is worse than no sandbox, because it produces a false security claim you will later rely on.
+    </p>
+
     <h2>Isolation versus mediation</h2>
     <p>
       There are two broad enforcement styles. <strong>Isolation</strong> changes what the workload can see: a private filesystem view, a private PID namespace, a private network namespace, or a whole virtual machine. <strong>Mediation</strong> leaves the world conceptually visible but inserts a decision point: a seccomp-notify supervisor, an HTTP proxy, a broker for secrets, or a file-open policy engine.
@@ -203,6 +227,9 @@ publish_result:   <span class="t-out">network = allowlist</span>, <span class="t
     <p>
       It cannot make arbitrary hostile code safe merely by naming itself a sandbox. Shared-kernel isolation still shares the host kernel. If the workload can reach a vulnerable kernel surface through an allowed syscall, a kernel exploit can become a host escape. Containers, Landlock, seccomp, and namespaces are important, but they are not the same category as a microVM with a separate guest kernel.
     </p>
+    <p>
+      There is also a class of leaks that no syscall filter or filesystem allowlist addresses: <strong>side channels</strong>. A confined process that shares CPU cores with the host can still observe timing, cache, and branch-predictor effects; it can read coarse host signals through whatever <code>/proc</code> and <code>/sys</code> entries remain mounted; an egress allowlist that resolves domains can still be a covert channel through DNS query patterns or request timing. These are not reasons to skip the primitives — they are reasons to be precise about the claim. "The agent cannot open this file" is enforceable and worth enforcing. "The agent cannot exfiltrate one bit by any physical means" is a much stronger statement that shared-kernel, shared-CPU sandboxing does not make.
+    </p>
 
     <div class="callout warn">
       <strong>Security claims must name their ceiling.</strong> "Prevents accidental damage" is a different claim from "contains malicious code" and a different claim again from "safe for mutually hostile tenants." Honest sandbox documentation should say which one it means.
@@ -214,6 +241,9 @@ publish_result:   <span class="t-out">network = allowlist</span>, <span class="t
     </p>
     <p>
       The categories are not a strict ladder for every workload. Worktrees are excellent for merge workflow and terrible as a security boundary. Process sandboxes are fast and local but share the kernel. Containers are ergonomic but frequently misconfigured. gVisor and Kata improve the kernel boundary at operational cost. MicroVMs raise the isolation ceiling but require VM images, KVM, boot plumbing, and careful network and file integration.
+    </p>
+    <p>
+      The same families show up as the tier ladder in h5i's <code>env</code> (covered in <a href="/blog/sandboxing-ai-agents-h5i/">Part 4</a>): <code>workspace</code> is the worktree-only tier — isolation for parallel edits, no execution confinement; <code>process</code> is the host-kernel tier — a Landlock filesystem allowlist, a seccomp deny-list, namespaces, and rlimits, forking a supervisor in a fresh PID namespace; <code>supervised</code> adds seccomp-notify mediation on top; and <code>container</code> runs the workload in rootless Podman, which is the tier where an outbound domain allowlist (<code>net.egress</code>) becomes enforceable through a host-side allowlist proxy. The names are deliberately not interchangeable: each tier states a different ceiling, and a higher tier is a different security claim, not just "more secure."
     </p>
 
     <h2>The audit requirement</h2>
@@ -236,6 +266,22 @@ publish_result:   <span class="t-out">network = allowlist</span>, <span class="t
       <li>Check whether denied actions are recorded in a form reviewers can inspect.</li>
       <li>Check whether the tool fails closed when a requested boundary cannot be enforced.</li>
     </ol>
+
+    <h2>Conclusion</h2>
+    <p>
+      Sandboxing an AI coding agent is not a feature you turn on; it is a claim you make and then have to defend. The claim has four moving parts — the adversary you are containing, the capabilities you grant, the primitive that enforces each one, and the evidence left behind — and every one of them has to be stated, not assumed. The threat model is concrete: untrusted code execution, data exfiltration, privilege escalation, resource exhaustion. The defense is also concrete: namespaces for visibility, seccomp for syscall surface, Landlock for filesystem reach, cgroups and rlimits for resources, egress policy for the network. None of these is a sandbox by itself; composed, with fail-closed defaults and a functional check that the composition actually holds, they become one.
+    </p>
+    <p>
+      The discipline is mostly in the honesty. Name the ceiling. Refuse to run when the boundary cannot be enforced rather than pretending it was. Do not call a permission prompt a sandbox, and do not call shared-kernel confinement a defense against a kernel exploit. An agent sandbox that does these things will not make hostile code safe — nothing short of a separate guest kernel comes close to that — but it will make the common cases (accidents and most prompt-injection payloads) contained, auditable, and reversible, which is the actual job. The rest of this series turns these principles into code, compares the tools that implement them, and walks through how h5i wires them together.
+    </p>
+
+    <h2>FAQ</h2>
+    <div class="faq">
+      <p><strong>Is a permission prompt the same as a sandbox?</strong> No. A prompt asks the user to approve a tool call before it runs; a sandbox enforces a rule regardless of what the user, model, dependency, or shell decides. Prompts are a useful workflow control and depend on a human catching the right moment — they are not a containment boundary, and they do nothing once a command has been approved or once untrusted text has steered the agent.</p>
+      <p><strong>What does each Linux primitive actually contain?</strong> Each contains one axis of authority. Landlock restricts filesystem reach (which paths a process may read or write). seccomp-bpf restricts the syscall surface (which kernel calls are even reachable). Namespaces restrict visibility (private PID, mount, network, user views). cgroups and rlimits bound resources (memory, process count, CPU, file size, wall time). Network namespaces plus an egress policy bound where packets can go. Only their composition is a meaningful sandbox; any single one leaves the other axes wide open.</p>
+      <p><strong>Why isn't a container enough for untrusted code?</strong> A standard container shares the host kernel. If the workload can reach a vulnerable kernel surface through an allowed syscall, a kernel exploit can become a host escape. Containers, Landlock, seccomp, and namespaces are the right tools for containing accidents and most prompt-injection payloads, but they are a different category from a microVM (such as Firecracker) or a user-space kernel (such as gVisor) that interposes a separate guest kernel between the workload and the host.</p>
+      <p><strong>What does "fail closed" mean for a sandbox?</strong> It means that when a requested boundary cannot be enforced, the tool refuses to run instead of silently continuing without it. The dangerous alternative is a silent downgrade: the kernel reports that Landlock, seccomp, and user namespaces are present, but a confined command cannot actually execute (for example, AppArmor restricts unprivileged user namespaces), and the tool runs anyway. That produces a false security claim you will later rely on, which is worse than no sandbox at all. The right pattern is a functional self-test that verifies confinement actually holds before granting it.</p>
+    </div>
 
     <h2>Further reading</h2>
     <p>

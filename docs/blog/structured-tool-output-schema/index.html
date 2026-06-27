@@ -11,6 +11,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
   <link rel="canonical" href="https://h5i.dev/blog/structured-tool-output-schema/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
   <link rel="icon" type="image/png" href="/_static/logo.png">
   <link rel="apple-touch-icon" href="/_static/logo.png">
 
@@ -36,7 +37,7 @@
     "description": "h5i adds a unified JSON/YAML result schema on top of token reduction — one shape across tests, compilers, linters, and type checkers — so tool output becomes machine-actionable.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-06-06",
-    "dateModified": "2026-06-06",
+    "dateModified": "2026-06-26",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/structured-tool-output-schema/"},
     "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
@@ -52,6 +53,35 @@
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "One Schema for Every Tool: Structured Output for AI Agents", "item": "https://h5i.dev/blog/structured-tool-output-schema/"}]}
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "dateModified": "2026-06-26",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is a structured tool output schema for AI agents?",
+        "acceptedAnswer": {"@type": "Answer", "text": "It is one typed record — h5i's ToolResult, carrying a list of Findings — that every tool is parsed into, so an agent reads one shape instead of re-learning pytest's, cargo's, then tsc's free-text layout. The envelope carries tool, kind, status, exit_code, counts, parser_confidence and raw_oid; each finding carries a severity, location, message and a stable fingerprint."}
+      },
+      {
+        "@type": "Question",
+        "name": "How is this different from token-reduction tools like rtk or headroom?",
+        "acceptedAnswer": {"@type": "Answer", "text": "rtk and headroom reduce output to less text, and h5i reuses that text path for tools without a coded adapter. The schema adds a typed, queryable, fingerprinted layer on top: the agent can branch on a status, dedupe by fingerprint, and query across captures. Reduction makes the output small; the schema makes it actionable."}
+      },
+      {
+        "@type": "Question",
+        "name": "How does h5i avoid inventing structure that isn't in the output?",
+        "acceptedAnswer": {"@type": "Answer", "text": "status is derived from the exit code, not scraped from words like 'passed', and a parser that can't find its anchors declines to a generic result — recording parser_confidence: generic — instead of guessing. The full raw bytes are always one h5i recall object away, so the structure is a view, never the only copy."}
+      },
+      {
+        "@type": "Question",
+        "name": "What does the finding fingerprint enable?",
+        "acceptedAnswer": {"@type": "Answer", "text": "The fingerprint is a hash of tool + rule + digit-normalized location + message, so it stays stable when line numbers shift. That makes 'the same failure' recognizable across runs: h5i recall search --fingerprint <fp> answers 'has this exact failure happened before?' across every capture, and lets an agent dedupe repeated diagnostics."}
+      }
+    ]
+  }
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -82,11 +112,20 @@
       </p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
-        <span><strong>Reading time</strong> 7 min</span>
+        <span><strong>Reading time</strong> 9 min</span>
         <span><strong>Tags</strong> Structured output · Schema · Tooling</span>
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>A failing test, a compile error, and a lint diagnostic are the same shape, so they collapse into one typed ToolResult / Finding.</li>
+        <li>The schema is honest by construction: status comes from the exit code, parser_confidence is explicit, and the raw bytes are always recoverable.</li>
+        <li>Reduction makes tool output small; the typed, fingerprinted, queryable record is what makes it actionable.</li>
+  </ul>
+</div>
     <p>
       Compressed tool logs are one of the core properties of an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>, and structured output is what makes those logs machine-actionable, not just smaller.
       Token reduction is a real win (see <a href="/blog/token-reduction-object-store/">the object-store
@@ -107,7 +146,46 @@
     <h2>The idea: one result, every tool</h2>
 
     <p>
-      h5i parses each tool into a single typed <code>ToolResult</code>. The key realization is that a
+      Here's what an agent normally swallows — a single failing <code>pytest</code> run:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
+      <div class="terminal-body"><pre>$ pytest -q
+============================= test session starts ==============================
+platform linux -- Python 3.11.4, pytest-8.1.1, pluggy-1.4.0
+rootdir: /home/dev/app
+plugins: anyio-4.3.0, cov-4.1.0
+collected 121 items
+
+tests/test_auth.py .........................F.............              [ 30%]
+tests/test_api.py ....................................                  [ 70%]
+tests/test_db.py ..................................                     [100%]
+
+=================================== FAILURES ===================================
+______________________________ test_refresh ___________________________________
+
+    def test_refresh():
+        token = refresh(expired_session())
+&gt;       assert token.ttl == 100
+E       assert 0 == 100
+E        +  where 0 = Token(ttl=0).ttl
+
+tests/test_auth.py:42: AssertionError
+=============================== warnings summary ===============================
+tests/test_api.py::test_list
+  /home/dev/app/api.py:88: DeprecationWarning: client.get(...) is deprecated
+    return client.get(url)
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_auth.py::test_refresh - assert 0 == 100
+1 failed, 120 passed, 1 warning in 4.31s</pre></div>
+    </div>
+
+    <p>
+      Run that through <code>h5i capture run</code> and the <em>same</em> run becomes the compact
+      typed result below — roughly 95% fewer tokens, with the raw output kept out-of-band and one
+      command away. h5i parses each tool into a single typed <code>ToolResult</code>. The key realization is that a
       <strong>failing test, a compile error, and a lint diagnostic are the same shape</strong>: a
       thing, somewhere, with a message and a severity. So they all become a unified
       <code>Finding</code>, under one envelope:
@@ -134,8 +212,19 @@ findings:
     <p>
       Swap <code>pytest</code> for <code>cargo test</code>, <code>tsc</code>, <code>eslint</code>,
       <code>ruff</code>, <code>mypy</code>, or <code>go test</code> and you get the
-      <em>same fields</em>, a `rule` for a linter, `expected`/`actual` for an assertion, a
-      `build_error` kind for a compile failure. An agent learns the schema once.
+      <em>same fields</em>: a <code>rule</code> for a linter (e.g. <code>TS2322</code>),
+      <code>expected</code>/<code>actual</code> for an assertion, a <code>build_error</code> kind
+      for a compile failure, <code>suggestions</code> + a <code>fixable</code> flag for an
+      autofixable lint. An agent learns the schema once.
+    </p>
+
+    <p>
+      Not every tool's output is diagnostic-shaped, so the envelope keeps a small <code>extra</code>
+      escape hatch for parser-specific data that doesn't fit a <code>Finding</code>, a coverage
+      percentage, an install tally, a diff's <code>+/-</code> stats, a benchmark number, a VCS file
+      list. The core stays a tight list of findings; the long tail still has somewhere to land
+      without bending the common shape. The schema is versioned (<code>schema_version</code>), so the
+      stored manifests stay readable as the shape evolves.
     </p>
 
     <h2>Three renders, one source of truth</h2>
@@ -172,12 +261,17 @@ findings:
       <li><strong>Iterate findings.</strong> Each carries a precise <code>location</code> and
         <code>message</code>, jump straight to <code>tests/test_auth.py:42</code>.</li>
       <li><strong>Dedupe / track by fingerprint.</strong> Each finding has a stable
-        <code>fingerprint</code> (a hash of tool + rule + digit-normalized location + message), so
-        "the same failure" is recognizable across runs even as line numbers shift.</li>
+        <code>fingerprint</code> (the first 12 hex of a sha256 over tool + rule + digit-normalized
+        location + message), so "the same failure" is recognizable across runs even as line numbers
+        shift. <code>h5i recall search --fingerprint &lt;fp&gt;</code> answers "has this exact
+        failure happened before?" across every capture.</li>
       <li><strong>Query the store.</strong> The result lives in the manifest, so
-        <code>h5i recall objects --status failed --tool pytest</code> works across every capture.</li>
+        <code>h5i recall objects --status failed --tool pytest</code> lists captures, and
+        <code>h5i recall search</code> goes deeper, matching finding message/rule/path/severity/kind
+        across every captured tool.</li>
       <li><strong>Know how much to trust it.</strong> <code>parser_confidence</code> says whether the
-        result was <code>parsed</code> by a dedicated adapter or is a <code>generic</code> fallback.</li>
+        result was <code>parsed</code> by a dedicated adapter, inferred by a <code>heuristic</code>,
+        or is a <code>generic</code> exit-code-only fallback.</li>
     </ul>
 
     <div class="terminal">
@@ -186,29 +280,43 @@ findings:
 "failed"
 "tests/test_auth.py:42"
 
-$ h5i recall objects --status failed --tool mypy   # every mypy failure, ever</pre></div>
+$ h5i recall objects --status failed --tool mypy   # every mypy failure, ever
+$ h5i recall search --fingerprint 0bb827e4e61a     # has this one recurred?
+$ h5i recall search --severity error --rule TS2322 # one rule, across every tsc run</pre></div>
     </div>
 
     <h2>Honest by construction</h2>
 
     <p>
       A schema that lies is worse than text. Two rules keep it honest. First, <strong>status comes
-      from the exit code</strong>, never from scraping words like "passed". Second, a parser that
-      can't find its anchors <strong>declines to a <code>generic</code> result</strong> (status from
-      the exit code, the reduced text in <code>body</code>) rather than inventing structure, and
-      says so via <code>parser_confidence: generic</code>. The raw bytes are always one
-      <code>h5i recall object</code> away, so the structure is a <em>view</em>, never the only copy.
+      from the exit code</strong>, never from scraping words like "passed". And the mapping is more
+      careful than <code>exit == 0</code>: a test runner is only <code>passed</code> on a clean zero
+      exit; findings that somehow appear on a zero exit still surface as <code>failed</code>; and a
+      nonzero exit with <em>no</em> parsed findings is <code>error</code> (the tool itself couldn't
+      run) rather than <code>failed</code> (the tool ran and reported problems). That
+      <code>failed</code>-vs-<code>error</code> distinction is exactly what an agent needs to decide
+      between "fix the code" and "fix the invocation". Second, a parser that can't find its anchors
+      <strong>declines to a <code>generic</code> result</strong> (status from the exit code, the
+      reduced text in <code>body</code>) rather than inventing structure, and labels itself with
+      <code>parser_confidence</code>: <code>parsed</code> when a dedicated adapter matched,
+      <code>heuristic</code> when the shape was inferred, <code>generic</code> when only the exit
+      code is trustworthy. An agent can lower its certainty accordingly instead of trusting every
+      record equally. The raw bytes are always one <code>h5i recall object</code> away, so the
+      structure is a <em>view</em>, never the only copy.
     </p>
 
     <h2>Where this sits relative to rtk / headroom</h2>
 
     <p>
-      Credit where it's due: rtk's declarative per-command filters and headroom's log line-folding
-      are excellent at the <em>reduction</em> problem, and h5i reuses both for its text path (see the
-      <a href="https://github.com/h5i-dev/h5i/blob/main/NOTICE">NOTICE</a>). The unified
-      <code>ToolResult</code> / <code>Finding</code> schema, typed, fingerprinted, queryable, honest
-      about confidence, and identical across tools, is the layer h5i adds on top. Reduction makes
-      the output <em>small</em>; the schema makes it <em>actionable</em>.
+      <strong>Good:</strong> rtk's declarative per-command filters and headroom's log line-folding
+      are good at the <em>reduction</em> problem, and h5i reuses both for its text path (see the
+      <a href="https://github.com/h5i-dev/h5i/blob/main/NOTICE">NOTICE</a>); a tool with no coded
+      adapter still gets those rtk-derived rules applied, and you can ask for that legacy free-text
+      view directly with <code>--format summary</code>. <strong>Gap:</strong> a filtered summary is
+      still text, shaped differently per tool, with nothing to branch on, dedupe, or query. The
+      unified <code>ToolResult</code> / <code>Finding</code> schema — typed, fingerprinted,
+      queryable, honest about confidence, and identical across tools — is the layer h5i adds on top.
+      Reduction makes the output <em>small</em>; the schema makes it <em>actionable</em>.
     </p>
 
     <h2>Coverage</h2>
@@ -217,7 +325,55 @@ $ h5i recall objects --status failed --tool mypy   # every mypy failure, ever</p
       Dedicated parsers (rich findings) ship for <strong>pytest, cargo test, go test, tsc, eslint,
       ruff, and mypy</strong>; every other command gets a valid generic result (honest status +
       reduced <code>body</code>). Each parser carries golden tests so the schema stays faithful, and
-      adding a tool is just another parser feeding the same shape.
+      adding a tool is just another parser feeding the same shape — the agent-facing contract never
+      changes.
+    </p>
+
+    <h2>FAQ</h2>
+
+    <div class="faq">
+      <p><strong>What is a structured tool output schema for AI agents?</strong><br>
+        One typed record — h5i's <code>ToolResult</code>, carrying a list of <code>Finding</code>s —
+        that every tool is parsed into, so an agent reads one shape instead of re-learning pytest's,
+        then cargo's, then tsc's free-text layout. The envelope carries <code>tool</code>,
+        <code>kind</code>, <code>status</code>, <code>exit_code</code>, <code>counts</code>,
+        <code>parser_confidence</code> and <code>raw_oid</code>; each finding carries a
+        <code>severity</code>, <code>location</code>, <code>message</code> and a stable
+        <code>fingerprint</code>.</p>
+
+      <p><strong>How is this different from token-reduction tools like rtk or headroom?</strong><br>
+        rtk and headroom reduce output to less text, and h5i reuses that text path for tools without
+        a coded adapter. The schema adds a typed, queryable, fingerprinted layer on top: the agent
+        can branch on a status, dedupe by fingerprint, and query across captures. Reduction makes the
+        output small; the schema makes it actionable.</p>
+
+      <p><strong>How does h5i avoid inventing structure that isn't in the output?</strong><br>
+        <code>status</code> is derived from the exit code, not scraped from words like "passed", and
+        a parser that can't find its anchors declines to a <code>generic</code> result — recording
+        <code>parser_confidence: generic</code> — instead of guessing. The full raw bytes are always
+        one <code>h5i recall object</code> away, so the structure is a view, never the only copy.</p>
+
+      <p><strong>What does the finding fingerprint enable?</strong><br>
+        The fingerprint is a hash of tool + rule + digit-normalized location + message, so it stays
+        stable when line numbers shift. That makes "the same failure" recognizable across runs:
+        <code>h5i recall search --fingerprint &lt;fp&gt;</code> answers "has this exact failure
+        happened before?" across every capture, and lets an agent dedupe repeated diagnostics.</p>
+    </div>
+
+    <h2>Conclusion</h2>
+
+    <p>
+      Token reduction solves a real problem — it keeps a 40-line pytest dump out of the context
+      window — but it stops at making output <em>smaller</em>. The step that makes reduction
+      <em>actionable</em> is noticing that a failing test, a compile error, and a lint diagnostic are
+      the same shape: a thing, somewhere, with a message and a severity. Collapse them into one typed
+      <code>ToolResult</code> and the agent stops parsing prose and starts branching on a
+      <code>status</code>, jumping to a <code>location</code>, deduping by <code>fingerprint</code>,
+      and querying <code>h5i recall search</code> across every run it has ever done. Build the schema
+      to be honest — status from the exit code, confidence labeled rather than faked, raw bytes
+      always recoverable — and it stays trustworthy even when a tool it has never seen shows up. That
+      typed, fingerprinted, queryable record, identical across tools, is the layer that turns a pile
+      of reduced logs into something an agent can actually <em>act</em> on.
     </p>
 
     <div class="next-up">

@@ -3,14 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>From Git Blame to AI Blame for AI-Era Code: h5i</title>
-  <meta name="description" content="Extend git blame for AI-assisted code with per-line provenance: the prompt, model, coding agent, commit, and captured test result.">
-  <meta name="keywords" content="git blame, ai blame, ai authorship tracking, who wrote this code ai, ai provenance, git blame ai code, claude code blame, h5i blame">
+  <title>From Git Blame to AI Blame: Per-Line Provenance for AI Code | h5i</title>
+  <meta name="description" content="git blame names the human who committed a line, not the model that wrote it. h5i AI blame adds the prompt, agent, and test result per line — and survives the move to agent-written code.">
+  <meta name="keywords" content="git blame, ai blame, ai authorship tracking, who wrote this code ai, ai provenance, git blame ai code, claude code blame, h5i blame, per-line provenance, ai code attribution">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
   <link rel="canonical" href="https://h5i.dev/blog/from-git-blame-to-ai-blame/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
   <link rel="icon" type="image/png" href="/_static/logo.png">
   <link rel="apple-touch-icon" href="/_static/logo.png">
 
@@ -32,11 +33,11 @@
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "From Git Blame to AI Blame for AI-Era Code",
-    "description": "git blame plus the prompt, the model, the agent, and the test result — for every line of an AI-assisted codebase.",
+    "headline": "From Git Blame to AI Blame: Per-Line Provenance for AI-Era Code",
+    "description": "git blame plus the prompt, the agent, and the test result — for every line of an AI-assisted codebase, recoverable when provenance is captured at commit time.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-05-06",
-    "dateModified": "2026-06-02",
+    "dateModified": "2026-06-26",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/from-git-blame-to-ai-blame/"},
     "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
@@ -52,6 +53,19 @@
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "From Git Blame to AI Blame for AI-Era Code", "item": "https://h5i.dev/blog/from-git-blame-to-ai-blame/"}]}
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {"@type": "Question", "name": "What is the difference between git blame and AI blame?", "acceptedAnswer": {"@type": "Answer", "text": "git blame maps each line to the commit that last changed it and shows the committer's name, SHA, and date. For agent-written code the committer is the human who ran git commit, not the model that produced the line. h5i AI blame keeps the same line-to-commit mapping and adds, per commit boundary, the coding agent, the human prompt, and whether the captured test run passed — the model name, token count, and integrity severity live in the commit's provenance record."}},
+      {"@type": "Question", "name": "Does git blame show which AI model wrote a line?", "acceptedAnswer": {"@type": "Answer", "text": "No. git blame only knows the Git author and committer identity from the commit object. It has no field for the model, the agent, or the prompt. That information has to be captured at commit time; h5i stores it in a git note on refs/h5i/notes keyed by commit OID."}},
+      {"@type": "Question", "name": "Where does h5i store per-line AI provenance?", "acceptedAnswer": {"@type": "Answer", "text": "In a git note attached to each commit on the refs/h5i/notes ref, serialized as JSON (an H5iCommitRecord with ai_metadata, test_metrics, and timestamp). It is not moved by a plain git push or git fetch; use h5i share push and h5i share pull to sync it alongside your code."}},
+      {"@type": "Question", "name": "What happens to AI blame when commits are squashed or rebased?", "acceptedAnswer": {"@type": "Answer", "text": "Provenance is keyed by commit OID, so rewriting history changes the OID and the original notes no longer match. A squash collapses several prompts into one new commit, so blame attributes every squashed line to whatever provenance the merge commit carries. AI blame is exactly as durable as the commit graph it annotates — preserve commit boundaries if you want per-prompt resolution."}},
+      {"@type": "Question", "name": "How do I see the prompt that produced a line?", "acceptedAnswer": {"@type": "Answer", "text": "Run h5i recall blame <file> --show-prompt to annotate each commit boundary with its prompt, agent, and test status, or h5i recall log --ancestry <file>:<line> to walk the full prompt history of a single line across every commit that touched it."}}
+    ]
+  }
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -86,6 +100,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>git blame resolves a line to the human who committed it; for agent code the committer is not the author.</li>
+        <li>h5i recall blame --show-prompt adds the agent and test status per line, and the prompt per commit boundary.</li>
+        <li>Attribution is commit-granular and OID-keyed, so it is exactly as durable as the commit graph — squash and rebase collapse prompts.</li>
+  </ul>
+</div>
     <p>
       Provenance, who asked, with what prompt, from what context, is a core property of an
       <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>. Per-line AI blame
@@ -134,55 +157,76 @@
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/http_client.rs --show-prompt</span>
 
-<span class="t-bold">STAT COMMIT   AUTHOR/AGENT     | CONTENT</span>
-<span class="t-pass">✅</span> <span class="t-ai">✨</span> <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code     </span> | <span class="t-out">async fn send_with_retry(req: Request) -&gt; Result&lt;Response&gt; {</span>
-<span class="t-pass">✅</span>    <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code     </span> | <span class="t-out">    let mut delay = Duration::from_millis(100);</span>
-<span class="t-pass">✅</span>    <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code     </span> | <span class="t-out">    for attempt in 0..MAX_RETRIES {</span>
-
-<span class="t-bold">─── boundary at a3f9c2b ─────────────────────────────────────</span>
-<span class="t-out">  Author:  Alice &lt;alice@example.com&gt;</span>
-<span class="t-ai">  Agent:   claude-code (claude-sonnet-4-6) ✨</span>
-<span class="t-warn">  Prompt:  "add exponential backoff with jitter to the HTTP client</span>
-<span class="t-warn">           — cap retries at 5 to avoid infinite loops"</span>
-<span class="t-pass">  Tests:   ✔ 42 passed, 0 failed, 1.23s [pytest]</span>
-<span class="t-out">  Audit:   ✔ no integrity warnings</span></pre></div>
+<span class="t-bold">STAT COMMIT   AUTHOR/AGENT    | CONTENT</span>
+                              <span class="t-warn">prompt: "add exponential backoff with jitter to the HTTP cli…"</span>
+<span class="t-pass">✅</span> <span class="t-ai">a3f9c2b9</span> <span class="t-ai">AI:claude-code </span> | <span class="t-out">async fn send_with_retry(req: Request) -&gt; Result&lt;Response&gt; {</span>
+<span class="t-pass">✅</span> <span class="t-ai">a3f9c2b9</span> <span class="t-ai">AI:claude-code </span> | <span class="t-out">    let mut delay = Duration::from_millis(100);</span>
+<span class="t-pass">✅</span> <span class="t-ai">a3f9c2b9</span> <span class="t-ai">AI:claude-code </span> | <span class="t-out">    for attempt in 0..MAX_RETRIES {</span></pre></div>
     </div>
 
     <p>
-      The four extra fields, agent, model, prompt, test result, are the difference between
-      knowing <em>that</em> Alice landed the change and knowing <em>what</em> the change was actually for. Same
-      git commit, four times as much context.
+      The first column is the test status carried by the commit that owns each line
+      (<span class="t-pass">✅</span> passing, <span class="t-warn">❌</span> failing, blank when no test
+      metrics were captured). The <code>AUTHOR/AGENT</code> column reads <code>AI:&lt;agent&gt;</code> for an
+      AI-tagged commit and <code>Human</code> otherwise — so a quick scan tells you which spans of a file
+      are human-written. With <code>--show-prompt</code>, the human prompt is printed once per commit
+      boundary (not once per line), keyed by the line's owning commit, so it stays readable on a long
+      function. That's the difference between knowing <em>that</em> Alice landed the change and knowing
+      <em>what</em> she actually asked for.
     </p>
 
-    <h2>Where the data lives</h2>
+    <p>
+      Two honest caveats on this view. The <code>AI:&lt;agent&gt;</code> label is the <em>agent</em> identity
+      (<code>claude-code</code>, <code>codex</code>, …), not the model — the model name, token count, and
+      integrity severity ride along in the commit's provenance record (next section) and surface in
+      <code>h5i recall log</code> rather than in the per-line blame. And attribution is
+      <strong>commit-granular</strong>: blame resolves a line to its owning commit, and provenance hangs
+      off that commit. If you batch ten prompts into one commit, all ten lines share that commit's single
+      recorded prompt. Per-prompt resolution is exactly as fine as your commit boundaries.
+    </p>
+
+    <h2>Where the data lives: a git note per commit</h2>
 
     <p>
-      The provenance fields are stored in <code>refs/h5i/notes</code> as JSON keyed by commit OID.
-      Concretely, each AI-tagged commit has a <code>H5iCommitRecord</code> attached:
+      The provenance fields are stored in <code>refs/h5i/notes</code> as JSON keyed by commit OID — a git
+      note, not a parallel database, so it travels with the object graph and can never drift out of sync
+      with the commit it describes. Each AI-tagged commit has an <code>H5iCommitRecord</code> attached:
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">refs/h5i/notes</span></div>
       <div class="terminal-body"><pre><span class="t-cmd">{
-  "commit": "a3f9c2b9...",
+  "git_oid": "a3f9c2b9...",
+  "parent_oid": "7216039...",
   "ai_metadata": {
-    "model": "claude-sonnet-4-6",
-    "agent": "claude-code",
+    "model_name": "claude-sonnet-4-6",
+    "agent_id": "claude-code",
     "prompt": "add exponential backoff with jitter to the HTTP client...",
-    "tokens": 312
+    "usage": { "prompt_tokens": 312, "total_tokens": 1180, "model": "claude-sonnet-4-6" }
   },
   "test_metrics": {
-    "framework": "pytest",
-    "passed": 42, "failed": 0, "duration_ms": 1230
+    "tool": "pytest",
+    "passed": 42, "failed": 0, "skipped": 0, "total": 42,
+    "duration_secs": 1.23, "exit_code": 0
   },
-  "integrity_report": { "severity": "Valid", "warnings": [] }
+  "timestamp": "2026-04-12T14:02:11Z"
 }</span></pre></div>
     </div>
 
     <p>
-      The notes ref isn't pulled by a plain <code>git fetch</code>, it would clutter remotes that don't care.
-      <code>h5i share push</code> and <code>h5i share pull</code> sync the h5i refs alongside your code, so teammates who opt in
-      see the full provenance and others see normal git behavior.
+      Integrity is the one field that is <em>not</em> stored here: rather than freezing a possibly-stale
+      verdict, h5i recomputes it on demand by re-running its rule set against the commit's own
+      parent→commit diff (<code>verify_commit_integrity</code>), grading each commit
+      <code>Valid</code>&nbsp;/&nbsp;<code>Warning</code>&nbsp;/&nbsp;<code>Violation</code> with the
+      specific rule findings (credential leak, code execution, sensitive-file change, …). That triaged
+      view is what <code>h5i audit review</code> surfaces across many commits.
+    </p>
+
+    <p>
+      The notes ref isn't pulled by a plain <code>git fetch</code> — it would clutter remotes that don't
+      care, and most CI never asks for it. <code>h5i share push</code> and <code>h5i share pull</code> sync
+      the h5i refs alongside your code, so teammates who opt in see the full provenance and everyone else
+      sees ordinary git behavior. Provenance is additive, never load-bearing for the build.
     </p>
 
     <h2>How <code>h5i capture commit</code> populates the record</h2>
@@ -196,7 +240,7 @@
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "add retry logic to HTTP client" \
     --model claude-sonnet-4-6 \
     --agent claude-code \
-    --prompt "add exponential backoff to the HTTP client" \
+    --intent "add exponential backoff to the HTTP client" \
     --tests \
     --audit</span>
 
@@ -205,40 +249,113 @@
     </div>
 
     <p>
-      Or you can install the <code>UserPromptSubmit</code> hook from <code>h5i hook setup</code> and stop typing
-      <code>--prompt</code> entirely. The hook captures every prompt you type to Claude Code, attaches the
-      most recent one to the next <code>h5i capture commit</code>, and you keep using normal git ergonomics.
+      In practice you rarely type <code>--intent</code> at all. Installing the hooks with
+      <code>h5i hook setup</code> wires a <code>UserPromptSubmit</code> hook that captures the verbatim prompt
+      you send to Claude Code and attaches it to the next commit — and the auto-captured prompt
+      <em>wins</em> over an agent-supplied <code>--intent</code>, so what gets recorded is what the human
+      actually asked, not the agent's paraphrase. (<code>--intent</code> stays as the fallback for Codex,
+      CI, or manual commits where no prompt-capture hook is running; Codex instead mines its own session
+      transcript.) The <code>--tests</code> flag attaches the captured test metrics and <code>--audit</code>
+      runs the integrity rules before the commit lands.
     </p>
 
     <h2>The new question: <em>per-line prompt history</em></h2>
 
     <p>
-      Standard blame stops at the line's introducing commit. h5i adds <code>--ancestry</code>, which walks
-      backward and shows every prompt that ever touched the line, not just the last one:
+      Standard blame stops at the line's introducing commit. <code>h5i recall log --ancestry
+      &lt;file&gt;:&lt;line&gt;</code> walks backward from HEAD, re-blaming the file at each step and following
+      the line as it moves through edits, so it can show every prompt that ever shaped that line — not just
+      the last one:
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --ancestry src/http_client.rs:88</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --ancestry src/http_client.rs:89</span>
 
-<span class="t-bold">Line 88 of src/http_client.rs — 3 commits in ancestry</span>
+<span class="t-bold">── Prompt ancestry for src/http_client.rs:89</span>
 
-<span class="t-out">● a3f9c2b  2026-04-12  Alice / claude-code</span>
-  <span class="t-warn">prompt: "add exponential backoff with jitter to the HTTP client"</span>
+<span class="t-out">  [3 of 3] <span class="t-ai">a3f9c2b9</span>  Alice · 2026-04-12 14:02 UTC</span>
+       line:  <span class="t-out">let mut delay = Duration::from_millis(100);</span>
+       prompt:  <span class="t-warn">"add exponential backoff with jitter to the HTTP client"</span>
 
-<span class="t-out">● 7216039  2026-03-08  Alice / claude-code</span>
-  <span class="t-warn">prompt: "fix off-by-one in retry counter"</span>
+<span class="t-out">  [2 of 3] <span class="t-ai">72160394</span>  Alice · 2026-03-08 09:14 UTC</span>
+       line:  <span class="t-out">let delay = Duration::from_millis(100);</span>
+       prompt:  <span class="t-warn">"fix off-by-one in retry counter"</span>
 
-<span class="t-out">● 9eff001  2026-02-24  Alice (no AI metadata)</span>
-  <span class="t-out">commit: "initial HTTP client"</span></pre></div>
+<span class="t-out">  [1 of 3] <span class="t-ai">9eff0012</span>  Alice · 2026-02-24 11:30 UTC</span>
+       line:  <span class="t-out">let delay = 100;</span>
+       prompt:  <span class="t-out">(none recorded) (Human)</span></pre></div>
     </div>
 
     <p>
-      This is the answer to "why is this line the way it is?" not just at the most recent edit but
-      across its whole life. When debugging a regression that bisects to a refactor, the ancestry
-      view tells you whether the line you're staring at was rewritten by the refactor or merely
-      moved, and what was on the prompt that moved it.
+      Entries print most-recent first (<code>[3 of 3]</code> down to <code>[1 of 3]</code>), each with the
+      line's exact content <em>at that point in history</em>. This answers "why is this line the way it
+      is?" across its whole life, not just at the most recent edit. When a regression bisects to a refactor,
+      the ancestry view tells you whether the line you're staring at was genuinely rewritten or merely moved
+      — and which prompt did the moving. The walk is bounded (it stops at the commit that introduced the
+      line, or after a depth cap) and gracefully interleaves untagged historical commits, which simply read
+      <code>(none recorded)</code>.
     </p>
+
+    <h2>How it compares to what you already have</h2>
+
+    <p>
+      Provenance for AI code isn't a brand-new idea — there are two conventions you've probably already
+      reached for. Both help; both have a ceiling.
+    </p>
+
+    <table class="data">
+      <thead>
+        <tr><th>Question</th><th><code>git blame</code></th><th>Commit trailers<br>(<code>Co-authored-by</code>, <code>Assisted-by</code>)</th><th>h5i AI blame</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Which commit owns this line?</td><td><strong>Yes</strong></td><td>No (commit-level only)</td><td><strong>Yes</strong> (same git algorithm)</td></tr>
+        <tr><td>Who committed it / when?</td><td><strong>Yes</strong></td><td>Yes</td><td><strong>Yes</strong></td></tr>
+        <tr><td>Which agent produced it?</td><td>No</td><td>Sometimes (free-text, unenforced)</td><td><strong>Yes</strong> (<code>AI:&lt;agent&gt;</code> per line)</td></tr>
+        <tr><td>Which model / token cost?</td><td>No</td><td>No</td><td><strong>Yes</strong> (in the record)</td></tr>
+        <tr><td>What prompt produced it?</td><td>No</td><td>No</td><td><strong>Yes</strong> (<code>--show-prompt</code>)</td></tr>
+        <tr><td>Did its tests pass?</td><td>No</td><td>No</td><td><strong>Yes</strong> (<code>--tests</code>)</td></tr>
+        <tr><td>Full prompt history of one line?</td><td>No</td><td>No</td><td><strong>Yes</strong> (<code>--ancestry</code>)</td></tr>
+        <tr><td>Survives <code>git push</code> with no setup?</td><td><strong>Yes</strong></td><td><strong>Yes</strong> (it's in the message)</td><td>No — needs <code>h5i share push</code></td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      <strong>Good, about trailers:</strong> a <code>Co-authored-by: Claude &lt;…&gt;</code> trailer is
+      zero-infrastructure, travels in the commit message, and is enough to answer "was a model involved at
+      all?" — which is sometimes all you need. <strong>Gap:</strong> it is commit-granular free text. It
+      can't tell you which of the 14 files in the commit the model touched, carries no prompt or test
+      outcome, and nothing validates it — an agent that forgets the trailer leaves no trace. AI blame trades
+      that zero-setup portability (the notes ref needs an explicit <code>h5i share push</code>) for
+      structured, line-resolved, queryable provenance.
+    </p>
+
+    <h2>Failure modes worth knowing before you rely on it</h2>
+
+    <p>
+      AI blame inherits git blame's mechanics, so it inherits git blame's blind spots — plus a couple of
+      its own. Knowing them up front keeps you from over-trusting a clean-looking annotation.
+    </p>
+
+    <ul>
+      <li><strong>Squash and rebase rewrite OIDs.</strong> Provenance is keyed by commit OID. A squash merge
+      collapses many commits — and many prompts — into one new commit with one new OID; the original notes
+      no longer match it, so blame attributes every squashed line to the single record the new commit
+      carries. If per-prompt resolution matters to you, keep the granular commits (a merge commit, or
+      rebase that preserves boundaries) rather than squashing.</li>
+      <li><strong>Moved lines look like new lines.</strong> Plain blame credits the commit that last touched
+      a line, so a pure move or reformat reassigns it. <code>git blame -C -M</code> mitigates this for the
+      standard view; the <code>--ancestry</code> walk helps for h5i by distinguishing a genuine rewrite from
+      a move, but a large mechanical reformat will still re-stamp lines with the reformatting commit's
+      provenance.</li>
+      <li><strong>Attribution is commit-granular, not keystroke-granular.</strong> The prompt attached to a
+      line is the prompt recorded for its owning commit. One commit, one prompt field — batching work
+      coarsens the resolution.</li>
+      <li><strong>Untagged commits read blank.</strong> Anything committed with plain <code>git commit</code>,
+      or before you adopted h5i, has no record; those lines show <code>Human</code> / <code>(none
+      recorded)</code> regardless of how they were actually written. Absence of a record is not evidence of a
+      human author.</li>
+    </ul>
 
     <h2>Practical usage patterns</h2>
 
@@ -275,9 +392,12 @@
     </p>
 
     <div class="callout">
-      <strong>Bonus.</strong> <code>h5i audit vibe</code> is the explicit command for the inherited-repo case. It scans a
-      repo in seconds and prints AI footprint, fully-AI-written directories, leaked tokens, and
-      prompt-injection hits. Useful even on repos you didn't author.
+      <strong>Bonus.</strong> <code>h5i audit vibe</code> is the explicit command for the inherited-repo case.
+      It scans recent commits and prints the AI footprint (what fraction carries AI metadata), which models
+      appear, the directories with the highest AI concentration, and the riskiest files (high AI ratio, no
+      tests, blind edits). For credential leaks and prompt-injection hits, reach for the integrity rules via
+      <code>h5i audit scan</code> / <code>h5i audit review</code> — that's a different lens on the same
+      provenance.
     </div>
 
     <h2>What this is not trying to be</h2>
@@ -311,13 +431,69 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup</span>  <span class="t-cmt"># auto-captures prompts via UserPromptSubmit</span>
 
 <span class="t-cmt"># From your next commit forward:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "..."  </span><span class="t-cmt"># prompt + model + agent recorded automatically</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "..." --model claude-sonnet-4-6 --agent claude-code --tests</span>
+                              <span class="t-cmt"># prompt auto-attached by the hook</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/foo.rs --show-prompt</span></pre></div>
     </div>
 
+    <h2>FAQ</h2>
+
+    <h3>What is the difference between git blame and AI blame?</h3>
     <p>
-      The first time you use it on a real bug, you'll wonder how you ever debugged AI-touched code
-      without it.
+      <code>git blame</code> maps each line to the commit that last changed it and shows the committer's
+      name, SHA, and date. For agent-written code the committer is the human who ran <code>git commit</code>,
+      not the model that wrote the line. AI blame keeps the same line-to-commit mapping and adds, per commit
+      boundary, the coding agent, the human prompt, and the captured test status; the model name, token
+      count, and integrity grade live in the commit's provenance record.
+    </p>
+
+    <h3>Does git blame show which AI model wrote a line?</h3>
+    <p>
+      No. A git commit object only records author and committer identity — there is no field for the model,
+      the agent, or the prompt. That has to be captured at commit time. h5i stores it in a git note on
+      <code>refs/h5i/notes</code> keyed by commit OID.
+    </p>
+
+    <h3>Where does h5i store per-line AI provenance?</h3>
+    <p>
+      In a git note attached to each commit on <code>refs/h5i/notes</code>, serialized as JSON (an
+      <code>H5iCommitRecord</code> with <code>ai_metadata</code>, <code>test_metrics</code>, and a
+      timestamp). It is not carried by a plain <code>git push</code> or <code>git fetch</code>; use
+      <code>h5i share push</code> / <code>h5i share pull</code> to sync it alongside your code.
+    </p>
+
+    <h3>What happens to AI blame when commits are squashed or rebased?</h3>
+    <p>
+      Provenance is keyed by commit OID, so rewriting history changes the OID and the original notes stop
+      matching. A squash collapses several prompts into one new commit, and blame then attributes every
+      squashed line to that commit's single record. AI blame is exactly as durable as the commit graph it
+      annotates — preserve commit boundaries if you want per-prompt resolution.
+    </p>
+
+    <h3>How do I see the prompt that produced a line?</h3>
+    <p>
+      Run <code>h5i recall blame &lt;file&gt; --show-prompt</code> to annotate each commit boundary with its
+      prompt, agent, and test status, or <code>h5i recall log --ancestry &lt;file&gt;:&lt;line&gt;</code> to
+      walk the full prompt history of one line across every commit that touched it.
+    </p>
+
+    <h2>The bottom line</h2>
+
+    <p>
+      <code>git blame</code> was designed around an assumption that quietly stopped holding: that the person
+      who committed a line is the person who decided what it should say. For agent-written code those are two
+      different actors, and the gap between them — the model, the prompt, the test outcome — is precisely the
+      context a debugger needs at 2am. None of it is recoverable after the fact from a git commit alone; it
+      only exists if something captured it at commit time.
+    </p>
+
+    <p>
+      That's the whole proposition, and also its honest limit. AI blame is not attribution, not a copyright
+      claim, and not a substitute for review — it makes the next reader faster, nothing more. It resolves no
+      finer than your commit boundaries, and it survives only as well as you preserve those boundaries. But
+      within those limits it turns "who touched this line" into "which model, from what prompt, with what
+      test result" — and on a codebase where most lines were written by an agent, that is the question
+      actually worth asking.
     </p>
 
     <div class="next-up">

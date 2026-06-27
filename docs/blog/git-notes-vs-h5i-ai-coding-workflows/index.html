@@ -3,21 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Git Notes vs h5i for AI Coding Workflows: h5i</title>
-  <meta name="description" content="Git notes can attach metadata to commits without rewriting them. h5i builds an AI coding workflow around provenance, context, audit, recall, and sharing.">
-  <meta name="keywords" content="git notes vs h5i, git notes ai coding, ai code provenance git notes, h5i provenance, git sidecar ai agents">
+  <title>Git Notes vs h5i for AI Coding Workflows: Does Your Metadata Have Behavior?</title>
+  <meta name="description" content="h5i is built on git notes, not a competitor to them. The deciding question for AI provenance: does the metadata have behavior — must it be queried, rendered into a PR packet, or moved between agents?">
+  <meta name="keywords" content="git notes vs h5i, git notes ai coding, ai code provenance git notes, git notes refs/notes, ai coding workflow, h5i provenance, git sidecar ai agents">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
   <link rel="canonical" href="https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
   <link rel="icon" type="image/png" href="/_static/logo.png">
   <link rel="apple-touch-icon" href="/_static/logo.png">
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="Git Notes vs h5i for AI Coding Workflows">
-  <meta property="og:description" content="Git notes can attach metadata to commits without rewriting them. h5i builds an AI coding workflow around provenance, context, audit, recall, and sharing.">
+  <meta property="og:description" content="h5i is built on git notes, not against them. The deciding question for AI provenance: does the metadata have behavior — must it be queried, rendered into a PR packet, or moved between agents?">
   <meta property="og:url" content="https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="article:published_time" content="2026-06-03">
@@ -25,7 +26,7 @@
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Git Notes vs h5i for AI Coding Workflows">
-  <meta name="twitter:description" content="Git notes can attach metadata to commits without rewriting them. h5i builds an AI coding workflow around provenance, context, audit, recall, and sharing.">
+  <meta name="twitter:description" content="h5i is built on git notes, not against them. The deciding question for AI provenance: does the metadata have behavior — must it be queried, rendered, or moved between agents?">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
@@ -33,14 +34,14 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "Git Notes vs h5i for AI Coding Workflows",
-  "description": "Git notes can attach metadata to commits without rewriting them. h5i builds an AI coding workflow around provenance, context, audit, recall, and sharing.",
+  "description": "h5i is built on git notes, not a competitor to them. The deciding question for AI provenance: does the metadata have behavior — must it be queried, rendered into a PR packet, or moved between agents?",
   "author": {
     "@type": "Person",
     "name": "Koukyosyumei",
     "url": "https://github.com/Koukyosyumei"
   },
   "datePublished": "2026-06-03",
-  "dateModified": "2026-06-03",
+  "dateModified": "2026-06-26",
   "publisher": {
     "@type": "Organization",
     "name": "h5i",
@@ -54,7 +55,47 @@
     "@id": "https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/"
   },
   "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-  "keywords": "git notes vs h5i, git notes ai coding, ai code provenance git notes, h5i provenance, git sidecar ai agents"
+  "keywords": "git notes vs h5i, git notes ai coding, ai code provenance git notes, git notes refs/notes, ai coding workflow, h5i provenance, git sidecar ai agents"
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Does h5i replace git notes?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. h5i is built on git notes. Its per-commit provenance record is a JSON document stored as a git note on its own ref, refs/h5i/notes. h5i adds a typed schema, a capture/recall/audit command surface, and sibling refs on top of the same primitive — it does not compete with it."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why not store AI provenance in a single free-form git note?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "AI provenance is structured (prompt, model, agent, tokens, test metrics, integrity findings), multi-ref (per-commit notes plus a reasoning DAG and cross-agent messages), and queried (blame by line, filter by risk, render into a PR packet). A single free-form note has no schema to query, merges badly under concurrent annotation, and cannot hold the sibling refs that context and messaging need."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "When are raw git notes enough?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Raw git notes are enough when the metadata is small, human-authored, and rarely queried — for example a one-line review marker. Reach for h5i when the record is produced repeatably during agent work and must be acted on later: queried, rendered into a review packet, used to restore a session, or moved between agents."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Are git notes pushed and fetched by default?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. refs/notes/* are not part of a default push or fetch; you must add an explicit refspec. h5i stores its data under refs/h5i/* (including refs/h5i/notes) and moves all of it intentionally with h5i share push and h5i share pull, so provenance is not silently dropped on push."
+      }
+    }
+  ]
 }
   </script>
 
@@ -88,46 +129,113 @@
   <article class="post">
     <header>
       <div class="post-eyebrow">Comparison · Git notes</div>
-      <h1>Git Notes vs h5i for AI Coding Workflows</h1>
-      <p class="post-deck">Git notes are a useful primitive for attaching metadata. h5i is the workflow layer: capture, recall, audit, share, and multi-agent context.</p>
+      <h1>Git Notes vs h5i for AI Coding: Does Your Commit Metadata Have Behavior?</h1>
+      <p class="post-deck">It is not notes <em>versus</em> h5i. h5i is built on git notes for per-commit provenance and adds a typed schema, a capture/recall/audit pipeline, and sibling refs a single free-form note was never meant to hold. The deciding question is whether the metadata has behavior.</p>
       <div class="post-meta">
         <span><strong>Published</strong> 2026-06-03</span>
-        <span><strong>Reading time</strong> 8 min read</span>
+        <span><strong>Reading time</strong> 11 min read</span>
         <span><strong>Tags</strong> Git notes · h5i · Comparison</span>
       </div>
     </header>
 
-<p>Git notes and h5i solve related but different problems. Git notes are a low-level Git feature for attaching extra information to objects without changing those objects. h5i is a Git sidecar for <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspaces</strong></a>, it stores prompts, agent provenance, context traces, risk signals, memory, and messages in Git-sidecar refs, making every session's work provable after the fact.</p>
-<h2>What Git notes do well</h2>
-<p>The official Git documentation describes notes as data attached to objects without touching the objects themselves. By default, notes are stored under <code>refs/notes/commits</code>, and <code>git log</code> can display them alongside commit messages. That makes notes a good fit for lightweight commit annotations.</p>
-<p>For AI coding, you could store a prompt or test summary in a note. That is simple, Git-native, and compatible with existing repositories.</p>
-<h2>Where raw notes stop</h2>
-<p>Git notes do not define an AI provenance schema. They do not decide how to capture a Claude Code prompt, how to summarize a Codex session, how to rank review risk, how to build a PR body, or how to roll back by natural-language intent. Those are workflow problems on top of storage.</p>
-<p>Notes also require teams to design conventions: which ref to use, how to serialize metadata, how to merge conflicts, how to share notes, and how to query them. Git supports configurable note refs and merge strategies, but it does not know what an AI agent is.</p>
-<h2>What h5i adds</h2>
-<p>h5i treats Git as the durable substrate and adds AI-specific commands:</p>
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>Git notes are the right primitive, and h5i uses them — the record is JSON in a git note on refs/h5i/notes, not a competing store.</li>
+        <li>AI provenance is structured, multi-ref, and queried — which is exactly where a single free-form note breaks down.</li>
+        <li>Use raw notes for small human annotations; use h5i when the record must be captured repeatably and acted on later.</li>
+  </ul>
+</div>
+<p>When a person writes a commit, the message <em>is</em> the provenance: a human chose the words and will answer for them. When an agent writes a commit, the interesting record lives outside the diff — which prompt produced it, which model and agent, how many tokens, whether the tests passed, whether an integrity audit flagged anything. None of that belongs in the commit message, and none of it should rewrite the commit's SHA. So the question arrives quickly for anyone running Claude Code, Codex, or a fleet of agents against a real repository: where does AI provenance go, and what can you <em>do</em> with it afterward?</p>
+<p>The usual framing — "git notes versus h5i" — is the wrong one. h5i is built <em>on</em> git notes. Its per-commit provenance record is a JSON document stored as a git note. The real comparison is not between two storage mechanisms; it is between a free-form note you maintain by hand and a typed record with a query, audit, and sharing pipeline around it. The deciding question, the one this whole post turns on, is whether your metadata has <strong>behavior</strong>: does it merely sit there to be read by a human someday, or must it be queried, rendered into a PR packet, used to restore a future session, and moved between agents?</p>
+
+<h2>What you already know: how git notes actually work</h2>
+<p>Most readers of this post know the primitive, so the recap is short and aimed at the corners that bite later. A git note attaches data to an existing object — almost always a commit — <em>without</em> changing that object. Because a commit's SHA is a hash of its content, you cannot edit a merged commit to add metadata without rewriting history and breaking every downstream reference. Notes sidestep that: the note is stored as a separate blob in a parallel tree, keyed by the target commit's OID, and the commit itself is untouched.</p>
+<p>Those note trees live under their own refs. The default is <code>refs/notes/commits</code>, which <code>git log</code> renders inline beneath each message. You are not limited to it: <code>git notes --ref=&lt;name&gt;</code> (or <code>core.notesRef</code>) lets you keep parallel, independent note namespaces, so build metadata and review metadata need not collide. Four facts about notes matter for what follows:</p>
 <ul>
-  <li><code>h5i capture commit</code> records prompt, model, agent, tokens, tests, and decisions.</li>
-  <li><code>h5i recall log</code> reads commit history with AI provenance.</li>
-  <li><code>h5i recall blame --show-prompt</code> connects lines back to AI-assisted commit context.</li>
-  <li><code>h5i recall context</code> restores goals, milestones, and reasoning traces.</li>
-  <li><code>h5i audit review</code> and related audit commands surface review signals.</li>
-  <li><code>h5i share push</code> and <code>h5i share pull</code> move h5i refs intentionally.</li>
+  <li><strong>No schema.</strong> A note is an opaque blob. Git neither knows nor cares whether it holds a sentence, YAML, or JSON. Structure is entirely your problem.</li>
+  <li><strong>Not fetched or pushed by default.</strong> <code>refs/notes/*</code> is outside the default refspec. A plain <code>git push</code> leaves your notes behind unless you configure <code>remote.&lt;name&gt;.push</code> / <code>fetch</code> to carry them explicitly.</li>
+  <li><strong>Merges need a strategy.</strong> When two clones annotate the same commit, the note refs diverge. <code>git notes merge</code> offers <code>manual</code>, <code>ours</code>, <code>theirs</code>, and <code>cat_sort_uniq</code> — and the default is a conflict you resolve by hand.</li>
+  <li><strong>Notes are attached to a SHA.</strong> Rebase or amend that commit and the note does not follow; it now points at an object no branch reaches.</li>
 </ul>
-<h2>When Git notes are enough</h2>
-<p>Use raw Git notes if you only need small human-written annotations on commits and your team is comfortable maintaining its own schema. For example: "generated by Claude Code" or "manual review completed".</p>
-<h2>When h5i is a better fit</h2>
-<p>Use h5i when you need repeatable capture, queryable provenance, review packets, multi-agent handoff, memory snapshots, or rollback by intent. Those workflows need more than a place to put text. They need commands, conventions, and records that remain useful across sessions.</p>
-<h2>Decision checklist</h2>
-<p>Choose Git notes when the metadata is small, human-authored, and rarely queried. Choose h5i when the metadata is produced during agent work and needs to be filtered, rendered, shared, or trusted later. Prompts, model identity, tool output, test evidence, risk findings, and context branches are structured records; storing them as one free-form note makes future automation harder.</p>
-<p>The deciding question is whether the record has behavior. If it should appear in a PR review packet, feed rollback search, restore a future agent session, or move between Claude and Codex, h5i's schema and command surface are doing real work that raw notes do not provide.</p>
+<p>This is a genuinely good primitive. It is the right place to put per-commit metadata, and it is exactly what h5i uses. The open question is everything Git deliberately leaves to you: the schema, the queries, the sharing, the merge policy.</p>
+
+<h2>The contrast: a hand-rolled note vs h5i capture commit</h2>
+<p>Suppose an agent just added retry logic to an API client and you want the provenance recorded. The hand-rolled approach is one extra command:</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ git commit -m "add retry to api client"
+$ git notes add -m "prompt: retry on 503; model: claude-sonnet-4-6; agent: claude-code; tests: 12 passed"
+$ git log --notes -1
+commit 9af1c2e…
+    add retry to api client
+
+Notes:
+    prompt: retry on 503; model: claude-sonnet-4-6; agent: claude-code; tests: 12 passed</pre></div></div>
+<p>That works, and for a one-off it is fine. But look at what you have actually committed to: a single English string under the default ref, with a field convention (<code>key: value; …</code>) that exists only in your head. Nothing validates it. Nothing can answer "show me every commit by <code>claude-code</code> where tests failed" without you writing a parser. And as established above, that note will not leave your machine on the next <code>git push</code>.</p>
+<p>The h5i path looks similar at the surface and diverges underneath:</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ git add src/api/client.py
+$ h5i capture commit -m "add retry to api client" \
+    --model claude-sonnet-4-6 --agent claude-code --tests --audit</pre></div></div>
+<p>This creates an ordinary git commit and writes a structured <code>H5iCommitRecord</code> — an <code>AiMetadata</code> block (model, agent id, prompt, token usage), optional <code>TestMetrics</code>, and an <code>IntegrityReport</code> whose severity is <code>Valid</code>, <code>Warning</code>, or <code>Violation</code>. In Claude Code the verbatim human prompt is captured automatically by the <code>UserPromptSubmit</code> hook and wins over any <code>--intent</code> you might pass, so the recorded prompt is what the human actually asked, not what the agent paraphrased.</p>
+
+<h2>It is notes underneath, with a schema on top</h2>
+<p>The point worth making visceral: h5i's record is not stored somewhere exotic. It is a git note — JSON, on h5i's own note ref, <code>refs/h5i/notes</code> (kept separate from <code>refs/notes/commits</code> so it never collides with anyone's hand-written notes). You can read it with plain Git:</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ git notes --ref=refs/h5i/notes show HEAD
+{
+  "git_oid": "9af1c2e…",
+  "ai_metadata": {
+    "model_name": "claude-sonnet-4-6",
+    "prompt": "make the client retry on 503 with backoff",
+    "agent_id": "claude-code",
+    "usage": { "total_tokens": 1843, "model": "claude-sonnet-4-6" }
+  },
+  "test_metrics": { "passed": 12, "failed": 0, "total": 12, "tool": "pytest" },
+  "timestamp": "2026-06-03T14:22:08Z"
+}</pre></div></div>
+<p>That is the whole trick. Git notes are the storage; the schema is the value h5i adds. And because the record is typed rather than free-form, you read it ergonomically instead of grepping a string:</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ h5i recall log --limit 3                 # commit history with AI provenance
+$ h5i recall blame src/api/client.py --show-prompt   # per line: author + model + agent + test result
+$ h5i audit review --limit 50              # triage the integrity findings before merge</pre></div></div>
+<p>The hand-rolled note can do none of this without you building it. <code>recall blame --show-prompt</code> resolves each line to the commit that wrote it and surfaces that commit's model, agent, and test outcome; <code>audit review</code> funnels the <code>IntegrityReport</code> severities so you can look at the <code>Violation</code>s before merging an AI-heavy branch. The metadata has behavior because it has a shape.</p>
+
+<h2>Where one note stops: provenance is multi-ref</h2>
+<p>Even with a schema, per-commit notes are only one dimension of what an agent session produces, and this is where the "just use a note" instinct quietly breaks. AI provenance is not a single annotation per commit; it spans several kinds of record with different lifetimes and merge semantics. This is the reasoning behind h5i's design as a substrate for <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspaces</strong></a>: it deliberately puts each dimension on its own ref:</p>
+<ul>
+  <li><strong>Per-commit provenance → git notes</strong> (<code>refs/h5i/notes</code>). Keyed to a commit OID, written once, the case above.</li>
+  <li><strong>Reasoning and context → <code>refs/h5i/context</code>.</strong> A DAG of <code>OBSERVE</code> / <code>THINK</code> / <code>ACT</code> / <code>NOTE</code> / <code>MERGE</code> entries plus a goal, milestones, and commit-pinned snapshots — the session's thinking, which is not attached to any single commit and changes continuously while you work.</li>
+  <li><strong>Cross-agent coordination → <code>refs/h5i/msg</code>.</strong> An append-only message log (the i5h protocol) for handoffs and reviews between, say, a Claude and a Codex instance sharing a clone.</li>
+  <li><strong>Memory snapshots → their own ref.</strong> Point-in-time captures of an agent's working memory, restorable later.</li>
+</ul>
+<p>Try to cram all of that into one free-form note per commit and three things break at once. <strong>Querying</strong> breaks: a reasoning DAG and a message log have no natural home keyed to a single commit SHA — context evolves between commits, and messages belong to no commit at all. <strong>Merging</strong> breaks: per-commit notes, an append-only message log, and a context DAG want different conflict policies (newest-wins, union-append, and structured merge respectively); one blob forces one policy on all of them. <strong>Sharing</strong> breaks: you would be moving coordination state and per-commit facts as a single unit when they have different audiences and update cadences. Separate refs exist precisely so each dimension keeps the merge and query model that suits it.</p>
+
+<h2>Sharing semantics: explicit, on both sides</h2>
+<p>Because every h5i ref lives under <code>refs/h5i/*</code>, none of it travels on a plain <code>git push</code> — the same rule that hides hand-written notes. The difference is the ergonomics of fixing that. With raw notes you edit <code>remote.origin.push</code> and <code>remote.origin.fetch</code> refspecs on each clone, remember to keep them in sync, and hope a teammate did too; forget, and provenance silently stays local. h5i moves the whole namespace with one verb on each side:</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ h5i share push    # push notes, context, msg, memory under refs/h5i/* to origin
+$ h5i share pull    # pull them back, union-merging where the refs allow</pre></div></div>
+<p>This does not make sharing automatic — and that is deliberate. Provenance moves when you say so, not on every push, so a noisy local context branch does not spam the remote. But it is one intentional command rather than a refspec you maintain by hand and forget.</p>
+
+<h2>Failure modes and tradeoffs, on both sides</h2>
+<p>A fair comparison names where each approach hurts.</p>
+<p><strong>Raw notes.</strong> The failure modes are the four facts from earlier, now turned against you. <em>Merge conflicts:</em> two agents (or an agent and CI) annotating the same commit produce divergent note refs, and the default merge is a manual conflict — <code>cat_sort_uniq</code> can help for additive text but will happily concatenate two JSON blobs into something that is no longer JSON. <em>Silent non-sharing:</em> notes that are not in anyone's refspec simply never arrive, and nothing warns you. <em>Rebase and amend orphan notes:</em> rewrite a commit and its note is left pointing at an unreachable OID. <em>Schema cost:</em> the moment you want to query, you are maintaining a serialization format, a parser, and a convention across every contributor — an unfunded mandate that grows with the team.</p>
+<p><strong>h5i.</strong> It is not free either. It is another tool in the loop, with its own commands to learn and its own refs to share. The same conflict and orphaning realities exist underneath — h5i chooses merge policies per ref rather than abolishing the problem, and a record is still keyed to a commit, so aggressive history rewriting can still strand provenance. And it is genuine overkill for a solo developer who wants to scribble "reviewed, ship it" on a commit: that is a sentence, and a sentence wants a plain note. h5i earns its place when records are produced <em>repeatably</em> by agents and consumed <em>later</em> by tools or people — not when you want to leave one human remark.</p>
+
+<h2>When raw notes are enough vs when h5i fits</h2>
+<p><strong>Reach for raw git notes</strong> when the metadata is small, human-authored, and rarely queried: a manual review marker, a "generated by an agent" flag, a one-line rationale you will read with your eyes and never with a script. You accept that you own the schema and the sharing, because there is barely a schema to own.</p>
+<p><strong>Reach for h5i</strong> when the record is produced during agent work and must be acted on later — filtered by agent or severity, rendered into a PR or compliance packet (<code>h5i audit compliance --since … --until … --format html</code>), used to restore a future session's context, or moved between Claude and Codex. Prompts, model identity, token counts, test evidence, integrity findings, and reasoning branches are structured, multi-ref records. Storing them as one free-form note does not just look untidy; it forecloses every downstream automation.</p>
+
+<h2>Conclusion: does the record have behavior?</h2>
+<p>The honest version of this comparison is not a contest. Git notes are the correct primitive for attaching data to a commit without rewriting it, and h5i agrees so completely that it stores its provenance as a git note. What h5i adds is everything Git deliberately leaves undefined: a typed schema so the record can be queried, a capture/recall/audit pipeline so it can be acted on, and sibling refs so the dimensions a single note cannot hold — reasoning, coordination, memory — each get a home with the right merge and sharing model.</p>
+<p>So the choice is not "notes or h5i." It is a question you can ask of any piece of AI metadata before you decide where to put it: <em>does this record have behavior?</em> If it only needs to be read by a human someday, a plain note is the lighter, more Git-native answer, and you should take it. If it must be queried, rendered, restored, or moved between agents, then a free-form note is a parser and a merge policy and a sharing convention you have not written yet — and that is precisely the work h5i has already done.</p>
+
 <h2>FAQ</h2>
-<h3>Does h5i replace Git notes?</h3>
-<p>No. It uses Git-native sidecar storage ideas but adds an AI workflow and command surface around them.</p>
+<h3>Does h5i replace git notes?</h3>
+<p>No — it is built on them. h5i's per-commit provenance is a JSON <code>H5iCommitRecord</code> stored as a git note on its own ref, <code>refs/h5i/notes</code>. It adds a typed schema, a query/audit command surface, and sibling refs on top of the same primitive rather than competing with it.</p>
 <h3>Can teammates ignore h5i?</h3>
-<p>Yes. The code history remains ordinary Git. Teammates who do not use h5i can still clone, branch, diff, and merge normally.</p>
+<p>Yes. The code history is ordinary Git. Anyone who does not use h5i can clone, branch, diff, and merge normally; the h5i data sits in <code>refs/h5i/*</code> and is only ever moved by an explicit <code>h5i share push</code> / <code>pull</code>.</p>
 <h3>Why not put everything in commit messages?</h3>
-<p>Commit messages are user-facing summaries. AI provenance is structured data: prompt, model, tests, decisions, risk, and context often deserve their own queryable record.</p>
+<p>Commit messages are user-facing summaries and editing one rewrites the commit's SHA. AI provenance is structured data — prompt, model, tokens, tests, integrity findings — that wants its own queryable record attached without touching the commit, which is exactly what a git note is for.</p>
+<h3>Are git notes shared on a normal push?</h3>
+<p>No. <code>refs/notes/*</code> is outside the default refspec, so a plain <code>git push</code> leaves notes behind unless you configure push/fetch refspecs explicitly. h5i keeps its data under <code>refs/h5i/*</code> and moves all of it with <code>h5i share push</code> / <code>h5i share pull</code>.</p>
 
 
     <h2>Sources and verification</h2>

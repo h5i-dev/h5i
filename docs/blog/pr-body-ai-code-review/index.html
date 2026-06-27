@@ -4,20 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>The AI Pull Request Body: h5i's Review Surface for Agent Work</title>
-  <meta name="description" content="Turn shared AI agent context into a GitHub PR review body with focus files, evidence, test results, risk signals, and provenance.">
-  <meta name="keywords" content="AI pull request, AI code review, PR body, GitHub PR comment, h5i share pr, AI provenance, Claude Code review, Codex review">
+  <meta name="description" content="The AI pull request body, generated from captured provenance — prompt, model, tests, risk, and agent messages — so reviewers triage evidence, not a self-report. Sticky GitHub comment via h5i share pr.">
+  <meta name="keywords" content="AI pull request, AI code review, PR body, GitHub PR comment, h5i share pr, AI provenance, sticky PR comment, AI PR summary bot, Claude Code review, Codex review">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
   <link rel="canonical" href="https://h5i.dev/blog/pr-body-ai-code-review/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
   <link rel="icon" type="image/png" href="/_static/logo.png">
   <link rel="apple-touch-icon" href="/_static/logo.png">
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="The AI Pull Request Body: h5i's Review Surface for Agent Work">
-  <meta property="og:description" content="The PR is one view of h5i's shared context: review focus, risk signals, reasoning highlights, tests, and provenance in the place reviewers already work.">
+  <meta property="og:description" content="The PR body, generated from captured provenance instead of hand-written: review focus, risk signals, reasoning highlights, tests, and per-commit AI provenance in the place reviewers already work.">
   <meta property="og:url" content="https://h5i.dev/blog/pr-body-ai-code-review/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="og:image:width" content="2257">
@@ -30,7 +31,7 @@
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="The AI Pull Request Body: h5i's Review Surface for Agent Work">
-  <meta name="twitter:description" content="How h5i renders shared agent context into a reviewer-friendly GitHub PR comment.">
+  <meta name="twitter:description" content="How h5i renders captured AI provenance into a sticky, reviewer-friendly GitHub PR comment — evidence, not a self-report.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
@@ -38,14 +39,27 @@
     "@context": "https://schema.org",
     "@type": "TechArticle",
     "headline": "The AI Pull Request Body: h5i's Review Surface for Agent Work",
-    "description": "How h5i turns shared agent context into a GitHub PR body for AI code review.",
+    "description": "h5i generates the AI pull request body from captured provenance — prompt, model, tests, risk, agent messages — and upserts it as a sticky GitHub comment, so reviewers triage evidence instead of a self-report.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-05-24",
-    "dateModified": "2026-06-02",
+    "dateModified": "2026-06-26",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/pr-body-ai-code-review/"},
     "image": "https://h5i.dev/_static/h5i-concept.svg",
-    "keywords": "AI pull request, AI code review, h5i share pr, GitHub PR comment, AI provenance"
+    "keywords": "AI pull request, AI code review, h5i share pr, sticky PR comment, GitHub PR comment, AI PR summary bot, AI provenance"
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {"@type": "Question", "name": "Does h5i write my pull request description for me?", "acceptedAnswer": {"@type": "Answer", "text": "Not a hand-written narrative. h5i renders a review packet from the provenance it already captured on the branch — prompts, model and agent identity, tests, audit findings, and reasoning. h5i share pr body prints that markdown to stdout (pipe it into gh pr edit --body-file -), and h5i share pr post upserts it as a sticky PR comment. The content is generated from evidence, not authored by the agent under review."}},
+      {"@type": "Question", "name": "Will re-running h5i share pr post spam the pull request with comments?", "acceptedAnswer": {"@type": "Answer", "text": "No. Each comment carries a hidden HTML marker (<!-- h5i:pr-comment v1 -->). On re-run, h5i lists the PR's comments, finds the one starting with that marker, and PATCHes it in place via gh api. Only when no marked comment exists does it post a new one — so there is exactly one sticky h5i comment per branch."}},
+      {"@type": "Question", "name": "How is this different from a generic AI pull request summary bot?", "acceptedAnswer": {"@type": "Answer", "text": "AI PR-summary bots read the diff and paraphrase it. h5i's packet renders provenance the diff cannot contain: the prompt that triggered each AI commit, the model and agent identity, captured test metrics, audit risk signals (leaked secrets, duplicate code, blind edits), and recorded reasoning. A diff summary tells you what changed; the provenance packet tells you what the agent was asked, what it knew, and what it checked."}},
+      {"@type": "Question", "name": "What happens if there is no open PR or gh is not authenticated?", "acceptedAnswer": {"@type": "Answer", "text": "h5i share pr post requires the GitHub CLI installed and authenticated; it resolves the repo and the branch's PR number via gh and fails with a clear message if gh auth status is not clean, if no PR exists for the branch (push and open one first, or pass --number), or if gh returns a non-numeric number. Use --dry-run to render the body locally without calling gh, or h5i share pr body to print markdown for CI."}},
+      {"@type": "Question", "name": "Could the PR comment leak secrets or private agent chatter?", "acceptedAnswer": {"@type": "Answer", "text": "The packet is secret-redacted: detected credentials are surfaced as a rotate-before-merge alert, not reprinted. The agent-coordination section excerpts only review-typed i5h messages (review request, risk, handoff, ask, ack, done, decline, blocked) by default; casual FYI/free-text stays metadata-only unless you pass --msg-bodies. Untrusted pulled fields are sanitized and escaped against terminal- and markdown-injection."}}
+    ]
   }
   </script>
 
@@ -80,25 +94,47 @@
       <div class="post-eyebrow">Feature · 2026-05-24</div>
       <h1>The AI Pull Request Body: h5i's Review Surface for Agent Work</h1>
       <p class="post-deck">
-        h5i's PR comment is not the product. It is a high-leverage view of the
-        shared context graph: what the agent was asked to do, what it inspected,
-        what it changed, what risk signals fired, and where reviewers should look first.
+        When an agent writes the code <em>and</em> the PR description, the description is a
+        self-report. h5i instead <em>generates</em> the review body from provenance it captured
+        as the work happened — prompt, model, tests, risk signals, reasoning, agent messages —
+        and upserts it as one sticky GitHub comment. The reviewer triages evidence, not a summary.
       </p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
-        <span><strong>Reading time</strong> 6 min</span>
+        <span><strong>Reading time</strong> 9 min</span>
         <span><strong>Tags</strong> PR · Review · Provenance</span>
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>An agent-written PR description is a self-report; h5i instead generates the body from captured provenance.</li>
+        <li>The comment is upserted in place via a hidden marker — one sticky comment per branch, not comment spam.</li>
+        <li>Five styles (receipt, review, detective, replay, minimal) render the same provenance for different readers.</li>
+  </ul>
+</div>
     <p>
-      An <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> records
-      every prompt, command, decision, and test result the agent produced. The pull request
-      is how that record reaches the reviewer: a rendered, human-readable surface in the
-      place review already happens. If an AI agent did a meaningful part of the work, the
-      reviewer should not have to open a terminal, scrape a chat transcript, or guess which
-      files are risky. The review surface should explain the branch in the same place the
-      diff is reviewed.
+      A growing share of the branches a reviewer is handed today were written by an agent —
+      and so was the PR description explaining them. That is the trap. When the same system
+      authors the code and the summary, the summary is a <em>self-report</em>: a confident
+      paragraph the model wrote about its own work, with no obligation to mention the test it
+      skipped, the file it edited without reading, or the credential it pasted into a config.
+      Reviewers know not to trust an author's self-assessment from humans; an LLM's prose is no
+      more load-bearing, just more fluent.
+    </p>
+
+    <p>
+      You already know the standard moves here: write the PR body by hand, or let an AI
+      summary bot read the diff and paraphrase it. The first is honest but expensive and
+      rarely done well on agent branches; the second scales but only ever sees the
+      <em>result</em> — the diff — never the process that produced it. The option you may not
+      have considered is to generate the review body from <em>captured provenance</em>: the
+      prompts, model and agent identity, test metrics, audit findings, and reasoning recorded
+      <a href="../auditable-workspaces-for-ai-agents/">as the work happened</a>. The reviewer
+      then reads evidence the author could not have quietly omitted, in the place review
+      already happens.
     </p>
 
     <figure class="feature-figure">
@@ -111,113 +147,275 @@
 
     <p>
       That is what <code>h5i share pr post</code> does. It renders h5i's
-      <a href="/blog/context-dag-versioned-agent-reasoning/">shared context DAG</a>
-      into a sticky GitHub comment. Re-run it and h5i updates the same comment instead
-      of spraying duplicates across the thread.
+      <a href="/blog/context-dag-versioned-agent-reasoning/">shared context DAG</a>, commit
+      provenance, audit findings, and branch-scoped agent messages into a sticky GitHub
+      comment. Re-run it and h5i updates the same comment instead of spraying duplicates
+      across the thread. Its sibling, <code>h5i share pr body</code>, prints the same markdown
+      to stdout so CI can own the PR description directly.
     </p>
 
     <h2>What the PR body answers</h2>
+
+    <p>
+      The packet is organized around the questions a reviewer actually asks before approving
+      an agent's branch. Each answer is rendered from a recorded signal, not generated prose —
+      a section self-omits when its signal is missing rather than inventing a plausible-sounding
+      filler.
+    </p>
 
     <div class="tbl-wrap">
       <table class="data">
         <thead><tr><th>Reviewer question</th><th>h5i source</th></tr></thead>
         <tbody>
-          <tr><td>What was the agent trying to do?</td><td>Branch goal, prompt, milestones.</td></tr>
+          <tr><td>What was the agent trying to do?</td><td>Branch goal, captured prompt, milestones.</td></tr>
           <tr><td>Which files deserve first review?</td><td>Footprint, churn, audit signals, context relevance.</td></tr>
-          <tr><td>Was the work tested?</td><td>Captured test metrics from h5i capture commit.</td></tr>
-          <tr><td>What did the agent decide?</td><td>THINK entries and structured decisions.</td></tr>
-          <tr><td>What risks were detected?</td><td><code>h5i audit review</code>, secrets, blind edits, duplicates, CI changes.</td></tr>
+          <tr><td>Was the work tested?</td><td>Captured test metrics from <code>h5i capture commit --tests</code>.</td></tr>
+          <tr><td>What did the agent decide?</td><td>THINK entries and structured decision records.</td></tr>
+          <tr><td>What risks were detected?</td><td><code>h5i audit review</code>: leaked secrets, blind edits, duplicates, CI changes.</td></tr>
+          <tr><td>Did agents coordinate on this?</td><td>Branch-scoped <a href="/blog/i5h-agent-to-agent-messaging/">i5h</a> review requests, risks, handoffs.</td></tr>
         </tbody>
       </table>
     </div>
 
     <h2>Post or preview</h2>
 
+    <p>
+      The common loop is: render locally with <code>--dry-run</code> to check the body, then
+      drop the flag to upsert it onto the open PR. <code>h5i share pr body</code> takes the same
+      style and limit flags but never touches <code>gh</code> — it is the CI path.
+    </p>
+
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">pull request</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post --style review</span>
-<span class="t-cmt"># upsert a sticky GitHub PR comment</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post --style review --dry-run</span>
+<span class="t-cmt"># render the reviewer brief locally; no gh call</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post --style review --dry-run</span>
-<span class="t-cmt"># render locally without calling gh</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post --style review</span>
+<span class="t-cmt"># upsert the sticky comment on this branch's open PR</span>
+<span class="t-out">✔ Posted h5i comment on h5i-dev/h5i#418</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr body --style replay</span>
-<span class="t-cmt"># print markdown for CI or gh pr edit --body-file -</span></pre></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post --style review</span>
+<span class="t-cmt"># re-run after more commits: same comment, edited in place</span>
+<span class="t-out">✔ Updated h5i comment on h5i-dev/h5i#418 (id 2391847706)</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr body --style replay --limit 50 | gh pr edit --body-file -</span>
+<span class="t-cmt"># CI path: write the rendered markdown straight into the PR description</span></pre></div>
     </div>
+
+    <p>
+      <code>--limit</code> caps how many commits feed the packet (default 25); <code>--number</code>
+      pins a PR explicitly instead of auto-detecting from the branch. Both <code>post</code> and
+      <code>body</code> share the style, limit, and coordination flags.
+    </p>
 
     <h2>Five styles, one record</h2>
 
     <p>
-      The style changes the presentation, not the underlying evidence. The data still
-      comes from h5i context, notes, commits, audit rules, and memory.
+      Style changes only the hero block at the top of the comment — the first viewport a
+      reviewer or a screenshot captures. The audit sections, reasoning DAG, coordination
+      threads, and per-commit provenance below the fold are identical across styles, because
+      they all read from the same recorded evidence. Pick the framing that fits the moment;
+      the facts do not move.
     </p>
 
     <div class="tbl-wrap">
       <table class="data">
-        <thead><tr><th>Style</th><th>Best use</th></tr></thead>
+        <thead><tr><th>Style</th><th>What the hero surfaces</th><th>Reach for it when…</th></tr></thead>
         <tbody>
-          <tr><td><code>review</code></td><td>Default reviewer workflow: triage, checklist, evidence, compact reasoning highlights.</td></tr>
-          <tr><td><code>receipt</code></td><td>Screenshot-friendly summary with punchline stats.</td></tr>
-          <tr><td><code>detective</code></td><td>Narrative write-up: goal, considered alternatives, key insight, shipped work.</td></tr>
-          <tr><td><code>replay</code></td><td>Reasoning DAG promoted above the fold.</td></tr>
-          <tr><td><code>minimal</code></td><td>Quiet internal provenance for routine branches.</td></tr>
+          <tr><td><code>receipt</code> <em>(default)</em></td><td>Stat card (commits, tests, est. cost), the triggering prompt, milestones.</td><td>You want one scannable, screenshot-able summary block.</td></tr>
+          <tr><td><code>review</code></td><td>Merge status (✅/🟡), top focus files, an evidence line, and a short checklist.</td><td>A human is about to triage and merge — the reviewer-first brief.</td></tr>
+          <tr><td><code>detective</code></td><td>Narrative: goal → alternatives considered/rejected → key insight → shipped.</td><td>The reasoning matters and you want it read top-to-bottom.</td></tr>
+          <tr><td><code>replay</code></td><td>The reasoning DAG promoted above the fold, expanded, with milestone markers.</td><td>The <em>process</em> (read/think/edit shape) is the story.</td></tr>
+          <tr><td><code>minimal</code></td><td>One-line headline, the goal, the swim-lane DAG. No tables, no dollar figures.</td><td>A routine internal branch wants provenance without the flourish.</td></tr>
         </tbody>
       </table>
     </div>
 
-    <h2>The important boundary</h2>
+    <h2>What is in the packet</h2>
 
     <p>
-      The PR comment is a surface, not the source of truth. h5i stores the durable
-      record in Git sidecar refs such as <code>refs/h5i/context</code>, <code>refs/h5i/notes</code>,
-      and <code>refs/h5i/memory</code>. <a href="/blog/i5h-agent-to-agent-messaging/">Agent-to-agent
-      messages</a> add durable review requests and handoffs. The same record can render as a terminal prelude,
-      a local dashboard, a compliance report, a handoff prompt, or a PR comment.
+      Below the hero, every body renders the same ordered sections, each of which omits itself
+      when it has nothing to say:
     </p>
+
+    <ul>
+      <li><strong>🔒 Credential-leak alert.</strong> If the audit found a secret on an added line,
+        it is promoted <em>above</em> the hero as a rotate-before-merge banner — the leak is
+        flagged, never reprinted.</li>
+      <li><strong>🔁 Duplicate-code alert.</strong> Copy-paste the agent introduced, with the
+        rule, file, and line that tripped it.</li>
+      <li><strong>🧠 Reasoning DAG.</strong> The OBSERVE/THINK/ACT trace, collapsible below the
+        fold (and expanded in-hero for <code>replay</code>).</li>
+      <li><strong>💬 Agent coordination.</strong> Branch-scoped i5h message threads — review
+        requests, risk callouts, handoffs — so a reviewer sees what the agents told each other.
+        Off with <code>--no-msg</code>.</li>
+      <li><strong>📜 Per-commit provenance.</strong> One row per AI commit: model, agent, prompt,
+        token count, and test result, collapsed automatically past five commits.</li>
+    </ul>
+
+    <p>
+      The coordination section is deliberately conservative about what it republishes. By
+      default it excerpts only review-typed messages (review request, risk, handoff, ask, and
+      their typed replies); casual <code>FYI</code> and free-text chatter stay metadata-only
+      unless you pass <code>--msg-bodies</code>, and <code>--msg-limit</code> caps how many
+      threads render. Pulled message fields are untrusted input, so an unrecognized message
+      kind is sanitized and escaped before it reaches the comment — a hostile <code>kind</code>
+      can not break out of its rendered cell. This is the same
+      <a href="/blog/i5h-agent-to-agent-messaging/">terminal-injection defense</a> the messaging
+      layer applies everywhere it shows pulled text.
+    </p>
+
+    <h2>The sticky comment, not comment spam</h2>
+
+    <p>
+      CI that posts a fresh comment on every push turns a PR thread into a changelog nobody
+      reads. h5i avoids this with a hidden marker. Every comment it writes begins with
+      <code>&lt;!-- h5i:pr-comment v1 --&gt;</code>. On each run, <code>pr post</code> lists the
+      PR's comments, finds the one starting with that marker, and edits it in place via
+      <code>gh api … -X PATCH</code>; only if none exists does it post a new one with
+      <code>gh pr comment</code>. The result is exactly one h5i comment per branch that tracks
+      the latest state of the work — your re-runs update history rather than burying it.
+    </p>
+
+    <h2>How this compares</h2>
+
+    <p>
+      The PR comment is one rendering of a durable record, not the record itself. h5i keeps the
+      truth in Git sidecar refs (<code>refs/h5i/context</code>, <code>refs/h5i/notes</code>,
+      <code>refs/h5i/memory</code>), and the same evidence also renders as a terminal prelude, a
+      local dashboard, or a compliance report. So the fair question is not "is a generated
+      comment nice" but "what does <em>this</em> rendering let a reviewer see that the
+      alternatives do not."
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Approach</th><th>Good</th><th>Gap</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Hand-written PR description</td>
+            <td>Human judgment, real context, honest caveats when the author is diligent.</td>
+            <td>Expensive; rarely done well on agent branches; still a self-report — the author chooses what to mention.</td>
+          </tr>
+          <tr>
+            <td>Generic AI PR-summary bot</td>
+            <td>Zero-effort, scales to every PR, decent at "what changed" on small diffs.</td>
+            <td>Sees only the diff. No prompt, model, tests, risk rules, or reasoning — it can not surface a skipped test or a blind edit because those are not in the diff.</td>
+          </tr>
+          <tr>
+            <td>h5i provenance packet</td>
+            <td>Renders captured evidence the diff can not contain: prompt, model/agent, tests, audit signals, reasoning, agent messages. Sticky, redacted, evidence-first.</td>
+            <td>Only as rich as what was captured — a branch that never ran h5i during the work yields a thin packet (it degrades to commit-level facts, not a fabrication).</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <div class="callout">
       <strong>Good PR automation should reduce review load, not hide it.</strong>
-      h5i does not say "trust the agent." It says "here is what the agent knew,
-      where it was uncertain, what tests ran, and which files deserve your attention."
+      h5i does not say "trust the agent." It says "here is what the agent was asked, what it
+      knew, where it was uncertain, what tests ran, and which files deserve your attention" —
+      and it lets the reviewer disagree with all of it.
     </div>
 
     <h2>Reviewer workflow</h2>
 
     <p>
-      A useful AI PR body should change review order. Start with the goal and scope, then
-      inspect the files h5i ranks as risky, then read the reasoning highlights, then compare
-      tests against the behavior that changed. The rendered comment is not meant to replace
-      the diff; it tells the reviewer where the diff is most likely to hide a mistake.
+      A useful AI PR body should change review <em>order</em>. With <code>--style review</code>,
+      start at the merge-status line and the focus files h5i ranks highest, read the evidence
+      line and checklist, skim the reasoning highlights, then compare tests against the behavior
+      that changed. The comment never replaces the diff; it tells you where the diff is most
+      likely to hide a mistake.
     </p>
 
     <p>
-      This matters most on large generated patches. Without provenance, a reviewer may spend
-      equal time on formatting churn and security-sensitive changes. With h5i, blind edits,
-      uncertainty notes, skipped tests, generated configuration, and high-churn files can move
-      to the top of the review queue.
+      This matters most on large generated patches. Without provenance, a reviewer spends equal
+      attention on formatting churn and on security-sensitive changes. With it, blind edits,
+      uncertainty notes, skipped tests, generated configuration, and high-churn files move to
+      the top of the queue — and the routine churn drops to the bottom where it belongs.
     </p>
 
     <p>
-      The same workflow helps after merge. If a production issue appears later, the PR body
-      gives responders a compact record of the original task, the evidence available at review
-      time, and the assumptions that were accepted. That is useful incident context, not just
-      a nicer pull request comment.
+      The same record helps after merge. If a production issue surfaces later, the sticky
+      comment is a compact account of the original task, the evidence available at review time,
+      and the assumptions that were accepted. That is incident context, not just a tidier PR.
     </p>
 
-    <h2>Requirements</h2>
+    <h2>Requirements and failure modes</h2>
 
     <p>
-      Posting requires the GitHub CLI to be installed and authenticated. If CI should own
-      the final PR body, use <code>h5i share pr body</code> and pipe the rendered markdown into
-      your existing GitHub workflow.
+      <code>h5i share pr post</code> needs the GitHub CLI installed and authenticated. It fails
+      fast and explains itself when:
+    </p>
+
+    <ul>
+      <li><strong><code>gh</code> is missing or not authed</strong> — it can not resolve the repo;
+        run <code>gh auth login</code> and check <code>gh auth status</code>.</li>
+      <li><strong>No open PR for the branch</strong> — auto-detection has nothing to target; push
+        the branch and open a PR, or pass <code>--number N</code>.</li>
+      <li><strong>You want a preview, not a post</strong> — use <code>--dry-run</code>, or
+        <code>h5i share pr body</code> to print markdown for your own workflow.</li>
+    </ul>
+
+    <p>
+      The richest packets come from branches that used h5i throughout: a context goal and traces
+      from the session hooks, <code>h5i capture commit --tests</code> for provenance and metrics,
+      and <code>h5i audit review</code> before requesting review (Codex branches wire the same via
+      <code>h5i hook codex prelude</code> and <code>h5i hook codex sync</code>). A branch that
+      skipped all of that still renders — just with less to show. For the risk model behind the
+      audit signals, see the <a href="/blog/auditing-ai-generated-code/">AI-generated code audit
+      framework</a>.
+    </p>
+
+    <h2>Frequently asked questions</h2>
+
+    <div class="faq">
+      <p><strong>Does h5i write my pull request description for me?</strong> Not a hand-written
+        narrative. It renders a packet from the provenance already captured on the branch.
+        <code>h5i share pr body</code> prints that markdown to stdout (pipe it into
+        <code>gh pr edit --body-file -</code>); <code>h5i share pr post</code> upserts it as a sticky
+        comment. The content is generated from evidence, not authored by the agent under review.</p>
+
+      <p><strong>Will re-running <code>h5i share pr post</code> spam the PR with comments?</strong> No.
+        Each comment carries a hidden marker (<code>&lt;!-- h5i:pr-comment v1 --&gt;</code>). On
+        re-run, h5i finds the marked comment and PATCHes it in place via <code>gh api</code>, posting
+        a new one only when none exists — so there is exactly one sticky h5i comment per branch.</p>
+
+      <p><strong>How is this different from a generic AI PR-summary bot?</strong> Summary bots read
+        the diff and paraphrase it. h5i's packet renders provenance the diff can not contain: the
+        prompt behind each AI commit, model and agent identity, captured test metrics, audit risk
+        signals, and recorded reasoning. A diff summary tells you what changed; the packet tells you
+        what the agent was asked, what it knew, and what it checked.</p>
+
+      <p><strong>What if there is no open PR or <code>gh</code> is not authenticated?</strong>
+        <code>pr post</code> resolves the repo and PR number via <code>gh</code> and fails with a
+        clear message if auth is not clean, if no PR exists (push and open one, or pass
+        <code>--number</code>), or if no number is returned. Use <code>--dry-run</code> to render
+        locally, or <code>h5i share pr body</code> for CI.</p>
+
+      <p><strong>Could the PR comment leak secrets or private agent chatter?</strong> The packet is
+        secret-redacted — detected credentials become a rotate-before-merge alert, not reprinted.
+        The coordination section excerpts only review-typed i5h messages by default; casual chatter
+        stays metadata-only unless you pass <code>--msg-bodies</code>. Untrusted pulled fields are
+        sanitized and escaped against injection.</p>
+    </div>
+
+    <h2>Conclusion</h2>
+
+    <p>
+      The reason to generate the PR body instead of writing it is not convenience. It is that an
+      agent's own summary and a diff-only bot share the same blind spot: neither can show you what
+      was <em>left out</em>. A skipped test, a file edited without being read, a secret pasted into
+      a config, a rejected alternative — these live in the process, not the patch. h5i captures the
+      process as it happens and renders it where review already occurs, sticky and redacted, with
+      the audit signals that did not make it into the diff promoted to the top.
     </p>
 
     <p>
-      The strongest PR comments come from branches that used h5i throughout the work:
-      <code>h5i hook codex prelude</code> at the start, <code>h5i hook codex sync</code> during the
-      session, <code>h5i capture commit</code> for provenance, and <code>h5i audit review</code>
-      before review. For a deeper risk model, see the
-      <a href="/blog/auditing-ai-generated-code/">AI-generated code audit framework</a>.
+      The packet does not ask you to trust the agent. It gives you the evidence to decide, lets you
+      disagree with every line of it, and — because it is one rendering of a durable record — leaves
+      the same facts available later as the dashboard, the compliance export, or the post-incident
+      account. The PR comment is just the view the reviewer happened to need first.
     </p>
 
     <div class="post-cta">

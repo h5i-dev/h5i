@@ -11,6 +11,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
   <link rel="canonical" href="https://h5i.dev/blog/token-reduction-object-store/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
   <link rel="icon" type="image/png" href="/_static/logo.png">
   <link rel="apple-touch-icon" href="/_static/logo.png">
 
@@ -36,7 +37,7 @@
     "description": "A content-addressed object store keeps raw tool output out of agent context, cutting tokens about 95% while staying recoverable.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-06-05",
-    "dateModified": "2026-06-05",
+    "dateModified": "2026-06-26",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/token-reduction-object-store/"},
     "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
@@ -52,6 +53,19 @@
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Cut Agent Token Usage 95% with h5i Capture", "item": "https://h5i.dev/blog/token-reduction-object-store/"}]}
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {"@type": "Question", "name": "How much does keeping tool output out of context cut tokens?", "acceptedAnswer": {"@type": "Answer", "text": "About 95% across a mixed matrix of test runs, builds, JSON payloads, and noisy logs. The cut is set by how much noise surrounds the signal: tests and logs are mostly noise and reduce 90–100%, while a linter with many real diagnostics has little to drop and reduces far less."}},
+      {"@type": "Question", "name": "Is the raw output lost when h5i reduces it?", "acceptedAnswer": {"@type": "Answer", "text": "No. The full bytes are content-addressed by SHA-256 and written to a local store at .git/.h5i/objects/ab/cd/<sha256>. The agent reads only a small structured summary; the raw is one command away with h5i recall object <id>, returned byte-for-byte."}},
+      {"@type": "Question", "name": "How is this different from truncating or tailing a log?", "acceptedAnswer": {"@type": "Answer", "text": "Truncation discards information. The object store keeps every byte and just moves the bulk out of the context window, leaving a durable, queryable address behind. An evicted blob degrades to a clear absent message, never a silent loss, and captures stay searchable across runs."}},
+      {"@type": "Question", "name": "Do the raw blobs get pushed to my Git remote?", "acceptedAnswer": {"@type": "Answer", "text": "Not by default. h5i share push carries only the tiny manifests (pointers plus summaries). When you want to share raw bytes, h5i objects push uploads them via the native Git LFS Batch API on HTTP(S) remotes, falling back to a content-addressed git ref for SSH or file:// remotes."}},
+      {"@type": "Question", "name": "Does token-reducing capture work with both Claude Code and Codex?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The optional wrap-bash hook (h5i hook setup --write --wrap-bash) rewrites the agent's Bash commands into h5i capture run for both Claude Code and Codex (--target codex), so the agent gets the reduced summary automatically while the raw bytes are stored for recall."}}
+    ]
+  }
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -87,6 +101,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>The win is the split: a tiny typed summary in the agent's context plus the full raw bytes as a durable, content-addressed record.</li>
+        <li>The ~95% reduction is real but bounded by noise ratio — signal-dense diagnostic output reduces far less.</li>
+        <li>Content-addressing gives dedupe across runs, conflict-free set-union merge, and fetch-time verification for free.</li>
+  </ul>
+</div>
     <p>
       The <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>
       keeps raw logs out of context, recoverable on demand, and this post explains exactly how.
@@ -120,12 +143,45 @@
       </table>
     </div>
 
+    <div class="callout">
+      <p><strong>Who runs this?</strong> In practice the agent does, not a human. With the optional
+      <code>wrap-bash</code> hook installed (<code>h5i hook setup --write --wrap-bash</code>), a
+      <code>PreToolUse</code> handler transparently rewrites every Bash command the agent runs into
+      <code>h5i capture run …</code> — so the agent gets the token-reduced summary automatically while
+      the full raw bytes are stored for <code>h5i recall</code>. This wiring works for
+      <strong>both</strong> Claude Code and Codex (<code>--target codex</code> writes the same
+      <code>PreToolUse</code> / <code>Bash</code> hook into <code>.codex/config.toml</code>). You can of
+      course also run <code>h5i capture run</code> by hand.</p>
+    </div>
+
     <p>
       The agent reads only the manifest's summary. The full bytes are content-addressed by SHA-256
       and one command away (<code>h5i recall object &lt;id&gt;</code>), so the output is
-      <strong>reduced and losslessly recoverable at the same time</strong>. Output below a size
-      threshold passes straight through unstored, so wrapping any command is safe.
+      <strong>reduced and losslessly recoverable at the same time</strong>. Output below
+      <strong>2&nbsp;KB</strong> (the default <code>DEFAULT_CAPTURE_MIN_BYTES = 2048</code>) on a
+      <em>successful</em> command passes straight through unstored — a failing command is always
+      captured regardless of size — so wrapping anything is safe.
     </p>
+
+    <h3>What content-addressing buys you</h3>
+
+    <p>
+      The blob's name <em>is</em> its SHA-256. The local store is sharded by the first four hex
+      digits — <code>.git/.h5i/objects/&lt;ab&gt;/&lt;cd&gt;/&lt;full-hex&gt;</code> — so a directory
+      never fills with millions of siblings. Three properties fall out of this for free:
+    </p>
+
+    <ul>
+      <li><strong>Dedupe across runs.</strong> Writing a blob whose hash already exists is a no-op
+      (<code>if path.is_file() { return Ok(()) }</code>). Re-run the same failing test ten times and
+      the identical output is stored <em>once</em>; the manifest records ten captures pointing at one
+      blob.</li>
+      <li><strong>Merge is set union.</strong> Two clones that capture different output can be merged
+      by taking the union of blobs — there are no conflicts when names are derived from content.</li>
+      <li><strong>Verification is built in.</strong> A fetched blob is checked against the hash you
+      asked for; a tampered or truncated transfer is rejected, never cached. The summary you read and
+      the bytes you rehydrate provably came from the same run.</li>
+    </ul>
 
     <div class="callout">
       <p><strong>Why not just truncate?</strong> Truncation throws information away. The object
@@ -136,9 +192,10 @@
     <h2>Structured output, not a log excerpt</h2>
 
     <p>
-      The summary isn't a trimmed log, it's a normalized, machine-actionable result. One schema
-      across test runners, compilers, linters, and type checkers, so an agent learns
-      <em>one</em> shape instead of N. The default render is compact (one line per finding):
+      The summary isn't a trimmed log, it's a normalized, machine-actionable result —
+      <a href="../structured-tool-output-schema/">one schema across test runners, compilers, linters,
+      and type checkers</a>, so an agent learns <em>one</em> shape instead of N. The default render is
+      compact (one line per finding):
     </p>
 
     <div class="terminal">
@@ -164,13 +221,24 @@ $ h5i recall object 0bb827e4 --summary     # the reduced summary
 $ h5i recall object 0bb827e4               # the full raw bytes, exactly</pre></div>
     </div>
 
-    <h2>The experiment</h2>
+    <h2>What's measured, and how to reproduce it</h2>
 
     <p>
-      <code>scripts/experiment_token_reduction.sh</code> runs realistic tool output through
-      <code>h5i capture run</code> and measures four properties against the default agent-facing
-      output, tokenized with h5i's own tokenizer: token cut, signal retained, correct status, and
-      lossless recovery. A representative run:
+      The reduction isn't a marketing number — it's a property the test suite enforces.
+      <code>tests/filter_quality.rs</code> (run it yourself with <code>cargo test --test
+      filter_quality</code>) pushes realistic fixtures — a <code>pytest</code> failure, an all-pass
+      run, a <code>cargo test</code> panic, a noisy service log with one buried error, a large JSON
+      payload, a <code>gcc</code> error wall — through the same filter the CLI uses, then asserts
+      three things on each: the summary stays under a fixed fraction of the raw tokens (the
+      pytest-failure fixture must land under 35% of raw, an all-pass run under 5%), the signal
+      survives (the failing test, the panic, the buried error all appear in the summary), and the
+      summary <em>never</em> inflates the token count. Token counts use the same tiktoken-based
+      counter h5i records in every manifest, so the numbers match what an agent actually pays.
+    </p>
+
+    <p>
+      Tokenizing a representative capture run across common tools the same way gives the agent-facing
+      vs. raw comparison below:
     </p>
 
     <div class="tbl-wrap">
@@ -208,6 +276,37 @@ $ h5i recall object 0bb827e4               # the full raw bytes, exactly</pre></
       where it buys machine-actionability, not on already-compact output.
     </p>
 
+    <h2>How this compares to the alternatives</h2>
+
+    <p>
+      Keeping output out of context is not a new instinct — most teams already do <em>something</em>.
+      The difference is what survives. Lay the common approaches side by side and the axis that
+      matters isn't "how few tokens" but "what can you get back later":
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Approach</th><th>Tokens in context</th><th>Signal kept</th><th>Raw recoverable</th><th>Queryable later</th></tr></thead>
+        <tbody>
+          <tr><td>Raw logs piped to the agent</td><td>full (every turn)</td><td>yes, but buried</td><td>—</td><td>no</td></tr>
+          <tr><td><code>head</code>/<code>tail</code>/truncate</td><td>bounded</td><td>only if it sits at the ends</td><td>no (discarded)</td><td>no</td></tr>
+          <tr><td>Standalone filter (rtk, headroom)</td><td>reduced</td><td>yes (rule-matched)</td><td>no (filtered text <em>is</em> the output)</td><td>no</td></tr>
+          <tr><td><code>h5i capture run</code></td><td>reduced ~95%</td><td>yes (typed result)</td><td>yes (content-addressed)</td><td>yes (<code>recall objects</code>/<code>search</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <strong>Good:</strong> the text-filter tools h5i builds on — rtk's declarative TOML filter
+      engine and headroom's log line-folding (both Apache-2.0) — are well-tuned at exactly the
+      job of squeezing a noisy stream down to its diagnostics, and h5i reuses them rather than
+      reinventing that work. <strong>Gap:</strong> a standalone filter's reduced text is also its
+      only output — once the bulk is gone it's gone, and nothing indexes yesterday's run. Naive
+      truncation is worse: it bounds tokens but bets the signal lives at the head or tail, which a
+      buried error violates. h5i's contribution is the <em>second half</em> — the same reduction, but
+      the raw stays addressable and the captures stay searchable across runs and machines.
+    </p>
+
     <h2>Sharing the raw bytes: Git LFS by default</h2>
 
     <p>
@@ -238,6 +337,34 @@ $ h5i recall object 0bb827e4               # the full raw bytes, exactly</pre></
       cached. Credentials are scoped to the LFS host, never leaked to presigned transfer URLs.
     </p>
 
+    <h2>When recovery can fail (and how it fails)</h2>
+
+    <p>
+      A recoverable record is only as good as its failure behavior. The honest cases:
+    </p>
+
+    <ul>
+      <li><strong>The blob is gone locally and was never shared.</strong> If you garbage-collect the
+      local store, or move to a machine that only pulled the manifests, <code>recall object</code>
+      reports a clear "absent" result — it never fabricates output or silently returns a stale
+      summary as if it were the raw.</li>
+      <li><strong>The remote doesn't speak LFS.</strong> The <code>auto</code> backend only chooses
+      LFS for HTTP(S) remotes and falls back to a content-addressed git ref for SSH or
+      <code>file://</code>. If you force <code>--backend lfs</code> at a host without it, the Batch
+      endpoint returns 404/501 and h5i raises an explicit "remote does not speak LFS" error rather
+      than appearing to succeed.</li>
+      <li><strong>You're offline.</strong> The lazy LFS fetch is best-effort network, so rehydrating
+      a not-yet-local blob fails loudly when the server is unreachable — but the manifest summary,
+      status, and findings still read fine offline, because they live in the git ref you already
+      pulled.</li>
+    </ul>
+
+    <p>
+      The common thread: the working context (summary) and the durable record (raw) fail
+      <em>independently</em>. Losing access to the bytes never corrupts the summary, and a missing
+      blob is always an explicit absence, never a quiet substitution.
+    </p>
+
     <h2>It shows up in the PR, too</h2>
 
     <p>
@@ -246,6 +373,12 @@ $ h5i recall object 0bb827e4               # the full raw bytes, exactly</pre></
     </p>
 
     <h2>Try it</h2>
+
+    <p>
+      These are the commands the agent runs; with the <code>wrap-bash</code> hook installed
+      (<code>h5i hook setup --write --wrap-bash</code>) they're invoked automatically on every Bash
+      call, so the agent never has to remember to wrap anything — but each works typed by hand too:
+    </p>
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
@@ -273,6 +406,47 @@ h5i objects setup</pre></div>
       log line-folding (from <a href="https://github.com/chopratejas/headroom">headroom</a>,
       Apache-2.0) cover the long tail of commands; h5i adds what they don't: the raw stays
       content-addressed, recoverable, and queryable across captures and machines.
+    </p>
+
+    <h2>Frequently asked questions</h2>
+
+    <div class="faq">
+      <p><strong>How much does this actually cut?</strong> About 95% across a mixed matrix of test
+      runs, builds, JSON payloads, and noisy logs. The ceiling is set by how much noise surrounds the
+      signal: tests and logs reduce 90–100%; a linter where every line is a real diagnostic reduces
+      far less, which the honest-limit section above spells out.</p>
+
+      <p><strong>Is the raw output lost?</strong> No. The full bytes are content-addressed by SHA-256
+      under <code>.git/.h5i/objects/ab/cd/&lt;sha256&gt;</code> and returned byte-for-byte by
+      <code>h5i recall object &lt;id&gt;</code>. The agent just doesn't carry them in context.</p>
+
+      <p><strong>How is it different from truncating a log?</strong> Truncation discards; the object
+      store moves the bulk out of context but keeps a durable, queryable address. An evicted blob
+      degrades to a clear "absent" message, never a silent loss.</p>
+
+      <p><strong>Do raw blobs get pushed to my Git remote?</strong> Not by default —
+      <code>h5i share push</code> carries only manifests. <code>h5i objects push</code> uploads the
+      bytes via the native Git LFS Batch API on HTTP(S) remotes, falling back to a content-addressed
+      git ref for SSH or <code>file://</code>.</p>
+
+      <p><strong>Does it work with Codex as well as Claude Code?</strong> Yes. The
+      <code>wrap-bash</code> hook (<code>h5i hook setup --write --wrap-bash</code>, or
+      <code>--target codex</code>) rewrites the agent's Bash into <code>h5i capture run</code> for
+      both.</p>
+    </div>
+
+    <h2>The point isn't smaller logs</h2>
+
+    <p>
+      It's worth being precise about what changed. The reduction number is real and reproducible, but
+      it's the consequence, not the design. The design is a <strong>split</strong>: the agent's
+      working context becomes a tiny typed summary it can branch on, while the durable record stays
+      the full raw bytes — content-addressed, deduplicated, verified on fetch, and recoverable on
+      demand. Those two halves fail independently, travel separately (manifests by default, bytes only
+      when you ask), and answer different questions: the summary tells the agent what happened now;
+      the store lets a reviewer, a later session, or another machine ask what happened then. Filtering
+      logs saves tokens. Separating the context from the record is what makes a noisy tool run both
+      cheap to read and impossible to lose.
     </p>
 
     <div class="next-up">

@@ -3,44 +3,45 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Claude Code Hooks vs Git Hooks: h5i</title>
-  <meta name="description" content="Claude Code hooks run during the agent lifecycle. Git hooks run during Git operations. AI coding workflows usually need both.">
-  <meta name="keywords" content="claude code hooks vs git hooks, claude code hooks, git hooks ai coding, PostToolUse, SessionStart, h5i hook">
+  <title>Claude Code Hooks vs Git Hooks: Two Lifecycles, Two Trust Models</title>
+  <meta name="description" content="Claude Code hooks fire in the agent tool loop; Git hooks fire on repository operations. They see different things and carry different trust guarantees — here is how to layer both.">
+  <meta name="keywords" content="claude code hooks vs git hooks, claude code hooks, git hooks ai, PostToolUse, PreToolUse, SessionStart, agent hooks, h5i hook">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
   <link rel="canonical" href="https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
   <link rel="icon" type="image/png" href="/_static/logo.png">
   <link rel="apple-touch-icon" href="/_static/logo.png">
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="Claude Code Hooks vs Git Hooks">
-  <meta property="og:description" content="Claude Code hooks run during the agent lifecycle. Git hooks run during Git operations. AI coding workflows usually need both.">
+  <meta property="og:title" content="Claude Code Hooks vs Git Hooks: Two Lifecycles, Two Trust Models">
+  <meta property="og:description" content="Claude Code hooks fire in the agent tool loop; Git hooks fire on repository operations. They see different things and carry different trust guarantees — here is how to layer both.">
   <meta property="og:url" content="https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="article:published_time" content="2026-06-03">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Claude Code Hooks vs Git Hooks">
-  <meta name="twitter:description" content="Claude Code hooks run during the agent lifecycle. Git hooks run during Git operations. AI coding workflows usually need both.">
+  <meta name="twitter:title" content="Claude Code Hooks vs Git Hooks: Two Lifecycles, Two Trust Models">
+  <meta name="twitter:description" content="Claude Code hooks fire in the agent tool loop; Git hooks fire on repository operations. They see different things and carry different trust guarantees — here is how to layer both.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "TechArticle",
-  "headline": "Claude Code Hooks vs Git Hooks",
-  "description": "Claude Code hooks run during the agent lifecycle. Git hooks run during Git operations. AI coding workflows usually need both.",
+  "headline": "Claude Code Hooks vs Git Hooks: Two Lifecycles, Two Trust Models",
+  "description": "Claude Code hooks fire in the agent tool loop; Git hooks fire on repository operations. They see different things and carry different trust guarantees — here is how to layer both.",
   "author": {
     "@type": "Person",
     "name": "Koukyosyumei",
     "url": "https://github.com/Koukyosyumei"
   },
   "datePublished": "2026-06-03",
-  "dateModified": "2026-06-03",
+  "dateModified": "2026-06-26",
   "publisher": {
     "@type": "Organization",
     "name": "h5i",
@@ -54,7 +55,7 @@
     "@id": "https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/"
   },
   "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-  "keywords": "claude code hooks vs git hooks, claude code hooks, git hooks ai coding, PostToolUse, SessionStart, h5i hook"
+  "keywords": "claude code hooks vs git hooks, claude code hooks, git hooks ai, PostToolUse, PreToolUse, SessionStart, agent hooks, h5i hook"
 }
   </script>
 
@@ -89,31 +90,134 @@
     <header>
       <div class="post-eyebrow">Comparison · Hooks</div>
       <h1>Claude Code Hooks vs Git Hooks</h1>
-      <p class="post-deck">Git hooks protect repository operations. Claude Code hooks observe and steer the agent while it works. They are complementary, not interchangeable.</p>
+      <p class="post-deck">Git hooks fire on repository operations; Claude Code hooks fire in the agent tool loop. They see different things and carry different trust guarantees — so robust AI repos layer both rather than picking one.</p>
       <div class="post-meta">
         <span><strong>Published</strong> 2026-06-03</span>
-        <span><strong>Reading time</strong> 8 min read</span>
+        <span><strong>Reading time</strong> 10 min read</span>
         <span><strong>Tags</strong> Claude Code · Git hooks · Automation</span>
       </div>
     </header>
 
-<p>Inside an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>, both hook systems play a role: Claude Code hooks capture the agent's session evidence, Git hooks enforce policy at repository boundaries. Together they form the provenance layer that makes a workspace reviewable after the fact. Claude Code hooks and Git hooks both run automation, but they fire at different layers. Git hooks run when Git performs repository operations such as commit, merge, applypatch, and push. Claude Code hooks run during the Claude Code session lifecycle and agent tool loop.</p>
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>A Git hook sees a repository event; an agent hook sees an agent event — each is structurally blind to the other's layer.</li>
+        <li>Layer them: agent hooks capture the prompt and tool trace while working; Git hooks and CI enforce at the commit and push boundary.</li>
+        <li>Trust differs — client-side Git hooks are local and bypassable with --no-verify, while a sandbox can pin an unkillable managed-settings hook.</li>
+  </ul>
+</div>
+<p>AI agents now author a growing share of the commits in many repositories, which makes one question routine: what produced this change, and was it checked before it landed? The answer lives in two automation layers that look alike — both are <em>hooks</em>, both run your scripts at a defined moment — but fire on different lifecycles. Git hooks run when Git performs a repository operation: commit, merge, applypatch, push. Claude Code (and Codex) hooks run inside the agent's tool loop: a prompt arrives, a tool runs, a turn ends. Because they observe different lifecycles, they see different things, fail in different ways, and carry different trust guarantees. They are complementary, not interchangeable — and inside an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a> you layer both: agent hooks capture the prompt and trace, Git hooks and CI enforce at the commit and push boundary.</p>
 <h2>Git hooks: repository lifecycle</h2>
 <p>The official Git hooks documentation says hooks are programs placed in a hooks directory, usually <code>$GIT_DIR/hooks</code> or a path configured with <code>core.hooksPath</code>. Git invokes them at specific moments in Git operations. A <code>pre-commit</code> hook can block a commit. A <code>commit-msg</code> hook can validate the message. Server-side hooks can inspect pushes.</p>
 <p>Git hooks are excellent for repository policy: formatting, linting, secret checks, commit-message conventions, and push-time enforcement.</p>
 <h2>Claude Code hooks: agent lifecycle</h2>
 <p>Anthropic's Claude Code hooks reference describes hooks as user-defined commands, HTTP endpoints, or prompt hooks that execute at lifecycle events. Events include <code>SessionStart</code>, <code>UserPromptSubmit</code>, <code>PreToolUse</code>, <code>PostToolUse</code>, <code>Stop</code>, and others. Command hooks receive JSON context on stdin.</p>
 <p>That makes Claude Code hooks useful for agent-aware automation: inject context at session start, inspect tool calls before execution, record edits after tool use, summarize state when a turn stops, or add deterministic feedback after a file change.</p>
-<h2>The difference that matters</h2>
-<p>A Git hook sees the repository event. A Claude Code hook sees the agent event. If you only use Git hooks, you may know a commit happened but not which prompt caused it or what Claude observed while editing. If you only use Claude Code hooks, you may capture rich session context but miss enforcement at the final commit or push boundary.</p>
+<h2>What each layer can — and can't — see</h2>
+<p>The two layers are blind to each other by construction. A Git hook is handed a tree and a set of refs; it never learns which prompt motivated the change or which files the agent read before writing one. An agent hook is handed the prompt and the tool call; it never sees a teammate who commits from a plain terminal, or a force-push from CI. The table maps the events most worth wiring to what each can observe and whether it can stop the operation.</p>
+<table class="data">
+  <thead>
+    <tr><th>Hook (layer)</th><th>Fires at</th><th>Sees</th><th>Blind to</th><th>Can block?</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>pre-commit</code> (Git)</td><td>start of <code>git commit</code></td><td>staged tree, diff</td><td>the prompt; files only read</td><td>yes — bypassable with <code>--no-verify</code></td></tr>
+    <tr><td><code>prepare-commit-msg</code> / <code>commit-msg</code> (Git)</td><td>message built / validated</td><td>commit message + source</td><td>agent intent behind it</td><td>yes (<code>commit-msg</code>) — bypassable</td></tr>
+    <tr><td><code>pre-push</code> (Git)</td><td>before refs leave</td><td>local commits, target remote</td><td>the session that wrote them</td><td>yes — bypassable</td></tr>
+    <tr><td><code>post-merge</code> (Git)</td><td>after a merge completes</td><td>new worktree state</td><td>who/what authored it</td><td>no — informational</td></tr>
+    <tr><td><code>pre-receive</code> (Git, server-side)</td><td>on the remote, at push receipt</td><td>proposed refs + objects</td><td>local config, the prompt</td><td>yes — <strong>not</strong> client-bypassable</td></tr>
+    <tr><td><code>SessionStart</code> (agent)</td><td>session opens</td><td>prior context, cwd</td><td>repo ops outside the session</td><td>no — injects context</td></tr>
+    <tr><td><code>UserPromptSubmit</code> (agent)</td><td>human submits a prompt</td><td>the verbatim prompt</td><td>any Git operation</td><td>can add context / block the prompt</td></tr>
+    <tr><td><code>PreToolUse</code> (agent)</td><td>before a tool runs</td><td>tool name + args (e.g. <code>Bash</code>, <code>Edit</code>)</td><td>repo-wide state</td><td>yes — can deny the tool call</td></tr>
+    <tr><td><code>PostToolUse</code> (agent)</td><td>after a tool runs</td><td>the edit/read and its result</td><td>an out-of-band commit</td><td>no — observe / give feedback</td></tr>
+    <tr><td><code>Stop</code> (agent)</td><td>turn ends</td><td>the full transcript</td><td>a later push or CI run</td><td>no — summarize / checkpoint</td></tr>
+  </tbody>
+</table>
+<p>Read down the two halves and the asymmetry is the whole point. The Git rows are tree- and ref-centric and blind to intent; the agent rows are intent- and tool-centric and blind to any repository operation that happens outside the session. Use only Git hooks and you know a commit landed but not which prompt caused it or what the agent inspected first; use only agent hooks and you have rich session context but no gate at the final commit or push.</p>
 <h2>How h5i combines them</h2>
 <p>h5i's Claude Code hook commands are designed for agent context. <code>h5i hook session-start</code> prints prior context into the new session. <code>h5i hook claude sync</code> reads JSON from Claude Code as a <code>PostToolUse</code> handler and emits h5i context traces. <code>h5i hook claude finish</code> checkpoints recent context when a turn stops, and <code>h5i hook claude prompt</code> captures the verbatim prompt as a <code>UserPromptSubmit</code> handler.</p>
+<p>You do not wire these handlers in by hand. <code>h5i hook setup</code> prints the copy-paste install instructions, and <code>h5i hook setup --write</code> merges the wiring straight into the agent config for you (idempotent — safe to run twice):</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ h5i hook setup                       # print the wiring; write nothing
+$ h5i hook setup --write                # write Claude AND Codex config (project scope)
+$ h5i hook setup --write --target claude  # write only .claude/settings.json
+$ h5i hook setup --write --scope user   # write ~/.claude/settings.json (all projects)
+$ h5i hook setup --write --wrap-bash    # also route every agent Bash through h5i capture run
+$ h5i hook setup --write --team         # also register the team peer-review Stop hook</pre></div></div>
 <p>That can coexist with Git hooks for conventional repository policy. For example, Claude Code hooks can capture the prompt and tool trace, while a Git <code>pre-commit</code> hook runs tests or blocks secrets.</p>
-<h2>Practical rule</h2>
-<p>Use Claude Code hooks for agent observability and session memory. Use Git hooks for repository gates. Use h5i to connect the two into provenance that survives beyond the chat window.</p>
-<h2>Where teams get the boundary wrong</h2>
-<p>The common mistake is installing one hook system and assuming it covers the other system's job. A Claude Code <code>PreToolUse</code> hook can warn before a shell command, but it does not protect a teammate who commits outside Claude Code. A Git <code>pre-commit</code> hook can block a bad commit, but it cannot reconstruct which prompt caused the edit or which files the agent inspected before writing it.</p>
-<p>For AI-assisted repositories, the useful pattern is layered. Use Claude Code hooks to capture session context while the agent is working. Use Git hooks and CI to enforce rules at repository boundaries. Then use h5i to join the two records so the final review sees both the agent trace and the conventional Git result.</p>
+<h2>The h5i hook commands</h2>
+<p>The <code>setup</code> command is the entry point; everything else is a <em>handler</em> the agent runtime invokes at a lifecycle event — you never type those by hand. Start with these <code>setup</code> options:</p>
+<table class="data">
+  <thead>
+    <tr><th>Option</th><th>What it does</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>setup</code> (no flag)</td><td>Prints copy-paste install instructions. Writes nothing.</td></tr>
+    <tr><td><code>--write</code></td><td>Merges the hook wiring into the agent config. Idempotent.</td></tr>
+    <tr><td><code>--target claude|codex</code></td><td>Which config to write. Omit to write <strong>both</strong>.</td></tr>
+    <tr><td><code>--scope project|user</code></td><td>Default <code>project</code> (repo <code>./.claude/settings.json</code>); <code>user</code> writes <code>~/.claude/settings.json</code> for every project.</td></tr>
+    <tr><td><code>--wrap-bash</code></td><td>Optional. Also registers the Bash capture-wrap <code>PreToolUse</code> hook that routes each agent Bash command through <code>h5i capture run</code> (token-reduced summary; full raw kept for <code>h5i recall</code>). Off by default — note that permission allowlists then match the rewritten <code>h5i capture run …</code> command, not the original.</td></tr>
+    <tr><td><code>--team</code></td><td>Optional. Also registers the team peer-review Stop hook (<code>h5i team agent hook</code>); a no-op outside a live <code>h5i team</code> round, safe to leave on.</td></tr>
+  </tbody>
+</table>
+<p>For Claude, <code>--write</code> installs four handlers (plus the optional fifth with <code>--wrap-bash</code>):</p>
+<table class="data">
+  <thead>
+    <tr><th>Handler</th><th>Event</th><th>What it does</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>h5i hook session-start</code></td><td><code>SessionStart</code></td><td>Injects prior context — goal, recent milestones, decisions/actions, open TODOs — into the new session. (Wired for Claude <em>and</em> Codex.)</td></tr>
+    <tr><td><code>h5i hook claude sync</code></td><td><code>PostToolUse</code> (<code>Edit|Write|Read</code>)</td><td>Emits an OBSERVE trace for <code>Read</code>, an ACT trace for <code>Edit</code>/<code>Write</code>; on <code>Read</code> also injects prior reasoning about that file.</td></tr>
+    <tr><td><code>h5i hook claude finish</code></td><td><code>Stop</code></td><td>Mines THINK entries from the transcript plus NOTE entries for deferrals/placeholders/unfulfilled promises, and auto-checkpoints a context milestone.</td></tr>
+    <tr><td><code>h5i hook claude prompt</code></td><td><code>UserPromptSubmit</code></td><td>Records the verbatim human prompt; a later <code>h5i capture commit</code> uses it as the recorded prompt (it wins over an agent-authored <code>--intent</code>).</td></tr>
+    <tr><td><code>h5i hook wrap-bash</code></td><td><code>PreToolUse</code> (<code>Bash</code>)</td><td>Optional (<code>--wrap-bash</code>). Rewrites the Bash command into <code>h5i capture run …</code>; skips h5i's own commands, top-level <code>cd</code>, and non-git dirs, and fails open so the original command still runs.</td></tr>
+  </tbody>
+</table>
+<p>Codex has no <code>PostToolUse</code> or <code>UserPromptSubmit</code>, so it derives the same prompt and OBSERVE/ACT signals by parsing its session JSONL. <code>--write</code> wires <code>SessionStart</code> → <code>h5i hook session-start</code> and <code>Stop</code> → <code>h5i hook codex finish --quiet</code>; the matching <code>h5i hook codex prelude</code> and <code>h5i hook codex sync</code> handlers cover its tool loop. The optional <code>--wrap-bash</code> hook is <em>not</em> Claude-only: <code>--target codex --wrap-bash</code> writes the same <code>PreToolUse</code> / <code>Bash</code> handler into <code>.codex/config.toml</code>.</p>
+<h2>A worked layering: agent hooks and Git hooks together</h2>
+<p>Wiring both is mechanical. The agent hooks record intent and trace <em>while</em> the agent works; the Git hooks gate the result <em>when</em> it tries to land. Here is a minimal pairing. The agent side declares two handlers in <code>.claude/settings.json</code>:</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "h5i hook claude prompt" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Edit|Write|Read",
+        "hooks": [{ "type": "command", "command": "h5i hook claude sync" }] }
+    ]
+  }
+}</pre></div></div>
+<p>The Git side is two ordinary scripts. A <code>.git/hooks/pre-commit</code> gate runs before the snapshot is written:</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>#!/bin/sh
+# block a failing or secret-bearing tree before it becomes a commit
+cargo test --quiet || exit 1
+if git diff --cached | grep -nE 'AKIA|BEGIN [A-Z ]*PRIVATE KEY'; then
+  echo "secret-like content staged" &gt;&amp;2
+  exit 1
+fi
+exit 0</pre></div></div>
+<p>…and a <code>.git/hooks/pre-push</code> gate enforces policy at the boundary refs cross:</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>#!/bin/sh
+# refuse a direct push to the protected branch
+if [ "$(git rev-parse --abbrev-ref HEAD)" = "main" ]; then
+  echo "direct push to main blocked" &gt;&amp;2
+  exit 1
+fi
+exit 0</pre></div></div>
+<p>What each catches that the other can't: the <code>UserPromptSubmit</code> handler records the prompt verbatim — the <code>pre-commit</code> hook will never see it. The <code>pre-commit</code> hook blocks a failing or secret-bearing tree for <em>everyone</em>, including a teammate who never opened an agent — and no agent hook can reach that path. Run them together and the final review has both halves: the agent trace (prompt → reads → edits) and the conventional Git verdict (tests passed, no secrets, branch policy held). In practice you don't hand-edit the agent side — <code>h5i hook setup --write</code> merges exactly these handlers (and three more) — but the Git side stays yours to own.</p>
+<h2>Trust and determinism: advisory vs enforced</h2>
+<p>The two layers do not offer the same guarantee, and conflating them is the costliest mistake. The right question for any hook is not "does it run?" but "who can turn it off?"</p>
+<p>Git hooks are local and advisory. They live in <code>$GIT_DIR/hooks</code> (or a path set by <code>core.hooksPath</code>) and are <em>not</em> tracked in the repository by default, so a fresh clone has none of them until each contributor installs them. Any of them is bypassable in one flag: <code>git commit --no-verify</code> skips <code>pre-commit</code> and <code>commit-msg</code>; <code>git push --no-verify</code> skips <code>pre-push</code>. A client-side Git hook is therefore a convenience for the cooperative, never a control against the determined. The only Git hook that <em>enforces</em> for everyone is a server-side one — <code>pre-receive</code> / <code>update</code> on the remote, or an equivalent required CI check — because the client cannot opt out of it.</p>
+<p>Agent hooks inherit the trust of the config that declares them. A <code>.claude/settings.json</code> or <code>.codex/config.toml</code> hook is exactly as binding as that file: whoever can edit the config — or pass <code>disableAllHooks</code> — can switch it off. That is fine for observability you control, and inadequate when the point is to observe code you don't trust.</p>
+<p>h5i's sandbox closes that specific gap. When it runs an agent in a box, it writes a minimal managed-settings file carrying <em>only</em> the <code>wrap-bash</code> hook and bind-mounts it read-only at <code>/etc/claude-code/managed-settings.json</code>. Claude's managed scope sits above the normal precedence merge, so a higher-priority user setting can't remove it, and it survives <code>disableAllHooks</code>; the in-box agent can't write the root-owned path, so it cannot silence its own observation. That turns an advisory hook into an enforced one — the same shift you get by moving a Git check from <code>pre-commit</code> to <code>pre-receive</code>. (The managed-settings injection is Claude-specific; Codex hardening is handled separately.)</p>
+<h2>Failure modes worth knowing</h2>
+<ul>
+  <li><strong>The hook silently never fires.</strong> Usually the wiring isn't installed (a clone with no scripts in <code>$GIT_DIR/hooks</code>) or the matcher doesn't match (a <code>PostToolUse</code> matcher of <code>Edit</code> alone won't catch <code>Write</code>). Neither case errors; the automation just doesn't happen. Verify the wiring, don't assume it.</li>
+  <li><strong>Double capture.</strong> If both a <code>wrap-bash</code> <code>PreToolUse</code> hook and an in-box tee shim observe the same shell command, you can record it twice. h5i dedups by passing any command whose first word is <code>h5i</code> through unwrapped — the wrap already rewrote the original to <code>h5i capture run …</code>, so the shim records only what the hook didn't.</li>
+  <li><strong>Bypass at the boundary.</strong> <code>--no-verify</code> defeats any client-side Git hook. If a rule must always hold, mirror it server-side or in a required CI check; a local hook alone is an honor system.</li>
+  <li><strong>An agent disabling its own hooks.</strong> With write access to its config an agent can drop a hook. Managed scope is what resists that, by living somewhere the agent can't write — which is exactly why the sandbox pins observation there rather than in the project config.</li>
+</ul>
+<h2>Conclusion: layer, don't choose</h2>
+<p>Treat this as a layering decision, not an either/or. Use agent hooks — <code>SessionStart</code>, <code>UserPromptSubmit</code>, <code>PreToolUse</code>, <code>PostToolUse</code>, <code>Stop</code> — for intent and session memory while the agent works. Use Git hooks, with a server-side check or required CI behind them, to gate the tree and refs at the repository boundary where the rule has to hold for every contributor and tool. h5i wires the agent side for you and joins both records, so a later reviewer reads one provenance trail — prompt, reads, edits, and the Git verdict — instead of two disconnected halves.</p>
 <h2>FAQ</h2>
 <h3>Can a Git hook capture Claude Code prompts?</h3>
 <p>Not reliably by itself. Git hooks run at Git operations and do not naturally receive Claude Code session context.</p>
@@ -121,7 +225,37 @@
 <p>It can run checks, but repository enforcement still belongs at Git boundaries if you want the policy to apply to all contributors and tools.</p>
 <h3>Which one should I install first?</h3>
 <p>For AI provenance, install Claude Code hooks first. For enforcement, keep or add Git hooks and CI.</p>
+<h3>Can an agent disable its own hooks?</h3>
+<p>If it can edit the config that declares them, yes — that includes passing <code>disableAllHooks</code>. h5i's sandbox prevents this for Claude by pinning the <code>wrap-bash</code> hook in a read-only managed-settings file the in-box agent can neither write nor override, so observation survives even a <code>disableAllHooks</code>.</p>
 
+    <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Can a Git hook capture Claude Code prompts?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Not reliably by itself. Git hooks run at Git operations and do not naturally receive Claude Code session context such as the prompt." }
+    },
+    {
+      "@type": "Question",
+      "name": "Can a Claude Code hook replace pre-commit?",
+      "acceptedAnswer": { "@type": "Answer", "text": "It can run checks, but repository enforcement still belongs at Git boundaries if you want the policy to apply to all contributors and tools, not just sessions that ran through the agent." }
+    },
+    {
+      "@type": "Question",
+      "name": "Which one should I install first?",
+      "acceptedAnswer": { "@type": "Answer", "text": "For AI provenance, install Claude Code hooks first. For enforcement, keep or add Git hooks and CI." }
+    },
+    {
+      "@type": "Question",
+      "name": "Can an agent disable its own hooks?",
+      "acceptedAnswer": { "@type": "Answer", "text": "If it can edit the config that declares them, yes, including passing disableAllHooks. h5i's sandbox prevents this for Claude by pinning the wrap-bash hook in a read-only managed-settings file the in-box agent can neither write nor override, so observation survives even a disableAllHooks." }
+    }
+  ]
+}
+    </script>
 
     <h2>Sources and verification</h2>
     <p>This article avoids vendor-specific claims that were not checked against primary docs or local h5i CLI behavior.</p>

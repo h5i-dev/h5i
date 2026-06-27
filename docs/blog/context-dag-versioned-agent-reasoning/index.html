@@ -4,20 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Context DAG: Version-Controlled Reasoning for AI Agents - h5i</title>
-  <meta name="description" content="Store AI agent context as a Git-native DAG with resumable OBSERVE, THINK, ACT, and NOTE entries for Claude Code and Codex.">
-  <meta name="keywords" content="context DAG, AI agent memory, Claude Code context, Codex context, versioned reasoning, h5i context, AI coding agents">
+  <meta name="description" content="Version an AI agent's reasoning as a Git-backed DAG in refs/h5i/context: typed OBSERVE/THINK/ACT/NOTE/MERGE nodes that branch, merge, and pin to commit SHAs you can restore and diff — for Claude Code and Codex.">
+  <meta name="keywords" content="context DAG, versioned agent reasoning, AI agent memory, Claude Code context, Codex context, refs/h5i/context, branch merge reasoning, h5i context, AI coding agents">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
   <link rel="canonical" href="https://h5i.dev/blog/context-dag-versioned-agent-reasoning/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
   <link rel="icon" type="image/png" href="/_static/logo.png">
   <link rel="apple-touch-icon" href="/_static/logo.png">
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="Context DAG: Version-Controlled Reasoning for AI Agents">
-  <meta property="og:description" content="The reasoning behind AI-written code should branch, merge, checkpoint, and restore like code. h5i stores it as a Git-native context DAG.">
+  <meta property="og:description" content="The reasoning behind AI-written code should branch, merge, checkpoint, and restore like code. h5i stores it as a Git-backed DAG of typed nodes in refs/h5i/context, pinned to commit SHAs.">
   <meta property="og:url" content="https://h5i.dev/blog/context-dag-versioned-agent-reasoning/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="og:image:width" content="2257">
@@ -38,14 +39,27 @@
     "@context": "https://schema.org",
     "@type": "TechArticle",
     "headline": "Context DAG: Version-Controlled Reasoning for AI Agents",
-    "description": "How h5i stores AI agent reasoning as a Git-native context DAG.",
+    "description": "How h5i versions an AI agent's reasoning as a Git-backed DAG in refs/h5i/context — typed OBSERVE/THINK/ACT/NOTE/MERGE nodes that branch, merge, and pin to commit SHAs you can restore and diff.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-05-24",
-    "dateModified": "2026-06-02",
+    "dateModified": "2026-06-26",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/context-dag-versioned-agent-reasoning/"},
     "image": "https://h5i.dev/_static/h5i-concept.svg",
-    "keywords": "context DAG, AI agent memory, Claude Code context, Codex context, h5i context"
+    "keywords": "context DAG, versioned agent reasoning, AI agent memory, Claude Code context, Codex context, refs/h5i/context, branch merge reasoning, h5i context"
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {"@type": "Question", "name": "What is a context DAG?", "acceptedAnswer": {"@type": "Answer", "text": "A context DAG is a versioned graph of an AI agent's reasoning, stored by h5i in the Git ref refs/h5i/context. Instead of one mutable memory file, each unit of work is a typed node — OBSERVE (what was inspected), THINK (a decision or rejected alternative), ACT (what changed), NOTE (a TODO/risk/limitation), or MERGE (reasoning joined from another branch) — with ancestry, branch boundaries, and links to the commit SHAs the work produced."}},
+      {"@type": "Question", "name": "How is a context DAG different from a CLAUDE.md memory file?", "acceptedAnswer": {"@type": "Answer", "text": "A CLAUDE.md or markdown memory file is a single mutable blob: it has no per-entry ancestry, no way to branch an experiment in isolation, no link from a note to the commit it describes, and it grows unbounded and goes stale. A context DAG keeps the same Git-versioned, in-repo property but adds structure — typed nodes, branches you can merge with a MERGE node carrying both parents, and snapshots pinned to commit SHAs you can restore and diff."}},
+      {"@type": "Question", "name": "Are an agent's reasoning snapshots tied to specific commits?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Every h5i capture commit snapshots the context workspace and links it to the resulting Git commit SHA. You can later run h5i recall context restore <sha> to recover the reasoning state as of that commit, or h5i recall context diff <from> <to> to see how the reasoning evolved between two commits."}},
+      {"@type": "Question", "name": "Can two agents merge their reasoning?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. You branch the context (h5i recall context branch <name>), explore an alternative without disturbing the main thread, then h5i recall context merge <name> to fold the useful conclusion back. The merge produces a MERGE node that records both parent IDs, so the graph is a true DAG rather than a linear log."}},
+      {"@type": "Question", "name": "Where is the context stored, and does git push share it?", "acceptedAnswer": {"@type": "Answer", "text": "It lives in the Git ref refs/h5i/context, separate from your working tree. Plain git push does not move refs/h5i/* — use h5i share push and h5i share pull to share the reasoning DAG alongside the code."}}
+    ]
   }
   </script>
 
@@ -86,27 +100,41 @@
       </p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
-        <span><strong>Reading time</strong> 7 min</span>
+        <span><strong>Reading time</strong> 9 min</span>
         <span><strong>Tags</strong> Context · DAG · Agents</span>
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>A flat markdown memory file is the wrong shape for volatile, per-commit reasoning — no ancestry, no branchable experiments.</li>
+        <li>A DAG of typed nodes (with a MERGE node recording both parents) is queryable and mergeable like code.</li>
+        <li>Snapshots pin to commit SHAs, so reasoning gets the same restore-and-diff time travel Git gives code.</li>
+  </ul>
+</div>
     <p>
-      The context DAG is the reasoning layer of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>:
-      the record of what the agent observed, decided, and left open, versioned beside the code so the
-      next session (or the next reviewer) does not start from zero.
-      Most AI coding sessions lose their most valuable artifact: the reasoning. The final
-      diff survives, but the path to it does not. Which files did the agent read? Which
-      assumption did it reject? What was left as a TODO? Why did it choose one design over
-      another? Those answers live in the session transcript until the next session forgets
-      them.
+      Every AI coding session throws away its most useful artifact. The diff survives; the
+      <em>path to it</em> does not. Which files did the agent read before it edited? Which
+      assumption did it test and reject? What did it leave as a TODO, and why did it pick this
+      design over the obvious alternative? Those answers live in a chat window that closes — so
+      the next session re-discovers the project from scratch, and the reviewer is left reading
+      a diff with no idea how it was reached. The usual patch is a markdown memory file
+      (<code>CLAUDE.md</code>, <code>AGENTS.md</code>, a notes doc). It helps, and it also rots:
+      one mutable blob, no ancestry, no way to branch an experiment, no link from a note to the
+      commit it describes.
     </p>
 
     <p>
-      h5i treats that reasoning as versionable project state. It records a context DAG under
-      <code>refs/h5i/context</code>, separate from your working tree but shareable through Git.
-      The next agent does not have to re-discover the project. It can recall the branch goal,
-      milestones, decisions, open risks, and file-specific prior reasoning before editing.
+      h5i treats reasoning as versionable project state instead. It records a context DAG under
+      the Git ref <code>refs/h5i/context</code> — the reasoning layer of an
+      <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>, separate from your
+      working tree but shareable through Git. Each unit of work becomes a typed node with
+      ancestry; reasoning can branch and merge like code; and snapshots pin to the commit SHAs
+      they produced, so the next agent (or the next reviewer) can recall the goal, the
+      milestones, the decisions, the open risks, and the file-specific prior reasoning before
+      touching a line.
     </p>
 
     <figure class="feature-figure">
@@ -143,21 +171,40 @@
 
     <h2>Daily workflow</h2>
 
+    <p>
+      The honest daily workflow is: <strong>you just work.</strong> A human wires the hooks once
+      per runtime, and from then on capture is automatic — nobody types <code>h5i hook …</code> by hand:
+    </p>
+
     <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">context</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context init --goal "ship OAuth login safely"</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context relevant src/auth.rs</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context trace --kind THINK \
-  "Redis sessions over in-process map because restarts must not log users out"</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i hook codex sync</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i hook codex finish --summary "implemented refresh-token storage"</span></pre></div>
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">one-time setup (human)</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup --write --target claude</span>  <span class="t-cmt"># wires SessionStart · UserPromptSubmit · PostToolUse · Stop</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup --write --target codex</span>   <span class="t-cmt"># wires SessionStart · Stop</span></pre></div>
     </div>
 
     <p>
-      Claude Code can automate much of this through <code>h5i hook setup</code>. Codex uses
-      explicit <code>h5i hook codex prelude</code>, <code>sync</code>, and <code>finish</code> commands.
-      Both end up writing to the same shared context workspace.
+      With Claude Code all four handlers fire on their own: <code>h5i hook session-start</code> injects
+      prior context, <code>h5i hook claude prompt</code> records the verbatim prompt,
+      <code>h5i hook claude sync</code> writes OBSERVE and ACT as files are read and edited, and
+      <code>h5i hook claude finish</code> mines THINK and NOTE and checkpoints the milestone when the
+      turn ends. Codex has no per-prompt or per-edit hook, so it wires just two
+      (<code>h5i hook session-start</code> and <code>h5i hook codex finish --quiet</code>); the finish step
+      parses Codex's own session JSONL via <code>h5i hook codex prelude</code>/<code>sync</code>/<code>finish</code>
+      to reconstruct the prompts and OBSERVE/ACT entries it had no event hook for. Either way, both
+      agents write to the same shared context workspace.
     </p>
+
+    <p>
+      The only entries emitted explicitly — by the agent at a task boundary, not typed by you each
+      day — are the goal at the start of a task and the occasional flag left for a future reviewer:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">explicit, occasional</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context init --goal "ship OAuth login safely"</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context trace --kind NOTE \
+  "RISK: refresh-token rotation untested across deploys"</span></pre></div>
+    </div>
 
     <h2>Branching reasoning, not just code</h2>
 
@@ -172,17 +219,106 @@
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">branch reasoning</span></div>
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context branch experiment/cache-layer \
   --purpose "compare Redis cache against local LRU"</span>
-<span class="t-cmt"># inspect, test, decide</span>
+<span class="t-cmt"># inspect, test, decide — OBSERVE/THINK/ACT land on the branch, not on main</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i recall context checkout main</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i recall context merge experiment/cache-layer</span></pre></div>
     </div>
 
-    <h2>Why a DAG beats a flat memory file</h2>
+    <p>
+      The merge is what makes this a graph and not a list. It writes a <code>MERGE</code> node that
+      records <em>both</em> parent IDs — the tip of <code>main</code> and the tip of the experiment —
+      so the conclusion ("LRU won; Redis added a network hop we did not need") arrives on
+      <code>main</code> carrying a pointer back to the investigation that produced it. A teammate who
+      later asks "did anyone try Redis here?" follows that edge instead of guessing. You can render
+      the whole shape, parents and all, in the terminal:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">inspect the graph</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context dag</span>      <span class="t-cmt"># coloured DAG: kind, 8-hex id, time; MERGE shows both parents</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context relevant src/cache.rs</span>  <span class="t-cmt"># prior reasoning for one file</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context knowledge</span>  <span class="t-cmt"># every THINK across all branches — the decision log</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context todo</span>       <span class="t-cmt"># open NOTE/THINK items: TODO / FIXME / BLOCKED</span></pre></div>
+    </div>
+
+    <p>
+      A flat file cannot answer those questions because it has no edges to follow and no per-entry
+      type to filter on. The DAG is queryable precisely because the structure is in the data, not in
+      prose you have to skim.
+    </p>
+
+    <h2>Snapshots pinned to commit SHAs</h2>
+
+    <p>
+      Reasoning is most useful when it is anchored to the code it explains. Every
+      <code>h5i capture commit</code> automatically snapshots the context workspace and links it to
+      the resulting Git commit SHA. That gives you two operations a plain memory file can never
+      offer:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">time-travel reasoning</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context restore a1b2c3d</span>     <span class="t-cmt"># reasoning state as of that commit</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context diff a1b2c3d HEAD</span>   <span class="t-cmt"># how the reasoning evolved since</span></pre></div>
+    </div>
+
+    <p>
+      <code>restore</code> answers "what did we know when we shipped this?" — useful when a commit
+      from three weeks ago turns out to be wrong and you need the assumptions behind it.
+      <code>diff</code> answers "what changed in our thinking between these two points?" — the
+      reasoning counterpart of <code>git diff</code>. Because the snapshot is keyed by SHA, the
+      reasoning and the code can never drift apart: checking out an old commit and restoring its
+      context gives you a coherent picture of that moment, not today's notes pasted over yesterday's
+      code.
+    </p>
+
+    <h2>How it compares to memory files and vendor memory</h2>
 
     <p>
       A flat memory file is easy to append and hard to trust. It has no ancestry, no branch
-      boundary, no commit linkage, and no clear difference between durable knowledge and
-      scratch notes. A DAG gives context a structure close to the work itself.
+      boundary, no commit linkage, and no clear line between durable knowledge and scratch
+      notes. A DAG gives context a structure close to the work itself. The alternatives each get
+      something right — here is the honest tradeoff:
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Approach</th><th>Good</th><th>Gap</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Markdown memory file (<code>CLAUDE.md</code>, <code>AGENTS.md</code>)</td>
+            <td>Simple, human-readable, lives in the repo, loaded into every prompt.</td>
+            <td>One mutable blob: no per-entry ancestry, can't branch an experiment, no link from a note to its commit, grows unbounded and goes stale; conflicts are textual, not semantic.</td>
+          </tr>
+          <tr>
+            <td>Vendor "memory" features</td>
+            <td>Automatic recall across sessions with near-zero friction.</td>
+            <td>Provider-hosted and opaque: not in your repo, not in code review, not portable across tools or teammates, not pinned to a commit, and not diffable in a PR.</td>
+          </tr>
+          <tr>
+            <td>Session transcript / scrollback</td>
+            <td>Complete — every token of the reasoning is there.</td>
+            <td>Ephemeral and unstructured: too large to reuse, not shared, gone when the window closes.</td>
+          </tr>
+          <tr>
+            <td>Git commit messages</td>
+            <td>Durable, in-repo, already part of review.</td>
+            <td>Only the final decision, written after the fact — no observations, no rejected paths, no open risks.</td>
+          </tr>
+          <tr>
+            <td>h5i context DAG</td>
+            <td>In-repo and Git-versioned; typed nodes; branch/merge with both parents recorded; snapshots pinned to commit SHAs; queryable by file, kind, or decision.</td>
+            <td>Needs the one-time hook wiring, and lives in <code>refs/h5i/*</code> — shared with <code>h5i share push</code>, not plain <code>git push</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The point is not that markdown memory is useless — it is a fine place for stable, hand-curated
+      project rules. The point is that a single file is the wrong shape for the <em>volatile,
+      branching, per-commit</em> reasoning of an active session, and that is exactly where a DAG
+      earns its keep.
     </p>
 
     <div class="callout">
@@ -208,6 +344,34 @@
       repository. Humans get the same benefit when a branch sits for a week and the original
       conversation is gone.
     </p>
+
+    <h2>The bottom line</h2>
+
+    <p>
+      Agent reasoning is project state, and like any state worth keeping it wants the affordances
+      Git already gives code: history, branches, merges, and a way to look at any past moment. A
+      flat memory file gives you none of those; it gives you an append-only blob that drifts from
+      the code and loses the structure of the work. A context DAG keeps the in-repo, version-controlled
+      virtues of that file and adds the parts that make it trustworthy — typed nodes, ancestry,
+      merges that record both parents, and snapshots pinned to the commit SHAs they explain.
+    </p>
+
+    <p>
+      The practical test is simple: when a branch sits untouched for a week, can the next session —
+      or the next reviewer — recover not just <em>what</em> changed but <em>how it was reached</em>?
+      With a chat window, no. With a DAG you can <code>restore</code>, <code>diff</code>, and follow
+      the merge edges, the answer is yes, and review stops being archaeology.
+    </p>
+
+    <h2>FAQ</h2>
+
+    <div class="faq">
+      <p><strong>What is a context DAG?</strong> A versioned graph of an AI agent's reasoning, stored by h5i in the Git ref <code>refs/h5i/context</code>. Instead of one mutable memory file, each unit of work is a typed node — <code>OBSERVE</code>, <code>THINK</code>, <code>ACT</code>, <code>NOTE</code>, or <code>MERGE</code> — with ancestry, branch boundaries, and links to the commit SHAs the work produced.</p>
+      <p><strong>How is it different from a <code>CLAUDE.md</code> memory file?</strong> A markdown memory file is a single mutable blob: no per-entry ancestry, no way to branch an experiment in isolation, no link from a note to the commit it describes, and it grows unbounded and goes stale. A context DAG keeps the same Git-versioned, in-repo property but adds typed nodes, branches you can merge (with a <code>MERGE</code> node carrying both parents), and snapshots pinned to commit SHAs you can restore and diff.</p>
+      <p><strong>Are reasoning snapshots tied to specific commits?</strong> Yes. Every <code>h5i capture commit</code> snapshots the context workspace and links it to the resulting commit SHA. Use <code>h5i recall context restore &lt;sha&gt;</code> to recover the reasoning as of that commit, or <code>h5i recall context diff &lt;from&gt; &lt;to&gt;</code> to see how it evolved between two commits.</p>
+      <p><strong>Can two agents merge their reasoning?</strong> Yes. Branch with <code>h5i recall context branch &lt;name&gt;</code>, explore without disturbing the main thread, then <code>h5i recall context merge &lt;name&gt;</code> to fold the conclusion back. The merge produces a <code>MERGE</code> node recording both parent IDs, so the graph is a true DAG, not a linear log.</p>
+      <p><strong>Where is it stored, and does <code>git push</code> share it?</strong> In the Git ref <code>refs/h5i/context</code>, separate from your working tree. Plain <code>git push</code> does not move <code>refs/h5i/*</code> — use <code>h5i share push</code> and <code>h5i share pull</code> to share the reasoning DAG alongside the code.</p>
+    </div>
 
     <h2>What to read next</h2>
 

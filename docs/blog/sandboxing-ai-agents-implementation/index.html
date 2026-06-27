@@ -3,20 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sandboxing AI Agents, Part 2: Implementation: h5i</title>
-  <meta name="description" content="Implement an AI agent sandbox with worktrees, Landlock, seccomp, namespaces, cgroups, egress allowlists, secrets, and audit logs.">
-  <meta name="keywords" content="implement sandbox, Linux sandbox, Landlock, seccomp, namespaces, cgroups, network namespace, AI agent sandbox">
+  <title>Sandboxing AI Agents, Part 2: Implementing Kernel-Tier Confinement: h5i</title>
+  <meta name="description" content="How to implement a kernel-tier Linux sandbox for AI agents: probe Landlock/seccomp/namespaces, run a functional self-test, and fail closed instead of silently downgrading.">
+  <meta name="keywords" content="implement sandbox, Linux sandbox, Landlock, seccomp, namespaces, network namespace, capability probing, fail closed, RLIMIT, no_new_privs, AI agent sandbox">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
   <link rel="canonical" href="https://h5i.dev/blog/sandboxing-ai-agents-implementation/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
   <link rel="icon" type="image/png" href="/_static/logo.png">
   <link rel="apple-touch-icon" href="/_static/logo.png">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="Sandboxing AI Agents, Part 2: Implementation">
-  <meta property="og:description" content="Build the boundary: filesystem, syscalls, namespaces, network, resources, secrets, and evidence.">
+  <meta property="og:title" content="Sandboxing AI Agents, Part 2: Implementing Kernel-Tier Confinement">
+  <meta property="og:description" content="Probe Landlock, seccomp, and namespaces; run a functional self-test; fail closed. The hard part isn't picking primitives — it's proving the boundary actually holds.">
   <meta property="og:url" content="https://h5i.dev/blog/sandboxing-ai-agents-implementation/">
   <meta property="og:image" content="https://h5i.dev/_static/sandbox-series-card.png">
   <meta property="og:image:width" content="1200">
@@ -25,19 +26,22 @@
   <meta property="article:tag" content="AI agent sandbox">
   <meta property="article:tag" content="Landlock">
   <meta property="article:tag" content="seccomp">
-  <meta property="article:tag" content="egress allowlist">
+  <meta property="article:tag" content="namespaces">
   <meta property="article:published_time" content="2026-06-12">
-  <meta property="article:modified_time" content="2026-06-12">
+  <meta property="article:modified_time" content="2026-06-26">
   <meta property="article:author" content="Koukyosyumei">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Sandboxing AI Agents, Part 2: Implementation">
-  <meta name="twitter:description" content="Worktrees, Landlock, seccomp, namespaces, cgroups, egress allowlists, secrets, and audit logs.">
+  <meta name="twitter:title" content="Sandboxing AI Agents, Part 2: Implementing Kernel-Tier Confinement">
+  <meta name="twitter:description" content="Probe, self-test, fail closed. A worked walkthrough of a rootless Linux agent sandbox: Landlock, seccomp, namespaces, rlimits, and the traps.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-series-card.png">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 2: Implementation","description":"Implement an AI agent sandbox with worktrees, Landlock, seccomp, namespaces, cgroups, egress allowlists, secrets, and audit logs.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-implementation/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":2150,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox implementation","Landlock","seccomp","network egress allowlist"],"keywords":"Landlock, seccomp, namespaces, cgroups, egress allowlist, AI agent sandbox"}
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 2: Implementing Kernel-Tier Confinement","description":"How to implement a kernel-tier Linux sandbox for AI agents: probe Landlock/seccomp/namespaces, run a functional self-test, and fail closed instead of silently downgrading.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-26","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-implementation/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":2700,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox implementation","Landlock","seccomp","Linux namespaces","network egress allowlist"],"keywords":"Landlock, seccomp, namespaces, capability probing, fail closed, RLIMIT, AI agent sandbox"}
   </script>
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://h5i.dev/blog/"},{"@type":"ListItem","position":3,"name":"Sandboxing AI Agents, Part 2","item":"https://h5i.dev/blog/sandboxing-ai-agents-implementation/"}]}
+  </script>
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Is a Git worktree a sandbox?","acceptedAnswer":{"@type":"Answer","text":"No. A worktree gives an agent its own branch, index, and working directory, which protects your active checkout from messy edits. It is not an execution boundary: the process still runs with your host permissions, so it can read ~/.ssh, open the network, and inspect host processes. Treat the worktree as the file workspace layer and add kernel confinement around the command."}},{"@type":"Question","name":"Does the presence of Landlock, seccomp, and user-namespace capability bits mean confinement works?","acceptedAnswer":{"@type":"Answer","text":"No. The kernel can advertise Landlock, seccomp, and unprivileged user namespaces while still refusing to let a confined process exec — for example when an AppArmor profile restricts unprivileged userns, which is common on CI runners. The bits are necessary but not sufficient. The fix is a functional self-test: run a trivial command (true) under the full boundary before accepting the policy, and refuse if it cannot run."}},{"@type":"Question","name":"Why fail closed instead of degrading to a weaker isolation tier?","acceptedAnswer":{"@type":"Answer","text":"Silent downgrade is the most dangerous sandbox bug: the user asked for confinement, the evidence record says confinement, and the command actually ran unrestricted. Refusing with a clear message about the missing capability lets the operator decide — re-request a weaker tier explicitly, or fix the host — instead of getting a false sense of safety. Every resolution either proves the requested claim or returns an error."}},{"@type":"Question","name":"Why use RLIMIT_DATA instead of RLIMIT_AS for a memory limit?","acceptedAnswer":{"@type":"Answer","text":"RLIMIT_AS caps virtual address space, which modern runtimes over-reserve by design: V8/Node maps a roughly 1 TiB PROT_NONE heap cage at startup and Go reserves large arenas, none of it resident. An AS cap rejects those reservations and the process aborts at trivial RSS. RLIMIT_DATA caps the writable data segment (brk plus writable anonymous mappings), so it bounds actual heap growth without counting PROT_NONE reservations. A cgroup memory.max is the accurate whole-subtree cap layered on top when the host delegates one."}},{"@type":"Question","name":"Can a kernel-tier sandbox contain hostile code that has a kernel exploit?","acceptedAnswer":{"@type":"Answer","text":"Not reliably. A seccomp deny-list plus Landlock plus namespaces reduces the known-dangerous surface and blocks the usual escalation paths, but it still shares one kernel with the host, so a kernel bug in a permitted syscall can defeat it. For untrusted code with an exploit budget, use a separate-kernel boundary such as a microVM."}}]}
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -62,254 +66,252 @@
   <article class="post">
     <header>
       <div class="post-eyebrow">Sandbox Series · Part 2 · 2026-06-12</div>
-      <h1>Sandboxing AI Agents, Part 2: How to Implement One</h1>
-      <p class="post-deck">Implementation is where most sandbox claims become precise or collapse. This part walks through a rootless Linux design and the checks that keep it honest.</p>
+      <h1>Sandboxing AI Agents, Part 2: How to Implement Kernel-Tier Confinement</h1>
+      <p class="post-deck">The hard part of a Linux agent sandbox isn't choosing primitives. It's that a kernel advertising Landlock, seccomp, and user namespaces can still refuse to confine a process — so you probe capabilities, run a functional self-test, and fail closed rather than silently downgrade.</p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
-        <span><strong>Reading time</strong> 18 min</span>
+        <span><strong>Reading time</strong> 17 min</span>
         <span><strong>Tags</strong> Landlock · seccomp · namespaces</span>
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>Capability bits report kernel support, not confinement, so probe capabilities, run a functional self-test, and refuse to start if it cannot run.</li>
+        <li>Fail closed beats degrade: a silent downgrade is the worst sandbox bug because the evidence agrees with a guarantee that no longer holds.</li>
+        <li>Every primitive has a trap — Landlock cannot subtract a child and must use HardRequirement; memory uses RLIMIT_DATA, not RLIMIT_AS.</li>
+  </ul>
+</div>
     <p>
-      A sandbox implementation is not one mechanism. It is a launch protocol. You prepare a filesystem view, create namespaces, drop privileges, install syscall policy, install resource limits, configure networking, start the workload, observe the workload, and preserve enough evidence to review the result. The order matters because a process that runs before the boundary is complete is not confined by the boundary. Implementation is how the confinement pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> becomes precise, or collapses.
+      An AI coding agent that can run shell commands is, from the kernel's point of view, an ordinary process with your full permissions. It can read <code>~/.ssh/id_ed25519</code>, push to a remote, exfiltrate over the network, or read another process's environment block — not because it is malicious, but because a prompt-injected tool call or a poisoned dependency can steer it there. The sandbox is the only thing standing between that and your laptop. So the implementation has to be correct, not merely present.
     </p>
 
     <p>
-      Think of implementation as building a small operating room for one command. The command should not inherit the whole developer laptop. It should receive a prepared directory, a small set of visible system files, a private process view, a controlled network path, a resource budget, and a recorder. The implementation work is making sure those pieces exist before the command gets its first instruction.
+      If you have built containers before, the primitives here will look familiar: Landlock for files, seccomp for syscalls, namespaces for isolation, rlimits and cgroups for resources. What you may not have internalized is the failure mode that dominates real deployments. <strong>The kernel reporting that a primitive exists does not mean confinement actually works.</strong> A host can advertise Landlock ABI 3, seccomp, and unprivileged user namespaces, and still refuse to let a confined process call <code>exec</code> — for instance when an AppArmor profile restricts unprivileged userns, which is the default on several CI runners. A sandbox that trusts the capability bits and launches anyway has quietly run the command unconfined. This post walks through a rootless Linux design (h5i's <code>process</code> tier, <code>src/sandbox.rs</code>) and, more importantly, the checks that keep the boundary honest: <em>probe, then verify, then fail closed</em>.
     </p>
 
     <div class="callout">
-      <strong>Series map.</strong> Review the <a href="/blog/sandboxing-ai-agents-foundations/">foundations</a>, then continue to <a href="/blog/sandboxing-ai-agents-landscape/">sandbox comparison</a> and <a href="/blog/sandboxing-ai-agents-h5i/">h5i's env design</a>.
+      <strong>Series map.</strong> Start with the <a href="/blog/sandboxing-ai-agents-foundations/">foundations</a> (the threat model and why a worktree isn't a boundary), read this part for implementation, then compare designs in the <a href="/blog/sandboxing-ai-agents-landscape/">sandbox landscape</a> and see how it composes with provenance in <a href="/blog/sandboxing-ai-agents-h5i/">h5i's env design</a>.
     </div>
 
-    <h2>Start with a policy type</h2>
+    <h2>A sandbox is a launch protocol, not a mechanism</h2>
     <p>
-      The first implementation mistake is treating sandbox options as informal flags. Instead, define a policy object with explicit fields and a resolved form. The requested policy is what the user asked for. The resolved policy is what the host proved it can enforce. If the requested claim cannot be resolved, the implementation should refuse rather than silently downgrade.
+      The single idea that organizes everything below: a process that runs before the boundary is complete is not confined by the boundary. So implementation is an ordering problem. You prepare a filesystem view, create namespaces, drop privileges, install syscall policy and resource limits, configure networking, and only then <code>exec</code> the workload. Anything that needs broad authority must happen before the untrusted command's first instruction; anything it could use to escape must be removed before <code>exec</code>. Get the order wrong and each mechanism still "works" in isolation while the composite leaks.
+    </p>
+    <p>
+      The second idea: separate what the user <em>asked for</em> from what the host <em>proved it can enforce</em>. Those are different objects, and conflating them is how sandboxes lie.
+    </p>
+
+    <h2>Start with a resolved policy type</h2>
+    <p>
+      The first implementation mistake is treating sandbox options as informal flags. Define a policy object with explicit fields, parsed from checked-in config (h5i reads <code>.h5i/env.toml</code>), with two forms: the <em>requested</em> policy is what the profile asked for; the <em>resolved</em> policy is what the host proved it can enforce. Resolution either succeeds or refuses — it never downgrades the claim behind your back.
     </p>
 
     <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">policy.toml</span></div>
-      <div class="terminal-body"><pre><span class="t-cmt"># Minimum isolation claim. If the host cannot provide it, refuse.</span>
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">.h5i/env.toml</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># Minimum isolation claim. If the host cannot enforce it, refuse — never downgrade.</span>
 <span class="t-out">isolation</span> = <span class="t-cmd">"process"</span>
 
-<span class="t-cmt"># Read access: the worktree plus read-only runtime files needed by tools.</span>
-<span class="t-out">fs.read</span>   = [<span class="t-cmd">"$WORK"</span>, <span class="t-cmd">"/usr"</span>, <span class="t-cmd">"/lib"</span>, <span class="t-cmd">"/nix"</span>]
-
-<span class="t-cmt"># Write access: only the disposable environment worktree.</span>
+<span class="t-cmt"># Landlock allowlist. fs.deny is a lint over fs.read/write, not a subtraction —</span>
+<span class="t-cmt"># you cannot grant a parent tree and carve a child out of it (see below).</span>
+<span class="t-out">fs.read</span>   = [<span class="t-cmd">"$WORK"</span>, <span class="t-cmd">"/usr"</span>, <span class="t-cmd">"/lib"</span>, <span class="t-cmd">"/etc/ssl"</span>]
 <span class="t-out">fs.write</span>  = [<span class="t-cmd">"$WORK"</span>]
 
-<span class="t-cmt"># No outbound network in this profile.</span>
+<span class="t-cmt"># No outbound network in this profile (an empty network namespace).</span>
 <span class="t-out">net.mode</span>  = <span class="t-cmd">"deny"</span>
-<span class="t-out">net.egress</span> = []
 
-<span class="t-cmt"># Resource budget: memory, number of processes, and wall-clock time.</span>
-<span class="t-out">limits.memory_mb</span> = <span class="t-pass">4096</span>
-<span class="t-out">limits.pids</span> = <span class="t-pass">256</span>
-<span class="t-out">limits.seconds</span> = <span class="t-pass">900</span>
-
-<span class="t-cmt"># No credentials are injected unless explicitly named.</span>
-<span class="t-out">secrets</span> = []</pre></div>
+<span class="t-cmt"># Resource budget. mem/procs/wall always apply; fsize/cpu are opt-in.</span>
+<span class="t-out">resources.mem</span>   = <span class="t-pass">"4GiB"</span>
+<span class="t-out">resources.procs</span> = <span class="t-pass">256</span>
+<span class="t-out">resources.wall</span>  = <span class="t-pass">"900s"</span></pre></div>
     </div>
 
     <p>
-      A good resolver returns both policy and evidence: Landlock ABI version, whether unprivileged user namespaces are enabled, whether seccomp can install the filter, whether cgroup v2 delegation exists, whether rootless Podman is available, and whether network allowlists can actually be enforced. That evidence should be stored with every run.
+      Everything is fail-closed by default: an unparseable field, an unknown isolation claim, or a tool not on the <code>tools</code> allowlist is a refusal, not a warning. Two built-in profiles need no file — <code>default</code> (deny-home build/test confinement) and <code>agent</code> (agent-in-box, only on tiers that can enforce it).
+    </p>
+
+    <h2>Probe the host: capabilities, carefully</h2>
+    <p>
+      Resolution starts by asking the kernel what it actually supports — and the probes have to be honest. Two traps recur. First, do not unshare a namespace in your own long-lived process to "test" it; you cannot cleanly undo it. Fork a throwaway child instead. Second, a syscall that returns a version number is telling you the surface exists, not that you may use it.
     </p>
 
     <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">policy resolver pseudo-code</span></div>
-      <div class="terminal-body"><pre><span class="t-cmt"># requested: what the user or profile asked for</span>
-<span class="t-cmt"># host: what the current machine can actually enforce</span>
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">capability probes (src/sandbox.rs)</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># Landlock: landlock_create_ruleset(NULL, 0, VERSION) returns the highest</span>
+<span class="t-cmt"># supported ABI, or -1 when the LSM is off. It creates nothing.</span>
+landlock_abi = create_ruleset(NULL, 0, CREATE_RULESET_VERSION)   <span class="t-cmt"># Some(3) here, else None</span>
 
-resolved = {}
+<span class="t-cmt"># seccomp: PR_GET_SECCOMP succeeds (>= 0) iff the kernel has seccomp.</span>
+has_seccomp  = prctl(PR_GET_SECCOMP) &gt;= 0
 
-if requested.isolation == <span class="t-cmd">"process"</span>:
-    require(host.has_user_namespaces)
-    require(host.has_mount_namespaces)
-    require(host.has_pid_namespaces)
-    require(host.has_seccomp)
-    require(host.has_landlock)
-    resolved.isolation = <span class="t-cmd">"process"</span>
-
-if requested.net.egress is not empty:
-    require(host.can_enforce_egress_allowlist)
-    resolved.net.egress = pin_dns_and_addresses(requested.net.egress)
-
-if any require(...) failed:
-    refuse(<span class="t-red">"requested sandbox claim cannot be enforced"</span>)</pre></div>
+<span class="t-cmt"># user namespaces: NEVER unshare in this process. Fork a throwaway child that</span>
+<span class="t-cmt"># runs `true` after unshare(CLONE_NEWUSER); it exits 0 iff the unshare took.</span>
+has_userns   = spawn(<span class="t-cmd">"true"</span>, pre_exec = || unshare(CLONE_NEWUSER)).exit == 0</pre></div>
     </div>
 
-    <h2>Workspace isolation</h2>
     <p>
-      AI coding agents need a place to make changes. The lowest-cost answer is a separate checkout, usually a Git worktree. This prevents accidental edits to the developer's active tree and gives each agent its own branch, index, and working directory. It is not a security boundary by itself: the process still has the user's host permissions unless a stronger tier is applied.
+      A resolver then maps requested claim to required capabilities and collects every missing one, so the error names all of them at once rather than failing on the first:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">resolve(profile, caps) -&gt; ResolvedPolicy | refuse</span></div>
+      <div class="terminal-body"><pre>missing = []
+if requested.isolation == <span class="t-cmd">"process"</span>:
+    if caps.landlock_abi is None:  missing += <span class="t-cmd">"Landlock unavailable"</span>
+    if not caps.has_userns:        missing += <span class="t-cmd">"unprivileged user namespaces disabled"</span>
+    if not caps.has_seccomp:       missing += <span class="t-cmd">"seccomp-bpf unavailable"</span>
+
+if missing:
+    refuse(<span class="t-red">"isolation claim 'process' cannot be satisfied on this host: " + missing</span>)</pre></div>
+    </div>
+
+    <h2>The trap: capability bits are not confinement</h2>
+    <p>
+      Here is the part that most write-ups skip. Every probe above can pass and the sandbox can still be broken. The bits report kernel <em>support</em>; they do not report that a process confined this way can <em>run</em>. On a host where AppArmor restricts unprivileged user namespaces, <code>unshare(CLONE_NEWUSER)</code> may even succeed in the probe yet the full confined launch fails at <code>exec</code> with <code>EACCES</code> — and you would only discover it when the first real command dies.
     </p>
     <p>
-      The major worktree trap is the shared Git object store. A worktree's <code>.git</code> entry points back into the repository's common Git directory. If a confined process can follow that pointer, it may reach refs, hooks, config, and object storage outside the intended workspace. A process-tier sandbox should hide or replace <code>.git</code>, then have the host-side supervisor compute diffs and commit through a path-checked staging path.
+      The defense is a <strong>functional self-test</strong>. After resolution, before accepting an environment, actually run a trivial command (<code>true</code>) through the entire process-tier boundary in a throwaway directory and confirm it exits 0. h5i's <code>verify_exec</code> gates <code>env create</code> on exactly this. If the self-test cannot run, creation refuses with a message that explains the likely cause and tells the operator to re-request a weaker, explicit tier — it does not quietly hand back a weaker sandbox.
     </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">verify_exec(policy) — the functional self-test</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># "Bits present" != "confinement can exec". Prove it by running under the</span>
+<span class="t-cmt"># real boundary. Clear the tools allowlist first so a user-pinned list that</span>
+<span class="t-cmt"># omits `true` can't reject our own probe.</span>
+probe = policy.with_tools_cleared()
+
+match run(probe, tmpdir, [<span class="t-cmd">"true"</span>]):
+    exit 0    -&gt; <span class="t-pass">Ok</span>                 <span class="t-cmt"># confinement can exec — create the env</span>
+    exit n    -&gt; <span class="t-red">refuse("self-test exited n; re-request --isolation workspace")</span>
+    error e   -&gt; <span class="t-red">refuse("not functional: {e} (e.g. AppArmor-restricted userns)")</span></pre></div>
+    </div>
 
     <div class="callout">
-      <strong>Worktree is not sandbox.</strong> A Git worktree protects your active checkout from messy edits. It does not stop a process from reading <code>~/.ssh</code>, opening the network, or inspecting host processes. Treat it as the file workspace layer, then add execution confinement around commands.
+      <strong>Why fail closed beats degrade.</strong> Silent downgrade is the worst sandbox bug because it is invisible: the user asked for confinement, the evidence record claims confinement, and the command ran unrestricted. A refusal is loud and recoverable — fix the host, or pass <code>--isolation workspace</code> on purpose. Capability probing should <em>refuse, never silently downgrade</em>.
     </div>
 
-    <h2>Filesystem confinement</h2>
+    <h2>Filesystem confinement with Landlock</h2>
     <p>
-      On Linux, the modern unprivileged primitive for per-process filesystem access control is Landlock. Landlock is allowlist-oriented. You grant read and write rights to specific trees. You cannot grant a parent directory and then subtract one child. That single detail shapes the whole design: do not grant the repository root and hope to deny <code>.git</code>; grant the worktree and selected system paths.
+      Landlock is the modern unprivileged primitive for per-process filesystem access control, and it is strictly allowlist-oriented. You grant read or read+write rights to specific trees; you <strong>cannot</strong> grant a parent and then subtract a child. That one property shapes the whole design: never grant the repository root hoping to deny <code>.git</code> — grant the worktree (<code>$WORK</code>) read+write and selected system paths (<code>/usr</code>, <code>/lib</code>, <code>/etc/ssl</code>, …) read-only. Anything sensitive in <code>$HOME</code> is simply absent.
     </p>
     <p>
-      A practical file policy usually grants write access to <code>$WORK</code>, read-only access to runtime paths such as <code>/usr</code>, <code>/lib</code>, <code>/lib64</code>, <code>/bin</code>, <code>/etc/ssl</code>, and maybe language-store paths such as <code>/nix</code>. Everything sensitive in the home directory is absent by default. If an agent runtime needs its own state, grant only that runtime's directory and only in a profile that also controls egress.
+      Two implementation details decide whether this is real or theater:
     </p>
+    <ul>
+      <li><strong>Compatibility is a hard requirement.</strong> The Landlock crate defaults to "best effort": on an older kernel it silently drops access rights it cannot enforce. For a security boundary that is a downgrade in disguise. h5i builds the ruleset with <code>CompatLevel::HardRequirement</code> and matches the granted access set to the probed ABI (ABI 1→V1 … 5+→V5). After <code>restrict_self</code>, it checks the returned status and treats <code>NotEnforced</code> as a fatal, fail-closed error.</li>
+      <li><strong>Skipping a missing grant narrows the sandbox.</strong> If a configured read path doesn't exist on this host, drop the grant rather than erroring — fewer grants is the fail-closed direction. The inverse (inventing access) would not be.</li>
+    </ul>
     <p>
-      Filesystem policy must also handle path escape during review. Symlinks, hardlinks, nested Git repositories, submodule gitdirs, and <code>..</code> traversal all matter. If the host commits changes after the workload exits, every staged path should be canonicalized and rejected when it escapes <code>$WORK</code>. Treat this as part of the sandbox boundary, not as cleanup.
+      There is a subtle ordering bug hiding in the private-procfs step. When the workload runs in its own PID namespace, you mount a fresh <code>/proc</code> over the host one — but that new mount shadows the inode Landlock granted, so the original read rule no longer applies to it. The fix is to re-grant Landlock read on the newly mounted <code>/proc</code> <em>inside the child</em>, after the mount, before locking the ruleset. Miss this and either the tool can't read <code>/proc</code> or you over-grant the host one.
     </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">path escape check</span></div>
-      <div class="terminal-body"><pre>for changed_path in diff_from_worktree():
-    real_path = canonicalize(<span class="t-out">$WORK</span> / changed_path)
-
-    if not real_path.starts_with(canonicalize(<span class="t-out">$WORK</span>)):
-        reject(<span class="t-red">"path escapes sandbox worktree"</span>)
-
-    if path_is_nested_gitdir_or_submodule(real_path):
-        reject(<span class="t-red">"nested repository boundary needs explicit handling"</span>)
-
-    stage_for_commit(real_path)</pre></div>
-    </div>
-
-    <h2>Process and syscall confinement</h2>
-    <p>
-      Seccomp limits the Linux syscall surface. The strongest model is an allowlist: only syscalls needed by the workload are permitted. Many developer sandboxes start with a denylist because language toolchains need a broad surface and an allowlist takes time to tune. A denylist is still useful when it blocks obvious escalation tools: <code>mount</code>, <code>ptrace</code>, <code>bpf</code>, module loading, keyrings, and dangerous namespace operations.
-    </p>
-    <p>
-      Seccomp should be installed after <code>PR_SET_NO_NEW_PRIVS</code>. No-new-privs prevents later exec transitions from gaining privilege through setuid binaries or file capabilities. Drop Linux capabilities where possible. Use a private PID namespace so the workload cannot inspect or signal host processes, and mount a private <code>/proc</code> for that namespace rather than exposing the host process table.
-    </p>
-
-    <div class="tbl-wrap">
-      <table class="data">
-        <thead><tr><th>Primitive</th><th>Beginner translation</th><th>Example denial</th></tr></thead>
-        <tbody>
-          <tr><td><strong>seccomp</strong></td><td>Filter the questions a process may ask the kernel.</td><td>deny <code>mount()</code> or <code>bpf()</code></td></tr>
-          <tr><td><strong>no-new-privs</strong></td><td>Do not let future execs gain more privilege than this process has now.</td><td>setuid helper cannot elevate</td></tr>
-          <tr><td><strong>PID namespace</strong></td><td>Show the workload its own small process table.</td><td>cannot inspect host <code>/proc</code></td></tr>
-          <tr><td><strong>capabilities</strong></td><td>Split root-like power into smaller switches and turn them off.</td><td>no <code>CAP_SYS_ADMIN</code></td></tr>
-        </tbody>
-      </table>
-    </div>
 
     <div class="callout warn">
-      <strong>Denylist seccomp is not a hostile-code proof.</strong> It reduces known-dangerous surface. It does not prove that every permitted syscall is safe against a future kernel bug. For malicious code with a kernel exploit budget, use a separate-kernel boundary such as a microVM.
+      <strong>Worktree is not a sandbox.</strong> A Git worktree gives each agent its own branch and working directory and protects your active checkout. It does not stop the process from reading <code>~/.ssh</code>, opening a socket, or reading host process memory. It is the file workspace layer; the confinement above is what makes it a boundary. The remaining trap is the shared object store: a worktree's <code>.git</code> points back into the common Git directory (refs, hooks, config, objects). A confined run must not be able to follow that pointer to commit — the host-side supervisor stages changes through a path-checked, canonicalized commit that rejects symlink escapes, nested gitdirs, and <code>..</code> traversal.
     </div>
 
-    <h2>AI agent sandbox network confinement</h2>
+    <h2>Syscall confinement: a deny-list with a clear rationale</h2>
     <p>
-      Network policy has three common modes. <strong>Deny</strong> creates an empty or loopback-only network namespace. <strong>Host</strong> leaves networking unrestricted and should be labeled as such. <strong>Allowlist</strong> permits specific destinations. Allowlist is the most useful mode for agents, but it is also the easiest to implement incorrectly.
+      Seccomp filters which syscalls a process may issue. The strongest model is a default-deny <em>allowlist</em>, but allowlists are brittle for general developer workloads: language toolchains touch a wide and version-dependent syscall surface, and one missing entry turns a passing build into a mysterious crash. A pragmatic v1 is therefore a default-<em>allow</em> <strong>deny-list</strong> that returns <code>EPERM</code> for administrative, introspection, and namespace syscalls that a build or test never legitimately issues. It is a real reduction in attack surface, not a proof of safety, and the design says so.
     </p>
     <p>
-      A proxy-only allowlist blocks programs that use the proxy. It may not block a raw socket unless the runtime also prevents direct network access. DNS filtering alone is also insufficient: a program can connect to an IP literal, reuse a cached address, or encode data into DNS queries if port 53 is open. A serious egress design needs packet-level enforcement plus name resolution that cannot become a side channel.
-    </p>
-    <p>
-      One rootless Linux pattern is: create a network namespace, attach a user-space NAT such as <code>slirp4netns</code>, install default-drop <code>nftables</code> rules inside the namespace, resolve allowlisted hostnames at startup, bind a private <code>/etc/hosts</code>, and do not open general DNS. Then block <code>AF_NETLINK</code> after setup so the workload cannot rewrite routes or firewall rules.
-    </p>
-
-    <p>
-      The detail to watch is bypass shape. If the policy says "only <code>github.com</code>," then a direct connection to <code>140.82.112.4</code> must not work unless that address was pinned for the allowed host. If the policy says "no DNS except pinned names," then a hostname such as <code>secret.attacker.example</code> should not even resolve. If the workload can edit firewall rules after launch, the allowlist is only advisory.
+      The deny set groups into categories with a one-line justification each:
     </p>
 
     <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">egress decision model</span></div>
-      <div class="terminal-body"><pre>allowlisted host  -&gt; resolve once -&gt; pin address -&gt; nftables allow -&gt; connect
-other hostname    -&gt; absent from private hosts file -&gt; no DNS path -&gt; fail
-raw IP literal    -&gt; packet hits default drop -&gt; fail
-firewall rewrite  -&gt; AF_NETLINK denied by socket gate -&gt; fail</pre></div>
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">denied_syscalls() — match -&gt; EPERM, default Allow</span></div>
+      <div class="terminal-body"><pre>mount, umount2, pivot_root, chroot        <span class="t-cmt"># rootfs manipulation</span>
+ptrace, process_vm_readv/writev           <span class="t-cmt"># cross-process memory / tracing</span>
+keyctl, add_key, request_key              <span class="t-cmt"># kernel keyring</span>
+bpf, perf_event_open, userfaultfd         <span class="t-cmt"># privileged kernel interfaces</span>
+init_module, finit_module, delete_module  <span class="t-cmt"># module loading</span>
+kexec_load, kexec_file_load               <span class="t-cmt"># load a new kernel</span>
+open_by_handle_at, name_to_handle_at      <span class="t-cmt"># bypass path-based Landlock</span>
+setns, unshare                            <span class="t-cmt"># enter / create namespaces post-launch</span>
+io_uring_setup/enter/register             <span class="t-cmt"># large, repeatedly-exploited surface that</span>
+                                          <span class="t-cmt">#   also bypasses seccomp for its own ops</span>
+reboot, swapon/off, settimeofday, …       <span class="t-cmt"># host / time / power administration</span></pre></div>
     </div>
 
-    <h2>Resources and time</h2>
     <p>
-      Resource limits are part of security because denial of service is a security failure. Use cgroup v2 when available: <code>memory.max</code>, <code>pids.max</code>, CPU weight or quota, and I/O limits if needed. Use <code>RLIMIT_FSIZE</code> to prevent huge files, <code>RLIMIT_CPU</code> as a backstop, and a wall-clock supervisor timer because CPU limits do not catch every hang.
+      A few entries earn their place specifically. <code>open_by_handle_at</code> / <code>name_to_handle_at</code> resolve files by an opaque handle rather than a path, which would route around Landlock's path-based checks. <code>io_uring</code> is denied wholesale because it is both a recurring source of kernel CVEs and a way to submit operations that the seccomp filter never sees. And the deny-list is honest about its gap: <code>clone</code> with <code>CLONE_NEWUSER</code> is not argument-filtered in v1 (filtering <code>clone</code> flags is fiddly and easy to get wrong), so the floor is held by other layers — <code>unshare</code> is denied outright, and <code>no_new_privs</code> plus Landlock bound what any fresh namespace could reach. An argument-aware allowlist is a later hardened profile, not a claim made here.
     </p>
     <p>
-      Limits should be visible in the audit log. If a test run failed because the sandbox killed it at 900 seconds or memory pressure terminated a process, the reviewer needs to distinguish that from a semantic test failure.
+      Ordering matters again: install seccomp <em>after</em> <code>PR_SET_NO_NEW_PRIVS</code>. No-new-privs is what prevents a later <code>exec</code> of a setuid binary or file-capability program from regaining privilege, and Landlock requires it too. Lock down, then exec.
     </p>
 
-    <h2>Secrets</h2>
+    <h2>Namespaces and the PID-view leak</h2>
     <p>
-      Passing secrets as environment variables is convenient and dangerous. Child processes inherit them. Debug output prints them. <code>/proc</code> can reveal them if namespaces and procfs are wrong. A stronger pattern is a secrets broker: the workload asks for a named secret, the broker checks policy, releases the value only for the intended scope, and redacts matching fingerprints from captured output.
-    </p>
-    <p>
-      The broker should log the secret name, a fingerprint, the command scope, and whether release was allowed. It should not log the secret value. If the sandbox permits network egress, the policy should be stricter about which secrets are present; a stage with secrets and broad network is the dangerous combination.
-    </p>
-
-    <h2>Observation and evidence</h2>
-    <p>
-      Every run should produce a capture: command, arguments, working directory, start time, exit status, stdout and stderr pointers, policy digest, resource summary, egress summary, denied actions, and redactions. Large output should be content-addressed outside the model's context window, but recoverable. The summary should be small enough for an agent or reviewer to scan.
+      At the process tier the child always enters fresh user, IPC, and UTS namespaces (<code>CLONE_NEWUSER | CLONE_NEWIPC | CLONE_NEWUTS</code>): the user namespace is what makes all the rest unprivileged, and IPC+UTS remove shared System V IPC and the host hostname. When the profile denies networking, it adds <code>CLONE_NEWNET</code> for an empty network namespace — no interfaces, no routes, nothing to connect to. The uid/gid map is 1:1 back to the real user so files written in <code>$WORK</code> keep correct ownership, with <code>setgroups</code> set to <code>deny</code> before the gid map.
     </p>
     <p>
-      This evidence is not only debugging. It is how the sandbox becomes reviewable. A diff produced under a weak policy should not be reviewed the same way as a diff produced under deny-network confinement. A run with blocked raw-IP egress deserves more scrutiny than a run that only compiled.
+      The leak worth calling out is the process table. Without a PID namespace, a confined process can read <code>/proc/&lt;pid&gt;/environ</code> of host processes — which is exactly where other tools keep their secrets. So the process tier also unshares <code>CLONE_NEWPID | CLONE_NEWNS</code> and mounts a private <code>/proc</code>. A new PID namespace needs a PID 1, so the implementation forks inside <code>pre_exec</code>: the parent becomes a thin supervisor that mirrors the workload's exit (and writes the workload's real pid into the cgroup so accounting binds the right process), while the child is PID 1 of the new namespace and goes on to exec the command.
     </p>
 
-    <h2>Launch order</h2>
-    <p>
-      The launch sequence is easiest to understand as "host prepares, child enters, child loses power, workload starts." Anything that requires broad authority must happen before the untrusted command runs. Anything the command could use to escape must be removed or filtered before <code>exec</code>.
-    </p>
-    <ol>
-      <li>Create or select the isolated workspace and freeze the base revision.</li>
-      <li>Resolve policy against host capabilities; refuse if the claim cannot be enforced.</li>
-      <li>Prepare filesystem view, hiding shared Git state and sensitive host paths.</li>
-      <li>Create user, mount, PID, and network namespaces as required.</li>
-      <li>Set up network policy before the workload starts.</li>
-      <li>Install resource limits and cgroup membership.</li>
-      <li>Set no-new-privs, drop capabilities, and install seccomp or supervisor gates.</li>
-      <li>Start the workload and capture output, denials, resources, and egress decisions.</li>
-      <li>After exit, compute diff from the workspace filesystem using escape-checked paths.</li>
-      <li>Store policy, evidence, and diff together so review can reconstruct the run.</li>
-    </ol>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">launch pseudo-code</span></div>
-      <div class="terminal-body"><pre>manifest = create_env_manifest(base_commit, requested_policy)
-resolved = resolve_or_refuse(requested_policy, host_capabilities())
-
-work = create_git_worktree(base_commit)
-fs_view = prepare_mount_view(work, resolved.fs)
-network = prepare_network_namespace(resolved.net)
-resources = create_cgroup(resolved.limits)
-
-child = fork()
-if child == 0:
-    enter_user_mount_pid_network_namespaces()
-    mount_private_proc()
-    join_cgroup(resources)
-    apply_landlock(resolved.fs)
-    set_no_new_privs()
-    install_seccomp(resolved.syscalls)
-    exec(command)
-
-capture_exit_status_output_denials()
-diff = compute_escape_checked_diff(work)
-store_evidence(manifest, resolved, capture, diff)</pre></div>
-    </div>
-
-    <h2>Common implementation bugs</h2>
     <div class="tbl-wrap">
       <table class="data">
-        <thead><tr><th>Bug</th><th>Why it matters</th><th>Fix</th></tr></thead>
+        <thead><tr><th>Namespace</th><th>What it removes</th><th>When</th></tr></thead>
         <tbody>
-          <tr><td>Silent downgrade</td><td>User asks for network allowlist; host runs unrestricted</td><td>fail closed and print missing capability</td></tr>
-          <tr><td>Grant repo root to Landlock</td><td><code>.git</code> and hooks become reachable</td><td>grant worktree only; host mediates commits</td></tr>
-          <tr><td>Proxy-only network policy</td><td>Raw sockets bypass host allowlist</td><td>combine proxy with netns packet filtering or deny direct sockets</td></tr>
-          <tr><td>Host <code>/proc</code> mounted</td><td>Secrets and host process metadata leak</td><td>private PID namespace and private procfs</td></tr>
-          <tr><td>Secrets in argv</td><td>Process list and logs expose values</td><td>broker or file descriptor handoff; redact captures</td></tr>
-          <tr><td>No path canonicalization on apply</td><td>Symlink escape can write outside worktree</td><td>canonicalize and reject escaped paths</td></tr>
+          <tr><td><code>CLONE_NEWUSER</code></td><td>Host capabilities outside the userns; makes the rest unprivileged</td><td>always (process tier)</td></tr>
+          <tr><td><code>CLONE_NEWIPC</code> / <code>CLONE_NEWUTS</code></td><td>Shared SysV IPC; host hostname</td><td>always</td></tr>
+          <tr><td><code>CLONE_NEWNET</code></td><td>All network access (empty netns)</td><td>when <code>net.mode = deny</code></td></tr>
+          <tr><td><code>CLONE_NEWPID</code> + private <code>/proc</code></td><td>Visibility of host processes and their <code>environ</code></td><td>process tier (supervisor = PID 1)</td></tr>
         </tbody>
       </table>
     </div>
+
+    <h2>Resources, time, and a memory-limit trap</h2>
+    <p>
+      Resource limits are part of security because a hang or a fork bomb is a denial-of-service. The interesting trap is memory. The obvious choice, <code>RLIMIT_AS</code>, caps <em>virtual address space</em> — and modern runtimes over-reserve it on purpose: V8/Node maps a roughly 1 TiB <code>PROT_NONE</code> heap cage at startup and Go reserves large arenas, none of it resident. An <code>RLIMIT_AS</code> cap rejects those reservations and the process aborts at trivial RSS ("JavaScript heap out of memory" at ~100 MiB). h5i uses <code>RLIMIT_DATA</code> instead, which bounds the writable data segment (brk plus writable anonymous mappings) — actual heap growth, not <code>PROT_NONE</code> reservations. When the host delegates a cgroup v2 subtree, <code>memory.max</code> is the accurate whole-subtree cap layered on top; the rlimit is the per-process fallback.
+    </p>
+    <p>
+      The rest: <code>RLIMIT_NPROC</code> bounds process count, <code>RLIMIT_FSIZE</code> (opt-in) is a disk-bomb backstop on any single file, <code>RLIMIT_CPU</code> (opt-in) is a kernel-side CPU-time backstop, and <code>RLIMIT_CORE</code> is set to 0 so a crash can't dump memory to disk. None of these catches a process that simply sleeps, so there is also a wall-clock kill: the launcher calls <code>setsid</code> so the workload gets its own process group, then a supervisor loop reaps with <code>wait4</code> (recording <code>rusage</code> — peak RSS and CPU time for the audit log) and, at the deadline, sends <code>SIGKILL</code> to the whole group with <code>kill(-pid, …)</code> so no descendant survives. A timed-out run exits 124, the coreutils <code>timeout</code> convention, so reviewers can distinguish a kill from a semantic failure.
+    </p>
+
+    <h2>Network egress, briefly</h2>
+    <p>
+      Deny mode (empty netns) is airtight and cheap, and it is the right default. Allowlisting specific destinations is far harder to get right and, at the kernel/process tier, h5i deliberately does not attempt it: a proxy-only allowlist is bypassed by any program that ignores <code>HTTP_PROXY</code> and opens a raw socket, and DNS filtering alone leaks (IP literals, cached addresses, data tunneled in queries). A serious egress allowlist needs packet-level enforcement plus name resolution that can't become a side channel — create a netns, attach a userspace NAT (<code>slirp4netns</code>), install default-drop <code>nftables</code> inside it, pin allowlisted hostnames into a private <code>/etc/hosts</code>, and block route/firewall edits afterward. h5i ships that as the <code>container</code> tier's domain allowlist (a host-side DNS-pinned CONNECT proxy); the static <code>process</code> tier honestly only offers deny or host, and says so rather than shipping an advisory allowlist.
+    </p>
+
+    <h2>Launch order, end to end</h2>
+    <p>
+      Putting it together: host prepares, child enters, child loses power, workload starts. Read the sequence as "everything that needs authority happens before the untrusted command, and everything it could escape through is removed before <code>exec</code>."
+    </p>
+    <ol>
+      <li>Resolve the policy against host capabilities; refuse if any required capability is missing.</li>
+      <li>Gate creation on the functional self-test (<code>verify_exec</code>): run <code>true</code> through the full boundary, refuse if it can't.</li>
+      <li>Create/select the worktree and freeze the base revision; hide shared Git state and sensitive host paths.</li>
+      <li>In <code>pre_exec</code>: <code>setsid</code>, then <code>unshare</code> the namespaces; write uid/gid maps (<code>setgroups</code> deny first).</li>
+      <li>Mount private <code>/proc</code> and re-grant Landlock read on it; apply config-lock / private binds in the mount namespace.</li>
+      <li>Set rlimits (<code>RLIMIT_DATA</code>, <code>NPROC</code>, opt-in <code>FSIZE</code>/<code>CPU</code>, <code>CORE</code>=0).</li>
+      <li>Set <code>PR_SET_NO_NEW_PRIVS</code>; <code>restrict_self</code> the Landlock ruleset (fail closed on <code>NotEnforced</code>); install the seccomp filter.</li>
+      <li><code>exec</code> the command; capture output, denials, resources, and a policy digest.</li>
+      <li>After exit, compute the diff with escape-checked, canonicalized paths and store policy + evidence + diff together.</li>
+    </ol>
+
+    <h2>Honest limits</h2>
+    <p>
+      A design is only trustworthy if it names what it does not do. This one has real edges:
+    </p>
+    <ul>
+      <li><strong>One shared kernel.</strong> A seccomp deny-list plus Landlock plus namespaces reduces and bounds the attack surface; it does not prove every permitted syscall is safe against a kernel bug. For untrusted code with an exploit budget, the right boundary is a separate kernel — a microVM (Firecracker/Kata) or gVisor's user-space kernel. The deny-list is a floor, not a ceiling.</li>
+      <li><strong>The <code>supervised</code> tier is partial.</strong> It adds a seccomp-notify mediation model but currently runs with <code>pidns = false</code>. And per-command <code>execve</code> observation via seccomp-notify is <em>deferred</em>: notifying <code>execve</code> makes the bootstrap exec block on the supervisor, which deadlocks against the egress bring-up handshake. In-box observation ships through other mechanisms (a container tee-shim, a Bash hook) rather than execve notification.</li>
+      <li><strong>Hosts vary, and some can't run this at all.</strong> AppArmor-restricted unprivileged user namespaces (common on CI) break the process tier even when the capability bits look present — which is the entire reason the functional self-test exists. The correct behavior there is to refuse and let the operator choose <code>workspace</code> explicitly, not to pretend.</li>
+      <li><strong>The v1 deny-list has a documented <code>clone(CLONE_NEWUSER)</code> gap</strong>, mitigated by denying <code>unshare</code> and by <code>no_new_privs</code> + Landlock, and closed properly only by a future argument-aware allowlist profile.</li>
+    </ul>
+    <p>
+      None of this is "airtight." It is a layered, fail-closed boundary whose claims are bounded by what the host can prove — which is the most a process-tier sandbox can honestly offer.
+    </p>
 
     <h2>Testing a sandbox</h2>
     <p>
-      Unit tests should exercise policy parsing, path normalization, and resolver fail-closed cases. Integration tests should attempt real denied operations: read <code>~/.ssh</code>, write outside <code>$WORK</code>, connect to a raw IP, resolve an off-allowlist hostname, open <code>AF_NETLINK</code>, inspect host <code>/proc/1/environ</code>, fork past the PID limit, and fill a file past the file-size limit. Good tests prove both the refusal and the evidence record.
+      The most valuable tests are the boring negative ones: assert that a forbidden operation fails in exactly the way the security model predicts, and that the refusal is recorded. Unit-test the policy parser, path canonicalization, the resolver's fail-closed branches, and the membership of the syscall deny-list (you can assert the security-critical entries are present without a kernel). Integration-test the real denials: read <code>~/.ssh</code>, write outside <code>$WORK</code>, inspect <code>/proc/1/environ</code>, <code>unshare</code> a namespace, fork past the pid limit, and exceed the file-size limit. If a sandbox cannot demonstrate its own denials, reviewers are trusting prose. (h5i's process-tier and container tests are capability-gated — they skip cleanly where the host can't enforce them, rather than passing vacuously.)
     </p>
+
+    <h2>Conclusion</h2>
     <p>
-      The most useful negative tests are boring. They assert that a command fails in the way the security model predicts. If a sandbox cannot test its own denials, reviewers have to trust prose.
+      Choosing primitives is the easy 20% of a Linux agent sandbox; Landlock, seccomp, namespaces, and rlimits are well documented and largely interoperable. The hard 80% is the discipline around them. Resolve a requested policy into one the host has proven it can enforce. Probe capabilities without mutating your own process. Then — because capability bits report support, not confinement — run a functional self-test through the real boundary and refuse to create the environment if it fails. Get the launch order right so nothing runs before the boundary is complete, and fail closed at every step, because a sandbox that silently degrades is worse than no sandbox: it hands you a false guarantee and an evidence record that agrees with it. The implementation, not the diagram, decides whether the boundary holds.
     </p>
 
     <div class="next-up">
