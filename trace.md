@@ -3078,3 +3078,4 @@ _[Checkpoint: 6a3f1ab2 — edited docs/blog/context-dag-versioned-agent-reasonin
 [00:37:14] ACT: edited docs/blog/context-dag-versioned-agent-reasoning/index.html
 [00:37:16] ACT: edited docs/blog/from-git-blame-to-ai-blame/index.html
 [00:37:25] ACT: edited docs/blog/prompt-maturity-score/index.html
+[00:37:28] ACT: edited docs/blog/uncertainty-heatmap/index.html
