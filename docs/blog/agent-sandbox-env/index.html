@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>An Auditable Sandbox for AI Agents: h5i</title>
-  <meta name="description" content="Run AI agents in an auditable sandbox: Git worktree isolation, Landlock, seccomp, namespaces, and rootless egress controls.">
-  <meta name="keywords" content="ai agent sandbox, confined agent environment, agent isolation, network egress allowlist, landlock seccomp sandbox, rootless sandbox, claude code sandbox, audit agent commands">
+  <title>The Agent Sandbox With a Review Loop: h5i env</title>
+  <meta name="description" content="h5i env gives an AI agent an isolated git worktree under a pinned policy. Every run is captured as evidence, then proposed for human apply — nothing reaches your base branch unreviewed.">
+  <meta name="keywords" content="ai agent sandbox, agent environment, isolated git worktree, policy-enforced agent, agent review loop, propose apply, agent evidence capture, claude code sandbox">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -16,31 +16,44 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="An Auditable Sandbox for AI Agents">
-  <meta property="og:description" content="A git worktree plus tiered isolation and an airtight, rootless network egress allowlist, hand an agent a confined box, then audit everything it did.">
+  <meta property="og:title" content="The Agent Sandbox With a Review Loop: h5i env">
+  <meta property="og:description" content="An isolated git worktree plus a pinned policy plus captured evidence — an agent works confined, you review the diff, and apply is yours alone.">
   <meta property="og:url" content="https://h5i.dev/blog/agent-sandbox-env/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="article:published_time" content="2026-06-10">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="An Auditable Sandbox for AI Agents">
-  <meta name="twitter:description" content="Confined agent environments with tiered isolation and an un-bypassable network egress allowlist.">
+  <meta name="twitter:title" content="The Agent Sandbox With a Review Loop: h5i env">
+  <meta name="twitter:description" content="Give an AI agent an isolated worktree under a policy; every run is evidence; nothing lands on your branch until you apply it.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "An Auditable Sandbox for AI Agents",
-    "description": "Run AI agents in an auditable sandbox: Git worktree isolation, Landlock, seccomp, namespaces, and rootless egress controls.",
+    "headline": "The Agent Sandbox With a Review Loop: h5i env",
+    "description": "h5i env gives an AI agent an isolated git worktree under a pinned policy. Every run is captured as evidence, then proposed for human apply — nothing reaches your base branch unreviewed.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-06-10",
-    "dateModified": "2026-06-10",
+    "dateModified": "2026-06-26",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/agent-sandbox-env/"},
     "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-    "keywords": "ai agent sandbox, agent isolation, network egress allowlist, landlock seccomp, rootless sandbox"
+    "keywords": "ai agent sandbox, agent environment, isolated git worktree, policy-enforced agent, agent review loop, propose apply, evidence capture"
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {"@type": "Question", "name": "How is an h5i env different from just running an agent in a git worktree?", "acceptedAnswer": {"@type": "Answer", "text": "A worktree isolates the checkout but not the process: the agent still runs with your shell's filesystem and network access, and its work merges like any other branch. An h5i env fuses three things under one name — a code branch on a native worktree, a reasoning branch, and a pinned, fail-closed policy manifest — and gates the result behind an explicit human apply step. Nothing reaches your base branch until you propose and apply it."}},
+      {"@type": "Question", "name": "What is the h5i env lifecycle?", "acceptedAnswer": {"@type": "Answer", "text": "create freezes a base commit and forks a code + reasoning branch under a policy; run or shell executes confined, capturing evidence; diff shows the change against the frozen base; propose runs a path-checked mediated commit and writes a review brief; apply merges onto your branch (or --patch squashes), and only when you choose; abort parks the env for forensics and gc reclaims its worktree. rm permanently removes it."}},
+      {"@type": "Question", "name": "Is the agent actually confined, or just isolated in a branch?", "acceptedAnswer": {"@type": "Answer", "text": "It depends on the isolation tier you can run. workspace is a worktree with no process confinement (for trusted code). process and supervised add kernel confinement (Landlock filesystem allowlist, a seccomp syscall deny-list, namespaces, and rlimits); supervised adds a netns L3/L4 egress allowlist. container uses rootless Podman with a dropped-capability, read-only-rootfs box and an L7 egress proxy. h5i env probe reports what your host can enforce, and create refuses a tier the host cannot satisfy rather than downgrading silently."}},
+      {"@type": "Question", "name": "Why can't an env's commit step write outside its worktree?", "acceptedAnswer": {"@type": "Answer", "text": "propose is a mediated commit, not a plain git commit. It enforces a canonicalized path allowlist rooted at the worktree: it rejects a nested .git, symlinked directory escapes, and .. traversal, and refuses an agent-introduced or re-pointed gitlink unless it round-trips a registered base submodule unchanged. Paths that resolve outside the box fail closed."}},
+      {"@type": "Question", "name": "Can another person or agent review and apply an env on a different clone?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Env state lives under refs/h5i/env and travels with h5i share push / pull. A pulled env has no local worktree, so diff falls back to base..branch-tip (the proposed state) and apply works from the branch — so one agent can propose on its clone and a teammate or another agent reviews and applies on theirs, with the full evidence in hand."}}
+    ]
   }
   </script>
 
@@ -73,77 +86,139 @@
   <article class="post">
     <header>
       <div class="post-eyebrow">Feature · 2026-06-10</div>
-      <h1>An Auditable Sandbox for AI Agents</h1>
+      <h1>The Agent Sandbox With a Review Loop</h1>
       <p class="post-deck">
-        You want an agent to run the dependency upgrade, the refactor, the unfamiliar build, but
-        not loose in your working tree with your credentials and your network. h5i's
-        <code>env</code> gives it a disposable, confined box instead: a git worktree plus a policy
-        that limits what code can read, write, and reach, and a record of everything it did.
+        Letting an agent work unattended is two bets at once: that it can't reach anything it
+        shouldn't, and that you can tell, afterward, what it actually did. h5i's
+        <code>env</code> makes those one reviewable unit — an isolated git worktree under a pinned
+        policy, where every run is captured as evidence and the change reaches your branch only
+        when you apply it.
       </p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
-        <span><strong>Reading time</strong> 10 min</span>
-        <span><strong>Tags</strong> Sandbox · Isolation · Security</span>
+        <span><strong>Reading time</strong> 11 min</span>
+        <span><strong>Tags</strong> Sandbox · Autonomy · Review</span>
       </div>
     </header>
 
     <p>
-      A coding agent is a process you didn't write, running commands you didn't read, with whatever
-      access your shell has. Most of the time it installs a package and edits a file. Sometimes a
-      poisoned dependency, a prompt-injected README, or an over-eager plan turns "run the build" into
-      reading <code>~/.ssh</code>, posting your environment to a webhook, or rewriting files far
-      outside the task. The uncomfortable combination, private data, untrusted content, and network
-      egress in the same process, is what makes an agent worth sandboxing rather than trusting.
+      A coding agent has crossed a line that autocomplete never did: it runs unattended. It installs
+      packages, runs builds, edits files across a tree, and reaches the network — for minutes or
+      hours, with whatever access your shell has, while you do something else. When you come back, the
+      question is no longer "is this line correct." It's two harder questions at once. What could this
+      process have touched that wasn't the task — your <code>~/.ssh</code>, your tokens, an arbitrary
+      host — if a poisoned dependency or a prompt-injected README nudged it off course? And separately:
+      can you actually tell, after the fact, what it <em>did</em> do?
     </p>
 
     <p>
-      The confinement pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>
-      answers this directly: the agent physically could not reach your credentials or the open internet
-     , provable, because the policy is pinned by hash and the denials are captured alongside the run.
-      h5i takes a narrower goal than a standalone container: give the agent an isolated
-      <em>environment</em> tied to your Git history, confine it with what the host already provides,
-      and keep a tamper-evident record, so you can hand off the risky work and audit exactly what
-      happened.
+      Those two questions — blast radius and reviewability — are usually handled by two different
+      tools that don't know about each other. A git worktree isolates the <em>checkout</em>. A
+      container isolates the <em>process</em>. Neither, on its own, gives you the thing autonomy
+      actually needs: a single unit you can hand an agent, that confines it, records what it did, and
+      then makes its output reach your real branch only when a human says so. That unit — the
+      confinement-and-provenance core of an <a href="/blog/auditable-workspaces-for-ai-agents/">auditable
+      workspace</a> — is what h5i calls an <code>env</code>.
     </p>
 
-    <h2>The loop: create, shell, audit, apply</h2>
+    <h2>An environment is more than a branch</h2>
 
     <p>
-      An <code>env</code> is a git worktree (its own checkout under <code>.git/.h5i/</code>, invisible
-      to your main tree) plus a policy pinned at creation. You work with it in five commands:
+      You already know the worktree half of the story: <code>git worktree add</code> gives a branch
+      its own checkout so an agent can't trample your working tree. What it doesn't give you is
+      confinement (the agent still runs with your filesystem and your network), provenance (why each
+      change was made), or a gate (the branch merges like any other). An <code>env</code> fuses three
+      things under one name to close all three gaps:
+    </p>
+
+    <ul>
+      <li><strong>A code branch</strong> — <code>refs/heads/h5i/env/&lt;agent&gt;/&lt;slug&gt;</code>, checked out into a native git worktree under <code>.git/.h5i/env/…/work</code> (locked for the env's life). The base revision is frozen at <code>create</code>, so "what changed" is always measured against a fixed point, not a moving branch.</li>
+      <li><strong>A reasoning branch</strong> — <code>refs/h5i/context/env/&lt;agent&gt;/&lt;slug&gt;</code>, a versioned record of the agent's own observations, decisions, and notes that rides alongside the code (see <a href="/blog/context-dag-versioned-agent-reasoning/">the context DAG</a>). The diff tells you what changed; this tells you why.</li>
+      <li><strong>A policy manifest</strong> — the isolation tier and a fail-closed set of filesystem, network, resource, and tool limits, pinned at creation. The policy is content-hashed, and that digest is stamped onto every piece of evidence the env produces, so the run and the rules that governed it can't drift apart.</li>
+    </ul>
+
+    <p>
+      That triple — code, reasoning, policy — is the whole point. It is the difference between "the
+      agent made a branch" and "the agent worked inside a confined, self-documenting box whose output
+      I can review as one thing." Everything below is the lifecycle of that box.
+    </p>
+
+    <h2>A worked lifecycle: create → run → propose → apply</h2>
+
+    <p>
+      The env lifecycle is <code>create → run → propose → apply | abort → gc</code>. Here is the whole
+      arc on one screen; each verb is unpacked below.
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create fix-auth</span>
-  <span class="t-out">created env · isolation: </span><span class="t-ai">supervised</span><span class="t-out"> · worktree under .git/.h5i/…</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create fix-auth</span>           <span class="t-cmt"># freeze base, fork code + reasoning branch, pin policy</span>
+  <span class="t-out">created env · isolation: </span><span class="t-ai">supervised</span><span class="t-out"> · profile: agent-claude · worktree under .git/.h5i/…</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell fix-auth</span>      <span class="t-cmt"># work inside it — or hand the box to an agent</span>
-<span class="t-ai">box$</span> <span class="t-cmd">cargo build &amp;&amp; cargo test</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell fix-auth</span>            <span class="t-cmt"># hand the box to an agent (or work in it yourself)</span>
+<span class="t-ai">box$</span> <span class="t-cmd">cargo build &amp;&amp; cargo test</span>      <span class="t-cmt"># every command here is confined + captured</span>
 <span class="t-ai">box$</span> <span class="t-cmd">exit</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env diff fix-auth</span>     <span class="t-cmt"># what changed, vs the frozen starting point</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env propose fix-auth</span>  <span class="t-cmt"># mediated commit + review brief (apply refuses without it)</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env apply fix-auth</span>    <span class="t-cmt"># merge onto your branch — only when you choose to</span></pre></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env diff fix-auth</span>             <span class="t-cmt"># the change, vs the frozen starting point</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env propose fix-auth</span>          <span class="t-cmt"># mediated commit + review brief (apply refuses without it)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env apply fix-auth</span>            <span class="t-cmt"># merge onto your branch — only when you choose to</span></pre></div>
     </div>
 
     <p>
-      <code>create</code> freezes a base commit and forks a branch. <code>shell</code> drops you (or
-      the agent) into the box with a real terminal, so every command the session runs is confined,
-      not just the ones someone remembered to wrap. <code>diff</code> shows the change against the
-      frozen base. <code>propose</code> commits the worktree through a path-checked mediation step and
-      produces a review brief. <code>apply</code> then merges the proposed env onto your branch, and it
-      never happens on its own: an unproposed env is refused. For a single one-off command there's <code>h5i env run fix-auth -- cargo build</code>,
-      which runs it the same confined way and captures the output.
+      <strong><code>create</code></strong> freezes the base commit, forks the code and reasoning
+      branches, and pins the policy. With no <code>--profile</code> it auto-picks the creating
+      runtime's agent-in-box profile where the host can enforce it, else a fail-closed build/test
+      profile; <code>--from &lt;rev&gt;</code> bases it somewhere other than <code>HEAD</code>, and
+      <code>--isolation</code> requests a specific tier (more on that below).
     </p>
 
-    <h2>Tiered isolation, picked for you</h2>
+    <p>
+      <strong><code>shell</code></strong> drops you — or the agent — into the box with a real,
+      inherited terminal, so <em>every</em> command the session spawns is confined by the box, not
+      only the ones someone remembered to wrap. For a single non-interactive command, <code>h5i env
+      run fix-auth -- cargo build</code> does the same confined execution and captures the output. The
+      distinction matters for autonomy: <code>shell</code> is how you let an agent live in the box and
+      run an open-ended sequence of commands under one policy.
+    </p>
 
     <p>
-      "Confined" means different things on different machines, and h5i is honest about it. Isolation
-      is a ladder of tiers, and <code>h5i env create</code> with no flag picks the strongest level the
-      host can actually enforce. If you ask for a level the host can't provide, it refuses rather than
-      quietly running with less, you never think you're sandboxed when you aren't.
+      <strong><code>diff</code></strong> (add <code>--stat</code> for a summary) shows the work against
+      the frozen base — the proposed change, before it touches anything real. <strong><code>propose</code></strong>
+      commits the worktree through a path-checked mediation step and writes a review brief; it never
+      writes the parent branch. <strong><code>apply</code></strong> is the only verb that touches your
+      branch, and it refuses to run on an env that hasn't been proposed. It merges by default
+      (fast-forward when it can) or squashes with <code>--patch</code>. If the work is a dead end,
+      <strong><code>abort</code></strong> parks the env (manifest and workspace preserved for
+      forensics) and <strong><code>gc</code></strong> later reclaims the worktree; <strong><code>rm</code></strong>
+      removes an env entirely. The asymmetry is deliberate: producing a change is cheap and reversible;
+      landing one is an explicit, human-gated act.
+    </p>
+
+    <h2>Why <code>propose</code> is a mediated commit, not <code>git commit</code></h2>
+
+    <p>
+      It would be simpler to let the agent <code>git commit</code> in the worktree and call that the
+      proposal. h5i doesn't, because a commit is an attack surface: a worktree is just a directory, and
+      a directory can contain a nested <code>.git</code>, a symlink that points out of the tree, or a
+      <code>..</code> path that resolves to your real repo. <code>propose</code> runs the commit
+      through a canonicalized path allowlist rooted at the worktree (<code>$WORK</code>). It rejects a
+      nested <code>.git</code>, refuses symlinked-directory escapes and <code>..</code> traversal, and
+      will not accept an agent-introduced or re-pointed gitlink unless it round-trips a registered base
+      submodule unchanged — same path, same object id as the env-branch tip. Anything that resolves
+      outside the box fails closed. The result is that the bytes you review in <code>diff</code> are
+      the bytes that get committed, with no path trickery in between.
+    </p>
+
+    <h2>Isolation is a tier, and the post is honest about it</h2>
+
+    <p>
+      "Confined" means different things on different machines, so the policy names an isolation tier
+      and <code>h5i env create</code> with no flag picks the strongest one the host can actually
+      enforce. Crucially, an <em>explicit</em> tier fails closed: ask for a level the host can't
+      provide and <code>create</code> refuses rather than quietly running with less. A bits-present
+      check isn't enough, either — <code>create</code> runs a functional self-test before it trusts a
+      kernel tier (on some hosts, e.g. AppArmor-restricted user namespaces on CI, the bits exist but
+      confined exec doesn't work).
     </p>
 
     <div class="tbl-wrap">
@@ -152,122 +227,131 @@
           <tr><th>Tier</th><th>What confines the code</th><th>Network</th></tr>
         </thead>
         <tbody>
-          <tr><td><strong>workspace</strong></td><td>git worktree only, for trusted code</td><td>host (unrestricted)</td></tr>
-          <tr><td><strong>process</strong></td><td>Landlock filesystem allowlist + a seccomp syscall deny-list + user/mount/net namespaces + cgroup limits, all rootless</td><td>off, or full</td></tr>
-          <tr><td><strong>supervised</strong></td><td>the process tier + a live seccomp socket gate</td><td>off, or a real <strong>egress allowlist</strong></td></tr>
-          <tr><td><strong>container</strong></td><td>rootless Podman, dropped capabilities, read-only root filesystem, no docker socket</td><td>an egress allowlist (L7 proxy)</td></tr>
+          <tr><td><strong>workspace</strong></td><td>git worktree only — no process confinement, for trusted code</td><td>host (unrestricted)</td></tr>
+          <tr><td><strong>process</strong></td><td>Landlock filesystem allowlist + a seccomp syscall deny-list + user/mount/pid/net namespaces + rlimits, all rootless</td><td>off, or full host</td></tr>
+          <tr><td><strong>supervised</strong></td><td>the process tier + a live seccomp socket gate</td><td>off, or an <strong>L3/L4 egress allowlist</strong></td></tr>
+          <tr><td><strong>container</strong></td><td>rootless Podman, <code>--cap-drop=ALL</code>, no-new-privileges, read-only rootfs, no docker socket</td><td>an <strong>L7 egress allowlist</strong> (CONNECT proxy)</td></tr>
         </tbody>
       </table>
     </div>
 
     <p>
-      None of this needs root or a VM. <code>h5i env probe</code> prints exactly what your host
-      supports; if rootless Podman isn't installed, <code>create</code> tells you so when it lands on a
-      kernel tier, instead of silently leaving the container tier out of reach.
+      <code>h5i env probe</code> prints exactly what your host supports. The two egress mechanisms are
+      genuinely different and worth choosing between: the <code>container</code> tier runs an
+      HTTP/HTTPS CONNECT proxy and points the box at it — honest <em>L7</em> scoping that blocks
+      proxy-respecting tooling but not a program that opens a raw socket to a permitted IP; the
+      <code>supervised</code> tier installs a default-drop <code>nftables</code> ruleset in the box's
+      own network namespace over a rootless <code>slirp4netns</code> uplink, which stops the packet at
+      <em>L3/L4</em> regardless of how the program tries to connect. None of this needs root or a VM —
+      and h5i is clear that it is strong containment for ordinary and opportunistic threats, not a
+      hardware boundary against a determined kernel exploit. The full mechanism (Landlock allowlists,
+      the seccomp deny-list, the egress internals, and the microVM tier h5i doesn't pretend to ship
+      yet) is the subject of its own post:
+      <a href="/blog/sandboxing-ai-agents-h5i/">Sandboxing AI Agents, Part 4: h5i's design</a>.
     </p>
 
-    <h2>The interesting part: an egress allowlist you can't undo</h2>
+    <h2>Every run is evidence; <code>compare</code> is the arena</h2>
 
     <p>
-      Filesystem confinement is well-trodden. Network egress is where most sandboxes get honest about
-      their limits. An L7 proxy allowlist, the kind a container egress filter or a SOCKS proxy gives
-      you, only stops programs that respect the proxy; a raw socket to an IP walks straight past it.
-      h5i's <code>supervised</code> tier enforces the allowlist a layer lower, at L3/L4, where a raw
-      socket can't help:
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">.h5i/env.toml</span></div>
-      <div class="terminal-body"><pre><span class="t-out">isolation  = </span><span class="t-cmd">"supervised"</span>
-<span class="t-out">net.egress = </span><span class="t-cmd">["example.com", "pypi.org", "github.com:443"]</span></pre></div>
-    </div>
-
-    <p>Inside the box, the allowlist holds, and there's no DNS channel for anything off it:</p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">box</span></div>
-      <div class="terminal-body"><pre><span class="t-ai">box$</span> <span class="t-cmd">curl https://example.com</span>
-  <span class="t-pass">200 OK</span><span class="t-out">                              — on the allowlist</span>
-<span class="t-ai">box$</span> <span class="t-cmd">curl https://www.cloudflare.com</span>
-  <span class="t-red">could not resolve host                — blocked, no DNS for it</span>
-<span class="t-ai">box$</span> <span class="t-cmd">python3 -c 'import socket; socket.create_connection(("1.1.1.1",443))'</span>
-  <span class="t-red">timed out                             — raw IP dropped at L3/L4</span></pre></div>
-    </div>
-
-    <p>Three pieces make that work, all without root:</p>
-
-    <ul>
-      <li><strong>A namespaced uplink.</strong> The confined process gets its own network namespace, and <code>slirp4netns</code> gives that namespace a NAT'd uplink from user space, no <code>CAP_NET_ADMIN</code> on the host required.</li>
-      <li><strong>An nftables default-drop allowlist.</strong> Inside its namespace the process holds capabilities over its <em>own</em> network only, so it installs an <code>nftables</code> ruleset that drops everything except the pinned addresses. This is the layer that actually stops a packet.</li>
-      <li><strong>DNS pinned through <code>/etc/hosts</code>.</strong> Each allowlisted host is resolved once, at startup, and written into a private <code>/etc/hosts</code> bound only inside the box. No port 53 is opened at all: allowlisted names resolve to exactly the address nftables permits, and everything else simply doesn't resolve. That kills both DNS rebinding and DNS as an exfiltration side-channel.</li>
-    </ul>
-
-    <p>
-      The natural objection: if the code runs with capabilities over its own network namespace, can't
-      it just delete the firewall? It tries, and can't:
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">box</span></div>
-      <div class="terminal-body"><pre><span class="t-ai">box$</span> <span class="t-cmd">nft flush ruleset</span>
-  <span class="t-red">Unable to initialize Netlink socket: Operation not permitted</span>
-<span class="t-ai">box$</span> <span class="t-cmd">curl https://1.1.1.1</span>
-  <span class="t-red">timed out                             — still blocked</span></pre></div>
-    </div>
-
-    <p>
-      The seccomp socket gate sits in front of <code>socket()</code> and denies the
-      <code>AF_NETLINK</code> family outright. <code>nft</code>, <code>ip</code>, and every other tool
-      that would rewrite the ruleset or the routes needs a netlink socket to do it, so they can't
-      open the door they'd need. The firewall is set before the untrusted program starts and is out of
-      its reach afterward. Two cheap mechanisms, a syscall gate and a packet filter, compose into
-      something neither gives alone.
-    </p>
-
-    <div class="callout">
-      <strong>Rootless, the whole way down.</strong> namespaces, the slirp uplink, nftables in the
-      namespace, the bind-mounted <code>/etc/hosts</code>, none of it needs host root or a VM. The
-      tradeoff is honest: this is strong containment for ordinary and opportunistic threats, not a
-      hardware boundary against a determined kernel exploit. For that, h5i reserves microVM tiers it
-      doesn't pretend to ship yet.
-    </div>
-
-    <h2>Everything is auditable after the fact</h2>
-
-    <p>
-      Confinement decides what code <em>can</em> do; the record tells you what it <em>did</em>. Every
-      run in an env is captured, its output, exit code, the exact policy that was enforced (pinned by
-      hash, so it's tamper-evident), and any secrets redacted out of the evidence. Blocked accesses
-      are recorded too, not silently swallowed.
+      Confinement decides what the code <em>can</em> do; the captured record tells you what it
+      <em>did</em>. Every <code>run</code> in an env is a tagged, secret-redacted evidence capture
+      stored in git refs and stamped with the env id and the policy digest that was in force, so a run
+      can never be read apart from the rules that governed it. Blocked accesses are recorded too, not
+      silently swallowed.
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env log fix-auth</span>          <span class="t-cmt"># every command, secret use, and denial</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env inspect fix-auth --capture &lt;id&gt;</span>   <span class="t-cmt"># one run's full record</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env compare a b c</span>        <span class="t-cmt"># rank parallel attempts side by side</span></pre></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env status fix-auth</span>             <span class="t-cmt"># lifecycle, enforced policy, evidence, base drift</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall objects --env fix-auth</span>   <span class="t-cmt"># this env's captures</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env inspect fix-auth --capture &lt;id&gt;</span>  <span class="t-cmt"># one run's full structured record</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env compare a b c</span>               <span class="t-cmt"># rank parallel attempts side by side</span></pre></div>
     </div>
 
     <p>
-      Because the record is content-addressed and lives in git refs, it travels with
-      <code>h5i share push</code> / <code>pull</code>: one agent can propose a change on its clone and a
-      teammate (or another agent) can review and apply it on theirs, with the full evidence in hand.
-      The <a href="/features/">web dashboard</a> renders the timeline and scores every allowed and
-      blocked action, so the boxes that pushed hardest on their boundary are the ones you look at
-      first.
+      Because the evidence is content-addressed and lives under <code>refs/h5i/env</code>, the whole
+      env travels with <code>h5i share push</code> / <code>pull</code>. A pulled env has no local
+      worktree, so <code>diff</code> falls back to <code>base..branch-tip</code> (the proposed state)
+      and <code>apply</code> works straight from the branch — which is what makes the cross-agent loop
+      real: one agent proposes a change on its clone, and a teammate or another agent reviews and
+      applies it on theirs, with the full evidence in hand.
     </p>
-
-    <h2>When to reach for it</h2>
 
     <p>
-      Use an env whenever you'd hesitate to let a command touch your real tree or your real network: a
-      dependency upgrade, a build you don't fully trust, an agent working unattended, a refactor you
-      want to diff before it lands. Skip it for quick, trusted edits, that's what the
-      <code>workspace</code> tier is for, and it costs nothing. The point isn't maximum paranoia on
-      every command; it's that when the work is risky, you get a box that's confined as strongly as
-      your host allows and a record you can actually audit, in the same tool that already holds your
-      history.
+      <code>compare</code> is where this pays off for autonomy at scale. Spin up several envs on the
+      same frozen base — different agents, different approaches — let each work sealed, and rank them
+      side by side: the changes each made and the results of each one's last run, in one table. This
+      "arena" is the substrate the <a href="/blog/agent-ensembles-with-h5i-team/">h5i team</a>
+      ensemble builds on, where the same task is run across personas and a neutral verifier replays
+      each candidate before any verdict is applied. The shared, hashed base is what makes the
+      comparison fair.
     </p>
+
+    <h2>Failure modes worth knowing</h2>
+
+    <ul>
+      <li><strong>The host can't enforce your tier.</strong> Explicit <code>--isolation</code> fails closed; <code>create</code> tells you why instead of downgrading. Run <code>h5i env probe</code> first to see what's available, and remember the kernel tiers need a working user-namespace + Landlock + seccomp stack, which some CI and AppArmor setups disallow.</li>
+      <li><strong>The base advanced under you.</strong> A long-running env can fall behind its parent. <code>status</code> reports the drift; <code>h5i env rebase</code> re-pins the base onto the advanced parent with a 3-way merge — and refuses if that would conflict, rather than producing a silently wrong base.</li>
+      <li><strong>You tried to apply without proposing.</strong> <code>apply</code> refuses an unproposed env by design; run <code>propose</code> (which is also where the path-allowlist mediation runs) first.</li>
+      <li><strong>Egress scoping confusion.</strong> A <code>container</code>-tier allowlist is L7 and only constrains proxy-respecting clients; if you need a raw-socket-proof boundary, choose <code>supervised</code> (L3/L4). Either way, declare <code>net.egress</code> in <code>.h5i/env.toml</code>; the static <code>process</code> tier can't honor a domain allowlist and will say so.</li>
+      <li><strong>You expected total containment.</strong> These tiers don't claim to stop a determined kernel exploit; that's the unshipped microVM tier's job. Match the tier to the threat, and don't run genuinely hostile code on a kernel tier expecting hardware-grade isolation.</li>
+    </ul>
+
+    <h2>Conclusion: the unit of safe autonomy</h2>
+
+    <p>
+      The reason an agent is worth confining is the same reason its output is worth reviewing: you
+      didn't watch it work. h5i's answer is to make those one object instead of two. An <code>env</code>
+      is an isolated worktree, a record of the agent's reasoning, and a pinned policy, bound together
+      so that the box that confined the work is the same box that produced the evidence and the same
+      box you propose and apply from. Nothing reaches your base branch by accident — <code>apply</code>
+      is a deliberate human act on a change you have already diffed, with the policy that governed it
+      hashed into the record.
+    </p>
+
+    <p>
+      That is a narrower promise than "a sandbox," and a more useful one. It doesn't ask you to trust
+      the agent, and it doesn't ask you to babysit it either. It asks for one decision, at the end,
+      with the evidence in front of you — which is exactly the decision you wanted to keep.
+    </p>
+
+    <h2>FAQ</h2>
+
+    <div class="faq">
+      <h3>How is an h5i env different from just running an agent in a git worktree?</h3>
+      <p>
+        A worktree isolates the checkout but not the process — the agent still has your filesystem and
+        network — and the branch merges like any other. An env adds a fail-closed policy, captured
+        evidence, and an explicit <code>apply</code> gate, so confinement, provenance, and review are
+        one reviewable unit rather than three loose pieces.
+      </p>
+
+      <h3>Is the agent actually confined, or just isolated in a branch?</h3>
+      <p>
+        It depends on the tier you can run. <code>workspace</code> is a worktree with no process
+        confinement; <code>process</code> and <code>supervised</code> add kernel confinement (Landlock,
+        a seccomp deny-list, namespaces, rlimits), with <code>supervised</code> adding an L3/L4 egress
+        allowlist; <code>container</code> uses rootless Podman with an L7 egress proxy. <code>h5i env
+        probe</code> reports what your host can enforce, and <code>create</code> refuses a tier the host
+        can't satisfy instead of downgrading silently.
+      </p>
+
+      <h3>Why can't an env's commit step write outside its worktree?</h3>
+      <p>
+        <code>propose</code> is a mediated commit. It enforces a canonicalized path allowlist rooted at
+        the worktree — rejecting a nested <code>.git</code>, symlinked-directory escapes, and
+        <code>..</code> traversal, and refusing an agent-introduced gitlink unless it round-trips a
+        registered base submodule unchanged. Paths that resolve outside the box fail closed.
+      </p>
+
+      <h3>Can another person or agent review and apply an env on a different clone?</h3>
+      <p>
+        Yes. Env state lives under <code>refs/h5i/env</code> and travels with <code>h5i share push</code>
+        / <code>pull</code>. A pulled env has no local worktree, so <code>diff</code> falls back to
+        <code>base..branch-tip</code> and <code>apply</code> works from the branch — one agent proposes
+        on its clone, another reviews and applies on theirs, with the full evidence.
+      </p>
+    </div>
 
     <div class="next-up">
       <span class="label">Read next</span>

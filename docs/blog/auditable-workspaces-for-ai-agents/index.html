@@ -36,7 +36,7 @@
     "description": "An auditable workspace is the place an AI agent does its work — a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. This is the definition, the three proof pillars (provenance, confinement, governance), the workspace stack, and the golden path.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-06-19",
-    "dateModified": "2026-06-19",
+    "dateModified": "2026-06-26",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/auditable-workspaces-for-ai-agents/"},
     "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
@@ -52,6 +52,15 @@
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Why AI Agents Need Auditable Workspaces", "item": "https://h5i.dev/blog/auditable-workspaces-for-ai-agents/"}]}
+  </script>
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+    {"@type": "Question", "name": "What is an auditable workspace for AI agents?", "acceptedAnswer": {"@type": "Answer", "text": "An auditable workspace is the place an AI coding agent does its work — a Git-backed worktree where the full record behind every change is captured in your repo: the prompt and intent, the model and agent identity, the reasoning the agent followed, the commands it ran, the tests that verified it, the risk signals, and the handoffs to other agents. Because the record lives under refs/h5i/* in the same repository as the code, the work is provable and reviewable after the session ends, with no separate SaaS."}},
+    {"@type": "Question", "name": "Why isn't Git alone enough to audit an AI agent's work?", "acceptedAnswer": {"@type": "Answer", "text": "A Git commit is a snapshot of files plus an author, timestamp, and message — it records the artifact, not the operational session that produced it. The prompt, the files the agent read, the commands it ran, the network it could reach, and the reasoning it followed all happen off-ledger and evaporate when the session ends. That off-ledger material is exactly what a reviewer or incident responder needs, so an auditable workspace records it as Git-native data alongside the diff."}},
+    {"@type": "Question", "name": "Where is the auditable record stored, and does git push share it?", "acceptedAnswer": {"@type": "Answer", "text": "It is stored Git-natively: per-commit provenance as git notes on refs/h5i/notes, agent reasoning on refs/h5i/context, cross-agent coordination on refs/h5i/msg, and sandbox policy and evidence under refs/h5i/env. A plain git push does not move refs/h5i/* — use h5i share push and h5i share pull to carry the record to another clone alongside the code."}},
+    {"@type": "Question", "name": "How is the record captured without extra work from the agent?", "acceptedAnswer": {"@type": "Answer", "text": "Hooks capture most of it automatically. In Claude Code, a UserPromptSubmit hook records the verbatim human prompt, PostToolUse hooks log reads and edits as OBSERVE and ACT context nodes, and a Stop hook mines reasoning and checkpoints milestones. An optional wrap-bash hook rewrites agent shell commands into h5i capture run so tool output is recorded too. Codex mines the same record from its session JSONL. The agent does not have to remember to log anything."}},
+    {"@type": "Question", "name": "How is an auditable workspace different from a CI artifact or a vendor session transcript?", "acceptedAnswer": {"@type": "Answer", "text": "A green CI run proves tests passed for a pipeline run but is not tied to the prompt or the files the agent inspected. A vendor session transcript lives in that vendor's console, is tied to your account, and is not portable or queryable per commit. An auditable workspace ties prompt, model, reasoning, commands, tests, and risk signals to each commit, stores them in your own repo, and makes them inspectable with recall, audit, and PR tooling — no account to log into and no separate system of record."}}
+  ]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -72,7 +81,7 @@
 <main class="article-wrap">
   <article class="post">
     <header>
-      <div class="post-eyebrow">Cornerstone · 2026-06-19</div>
+      <div class="post-eyebrow">Cornerstone · 2026-06-19 · Updated 2026-06-26</div>
       <h1>Why AI agents need auditable workspaces</h1>
       <p class="post-deck">
         <strong>Git tracks the diff. h5i tracks the workspace behind it.</strong> An AI coding agent
@@ -144,6 +153,14 @@
       with <em>"make it work"</em>, ran a destructive migration you can't see, and could reach the
       production database the whole time. None of that is in the diff. It was in the workspace, and
       the workspace evaporated.
+    </p>
+
+    <p>
+      Naming the missing data is a category question — <a href="/blog/what-is-ai-aware-version-control/">AI-aware
+      version control</a> covers <em>what record a diff structurally can't hold</em> and how to store it on top
+      of Git. This post is narrower and more operational: it is about the <em>place</em> the agent works and the
+      concrete artifact that place leaves behind. The category says <em>record the process, not just the
+      artifact</em>; the workspace is where that record actually accrues, command by command.
     </p>
 
     <h2>Three proof pillars</h2>
@@ -234,6 +251,122 @@
       able to show you the full output later.
     </p>
 
+    <h2>How the record is captured — refs and hooks</h2>
+
+    <p>
+      "Recorded in your repo" is precise, not a metaphor. Each dimension of the workspace maps to a
+      Git ref, and most of the writing happens automatically through editor hooks, not through commands
+      you remember to run:
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead>
+          <tr><th>What is recorded</th><th>Where it lives</th><th>How it gets there</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Prompt · model · agent · tests · integrity verdict</td><td><code>refs/h5i/notes</code> (git notes)</td><td><code>h5i capture commit</code>; the prompt via the Claude <code>UserPromptSubmit</code> hook</td></tr>
+          <tr><td>Reasoning: OBSERVE / THINK / ACT / NOTE nodes</td><td><code>refs/h5i/context</code></td><td><code>PostToolUse</code> and <code>Stop</code> hooks (or Codex session JSONL)</td></tr>
+          <tr><td>Tool output, compressed and content-addressed</td><td>object store (raw out-of-band)</td><td><code>h5i capture run</code>, optionally via the <code>wrap-bash</code> hook</td></tr>
+          <tr><td>Cross-agent handoffs and reviews</td><td><code>refs/h5i/msg</code></td><td><code>h5i msg</code> (append-only, union-merged)</td></tr>
+          <tr><td>Sandbox policy and run evidence</td><td><code>refs/h5i/env</code></td><td><code>h5i env</code> on each run</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The hooks matter as much as the refs. An audit trail an agent has to <em>opt into</em> is one it
+      will forget under deadline; capture has to be the default path, not a discipline. h5i wires that
+      with <code>h5i hook setup</code>: in Claude Code, <code>SessionStart</code>, <code>UserPromptSubmit</code>,
+      <code>PostToolUse</code> (on every <code>Read</code>/<code>Edit</code>/<code>Write</code>), and
+      <code>Stop</code> hooks record the prompt, the reads as OBSERVE, the edits as ACT, and mined THINK/NOTE
+      reasoning — without the agent issuing a single logging command. Codex reconstructs the same record from
+      its session JSONL. The verbatim human prompt wins over any agent-supplied <code>--intent</code>, so the
+      record reflects what a person actually asked, not what the agent later claims it was asked.
+    </p>
+
+    <h2>Surfacing the record: a worked example</h2>
+
+    <p>
+      An audit trail is only worth keeping if you can read it back cheaply. The same workspace that
+      <em>captured</em> the work exposes it through query commands — no console, no export. Suppose a
+      reviewer is staring at a one-line change in <code>src/api/client.py</code> and wants to know who
+      and what produced it:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">surface the record</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/api/client.py --show-prompt</span>  <span class="t-cmt"># line → author + model + prompt + test result</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --limit 20</span>                       <span class="t-cmt"># provenance per commit, most recent first</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i notes uncertainty</span>                            <span class="t-cmt"># where the agent flagged it was unsure</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i audit review --limit 50</span>                      <span class="t-cmt"># triage funnel: integrity Warnings/Violations</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i audit compliance --since 2026-01-01 \</span>
+      <span class="t-cmd">--until 2026-03-31 --format html --output audit.html</span>  <span class="t-cmt"># a dated, shareable report</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post</span>                                <span class="t-cmt"># the same evidence as a sticky PR comment</span></pre></div>
+    </div>
+
+    <p>
+      The shape of the answer is the point: <code>recall blame</code> turns "who wrote this line" into
+      "which model, steered by which human prompt, with which test result," and <code>audit review</code>
+      is a deterministic triage funnel — no model in the loop grading the work — surfacing the commits
+      whose stored <code>IntegrityReport</code> came back <em>Warning</em> or <em>Violation</em>. A reviewer
+      reads the record, not the agent's self-report.
+    </p>
+
+    <h2>How it compares</h2>
+
+    <p>
+      Teams already reach for several tools to answer "what did the agent do?" Each captures a real slice;
+      none captures the workspace. The honest comparison:
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead>
+          <tr><th>Approach</th><th>Good</th><th>Gap</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>PR description templates</td><td>Human-readable context right where review happens; zero new tooling.</td><td>Self-reported and optional; the agent writes its own report card; nothing ties a claim to the prompt, the commands, or the tests.</td></tr>
+          <tr><td>CI logs &amp; artifacts</td><td>Trustworthy machine evidence that tests ran and passed at a point in time.</td><td>Tied to a pipeline run, not to the prompt or the files the agent inspected; expires on a retention clock; says nothing about intent, reach, or reasoning.</td></tr>
+          <tr><td>Vendor session transcripts</td><td>Rich, verbatim capture of the actual agent session.</td><td>Lives in that vendor's console, tied to your account and their retention; not per-commit, not queryable, not portable across tools, and gone if you switch vendors.</td></tr>
+          <tr><td>SaaS audit / observability tools</td><td>Dashboards, search, alerting across many runs.</td><td>A separate system of record that holds your trail; another account, another egress of code metadata; the evidence no longer travels with the repo.</td></tr>
+          <tr><td><strong>Auditable workspace (<code>refs/h5i/*</code>)</strong></td><td>Prompt, model, reasoning, commands, tests, risk, and confinement policy tied to each commit, in your own repo, query- and PR-ready, offline.</td><td>Requires the refs to be shared (<code>h5i share push</code>); records what was captured, so coverage depends on hooks being wired.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      None of these is wrong, and an auditable workspace does not replace CI or your PR template — it
+      complements them by giving the per-commit, in-repo substrate the others assume but don't provide.
+      The differentiator is the last column's first entry: the record is <em>yours</em>, durable, and
+      portable, because it is Git.
+    </p>
+
+    <h2>Failure modes — where this breaks</h2>
+
+    <p>
+      A pillar should be honest about its edges. An auditable workspace fails in three predictable ways,
+      and each has a mitigation rather than a denial:
+    </p>
+
+    <ul>
+      <li><strong>Unshared refs.</strong> <code>refs/h5i/*</code> are deliberately not moved by a plain
+      <code>git push</code>, so a reviewer on another clone sees the code but not the record. The record is
+      there, just local. The fix is operational, not technical: run <code>h5i share push</code> (and
+      <code>h5i share pull</code>), ideally from CI on the branch, so the evidence travels with the PR by default.</li>
+      <li><strong>Gaming the record.</strong> Provenance the agent writes about itself — an <code>--intent</code>
+      string, a tidy commit message — can flatter. h5i blunts this by preferring captured signal over
+      self-report: the verbatim human prompt overrides agent-supplied intent, tool output is captured by the
+      <code>wrap-bash</code> hook rather than narrated, the <code>IntegrityReport</code> verdict is computed, and
+      confinement is a <em>boundary</em>, not a claim — an egress allowlist makes "it couldn't exfiltrate"
+      provable instead of asserted. What an agent narrates is weaker evidence than what the workspace observed.</li>
+      <li><strong>Discipline drift.</strong> If commits skip <code>h5i capture commit</code>, runs skip
+      <code>capture run</code>, or hooks aren't installed, coverage is patchy and the trail has holes.
+      The mitigation is to make capture the default path — <code>h5i hook setup</code> wires it into the
+      editor so the agent can't quietly opt out — and to treat a missing record on a PR as a review blocker,
+      the same way an untested change is.</li>
+    </ul>
+
     <h2>What it is not</h2>
 
     <div class="callout">
@@ -259,6 +392,16 @@
       first-class, Git-backed, provable artifact. Grade the work by the record it leaves, confine what
       it can reach, and let a human apply it after reading the evidence.
     </p>
+
+    <h2>Frequently asked questions</h2>
+
+    <div class="faq">
+      <p><strong>What is an auditable workspace for AI agents?</strong> It is the place an AI coding agent does its work — a Git-backed worktree where the full record behind every change is captured in your repo: the prompt and intent, the model and agent identity, the <a href="/blog/context-dag-versioned-agent-reasoning/">reasoning the agent followed</a>, the commands it ran, the tests that verified it, the risk signals, and the <a href="/blog/i5h-agent-to-agent-messaging/">handoffs to other agents</a>. Because the record lives under <code>refs/h5i/*</code> in the same repository as the code, the work is provable and reviewable after the session ends, with no separate SaaS.</p>
+      <p><strong>Why isn't Git alone enough to audit an AI agent's work?</strong> A commit is a snapshot of files plus an author, timestamp, and message — it records the artifact, not the operational session that produced it. The prompt, the files the agent read, the commands it ran, the network it could reach, and the reasoning it followed all happen off-ledger and evaporate when the session ends. That off-ledger material is exactly what review and incident response need, so an auditable workspace records it as Git-native data alongside the diff. The category framing is <a href="/blog/what-is-ai-aware-version-control/">AI-aware version control</a>; <a href="/blog/why-git-diffs-are-not-enough-for-ai-generated-code/">why a diff isn't enough</a> goes deeper still.</p>
+      <p><strong>Where is the auditable record stored, and does <code>git push</code> share it?</strong> Git-natively: per-commit provenance as git notes on <code>refs/h5i/notes</code>, agent reasoning on <code>refs/h5i/context</code>, cross-agent coordination on <code>refs/h5i/msg</code>, and sandbox policy and evidence under <code>refs/h5i/env</code>. A plain <code>git push</code> does not move <code>refs/h5i/*</code> — use <code>h5i share push</code> and <code>h5i share pull</code> to carry the record to another clone alongside the code.</p>
+      <p><strong>How is the record captured without extra work from the agent?</strong> Hooks capture most of it automatically. In Claude Code a <code>UserPromptSubmit</code> hook records the verbatim human prompt, <code>PostToolUse</code> hooks log reads and edits as OBSERVE and ACT, and a <code>Stop</code> hook mines reasoning and checkpoints milestones; an optional <a href="/blog/token-reduction-object-store/"><code>wrap-bash</code> hook</a> rewrites shell commands into <code>h5i capture run</code> so tool output is recorded too. Codex mines the same record from its session JSONL.</p>
+      <p><strong>How is this different from a CI artifact or a vendor session transcript?</strong> A green CI run proves tests passed for a pipeline run but isn't tied to the prompt or the files the agent inspected. A vendor transcript lives in that vendor's console, tied to your account, not portable or queryable per commit. An auditable workspace ties prompt, model, reasoning, commands, tests, and risk to each commit, stores them in your own repo, and makes them inspectable with <a href="/blog/auditing-ai-generated-code/">recall, audit</a>, and <a href="/blog/pr-body-ai-code-review/">PR tooling</a> — no account to log into.</p>
+    </div>
 
     <div class="next-up">
       <span class="label">Read next</span>

@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sandboxing AI Agents, Part 4: h5i's Design: h5i</title>
-  <meta name="description" content="How h5i env sandboxes AI agents with worktrees, tiered isolation, rootless egress, mediated commits, secrets, and audit captures.">
-  <meta name="keywords" content="h5i env, AI agent sandbox, rootless egress allowlist, Landlock seccomp, supervised sandbox, Git provenance">
+  <title>Sandboxing AI Agents, Part 4: h5i's Tier Ladder and Policy Model: h5i</title>
+  <meta name="description" content="h5i's env sandbox is a four-tier ladder — workspace, process, supervised, container — that matches confinement to trust and to what the host can actually enforce, fail-closed, with each run captured as Git provenance.">
+  <meta name="keywords" content="h5i env, AI agent sandbox isolation tiers, Landlock seccomp sandbox, rootless egress allowlist, supervised sandbox, env.toml policy, Git provenance">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -15,8 +15,8 @@
   <link rel="apple-touch-icon" href="/_static/logo.png">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="Sandboxing AI Agents, Part 4: h5i's Design">
-  <meta property="og:description" content="h5i env: Git worktrees, policy tiers, rootless L3/L4 egress, captures, and review flow.">
+  <meta property="og:title" content="Sandboxing AI Agents, Part 4: h5i's Tier Ladder">
+  <meta property="og:description" content="h5i env: a four-tier isolation ladder, a checked-in policy model, two honest egress allowlists, and runs captured as Git provenance.">
   <meta property="og:url" content="https://h5i.dev/blog/sandboxing-ai-agents-h5i/">
   <meta property="og:image" content="https://h5i.dev/_static/sandbox-series-card.png">
   <meta property="og:image:width" content="1200">
@@ -27,14 +27,17 @@
   <meta property="article:tag" content="Git provenance">
   <meta property="article:tag" content="rootless egress">
   <meta property="article:published_time" content="2026-06-12">
-  <meta property="article:modified_time" content="2026-06-12">
+  <meta property="article:modified_time" content="2026-06-26">
   <meta property="article:author" content="Koukyosyumei">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Sandboxing AI Agents, Part 4: h5i's Design">
-  <meta name="twitter:description" content="Git worktrees, tiered isolation, rootless egress, captures, and review evidence.">
+  <meta name="twitter:title" content="Sandboxing AI Agents, Part 4: h5i's Tier Ladder">
+  <meta name="twitter:description" content="A four-tier isolation ladder, a checked-in env.toml policy, two honest egress allowlists, and runs captured as Git provenance.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-series-card.png">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 4: h5i's Design","description":"How h5i env sandboxes AI agents with worktrees, tiered isolation, rootless egress, mediated commits, secrets, and audit captures.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-h5i/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":1535,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["h5i env","AI agent sandbox","Git provenance","rootless egress allowlist"],"keywords":"h5i env, agent sandbox, Git provenance, rootless egress"}
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 4: h5i's Tier Ladder and Policy Model","description":"h5i's env sandbox is a four-tier ladder — workspace, process, supervised, container — that matches confinement to trust and to what the host can actually enforce, fail-closed, with each run captured as Git provenance.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-26","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-h5i/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["h5i env","AI agent sandbox","isolation tiers","Landlock seccomp","rootless egress allowlist","Git provenance"],"keywords":"h5i env, agent sandbox isolation tiers, env.toml policy, Landlock seccomp, rootless egress allowlist, Git provenance"}
+  </script>
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"What isolation tiers does h5i env support?","acceptedAnswer":{"@type":"Answer","text":"Four shipped tiers: workspace (a Git worktree, no execution confinement), process (Landlock filesystem allowlist + seccomp deny-list + namespaces + rlimits/cgroups, run under a PID-namespace supervisor), supervised (the process stack plus a seccomp-notify socket gate and an L3/L4 nftables egress allowlist), and container (rootless Podman with capabilities dropped, a read-only rootfs, and an L7 proxy egress allowlist). hardened-container and microvm are reserved enum slots, not shipped backends."}},{"@type":"Question","name":"Which h5i tiers can enforce a network egress domain allowlist?","acceptedAnswer":{"@type":"Answer","text":"Only supervised and container. The process tier supports net.mode = deny or host but not a domain allowlist, because its network namespace is all-or-nothing — h5i refuses a profile that sets net.egress below the supervised tier. Supervised enforces the allowlist at L3/L4 with nftables and DNS pinning; container enforces it with an L7 CONNECT proxy, which is honest L7 scoping and can be bypassed by tooling that ignores proxy settings and opens a raw socket."}},{"@type":"Question","name":"Is h5i env as safe as a virtual machine?","acceptedAnswer":{"@type":"Answer","text":"No. All four shipped tiers share the host kernel. They defend well against accidental damage, many prompt-injection effects, and ordinary untrusted build scripts, but a malicious binary with a working host-kernel exploit is outside their honest claim. Separate-kernel isolation (Firecracker/Kata-style microVMs) is a reserved future tier, not something the current build provides."}},{"@type":"Question","name":"How does h5i decide which tier a host can actually run?","acceptedAnswer":{"@type":"Answer","text":"h5i env probe reports the host's Landlock ABI, user-namespace and seccomp support, and container runtime, then prints which isolation claims are satisfiable. It also runs a functional verify_exec self-test, because the required kernel bits can be present while a hardened kernel still denies exec under the full confinement stack. If a requested claim cannot be enforced, h5i refuses rather than silently downgrading."}}]}
   </script>
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://h5i.dev/blog/"},{"@type":"ListItem","position":3,"name":"Sandboxing AI Agents, Part 4","item":"https://h5i.dev/blog/sandboxing-ai-agents-h5i/"}]}
@@ -61,158 +64,219 @@
 <main class="article-wrap">
   <article class="post">
     <header>
-      <div class="post-eyebrow">Sandbox Series · Part 4 · 2026-06-12</div>
-      <h1>Sandboxing AI Agents, Part 4: How h5i Implements It</h1>
-      <p class="post-deck">h5i treats a sandboxed agent run as a Git-addressed unit of work: code branch, reasoning context, policy, command evidence, denials, and review decision all travel together.</p>
+      <div class="post-eyebrow">Sandbox Series · Part 4 · 2026-06-12 · Updated 2026-06-26</div>
+      <h1>Sandboxing AI Agents, Part 4: h5i's Tier Ladder and Policy Model</h1>
+      <p class="post-deck">h5i's <code>env</code> sandbox is not one box. It is a four-rung ladder — workspace, process, supervised, container — that lets you match confinement to how much you trust the run and to what the host can actually enforce, fail-closed, with every run captured as Git provenance.</p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
-        <span><strong>Reading time</strong> 18 min</span>
-        <span><strong>Tags</strong> h5i env · Provenance · Egress</span>
+        <span><strong>Reading time</strong> 16 min</span>
+        <span><strong>Tags</strong> h5i env · Isolation tiers · Policy · Egress</span>
       </div>
     </header>
 
     <p>
-      h5i's sandbox feature is named <code>env</code>. The name is deliberate. An environment is more than a container and more than a worktree. It is the place an agent works, the policy that confines it, the evidence that records it, and the review lifecycle that decides whether the result reaches the main branch. This is the confinement pillar made concrete: inside an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>, the agent physically could not reach your credentials or the open internet, and the policy digest in Git proves it.
+      An AI agent that can edit your tree and run shell commands is, for the duration of a task, a process executing instructions you did not write and cannot fully predict. The instructions can be redirected by a poisoned dependency, a hostile file in the repo, or a prompt-injected web page. The usual reflexes — "run it in a container" or "review the diff afterward" — answer only half of the question. A single container is one fixed boundary applied to every run regardless of trust, and an after-the-fact diff review tells you what changed in the files but nothing about what the process <em>reached for</em>: which paths it read, which hosts it tried to call, which limits it hit. The interesting design question is not "is it in a box?" but "is the box matched to how much I trust this run, can this host actually enforce that box, and is what happened written down?"
+    </p>
+    <p>
+      h5i's sandbox feature is named <code>env</code>, and its answer to that question is a <strong>tier ladder</strong> rather than a single box. You declare how much confinement a run needs; h5i resolves that claim against the host and either enforces it or refuses — it never silently downgrades. The whole run is then captured as Git-addressed provenance, so the sandbox boundary and the review boundary become the same unit of work. This is the confinement pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> made concrete.
     </p>
 
     <div class="callout">
-      <strong>Series map.</strong> This h5i deep dive follows the <a href="/blog/sandboxing-ai-agents-foundations/">foundations</a>, <a href="/blog/sandboxing-ai-agents-implementation/">implementation guide</a>, and <a href="/blog/sandboxing-ai-agents-landscape/">AI sandbox comparison</a>.
+      <strong>Series map.</strong> This h5i deep dive follows the <a href="/blog/sandboxing-ai-agents-foundations/">foundations</a>, the <a href="/blog/sandboxing-ai-agents-implementation/">implementation guide</a>, and the <a href="/blog/sandboxing-ai-agents-landscape/">AI sandbox comparison</a>. For the end-to-end workflow around the sandbox, see <a href="/blog/agent-sandbox-env/">the h5i env walkthrough</a>.
     </div>
 
-    <h2>h5i env sandbox core abstraction</h2>
+    <h2>What you already know, and what h5i adds</h2>
     <p>
-      An h5i environment fuses three objects. The <strong>code branch</strong> is a Git worktree and branch for the agent's file changes. The <strong>context branch</strong> is the h5i reasoning and memory context associated with the work. The <strong>environment manifest</strong> records policy, identity, base commit, captures, and provenance. Together, they make the sandboxed run audit-reconstructable: not bit-for-bit replay, but a durable answer to who ran what, under which policy, against which tree, producing which diff.
+      If you have sandboxed a build before, the primitives here are familiar: Linux namespaces, Landlock and seccomp, cgroups and rlimits, rootless containers, an egress proxy. h5i does not invent new kernel mechanisms. What it adds is the part that is usually left to a pile of shell scripts and tribal knowledge: a single declared policy that selects among those mechanisms, a resolver that refuses claims the host cannot meet, and a binding from the enforced policy to a reviewable record. The novelty is the discipline, not the syscalls.
+    </p>
+
+    <h2>The env: one Git-addressed unit of work</h2>
+    <p>
+      An h5i environment fuses three objects. The <strong>code branch</strong> is a Git worktree and branch for the agent's file changes. The <strong>context branch</strong> is the h5i reasoning and memory context for the work. The <strong>environment manifest</strong> records the policy, identity, base commit, captures, and a policy digest. Together they make the run audit-reconstructable: not bit-for-bit replay, but a durable answer to who ran what, under which policy, against which tree, producing which diff.
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">h5i env lifecycle</span></div>
-      <div class="terminal-body"><pre>$ h5i env create fix-auth --profile agent
-$ h5i env shell fix-auth
+      <div class="terminal-body"><pre>$ h5i env create fix-auth --profile agent     # pick a profile; tier resolved vs host
+$ h5i env shell fix-auth                       # confined interactive session
 box$ cargo test
 box$ exit
-$ h5i env log fix-auth
-$ h5i env diff fix-auth
-$ h5i env propose fix-auth
-$ h5i env apply fix-auth</pre></div>
+$ h5i env diff fix-auth                         # inspect the filesystem diff
+$ h5i env propose fix-auth                       # mediated commit + review brief
+$ h5i env apply fix-auth                          # reviewer-selected; never automatic</pre></div>
     </div>
 
     <p>
-      The user gets a normal review shape: create, run or shell, inspect logs, inspect diff, propose the mediated commit, and apply when satisfied. Apply refuses an unproposed environment, the mediated-commit step is mandatory, never implicit. The agent gets a workspace that feels like a real project. The repository gets a durable record rather than an unstructured transcript.
+      The reviewer gets a normal shape: create, run or shell, inspect the diff, propose the mediated commit, apply when satisfied. <code>apply</code> refuses an unproposed environment — the mediated-commit step is mandatory, never implicit. The agent gets a workspace that feels like a real checkout. The repository gets a durable record rather than an unstructured transcript.
     </p>
 
-    <h2>Tiered isolation</h2>
+    <h2>The tier ladder: match the box to the trust</h2>
     <p>
-      h5i does not pretend every host supports every boundary. It resolves a requested isolation claim against the local machine and refuses when the claim cannot be met. The tiers are intentionally explicit:
+      h5i does not pretend every host supports every boundary, and it does not pretend every run needs the strongest one. There are four shipped tiers. Each rung adds enforcement and adds host requirements; each is fail-closed, so a run that asks for more than the host can deliver is refused, not quietly weakened.
     </p>
 
     <div class="tbl-wrap">
       <table class="data">
-        <thead><tr><th>Tier</th><th>Boundary</th><th>Defends well against</th><th>Does not claim</th></tr></thead>
+        <thead><tr><th>Tier</th><th>Filesystem</th><th>Network</th><th>Enforced by</th><th>Host requirement</th></tr></thead>
         <tbody>
-          <tr><td><strong>workspace</strong></td><td>Git worktree only</td><td>parallel edit collisions</td><td>execution containment</td></tr>
-          <tr><td><strong>process</strong></td><td>Landlock, seccomp denylist, user/mount/PID/net namespaces, cgroups or rlimits</td><td>accidental damage, many prompt-injection effects, deny-network local runs</td><td>microVM-grade hostile-code isolation</td></tr>
-          <tr><td><strong>supervised</strong></td><td>process tier plus seccomp-notify socket gate and rootless L3/L4 egress</td><td>off-allowlist network, raw-IP bypass attempts, netlink firewall rewrites</td><td>dynamic policy patching or separate kernel</td></tr>
-          <tr><td><strong>container</strong></td><td>rootless Podman with dropped capabilities, read-only rootfs, no docker socket, L7 proxy egress</td><td>containerized toolchains and stronger filesystem packaging</td><td>un-bypassable raw-socket egress unless direct sockets are blocked by config</td></tr>
+          <tr>
+            <td><strong>workspace</strong></td>
+            <td>worktree on the host FS; no kernel confinement</td>
+            <td>inherits the host network</td>
+            <td>Git worktree isolation only</td>
+            <td>none (works anywhere Git does)</td>
+          </tr>
+          <tr>
+            <td><strong>process</strong></td>
+            <td>Landlock allowlist: worktree writable, selected paths read-only, home excluded by default</td>
+            <td><code>deny</code> (empty netns) or <code>host</code>; <em>no</em> domain allowlist</td>
+            <td>Landlock + seccomp deny-list + user/mount/IPC/UTS (and net on deny) namespaces + PID-namespace supervisor + cgroup v2 or rlimits</td>
+            <td>Landlock-capable kernel, unprivileged user namespaces, seccomp</td>
+          </tr>
+          <tr>
+            <td><strong>supervised</strong></td>
+            <td>same Landlock allowlist as process</td>
+            <td><code>deny</code>, <code>host</code>, or an L3/L4 domain allowlist (<code>net.egress</code>)</td>
+            <td>the process stack <em>plus</em> a seccomp-notify socket gate and an nftables egress filter in a private netns</td>
+            <td>process-tier requirements + rootless nftables + <code>slirp4netns</code></td>
+          </tr>
+          <tr>
+            <td><strong>container</strong></td>
+            <td>read-only rootfs, private <code>/tmp</code> tmpfs, <code>$WORK</code> bind-mounted rw, <code>--userns=keep-id</code></td>
+            <td><code>deny</code>, <code>host</code>, or an L7 proxy domain allowlist (<code>net.egress</code>)</td>
+            <td>rootless Podman: <code>--cap-drop=ALL</code>, <code>--security-opt=no-new-privileges</code>, no docker socket, host-side CONNECT proxy</td>
+            <td>rootless Podman + a <code>container.image</code> in the profile</td>
+          </tr>
         </tbody>
       </table>
     </div>
 
     <p>
-      The future slots are <code>hardened-container</code> and <code>microvm</code>, but h5i does not claim they are shipped when they are not. That is important: an isolation enum should express both current capability and a fail-closed upgrade path.
+      The two reserved slots, <code>hardened-container</code> and <code>microvm</code>, are external/separate-kernel backends that this build does not ship — and h5i says so plainly rather than pretending the enum value implies the boundary. An isolation enum should express both current capability and a fail-closed upgrade path.
+    </p>
+    <p>
+      Read the ladder by trust. <strong>workspace</strong> is for runs you already trust (your own scripted refactor) where you only want parallel-edit isolation. <strong>process</strong> is the everyday default for agent build/test work: it keeps a confused or prompt-injected command away from your home directory and the network without the weight of a container. <strong>supervised</strong> is for when the run legitimately needs the network but only to specific hosts, and you want that enforced at the packet layer. <strong>container</strong> is for runs that need a packaged toolchain or an image-level filesystem, accepting an L7 (not L3/L4) egress claim in exchange.
     </p>
 
-    <h2>Worktree plus mediated commit</h2>
+    <h2>Ask the host first: <code>h5i env probe</code></h2>
     <p>
-      The worktree gives the agent a real checkout. At confined tiers, h5i hides the shared Git internals from the workload and treats the filesystem diff as the output. The host-side h5i process stages and commits after checking paths. This avoids giving the untrusted process direct write access to refs, hooks, shared objects, and other worktrees.
-    </p>
-    <p>
-      This design also makes review ordinary. You can inspect a diff, compare multiple environments, and apply the one you want. The sandbox does not auto-merge just because the command exited successfully.
+      Because the ladder is host-dependent, h5i ships a probe. It does not just check that the kernel bits exist; the required Landlock/seccomp/userns features can all be present while a hardened kernel or an AppArmor profile still denies exec under the full stack. So the probe also runs a functional self-test (<code>verify_exec</code>) before it reports a tier as runnable.
     </p>
 
-    <h2>Filesystem defense</h2>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">h5i env probe</span></div>
+      <div class="terminal-body"><pre>$ h5i env probe
+── Host isolation capabilities ──
+  os           = linux
+  landlock_abi = 3
+  userns       = true
+  seccomp      = true
+  container    = podman
+
+  claim workspace  satisfiable = yes
+  claim process    satisfiable = yes
+  claim container  satisfiable = yes (needs rootless Podman + profile container.image)
+  claim hardened-container/microvm: external backends (not in this build)
+  process tier runnable = yes</pre></div>
+    </div>
+
     <p>
-      In the process tier, h5i grants write access to the environment worktree and selected read-only system paths. It does not grant the user's whole home directory. It does not rely on "deny this child under an allowed parent" semantics because Landlock is allowlist-only. Profiles that need runtime state, such as an agent's own credential cache, must say so explicitly.
-    </p>
-    <p>
-      The defense here is against accidental host writes, prompt-injected commands that try to read common secret paths, and dependency scripts that assume normal home-directory access. It is not a promise that the host kernel is unreachable; this tier still shares the kernel.
+      If a requested claim is not satisfiable, <code>env create</code> fails with a specific reason — for example, an AppArmor-restricted user namespace on CI fails the functional check even though the Landlock ABI looks fine. Refusing is the point: a sandbox that downgrades itself silently is worse than no sandbox, because the policy digest would then assert a boundary the run never had.
     </p>
 
-    <h2>Network defense</h2>
+    <h2>The policy model: one checked-in <code>env.toml</code></h2>
     <p>
-      h5i's most distinctive enforcement detail is the supervised tier's rootless egress allowlist. The sandbox creates a private network namespace, uses a user-space uplink, installs a default-drop nftables ruleset inside the namespace, resolves allowlisted hosts once, pins them through a private <code>/etc/hosts</code>, and opens no general DNS path.
+      A profile is a small, version-controlled TOML block in <code>.h5i/env.toml</code>. It is the single place that selects a tier and declares the filesystem, network, resource, environment, secret, and tool surface for a run. Two built-ins need no file at all: <code>default</code> (a deny-home build/test profile) and the <code>agent</code> family (an agent-in-box profile). Everything below is fail-closed — an unset list grants nothing, and several lints reject contradictory policies before a run starts.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">.h5i/env.toml</span></div>
+      <div class="terminal-body"><pre># Checked in, versioned, and digested into the env manifest.
+[profile.ci]
+isolation = "supervised"          # workspace | process | supervised | container
+tools     = ["cargo", "rustc", "git"]   # empty = any program; non-empty = allowlist
+
+[profile.ci.fs]
+read  = ["~/.cargo", "~/.rustup"] # extra read-only grants ($WORK is writable already)
+write = []                        # extra writable paths beyond $WORK
+deny  = []                        # lint: a denied path may not sit under a grant
+
+[profile.ci.net]
+mode   = "deny"                   # deny (no network) | host (full rootless NAT)
+egress = ["crates.io", "static.crates.io", "github.com:443"]
+                                  # a non-empty allowlist supersedes `mode`: only
+                                  # these hosts, enforced at L3/L4 here (supervised)
+
+[profile.ci.resources]
+mem   = "2G"
+procs = 256
+wall  = "10m"
+cpu   = "5m"
+fsize = "512M"
+
+[profile.ci.env]
+pass = ["PATH", "CARGO_HOME", "RUSTUP_HOME"]   # the rest of the host env is stripped</pre></div>
+    </div>
+
+    <p>
+      The fail-closed lints are the load-bearing part. h5i <strong>refuses a profile that sets <code>net.egress</code> below the supervised tier</strong>: the process tier's network namespace is all-or-nothing, so it can offer <code>deny</code> or <code>host</code> but cannot honor a domain allowlist, and claiming otherwise would be a lie in the manifest. It also refuses a granted filesystem path that <em>contains</em> a denied child, because Landlock is allowlist-only and cannot subtract a child from a granted parent — the fix is to narrow the grant, not to pretend a deny rule will catch it.
     </p>
     <p>
-      The remaining escape attempt is policy mutation: if the workload can call netlink, it can try to flush nftables or change routes. h5i places a seccomp-notify socket gate in front of socket creation and denies <code>AF_NETLINK</code>. That means tools such as <code>nft</code> and <code>ip</code> cannot open the control channel needed to rewrite the namespace's packet policy.
+      Secrets are brokered rather than passed through. A grant names a secret and how to source and inject it (<code>env:VAR</code> or a host-side <code>command:</code> extractor; injected as a file or an env var, with an optional TTL); captures redact the value and record a fingerprint, so a reviewer can see that a secret was involved without seeing it. And the agent-in-box profiles are <strong>runtime-scoped</strong>: <code>agent-claude</code> grants only Claude's own HOME state and Anthropic egress, <code>agent-codex</code> only Codex's state and OpenAI egress. A Claude box cannot read Codex's credentials or reach the other vendor's API, which keeps a prompt-injected agent from laundering one runtime's authority through another.
+    </p>
+
+    <h2>Two egress allowlists, two honest claims</h2>
+    <p>
+      The network is where the tiers differ most, and where the distinction matters for your threat model. Both supervised and container can enforce a <code>net.egress</code> domain allowlist, but they do it at different layers and with different guarantees — and h5i is deliberate about not blurring them.
+    </p>
+    <p>
+      The <strong>supervised</strong> tier enforces egress at <strong>L3/L4</strong>. It runs the workload in a private network namespace with a user-space uplink (<code>slirp4netns</code>), installs a default-drop nftables ruleset, resolves the allowlisted hosts once and pins them through a private <code>/etc/hosts</code>, and opens no general DNS path. The remaining escape is policy mutation — flushing nftables or rewriting routes — so the seccomp-notify socket gate denies <code>AF_NETLINK</code> (along with raw and packet sockets). Tools such as <code>nft</code> and <code>ip</code> cannot even open the control channel they would need.
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">supervised egress behavior</span></div>
-      <div class="terminal-body"><pre>curl https://pypi.org            # allowed when pypi.org is in net.egress
-curl https://example.invalid     # blocked: no DNS route
-curl https://1.1.1.1             # blocked: packet default-drop
-nft flush ruleset                # blocked: AF_NETLINK denied</pre></div>
+      <div class="terminal-body"><pre>curl https://crates.io           # allowed: crates.io is in net.egress
+curl https://example.invalid     # blocked: not in the pinned /etc/hosts, no DNS route
+curl https://1.1.1.1             # blocked: nftables default-drop at L3/L4
+nft flush ruleset                # blocked: AF_NETLINK denied by the seccomp gate</pre></div>
     </div>
 
     <p>
-      The container tier has a different network shape: rootless Podman plus a proxy-oriented egress allowlist. That is useful and ergonomic, but h5i documents the difference. A proxy allowlist and a packet-enforced allowlist are not the same claim.
+      The <strong>container</strong> tier enforces egress at <strong>L7</strong>. A non-empty <code>net.egress</code> spawns a host-side, DNS-pinned HTTP/HTTPS CONNECT allowlist proxy; the container reaches it over slirp4netns and is pointed at it with <code>HTTP(S)_PROXY</code>. This is honest L7 scoping: it gates proxy-respecting tooling cleanly, but it cannot stop a process that ignores the proxy environment and opens a raw socket to whatever IP the rootless NAT permits. That is a real, documented difference — a proxy allowlist and a packet-enforced allowlist are not the same claim, and the container tier does not pretend to give the L3/L4 guarantee the supervised tier does. Airtight L3/L4 inside a container is the job of the not-yet-shipped hardened/microVM tiers.
     </p>
 
-    <h2>Secrets defense</h2>
+    <h2>Worktree, mediated commit, and captured evidence</h2>
     <p>
-      h5i includes a secrets broker model rather than treating environment variables as invisible. The policy names which secrets may be released. Captures redact values and record fingerprints so a reviewer can see that a secret was involved without seeing the secret. The design goal is not simply "make the command work"; it is "make secret use reviewable without leaking the secret into evidence."
+      The worktree gives the agent a real checkout, but at the confined tiers h5i keeps the shared Git internals out of the box and treats the filesystem diff as the output. The host-side h5i process stages and commits after checking the paths — so the untrusted process never gets direct write access to refs, hooks, shared objects, or your other worktrees. That is what makes review ordinary: you can inspect a diff, <code>compare</code> several environments side by side, and apply the one you want. Nothing auto-merges because a command exited zero.
     </p>
     <p>
-      Profiles for real agents are scoped to one runtime. A Claude-oriented environment should not also receive Codex credentials and egress to OpenAI endpoints; a Codex-oriented environment should not also receive Claude state and egress to Anthropic endpoints. Combining runtime credentials expands the damage of a prompt-injected agent.
-    </p>
-
-    <h2>Resources defense</h2>
-    <p>
-      h5i uses cgroup v2 where possible and rlimits as fallback. Memory, process count, file size, CPU, and wall-clock duration are all part of the sandbox's operational boundary. This matters for agents because many failures are not clever attacks. They are runaway builds, recursive test fixtures, package managers that explode cache size, or generated code that forks too much.
+      Every run is capture-wrapped. h5i records the command, a redacted summary, the raw output pointer, the policy digest, an egress summary, redactions, and denials. The dashboard groups this "boundary pressure" into five lanes — filesystem, network, process and privilege, resources, and provenance — with deliberately careful copy: a blocked off-allowlist request is evidence, not proof of malice, and a sensitive access under <em>workspace</em> isolation is a weak-isolation gap, not a red alert. The payoff is triage. A reviewer can prioritize the env that attempted raw-IP egress, touched sensitive paths, hit seccomp denials, or blew its resource budget, and spend less time on the clean ones.
     </p>
 
-    <h2>Audit and boundary pressure</h2>
+    <h2>The honest ceiling</h2>
     <p>
-      h5i records command captures, raw output pointers, structured summaries, policy digests, egress summaries, redactions, and denials. The web dashboard classifies "boundary pressure" across five lanes: filesystem, network, process and privilege, resources, and provenance. That copy is intentionally careful: a blocked off-allowlist request is important evidence, not proof of maliciousness. A sensitive access under workspace isolation is a weak-isolation gap, not a red alert.
-    </p>
-    <p>
-      This is the review advantage of binding sandboxing to provenance. A reviewer can prioritize the environment that attempted raw IP egress, touched sensitive paths, hit seccomp denials, or exceeded resource budgets. Clean runs and noisy runs should not consume the same review time.
-    </p>
-
-    <h2>What h5i defends</h2>
-    <div class="tbl-wrap">
-      <table class="data">
-        <thead><tr><th>Threat</th><th>h5i defense</th><th>Residual risk</th></tr></thead>
-        <tbody>
-          <tr><td>Agent clobbers user's checkout</td><td>separate worktree and branch</td><td>none for normal Git edits; malicious host writes need process tier</td></tr>
-          <tr><td>Command reads home secrets</td><td>Landlock/file view excludes home by default</td><td>explicit profiles can reintroduce state if too broad</td></tr>
-          <tr><td>Command exfiltrates over internet</td><td>network deny or supervised egress allowlist</td><td>host mode and broad allowlists are intentionally weaker</td></tr>
-          <tr><td>Raw socket bypasses proxy</td><td>supervised L3/L4 packet filter catches raw IP</td><td>container L7 proxy tier has different claim</td></tr>
-          <tr><td>Workload rewrites firewall</td><td>AF_NETLINK denied after setup</td><td>kernel bugs remain shared-kernel risk</td></tr>
-          <tr><td>Runaway process consumes host</td><td>cgroups, rlimits, timeout</td><td>hosts without delegation may get weaker fallback limits</td></tr>
-          <tr><td>Reviewer cannot tell what happened</td><td>content-addressed captures and policy digests</td><td>not deterministic replay of external services</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h2>What h5i does not defend</h2>
-    <p>
-      h5i's shipped tiers are shared-kernel tiers. They are useful against accidental damage, prompt-injection effects, many exfiltration attempts, and ordinary untrusted build scripts. They are not the same as a Firecracker or Kata-backed microVM boundary. A malicious binary with a working host-kernel exploit is outside the honest claim of the current implementation.
-    </p>
-    <p>
-      h5i also does not make a broad allowlist safe by magic. If a profile grants credentials and permits egress to a general-purpose endpoint, the policy has created a channel. Sandboxing reduces authority; it does not replace careful policy design.
+      All four shipped tiers share the host kernel. They are strong against accidental damage, many prompt-injection effects, ordinary untrusted build scripts, and casual exfiltration. They are not a Firecracker- or Kata-backed microVM boundary, and a malicious binary with a working host-kernel exploit is outside their honest claim. Likewise, no tier makes a careless policy safe: if a profile grants credentials and permits egress to a general-purpose endpoint, the policy itself has opened a channel. Sandboxing reduces authority; it does not replace policy design.
     </p>
 
     <div class="callout danger">
-      <strong>The hard ceiling is the shared kernel.</strong> Process, supervised, and rootless-container tiers are strong local containment tools. They are not a substitute for separate-kernel isolation when the workload itself is a determined adversary.
+      <strong>The hard ceiling is the shared kernel.</strong> Process, supervised, and rootless-container tiers are strong local containment tools. They are not a substitute for separate-kernel isolation when the workload itself is a determined adversary — that is what the reserved hardened-container and microVM tiers are for.
     </div>
 
-    <h2>The design lesson</h2>
+    <h2>Conclusion: a ladder, not a box</h2>
     <p>
-      h5i's answer to AI-agent sandboxing is not "one box to rule them all." It is a disciplined binding: create a disposable workspace, enforce the strongest local policy the host can actually satisfy, capture what happened, attach that evidence to the work, and let a reviewer choose whether the diff lands. The sandbox boundary and the review boundary are the same unit.
+      The reason h5i exposes four tiers instead of one is that "trust" is not a constant across agent runs, and "what the host can enforce" is not constant across machines. A single fixed box forces you to either over-confine routine work or under-confine the run that finally reaches the open internet. A ladder lets the policy say exactly how much authority a run should have, the resolver refuse anything the host cannot truly deliver, and the manifest record which boundary actually applied.
     </p>
     <p>
-      That is the difference between running an agent in a container and running agent work as an auditable environment. The former may be isolated. The latter can be reviewed, compared, pushed, pulled, and remembered.
+      That last part is what separates running an agent in a container from running agent work as an auditable environment. The container may be isolated; you still have to take its isolation on faith and reconstruct what happened from logs. An h5i env binds the enforced policy to a reviewable, comparable, shareable record — so the question "what was this process allowed to do, and what did it try?" has an answer in Git, not in your memory.
     </p>
+
+    <h2>Frequently asked questions</h2>
+    <div class="faq">
+      <p><strong>Which tier should I use by default?</strong> For everyday agent build/test work, <code>process</code> is the right default where the host supports it: it excludes your home directory and the network without a container's weight. Drop to <code>workspace</code> only for runs you already trust; step up to <code>supervised</code> when the run needs specific hosts at the packet layer, or <code>container</code> when it needs a packaged image. Run <code>h5i env probe</code> to see which are satisfiable on your machine.</p>
+      <p><strong>Can the process tier restrict the network to specific domains?</strong> No. The process tier offers only <code>net.mode = deny</code> (an empty network namespace) or <code>host</code>, because its netns is all-or-nothing. A <code>net.egress</code> domain allowlist requires the supervised tier (L3/L4 nftables) or the container tier (L7 proxy); h5i refuses a profile that sets <code>net.egress</code> below supervised rather than silently ignoring it.</p>
+      <p><strong>Is the container tier's egress allowlist airtight?</strong> It is honest L7 scoping, not an airtight L3/L4 guarantee. The host-side CONNECT proxy gates proxy-respecting tooling, but a process that ignores <code>HTTP(S)_PROXY</code> and opens a raw socket can reach any IP the rootless NAT permits. For packet-level enforcement, use the supervised tier; for un-bypassable egress, the separate-kernel tiers are the (not-yet-shipped) answer.</p>
+      <p><strong>Is an h5i env as safe as a VM?</strong> No. Every shipped tier shares the host kernel, so a working kernel exploit is outside their claim. They are designed for accidental damage, prompt-injection effects, and ordinary untrusted build scripts — not for running a determined adversary's binary. Separate-kernel isolation (Firecracker/Kata-style microVMs) is a reserved future tier.</p>
+    </div>
 
     <div class="next-up">
       <span class="label">Series start</span>
