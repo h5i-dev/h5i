@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Git as the Communication Layer for AI Agents: h5i</title>
-  <meta name="description" content="Git can carry more than code. h5i uses Git refs as a durable message bus for Claude Code, Codex, and reviewers.">
-  <meta name="keywords" content="git communication layer ai agents, multi-agent coding git, claude code codex collaboration, ai agent messaging, h5i msg">
+  <meta name="description" content="A Git ref with compare-and-swap writes and union-merge-by-id is a lossless multi-writer mailbox for AI agents — durable multi-agent coordination, asks, reviews, and handoffs with no broker.">
+  <meta name="keywords" content="git agent communication, multi-agent coordination, agent handoff, ai agent messaging, compare-and-swap union merge, multi-agent coding git, claude code codex collaboration, h5i msg">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -17,7 +17,7 @@
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="Git as the Communication Layer for AI Agents">
-  <meta property="og:description" content="Git can carry more than code. h5i uses Git refs as a durable message bus for Claude Code, Codex, and reviewers.">
+  <meta property="og:description" content="A Git ref with compare-and-swap writes and union-merge-by-id is a lossless multi-writer mailbox for AI agents — durable coordination with no broker.">
   <meta property="og:url" content="https://h5i.dev/blog/git-communication-layer-ai-agents/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="article:published_time" content="2026-06-03">
@@ -25,7 +25,7 @@
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Git as the Communication Layer for AI Agents">
-  <meta name="twitter:description" content="Git can carry more than code. h5i uses Git refs as a durable message bus for Claude Code, Codex, and reviewers.">
+  <meta name="twitter:description" content="A Git ref with compare-and-swap writes and union-merge-by-id is a lossless multi-writer mailbox for AI agents — durable coordination with no broker.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
@@ -33,7 +33,7 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "Git as the Communication Layer for AI Agents",
-  "description": "Git can carry more than code. h5i uses Git refs as a durable message bus for Claude Code, Codex, and reviewers.",
+  "description": "A Git ref with compare-and-swap writes and union-merge-by-id is a lossless multi-writer mailbox for AI agents — durable multi-agent coordination, asks, reviews, and handoffs with no broker.",
   "author": {
     "@type": "Person",
     "name": "Koukyosyumei",
@@ -54,7 +54,47 @@
     "@id": "https://h5i.dev/blog/git-communication-layer-ai-agents/"
   },
   "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-  "keywords": "git communication layer ai agents, multi-agent coding git, claude code codex collaboration, ai agent messaging, h5i msg"
+  "keywords": "git agent communication, multi-agent coordination, agent handoff, ai agent messaging, compare-and-swap union merge, multi-agent coding git, claude code codex collaboration, h5i msg"
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Is Git fast enough for AI agent messages?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "For durable task handoffs, reviews, and risk notes, yes. A Git ref trades sub-second latency for durability and auditability: an agent must pull to see new mail, so delivery is eventual, not real-time. h5i bridges the gap with a Stop-hook that surfaces new messages between turns and an `h5i msg wait` background waiter that wakes on arrival. It is the wrong substrate for live, sub-second chat and the right one for asks, reviews, risks, and handoffs."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How does a plain Git ref avoid lost messages with many writers?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Two mechanisms. A send is a compare-and-swap against the ref tip: build a commit off the tip you read, then move the ref only if it still points there; if a concurrent writer moved it first, re-read and retry. Across clones, pulls union-merge the append-only messages.jsonl by message id, so two agents pushing from different machines reconcile into the union of both message sets instead of one clobbering the other. The cost is eventual consistency: ordering is a per-id merge, not a global clock, so causal order rides on thread_id and reply_to."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Should every agent thought become a message?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. Routine observation belongs in context traces. The message channel is reserved for coordination events — asks, reviews, risks, handoffs, acknowledgements, and completion — so it stays readable and searchable after the session ends."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How does Git-native messaging compare to a message bus like Kafka or to MCP?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "A message bus gives real-time, ordered delivery but is a server to run and is not code-adjacent or auditable by default. MCP is a tool/transport protocol for one agent's tools, not a durable multi-agent log. Live agent-to-agent RPC protocols such as Google's A2A need both endpoints up at once. A Git ref is complementary: it works async and offline, travels with the code, and is auditable by construction — at the cost of presence and server-push."
+      }
+    }
+  ]
 }
   </script>
 
@@ -89,45 +129,86 @@
     <header>
       <div class="post-eyebrow">Pillar · Multi-agent collaboration</div>
       <h1>Git as the Communication Layer for AI Agents</h1>
-      <p class="post-deck">Agents already coordinate through files and commits. h5i makes the communication explicit: typed asks, reviews, risks, handoffs, and done messages stored in a shareable Git ref.</p>
+      <p class="post-deck">Multi-agent systems need a coordination channel that outlives the chat window. A Git ref with compare-and-swap writes and union-merge-by-id is a lossless multi-writer mailbox — durable, auditable, and broker-free. Here is the mechanics, the honest tradeoffs, and where it loses to a message bus.</p>
       <div class="post-meta">
         <span><strong>Published</strong> 2026-06-03</span>
-        <span><strong>Reading time</strong> 8 min read</span>
+        <span><strong>Reading time</strong> 11 min read</span>
         <span><strong>Tags</strong> Git · Messaging · Multi-agent</span>
       </div>
     </header>
 
-<p>Git-backed agent handoffs are one of the core coordination pillars inside an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>, every ask, review, risk, and handoff recorded in your repo, provable after the fact. AI coding agents usually share a repository but not a durable conversation. One agent changes files. Another agent reviews. A human asks for a follow-up. Without a shared channel, the context lives in separate chat windows and disappears when sessions end.</p>
-<p>Git is a practical communication substrate because it is already available wherever the code is. It has identities, refs, remotes, fetch, push, history, and review workflows. h5i uses those properties to make agent communication durable and replayable.</p>
-<h2>What Git gives you</h2>
-<p>Git is distributed. It is content-addressed. It can move custom refs. It can preserve append-only history. Those properties are useful for agent messages because the messages should travel with the code, survive machine changes, and remain inspectable later.</p>
-<h2>What h5i adds</h2>
-<p>h5i's <code>msg</code> command stores cross-agent messages in <code>refs/h5i/msg</code>. The command surface includes <code>ask</code>, <code>review</code>, <code>risk</code>, <code>handoff</code>, <code>ack</code>, <code>done</code>, and <code>decline</code>. Messages can be addressed to an agent or broadcast to <code>all</code>. They move with <code>h5i share push</code> and <code>h5i share pull</code>.</p>
+<p>A year ago "multi-agent" meant one model in a loop. Now it means a Claude Code session writing a branch while Codex reviews it, a third agent runs the long task, and a human steps in to redirect — often on different machines, rarely all awake at the same second. The hard part is no longer making one agent competent. It is getting several of them to coordinate without losing the thread: who asked for what, which risk was already flagged, who owns the next step, what counts as done.</p>
+<p>Most teams answer this with the chat window. That works until the session ends. The ask, the review note, the "I already handled that" — all of it lives in a transcript that is not attached to the branch it was about, and is gone the moment the context resets. Coordination state that does not survive the session is not coordination state; it is a conversation you have to reconstruct.</p>
+<p>This article makes a narrower claim than "use Git for everything." It is that the coordination channel for asks, reviews, risks, and handoffs should live <em>next to the artifact</em> — the branch, the commit, the file — and that a single Git ref, written with compare-and-swap and reconciled with union-merge, gives you a lossless multi-writer mailbox with no server to run. You already know Git's basics; the part worth your attention is why those two mechanics turn an append-only ref into a mailbox, and where that trade is wrong. Git-native handoffs are also one of the coordination pillars inside an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>: every ask, review, risk, and handoff recorded in the repo, provable after the fact.</p>
+
+<h2>Why a ref is the substrate, not a server</h2>
+<p>Strip the messaging idea down and you are choosing where coordination state lives. The candidate properties you want: it travels with the code, it survives a machine or a session, it cannot be silently rewritten, and it needs no always-on service. A Git ref has all four, and you did not have to build any of it.</p>
+<ul>
+  <li><strong>It travels with the code.</strong> A ref is part of the repository. Clone the repo, fetch the ref, and the coordination history comes with it — on a laptop, in CI, in a sandbox. The conversation is co-located with the branch it is about, not in a separate product that has to be cross-referenced by hand.</li>
+  <li><strong>It is content-addressed.</strong> Every message commit is identified by the hash of its contents. Tampering is detectable by construction; "what did the reviewer actually say" has a cryptographic answer, not a vendor's word.</li>
+  <li><strong>It is append-only by discipline.</strong> The log only ever grows. Nothing in the normal write path edits an earlier message, which is exactly what makes the history replayable and exactly what makes the next mechanic safe.</li>
+  <li><strong>It needs no central service.</strong> Two agents on two machines coordinate through the same remote they already push code to. There is no broker to provision, secure, scale, or page someone about at 3am.</li>
+</ul>
+<p>h5i builds on this directly: cross-agent messages live in <code>refs/h5i/msg</code> as an append-only <code>messages.jsonl</code> (one JSON message per line) plus an <code>agents.json</code> roster. They move with <code>h5i share push</code> and <code>h5i share pull</code> — they are <em>not</em> carried by a plain <code>git push</code>, which only moves <code>refs/heads/*</code>. (For the on-the-wire field layout — <code>version</code>, <code>kind</code>, <code>reply_to</code>, <code>thread_id</code>, <code>priority</code>, <code>focus</code>, <code>risk</code>, <code>links</code> — see the <a href="/blog/i5h-agent-to-agent-messaging/">i5h protocol deep dive</a>; this post stays at the substrate altitude.)</p>
+
+<h2>A Git ref as a lossless multi-writer mailbox</h2>
+<p>Here is the part that is not obvious. A single ref looks like a single-writer thing — it points at one commit, and a naive "read tip, write new commit, move ref" loses data the moment two agents do it at once. The trick is two mechanics working together: compare-and-swap on write, union-merge-by-id on reconcile.</p>
+<h3>Compare-and-swap on send</h3>
+<p>A send does not blindly move the ref. It reads the current tip, builds a new commit that appends one line to <code>messages.jsonl</code> off that tip, and then moves the ref <em>only if it still points where it was read</em>. If a concurrent writer in the same clone moved the tip first, the swap fails; the sender re-reads the new tip and retries. h5i's <code>append_message_cas</code> loops this up to 64 times — a writer would have to lose that many consecutive races to error — so bursty concurrency (several agents sending into one clone at once) never silently drops an append. This is the standard optimistic-concurrency pattern, applied to a ref instead of a database row: no locks, no broker, and no lost write under contention within a clone.</p>
+<h3>Union-merge-by-id on pull</h3>
+<p>Compare-and-swap solves contention <em>inside</em> one clone. It does nothing for two agents on two machines who both committed off the same tip and pushed — that is a genuine divergence, and a fast-forward-only push would reject one of them. Here the append-only discipline pays off. Because no message is ever edited, the two <code>messages.jsonl</code> blobs are two sets of immutable lines, and reconciliation is set union keyed by message id. h5i's <code>union_merge_commits</code> takes the union of both message sets (de-duplicating by id), then sorts the result into a stable <code>(timestamp, id)</code> order; the two rosters merge by keeping the latest last-seen per agent. Neither side's messages are clobbered — you end up with both.</p>
+<p>Why this is lossless: a message is identified by its id, and union never discards a line that exists on either side. Two agents can write blind to each other and, after a pull, both messages are present. What it costs is precise, and worth stating plainly:</p>
+<ul>
+  <li><strong>You must pull to see new mail.</strong> There is no push from the ref to you. Delivery is eventual — a message exists the instant it is committed, but you observe it only after a fetch + merge. This is eventual consistency, not real-time.</li>
+  <li><strong>Ordering is per-id merge, not a global clock.</strong> The merge sorts by timestamp, but timestamps come from independent machines with independent clocks. There is no total order you can trust for causality. If message B is a reply to A, the only reliable way to know that is the data itself — which is why every message carries <code>thread_id</code> and <code>reply_to</code>, so causal order rides on explicit links, not on wall-clock luck.</li>
+</ul>
+<p>In practice the command surface hides all of this. You send typed messages — <code>ask</code>, <code>review</code>, <code>risk</code>, <code>handoff</code>, and the typed replies <code>reply</code>, <code>ack</code>, <code>done</code>, <code>decline</code> — addressed to one agent or broadcast to <code>all</code>. Identity comes from <code>$H5I_AGENT</code> (Claude Code sets it to <code>claude</code>), so no <code>--from</code> is needed in the common case.</p>
 <div class="terminal"><div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/repo</span></div><div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i msg review --branch auth --focus src/auth.rs codex "review token refresh edge cases"</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i msg risk --priority high all "billing cache crosses tenants"</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i msg done 1 "fixed in 8f21c3a"</span></pre></div></div>
-<h2>Why not a chat app?</h2>
-<p>A chat app is useful for people. It is not automatically tied to branches, commits, remotes, and audit history. For agent collaboration, the strongest signal is often branch-local and code-adjacent: review this file, inspect this risk, take this handoff, mark this request done.</p>
-<p>Git-native messaging keeps the coordination near the artifact being coordinated. It also works across machines and clones without requiring a central service designed specifically for agents.</p>
-<h2>Use cases</h2>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i msg done 1 "fixed in 8f21c3a"</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share push</span>   <span class="t-cmt"># refs/h5i/msg does not ride a plain git push</span></pre></div></div>
+
+<h2>How it fails, and why those failures are acceptable</h2>
+<p>A substrate is only as good as its failure modes are understood. The Git-native ones are real and bounded.</p>
 <ul>
-  <li>A Claude Code session asks Codex to review a risky file.</li>
-  <li>Codex flags a security concern for the next agent to inspect.</li>
-  <li>A long-running task is handed off with branch and context metadata.</li>
-  <li>A reviewer asks for a targeted fix and receives a done message linked to the work.</li>
-  <li>The PR body includes relevant agent-message history for human review.</li>
+  <li><strong>No real-time push.</strong> This is the headline cost. An idle agent is not woken by a message landing in the ref. h5i works around it rather than pretending it away: a Stop-hook (<code>h5i msg hook</code>) surfaces new mail between turns, and an agent that has sent a request and is waiting on a reply launches a background <code>h5i msg wait --timeout N</code> that exits when a reply arrives; <code>h5i msg watch</code> is the human-side dashboard. If your workflow needs sub-second delivery to an agent that is otherwise sitting idle, this substrate is a poor fit — poll-or-wake is the model.</li>
+  <li><strong>Ref growth.</strong> The log is append-only, so it grows without bound. For task handoffs across a project's life this is small text and rarely a concern, but it is not zero — a high-frequency firehose of messages is the wrong thing to put here, both for size and for readability.</li>
+  <li><strong>Merge is by id, not causality.</strong> As above, you cannot infer "happened-before" from the merged order. Threads must be explicit (<code>thread_id</code>/<code>reply_to</code>) or you lose the conversation structure.</li>
+  <li><strong>Pulled content is untrusted.</strong> A message can arrive from another clone carrying attacker-influenced text — control characters or escape sequences aimed at the terminal that renders it. h5i runs pulled display fields through a <code>sanitize_display</code> pass that neutralizes terminal-injection in untrusted fields. Treat an incoming message as input to evaluate, never as an instruction to obey, even when a hook delivers it automatically.</li>
 </ul>
-<h2>What belongs in an agent message</h2>
-<p>Agent messages should be sparse and actionable. A good message names the branch, the file or behavior at issue, the kind of response expected, and the evidence already known. "Review auth retry behavior in <code>src/auth.rs</code>; concern is duplicate refresh after timeout" is useful. "Look at this" is not.</p>
-<p>That distinction matters for search and audit. A durable Git message should be understandable after the chat session is gone. h5i keeps routine observations in context traces and reserves messages for coordination events: asks, risks, reviews, handoffs, acknowledgements, and completion. The message channel stays readable because it is not a dump of every agent thought.</p>
-<p>It also makes responsibility explicit. A handoff should say who owns the next step, what result counts as done, and whether the sender expects a reply, review, or fix. That small structure prevents two agents from silently duplicating work or assuming the other side handled a risk.</p>
+<p>None of these is fatal for the use case the substrate is chosen for: durable, low-frequency coordination events. They would be disqualifying for live chat. That is the whole point — pick the substrate to match the traffic.</p>
+
+<h2>Git-native versus the alternatives</h2>
+<p>The honest way to argue for a substrate is to say what it gives up. Here is where a Git ref wins and where it does not.</p>
+<ul>
+  <li><strong>vs. a chat app / ChatOps (Slack, Discord).</strong> Excellent for humans and for ambient awareness. But it is not tied to a branch or commit, it is ephemeral relative to the repo, and it is not auditable as part of the code's history. When the coordination signal is "review <em>this</em> file on <em>this</em> branch," a separate chat product is the wrong home for it. Git-native keeps the message co-located with the artifact; chat keeps it co-located with people.</li>
+  <li><strong>vs. a message bus (Kafka, NATS).</strong> A bus gives you real-time delivery and a strong, partition-ordered log — genuinely better on latency and ordering. The cost is a server (or cluster) to run, secure, and scale; messages that live in infrastructure, not in the repo; and no audit trail unless you build one. A bus is the right answer for high-throughput event streams between services. It is overkill, and off to the side, for "agent A hands branch X to agent B."</li>
+  <li><strong>vs. MCP (Model Context Protocol).</strong> MCP is a tool/transport protocol that connects <em>one</em> agent to its tools and data sources. It is not a durable, shared, multi-writer log of coordination between agents — different layer entirely. You might use MCP tools <em>and</em> a Git message ref; they do not compete. (h5i in fact exposes its own operations as MCP tools.)</li>
+  <li><strong>vs. agent-to-agent RPC (e.g. Google's A2A).</strong> A2A and similar protocols let agents call each other live, in real time, with presence — strictly better when both endpoints are up and you want a synchronous exchange. The constraint is exactly that: both endpoints must be up. A Git ref works asynchronously and offline; an agent can hand off to one that does not exist yet, and the message waits in the ref until that agent is spawned and pulls. The two are complementary — live RPC for synchronous collaboration, a durable ref for asynchronous, auditable handoffs.</li>
+</ul>
+<p>The pattern across the comparison: every alternative that beats Git on latency or presence loses to it on durability, code-adjacency, or zero-infra — and vice versa. There is no free lunch, only a fit. For asks, reviews, risks, and handoffs, the Git-native trade is the right one. For a live operator chat or a high-rate event stream, it is not.</p>
+
+<h2>What goes in a message versus a context trace</h2>
+<p>Choosing the substrate is half the discipline; the other half is what you put on it. The failure mode of any durable channel is that it becomes a dump of everything, at which point it is as useless as no channel. The line h5i draws: <strong>messages are coordination events; routine observation is a context trace.</strong></p>
+<p>A trace records what an agent did and saw — the work. A message records a decision that requires another party: an ask that expects a response, a risk that the next agent must inspect, a review request scoped to a file, a handoff that transfers ownership, an acknowledgement that closes a loop. If a line does not change what someone else should do, it is a trace, not a message.</p>
+<p>That keeps the channel both readable and searchable after the session is gone. A good message is self-contained: it names the branch, the file or behavior at issue, the response expected, and the evidence already known. "Review auth retry behavior in <code>src/auth.rs</code>; concern is duplicate refresh after timeout" survives the loss of its chat window. "Look at this" does not.</p>
+<p>The handoff case is where this earns its keep. Multi-agent work fails most often not from a bad change but from ambiguous ownership — two agents redoing the same task, or both assuming the other handled a risk. A handoff message makes ownership explicit: who owns the next step, what result counts as done, whether a reply, review, or fix is expected. That small structure, recorded durably next to the branch, is the difference between coordination and two monologues.</p>
+
+<h2>Conclusion: pick the substrate for the traffic</h2>
+<p>There is no universal coordination layer for AI agents, and the useful question is not "real-time or durable" in the abstract — it is which trade matches the traffic in front of you. Asks, reviews, risks, and handoffs are low-frequency, high-consequence, and inherently tied to a branch or commit. For that traffic, a Git ref written with compare-and-swap and reconciled with union-merge-by-id is a lossless multi-writer mailbox you already have the infrastructure for: it travels with the code, it cannot be silently rewritten, it works offline and across clones, and it costs you a server you never have to run. The price — eventual delivery, poll-or-wake instead of push, no global causal clock — is real, well understood, and acceptable exactly where this channel is used.</p>
+<p>Where it is the wrong tool — live operator chat, sub-second streams, synchronous RPC between two agents that are both awake — reach for a bus or an A2A-style protocol and let them complement the durable log rather than replace it. Use the chat window for the conversation with the human; use the ref for the coordination that has to outlive it.</p>
+
 <h2>FAQ</h2>
-<h3>Is Git fast enough for agent messages?</h3>
-<p>For durable task handoffs, reviews, and risks, yes. h5i also provides wait and watch commands for agent workflows that need to wake on new messages.</p>
+<h3>Is Git fast enough for AI agent messages?</h3>
+<p>For durable task handoffs, reviews, and risk notes, yes. A Git ref trades sub-second latency for durability and auditability: an agent must pull to see new mail, so delivery is eventual, not real-time. h5i bridges the gap with a Stop-hook that surfaces new messages between turns and an <code>h5i msg wait</code> background waiter that wakes on arrival. It is the wrong substrate for live, sub-second chat and the right one for asks, reviews, risks, and handoffs.</p>
+<h3>How does a plain Git ref avoid lost messages with many writers?</h3>
+<p>Two mechanisms. A send is a compare-and-swap against the ref tip: build a commit off the tip you read, then move the ref only if it still points there; retry on contention. Across clones, pulls union-merge the append-only <code>messages.jsonl</code> by message id, so two agents pushing from different machines reconcile into the union of both message sets instead of one clobbering the other. The cost is eventual consistency: ordering is a per-id merge, not a global clock, so causal order rides on <code>thread_id</code> and <code>reply_to</code>.</p>
 <h3>Should every agent thought become a message?</h3>
-<p>No. Context traces capture work. Messages should represent coordination: asks, reviews, risks, handoffs, acknowledgements, and completion.</p>
+<p>No. Routine observation belongs in context traces. The message channel is reserved for coordination events — asks, reviews, risks, handoffs, acknowledgements, and completion — so it stays readable and searchable after the session ends.</p>
+<h3>How does Git-native messaging compare to a message bus like Kafka or to MCP?</h3>
+<p>A message bus gives real-time, ordered delivery but is a server to run and is not code-adjacent or auditable by default. MCP is a tool/transport protocol for one agent's tools, not a durable multi-agent log. Live agent-to-agent RPC protocols such as Google's A2A need both endpoints up at once. A Git ref is complementary: it works async and offline, travels with the code, and is auditable by construction — at the cost of presence and server-push.</p>
 <h3>Can humans read the messages?</h3>
-<p>Yes. The point is an auditable channel that both agents and humans can inspect.</p>
+<p>Yes. The ref is plain text under <code>refs/h5i/msg</code>, and the point is an auditable channel that both agents and humans can inspect — including in a PR body, where relevant message history can be surfaced for human review.</p>
 
 
     <h2>Sources and verification</h2>

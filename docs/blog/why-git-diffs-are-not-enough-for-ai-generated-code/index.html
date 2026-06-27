@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Why Git Diffs Are Not Enough for AI-Generated Code: h5i</title>
-  <meta name="description" content="Git diffs show changed lines, but AI-generated code review also needs prompts, context coverage, uncertainty, tests, and intent.">
-  <meta name="keywords" content="why git diffs are not enough for ai generated code, ai generated code review, ai code audit, ai code provenance, h5i">
+  <meta name="description" content="A git diff shows the destination, not the journey. For AI-generated code the journey — intent, observed context, test evidence, flagged uncertainty — is where the risk lives. Review AI code by provenance, not lines alone.">
+  <meta name="keywords" content="git diff ai code, why git diffs are not enough for ai generated code, review ai-generated code, ai code review, ai generated code review, code provenance, ai code audit, h5i">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -17,7 +17,7 @@
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="Why Git Diffs Are Not Enough for AI-Generated Code">
-  <meta property="og:description" content="Git diffs show changed lines, but AI-generated code review also needs prompts, context coverage, uncertainty, tests, and intent.">
+  <meta property="og:description" content="A git diff shows the destination, not the journey. For AI-generated code the journey — intent, observed context, test evidence, flagged uncertainty — is where the risk lives.">
   <meta property="og:url" content="https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="article:published_time" content="2026-06-03">
@@ -25,7 +25,7 @@
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Why Git Diffs Are Not Enough for AI-Generated Code">
-  <meta name="twitter:description" content="Git diffs show changed lines, but AI-generated code review also needs prompts, context coverage, uncertainty, tests, and intent.">
+  <meta name="twitter:description" content="A git diff shows the destination, not the journey. For AI-generated code the journey — intent, observed context, test evidence, flagged uncertainty — is where the risk lives.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
@@ -33,7 +33,7 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "Why Git Diffs Are Not Enough for AI-Generated Code",
-  "description": "Git diffs show changed lines, but AI-generated code review also needs prompts, context coverage, uncertainty, tests, and intent.",
+  "description": "A git diff shows the destination, not the journey. For AI-generated code the journey — intent, observed context, test evidence, flagged uncertainty — is where the risk lives. Review AI code by provenance, not lines alone.",
   "author": {
     "@type": "Person",
     "name": "Koukyosyumei",
@@ -54,7 +54,7 @@
     "@id": "https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/"
   },
   "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-  "keywords": "why git diffs are not enough for ai generated code, ai generated code review, ai code audit, ai code provenance, h5i"
+  "keywords": "git diff ai code, why git diffs are not enough for ai generated code, review ai-generated code, ai code review, ai generated code review, code provenance, ai code audit, h5i"
 }
   </script>
 
@@ -66,6 +66,62 @@
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Why Git Diffs Are Not Enough for AI-Generated Code", "item": "https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/"}]}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Should reviewers still read the diff for AI-generated code?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. The diff remains the ground truth for code changes. Provenance does not replace it — it tells you which parts of the diff to read first and with the most care, and supplies the context needed to interpret them correctly."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Isn't generating more code the bigger problem than reviewing it?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Generation is fast; the bottleneck has moved to review. And generated volume is not generated risk: a 500-line generated fixture can warrant a skim while a five-line change to an auth predicate can outweigh it. Ranking attention by risk matters more than keeping up with line count."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can commit messages or PR descriptions solve this?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "They help, but they are summaries — and increasingly auto-generated by the same agent that wrote the code. They rarely preserve the verbatim prompt, the files actually observed, flagged uncertainty, real test output, or multi-agent handoffs, and they are unverifiable against what actually ran. A description tells you what the author says happened; provenance records what did."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What is context coverage, and why does it matter more than line count?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Context coverage is the comparison between the files a change touched and the files the agent actually read (its OBSERVE trace). A file edited but never read is a blind edit, which is the high-signal risk for agent code — correct-looking, but produced without the evidence it depends on. It is a better predictor of where a change will be wrong than how many lines it spans."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does an LLM reviewer make this unnecessary?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No — it makes it more useful. A review model that sees only the diff inherits the same blind spot as a human: it cannot tell whether the author had the right evidence. Feed it the prompt, the observed context, and the test results and it reviews agent code far better, for the same reason a human does."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What is the simplest first improvement?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Capture the prompt and the test result for every AI-assisted commit. That alone makes later review, triage, and rollback much more practical, and it is the foundation the context trace and review packet build on."
+      }
+    }
+  ]
+}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -89,43 +145,55 @@
     <header>
       <div class="post-eyebrow">Guide · AI code review</div>
       <h1>Why Git Diffs Are Not Enough for AI-Generated Code</h1>
-      <p class="post-deck">A diff tells you what changed. It does not tell you what the agent was asked, which files it ignored, why it chose the approach, or whether the risky part was tested.</p>
+      <p class="post-deck">A diff shows the destination, not the journey. For agent-written code the journey — what it was asked, which files it actually read, why it chose the approach, what it flagged as uncertain, whether the risky part was tested — is exactly where the risk concentrates. The diff is structurally blind to all of it.</p>
       <div class="post-meta">
         <span><strong>Published</strong> 2026-06-03</span>
-        <span><strong>Reading time</strong> 8 min read</span>
+        <span><strong>Reading time</strong> 11 min read</span>
         <span><strong>Tags</strong> Code review · Git diff · Audit</span>
       </div>
     </header>
 
-<p>An <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> is the record of everything behind the diff: the prompt, the files the agent observed, the commands it ran, and the evidence it used to make decisions. Git tracks the diff. h5i tracks the workspace behind it. A Git diff is still the first thing to review. It is precise, compact, and universal. For AI-generated code, it is also incomplete. The diff shows the final text change after an agent has already compressed a long sequence of prompts, observations, tool calls, assumptions, and test attempts into a patch.</p>
-<p>That compression hides the parts reviewers most need. A human-written diff carries social context: the author understands the system, attends standup, and can answer why the change exists. An agent-written diff may have been produced from a narrow prompt, stale context, or an incorrect assumption about code it never opened.</p>
-<h2>What a diff cannot tell you</h2>
-<p>A diff cannot tell whether the agent read the policy module before editing authorization code. It cannot tell whether the original prompt asked for a quick prototype or production hardening. It cannot tell whether the agent saw a warning from the test suite and worked around it. It cannot tell whether a second agent reviewed the plan and flagged a risk.</p>
-<p>The missing data falls into five buckets: intent, evidence, uncertainty, execution, and collaboration.</p>
+<p>Coding agents have changed the economics of writing code, not of reading it. An agent can produce a clean, internally consistent patch in seconds; a reviewer still has to reconstruct the context the agent had — and then threw away — before they can trust a single line. Review throughput, not generation throughput, is now the bottleneck, and the tool we reach for first was designed for a different problem. The Git diff was built to compare two states of code written by a human who understood the system. It answers "what changed?" exactly. It was never meant to answer "what did the author know, and was it enough?" — a question that barely mattered when a colleague authored the change and could be asked directly, and that becomes the whole game when the author is a stateless model.</p>
+<p>This is the part worth being precise about. The diff is not wrong, and it is not going away. It remains the ground truth for code changes: precise, compact, and universal. What is new is not a flaw in diffs but a shift in where risk lives. For human code, the risk is mostly in the lines, because the intent and context behind them were carried in a head you could query. For agent code, the lines are the one part you can already see; the risk has moved upstream into the journey — the prompt, the files the agent opened, the assumption it made about code it never opened, the test it ran or skipped, the uncertainty it voiced and then buried in a confident-sounding patch. A diff shows the destination. The journey is structurally absent from it.</p>
+<h2>What a diff cannot tell you, in cases you will actually see</h2>
+<p>The gap is easiest to feel through patches that pass a line-by-line read and still carry the failure with them. Each of these is a clean diff:</p>
 <ul>
-  <li><strong>Intent:</strong> what behavior the user wanted, and what constraints were stated.</li>
-  <li><strong>Evidence:</strong> which files, docs, and prior facts the agent observed.</li>
-  <li><strong>Uncertainty:</strong> what the agent marked as unclear, risky, or assumed.</li>
-  <li><strong>Execution:</strong> which commands and tests ran, and what happened.</li>
-  <li><strong>Collaboration:</strong> what handoffs, review requests, and risk messages surrounded the work.</li>
+  <li><strong>The plausible patch on an unverified assumption.</strong> The agent changes a serializer to emit timestamps as Unix epoch seconds because that is the common convention. The diff is tidy and the tests pass. What the diff cannot show is that the agent never opened the consumer, which has parsed ISO-8601 for two years. The code is internally correct and wrong against a constraint the agent never read.</li>
+  <li><strong>Tests that re-prove the old happy path.</strong> The change adds a permission check; the diff also adds a test, which is reassuring until you notice the test exercises the already-passing authorized case and never constructs the unauthorized one. Coverage went up. The new behavior — the denial — was never executed. The diff shows a test was added; it cannot show that the test misses the edge the change exists to handle.</li>
+  <li><strong>The refactor that updates the helper but not every caller.</strong> A signature changes from returning a value to returning a Result. The agent updated the three callers it had in context and the compiler was satisfied because the fourth caller lives behind a feature flag the agent never built. The diff is a coherent local change; whether it is a <em>complete</em> one depends on what the agent could see, which the diff does not record.</li>
+  <li><strong>The fix that is correct locally and wrong against a system constraint.</strong> An agent shortens a retry backoff to fix a flaky test. Locally reasonable. The constraint it never read is a downstream rate limit that the original backoff was tuned to respect. The diff is three lines of obviously-better-looking code. The reason it is dangerous is not in the diff at all.</li>
 </ul>
-<h2>The failure mode: reviewing every line equally</h2>
-<p>When reviewers only have a diff, they often review evenly. That is expensive and ineffective. AI-generated code has uneven risk. A one-line config change made after reading the right file may be lower risk than a small auth refactor made without observing the caller. A large generated test file may be lower risk than a three-line change to token expiry.</p>
-<p>Good AI review starts by ranking attention. h5i's audit model is built around this idea: blind edits, uncertainty signals, churn, scope, and prompt-injection indicators should push a change higher in the review queue.</p>
+<p>None of these are caught by reading the patch more carefully, because in each case the patch is fine in isolation. They are caught by knowing what the agent did and did not observe — which is precisely the information a diff drops.</p>
+<h2>The asymmetry that makes AI patches dangerous to review</h2>
+<p>Human diffs leak their own uncertainty. A rushed human change looks rushed: inconsistent naming, a half-finished comment, a commit message that says "quick hack, revisit." Those tells are noisy, but they are signal, and experienced reviewers read them. Agent output erases the tells. Speed and surface coherence are uniform whether the agent had the right evidence or none of it. A patch built on a careful reading of the interface, the caller, and the tests looks identical to a patch built on a confident guess. The polish is not correlated with the diligence.</p>
+<p>That asymmetry sets a trap: the natural response to an unfamiliar, confident-looking patch is to read every line with equal care. For agent code that is the failure mode, not the discipline. Reading evenly spends the reviewer's scarcest resource — attention — uniformly across a change whose risk is wildly uneven, and it spends it on the one dimension (the lines) that is already visible while ignoring the dimensions (intent, context, evidence) that are not. The volume of generated code makes this worse, but volume is a distraction from the real point: <strong>generated volume is not generated risk.</strong> A 500-line fixture file the agent generated mechanically may warrant a skim; a five-line change to token expiry or an authorization predicate can outweigh all of it. Line count is a measure of how much there is to read, not of how much there is to get wrong.</p>
+<h2>Context coverage is a first-class review signal</h2>
+<p>If the lines do not tell you where risk concentrates, what does? The most useful single question for an agent change is one a diff cannot answer: <em>did the agent read the things its change depends on?</em> Did it open the interface it modified, the tests that exercise it, and at least the callers it affects? An edit made after observing the right files is ordinary engineering. The same edit made blind — correct-looking but produced without reading what it depends on — is the high-signal risk, because it is exactly how the four scenarios above are born.</p>
+<p>This is recordable. h5i logs what the agent <em>observed</em> as a first-class part of the work: the <a href="/blog/context-dag-versioned-agent-reasoning/">context DAG</a> (<code>refs/h5i/context</code>) captures OBSERVE nodes for the files the agent read, THINK nodes for its reasoning, and ACT nodes for its edits. Context coverage is then a direct comparison — the set of files the change touched against the set the agent OBSERVEd. A file edited but never read is a blind edit, and blind edits on sensitive paths are where a reviewer's first pass should land.</p>
+<h2>Uncertainty is signal, not noise to be smoothed over</h2>
+<p>Agents routinely tell you where they are unsure — "assuming the caller validates this," "this is likely correct but untested," "not sure whether the downstream service expects UTC." That text is usually the most honest risk assessment in the entire change, and it is usually the first thing lost, because the final patch is written to look finished. Treating that uncertainty as a routable signal — pulling the agent's own hedges to the front of the reviewer's attention — is one of the highest-leverage moves in AI review. h5i records flagged uncertainty as NOTE entries in the context DAG, and the <a href="/blog/uncertainty-heatmap/">uncertainty heatmap</a> turns that into a map of where the agent itself was least confident, so review attention follows the agent's own doubt instead of fighting the patch's confident tone.</p>
+<h2>What this is not: a fair look at the alternatives</h2>
+<p>Provenance is not the only answer on offer, and it is worth being honest about what each existing approach actually catches.</p>
+<ul>
+  <li><strong>Conventional human diff review</strong> works — when a human authored the change with full context, the reviewer shares that context, and the tells of a rushed change are visible. All three assumptions break when an agent authored the change. The method is not bad; its preconditions stop holding.</li>
+  <li><strong>PR descriptions</strong> put intent next to the diff, which helps. But they are out-of-band prose, increasingly auto-generated by the same agent that wrote the code, and unverifiable: a description that says "added tests for the unauthorized path" cannot be checked against what actually ran. A description summarizes the journey; it does not record it.</li>
+  <li><strong>Code coverage tools</strong> answer a real and adjacent question — which lines executed under the test suite. They do not answer whether the <em>changed behavior</em> or its edge cases were exercised. The re-proves-the-happy-path test above raises coverage while testing nothing new. Coverage measures line execution, not behavioral intent.</li>
+  <li><strong>LLM-as-reviewer</strong> is genuinely useful and catches classes of bug a tired human skims past. But by default a review model sees the same diff the human sees, and inherits the same blind spot: it cannot tell whether the author had the right evidence unless you feed it the provenance. Give it the prompt, the observed context, and the test results, and it gets sharper for the same reason a human does — not because it is a model, but because it finally has the journey.</li>
+</ul>
+<p>The throughline is that none of these are replaced by recording provenance. They are made to work on agent code by giving them the upstream signals they each, on their own, cannot see.</p>
 <h2>The minimum review packet</h2>
-<p>For each AI-assisted change, reviewers should see:</p>
+<p>Put concretely, an AI-assisted change is reviewable when the reviewer can see, alongside the diff:</p>
 <ul>
-  <li>the ordinary Git diff;</li>
-  <li>the prompt or task summary;</li>
-  <li>the agent and model identity;</li>
-  <li>the files the agent observed before editing;</li>
-  <li>test commands and summarized results;</li>
-  <li>recorded decisions and rejected alternatives;</li>
-  <li>risk signals and review focus files.</li>
+  <li>the prompt or task the agent was actually given;</li>
+  <li>the agent and model identity that produced it;</li>
+  <li>the files the agent observed before editing — and which edited files it did <em>not</em> read;</li>
+  <li>the test commands that ran and their summarized results;</li>
+  <li>the uncertainty the agent flagged, and any recorded decisions or rejected alternatives;</li>
+  <li>risk signals and the suggested review-focus files.</li>
 </ul>
-<p>That packet turns review from archaeology into verification. The reviewer can ask whether the implementation matches the intent, whether the agent had enough context, and whether tests cover the changed behavior.</p>
-<h2>How h5i adds the missing layer</h2>
-<p>h5i keeps the Git diff intact and adds structured context around it. <code>h5i capture commit</code> records prompt, model, agent, tests, tokens, and decisions with the commit. <code>h5i recall context</code> shows the goal, milestones, and OBSERVE/THINK/ACT trace. <code>h5i recall blame --show-prompt</code> connects lines back to the AI prompt at commit boundaries. <code>h5i share pr post</code> can turn that context into a reviewer-facing pull-request body.</p>
+<p>That packet turns review from archaeology into verification. The reviewer stops reconstructing what the agent might have known and starts checking three answerable questions: does the implementation match the stated intent, did the agent have enough context to make it safely, and do the tests cover the behavior the change introduces?</p>
+<h2>How h5i records the journey Git-natively</h2>
+<p>The missing signals do not require a new system of record; they can be stored as Git objects beside the commit. h5i keeps the diff intact and attaches structured context to it. <code>h5i capture commit</code> records the prompt, model, agent, token count, tests, and decisions as JSON in Git notes (in Claude Code the verbatim human prompt is captured automatically by the UserPromptSubmit hook). <code>h5i recall context</code> renders the goal, milestones, and the OBSERVE/THINK/ACT trace. <code>h5i recall blame --show-prompt</code> connects each line back to the prompt and test result at its commit. <code>h5i share pr post</code> assembles all of it into a reviewer-facing pull-request comment.</p>
 <p>The contrast is concrete. Plain Git shows the change and a hand-written summary:</p>
 <div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ git log --oneline -1
 a1b2c3d  shorten token expiry to 15m
@@ -142,14 +210,39 @@ a1b2c3d  shorten token expiry to 15m
 
 $ h5i recall blame src/auth/token.rs   # same lines, plus who/why/tested
 a1b2c3d  (claude-code · claude-sonnet-4-6 · tests PASS)  expiry = Duration::minutes(15);</pre></div></div>
-<p>The point is not to make reviews longer. It is to make them narrower. Review the diff, but use provenance and context to decide where the human attention should go first.</p>
+<p>And where the earlier blocks answer "what and who," the context trace answers the coverage question — what the agent read before it touched the file, so a blind edit shows up as the absence of a matching OBSERVE:</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ h5i recall context
+goal: shorten session token expiry; security review flagged 24h
+  OBSERVE  src/auth/token.rs        # read the file it changed
+  OBSERVE  tests/auth_token.rs      # read the tests
+  THINK    24h -&gt; 15m balances UX against the flagged risk
+  ACT      edit src/auth/token.rs
+  NOTE     assuming refresh flow unaffected; did not read refresh.rs</pre></div></div>
+<p>That last NOTE is the whole argument in one line: the agent told you where it did not look, and a reviewer can route straight to <code>refresh.rs</code> instead of re-reading the tidy three-line diff. None of this is visible to <code>git show</code>.</p>
+<h2>Where the provenance approach breaks down</h2>
+<p>It would be dishonest to present this as free. Recording the journey has real costs and failure modes a reviewer should keep in mind.</p>
+<ul>
+  <li><strong>Discipline cost.</strong> Provenance is only as good as the capture. If commits are made with plain <code>git commit</code>, or hooks are disabled, the notes are thin or absent and you are back to the diff. The value depends on the capture being routine, not heroic.</li>
+  <li><strong>It can be gamed.</strong> An OBSERVE entry proves a file was opened, not understood; a recorded prompt can be vague; "tests PASS" can mean a test that asserts nothing. Provenance raises the floor and concentrates attention, but it does not certify correctness — a determined or sloppy author can produce a clean-looking record around a bad change.</li>
+  <li><strong>Unshared refs.</strong> h5i stores its data under <code>refs/h5i/*</code>, which a plain <code>git push</code> does not move. If the team forgets <code>h5i share push</code>, the reviewer on another clone sees the diff and none of the context — the packet has to actually travel with the code.</li>
+  <li><strong>It is not a replacement for review.</strong> Provenance does not review the code. It builds a better packet so a human (or a review model with the packet) reviews the right lines first. The judgment still has to happen.</li>
+</ul>
+<p>The honest claim is narrow: provenance does not make any single line safer, but it makes the reviewer's allocation of attention dramatically better, which is where AI review actually fails today.</p>
+<h2>Narrow the review, do not lengthen it</h2>
+<p>The goal is not to make reviews longer by piling on context. It is to make them shorter and better aimed. You still review the diff — that does not change. What changes is the order: provenance and context decide where the first, most careful pass lands. Blind edits on sensitive paths, files the agent flagged as uncertain, behavior changes with no matching test — those rise to the top; the mechanically generated fixture sinks. The diff stays the ground truth for <em>what</em> changed. The journey tells you <em>where to look</em> first. For agent-written code, getting that order right is most of the job — and it is the one thing a diff, on its own, can never do. For the workflow that turns this into a repeatable review loop, see <a href="/blog/review-code-written-by-ai-agents/">how to review code written by AI agents</a>.</p>
 <h2>FAQ</h2>
 <h3>Should reviewers still read the diff?</h3>
-<p>Yes. The diff remains the ground truth for code changes. AI-aware review adds the context needed to interpret the diff correctly.</p>
-<h3>Can commit messages solve this?</h3>
-<p>Commit messages help, but they are summaries. They rarely preserve prompts, tool evidence, uncertainty, test output, or multi-agent handoffs.</p>
-<h3>What is the simplest improvement?</h3>
-<p>Capture the prompt and test result for every AI-assisted commit. That alone makes later review and rollback much more practical.</p>
+<p>Yes. The diff remains the ground truth for code changes. Provenance does not replace it — it tells you which parts of the diff to read first and with the most care, and supplies the context needed to interpret them correctly.</p>
+<h3>Isn't generating more code the bigger problem than reviewing it?</h3>
+<p>Generation is fast; the bottleneck has moved to review. And generated volume is not generated risk: a 500-line generated fixture can warrant a skim while a five-line change to an auth predicate can outweigh it. Ranking attention by risk matters more than keeping up with line count.</p>
+<h3>Can commit messages or PR descriptions solve this?</h3>
+<p>They help, but they are summaries — and increasingly auto-generated by the same agent that wrote the code. They rarely preserve the verbatim prompt, the files actually observed, flagged uncertainty, real test output, or multi-agent handoffs, and they are unverifiable against what actually ran. A description tells you what the author says happened; provenance records what did.</p>
+<h3>What is context coverage, and why does it matter more than line count?</h3>
+<p>Context coverage is the comparison between the files a change touched and the files the agent actually read (its OBSERVE trace). A file edited but never read is a blind edit, which is the high-signal risk for agent code — correct-looking, but produced without the evidence it depends on. It is a better predictor of where a change will be wrong than how many lines it spans.</p>
+<h3>Does an LLM reviewer make this unnecessary?</h3>
+<p>No — it makes it more useful. A review model that sees only the diff inherits the same blind spot as a human: it cannot tell whether the author had the right evidence. Feed it the prompt, the observed context, and the test results and it reviews agent code far better, for the same reason a human does.</p>
+<h3>What is the simplest first improvement?</h3>
+<p>Capture the prompt and the test result for every AI-assisted commit. That alone makes later review, triage, and rollback much more practical, and it is the foundation the context trace and review packet build on.</p>
 
 
     <h2>Sources and verification</h2>
