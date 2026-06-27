@@ -3293,3 +3293,4 @@ _[Checkpoint: 6a3f1e06 — edited docs/blog/sandboxing-ai-agents-landscape/index
 _[Checkpoint: 6a3f1e12 — edited docs/blog/sandboxing-ai-agents-landscape/index.html; edited docs/blog/sandboxing-ai-agents-implementation/index.h…]_
 ---
 
+[00:49:39] ACT: edited docs/blog/sandboxing-ai-agents-h5i/index.html
