@@ -2967,3 +2967,4 @@ _[Checkpoint: 6a3f18ff — edited docs/blog/claude-code-hooks-vs-git-hooks/index
 [00:33:42] OBSERVE: read blog-brief.md
 [00:33:43] OBSERVE: read docs/blog/structured-tool-output-schema/index.html
 [00:33:51] OBSERVE: read blog-brief.md
+[00:33:51] OBSERVE: read docs/blog/context-dag-versioned-agent-reasoning/index.html
