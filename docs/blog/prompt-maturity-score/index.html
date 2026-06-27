@@ -36,7 +36,7 @@
     "description": "Measure and score prompt quality without an LLM. h5i turns the prompt behind each AI commit into an explainable 0–100 score using only classical NLP — readability indices, lexical diversity, and curated lexicons — with anti-gaming guards and balance gates, and no model call.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-06-17",
-    "dateModified": "2026-06-17",
+    "dateModified": "2026-06-26",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/prompt-maturity-score/"},
     "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
@@ -52,6 +52,19 @@
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "How to Measure Prompt Quality Offline", "item": "https://h5i.dev/blog/prompt-maturity-score/"}]}
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {"@type": "Question", "name": "How is prompt quality scored without an LLM?", "acceptedAnswer": {"@type": "Answer", "text": "h5i scores the prompt text with classical NLP only: it counts observable features (code references, constraint and verification keywords, lexical diversity via an adaptive MATTR, readability inside a target band, length) and combines them with seven fixed weights that sum to 1.0. There is no model call, no network, and no randomness, so the same prompt always produces the same 0-100 score, in a git hook, in CI, or in a PR render."}},
+      {"@type": "Question", "name": "Why not use an LLM to judge the prompt instead?", "acceptedAnswer": {"@type": "Answer", "text": "An LLM judge understands meaning but costs an API call per prompt, drifts when re-run or when a model is deprecated, hides its rubric, and can be prompt-injected by the very text it grades. The fixed-weight composite trades semantic understanding for being free, deterministic, explainable, and gameable only in the specific ways its guards close. The two are complementary, not competing."}},
+      {"@type": "Question", "name": "Won't keyword counting just be gamed by stuffing the lexicons in?", "acceptedAnswer": {"@type": "Answer", "text": "Four guards sit on top of the weighted sum: a repetition penalty (a multiplier floored at 0.6 when bigrams repeat), per-category caps so the fourth 'must' adds nothing, balance gates (no constraints caps you below 'advanced' at 69; low specificity caps at 79), and hard length caps. You can't farm a single signal by repetition or pad your way past a length floor — you have to actually cover different ground."}},
+      {"@type": "Question", "name": "Does a high score mean the prompt was correct?", "acceptedAnswer": {"@type": "Answer", "text": "No. The score grades the form of the ask — concrete, bounded, structured — not its correctness or outcome. A precise, well-bounded instruction to do the wrong thing scores high. Read it as a heuristic signal of prompt craft alongside the test metrics and integrity audit on the same commit, never as a developer rating or a measure of whether the change was right."}},
+      {"@type": "Question", "name": "How is a whole pull request scored from many prompts?", "acceptedAnswer": {"@type": "Answer", "text": "Each commit's prompt is scored independently and the branch score is a length-weighted mean (weight = clamp(words, 20, 250)); prompts are never concatenated, so a pile of weak one-liners can't pool their vocabulary to look mature. The roll-up also tracks coverage and flags the result low-confidence when fewer than 80% of AI commits carried a prompt to score."}}
+    ]
+  }
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -128,6 +141,44 @@
       approaches are complementary, not competing.
     </p>
 
+    <p>
+      It's worth being fair to the alternatives rather than dismissing them. There are three honest
+      options for "how well was this prompt written," and each has a real place:
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead>
+          <tr><th>Approach</th><th>Good</th><th>Gap</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Ask an LLM judge</strong></td>
+            <td>Understands meaning; can catch a vague-but-clever ask a lexicon misses; no feature engineering.</td>
+            <td>Costs an API call per prompt; <em>non-deterministic</em> (re-scores drift, and a model deprecation silently moves the baseline); the rubric is opaque; and a prompt that <em>contains instructions</em> is a prompt-injection surface for the judge itself.</td>
+          </tr>
+          <tr>
+            <td><strong>Fixed-weight composite (this)</strong></td>
+            <td>Free, offline, deterministic, every point traceable to a named feature; the same prompt always scores the same in CI; gameable only in ways the guards explicitly close.</td>
+            <td>Sees surface features, not intent; can't tell whether an instruction was <em>correct</em>; tuned for English technical prose.</td>
+          </tr>
+          <tr>
+            <td><strong>No measurement</strong></td>
+            <td>Zero overhead; never wrong because it never claims anything.</td>
+            <td>Prompt craft stays invisible — <em>"make it work"</em> and a precise, bounded ask leave the same trace, so the difference never enters review and never improves.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The third row is the real baseline. Today most teams ship AI-assisted code with the prompt
+      either unrecorded or recorded but ungraded — so the gap between a disciplined ask and a lazy one
+      is structurally unobservable. A deterministic proxy that is sometimes blunt still beats a blank,
+      because it makes the axis exist. The bar this metric has to clear is not "as good as a human
+      reviewer reading the prompt"; it's "better than nothing, cheaply, on every commit."
+    </p>
+
     <h2>The load-bearing caveat: readability is not maturity</h2>
 
     <p>
@@ -150,8 +201,8 @@
       <strong>band</strong> (both extremes penalised, not "higher is better"), and it is computed on a
       <strong>code-masked</strong> copy of the prompt, every path, <code>func()</code> call, URL, and
       <code>snake_case</code> identifier is replaced with a neutral token before a single syllable is
-      counted. That one decision, treating readability as a bounded sub-signal rather than the score
-     , is the single most important guard against the metric punishing good engineering.
+      counted. That one decision — treating readability as a bounded sub-signal rather than the score
+      itself — is the single most important guard against the metric punishing good engineering.
     </p>
 
     <h2>The composite: seven signals, fixed weights</h2>
@@ -186,6 +237,28 @@
       voice at 8% precisely because it's the signal most likely to mislead on technical text.
     </p>
 
+    <h3>Why the weights are hand-set, not learned</h3>
+
+    <p>
+      The obvious "modern" move would be to learn these weights from data, fit a regression against
+      some label of prompt quality. We didn't, and the reason is the whole point of the metric. A
+      learned weight vector is only as honest as its training labels, and "good prompt" has no
+      ground-truth dataset; you'd be fitting against either an LLM judge (reintroducing the
+      nondeterminism and opacity we set out to avoid) or human ratings (expensive, subjective, and
+      drifting). Worse, learned weights are a moving target: retrain on new data and last quarter's
+      scores silently change, so the number stops being comparable over time.
+    </p>
+
+    <p>
+      Fixed weights that sum to exactly 1.0 (the code asserts it in a unit test) buy two properties a
+      learned model can't. The score is <strong>auditable</strong> — anyone can read the table, see
+      that specificity is worth 24%, and disagree on the record rather than litigating a black box. And
+      it is <strong>stable</strong> — a prompt scored today scores the same next year, which is what
+      makes "prompt maturity trended up this quarter" a sentence that means something. The cost is that
+      the weights encode <em>our</em> opinion of what matters; that opinion is wrong sometimes, but it
+      is at least <em>legible</em> and arguable, which a fitted coefficient is not.
+    </p>
+
     <h3>How each signal is computed</h3>
 
     <p>
@@ -198,8 +271,10 @@
         <strong>Specificity</strong> = concreteness − vagueness. Concreteness is a capped blend of code
         references (40%), action verbs (22%), quoted symbols (20%), and numbers (18%). Vagueness comes
         from the NALABS / Femmer "requirements smells" lexicon, words like <em>appropriate</em>,
-        <em>robust</em>, <em>somehow</em>, <em>as needed</em>, whose density per 100 words drags the
-        signal down.
+        <em>robust</em>, <em>somehow</em>, <em>as needed</em>, whose density per 100 words (saturating
+        at roughly eight weak words per hundred) is subtracted at half weight. So vagueness can pull
+        specificity down but never invert it; piling on weak words hurts, but the floor is concreteness
+        you actually demonstrated.
       </li>
       <li>
         <strong>Control</strong> rewards <em>breadth</em> across categories: constraints
@@ -240,14 +315,14 @@
     <ol>
       <li>
         <strong>Repetition penalty.</strong> The fraction of bigrams that are exact repeats becomes a
-        multiplier (floored at 0.6). <em>"must test format must test format"</em> gets multiplied down
-       , phrase-farming is detected and punished directly.
+        multiplier (floored at 0.6). <em>"must test format must test format"</em> gets multiplied down —
+        phrase-farming is detected and punished directly.
       </li>
       <li>
         <strong>Balance gates.</strong> You cannot look mature on one axis alone. <em>Control</em> is a
         <strong>hard gate</strong>: a prompt that sets no constraints or acceptance criteria is capped
-        below "advanced" (≤ 69) no matter how concrete it is. Low specificity additionally caps at 79
-       , you can't be "exemplary" while vague.
+        below "advanced" (≤ 69) no matter how concrete it is. Low specificity additionally caps at 79 —
+        you can't be "exemplary" while vague.
       </li>
       <li>
         <strong>Hard length caps.</strong> Under 8 words caps at 20; under 15 words caps at 45. A
@@ -319,6 +394,85 @@
       We don't hand engineers a keyword list to stuff, because the moment the metric becomes a target
       to optimise, it stops measuring anything real.
     </p>
+
+    <h2>Where the score is blind</h2>
+
+    <p>
+      Knowing the failure modes is part of using the number responsibly. The score grades the
+      <em>form</em> of the ask, never its correctness or outcome, so a handful of cases are
+      structurally invisible to it:
+    </p>
+
+    <ul>
+      <li>
+        <strong>Precise and wrong.</strong> A confident, specific, fully-bounded instruction to do the
+        wrong thing scores <em>high</em>. The metric measures how well the agent was steered, not
+        whether it was steered somewhere good — empirical correctness is the job of the test metrics
+        and integrity audit on the <a href="../from-git-blame-to-ai-blame/">same commit</a>, not of this signal.
+      </li>
+      <li>
+        <strong>Mentioning is not requiring.</strong> The lexicons count tokens, so a prompt that
+        says the word "test" without actually asking for one still banks a little verification credit.
+        The breadth requirement and the small per-category cap blunt this (one keyword can't carry a
+        signal), but a determined writer can still surface-dress a thin ask a few points above its true
+        rigour.
+      </li>
+      <li>
+        <strong>Context it can't verify.</strong> The soft context gate exempts a crisp tactical
+        prompt on the assumption that the agent already holds the repo context. The score can only see
+        that the prompt didn't restate it; it cannot confirm the context was actually sufficient. A
+        terse ask against a model that had <em>lost</em> the thread looks identical to one against a
+        model that had it.
+      </li>
+      <li>
+        <strong>English technical prose only.</strong> Readability indices and the curated lexicons are
+        tuned for English. A prompt in another language, one that is mostly pasted log output, or one
+        dominated by non-Latin identifiers will score noisily — the code-masking helps with
+        identifiers, but the band and lexicon assumptions don't transfer cleanly.
+      </li>
+      <li>
+        <strong>Steering that happened off-commit.</strong> The branch roll-up flags low coverage when
+        fewer than 80% of AI commits carried a prompt, but it can't recover steering that lived in a
+        chat thread, a design doc, or a voice call and only landed as terse confirmations in the
+        commits. Such a branch will under-score, correctly flagged as low-confidence rather than
+        silently wrong.
+      </li>
+    </ul>
+
+    <p>
+      None of these are bugs to patch; they are the boundary of what a text-feature proxy can claim.
+      The honest framing is the one baked into the render: a <em>heuristic signal of prompt craft</em>,
+      read alongside the tests and the diff, not in place of them.
+    </p>
+
+    <h2>Conclusion: make the ask reviewable</h2>
+
+    <p>
+      The Prompt Maturity Score is a deliberately modest instrument: seven counted features, seven
+      fixed weights that sum to one, four guards, and a clamp — no model, no network, no randomness.
+      That modesty is the design. Because it's deterministic it belongs in CI; because every point
+      traces to a named feature it survives an argument; because the weights are hand-set and public
+      you can disagree with them out loud instead of reverse-engineering a black box. It will never tell
+      you whether a prompt was <em>right</em>. It tells you whether the engineer was concrete and
+      bounded the agent — and it tells you the same way every time.
+    </p>
+
+    <p>
+      The point was never the number on its own. It's that "how well was this agent steered?" stops
+      being a vibe and becomes a column you can sort, trend, and review next to the diff and the test
+      result. Once prompt craft is visible, it can be coached, compared, and improved — which is the
+      only reason to measure anything.
+    </p>
+
+    <h2>FAQ</h2>
+
+    <div class="faq">
+      <p><strong>How is prompt quality scored without an LLM?</strong> h5i scores the prompt text with classical NLP only: it counts observable features (code references, constraint and verification keywords, lexical diversity via an adaptive MATTR, readability inside a target band, length) and combines them with seven fixed weights that sum to 1.0. There is no model call, no network, and no randomness, so the same prompt always produces the same 0–100 score, in a git hook, in CI, or in a PR render.</p>
+      <p><strong>Why not use an LLM to judge the prompt instead?</strong> An LLM judge understands meaning but costs an API call per prompt, drifts when re-run or when a model is deprecated, hides its rubric, and can be prompt-injected by the very text it grades. The fixed-weight composite trades semantic understanding for being free, deterministic, explainable, and gameable only in the specific ways its guards close. The two are complementary, not competing.</p>
+      <p><strong>Won't keyword counting just be gamed by stuffing the lexicons in?</strong> Four guards sit on top of the weighted sum: a repetition penalty (a multiplier floored at 0.6 when bigrams repeat), per-category caps so the fourth <code>must</code> adds nothing, balance gates (no constraints caps you below "advanced" at 69; low specificity caps at 79), and hard length caps. You can't farm a single signal by repetition or pad your way past a length floor — you have to actually cover different ground.</p>
+      <p><strong>Does a high score mean the prompt was correct?</strong> No. The score grades the <em>form</em> of the ask — concrete, bounded, structured — not its correctness or outcome. A precise, well-bounded instruction to do the wrong thing scores high. Read it as a heuristic signal of prompt craft alongside the test metrics and integrity audit on the same commit, never as a developer rating or a measure of whether the change was right.</p>
+      <p><strong>How is a whole pull request scored from many prompts?</strong> Each commit's prompt is scored independently and the branch score is a length-weighted mean (weight = <code>clamp(words, 20, 250)</code>); prompts are never concatenated, so a pile of weak one-liners can't pool their vocabulary to look mature. The roll-up also tracks coverage and flags the result low-confidence when fewer than 80% of AI commits carried a prompt to score.</p>
+    </div>
 
     <div class="next-up">
       <span class="label">Read next</span>

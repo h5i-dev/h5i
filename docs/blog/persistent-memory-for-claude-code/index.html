@@ -38,7 +38,7 @@
     "description": "Anthropic gives you a memory primitive. h5i gives you the layers above it — versioned reasoning, per-commit snapshots, and automatic injection at session start.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-05-06",
-    "dateModified": "2026-06-02",
+    "dateModified": "2026-06-26",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/persistent-memory-for-claude-code/"},
     "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
@@ -54,6 +54,39 @@
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Giving Claude Code Persistent Memory Across Sessions", "item": "https://h5i.dev/blog/persistent-memory-for-claude-code/"}]}
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Does h5i replace Claude Code's memory files?",
+        "acceptedAnswer": {"@type": "Answer", "text": "No. It sits on top of the memory directory. Your CLAUDE.md and ~/.claude memory files keep working; h5i adds a versioned reasoning workspace (refs/h5i/context), commit-keyed snapshots of the memory directory (refs/h5i/memory), and a SessionStart hook that injects the right slice into every new session. You stop hand-editing memory and let it accrue from your commits instead."}
+      },
+      {
+        "@type": "Question",
+        "name": "Are h5i refs pushed by a normal git push?",
+        "acceptedAnswer": {"@type": "Answer", "text": "No. refs/h5i/context, refs/h5i/memory, and refs/h5i/notes are not moved by plain git push. Use h5i share push to publish them and h5i share pull to fetch a teammate's. A collaborator who only runs git pull will see your code but none of the memory or reasoning."}
+      },
+      {
+        "@type": "Question",
+        "name": "How many tokens does the SessionStart hook inject?",
+        "acceptedAnswer": {"@type": "Answer", "text": "It is calibrated by --depth. Depth 2 (the default) is a timeline view of roughly 2,000-5,000 tokens. Depth 1 is a compact index of about 800 tokens for token-conscious workflows, and depth 3 dumps the full OBSERVE/THINK/ACT log. Claude can step up the depth itself with h5i recall context show --depth 3 when it needs more."}
+      },
+      {
+        "@type": "Question",
+        "name": "Is the memory snapshot automatic?",
+        "acceptedAnswer": {"@type": "Answer", "text": "The reasoning workspace in refs/h5i/context is snapshotted automatically and pinned to the git SHA on every h5i capture commit. The Claude memory directory is the one artifact you snapshot with an explicit command, h5i capture memory, which keys it to the current commit. If you forget to run it, h5i recall memory restore returns the last snapshot you took, not your latest live memory."}
+      },
+      {
+        "@type": "Question",
+        "name": "Can I recover an approach I explored and rejected?",
+        "acceptedAnswer": {"@type": "Answer", "text": "Yes. A reasoning branch (h5i recall context branch) keeps a rejected line of work in history even after you merge or abandon it. Months later you can read the whole evaluation, with the prompts, readings, and the reason it was dropped, instead of relying on someone's memory that you tried it once."}
+      }
+    ]
+  }
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -83,7 +116,7 @@
       </p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
-        <span><strong>Reading time</strong> 8 min</span>
+        <span><strong>Reading time</strong> 10 min</span>
         <span><strong>Tags</strong> Claude Code · Memory · Hooks</span>
       </div>
     </header>
@@ -157,8 +190,8 @@
     </p>
 
     <ul>
-      <li><strong>Reasoning workspace</strong>, <code>refs/h5i/context</code>. A versioned DAG of OBSERVE / THINK / ACT entries plus milestones. Branches like git, merges like git.</li>
-      <li><strong>Memory snapshots</strong>, <code>refs/h5i/memory</code>. Every <code>h5i capture commit</code> snapshots <code>~/.claude/projects/&lt;repo&gt;/memory/</code> and pins it to the git SHA.</li>
+      <li><strong>Reasoning workspace</strong>, <code>refs/h5i/context</code>. A versioned DAG of OBSERVE / THINK / ACT / NOTE entries plus milestones. Branches like git, merges like git, and snapshotted automatically — pinned to the git SHA — on every <code>h5i capture commit</code>.</li>
+      <li><strong>Memory snapshots</strong>, <code>refs/h5i/memory</code>. <code>h5i capture memory</code> copies <code>~/.claude/projects/&lt;repo&gt;/memory/</code> and keys it to the current commit, so the memory directory becomes something you can <code>diff</code> and <code>restore</code> per SHA.</li>
       <li><strong>Session notes</strong>, <code>refs/h5i/notes</code>. The exploration footprint of each session, files read vs. edited, uncertainty signals, blind edits.</li>
     </ul>
 
@@ -223,9 +256,12 @@
     <h2>Memory snapshots, pinned to git commits</h2>
 
     <p>
-      Every <code>h5i capture commit</code> auto-snapshots <code>~/.claude/projects/&lt;repo&gt;/memory/</code> alongside
-      the code commit. The snapshot is keyed by the git SHA, so memory is a first-class versioned
-      artifact:
+      The reasoning workspace rides along on every <code>h5i capture commit</code> automatically. The
+      Claude memory directory is the one artifact you snapshot with an explicit command: run
+      <code>h5i capture memory</code> after a substantial session and h5i copies
+      <code>~/.claude/projects/&lt;repo&gt;/memory/</code> into <code>.git/.h5i/memory/&lt;commit-oid&gt;/</code>,
+      keyed to the current commit. The snapshot is keyed by the git SHA, so memory is a first-class
+      versioned artifact:
     </p>
 
     <div class="terminal">
@@ -337,6 +373,69 @@
       biscuit?", you have the whole evaluation, with the prompts, the readings, and the reasons, not "I think we tried that once."
     </p>
 
+    <h2>How this compares to markdown memory and vendor session features</h2>
+
+    <p>
+      Two things already solve part of this problem, and it's worth being fair about where each one
+      is enough.
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead>
+          <tr><th>Approach</th><th>Good</th><th>Gap</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Markdown memory (<code>CLAUDE.md</code>, <code>~/.claude/memory/</code>)</td>
+            <td>Zero dependencies, human-readable, edits in any editor, trackable in git if it lives in the repo.</td>
+            <td>Flat prose with no link from a line to the commit it describes; manual upkeep, so it drifts; no branching; you trust your own discipline to keep it current.</td>
+          </tr>
+          <tr>
+            <td>Session resume (<code>claude --continue</code> / <code>--resume</code>)</td>
+            <td>Restores the exact prior transcript with full fidelity, no setup, nothing to maintain.</td>
+            <td>Tied to one machine's local session store; not versioned, not pinned to a commit, not shareable with a teammate; a <code>/clear</code> or a fresh checkout elsewhere loses it. Resumes a conversation, not a structured record of decisions linked to code.</td>
+          </tr>
+          <tr>
+            <td>h5i context + memory refs</td>
+            <td>A commit-pinned DAG of reasoning plus commit-keyed memory snapshots, branchable, diffable, and pushable to teammates; injected automatically at session start.</td>
+            <td>One-time hook setup; refs travel only via <code>h5i share push</code>, not plain <code>git push</code>; memory snapshots are as fresh as your last <code>h5i capture memory</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The honest summary: for a ten-line project note, a markdown file is the right tool and h5i is
+      overkill. Session resume is the right tool when you simply walked away mid-task on the same
+      machine. h5i earns its keep once the <em>reasoning</em> matters across days, machines, or
+      teammates, and you want it tied to the code rather than to your memory of having written it down.
+    </p>
+
+    <h2>Failure modes worth knowing</h2>
+
+    <p>
+      The mechanism is plumbing, and plumbing has edges. Four are worth internalizing before you
+      rely on it:
+    </p>
+
+    <ul>
+      <li><strong>Unshared refs.</strong> <code>refs/h5i/*</code> are not moved by a plain <code>git push</code>. A teammate who only runs <code>git pull</code> gets your code and none of the reasoning. Publish with <code>h5i share push</code>; they fetch with <code>h5i share pull</code>.</li>
+      <li><strong>Snapshot staleness.</strong> The context workspace auto-snapshots on every commit, but the memory directory does not — it only captures as of your last <code>h5i capture memory</code>. Forget to run it and <code>h5i recall memory restore</code> hands back an older state. Make it a habit at the end of a real session.</li>
+      <li><strong>Empty snapshots.</strong> Claude Code creates the memory directory lazily on first write. If you snapshot before anything has been written, h5i records an empty snapshot (zero files) so the commit is still tracked, rather than failing — useful to know when a restore comes back blank.</li>
+      <li><strong>Token budget.</strong> Depth 3 injects the full trace, which on a long-lived workspace is large. Keep the SessionStart cost predictable with the default depth 2 (or depth 1), and reach for depth 3 on demand.</li>
+    </ul>
+
+    <h2>FAQ</h2>
+
+    <div class="faq">
+      <p><strong>Does h5i replace Claude Code's memory files?</strong> No. It sits on top of the memory directory. Your <code>CLAUDE.md</code> and <code>~/.claude</code> memory keep working; h5i adds the versioned reasoning workspace, commit-keyed memory snapshots, and automatic injection at session start.</p>
+      <p><strong>Are h5i refs pushed by a normal <code>git push</code>?</strong> No. <code>refs/h5i/context</code>, <code>refs/h5i/memory</code>, and <code>refs/h5i/notes</code> travel via <code>h5i share push</code> / <code>h5i share pull</code> only.</p>
+      <p><strong>How many tokens does the SessionStart hook inject?</strong> Depth 2 (default) is a ~2,000-5,000 token timeline; depth 1 is a ~800-token index; depth 3 is the full OBSERVE/THINK/ACT log.</p>
+      <p><strong>Is the memory snapshot automatic?</strong> The context workspace is, on every <code>h5i capture commit</code>. The memory directory is snapshotted by the explicit <code>h5i capture memory</code>.</p>
+      <p><strong>Can I recover an approach I rejected?</strong> Yes — a reasoning branch keeps the rejected line of work in history with its prompts and the reason it was dropped.</p>
+    </div>
+
     <h2>Try it on your next task</h2>
 
     <p>
@@ -364,6 +463,27 @@
     <p>
       From there, the <code>SessionStart</code> hook does the work. You'll notice it the first time you open a
       new Claude Code session a week after a hard problem and Claude already knows where you stopped.
+    </p>
+
+    <h2>Memory as plumbing, not discipline</h2>
+
+    <p>
+      The thread running through all of this is that durable agent memory shouldn't depend on you
+      remembering to write it down. A hand-edited markdown file is only as current as your last
+      moment of conscientiousness; it drifts the instant you're busy, which is exactly when you most
+      need it. Tying memory to commits inverts that: the record is produced as a side effect of the
+      work, pinned to the SHA it describes, and replayed automatically when you sit back down.
+    </p>
+
+    <p>
+      That reframing also changes what "memory" means. It is no longer a paragraph of project
+      background but a structured, branchable history of <em>reasoning</em> — what you observed,
+      what you decided, what you rejected and why — restored at the granularity of a commit. The
+      cost is one-time setup and a couple of habits (<code>h5i capture memory</code> at the end of a
+      real session, <code>h5i share push</code> to bring teammates along). The payoff is that the
+      next session, the next machine, and the next teammate all start from where the last one left
+      off rather than from a blank context window. Use a markdown file when ten lines is genuinely
+      enough; reach for this when losing the thread actually costs you.
     </p>
 
     <div class="next-up">
