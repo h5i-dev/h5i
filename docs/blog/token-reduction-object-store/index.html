@@ -123,11 +123,12 @@
     <div class="callout">
       <p><strong>Who runs this?</strong> In practice the agent does, not a human. With the optional
       <code>wrap-bash</code> hook installed (<code>h5i hook setup --write --wrap-bash</code>), a
-      Claude Code <code>PreToolUse</code> handler transparently rewrites every Bash command the agent
-      runs into <code>h5i capture run …</code> — so the agent gets the token-reduced summary
-      automatically while the full raw bytes are stored for <code>h5i recall</code>. (You can of
-      course also run it by hand; for agents without a PreToolUse hook, such as Codex, the command is
-      wrapped explicitly.)</p>
+      <code>PreToolUse</code> handler transparently rewrites every Bash command the agent runs into
+      <code>h5i capture run …</code> — so the agent gets the token-reduced summary automatically while
+      the full raw bytes are stored for <code>h5i recall</code>. This wiring works for
+      <strong>both</strong> Claude Code and Codex (<code>--target codex</code> writes the same
+      <code>PreToolUse</code> / <code>Bash</code> hook into <code>.codex/config.toml</code>). You can of
+      course also run <code>h5i capture run</code> by hand.</p>
     </div>
 
     <p>
