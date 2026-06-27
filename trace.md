@@ -3386,3 +3386,4 @@ _[Checkpoint: 6a3f202c — edited docs/blog/auditing-ai-generated-code/index.htm
 [01:01:16] ACT: edited docs/blog/auditing-ai-generated-code/index.html
 [01:01:37] ACT: edited docs/blog/auditing-ai-generated-code/index.html
 [01:01:51] ACT: wrote llms.txt
+[01:04:04] NOTE: DEFERRAL (/tmp/claude-1000/-home-koukyosyumei-Dev-h5i/0458259c-229f-4ffd-b1d1-f1e98d00ebae/scratchpad/blog-brief.md): ent-sandbox-env` done (repositioned around the review-loop, deferred deep tier mechanics to Part 4). It surfaced a nuance …
