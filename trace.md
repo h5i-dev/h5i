@@ -3330,3 +3330,4 @@ _[Checkpoint: 6a3f1f22 — edited docs/blog/cve-2025-59536-startup-trust-dialog/
 
 [00:53:57] OBSERVE: read src/main.rs
 [00:54:01] OBSERVE: read src/main.rs
+[00:54:02] ACT: edited docs/blog/cve-2026-33068-bypass-permissions-settings/index.html
