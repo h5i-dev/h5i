@@ -3117,3 +3117,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a3f1bb7 — 2026-06-27 00:39 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Fixed lifecycle phase diagram to real run.phase strings (draft/dispatched/sealed_submit/verified/discuss/verdict/applied); added ML-ensemble independence rationale, FAIR comparison table (single/parallel/team), FAQ + FAQPage JSON-LD, honest protocol-not-benchmark conclusion; bumped dateModified to 2026-06-26. All commands verified against src/team.rs + main.rs.
+
+---
+
