@@ -2920,3 +2920,9 @@ _[Checkpoint: 6a3f17b2 — edited docs/blog/why-git-diffs-are-not-enough-for-ai-
 _[Checkpoint: 6a3f1829 — edited docs/blog/claude-code-hooks-vs-git-hooks/index.html; edited docs/blog/claude-code-hooks-vs-git-hooks/index.html; …]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3f1836 — edited docs/blog/claude-code-hooks-vs-git-hooks/index.html; edited docs/blog/claude-code-hooks-vs-git-hooks/index.html; …]_
+---
+
