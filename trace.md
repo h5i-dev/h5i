@@ -2964,3 +2964,4 @@ _[Checkpoint: 6a3f18ff — edited docs/blog/claude-code-hooks-vs-git-hooks/index
 [00:33:11] ACT: wrote blog-brief.md
 [00:33:35] OBSERVE: read blog-brief.md
 [00:33:35] OBSERVE: read docs/blog/token-reduction-object-store/index.html
+[00:33:42] OBSERVE: read blog-brief.md
