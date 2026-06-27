@@ -3260,3 +3260,4 @@ _[Checkpoint: 6a3f1cb6 — edited docs/blog/uncertainty-heatmap/index.html; edit
 _[Checkpoint: 6a3f1d7d — edited docs/blog/sandboxing-ai-agents-h5i/index.html; edited docs/blog/sandboxing-ai-agents-h5i/index.html; edited docs/…]_
 ---
 
+[00:46:53] ACT: edited docs/blog/sandboxing-ai-agents-h5i/index.html
