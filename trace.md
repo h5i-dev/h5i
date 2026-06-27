@@ -3300,3 +3300,4 @@ _[Checkpoint: 6a3f1e12 — edited docs/blog/sandboxing-ai-agents-landscape/index
 _[Checkpoint: 6a3f1e30 — edited docs/blog/sandboxing-ai-agents-implementation/index.html; edited docs/blog/agent-sandbox-env/index.html; edited d…]_
 ---
 
+[00:50:05] OBSERVE: read docs/blog/sandboxing-ai-agents-foundations/index.html
