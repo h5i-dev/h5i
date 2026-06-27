@@ -74,6 +74,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>No single primitive is a sandbox: Landlock contains filesystem reach, seccomp the syscall surface, namespaces visibility, cgroups resources — only their composition is a security property.</li>
+        <li>"Bits present" is not "confinement works": verify functionally and fail closed rather than silently downgrade.</li>
+        <li>Name the ceiling — shared-kernel confinement contains accidents and most prompt injection, but is a different category from a microVM with its own guest kernel.</li>
+  </ul>
+</div>
     <p>
       An AI coding agent is a strange security subject. It is not exactly malware, because you invited it in. It is not exactly a normal developer tool, because it reads untrusted project text and then chooses commands. It is not exactly a compiler, because it can browse your repository, run package managers, inspect environment variables, invoke shells, and decide that the next step is a network request. Sandboxing is the discipline of making that power conditional, and it is the confinement pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>: the place where you can say the agent physically could not reach certain resources, provably.
     </p>

@@ -75,6 +75,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>h5i's env is a four-rung ladder (workspace, process, supervised, container), fail-closed, matching confinement to trust and to what the host can enforce.</li>
+        <li>The two egress allowlists are different claims: supervised is L3/L4 (nftables and slirp4netns); container is an L7 CONNECT proxy; the process tier cannot do a domain allowlist at all.</li>
+        <li>The whole policy is one checked-in .h5i/env.toml, digested into the manifest and captured as Git provenance.</li>
+  </ul>
+</div>
     <p>
       An AI agent that can edit your tree and run shell commands is, for the duration of a task, a process executing instructions you did not write and cannot fully predict. The instructions can be redirected by a poisoned dependency, a hostile file in the repo, or a prompt-injected web page. The usual reflexes — "run it in a container" or "review the diff afterward" — answer only half of the question. A single container is one fixed boundary applied to every run regardless of trust, and an after-the-fact diff review tells you what changed in the files but nothing about what the process <em>reached for</em>: which paths it read, which hosts it tried to call, which limits it hit. The interesting design question is not "is it in a box?" but "is the box matched to how much I trust this run, can this host actually enforce that box, and is what happened written down?"
     </p>

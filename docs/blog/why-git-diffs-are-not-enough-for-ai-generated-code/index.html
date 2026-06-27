@@ -154,6 +154,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>Review AI code by intent, context coverage, and evidence — not line-by-line alone.</li>
+        <li>Generated volume is not generated risk: a five-line auth change can outweigh a 500-line fixture.</li>
+        <li>The missing signals (prompt, observed context, test evidence, flagged uncertainty) are recordable in Git and belong in the review packet.</li>
+  </ul>
+</div>
 <p>Coding agents have changed the economics of writing code, not of reading it. An agent can produce a clean, internally consistent patch in seconds; a reviewer still has to reconstruct the context the agent had — and then threw away — before they can trust a single line. Review throughput, not generation throughput, is now the bottleneck, and the tool we reach for first was designed for a different problem. The Git diff was built to compare two states of code written by a human who understood the system. It answers "what changed?" exactly. It was never meant to answer "what did the author know, and was it enough?" — a question that barely mattered when a colleague authored the change and could be asked directly, and that becomes the whole game when the author is a stateless model.</p>
 <p>This is the part worth being precise about. The diff is not wrong, and it is not going away. It remains the ground truth for code changes: precise, compact, and universal. What is new is not a flaw in diffs but a shift in where risk lives. For human code, the risk is mostly in the lines, because the intent and context behind them were carried in a head you could query. For agent code, the lines are the one part you can already see; the risk has moved upstream into the journey — the prompt, the files the agent opened, the assumption it made about code it never opened, the test it ran or skipped, the uncertainty it voiced and then buried in a confident-sounding patch. A diff shows the destination. The journey is structurally absent from it.</p>
 <h2>What a diff cannot tell you, in cases you will actually see</h2>

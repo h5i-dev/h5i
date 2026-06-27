@@ -98,6 +98,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>A Git hook sees a repository event; an agent hook sees an agent event — each is structurally blind to the other's layer.</li>
+        <li>Layer them: agent hooks capture the prompt and tool trace while working; Git hooks and CI enforce at the commit and push boundary.</li>
+        <li>Trust differs — client-side Git hooks are local and bypassable with --no-verify, while a sandbox can pin an unkillable managed-settings hook.</li>
+  </ul>
+</div>
 <p>AI agents now author a growing share of the commits in many repositories, which makes one question routine: what produced this change, and was it checked before it landed? The answer lives in two automation layers that look alike — both are <em>hooks</em>, both run your scripts at a defined moment — but fire on different lifecycles. Git hooks run when Git performs a repository operation: commit, merge, applypatch, push. Claude Code (and Codex) hooks run inside the agent's tool loop: a prompt arrives, a tool runs, a turn ends. Because they observe different lifecycles, they see different things, fail in different ways, and carry different trust guarantees. They are complementary, not interchangeable — and inside an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a> you layer both: agent hooks capture the prompt and trace, Git hooks and CI enforce at the commit and push boundary.</p>
 <h2>Git hooks: repository lifecycle</h2>
 <p>The official Git hooks documentation says hooks are programs placed in a hooks directory, usually <code>$GIT_DIR/hooks</code> or a path configured with <code>core.hooksPath</code>. Git invokes them at specific moments in Git operations. A <code>pre-commit</code> hook can block a commit. A <code>commit-msg</code> hook can validate the message. Server-side hooks can inspect pushes.</p>

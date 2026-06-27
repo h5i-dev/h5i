@@ -111,6 +111,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>Anything an agent stores (its trace) or pulls (cross-agent messages) is untrusted input.</li>
+        <li>One line can attack two victims: prompt injection aimed at a downstream model, and terminal-escape injection aimed at a human's terminal.</li>
+        <li>h5i narrows — it does not solve — the surface: an audit scan over the trace, sanitize_display at render time, and a policy that pulled messages are requests to evaluate, not commands.</li>
+  </ul>
+</div>
     <p>
       Prompt injection is the LLM-era equivalent of SQL injection: untrusted input gets concatenated
       into a control channel, the control channel obeys it, and the system does the wrong thing.

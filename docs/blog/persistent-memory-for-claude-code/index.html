@@ -122,6 +122,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>Durable agent memory should be a side effect of commits, not a markdown file you must remember to hand-edit.</li>
+        <li>h5i layers a commit-pinned reasoning DAG, commit-keyed memory snapshots, and a SessionStart hook over the memory primitive.</li>
+        <li>The memory directory is the one artifact you snapshot explicitly (h5i capture memory); the context workspace auto-snapshots on every commit.</li>
+  </ul>
+</div>
     <p>
       An <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>
       records every prompt, decision, and milestone in your repo, and this post covers how h5i

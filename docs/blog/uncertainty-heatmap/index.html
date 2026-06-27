@@ -113,6 +113,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>The heatmap is a deterministic router for reviewer attention, not a bug detector — and the signal lives in the trace, not the diff.</li>
+        <li>The confidence percentage is a fixed per-phrase weight h5i assigns, not the model's probability, so an empty heatmap is not proof of safety.</li>
+        <li>Detection is high-recall and low-precision (substring match over ~30 hedge phrases): false positives cost a sentence, false negatives are the expensive failure.</li>
+  </ul>
+</div>
     <p>
       An AI agent can produce a 1,400-line diff across 23 files in a single sitting. A human reviewer
       still reads at human speed. The usual response is to read uniformly — start at line 1, give

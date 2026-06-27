@@ -98,6 +98,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>A human wires the hooks once (h5i hook setup --write); after that, prompt, trace, and diff capture happen automatically.</li>
+        <li>Manual capture (--intent) is for humans, CI, or Codex where no prompt-capture hook runs; hook-based capture is the automatic Claude Code path.</li>
+        <li>Because the prompt, edits, and test evidence live in Git, a reviewer can later reconstruct how a change came to be.</li>
+  </ul>
+</div>
 <p>An <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> is where prompt provenance lives: who asked, what the agent knew, what it changed, and what evidence supports the result, all versioned in your repo. Claude Code already works inside a Git repository. That means every edit can end in a normal commit and pull request. The problem is that Git does not automatically store the Claude Code prompt, the model identity, the files Claude observed, or the test evidence behind the change.</p>
 <p>h5i fills that gap by capturing AI provenance as Git-sidecar data. The repository still behaves like a normal Git repo. The AI layer gives reviewers and future maintainers a way to answer, "what did Claude Code do, and why?"</p>
 <h2>What to capture</h2>

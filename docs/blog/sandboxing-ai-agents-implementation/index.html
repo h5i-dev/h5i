@@ -75,6 +75,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>Capability bits report kernel support, not confinement, so probe capabilities, run a functional self-test, and refuse to start if it cannot run.</li>
+        <li>Fail closed beats degrade: a silent downgrade is the worst sandbox bug because the evidence agrees with a guarantee that no longer holds.</li>
+        <li>Every primitive has a trap — Landlock cannot subtract a child and must use HardRequirement; memory uses RLIMIT_DATA, not RLIMIT_AS.</li>
+  </ul>
+</div>
     <p>
       An AI coding agent that can run shell commands is, from the kernel's point of view, an ordinary process with your full permissions. It can read <code>~/.ssh/id_ed25519</code>, push to a remote, exfiltrate over the network, or read another process's environment block — not because it is malicious, but because a prompt-injected tool call or a poisoned dependency can steer it there. The sandbox is the only thing standing between that and your laptop. So the implementation has to be correct, not merely present.
     </p>

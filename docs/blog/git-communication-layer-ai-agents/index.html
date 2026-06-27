@@ -138,6 +138,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>Agent coordination should live next to the artifact (branch and commit) and survive the chat window that produced it.</li>
+        <li>Compare-and-swap on send plus union-merge-by-id on pull turn a plain Git ref into a lossless multi-writer mailbox with no broker.</li>
+        <li>Git-native messaging trades latency and presence for durability, auditability, and zero infrastructure — right for handoffs, wrong for live chat.</li>
+  </ul>
+</div>
 <p>A year ago "multi-agent" meant one model in a loop. Now it means a Claude Code session writing a branch while Codex reviews it, a third agent runs the long task, and a human steps in to redirect — often on different machines, rarely all awake at the same second. The hard part is no longer making one agent competent. It is getting several of them to coordinate without losing the thread: who asked for what, which risk was already flagged, who owns the next step, what counts as done.</p>
 <p>Most teams answer this with the chat window. That works until the session ends. The ask, the review note, the "I already handled that" — all of it lives in a transcript that is not attached to the branch it was about, and is gone the moment the context resets. Coordination state that does not survive the session is not coordination state; it is a conversation you have to reconstruct.</p>
 <p>This article makes a narrower claim than "use Git for everything." It is that the coordination channel for asks, reviews, risks, and handoffs should live <em>next to the artifact</em> — the branch, the commit, the file — and that a single Git ref, written with compare-and-swap and reconciled with union-merge, gives you a lossless multi-writer mailbox with no server to run. You already know Git's basics; the part worth your attention is why those two mechanics turn an append-only ref into a mailbox, and where that trade is wrong. Git-native handoffs are also one of the coordination pillars inside an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>: every ask, review, risk, and handoff recorded in the repo, provable after the fact.</p>

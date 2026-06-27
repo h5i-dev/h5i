@@ -102,6 +102,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>The score grades the ask, not the answer: a fixed-weight composite over seven text features, fully deterministic, with no model call.</li>
+        <li>Its defensibility is being explainable and ungameable-by-construction in ways an LLM judge is not.</li>
+        <li>It is a form signal, not a correctness one — a precise-but-wrong prompt scores high, so pair it with tests and audit on the same commit.</li>
+  </ul>
+</div>
     <p>
       Prompt provenance is a core property of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>:
       not just <em>that</em> a prompt was recorded, but a signal of how well the agent was directed.

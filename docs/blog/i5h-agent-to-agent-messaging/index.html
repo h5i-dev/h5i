@@ -131,6 +131,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>A durable agent message bus needs only four primitives Git already has: an append-only log, content-addressed storage, compare-and-swap, and union-by-id merge.</li>
+        <li>"No lost messages" is precise: in-clone CAS serializes writers, and cross-clone union-by-id gives strong eventual consistency — not real time.</li>
+        <li>i5h trades immediacy for durability and zero infrastructure; it complements MCP (tool transport) and A2A (live RPC) rather than competing.</li>
+  </ul>
+</div>
     <p>
       More teams now run more than one coding agent on the same repository. Claude Code
       drafts a feature; Codex reviews it. One agent implements while another watches for

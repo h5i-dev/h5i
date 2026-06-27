@@ -105,6 +105,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>A flat markdown memory file is the wrong shape for volatile, per-commit reasoning — no ancestry, no branchable experiments.</li>
+        <li>A DAG of typed nodes (with a MERGE node recording both parents) is queryable and mergeable like code.</li>
+        <li>Snapshots pin to commit SHAs, so reasoning gets the same restore-and-diff time travel Git gives code.</li>
+  </ul>
+</div>
     <p>
       Every AI coding session throws away its most useful artifact. The diff survives; the
       <em>path to it</em> does not. Which files did the agent read before it edited? Which

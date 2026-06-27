@@ -117,6 +117,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>A failing test, a compile error, and a lint diagnostic are the same shape, so they collapse into one typed ToolResult / Finding.</li>
+        <li>The schema is honest by construction: status comes from the exit code, parser_confidence is explicit, and the raw bytes are always recoverable.</li>
+        <li>Reduction makes tool output small; the typed, fingerprinted, queryable record is what makes it actionable.</li>
+  </ul>
+</div>
     <p>
       Compressed tool logs are one of the core properties of an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>, and structured output is what makes those logs machine-actionable, not just smaller.
       Token reduction is a real win (see <a href="/blog/token-reduction-object-store/">the object-store

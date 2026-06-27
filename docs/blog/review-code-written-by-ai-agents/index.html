@@ -101,6 +101,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>Review in order — intent, context coverage, risk, evidence — then the lines; the diff is the last step, not the first.</li>
+        <li>Generated volume is not generated risk; triage by blast radius rather than line count.</li>
+        <li>Make provenance a merge requirement, not a nicety.</li>
+  </ul>
+</div>
 <p>Agents now author a large and growing share of the diffs that arrive for review. That changes who you are reviewing. The author is no longer a colleague who can defend their reasoning in standup; it is a process that produced a coherent patch in seconds and has already forgotten why. The reviewer inherits the gap. The reliable question is no longer only "is this line correct?" It is "did the agent understand the task, read the right code before editing, and test the behavior it actually changed?"</p>
 <p>The line-by-line part of review is the known problem. Humans have done it for decades, and most of those instincts still apply: read the change, reason about edge cases, check naming and error handling. What is novel is everything <em>upstream</em> of the diff. A human author carries the context in their head — the interface they read, the caller they checked, the assumption they made and chose not to verify. An agent's context is real but invisible the moment the patch is written. Provenance-first review is the practice of reconstructing that context from a record instead of guessing at it from the diff.</p>
 <p>So review in this order: <strong>intent → context coverage → risk → evidence → the lines</strong>. The diff comes last because by the time you read it, you should already know what the change was supposed to do, what the agent looked at, where the blast radius is, and which behavior has proof. An <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> is what makes this possible: it records every prompt, observation, command, and test result in the repo, so the reviewer reads a provable record rather than reverse-engineering one.</p>

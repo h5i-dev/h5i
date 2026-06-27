@@ -75,6 +75,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>There is no single right sandbox: isolation strength, overhead, setup cost, and capability move together, so pick by threat model.</li>
+        <li>Egress control and provenance are axes orthogonal to isolation strength, and they are where most tools quietly under-deliver.</li>
+        <li>h5i is honestly a medium-to-high boundary (kernel confinement plus a hardened rootless container, L7 egress, no VM tier) whose differentiator is Git-native provenance.</li>
+  </ul>
+</div>
     <p>
       Every coding agent you run executes shell commands on your behalf: it installs packages, runs build scripts, hits the network, and edits files. The moment one of those commands comes from an attacker-controlled source — a poisoned dependency, a prompt-injected README, a malicious test fixture — the only thing between that command and your credentials is whatever sandbox you put around it. That is why the sandbox question stopped being academic in 2025 and 2026: agents now run unattended, in parallel, against repositories full of untrusted text.
     </p>

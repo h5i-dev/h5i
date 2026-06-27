@@ -108,6 +108,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>Authorship shifted from a human typing lines to an agent acting on a prompt with context, so the version-control record must follow.</li>
+        <li>The missing record is six fields: agent, model, prompt, context observed, action trace, and test/review evidence.</li>
+        <li>You can capture all of it today on top of Git (notes plus sidecar refs) with no new system of record.</li>
+  </ul>
+</div>
 <div class="callout">
   <strong>In one line:</strong> Version control answers <em>what changed</em>. AI-aware version control adds the record a diff structurally cannot hold — <strong>which agent and model, from what prompt, with what context observed, verified by what tests, flagged by what review</strong> — captured as Git-native data (notes plus sidecar refs), not a separate system of record. h5i is one open-source implementation: code stays in normal commits and branches, while the AI provenance lives in git notes and <code>refs/h5i/*</code> and travels with the repo.
 </div>

@@ -138,6 +138,15 @@
       </div>
     </header>
 
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+        <li>Git notes are the right primitive, and h5i uses them — the record is JSON in a git note on refs/h5i/notes, not a competing store.</li>
+        <li>AI provenance is structured, multi-ref, and queried — which is exactly where a single free-form note breaks down.</li>
+        <li>Use raw notes for small human annotations; use h5i when the record must be captured repeatably and acted on later.</li>
+  </ul>
+</div>
 <p>When a person writes a commit, the message <em>is</em> the provenance: a human chose the words and will answer for them. When an agent writes a commit, the interesting record lives outside the diff — which prompt produced it, which model and agent, how many tokens, whether the tests passed, whether an integrity audit flagged anything. None of that belongs in the commit message, and none of it should rewrite the commit's SHA. So the question arrives quickly for anyone running Claude Code, Codex, or a fleet of agents against a real repository: where does AI provenance go, and what can you <em>do</em> with it afterward?</p>
 <p>The usual framing — "git notes versus h5i" — is the wrong one. h5i is built <em>on</em> git notes. Its per-commit provenance record is a JSON document stored as a git note. The real comparison is not between two storage mechanisms; it is between a free-form note you maintain by hand and a typed record with a query, audit, and sharing pipeline around it. The deciding question, the one this whole post turns on, is whether your metadata has <strong>behavior</strong>: does it merely sit there to be read by a human someday, or must it be queried, rendered into a PR packet, used to restore a future session, and moved between agents?</p>
 
