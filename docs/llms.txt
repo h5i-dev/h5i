@@ -11,6 +11,10 @@ h5i extends version control with four dimensions: temporal (Git history), intent
 - [Blog](https://h5i.dev/blog/): Engineering posts on auditable workspaces, sandboxing, provenance, and token reduction.
 - [Guides](https://h5i.dev/guides/): Task-focused how-tos for memory, multi-agent, provenance, audit, and blame.
 
+## Ensemble
+- [Run an AI Agent Ensemble (h5i team)](https://h5i.dev/blog/agent-ensembles-with-h5i-team/): Run the same task across several agents in sealed lanes, then merge the one result a neutral, sandboxed verifier clears.
+- [Why AI Agents Need Auditable Workspaces](https://h5i.dev/blog/auditable-workspaces-for-ai-agents/): The cornerstone — what an auditable workspace records (prompt, model, reasoning, commands, tests, risk, handoffs) and why Git alone is not enough.
+
 ## Concepts
 - [What Is AI-Aware Version Control?](https://h5i.dev/blog/what-is-ai-aware-version-control/): The record a diff can't hold — which agent and model, from what prompt, with what context, verified by what tests — captured Git-natively.
 - [Why Git Diffs Are Not Enough for AI-Generated Code](https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/): A diff shows the destination, not the journey; for agent code the journey (intent, context, tests, uncertainty) is where the risk lives.
@@ -30,7 +34,6 @@ h5i extends version control with four dimensions: temporal (Git history), intent
 - [From Git Blame to AI Blame](https://h5i.dev/blog/from-git-blame-to-ai-blame/): Per-line provenance — model, agent, prompt, and test result — beyond git blame's name and date.
 - [The AI Pull Request Body](https://h5i.dev/blog/pr-body-ai-code-review/): A PR body generated from captured provenance, so reviewers triage evidence instead of a self-report.
 - [The i5h Protocol](https://h5i.dev/blog/i5h-agent-to-agent-messaging/): The wire format — typed JSON messages in `refs/h5i/msg`, append-only, with compare-and-swap sends and union-merge by id.
-- [Run an AI Agent Ensemble (h5i team)](https://h5i.dev/blog/agent-ensembles-with-h5i-team/): Run the same task across several agents in sealed lanes, then merge the one result a neutral, sandboxed verifier clears.
 
 ## Sandboxing
 - [Sandboxing AI Agents, Part 1: Foundations](https://h5i.dev/blog/sandboxing-ai-agents-foundations/): The threat model and the Linux primitives (namespaces, seccomp, Landlock, cgroups) that contain an agent.
@@ -38,7 +41,6 @@ h5i extends version control with four dimensions: temporal (Git history), intent
 - [Part 3: The Landscape, Compared by Threat Model](https://h5i.dev/blog/sandboxing-ai-agents-landscape/): A fair survey — nothing/YOLO, git worktrees, language runtimes, kernel confinement, containers, gVisor/Kata, microVMs.
 - [Part 4: h5i's Tier Ladder and Policy Model](https://h5i.dev/blog/sandboxing-ai-agents-h5i/): The four-tier ladder (workspace, process, supervised, container) that matches confinement to trust and to what the host can enforce.
 - [The Agent Sandbox With a Review Loop (h5i env)](https://h5i.dev/blog/agent-sandbox-env/): An isolated git worktree under a pinned policy; every run is captured as evidence, then proposed for human apply.
-- [Why AI Agents Need Auditable Workspaces](https://h5i.dev/blog/auditable-workspaces-for-ai-agents/): What an auditable workspace records — prompt, model, reasoning, commands, tests, risk, handoffs — and why Git alone is not enough.
 
 ## Security
 - [CVE-2025-59536: Startup Trust Dialog Bypass](https://h5i.dev/blog/cve-2025-59536-startup-trust-dialog/): Claude Code before 1.0.111 could execute project code before the startup trust dialog was accepted.
