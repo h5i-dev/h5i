@@ -3352,3 +3352,4 @@ _[Checkpoint: 6a3f1f4f — edited docs/blog/cve-2025-59536-startup-trust-dialog/
 ---
 
 [00:54:39] OBSERVE: read src/risk.rs
+[00:54:42] OBSERVE: read src/review.rs
