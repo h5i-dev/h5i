@@ -3404,3 +3404,4 @@ _[Checkpoint: 6a3f22f2 — edited docs/blog/auditing-ai-generated-code/index.htm
 ---
 
 [01:21:07] OBSERVE: read blog/index.html
+[01:21:51] OBSERVE: read blog/auditable-workspaces-for-ai-agents/index.html
