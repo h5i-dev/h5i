@@ -3322,3 +3322,9 @@ _[Checkpoint: 6a3f1e30 — edited docs/blog/sandboxing-ai-agents-implementation/
 [00:53:47] ACT: edited docs/blog/cve-2026-33068-bypass-permissions-settings/index.html
 [00:53:51] ACT: edited docs/blog/cve-2025-59536-startup-trust-dialog/index.html
 [00:53:54] NOTE: DEFERRAL (/tmp/claude-1000/-home-koukyosyumei-Dev-h5i/0458259c-229f-4ffd-b1d1-f1e98d00ebae/scratchpad/blog-brief.md): ent-sandbox-env` done (repositioned around the review-loop, deferred deep tier mechanics to Part 4). It surfaced a nuance …
+
+
+---
+_[Checkpoint: 6a3f1f22 — edited docs/blog/cve-2025-59536-startup-trust-dialog/index.html; edited docs/blog/cve-2026-33068-bypass-permissions-sett…]_
+---
+
