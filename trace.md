@@ -3462,3 +3462,9 @@ _[Checkpoint: 6a40a610 — Fixed first-definition across docs to 'auditable work
 _[Checkpoint: 6a40a669 — edited pitch/index.html; edited pitch/index.html; edited pitch/index.html]_
 ---
 
+
+
+---
+_[Checkpoint: 6a40a68d — edited pitch/index.html; edited pitch/index.html; edited pitch/index.html]_
+---
+
