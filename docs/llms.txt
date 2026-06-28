@@ -1,8 +1,21 @@
 # h5i
 
-> h5i ("high-five") is a Git-native sidecar that makes AI coding-agent work auditable. It records prompts, model/agent provenance, reasoning traces, test evidence, and cross-agent messages in `refs/h5i/*` (no SaaS), and sandboxes each agent in an isolated git worktree.
+> h5i ("high-five") is an open-source auditable workspace layer for AI coding agents. It runs Claude Code, Codex, and other coding agents in isolated Git workspaces, records the prompts, commands, logs, sandbox policy, reviews, and verifier results behind every change, then helps teams merge one evidence-backed result. Local-first, no SaaS.
 
-h5i extends version control with four dimensions: temporal (Git history), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging). It integrates with Claude Code and Codex via lifecycle hooks and MCP, stores everything in your own repository, and shares h5i refs with `h5i share push` / `h5i share pull`. Apache-2.0, written in Rust.
+h5i solves the problems that show up once agents — not just humans — write the code: running many agents in parallel without collisions, sandboxing what each one can touch, proving where AI-generated code came from, and verifying which attempt to trust. Each agent works in its own isolated git worktree under a pinned policy; attempts are sealed independently and judged by a neutral, sandboxed verifier. It integrates with Claude Code and Codex via lifecycle hooks and MCP. Apache-2.0, written in Rust.
+
+## Core concepts
+- Auditable workspaces for AI coding agents
+- Sandboxed agent environments (tiered isolation + network egress allowlist)
+- Sealed independent attempts
+- Neutral verifier
+- Prompt-aware commits
+- AI code provenance
+- Git-native audit trail under `refs/h5i/*`
+- Local-first, no SaaS required
+
+## Technical model
+h5i stores agent evidence as Git-native sidecar refs under `refs/h5i/*` — prompts, model/agent provenance, reasoning traces, test metrics, reviews, verifier decisions, and cross-agent messages — so it lives alongside the repository with no hosted control plane, and travels with `h5i share push` / `h5i share pull`. It extends version control with four dimensions: temporal (Git history), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging).
 
 ## Docs
 - [Features](https://h5i.dev/features/): What h5i gives Claude Code and Codex — sandboxed worktrees, prompt-aware commits, compressed tool logs, agent handoffs.
