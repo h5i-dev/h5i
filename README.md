@@ -127,12 +127,12 @@ Launch every agent in its own sandboxed environment. Each agent automatically st
 
 ```bash
 # Terminal 1: Claude, running inside its own h5i sandboxed env.
-h5i env shell env/human/qsort-demo-claude -- claude "$(h5i team bootstrap)" # --dangerously-skip-permissions
+h5i env shell env/human/qsort-demo-claude -- claude "$(h5i team bootstrap)" # `--dangerously-skip-permissions`
 ```
 
 ```bash
 # Terminal 2: Codex, running inside its own h5i sandboxed env.
-h5i env shell env/human/qsort-demo-codex  -- codex  "$(h5i team bootstrap)" # --sandbox danger-full-access
+h5i env shell env/human/qsort-demo-codex  -- codex  "$(h5i team bootstrap)" # `--sandbox danger-full-access`
 ```
 
 Each agent peer-reviews, and revises inside its own implementation:
@@ -141,12 +141,18 @@ Each agent peer-reviews, and revises inside its own implementation:
 h5i team auto-peer-review qsort-demo                       # sync → freeze → mutual grant → instruct
 ```
 
-Replay each candidate, run the tests, merge the winner:
+Merge the best one:
 
 ```bash
-h5i team verify   qsort-demo --agent <agent-id> -- pytest  # id from `team status`
-h5i team finalize qsort-demo                               # explainable verdict (gates + smallest diff)
-h5i team apply    qsort-demo                               # merge the winner, gated on the verdict
+h5i team apply --agent <agent-id>                          # id from `team status`
+```
+
+Alternatively, replay each candidate, run the tests, merge the winner:
+
+```bash
+# h5i team verify   qsort-demo --agent <agent-id> -- pytest  # id from `team status`
+# h5i team finalize qsort-demo                               # explainable verdict (gates + smallest diff)
+# h5i team apply    qsort-demo                               # merge the winner, gated on the verdict
 ```
 
 Monitor the status:
