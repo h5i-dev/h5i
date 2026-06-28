@@ -3468,3 +3468,16 @@ Added --agent flag to team apply (conflicts_with --winner): resolves the agent's
 
 ---
 
+## Commit 6a4183e2 — 2026-06-28 20:28 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+Added --agent flag to team apply (conflicts_with --winner): resolves the agent's latest_submission_id and bypasses the verdict gate (implicit force). Error paths + happy path tested. Also documented that --winner <id> --force already worked.
+
+### This Commit's Contribution
+
+
+---
+
