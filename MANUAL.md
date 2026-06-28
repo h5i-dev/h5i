@@ -2826,7 +2826,7 @@ inboxes and never locks the round.
 | Command | Description |
 |---------|-------------|
 | `h5i team create <name> [--base REV] [--rounds N] [--title T] [--json]` | Create a run over existing envs. `--base` (default `HEAD`) is the shared base all candidates are compared against. |
-| `h5i team auto-create <name> [--base REV] [--rounds N] [--title T] [--json]` | **One-shot bootstrap** of a two-agent **claude + codex** team: creates `<name>-claude` (profile `agent-claude`) and `<name>-codex` (profile `agent-codex`) envs, creates the team, and enrolls both with their runtimes — equivalent to one `env create` per agent plus a `team create` and two `team add-env`. Env slugs are namespaced by the team id (`<name>-claude`/`<name>-codex`) so auto-created teams never collide on env names. The pinned `agent-*` profiles are **fail-closed**: on a host that can't enforce the agent-in-box tier, env creation errors rather than downgrading. |
+| `h5i team auto-create <name> [--base REV] [--rounds N] [--title T] [--json]` | **One-shot bootstrap** of a two-agent **claude + codex** team: creates `<name>-claude` (profile `agent-claude`) and `<name>-codex` (profile `agent-codex`) envs, creates the team, and enrolls both — equivalent to one `env create` per agent plus a `team create` and two `team add-env`. Like manual `add-env`, each member's roster **agent id is an auto-generated persona name** (e.g. `tariq`, `ravi`), kept distinct from the `runtime` (recorded as `claude`/`codex`); the command prints the `persona → runtime → env` mapping, and `team status` shows it. Env slugs are namespaced by the team id (`<name>-claude`/`<name>-codex`) so auto-created teams never collide on env names. The pinned `agent-*` profiles are **fail-closed**: on a host that can't enforce the agent-in-box tier, env creation errors rather than downgrading. |
 | `h5i team add-env <team> <env> [--as <agent-id>] [--runtime R] [--model M] [--json]` | Add an already-created env to the roster as a persona-bound member. The agent id is **auto-generated** unless you pin it with `--as` (a ref-safe key; distinct personas on the same runtime need distinct ids — see it with `h5i team status`). The persona itself comes from the env's profile (`persona = [...]` in `.h5i/env.toml`, baked into `PERSONA.md` at `env create`) — no per-add flag. Draft phase only. **Also binds the env's in-box identity** (writes host-owned `team-identity` / `team-run` files), so `env run`/`env shell` inject `H5I_AGENT=<agent>` and `H5I_TEAM=<team>` for scoped team-agent commands. |
 | `h5i team status [<team>] [--json]` | Folded run state: phase, roster, per-agent submission state. |
 | `h5i team list [--json]` | All runs on this clone. |
@@ -3010,9 +3010,11 @@ Shortcuts for the common claude + codex setup:
 
 ```bash
 # replace the create + two add-env lines above with one bootstrap:
-h5i team auto-create fix-auth --base HEAD             # envs fix-auth-claude / fix-auth-codex, both enrolled
-# …and to ship a chosen candidate without verify/finalize, pick the agent directly:
-h5i team apply fix-auth --agent claude               # applies claude's latest submission (gate bypassed)
+h5i team auto-create fix-auth --base HEAD   # envs fix-auth-claude / fix-auth-codex; prints the persona→runtime→env map
+#   ➜ enrolled tariq (claude) → env/human/fix-auth-claude
+#   ➜ enrolled ravi  (codex)  → env/human/fix-auth-codex
+# …and to ship a chosen candidate without verify/finalize, pick the agent by its persona key (from `team status`):
+h5i team apply fix-auth --agent tariq       # applies that agent's latest submission (gate bypassed)
 ```
 
 Hands-off via an external scheduler (recommended — crash-resilient, no daemon):

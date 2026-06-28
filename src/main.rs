@@ -9769,18 +9769,30 @@ fn main() -> anyhow::Result<()> {
                     )?;
                     let _ = h5i_core::team::set_current(&h5i_root, &run.id);
 
-                    // Enroll each env under its runtime-named team agent key.
+                    // Enroll each env under a generated persona key (like manual
+                    // add-env) — distinct from the runtime, which is recorded
+                    // separately. Accumulate assigned ids so the two never clash.
+                    let mut assigned: Vec<String> = Vec::new();
                     for (member, m) in roster.iter().zip(created.iter()) {
+                        let agent_id = h5i_core::team::gen_agent_id(&assigned);
                         h5i_core::team::add_env(
                             git,
                             &h5i_root,
                             &name,
                             &m.id,
-                            member.agent_key,
+                            &agent_id,
                             Some(member.runtime.to_string()),
                             None,
                             &actor,
                         )?;
+                        eprintln!(
+                            "{} enrolled {} ({}) → {}",
+                            STEP,
+                            style(&agent_id).green().bold(),
+                            member.runtime,
+                            m.id
+                        );
+                        assigned.push(agent_id);
                     }
 
                     let status = h5i_core::team::status(git, &name)?;

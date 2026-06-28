@@ -610,15 +610,25 @@ and
 .IR NAME \-codex
 (profile
 .BR agent-codex )
-envs, creates the team, and enrolls both with their runtimes \(em equivalent to
-one
+envs, creates the team, and enrolls both \(em equivalent to one
 .B env create
 per agent plus a
 .B team create
 and two
 .BR add-env .
-Env slugs are namespaced by the team id so auto-created teams never collide on
-env names. The pinned
+Like manual
+.BR add-env ,
+each member's roster agent id is an auto-generated persona name (e.g.\&
+.IR tariq ,
+.IR ravi ),
+kept distinct from the
+.I runtime
+(recorded as
+.IR claude / codex );
+the command prints the persona \(-> runtime \(-> env mapping, and
+.B team status
+shows it. Env slugs are namespaced by the team id so auto-created teams never
+collide on env names. The pinned
 .B agent-*
 profiles are fail-closed: on a host that cannot enforce the agent-in-box tier,
 env creation errors rather than downgrading.

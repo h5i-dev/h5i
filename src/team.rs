@@ -1954,11 +1954,12 @@ pub fn apply_agent(
     apply_winner(repo, h5i_root, run_id, Some(&submission), true, actor)
 }
 
-/// One member of an auto-created team: its team agent key, the env slug to
-/// create, the runtime-scoped agent-in-box profile to pin, and the runtime
-/// adapter to record on the roster.
+/// One member of an auto-created team: the env slug to create, the
+/// runtime-scoped agent-in-box profile to pin, and the runtime adapter to
+/// record on the roster. The roster **agent id** is not fixed here — like
+/// manual `add-env`, it is a generated persona name (`gen_agent_id`), kept
+/// distinct from the runtime so two members on one runtime stay possible.
 pub struct AutoMember {
-    pub agent_key: &'static str,
     pub env_slug: String,
     pub profile: &'static str,
     pub runtime: &'static str,
@@ -1973,9 +1974,8 @@ pub fn auto_create_roster(team: &str) -> Vec<AutoMember> {
         ("codex", "agent-codex", "codex"),
     ]
     .into_iter()
-    .map(|(agent_key, profile, runtime)| AutoMember {
-        agent_key,
-        env_slug: format!("{team}-{agent_key}"),
+    .map(|(env_suffix, profile, runtime)| AutoMember {
+        env_slug: format!("{team}-{env_suffix}"),
         profile,
         runtime,
     })
@@ -3156,17 +3156,29 @@ mod tests {
         let roster = auto_create_roster("demo");
         let summary: Vec<_> = roster
             .iter()
-            .map(|m| (m.agent_key, m.env_slug.as_str(), m.profile, m.runtime))
+            .map(|m| (m.env_slug.as_str(), m.profile, m.runtime))
             .collect();
         assert_eq!(
             summary,
             vec![
-                ("claude", "demo-claude", "agent-claude", "claude"),
-                ("codex", "demo-codex", "agent-codex", "codex"),
+                ("demo-claude", "agent-claude", "claude"),
+                ("demo-codex", "agent-codex", "codex"),
             ]
         );
         // Slugs are namespaced by team id so two auto-created teams never collide.
         assert_eq!(auto_create_roster("other")[0].env_slug, "other-claude");
+    }
+
+    #[test]
+    fn auto_create_assigns_generated_persona_keys_not_the_runtime() {
+        // The roster agent ids are generated persona names (like manual add-env),
+        // distinct from each other and from the runtime label.
+        let first = gen_agent_id(&[]);
+        let second = gen_agent_id(&[first.clone()]);
+        assert_ne!(first, second);
+        // gen_agent_id draws from the friendly persona pool, never a runtime name.
+        assert!(!["claude", "codex"].contains(&first.as_str()));
+        assert!(!["claude", "codex"].contains(&second.as_str()));
     }
 
     #[test]
