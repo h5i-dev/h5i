@@ -10363,7 +10363,7 @@ fn main() -> anyhow::Result<()> {
                         } else {
                             let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                             let review = h5i_core::team::submit_review(
-                                git, &team, &reviewer, &target, body, &actor,
+                                git, &h5i_root, &team, &reviewer, &target, body, &actor,
                             )?;
                             if json {
                                 println!("{}", serde_json::to_string_pretty(&review)?);

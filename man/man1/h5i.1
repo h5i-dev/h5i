@@ -772,7 +772,12 @@ Permissioned review: grant A scoped access to B's round artifacts (never raw log
 or persona bodies by default) + send a REVIEW_REQUEST.
 .TP
 .BI "review submit " "TEAM " "\-\-reviewer A \-\-target B \-\-file F"
-Record a review body for a target candidate.
+Record a review body for a target candidate and deliver it to the reviewed
+agent: post-freeze the review is fanned into the target's per-env inbox (so a
+confined agent receives a peer's critique of its own work) and recorded as a
+.IR discussion_msg ,
+marking the target's next revision non-independent. Before freeze it is recorded
+for audit but not delivered (independence-first).
 .TP
 .BI "discuss " "TEAM " "\-\-from S \-\-to A,B \-\-file F [\-\-artifacts IDS]"
 Send a logged, influence-tracked discussion message (post-freeze only).

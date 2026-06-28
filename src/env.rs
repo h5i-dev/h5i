@@ -3679,6 +3679,7 @@ pub fn ingest_team_outbound(
             };
             match crate::team::submit_review(
                 repo,
+                h5i_root,
                 &team_id,
                 &agent_id,
                 &request.target,

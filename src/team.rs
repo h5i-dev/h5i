@@ -1263,8 +1263,10 @@ pub fn auto_peer_review(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn submit_review(
     repo: &Repository,
+    h5i_root: &Path,
     run_id: &str,
     reviewer: &str,
     target: &str,
@@ -1284,15 +1286,15 @@ pub fn submit_review(
         reviewer: reviewer.into(),
         target: target.into(),
         round: current.current_round,
-        body,
-        referenced_artifacts,
+        body: body.clone(),
+        referenced_artifacts: referenced_artifacts.clone(),
     };
     let ev = event(
         run_id,
         actor,
         "review_submitted",
         current.current_round,
-        Some(current.phase),
+        Some(current.phase.clone()),
         None,
         format!(
             "review_submitted:{run_id}:{reviewer}:{target}:{}",
@@ -1301,6 +1303,28 @@ pub fn submit_review(
         serde_json::to_value(&review)?,
     );
     append_event(repo, &ev)?;
+
+    // Deliver the review to the reviewed agent. Without this the review lives
+    // only in the host-owned event log, so a confined target never receives a
+    // peer's critique of its own work through its inbox. We route delivery
+    // through `discuss`, which (a) fans the body into the target's per-env
+    // read-only inbox and (b) records a `discussion_msg` — so the target's next
+    // revision is correctly marked non-independent (influenced by this review).
+    // Discussion is post-freeze only by the independence-first invariant: during
+    // an open round we skip delivery (no cross-agent influence before every
+    // first attempt is sealed); the authoritative review event is still recorded.
+    if !is_open_round(&current.phase) {
+        discuss(
+            repo,
+            h5i_root,
+            run_id,
+            reviewer,
+            vec![target.to_string()],
+            body,
+            referenced_artifacts,
+            actor,
+        )?;
+    }
     Ok(review)
 }
 
@@ -2567,6 +2591,7 @@ mod tests {
 
         let review = submit_review(
             &repo,
+            h5i_root,
             "run3",
             "claude-fix",
             "codex-fix",
@@ -3241,6 +3266,105 @@ mod tests {
         assert!(!claude_sub.independent);
         assert!(!claude_sub.influence_event_ids.is_empty());
         assert!(!claude_sub.influence_artifact_ids.is_empty());
+    }
+
+    #[test]
+    fn submit_review_post_freeze_delivers_to_target_inbox_and_marks_influence() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let codex = manifest(&repo, h5i_root, "codex", "fix");
+        let claude = manifest(&repo, h5i_root, "claude", "fix");
+        let codex_commit = commit_file(&repo, "codex.txt", "ok\n");
+        repo.reference(&codex.branch, codex_commit, true, "codex")
+            .unwrap();
+        let claude_commit = commit_file(&repo, "claude.txt", "ok\n");
+        repo.reference(&claude.branch, claude_commit, true, "claude")
+            .unwrap();
+
+        create(&repo, "run-rv", "run-rv", "HEAD~2", 1, "human").unwrap();
+        add_env(&repo, h5i_root, "run-rv", "env/codex/fix", "codex-fix", None, None, "human")
+            .unwrap();
+        add_env(&repo, h5i_root, "run-rv", "env/claude/fix", "claude-fix", None, None, "human")
+            .unwrap();
+        let codex_sub = submit(&repo, h5i_root, "run-rv", "codex-fix", None, None, "codex").unwrap();
+        submit(&repo, h5i_root, "run-rv", "claude-fix", None, None, "claude").unwrap();
+        freeze(&repo, "run-rv", false, "human").unwrap();
+
+        // claude reviews codex's candidate. The review must now reach codex's
+        // per-env inbox (delivery), not just the host-owned event log.
+        submit_review(
+            &repo,
+            h5i_root,
+            "run-rv",
+            "claude-fix",
+            "codex-fix",
+            "tighten the error handling".into(),
+            "claude-fix",
+        )
+        .unwrap();
+
+        let inbox = crate::env::env_inbox_for_agent(h5i_root, "codex-fix", Some("run-rv"))
+            .expect("target env inbox should resolve");
+        let queued = crate::env::read_env_inbox(&inbox);
+        assert!(
+            queued.iter().any(|m| m.body == "tighten the error handling"),
+            "review body should be delivered to the reviewed agent's inbox"
+        );
+
+        // …and codex revising after the review is marked non-independent.
+        let codex_revised =
+            submit(&repo, h5i_root, "run-rv", "codex-fix", None, None, "codex").unwrap();
+        assert!(!codex_revised.independent);
+        assert!(!codex_revised.influence_event_ids.is_empty());
+        // The submission predating the review stays independent.
+        assert!(codex_sub.independent);
+    }
+
+    #[test]
+    fn submit_review_in_open_round_records_but_does_not_deliver() {
+        // Independence-first: a review before freeze is recorded for audit but
+        // not delivered (no cross-agent influence until first attempts are sealed).
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let codex = manifest(&repo, h5i_root, "codex", "fix");
+        manifest(&repo, h5i_root, "claude", "fix");
+        let codex_commit = commit_file(&repo, "codex.txt", "ok\n");
+        repo.reference(&codex.branch, codex_commit, true, "codex")
+            .unwrap();
+
+        create(&repo, "run-or", "run-or", "HEAD~1", 1, "human").unwrap();
+        add_env(&repo, h5i_root, "run-or", "env/codex/fix", "codex-fix", None, None, "human")
+            .unwrap();
+        add_env(&repo, h5i_root, "run-or", "env/claude/fix", "claude-fix", None, None, "human")
+            .unwrap();
+        submit(&repo, h5i_root, "run-or", "codex-fix", None, None, "codex").unwrap();
+
+        // Still draft (open round) → review recorded, but not delivered.
+        submit_review(
+            &repo,
+            h5i_root,
+            "run-or",
+            "claude-fix",
+            "codex-fix",
+            "premature".into(),
+            "claude-fix",
+        )
+        .unwrap();
+        let events = read_events(&repo, "run-or").unwrap();
+        assert!(events.iter().any(|e| e.kind == "review_submitted"));
+        assert!(
+            !events.iter().any(|e| e.kind == "discussion_msg"),
+            "no discussion delivery before freeze"
+        );
+        if let Some(inbox) = crate::env::env_inbox_for_agent(h5i_root, "codex-fix", Some("run-or")) {
+            assert!(crate::env::read_env_inbox(&inbox)
+                .iter()
+                .all(|m| m.body != "premature"));
+        }
     }
 
     #[test]

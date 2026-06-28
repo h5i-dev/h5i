@@ -2845,7 +2845,7 @@ inboxes and never locks the round.
 | `h5i team worker --once \| --watch [--interval N] [--id ID] [--lease-ttl S] [--json]` | Optional automation: one lease-and-finalize pass (`--once`) or an opt-in in-process loop (`--watch`). **Finalize-only — never auto-applies.** Leases are idempotent + TTL'd; for production prefer an external scheduler driving `--once`. |
 | `h5i team dispatch <team> [--prompt-file F] [--json]` | Send the task to **every roster agent in one command** (prompt read from **stdin** by default — `h5i team dispatch <team> < TASK.md`; `--prompt-file` reads it from a named file instead) over [`h5i msg`](#h5i-msg) (an `ASK` per persona, tagged with the team + round) — no per-env pasting. It **notifies, it does not launch**: each agent must be running in its env to pick the task out of its inbox. Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch. |
 | `h5i team grant-review <team> --reviewer A --target B [--artifacts diff,summary,tests] [--json]` | Open a permissioned review: grant reviewer A scoped access to target B's round artifacts (never raw logs or persona bodies by default) + send a `REVIEW_REQUEST`. |
-| `h5i team review submit <team> --reviewer A --target B --file F [--json]` | Record a review body for a target candidate. |
+| `h5i team review submit <team> --reviewer A --target B --file F [--json]` | Record a review body for a target candidate **and deliver it to the reviewed agent**: post-freeze the review is fanned into the target's per-env inbox (so a confined agent actually receives a peer's critique of its own work) and recorded as a `discussion_msg`, which marks the target's next revision **non-independent** (influenced by this review). Before freeze the review is still recorded for audit but not delivered (independence-first: no cross-agent influence until every first attempt is sealed). |
 | `h5i team discuss <team> --from S --to A,B --file F [--artifacts ids] [--json]` | Send a logged, influence-tracked discussion message (post-freeze only). |
 
 `<env>` accepts a bare slug, `agent/slug`, or the full `env/agent/slug`.
@@ -2944,7 +2944,10 @@ h5i hook setup --write --team
   the team Stop hook; `--relaunch` re-opens any box that already exited. Each
   boxed reviewer reads its target read-only with `h5i team artifact show <id>
   --diff` (the inbox carries the artifact ids), reviews statically, then
-  re-submits — which marks it done for the round.
+  re-submits — which marks it done for the round. A review written with `h5i team
+  review submit` is also **delivered to the reviewed agent's inbox** (post-freeze)
+  and recorded as a discussion, so the target sees the critique of its own work
+  and its next revision is stamped non-independent.
 - **`scripts/team-run.sh <team> [--task F] [--verify-cmd "<cmd>"] [--apply]`** —
   the full driver. It launches, then **polls with `h5i team sync`** to advance
   each phase: wait until all submitted → freeze → grant review → wait until all
