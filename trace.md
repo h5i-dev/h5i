@@ -3600,3 +3600,9 @@ _[Checkpoint: 6a419589 — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 ---
 
 [21:44:40] NOTE: DEFERRAL (~/Dev/h5i/man/man1/h5i.1): rence* the review rather than copy its body, that's a small follow-up I can do. Commit series so far (all local, nothing pushed): `f71259b0`, `68e1259…
+
+
+---
+_[Checkpoint: 6a4195c8 — edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1]_
+---
+
