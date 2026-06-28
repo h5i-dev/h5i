@@ -141,6 +141,8 @@ Each agent peer-reviews, and revises inside its own implementation:
 h5i team auto-peer-review qsort-demo                       # sync → freeze → mutual grant → instruct
 ```
 
+### 2.5. Web UI
+
 Merge the best one:
 
 ```bash
