@@ -3454,3 +3454,4 @@ _[Checkpoint: 6a40a610 — Fixed first-definition across docs to 'auditable work
 ---
 
 [04:43:21] THINK: I'll start by exploring the docs structure to understand the current state before applying the review's suggestions.
+[04:43:21] NOTE: DEFERRAL (~/Dev/h5i/docs/pitch/index.html): ew. The 6 net-new SEO landing pages are noted as a deferred follow-up (worth canonicalizing against the existing sandboxing series + provenance guide …
