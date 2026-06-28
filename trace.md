@@ -3472,3 +3472,4 @@ _[Checkpoint: 6a40a68d — edited pitch/index.html; edited pitch/index.html; edi
 [20:20:08] OBSERVE: read src/main.rs
 [20:20:16] OBSERVE: read src/main.rs
 [20:20:26] OBSERVE: read src/team.rs
+[20:20:31] OBSERVE: read src/env.rs
