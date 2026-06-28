@@ -3455,3 +3455,16 @@ Added TeamCommands::AutoCreate in main.rs: creates <team>-claude (agent-claude) 
 
 ---
 
+## Commit 6a4183d9 — 2026-06-28 20:28 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Added --agent flag to team apply (conflicts_with --winner): resolves the agent's latest_submission_id and bypasses the verdict gate (implicit force). Error paths + happy path tested. Also documented that --winner <id> --force already worked.
+
+---
+

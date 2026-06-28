@@ -3494,3 +3494,9 @@ _[Checkpoint: 6a4182ae — edited pitch/index.html; edited src/main.rs; edited s
 [20:26:56] OBSERVE: read src/main.rs
 [20:27:02] ACT: edited src/main.rs
 [20:27:11] ACT: edited src/main.rs
+
+
+---
+_[Checkpoint: 6a4183d9 — team apply --agent <id> to skip verify/finalize]_
+---
+
