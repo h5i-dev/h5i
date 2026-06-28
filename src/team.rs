@@ -1919,6 +1919,69 @@ pub fn apply_winner(
     Ok(result)
 }
 
+/// Resolve a team agent's most recent submission id, or a descriptive error if
+/// the agent is unknown or has not submitted yet.
+pub fn latest_submission_for(
+    repo: &Repository,
+    run_id: &str,
+    agent_id: &str,
+) -> Result<String, H5iError> {
+    let run = status(repo, run_id)?.run;
+    let agent = run
+        .agents
+        .iter()
+        .find(|a| a.agent_id == agent_id)
+        .ok_or_else(|| H5iError::Metadata(format!("team '{run_id}' has no agent '{agent_id}'")))?;
+    agent.latest_submission_id.clone().ok_or_else(|| {
+        H5iError::Metadata(format!(
+            "agent '{agent_id}' has no submission yet — it must run `h5i team submit` \
+             (or `team agent submit` from its box) first"
+        ))
+    })
+}
+
+/// Apply a specific agent's latest submission, skipping verify/finalize. An
+/// explicit human pick: resolves the agent's most recent submission and applies
+/// it with the verifier-verdict gate bypassed (the `--agent` form of `apply`).
+pub fn apply_agent(
+    repo: &Repository,
+    h5i_root: &Path,
+    run_id: &str,
+    agent_id: &str,
+    actor: &str,
+) -> Result<TeamApplyResult, H5iError> {
+    let submission = latest_submission_for(repo, run_id, agent_id)?;
+    apply_winner(repo, h5i_root, run_id, Some(&submission), true, actor)
+}
+
+/// One member of an auto-created team: its team agent key, the env slug to
+/// create, the runtime-scoped agent-in-box profile to pin, and the runtime
+/// adapter to record on the roster.
+pub struct AutoMember {
+    pub agent_key: &'static str,
+    pub env_slug: String,
+    pub profile: &'static str,
+    pub runtime: &'static str,
+}
+
+/// The fixed two-agent claude + codex roster for `team auto-create`. Each env
+/// slug is derived from the team id so several auto-created teams coexist
+/// without env-name collisions.
+pub fn auto_create_roster(team: &str) -> Vec<AutoMember> {
+    [
+        ("claude", "agent-claude", "claude"),
+        ("codex", "agent-codex", "codex"),
+    ]
+    .into_iter()
+    .map(|(agent_key, profile, runtime)| AutoMember {
+        agent_key,
+        env_slug: format!("{team}-{agent_key}"),
+        profile,
+        runtime,
+    })
+    .collect()
+}
+
 fn lease_active(events: &[TeamEvent], worker_id: &str, ttl_secs: i64) -> bool {
     let mut latest: Option<&TeamEvent> = None;
     for ev in events.iter().filter(|e| e.kind == "lease_acquired") {
@@ -3026,6 +3089,84 @@ mod tests {
 
         let status = status(&repo, "run5").unwrap();
         assert_eq!(status.run.phase, "applied");
+    }
+
+    #[test]
+    fn apply_agent_applies_latest_submission_without_finalize() {
+        // The `--agent` path: pick an agent and apply directly — no verify, no
+        // finalize, no verdict — and still land the submission on HEAD.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let base = commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path().join(".git").join(".h5i-test");
+        fs::create_dir_all(&h5i_root).unwrap();
+        let m = manifest(&repo, &h5i_root, "codex", "fix");
+        let candidate = commit_file(&repo, "feature.txt", "ok\n");
+        repo.reference(&m.branch, candidate, true, "candidate")
+            .unwrap();
+
+        create(&repo, "run8", "run8", &base.to_string(), 1, "human").unwrap();
+        add_env(
+            &repo, &h5i_root, "run8", "env/codex/fix", "codex-fix", None, None, "human",
+        )
+        .unwrap();
+        let sub = submit(&repo, &h5i_root, "run8", "codex-fix", None, None, "codex").unwrap();
+
+        // Reset HEAD to base, then apply by agent. No verify/finalize was run,
+        // so there is deliberately no verdict on the run.
+        let base_obj = repo.find_object(base, None).unwrap();
+        repo.reset(&base_obj, git2::ResetType::Hard, None).unwrap();
+        let status_before = status(&repo, "run8").unwrap();
+        assert!(status_before.run.verdict.is_none());
+
+        let applied = apply_agent(&repo, &h5i_root, "run8", "codex-fix", "human").unwrap();
+        assert_eq!(applied.submission_id, sub.id);
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(head.id().to_string(), applied.target_commit_oid);
+        assert!(head.tree().unwrap().get_path(Path::new("feature.txt")).is_ok());
+        assert_eq!(status(&repo, "run8").unwrap().run.phase, "applied");
+    }
+
+    #[test]
+    fn apply_agent_errors_for_unknown_or_unsubmitted_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let base = commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path().join(".git").join(".h5i-test");
+        fs::create_dir_all(&h5i_root).unwrap();
+        let _m = manifest(&repo, &h5i_root, "codex", "fix");
+
+        create(&repo, "run9", "run9", &base.to_string(), 1, "human").unwrap();
+        add_env(
+            &repo, &h5i_root, "run9", "env/codex/fix", "codex-fix", None, None, "human",
+        )
+        .unwrap();
+
+        // Unknown agent.
+        let err = apply_agent(&repo, &h5i_root, "run9", "nobody", "human").unwrap_err();
+        assert!(format!("{err}").contains("no agent 'nobody'"));
+
+        // Known agent, but it has not submitted yet.
+        let err = apply_agent(&repo, &h5i_root, "run9", "codex-fix", "human").unwrap_err();
+        assert!(format!("{err}").contains("no submission yet"));
+    }
+
+    #[test]
+    fn auto_create_roster_derives_per_team_env_slugs() {
+        let roster = auto_create_roster("demo");
+        let summary: Vec<_> = roster
+            .iter()
+            .map(|m| (m.agent_key, m.env_slug.as_str(), m.profile, m.runtime))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("claude", "demo-claude", "agent-claude", "claude"),
+                ("codex", "demo-codex", "agent-codex", "codex"),
+            ]
+        );
+        // Slugs are namespaced by team id so two auto-created teams never collide.
+        assert_eq!(auto_create_roster("other")[0].env_slug, "other-claude");
     }
 
     #[test]

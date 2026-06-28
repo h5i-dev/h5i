@@ -9732,28 +9732,22 @@ fn main() -> anyhow::Result<()> {
                     let env_agent = msg::resolve_identity(&h5i_root, None)
                         .unwrap_or_else(|_| "human".to_string());
 
-                    // Fixed two-agent claude + codex roster. Each member pins its
-                    // runtime-scoped agent-in-box profile, and its env slug is
-                    // derived from the team id so several auto-created teams can
-                    // coexist without env-name collisions.
-                    // (team agent key, env slug suffix, profile, runtime)
-                    let members = [
-                        ("claude", "agent-claude", "claude"),
-                        ("codex", "agent-codex", "codex"),
-                    ];
+                    // Fixed two-agent claude + codex roster; each member pins its
+                    // runtime-scoped agent-in-box profile and a team-derived env
+                    // slug (so auto-created teams never collide on env names).
+                    let roster = h5i_core::team::auto_create_roster(&name);
 
                     let mut created = Vec::new();
-                    for (key, profile, _runtime) in members {
-                        let slug = format!("{name}-{key}");
+                    for member in &roster {
                         let opts = h5i_core::env::CreateOpts {
                             from: None,
-                            profile: Some(profile.to_string()),
+                            profile: Some(member.profile.to_string()),
                             isolation: None,
                             backend: "auto".into(),
                             audit_capture: h5i_core::sandbox::AuditCapture::parse("signal")?,
                         };
                         let m = h5i_core::env::create(
-                            git, &h5i_root, workdir, &env_agent, &slug, opts,
+                            git, &h5i_root, workdir, &env_agent, &member.env_slug, opts,
                         )?;
                         eprintln!(
                             "{} created env {} (profile {})",
@@ -9776,14 +9770,14 @@ fn main() -> anyhow::Result<()> {
                     let _ = h5i_core::team::set_current(&h5i_root, &run.id);
 
                     // Enroll each env under its runtime-named team agent key.
-                    for ((key, _profile, runtime), m) in members.iter().zip(created.iter()) {
+                    for (member, m) in roster.iter().zip(created.iter()) {
                         h5i_core::team::add_env(
                             git,
                             &h5i_root,
                             &name,
                             &m.id,
-                            key,
-                            Some(runtime.to_string()),
+                            member.agent_key,
+                            Some(member.runtime.to_string()),
                             None,
                             &actor,
                         )?;
@@ -10074,34 +10068,19 @@ fn main() -> anyhow::Result<()> {
                     // `--agent` is an explicit human pick: resolve it to that
                     // agent's latest submission and bypass the verifier-verdict
                     // gate (so you can apply without verify/finalize).
-                    let (winner, force) = match &agent {
-                        Some(agent_id) => {
-                            let run = h5i_core::team::status(git, &team)?.run;
-                            let a = run
-                                .agents
-                                .iter()
-                                .find(|a| &a.agent_id == agent_id)
-                                .ok_or_else(|| {
-                                    anyhow::anyhow!("team '{team}' has no agent '{agent_id}'")
-                                })?;
-                            let sub = a.latest_submission_id.clone().ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "agent '{agent_id}' has no submission yet — it must run \
-                                     `h5i team submit` (or `team agent submit` from its box) first"
-                                )
-                            })?;
-                            (Some(sub), true)
-                        }
-                        None => (winner, force),
+                    let result = match &agent {
+                        Some(agent_id) => h5i_core::team::apply_agent(
+                            git, &h5i_root, &team, agent_id, &actor,
+                        )?,
+                        None => h5i_core::team::apply_winner(
+                            git,
+                            &h5i_root,
+                            &team,
+                            winner.as_deref(),
+                            force,
+                            &actor,
+                        )?,
                     };
-                    let result = h5i_core::team::apply_winner(
-                        git,
-                        &h5i_root,
-                        &team,
-                        winner.as_deref(),
-                        force,
-                        &actor,
-                    )?;
                     // Round applied → release any agents waiting in the team hook.
                     fan_out_team_done(git, &h5i_root, &team, &actor);
                     if json {
