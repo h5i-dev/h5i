@@ -2826,6 +2826,7 @@ inboxes and never locks the round.
 | Command | Description |
 |---------|-------------|
 | `h5i team create <name> [--base REV] [--rounds N] [--title T] [--json]` | Create a run over existing envs. `--base` (default `HEAD`) is the shared base all candidates are compared against. |
+| `h5i team auto-create <name> [--base REV] [--rounds N] [--title T] [--json]` | **One-shot bootstrap** of a two-agent **claude + codex** team: creates `<name>-claude` (profile `agent-claude`) and `<name>-codex` (profile `agent-codex`) envs, creates the team, and enrolls both with their runtimes — equivalent to one `env create` per agent plus a `team create` and two `team add-env`. Env slugs are namespaced by the team id (`<name>-claude`/`<name>-codex`) so auto-created teams never collide on env names. The pinned `agent-*` profiles are **fail-closed**: on a host that can't enforce the agent-in-box tier, env creation errors rather than downgrading. |
 | `h5i team add-env <team> <env> [--as <agent-id>] [--runtime R] [--model M] [--json]` | Add an already-created env to the roster as a persona-bound member. The agent id is **auto-generated** unless you pin it with `--as` (a ref-safe key; distinct personas on the same runtime need distinct ids — see it with `h5i team status`). The persona itself comes from the env's profile (`persona = [...]` in `.h5i/env.toml`, baked into `PERSONA.md` at `env create`) — no per-add flag. Draft phase only. **Also binds the env's in-box identity** (writes host-owned `team-identity` / `team-run` files), so `env run`/`env shell` inject `H5I_AGENT=<agent>` and `H5I_TEAM=<team>` for scoped team-agent commands. |
 | `h5i team status [<team>] [--json]` | Folded run state: phase, roster, per-agent submission state. |
 | `h5i team list [--json]` | All runs on this clone. |
@@ -2840,7 +2841,7 @@ inboxes and never locks the round.
 | `h5i team sync <team> [--json]` | **Live ingest**: apply every agent's staged in-box submissions/reviews to `refs/h5i/team/*` now, without the box exiting (the on-demand counterpart to the at-exit ingest). Lets a run advance while the team Stop hook keeps boxes alive — no relaunch. |
 | `h5i team verify <team> --agent <id> [--isolation TIER] -- <cmd>` | **Neutral, sandboxed verifier**: replays the frozen candidate into a throwaway worktree at the run base and runs `<cmd>` under the fail-closed `default` build/test profile. `--isolation` (`workspace`/`process`/`supervised`/`container`) defaults to the strongest tier the host can enforce (falls back to `workspace`); the tier is recorded on the verification. |
 | `h5i team finalize <team> [--json]` | Apply the finalization rule over **verifier** evidence → a verdict event. Hard gates (tests pass, applies cleanly) first; `smallest diff` only breaks ties among gate-passers. Records method + the verifier command + losers' reasons. No gate-passer → `no_verdict` (never applies a loser). |
-| `h5i team apply <team> [--winner <submission-id>] [--force] [--json]` | Replay the winning submission's recorded patch (`base..commit`) into the current branch and commit; records source + target commit oids; on conflict records an event, never mutates the artifact. Gated on the verdict's `can_auto_apply` unless `--force`. |
+| `h5i team apply <team> [--winner <submission-id>] [--agent <id>] [--force] [--json]` | Replay the winning submission's recorded patch (`base..commit`) into the current branch and commit; records source + target commit oids; on conflict records an event, never mutates the artifact. Gated on the verdict's `can_auto_apply` unless `--force`. **`--agent <id>`** picks that roster agent's **latest submission directly, skipping verify/finalize** — an explicit human override that bypasses the verdict gate (no `--force` needed; mutually exclusive with `--winner`). The agent must have submitted (`team submit`) — there is no apply-direct-from-env-branch. |
 | `h5i team worker --once \| --watch [--interval N] [--id ID] [--lease-ttl S] [--json]` | Optional automation: one lease-and-finalize pass (`--once`) or an opt-in in-process loop (`--watch`). **Finalize-only — never auto-applies.** Leases are idempotent + TTL'd; for production prefer an external scheduler driving `--once`. |
 | `h5i team dispatch <team> [--prompt-file F] [--json]` | Send the task to **every roster agent in one command** (prompt read from **stdin** by default — `h5i team dispatch <team> < TASK.md`; `--prompt-file` reads it from a named file instead) over [`h5i msg`](#h5i-msg) (an `ASK` per persona, tagged with the team + round) — no per-env pasting. It **notifies, it does not launch**: each agent must be running in its env to pick the task out of its inbox. Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch. |
 | `h5i team grant-review <team> --reviewer A --target B [--artifacts diff,summary,tests] [--json]` | Open a permissioned review: grant reviewer A scoped access to target B's round artifacts (never raw logs or persona bodies by default) + send a `REVIEW_REQUEST`. |
@@ -3003,6 +3004,15 @@ h5i team verify fix-auth --agent <agent-id> -- cargo test   # repeat per candida
 h5i team compare  fix-auth                            # side-by-side + verifier metrics
 h5i team finalize fix-auth                            # explainable verdict over verifier evidence
 h5i team apply    fix-auth                            # replays the winning patch (gated)
+```
+
+Shortcuts for the common claude + codex setup:
+
+```bash
+# replace the create + two add-env lines above with one bootstrap:
+h5i team auto-create fix-auth --base HEAD             # envs fix-auth-claude / fix-auth-codex, both enrolled
+# …and to ship a chosen candidate without verify/finalize, pick the agent directly:
+h5i team apply fix-auth --agent claude               # applies claude's latest submission (gate bypassed)
 ```
 
 Hands-off via an external scheduler (recommended — crash-resilient, no daemon):
