@@ -3545,3 +3545,4 @@ _[Checkpoint: 6a418537 — edited MANUAL.md; edited man/man1/h5i.1; edited man/m
 [21:28:21] ACT: edited MANUAL.md
 [21:28:27] ACT: edited man/man1/h5i.1
 [21:29:00] THINK: Let me know if you'd like me to push, or to also update the web docs under `docs/manual/` (I only touched the top-level MANUAL.
+[21:29:00] THINK: Let me implement that — generate friendly keys via `gen_agent_id()` (like manual `add-env`), keep the runtime recorded separately, and make the assigned keys obvious in the output.
