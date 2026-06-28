@@ -3583,3 +3583,4 @@ _[Checkpoint: 6a41939a — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 [21:40:44] ACT: edited src/env.rs
 [21:40:47] OBSERVE: read src/main.rs
 [21:40:51] ACT: edited src/main.rs
+[21:41:23] OBSERVE: read src/team.rs
