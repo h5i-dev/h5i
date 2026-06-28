@@ -103,14 +103,12 @@ Create a team
 
 ```bash
 h5i team auto-create qsort-demo
-```
 
-This `auto-create` corresponds to making and registering two sandboxed environments:
-
-```bash
+##### This `auto-create` corresponds to making and registering two sandboxed environments:
+#
 # h5i env create qsort-demo-claude --profile agent-claude
 # h5i env create qsort-demo-codex  --profile agent-codex
-
+#
 # h5i team create  qsort-demo --base HEAD
 # h5i team add-env qsort-demo env/human/claude-env --runtime claude
 # h5i team add-env qsort-demo env/human/codex-env  --runtime codex
@@ -145,11 +143,9 @@ Merge the best one:
 
 ```bash
 h5i team apply --agent <agent-id>                          # id from `team status`
-```
 
-Alternatively, replay each candidate, run the tests, merge the winner:
-
-```bash
+##### Alternatively, replay each candidate, run the tests, merge the winner:
+#
 # h5i team verify   qsort-demo --agent <agent-id> -- pytest  # id from `team status`
 # h5i team finalize qsort-demo                               # explainable verdict (gates + smallest diff)
 # h5i team apply    qsort-demo                               # merge the winner, gated on the verdict
