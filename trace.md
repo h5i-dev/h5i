@@ -3420,3 +3420,4 @@ _[Checkpoint: 6a3f22f2 — edited docs/blog/auditing-ai-generated-code/index.htm
 _[Checkpoint: 6a3f2674 — edited blog/index.html; edited blog/index.html; edited llms.txt]_
 ---
 
+[04:38:33] OBSERVE: read llms.txt
