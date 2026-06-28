@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i: Infrastructure for AI Agent Teams (Claude Code &amp; Codex)</title>
-  <meta name="description" content="h5i is the Git-native workspace layer for AI agent teams. Run many coding agents in isolated workspaces, seal independent attempts, verify neutrally, and merge one auditable result — versioned in refs/h5i/*, no SaaS.">
+  <title>h5i — Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)</title>
+  <meta name="description" content="h5i is an auditable workspace layer for AI coding agents — Claude Code, Codex, and agent teams. Run many coding agents in isolated workspaces, seal independent attempts, verify neutrally, and merge one auditable result — versioned in refs/h5i/*, no SaaS.">
   <meta name="keywords" content="ai agent teams, agent ensembles, multi-agent coding, auditable workspace, neutral verifier, sealed submissions, ai agent audit, agent provenance, confined agent sandbox, ai code governance, prompt injection detection, claude code, codex, git sidecar, h5i">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
@@ -21,8 +21,8 @@
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i: Infrastructure for AI Agent Teams (Claude Code &amp; Codex)">
-  <meta property="og:description" content="Run many coding agents. Merge one auditable result. h5i is the Git-native workspace layer for AI agent teams: isolated workspaces, sealed independent attempts, a neutral verifier, and one auditable verdict — in refs/h5i/*, no SaaS.">
+  <meta property="og:title" content="h5i — Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)">
+  <meta property="og:description" content="Run many coding agents. Merge one auditable result. h5i is an auditable workspace layer for AI coding agents: isolated workspaces, sealed independent attempts, a neutral verifier, and one auditable verdict — in refs/h5i/*, no SaaS.">
   <meta property="og:url" content="https://h5i.dev/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="og:image:width" content="2257">
@@ -31,8 +31,8 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i: Infrastructure for AI Agent Teams (Claude Code &amp; Codex)">
-  <meta name="twitter:description" content="Run many coding agents. Merge one auditable result. The Git-native workspace layer for AI agent teams: isolated workspaces, sealed attempts, a neutral verifier — versioned beside your code, no SaaS.">
+  <meta name="twitter:title" content="h5i — Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)">
+  <meta name="twitter:description" content="Run many coding agents. Merge one auditable result. An auditable workspace layer for AI coding agents: isolated workspaces, sealed attempts, a neutral verifier — versioned beside your code, no SaaS.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta name="twitter:image:alt" content="h5i web dashboard showing AI provenance, integrity scores, and test badges for each commit">
 
@@ -55,7 +55,7 @@
         "name": "h5i",
         "alternateName": "high-five",
         "url": "https://h5i.dev/",
-        "description": "The Git-native workspace layer for AI agent teams: run many coding agents, seal independent attempts, verify neutrally, and merge one auditable result.",
+        "description": "An auditable workspace layer for AI coding agents: run many coding agents in isolated workspaces, seal independent attempts, verify neutrally, and merge one auditable result.",
         "publisher": {"@id": "https://h5i.dev/#org"},
         "inLanguage": "en"
       },
@@ -66,7 +66,7 @@
         "alternateName": "high-five",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "Linux, macOS, Windows",
-        "description": "A Git sidecar that gives AI coding agents shared, version-controlled context with prompts, reasoning traces, memory snapshots, audit signals, shareable evidence, and a confined, auditable sandbox (tiered isolation + a network egress allowlist) to run agent work safely.",
+        "description": "An auditable workspace layer for AI coding agents. It runs Claude Code, Codex, and other agents in isolated, sandboxed Git workspaces (tiered isolation + a network egress allowlist) and records the prompts, commands, reasoning traces, logs, sandbox policy, reviews, and verifier results behind every change as Git-native sidecar refs under refs/h5i/* — no SaaS.",
         "url": "https://h5i.dev/",
         "downloadUrl": "https://github.com/h5i-dev/h5i",
         "softwareHelp": "/manual/",
@@ -93,7 +93,7 @@
           {
             "@type": "Question",
             "name": "What is h5i?",
-            "acceptedAnswer": {"@type": "Answer", "text": "h5i (pronounced high-five) is an open-source Git sidecar — the Git-native workspace layer for AI agent teams. Run many coding agents in isolated workspaces, seal independent attempts, verify neutrally, and merge one auditable result. Git records what changed; h5i records the rest — the prompt, model, agent, reasoning, commands, audit signals, and verdict behind every change — versioned alongside your code in refs/h5i/*."}
+            "acceptedAnswer": {"@type": "Answer", "text": "h5i (pronounced high-five) is an open-source auditable workspace layer for AI coding agents. It runs Claude Code, Codex, and other agents in isolated Git workspaces and records the prompt, model, agent, reasoning, commands, logs, sandbox policy, reviews, and verifier results behind every change — then lets teams merge one evidence-backed result. Technically, h5i stores this evidence as Git-native sidecar refs under refs/h5i/*, so it travels with your repo with no hosted control plane."}
           },
           {
             "@type": "Question",
@@ -113,7 +113,7 @@
           {
             "@type": "Question",
             "name": "How is h5i different from plain Git?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Git versions code. h5i adds five semantic dimensions on top: temporal (history), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging). It stores this metadata in dedicated refs/h5i/* refs so it travels with the repo without touching your commit history."}
+            "acceptedAnswer": {"@type": "Answer", "text": "Git versions code. h5i adds four semantic dimensions on top: temporal (history), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging). It stores this metadata in dedicated refs/h5i/* refs so it travels with the repo without touching your commit history."}
           },
           {
             "@type": "Question",
@@ -1167,7 +1167,7 @@
     <!-- <div class="hero-logo-wrap">
       <img src="/_static/logo.png" width="1280" height="640" alt="h5i logo" fetchpriority="high">
     </div> -->
-    <div class="hero-badge">INFRASTRUCTURE FOR AI AGENT TEAMS · SEALED ATTEMPTS · NEUTRAL VERIFIER</div>
+    <div class="hero-badge">AUDITABLE WORKSPACES FOR AI CODING AGENTS · SEALED ATTEMPTS · NEUTRAL VERIFIER</div>
     <h1 class="hero-title">
       <span class="shine-text"><span class="hl">Run Many Coding Agents.</span><br><span class="hl">Merge One Auditable Result</span></span>
     </h1>
@@ -1676,7 +1676,7 @@
       </details>
       <details class="faq-item">
         <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an open-source Git sidecar — the Git-native workspace layer for AI agent teams. Run many coding agents in isolated workspaces, seal independent attempts, verify neutrally, and merge one auditable result. Git records <strong>what</strong> changed; h5i records the rest — the prompt, model, agent, reasoning, commands, logs, sandbox policy, audit signals, and verdict — versioned alongside your code in <code>refs/h5i/*</code>.</div>
+        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an open-source <strong>auditable workspace layer for AI coding agents</strong>. It runs Claude Code, Codex, and other agents in isolated Git workspaces and records the prompt, model, agent, reasoning, commands, logs, sandbox policy, reviews, and verifier results behind every change — then lets teams merge one evidence-backed result. Technically, h5i stores this evidence as Git-native sidecar refs under <code>refs/h5i/*</code>, so it travels with your repo with no hosted control plane.</div>
       </details>
       <details class="faq-item">
         <summary>Does h5i work with Claude Code and Codex?</summary>
