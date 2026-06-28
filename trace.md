@@ -3565,3 +3565,4 @@ _[Checkpoint: 6a41921c — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 _[Checkpoint: 6a4192f1 — edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1]_
 ---
 
+[21:35:07] OBSERVE: read src/team.rs
