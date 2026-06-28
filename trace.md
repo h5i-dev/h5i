@@ -3558,3 +3558,4 @@ _[Checkpoint: 6a41921c — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 [21:30:53] OBSERVE: read src/main.rs
 [21:31:24] OBSERVE: read src/env.rs
 [21:31:50] OBSERVE: read src/env.rs
+[21:32:33] THINK: Let me confirm what the box can read at the git level (whether team refs are reachable in-box), to be precise:
