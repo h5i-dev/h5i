@@ -2029,6 +2029,27 @@ enum TeamCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Bootstrap a two-agent (claude + codex) team in one shot: create an
+    /// agent-claude env and an agent-codex env, create the team, and enroll
+    /// both. Equivalent to running `env create`, `team create`, and two
+    /// `team add-env` calls by hand.
+    AutoCreate {
+        /// Team id (ref-safe slug); also used to name the per-agent envs
+        /// (`<name>-claude`, `<name>-codex`)
+        name: String,
+        /// Base revision shared by all candidates
+        #[arg(long, default_value = "HEAD")]
+        base: String,
+        /// Maximum improvement rounds planned for this run
+        #[arg(long, default_value_t = 1)]
+        rounds: u32,
+        /// Human-readable label; defaults to the team id
+        #[arg(long)]
+        title: Option<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// List team runs
     List {
         /// Emit JSON
@@ -2158,6 +2179,11 @@ enum TeamCommands {
         /// Submission id; defaults to the finalized winner
         #[arg(long)]
         winner: Option<String>,
+        /// Pick a team agent's latest submission directly, skipping
+        /// verify/finalize. This is an explicit human override, so it implies
+        /// the verifier-verdict gate is bypassed (no `--force` needed).
+        #[arg(long, conflicts_with = "winner")]
+        agent: Option<String>,
         /// Override verifier verdict / auto-apply gate
         #[arg(long)]
         force: bool,
@@ -9691,6 +9717,91 @@ fn main() -> anyhow::Result<()> {
                         print!("{}", h5i_core::team::render_status(&status));
                     }
                 }
+                TeamCommands::AutoCreate {
+                    name,
+                    base,
+                    rounds,
+                    title,
+                    json,
+                } => {
+                    let workdir = git.workdir().ok_or_else(|| {
+                        anyhow::anyhow!("h5i team auto-create requires a non-bare repository")
+                    })?;
+                    // Envs are created under the human's identity, exactly like
+                    // `h5i env create` (env id = env/<agent>/<slug>).
+                    let env_agent = msg::resolve_identity(&h5i_root, None)
+                        .unwrap_or_else(|_| "human".to_string());
+
+                    // Fixed two-agent claude + codex roster; each member pins its
+                    // runtime-scoped agent-in-box profile and a team-derived env
+                    // slug (so auto-created teams never collide on env names).
+                    let roster = h5i_core::team::auto_create_roster(&name);
+
+                    let mut created = Vec::new();
+                    for member in &roster {
+                        let opts = h5i_core::env::CreateOpts {
+                            from: None,
+                            profile: Some(member.profile.to_string()),
+                            isolation: None,
+                            backend: "auto".into(),
+                            audit_capture: h5i_core::sandbox::AuditCapture::parse("signal")?,
+                        };
+                        let m = h5i_core::env::create(
+                            git, &h5i_root, workdir, &env_agent, &member.env_slug, opts,
+                        )?;
+                        eprintln!(
+                            "{} created env {} (profile {})",
+                            STEP,
+                            style(&m.id).magenta().bold(),
+                            m.profile
+                        );
+                        created.push(m);
+                    }
+
+                    // Create the team run and make it current, like `team create`.
+                    let run = h5i_core::team::create(
+                        git,
+                        &name,
+                        title.as_deref().unwrap_or(&name),
+                        &base,
+                        rounds,
+                        &actor,
+                    )?;
+                    let _ = h5i_core::team::set_current(&h5i_root, &run.id);
+
+                    // Enroll each env under a generated persona key (like manual
+                    // add-env) — distinct from the runtime, which is recorded
+                    // separately. Accumulate assigned ids so the two never clash.
+                    let mut assigned: Vec<String> = Vec::new();
+                    for (member, m) in roster.iter().zip(created.iter()) {
+                        let agent_id = h5i_core::team::gen_agent_id(&assigned);
+                        h5i_core::team::add_env(
+                            git,
+                            &h5i_root,
+                            &name,
+                            &m.id,
+                            &agent_id,
+                            Some(member.runtime.to_string()),
+                            None,
+                            &actor,
+                        )?;
+                        eprintln!(
+                            "{} enrolled {} ({}) → {}",
+                            STEP,
+                            style(&agent_id).green().bold(),
+                            member.runtime,
+                            m.id
+                        );
+                        assigned.push(agent_id);
+                    }
+
+                    let status = h5i_core::team::status(git, &name)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&status)?);
+                    } else {
+                        print!("{}", h5i_core::team::render_status(&status));
+                    }
+                }
                 TeamCommands::List { json } => {
                     let runs = h5i_core::team::list(git)?;
                     if json {
@@ -9964,16 +10075,24 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
-                TeamCommands::Apply { team, winner, force, json } => {
+                TeamCommands::Apply { team, winner, agent, force, json } => {
                     let team = h5i_core::team::resolve_run(&h5i_root, team)?;
-                    let result = h5i_core::team::apply_winner(
-                        git,
-                        &h5i_root,
-                        &team,
-                        winner.as_deref(),
-                        force,
-                        &actor,
-                    )?;
+                    // `--agent` is an explicit human pick: resolve it to that
+                    // agent's latest submission and bypass the verifier-verdict
+                    // gate (so you can apply without verify/finalize).
+                    let result = match &agent {
+                        Some(agent_id) => h5i_core::team::apply_agent(
+                            git, &h5i_root, &team, agent_id, &actor,
+                        )?,
+                        None => h5i_core::team::apply_winner(
+                            git,
+                            &h5i_root,
+                            &team,
+                            winner.as_deref(),
+                            force,
+                            &actor,
+                        )?,
+                    };
                     // Round applied → release any agents waiting in the team hook.
                     fan_out_team_done(git, &h5i_root, &team, &actor);
                     if json {
@@ -10244,7 +10363,7 @@ fn main() -> anyhow::Result<()> {
                         } else {
                             let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                             let review = h5i_core::team::submit_review(
-                                git, &team, &reviewer, &target, body, &actor,
+                                git, &h5i_root, &team, &reviewer, &target, body, &actor,
                             )?;
                             if json {
                                 println!("{}", serde_json::to_string_pretty(&review)?);

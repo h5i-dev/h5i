@@ -599,6 +599,40 @@ Create a run over existing envs;
 .B \-\-base
 (default HEAD) is the shared base every candidate is compared against.
 .TP
+.BI "auto-create " "NAME " "[\-\-base REV] [\-\-rounds N] [\-\-title T]"
+One-shot bootstrap of a two-agent
+.B claude + codex
+team: creates
+.IR NAME \-claude
+(profile
+.BR agent-claude )
+and
+.IR NAME \-codex
+(profile
+.BR agent-codex )
+envs, creates the team, and enrolls both \(em equivalent to one
+.B env create
+per agent plus a
+.B team create
+and two
+.BR add-env .
+Like manual
+.BR add-env ,
+each member's roster agent id is an auto-generated persona name (e.g.\&
+.IR tariq ,
+.IR ravi ),
+kept distinct from the
+.I runtime
+(recorded as
+.IR claude / codex );
+the command prints the persona \(-> runtime \(-> env mapping, and
+.B team status
+shows it. Env slugs are namespaced by the team id so auto-created teams never
+collide on env names. The pinned
+.B agent-*
+profiles are fail-closed: on a host that cannot enforce the agent-in-box tier,
+env creation errors rather than downgrading.
+.TP
 .BI "add-env " "TEAM ENV " "[\-\-as AGENT-ID] [\-\-runtime R] [\-\-model M] [\-\-persona FILE]"
 Add an existing env to the roster as a persona-bound member (draft phase only).
 .B \-\-as
@@ -696,12 +730,20 @@ Apply the finalization rule over verifier evidence \(-> a verdict event. Hard
 gates (tests pass, applies cleanly) first; smallest-diff only breaks ties among
 gate-passers. No gate-passer \(-> \fIno_verdict\fR (never applies a loser).
 .TP
-.BI "apply " "TEAM " "[\-\-winner SUBMISSION-ID] [\-\-force]"
+.BI "apply " "TEAM " "[\-\-winner SUBMISSION-ID] [\-\-agent ID] [\-\-force]"
 Replay the winning submission's recorded patch into the current branch and
 commit; records source + target oids. Gated on the verdict's
 .I can_auto_apply
 unless
 .BR \-\-force .
+.B \-\-agent
+.I ID
+picks that roster agent's latest submission directly, skipping verify/finalize
+\(em an explicit human override that bypasses the verdict gate (no
+.B \-\-force
+needed; mutually exclusive with
+.BR \-\-winner ).
+The agent must have submitted first (there is no apply-direct-from-env-branch).
 .TP
 .BI "worker " "\-\-once | \-\-watch " "[\-\-interval N] [\-\-id ID] [\-\-lease-ttl S]"
 Optional automation: one lease-and-finalize pass
@@ -730,7 +772,12 @@ Permissioned review: grant A scoped access to B's round artifacts (never raw log
 or persona bodies by default) + send a REVIEW_REQUEST.
 .TP
 .BI "review submit " "TEAM " "\-\-reviewer A \-\-target B \-\-file F"
-Record a review body for a target candidate.
+Record a review body for a target candidate and deliver it to the reviewed
+agent: post-freeze the review is fanned into the target's per-env inbox (so a
+confined agent receives a peer's critique of its own work) and recorded as a
+.IR discussion_msg ,
+marking the target's next revision non-independent. Before freeze it is recorded
+for audit but not delivered (independence-first).
 .TP
 .BI "discuss " "TEAM " "\-\-from S \-\-to A,B \-\-file F [\-\-artifacts IDS]"
 Send a logged, influence-tracked discussion message (post-freeze only).
