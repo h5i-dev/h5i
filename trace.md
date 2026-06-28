@@ -3532,3 +3532,9 @@ _[Checkpoint: 6a4184af — edited src/main.rs; edited src/main.rs; edited src/te
 [20:33:23] OBSERVE: read man/man1/h5i.1
 [20:33:33] ACT: edited man/man1/h5i.1
 [20:33:59] THINK: Note I haven't run the *full* workspace test suite (only the team module + clippy) given the WSL2 OOM constraints on this box — let me know if you'd like me to run it single-job, or push these commits.
+
+
+---
+_[Checkpoint: 6a418537 — edited MANUAL.md; edited man/man1/h5i.1; edited man/man1/h5i.1]_
+---
+
