@@ -141,8 +141,6 @@ Each agent peer-reviews, and revises inside its own implementation:
 h5i team auto-peer-review qsort-demo                       # sync → freeze → mutual grant → instruct
 ```
 
-### 2.5. Web UI
-
 Merge the best one:
 
 ```bash
@@ -156,6 +154,8 @@ Alternatively, replay each candidate, run the tests, merge the winner:
 # h5i team finalize qsort-demo                               # explainable verdict (gates + smallest diff)
 # h5i team apply    qsort-demo                               # merge the winner, gated on the verdict
 ```
+
+### 2.5. Web UI
 
 Monitor the status:
 
