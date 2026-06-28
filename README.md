@@ -99,20 +99,22 @@ h5i env apply claude-env     # merge the reviewed changes onto your branch
 
 ### 2.4. Run an ensemble
 
-Create two sandboxed agent environments:
+Create a team
 
 ```bash
-h5i env create claude-env --profile agent-claude
-h5i env create codex-env  --profile agent-codex
+h5i team auto-create qsort-demo
 ```
 
-Create a team and register both agents:
+This `auto-create` corresponds to making and registering two sandboxed environments:
 
 ```bash
-h5i team create  qsort-demo --base HEAD
-h5i team add-env qsort-demo env/human/claude-env --runtime claude
-h5i team add-env qsort-demo env/human/codex-env  --runtime codex
-h5i team status  qsort-demo                                 # note the generated agent ids
+# h5i env create qsort-demo-claude --profile agent-claude
+# h5i env create qsort-demo-codex  --profile agent-codex
+
+# h5i team create  qsort-demo --base HEAD
+# h5i team add-env qsort-demo env/human/claude-env --runtime claude
+# h5i team add-env qsort-demo env/human/codex-env  --runtime codex
+# h5i team status  qsort-demo                                 # note the generated agent ids
 ```
 
 Dispatch one task to every agent:
@@ -125,12 +127,12 @@ Launch every agent in its own sandboxed environment. Each agent automatically st
 
 ```bash
 # Terminal 1: Claude, running inside its own h5i sandboxed env.
-h5i env shell env/human/claude-env -- claude --dangerously-skip-permissions "$(h5i team bootstrap)"
+h5i env shell env/human/qsort-demo-claude -- claude "$(h5i team bootstrap)" # --dangerously-skip-permissions
 ```
 
 ```bash
 # Terminal 2: Codex, running inside its own h5i sandboxed env.
-h5i env shell env/human/codex-env  -- codex  --sandbox danger-full-access "$(h5i team bootstrap)"
+h5i env shell env/human/qsort-demo-codex  -- codex  "$(h5i team bootstrap)" # --sandbox danger-full-access
 ```
 
 Each agent peer-reviews, and revises inside its own implementation:
