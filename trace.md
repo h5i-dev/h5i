@@ -3500,3 +3500,5 @@ _[Checkpoint: 6a4182ae — edited pitch/index.html; edited src/main.rs; edited s
 _[Checkpoint: 6a4183d9 — team apply --agent <id> to skip verify/finalize]_
 ---
 
+[20:28:18] THINK: ## Not done (let me know if you want these)
+- **No `mcp.
