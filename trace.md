@@ -3593,3 +3593,9 @@ _[Checkpoint: 6a41939a — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 [21:43:37] THINK: Let me examine `discuss()` fully and how influence/independence tracking works, so I integrate cleanly without double-counting or phase-guard breakage:
 [21:43:37] THINK: Let me find the enclosing function's signature to confirm `h5i_root` is available there:
 [21:43:37] THINK: both new ones). Let me run the env ingest tests (the changed call site) and clippy:
+
+
+---
+_[Checkpoint: 6a419589 — edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1]_
+---
+
