@@ -3199,7 +3199,7 @@ mod tests {
         // The roster agent ids are generated persona names (like manual add-env),
         // distinct from each other and from the runtime label.
         let first = gen_agent_id(&[]);
-        let second = gen_agent_id(&[first.clone()]);
+        let second = gen_agent_id(std::slice::from_ref(&first));
         assert_ne!(first, second);
         // gen_agent_id draws from the friendly persona pool, never a runtime name.
         assert!(!["claude", "codex"].contains(&first.as_str()));
