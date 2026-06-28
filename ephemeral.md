@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: improve-seo
+# Ephemeral traces — Branch: auto-commands
 

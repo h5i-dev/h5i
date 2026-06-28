@@ -3429,3 +3429,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a4182a2 — 2026-06-28 20:22 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Added TeamCommands::AutoCreate in main.rs: creates <team>-claude (agent-claude) + <team>-codex (agent-codex) envs, creates the team, enrolls both with claude/codex runtimes. Smoke-tested + clippy clean. Not yet mirrored in mcp.rs or covered by a unit test.
+
+---
+
