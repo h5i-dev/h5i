@@ -3447,3 +3447,9 @@ _[Checkpoint: 6a3f2674 — edited blog/index.html; edited blog/index.html; edite
 [04:41:13] ACT: edited pitch/index.html
 [04:41:16] ACT: edited pitch/index.html
 [04:41:30] ACT: edited pitch/index.html
+
+
+---
+_[Checkpoint: 6a40a610 — Fixed first-definition across docs to 'auditable workspace layer for AI coding agents']_
+---
+

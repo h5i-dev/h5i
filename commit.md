@@ -3390,3 +3390,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a40a610 — 2026-06-28 04:41 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Updated llms.txt (lead def + Core concepts + Technical model), homepage title/OG/Twitter/meta/schema/FAQ/hero-badge (+four-dimensions bug), features FAQ JSON-LD, guides H1, pitch deck title/meta/slides. Demoted 'Git sidecar' to a second-sentence technical detail everywhere. Kept punchy H1 and Claude Code/Codex in title. Net-new landing pages deferred.
+
+---
+

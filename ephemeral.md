@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: improve-blogs
+# Ephemeral traces — Branch: improve-seo
 
