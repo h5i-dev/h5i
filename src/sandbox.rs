@@ -21,13 +21,14 @@
 //! macOS (Seatbelt) and Windows are explicitly not claimed (§5).
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 // PathBuf is only referenced from the `#[cfg(target_os = "linux")]` confinement
 // paths (Landlock grants, config-lock); gate the import so non-Linux targets
 // don't see it as unused under `-D warnings`.
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::error::H5iError;
@@ -1120,6 +1121,7 @@ fn augment_injected_env(
 
 /// Monotonic counter so concurrent functional probes get distinct temp dirs.
 static PROBE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static VERIFIED_EXEC_POLICIES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 /// Functionally verify the resolved policy can actually *execute* a command on
 /// this host. Capability bits (Landlock + user namespaces + seccomp present)
@@ -1138,6 +1140,13 @@ pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
     if policy.claim != IsolationClaim::Process {
         return Ok(());
     }
+    let cache_key = policy.digest().ok();
+    if let Some(key) = cache_key.as_deref() {
+        let cache = VERIFIED_EXEC_POLICIES.get_or_init(|| Mutex::new(HashSet::new()));
+        if cache.lock().map(|c| c.contains(key)).unwrap_or(false) {
+            return Ok(());
+        }
+    }
     let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!("h5i-exec-probe-{}-{seq}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
@@ -1149,7 +1158,15 @@ pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
     let result = run(&probe, &dir, &["true".to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
     match result {
-        Ok(o) if o.exit_code == Some(0) => Ok(()),
+        Ok(o) if o.exit_code == Some(0) => {
+            if let Some(key) = cache_key {
+                let cache = VERIFIED_EXEC_POLICIES.get_or_init(|| Mutex::new(HashSet::new()));
+                if let Ok(mut cache) = cache.lock() {
+                    cache.insert(key);
+                }
+            }
+            Ok(())
+        },
         Ok(o) => Err(H5iError::Metadata(format!(
             "process-tier confinement self-test exited {:?} on this host — refusing to create an \
              environment whose commands could not run (re-request --isolation workspace)",
