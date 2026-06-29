@@ -58,7 +58,10 @@ impl SupervisorCaps {
 /// cannot positively confirm is reported `ok = false` (the tier then refuses).
 #[cfg(target_os = "linux")]
 pub fn probe() -> SupervisorCaps {
-    let host = crate::sandbox::probe_host();
+    // Supervised readiness reads only the kernel bits (userns/Landlock/seccomp),
+    // never the container runtime — use the kernel-only probe so resolving a
+    // supervised claim doesn't shell out to `podman info`.
+    let host = crate::sandbox::probe_host_kernel();
     let cg = crate::cgroup::probe();
 
     let mut components = Vec::new();

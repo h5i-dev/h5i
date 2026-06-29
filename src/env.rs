@@ -1174,7 +1174,7 @@ pub fn create(
                     _ => sandbox::effective_auto(workdir, agent_profile, false)?,
                 };
                 let prof = sandbox::load_profile(workdir, agent_profile, Some(claim))?;
-                let pol = sandbox::resolve(&prof, &sandbox::probe_host())?;
+                let pol = sandbox::resolve(&prof, &sandbox::probe_host_for(claim))?;
                 sandbox::verify_exec(&pol)
             })()
             .is_ok();
@@ -1199,7 +1199,7 @@ pub fn create(
 
     // Policy first (fail closed BEFORE any state is created on disk).
     let profile = sandbox::load_profile(workdir, profile_name, Some(claim))?;
-    let caps = sandbox::probe_host();
+    let caps = sandbox::probe_host_for(claim);
     let mut policy = sandbox::resolve(&profile, &caps)?;
     policy.audit.capture = opts.audit_capture;
     // Functionally verify the confinement can actually run a command — capability

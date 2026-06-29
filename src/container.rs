@@ -104,6 +104,14 @@ pub struct Runtime {
     pub rootless: bool,
 }
 
+/// Cheap presence check: is the `podman` binary on PATH at all? Runs only
+/// `podman --version` (~tens of ms), **not** the `podman info` rootless probe
+/// (~1s). Use for discoverability hints that just need "is Podman installed?",
+/// not "is rootless Podman usable?" — the latter is [`probe`].
+pub fn podman_present() -> bool {
+    version_ok("podman")
+}
+
 /// Detect the only container runtime this phase supports: **rootless Podman**.
 /// Returns `None` when Podman is absent, broken, or running as root. Cheap:
 /// only runs `--version` and one `podman info` field read.
