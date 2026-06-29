@@ -1487,7 +1487,6 @@ fn verifier_policy(
     repo_workdir: &Path,
     requested: Option<&str>,
 ) -> Result<(sandbox::ResolvedPolicy, String), H5iError> {
-    let caps = sandbox::probe_host();
     let claim = match requested {
         Some(s) if !s.is_empty() && !s.eq_ignore_ascii_case("auto") => {
             sandbox::IsolationClaim::parse(s)?
@@ -1495,6 +1494,9 @@ fn verifier_policy(
         _ => sandbox::effective_auto(repo_workdir, "default", false)
             .unwrap_or(sandbox::IsolationClaim::Workspace),
     };
+    // Scope the probe to the chosen claim (the `default` profile never resolves a
+    // container tier, so this skips the ~1s `podman info`).
+    let caps = sandbox::probe_host_for(claim);
     let profile = sandbox::load_profile(repo_workdir, "default", Some(claim))?;
     let policy = sandbox::resolve(&profile, &caps)?;
     // Bits present != confinement can exec. If the kernel tier can't actually run
@@ -1632,7 +1634,8 @@ pub fn verify(
                     "default",
                     Some(sandbox::IsolationClaim::Workspace),
                 )?;
-                let ws_policy = sandbox::resolve(&ws_profile, &sandbox::probe_host())?;
+                let ws_policy =
+                    sandbox::resolve(&ws_profile, &sandbox::probe_host_kernel())?;
                 isolation_used = ws_policy.claim.as_str().to_string();
                 sandbox::run(&ws_policy, &verify_dir, &command)?
             }

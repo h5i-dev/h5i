@@ -10847,7 +10847,7 @@ fn main() -> anyhow::Result<()> {
                             m.isolation_claim.as_str(),
                             "workspace" | "process" | "supervised"
                         )
-                        && h5i_core::sandbox::probe_host().container_runtime.is_none()
+                        && !h5i_core::sandbox::podman_present()
                     {
                         println!(
                             "   {}      the 'container' tier (adds a network egress allowlist) needs \

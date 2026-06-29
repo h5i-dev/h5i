@@ -424,7 +424,6 @@ pub fn effective_auto(
             }
         }
     }
-    let caps = probe_host();
     // Strongest first. `container` is only picked when the profile sets an
     // image (resolve refuses it otherwise), so the bare default lands on the
     // strongest *kernel* confinement instead.
@@ -436,6 +435,15 @@ pub fn effective_auto(
         let Ok(profile) = load_profile(repo_workdir, name, Some(tier)) else {
             continue;
         };
+        // Container needs a declared image; without one `resolve` refuses it
+        // regardless of the host, so skip the candidate before paying the ~1s
+        // Podman probe that `probe_host_for(Container)` would trigger.
+        if tier == IsolationClaim::Container && profile.image.is_none() {
+            continue;
+        }
+        // Probe only what this tier consults: container resolves against the
+        // Podman-aware caps, every other tier against the cheap kernel-only probe.
+        let caps = probe_host_for(tier);
         let runnable = resolve(&profile, &caps).and_then(|pol| verify_exec(&pol)).is_ok();
         if runnable {
             return Ok(tier);
@@ -666,25 +674,83 @@ pub struct HostCaps {
     pub container_runtime: Option<String>,
 }
 
-#[cfg(target_os = "linux")]
+/// Process-wide memoization of the host capability probe. Kernel features
+/// (Landlock ABI, unprivileged userns, seccomp) and the rootless-Podman probe
+/// are effectively immutable for the life of a process, yet `probe_host` is
+/// called many times per `env create`/`run` — the tier auto-pick re-probes per
+/// candidate, and `create` resolves the policy several times over. The Podman
+/// branch alone spawns `podman info` (~1s+ on rootless), so an uncached default
+/// `env create` ran ~9 probes (~12s of pure `podman info`). Memoizing collapses
+/// them to one. The cache is never persisted, so a later process always re-probes
+/// and picks up a host change (a newly installed runtime, a kernel upgrade).
+static HOST_CAPS: OnceLock<HostCaps> = OnceLock::new();
+static HOST_CAPS_KERNEL: OnceLock<HostCaps> = OnceLock::new();
+
+/// Full host probe **including** the rootless-Podman runtime. Detecting Podman
+/// shells out to `podman info` (~1s on rootless), so this is reserved for paths
+/// that actually consult a container tier (the container family resolve arm, the
+/// `env probe`/doctor diagnostics, the MCP capability report). Memoized — see
+/// [`probe_host_kernel`] for why the common kernel-tier path must avoid it.
 pub fn probe_host() -> HostCaps {
+    HOST_CAPS
+        .get_or_init(|| {
+            let mut caps = probe_host_kernel();
+            caps.container_runtime = crate::container::probe().map(|r| r.bin);
+            caps
+        })
+        .clone()
+}
+
+/// Kernel-only probe: Landlock/userns/seccomp, but **not** the ~1s Podman
+/// shell-out (`container_runtime` is left `None`). `resolve` only reads
+/// `container_runtime` inside the container arm (after the image check), and
+/// `supervisor::probe` only reads the kernel bits — so every non-container claim
+/// can probe with this and skip `podman info` entirely. Memoized separately from
+/// the full probe so the two never cross-trigger.
+pub fn probe_host_kernel() -> HostCaps {
+    HOST_CAPS_KERNEL.get_or_init(probe_host_kernel_uncached).clone()
+}
+
+/// Cheap "is Podman installed?" check for discoverability hints — runs only
+/// `podman --version` (~tens of ms), not the full rootless `podman info` probe
+/// (~1s). Use when a hint just needs binary presence, not full container-tier
+/// readiness (that's [`probe_host`]'s `container_runtime`).
+pub fn podman_present() -> bool {
+    crate::container::podman_present()
+}
+
+/// Capability probe scoped to what `claim` actually needs: the container family
+/// gets the full (Podman-aware) probe; every other claim gets the cheap
+/// kernel-only probe. This is the choke point that keeps a default supervised/
+/// process `env create` from ever shelling out to `podman info`.
+pub fn probe_host_for(claim: IsolationClaim) -> HostCaps {
+    match claim {
+        IsolationClaim::Container
+        | IsolationClaim::HardenedContainer
+        | IsolationClaim::Microvm => probe_host(),
+        _ => probe_host_kernel(),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn probe_host_kernel_uncached() -> HostCaps {
     HostCaps {
         os: "linux".into(),
         landlock_abi: probe_landlock_abi(),
         userns: probe_userns(),
         seccomp: probe_seccomp(),
-        container_runtime: crate::container::probe().map(|r| r.bin),
+        container_runtime: None,
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn probe_host() -> HostCaps {
+fn probe_host_kernel_uncached() -> HostCaps {
     HostCaps {
         os: std::env::consts::OS.to_string(),
         landlock_abi: None,
         userns: false,
         seccomp: false,
-        container_runtime: crate::container::probe().map(|r| r.bin),
+        container_runtime: None,
     }
 }
 
