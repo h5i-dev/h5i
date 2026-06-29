@@ -163,6 +163,14 @@ h5i serve
   <img src="./docs/_static/screenshot-team-serve.png" alt="One task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo." width="95%">
 </p>
 
+### 2.6. [`h5i-studio`](https://github.com/h5i-dev/h5i-studio)
+
+[`h5i-studio`](https://github.com/h5i-dev/h5i-studio) is the alternative viewer that turns one of those runs into a live starship bridge: each agent is a crew member who reports in, seals a candidate, and speaks its actual reviews.
+
+<p align="center">
+  <img src="https://github.com/h5i-dev/h5i-studio/docs/h5i-studio-demo.gif" alt="A spaceship meeting room: crew members scattered around a central computer report in, seal candidates, review each other in speech bubbles, and the winner launches on a beam while the Mission Director announces the verdict." width="96%">
+</p>
+
 ---
 
 
