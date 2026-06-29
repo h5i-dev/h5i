@@ -168,8 +168,15 @@ h5i serve
 [`h5i-studio`](https://github.com/h5i-dev/h5i-studio) is the alternative viewer that turns one of those runs into a live starship bridge: each agent is a crew member who reports in, seals a candidate, and speaks its actual reviews.
 
 <p align="center">
-  <img src="https://github.com/h5i-dev/h5i-studio/docs/h5i-studio-demo.gif" alt="A spaceship meeting room: crew members scattered around a central computer report in, seal candidates, review each other in speech bubbles, and the winner launches on a beam while the Mission Director announces the verdict." width="96%">
+  <img src="https://github.com/h5i-dev/h5i-studio/blob/main/docs/h5i-studio-demo.gif" alt="A spaceship meeting room: crew members scattered around a central computer report in, seal candidates, review each other in speech bubbles, and the winner launches on a beam while the Mission Director announces the verdict." width="96%">
 </p>
+
+Requirements: Node ≥ 18, and the `h5i` binary on PATH.
+
+```bash
+npm i -g @h5i/studio
+h5i-studio     
+```
 
 ---
 
