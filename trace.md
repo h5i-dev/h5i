@@ -2838,3 +2838,9 @@ _[Checkpoint: 6a433654 — edited index.html]_
 [11:31:29] ACT: edited docs/index.html
 [11:31:56] THINK: Now I'll restructure into six cards, one per command family, with accurate verbs and dash-free copy:
 [11:31:56] NOTE: DEFERRAL (~/Dev/h5i/docs/index.html): Committed as a separate follow-up. - **Commit:** `07ad4c2` — *docs: decouple hero embed width from the headline text* -
+
+
+---
+_[Checkpoint: 6a43a92c — edited index.html; edited docs/index.html]_
+---
+
