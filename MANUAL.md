@@ -16,6 +16,14 @@ Command reference for all h5i subcommands and flags.
 - [h5i capture](#h5i-capture)
   - [h5i capture commit](#h5i-capture-commit)
   - [h5i capture memory](#h5i-capture-memory)
+  - [h5i capture run](#h5i-capture-run)
+  - [Structured output](#structured-output)
+- [h5i hook](#h5i-hook)
+  - [h5i hook setup](#h5i-hook-setup)
+  - [h5i hook session-start](#h5i-hook-session-start)
+  - [h5i hook wrap-bash](#h5i-hook-wrap-bash)
+  - [h5i hook claude](#h5i-hook-claude)
+  - [h5i hook codex](#h5i-hook-codex)
 - [h5i recall](#h5i-recall)
   - [h5i recall log](#h5i-recall-log)
   - [h5i recall blame](#h5i-recall-blame)
@@ -24,10 +32,9 @@ Command reference for all h5i subcommands and flags.
   - [h5i recall recap](#h5i-recall-recap)
   - [h5i recall memory](#h5i-recall-memory)
   - [h5i recall resume](#h5i-recall-resume)
-- [h5i objects (token reduction)](#h5i-objects-token-reduction)
-  - [h5i capture run](#h5i-capture-run)
   - [h5i recall object / objects](#h5i-recall-object--objects)
-  - [Structured output](#structured-output)
+  - [h5i recall rm](#h5i-recall-rm)
+- [h5i objects (token reduction)](#h5i-objects-token-reduction)
   - [h5i objects gc / pin / fsck](#h5i-objects-gc--pin--fsck)
   - [h5i objects push / pull — sharing raw blobs (optional)](#h5i-objects-push--pull--sharing-raw-blobs-optional)
   - [h5i objects filters / trust](#h5i-objects-filters--trust)
@@ -64,12 +71,6 @@ Command reference for all h5i subcommands and flags.
   - [The neutral verifier](#the-neutral-verifier-why-finalization-is-trustworthy)
   - [Minimal-human-labor finalization](#minimal-human-labor-finalization)
   - [Worked example](#worked-example)
-- [h5i hook](#h5i-hook)
-  - [h5i hook setup](#h5i-hook-setup)
-  - [h5i hook session-start](#h5i-hook-session-start)
-  - [h5i hook wrap-bash](#h5i-hook-wrap-bash)
-  - [h5i hook claude](#h5i-hook-claude)
-  - [h5i hook codex](#h5i-hook-codex)
 - [h5i serve](#h5i-serve)
 - [h5i mcp](#h5i-mcp)
   - [Registering with Claude Code](#registering-with-claude-code)
@@ -356,6 +357,258 @@ Snapshot the current state of an agent memory backend and store it as a git obje
 ```bash
 h5i capture memory --agent codex
 ```
+
+---
+
+### h5i capture run
+
+Run a command, store its full output, and print **only** the summary. The exit
+code passes through, so it's a transparent wrapper:
+
+```bash
+h5i capture run -- pytest -q
+h5i capture run --kind log -- cargo build
+h5i capture run --file src/auth.rs -- pytest tests/test_auth.py   # tag related files
+```
+
+| Flag | Meaning |
+|---|---|
+| `--kind <test\|log\|json\|diff\|generic>` | Force a content kind instead of auto-detecting. |
+| `--budget <N>` | Max lines in the summary. |
+| `--token-budget <N>` | Best-effort cap on summary tokens (tiktoken). |
+| `--min-bytes <N>` | Only store + summarize when output ≥ N bytes (default 2048); smaller output passes through unstored, so wrapping any command is safe. `0` = always capture. |
+| `--format <compact\|structured\|json\|summary>` | Output format. Default `compact` (one line per finding — token-minimal). `structured` = full YAML; `json` = the `ToolResult` as JSON; `summary` = the legacy filtered text. |
+| `--file <path>` | Associate the capture with a file (repeatable). Branch + working-tree diff are recorded automatically. |
+| `--quiet` | Suppress the trailing pointer/status line. |
+
+Every capture is automatically tagged with the **branch** and the **files** it
+concerns (explicit `--file` ∪ paths mentioned in the output) plus the **working
+diff** at capture time.
+
+**Read-through commands pass through.** Wrapping an h5i *read* whose whole point
+is to emit content in full — `h5i recall object` / `recall objects` / `recall
+search` and `h5i team artifact …` — is a no-op: `capture run` runs them
+verbatim, **unstored and uncompacted** (even inside an audit-all env box, and
+regardless of `--min-bytes`). So an agent whose harness wraps every command in
+`capture run` can still rehydrate a teammate's full diff with `h5i capture run --
+h5i team artifact show <id> --diff` without it being summarized.
+
+---
+
+### Structured output
+
+`h5i capture run` emits a normalized, AI-friendly **structured result** by
+default — one schema across test runners, compilers, linters, and type checkers:
+
+```yaml
+tool: pytest
+kind: test
+status: failed          # passed (tests) | ok (other tools) | failed | error | unknown
+exit_code: 1
+counts: { failed: 1, passed: 120 }
+parser_confidence: parsed   # parsed | heuristic | generic
+raw_oid: sha256:934f…       # full output, always recoverable
+findings:
+  - kind: test_failure      # test_failure | diagnostic | build_error | panic | generic
+    severity: failure
+    id: tests/t.py::test_pay
+    message: assert 0 == 100
+    location: tests/t.py:42
+    fingerprint: 0bb827e4e61a   # stable across line shifts → dedupe/query
+```
+
+- **JSON is canonical** — the manifest stores the `ToolResult` as JSON (and the
+  `h5i_capture_run` MCP tool returns it under a `structured` field); the CLI
+  **default render is `compact`** (one line per finding), with `--format
+  structured` for the full YAML — all from the same typed struct.
+- **Safety**: `status` is never `passed`/`ok` on a nonzero exit; a parser
+  **declines to a generic result** when its anchors are missing (`parser_confidence`
+  tells you how much to trust the structure); the raw is always recoverable.
+- **Dedicated parsers** (rich `findings`): pytest, cargo test, go test, tsc,
+  eslint, ruff, mypy. Everything else gets a generic result (status + `body`).
+
+---
+
+## h5i hook
+
+```
+h5i hook setup                          # print install instructions
+h5i hook setup --write                  # write both Claude and Codex hook config
+h5i hook setup --write --target claude  # Claude only
+h5i hook setup --write --target codex   # Codex only
+h5i hook setup --write --scope user     # write to ~/.claude (all projects)
+h5i hook setup --write --wrap-bash      # also register the Bash capture-wrap hook
+h5i hook session-start                  # SessionStart handler (context prelude)
+h5i hook wrap-bash                      # PreToolUse Bash handler (token-reduction)
+```
+
+`h5i hook` manages the agent hook wiring that drives h5i's automatic prompt capture and context tracing. The handlers that do the actual per-event work are **agent-specific** and live under [`h5i hook claude`](#h5i-hook-claude) (Claude Code) and [`h5i hook codex`](#h5i-hook-codex) (Codex); `h5i hook` itself also owns the cross-agent `setup`, `session-start`, and `wrap-bash` subcommands. (The bare `h5i claude …` / `h5i codex …` paths still work as deprecated aliases so already-installed hooks keep firing.)
+
+### h5i hook setup
+
+`h5i hook setup` (no flags) prints the install instructions. `h5i hook setup --write` writes the wiring directly: Claude Code into `.claude/settings.json` and Codex into `.codex/config.toml`, merged idempotently (each managed command is replaced in place; your own hooks and env keys are preserved). Add `--target claude` or `--target codex` to write only one agent's config, `--scope user` to write the user-level config instead of the repo's, `--wrap-bash` to also register the optional Bash capture-wrap hook, and `--team` to also register the team peer-review Stop hook (below).
+
+For **Claude Code**, `--write` installs four hooks into `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "h5i hook claude prompt" }] }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "h5i hook session-start" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Edit|Write|Read",
+        "hooks": [{ "type": "command", "command": "h5i hook claude sync" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "h5i hook claude finish" }] }
+    ]
+  }
+}
+```
+
+- **UserPromptSubmit → `h5i hook claude prompt`** — captures the verbatim human prompt so `h5i capture commit` records what you actually typed, not the agent's paraphrase.
+- **SessionStart → `h5i hook session-start`** — injects prior context into every new session, and notes any unread messages on resume.
+- **PostToolUse (Edit|Write|Read) → `h5i hook claude sync`** — auto-traces OBSERVE for every Read, ACT for every Edit/Write.
+- **Stop → `h5i hook claude finish`** — mines THINK / NOTE entries from the session transcript and auto-checkpoints the context workspace.
+
+For **Codex**, `--write --target codex` merges inline hook tables into `.codex/config.toml`. Codex only supports the agent-agnostic `SessionStart` and `Stop` events here (the `UserPromptSubmit` / `PostToolUse` handlers are Claude-Code-specific and are skipped):
+
+```toml
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "h5i hook session-start"
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "h5i hook codex finish --quiet"
+```
+
+Codex requires reviewing/trusting local hooks via `/hooks`; project-local hooks only load after the project `.codex/` layer is trusted.
+
+**Bash capture-wrap (`--wrap-bash`, optional).** Adds a `PreToolUse` Bash hook (`h5i hook wrap-bash`) that rewrites every Bash command into a `h5i capture run` wrapper, so the agent receives a token-reduced summary for large/failing output while the full raw bytes stay stored and searchable via `h5i recall`. Off by default. Note: with it enabled, permission allowlists then match the rewritten `h5i capture run …` command, not the original.
+
+**Team peer-review (`--team`, optional).** Adds a second `Stop` hook — `h5i team agent hook --block` for **both Claude and Codex** (their Stop hooks share the same `{"decision":"block","reason":…}` continuation contract). When the agent is a member of a live [`h5i team`](#h5i-team-auditable-agent-ensembles) round, it keeps the agent from stopping while it still owes work, **waits** for the next review before releasing the stop, and surfaces requests between turns. Each entry carries a long per-hook `timeout` (~1830s) so the agent runtime doesn't kill it mid-wait (set as the Claude hook's `timeout`, and the Codex handler's `timeout` field); a `TEAM_DONE` signal (sent by `finalize`/`apply`) releases it. It **no-ops outside a team**, so it's safe to leave installed. This is what lets `scripts/team-run.sh` drive the full peer-review cycle hands-off — for **both** agent runtimes — with boxes staying alive between turns.
+
+**MCP server (manual).** Hook setup no longer wires the MCP server — register it by hand if you want native h5i tools in Claude Code. Add the `mcpServers` block to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "h5i": { "command": "h5i", "args": ["mcp"] }
+  }
+}
+```
+
+Once registered, Claude Code gains native access to h5i tools (`h5i_log`, `h5i_blame`, `h5i_context_trace`, `h5i_notes_show`, etc.) without needing shell commands. See [h5i mcp](#h5i-mcp) for the full tool list.
+
+### h5i hook session-start
+
+```
+h5i hook session-start
+```
+
+The shared `SessionStart` handler for both Claude Code and Codex. Injects prior context (goal, recent decisions) into the new session's context window, and notes any unread cross-agent messages on resume. Registered automatically by `h5i hook setup --write`; you rarely run it by hand.
+
+### h5i hook wrap-bash
+
+```
+h5i hook wrap-bash
+```
+
+The optional `PreToolUse` handler for the Bash tool (Claude Code ≥ 2.0.10). Reads the tool event JSON from stdin and rewrites the command (via `updatedInput`) into a `h5i capture run` wrapper so the agent receives a token-reduced summary for large/failing output, while the full raw bytes are stored for `h5i recall`. Skips h5i's own commands, top-level `cd` (session cwd tracking), and anything outside a git repo; every failure path emits nothing, so the original command runs untouched. Register it with `h5i hook setup --write --wrap-bash`, or by hand under `PreToolUse` with matcher `Bash`.
+
+---
+
+### h5i hook claude
+
+```
+h5i hook claude sync     # PostToolUse handler (reads JSON from stdin)
+h5i hook claude finish   # Stop handler
+h5i hook claude prompt   # UserPromptSubmit handler (reads JSON from stdin)
+```
+
+Claude Code integration hook handlers. These are wired into `.claude/settings.json` by `h5i hook setup --write` (see [h5i hook setup](#h5i-hook-setup)) and run automatically per event — you normally never invoke them by hand. They all fail open (no-op outside an h5i-initialized repo, never block the turn). (The bare `h5i claude …` path remains as a deprecated alias.)
+
+#### h5i hook claude sync
+
+```
+h5i hook claude sync
+```
+
+The `PostToolUse` handler. Reads the tool-event JSON from stdin and emits an `h5i recall context trace` entry for the appropriate kind (OBSERVE on `Read`, ACT on `Edit`/`Write`); on `Read` events it injects prior reasoning about the file into Claude's context window so accumulated THINK entries surface before the file is modified.
+
+#### h5i hook claude finish
+
+```
+h5i hook claude finish
+```
+
+The `Stop` handler. Mines THINK / NOTE entries from the session transcript (including deferrals, placeholders, and unfulfilled promises detected in the agent's reasoning) and auto-checkpoints the context workspace milestone, so you never have to call `h5i recall context trace` or `commit` by hand.
+
+#### h5i hook claude prompt
+
+```
+h5i hook claude prompt
+```
+
+The `UserPromptSubmit` handler. Reads the hook JSON from stdin and records the **verbatim** human prompt into `.git/.h5i/pending_context.json`, accumulating across turns. `h5i capture commit` then uses this raw human prompt as the recorded prompt — it wins over an agent-authored `--intent` — so AI provenance reflects what the human actually asked rather than the agent's paraphrase.
+
+---
+
+### h5i hook codex
+
+```
+h5i hook codex prelude
+h5i hook codex sync
+h5i hook codex finish [--summary <text>] [--quiet]
+```
+
+Codex integration hook handlers for restoring shared context, syncing Codex session activity into `h5i recall context`, and auto-checkpointing the context workspace. `h5i hook setup --write --target codex` wires `h5i hook session-start` (SessionStart) and `h5i hook codex finish --quiet` (Stop) into `.codex/config.toml`. (The bare `h5i codex …` path remains as a deprecated alias.)
+
+Unlike Claude Code's handlers under [`h5i hook claude`](#h5i-hook-claude), these read the active Codex JSONL session under `~/.codex/sessions/` directly and replay relevant file activity into `refs/h5i/context`, so they also work as plain commands you can run by hand if Codex's hook layer isn't trusted.
+
+#### h5i hook codex prelude
+
+```
+h5i hook codex prelude
+```
+
+Print the current shared context in a compact session-start format: goal, branch, milestones, recent THINK/ACT entries, and open TODOs.
+
+Use this at the beginning of a Codex session, or whenever you want to re-orient the agent without manually stitching together `h5i recall context show`, `status`, and `todo`.
+
+#### h5i hook codex sync
+
+```
+h5i hook codex sync
+```
+
+Scan the active Codex session log for this repository and backfill `OBSERVE` / `ACT` trace entries into `h5i recall context`.
+
+Currently synced activity includes:
+
+- file reads
+- searches
+- file listing operations
+- `apply_patch` edits, adds, and deletes
+
+Sync state is recorded in `.git/.h5i/codex_sync_state.json`, so repeated runs only process new session events.
+
+#### h5i hook codex finish
+
+```
+h5i hook codex finish [--summary <text>] [--quiet]
+```
+
+Run `h5i hook codex sync`, then auto-checkpoint the current context workspace. This is the command installed as Codex's `Stop` hook (as `h5i hook codex finish --quiet`).
+
+If `--summary` is omitted, h5i derives a short checkpoint summary from the most recent `ACT` entries. Pass `--quiet` to suppress stdout for hook use.
 
 ---
 
@@ -1494,57 +1747,6 @@ h5i recall resume                               # get the full briefing
 
 ---
 
-## h5i objects (token reduction)
-
-Large tool outputs — test logs, build output, big JSON, traces — are the biggest
-avoidable drain on an agent's context window. The object store keeps the **full
-raw output out-of-band** (content-addressed) and surfaces only a small filtered,
-**structured** summary, git-annex / git-lfs style:
-
-| Artifact | Location | Travels with `h5i share push`? |
-|---|---|---|
-| Raw blob (full bytes, uncompressed) | `.git/.h5i/objects/ab/cd/<sha256>` (local) | Only via `h5i objects push` (the git-ref store) |
-| Manifest (pointer + structured summary) | `refs/h5i/objects` (git ref, JSONL) | Yes |
-| Shared raw blobs (optional) | `refs/h5i/objects-data` (git ref, content-addressed tree) | Yes — pushed/pulled on demand |
-
-The everyday entry point is `h5i capture run`; the `h5i objects` verbs are for
-maintenance. Only the small summary travels with `h5i share push`; raw blobs stay
-local (an absent blob is shown as `○`, and `h5i recall object` reports it
-clearly).
-
-### h5i capture run
-
-Run a command, store its full output, and print **only** the summary. The exit
-code passes through, so it's a transparent wrapper:
-
-```bash
-h5i capture run -- pytest -q
-h5i capture run --kind log -- cargo build
-h5i capture run --file src/auth.rs -- pytest tests/test_auth.py   # tag related files
-```
-
-| Flag | Meaning |
-|---|---|
-| `--kind <test\|log\|json\|diff\|generic>` | Force a content kind instead of auto-detecting. |
-| `--budget <N>` | Max lines in the summary. |
-| `--token-budget <N>` | Best-effort cap on summary tokens (tiktoken). |
-| `--min-bytes <N>` | Only store + summarize when output ≥ N bytes (default 2048); smaller output passes through unstored, so wrapping any command is safe. `0` = always capture. |
-| `--format <compact\|structured\|json\|summary>` | Output format. Default `compact` (one line per finding — token-minimal). `structured` = full YAML; `json` = the `ToolResult` as JSON; `summary` = the legacy filtered text. |
-| `--file <path>` | Associate the capture with a file (repeatable). Branch + working-tree diff are recorded automatically. |
-| `--quiet` | Suppress the trailing pointer/status line. |
-
-Every capture is automatically tagged with the **branch** and the **files** it
-concerns (explicit `--file` ∪ paths mentioned in the output) plus the **working
-diff** at capture time.
-
-**Read-through commands pass through.** Wrapping an h5i *read* whose whole point
-is to emit content in full — `h5i recall object` / `recall objects` / `recall
-search` and `h5i team artifact …` — is a no-op: `capture run` runs them
-verbatim, **unstored and uncompacted** (even inside an audit-all env box, and
-regardless of `--min-bytes`). So an agent whose harness wraps every command in
-`capture run` can still rehydrate a teammate's full diff with `h5i capture run --
-h5i team artifact show <id> --diff` without it being summarized.
-
 ### h5i recall object / objects
 
 ```bash
@@ -1564,6 +1766,8 @@ rehydrates its full raw bytes from the spool (so an agent can re-read output tha
 `h5i capture run` compacted). The structured `--manifest` / `--format` views are
 computed host-side on session end, so in-box they report the capture as staged
 and point you at the raw.
+
+---
 
 ### h5i recall rm
 
@@ -1609,37 +1813,28 @@ inverse of `h5i share push --branch <b>`. It removes, scoped to `<branch>`:
 To remove *only* a stale reasoning branch (not the rest), use the narrower
 `h5i recall context rm <name>` instead.
 
-### Structured output
+---
 
-`h5i capture run` emits a normalized, AI-friendly **structured result** by
-default — one schema across test runners, compilers, linters, and type checkers:
+## h5i objects (token reduction)
 
-```yaml
-tool: pytest
-kind: test
-status: failed          # passed (tests) | ok (other tools) | failed | error | unknown
-exit_code: 1
-counts: { failed: 1, passed: 120 }
-parser_confidence: parsed   # parsed | heuristic | generic
-raw_oid: sha256:934f…       # full output, always recoverable
-findings:
-  - kind: test_failure      # test_failure | diagnostic | build_error | panic | generic
-    severity: failure
-    id: tests/t.py::test_pay
-    message: assert 0 == 100
-    location: tests/t.py:42
-    fingerprint: 0bb827e4e61a   # stable across line shifts → dedupe/query
-```
+Large tool outputs — test logs, build output, big JSON, traces — are the biggest
+avoidable drain on an agent's context window. The object store keeps the **full
+raw output out-of-band** (content-addressed) and surfaces only a small filtered,
+**structured** summary, git-annex / git-lfs style:
 
-- **JSON is canonical** — the manifest stores the `ToolResult` as JSON (and the
-  `h5i_capture_run` MCP tool returns it under a `structured` field); the CLI
-  **default render is `compact`** (one line per finding), with `--format
-  structured` for the full YAML — all from the same typed struct.
-- **Safety**: `status` is never `passed`/`ok` on a nonzero exit; a parser
-  **declines to a generic result** when its anchors are missing (`parser_confidence`
-  tells you how much to trust the structure); the raw is always recoverable.
-- **Dedicated parsers** (rich `findings`): pytest, cargo test, go test, tsc,
-  eslint, ruff, mypy. Everything else gets a generic result (status + `body`).
+| Artifact | Location | Travels with `h5i share push`? |
+|---|---|---|
+| Raw blob (full bytes, uncompressed) | `.git/.h5i/objects/ab/cd/<sha256>` (local) | Only via `h5i objects push` (the git-ref store) |
+| Manifest (pointer + structured summary) | `refs/h5i/objects` (git ref, JSONL) | Yes |
+| Shared raw blobs (optional) | `refs/h5i/objects-data` (git ref, content-addressed tree) | Yes — pushed/pulled on demand |
+
+The everyday entry points live in their own sections: capture output with
+[`h5i capture run`](#h5i-capture-run), read it back with
+[`h5i recall object` / `objects`](#h5i-recall-object--objects). The `h5i objects`
+verbs below are the store's **maintenance** layer (and the low-level `put` / `get`
+/ `list` aliases). Only the small summary travels with `h5i share push`; raw blobs
+stay local (an absent blob is shown as `○`, and `h5i recall object` reports it
+clearly).
 
 ### h5i objects gc / pin / fsck
 
@@ -3025,189 +3220,6 @@ Hands-off via an external scheduler (recommended — crash-resilient, no daemon)
 ```cron
 * * * * * cd /repo && h5i team worker --once >> /var/log/h5i-team.log 2>&1
 ```
-
----
-
-## h5i hook
-
-```
-h5i hook setup                          # print install instructions
-h5i hook setup --write                  # write both Claude and Codex hook config
-h5i hook setup --write --target claude  # Claude only
-h5i hook setup --write --target codex   # Codex only
-h5i hook setup --write --scope user     # write to ~/.claude (all projects)
-h5i hook setup --write --wrap-bash      # also register the Bash capture-wrap hook
-h5i hook session-start                  # SessionStart handler (context prelude)
-h5i hook wrap-bash                      # PreToolUse Bash handler (token-reduction)
-```
-
-`h5i hook` manages the agent hook wiring that drives h5i's automatic prompt capture and context tracing. The handlers that do the actual per-event work are **agent-specific** and live under [`h5i hook claude`](#h5i-hook-claude) (Claude Code) and [`h5i hook codex`](#h5i-hook-codex) (Codex); `h5i hook` itself also owns the cross-agent `setup`, `session-start`, and `wrap-bash` subcommands. (The bare `h5i claude …` / `h5i codex …` paths still work as deprecated aliases so already-installed hooks keep firing.)
-
-### h5i hook setup
-
-`h5i hook setup` (no flags) prints the install instructions. `h5i hook setup --write` writes the wiring directly: Claude Code into `.claude/settings.json` and Codex into `.codex/config.toml`, merged idempotently (each managed command is replaced in place; your own hooks and env keys are preserved). Add `--target claude` or `--target codex` to write only one agent's config, `--scope user` to write the user-level config instead of the repo's, `--wrap-bash` to also register the optional Bash capture-wrap hook, and `--team` to also register the team peer-review Stop hook (below).
-
-For **Claude Code**, `--write` installs four hooks into `.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "h5i hook claude prompt" }] }
-    ],
-    "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "h5i hook session-start" }] }
-    ],
-    "PostToolUse": [
-      { "matcher": "Edit|Write|Read",
-        "hooks": [{ "type": "command", "command": "h5i hook claude sync" }] }
-    ],
-    "Stop": [
-      { "hooks": [{ "type": "command", "command": "h5i hook claude finish" }] }
-    ]
-  }
-}
-```
-
-- **UserPromptSubmit → `h5i hook claude prompt`** — captures the verbatim human prompt so `h5i capture commit` records what you actually typed, not the agent's paraphrase.
-- **SessionStart → `h5i hook session-start`** — injects prior context into every new session, and notes any unread messages on resume.
-- **PostToolUse (Edit|Write|Read) → `h5i hook claude sync`** — auto-traces OBSERVE for every Read, ACT for every Edit/Write.
-- **Stop → `h5i hook claude finish`** — mines THINK / NOTE entries from the session transcript and auto-checkpoints the context workspace.
-
-For **Codex**, `--write --target codex` merges inline hook tables into `.codex/config.toml`. Codex only supports the agent-agnostic `SessionStart` and `Stop` events here (the `UserPromptSubmit` / `PostToolUse` handlers are Claude-Code-specific and are skipped):
-
-```toml
-[[hooks.SessionStart]]
-[[hooks.SessionStart.hooks]]
-type = "command"
-command = "h5i hook session-start"
-
-[[hooks.Stop]]
-[[hooks.Stop.hooks]]
-type = "command"
-command = "h5i hook codex finish --quiet"
-```
-
-Codex requires reviewing/trusting local hooks via `/hooks`; project-local hooks only load after the project `.codex/` layer is trusted.
-
-**Bash capture-wrap (`--wrap-bash`, optional).** Adds a `PreToolUse` Bash hook (`h5i hook wrap-bash`) that rewrites every Bash command into a `h5i capture run` wrapper, so the agent receives a token-reduced summary for large/failing output while the full raw bytes stay stored and searchable via `h5i recall`. Off by default. Note: with it enabled, permission allowlists then match the rewritten `h5i capture run …` command, not the original.
-
-**Team peer-review (`--team`, optional).** Adds a second `Stop` hook — `h5i team agent hook --block` for **both Claude and Codex** (their Stop hooks share the same `{"decision":"block","reason":…}` continuation contract). When the agent is a member of a live [`h5i team`](#h5i-team-auditable-agent-ensembles) round, it keeps the agent from stopping while it still owes work, **waits** for the next review before releasing the stop, and surfaces requests between turns. Each entry carries a long per-hook `timeout` (~1830s) so the agent runtime doesn't kill it mid-wait (set as the Claude hook's `timeout`, and the Codex handler's `timeout` field); a `TEAM_DONE` signal (sent by `finalize`/`apply`) releases it. It **no-ops outside a team**, so it's safe to leave installed. This is what lets `scripts/team-run.sh` drive the full peer-review cycle hands-off — for **both** agent runtimes — with boxes staying alive between turns.
-
-**MCP server (manual).** Hook setup no longer wires the MCP server — register it by hand if you want native h5i tools in Claude Code. Add the `mcpServers` block to `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "h5i": { "command": "h5i", "args": ["mcp"] }
-  }
-}
-```
-
-Once registered, Claude Code gains native access to h5i tools (`h5i_log`, `h5i_blame`, `h5i_context_trace`, `h5i_notes_show`, etc.) without needing shell commands. See [h5i mcp](#h5i-mcp) for the full tool list.
-
-### h5i hook session-start
-
-```
-h5i hook session-start
-```
-
-The shared `SessionStart` handler for both Claude Code and Codex. Injects prior context (goal, recent decisions) into the new session's context window, and notes any unread cross-agent messages on resume. Registered automatically by `h5i hook setup --write`; you rarely run it by hand.
-
-### h5i hook wrap-bash
-
-```
-h5i hook wrap-bash
-```
-
-The optional `PreToolUse` handler for the Bash tool (Claude Code ≥ 2.0.10). Reads the tool event JSON from stdin and rewrites the command (via `updatedInput`) into a `h5i capture run` wrapper so the agent receives a token-reduced summary for large/failing output, while the full raw bytes are stored for `h5i recall`. Skips h5i's own commands, top-level `cd` (session cwd tracking), and anything outside a git repo; every failure path emits nothing, so the original command runs untouched. Register it with `h5i hook setup --write --wrap-bash`, or by hand under `PreToolUse` with matcher `Bash`.
-
----
-
-### h5i hook claude
-
-```
-h5i hook claude sync     # PostToolUse handler (reads JSON from stdin)
-h5i hook claude finish   # Stop handler
-h5i hook claude prompt   # UserPromptSubmit handler (reads JSON from stdin)
-```
-
-Claude Code integration hook handlers. These are wired into `.claude/settings.json` by `h5i hook setup --write` (see [h5i hook setup](#h5i-hook-setup)) and run automatically per event — you normally never invoke them by hand. They all fail open (no-op outside an h5i-initialized repo, never block the turn). (The bare `h5i claude …` path remains as a deprecated alias.)
-
-#### h5i hook claude sync
-
-```
-h5i hook claude sync
-```
-
-The `PostToolUse` handler. Reads the tool-event JSON from stdin and emits an `h5i recall context trace` entry for the appropriate kind (OBSERVE on `Read`, ACT on `Edit`/`Write`); on `Read` events it injects prior reasoning about the file into Claude's context window so accumulated THINK entries surface before the file is modified.
-
-#### h5i hook claude finish
-
-```
-h5i hook claude finish
-```
-
-The `Stop` handler. Mines THINK / NOTE entries from the session transcript (including deferrals, placeholders, and unfulfilled promises detected in the agent's reasoning) and auto-checkpoints the context workspace milestone, so you never have to call `h5i recall context trace` or `commit` by hand.
-
-#### h5i hook claude prompt
-
-```
-h5i hook claude prompt
-```
-
-The `UserPromptSubmit` handler. Reads the hook JSON from stdin and records the **verbatim** human prompt into `.git/.h5i/pending_context.json`, accumulating across turns. `h5i capture commit` then uses this raw human prompt as the recorded prompt — it wins over an agent-authored `--intent` — so AI provenance reflects what the human actually asked rather than the agent's paraphrase.
-
----
-
-### h5i hook codex
-
-```
-h5i hook codex prelude
-h5i hook codex sync
-h5i hook codex finish [--summary <text>] [--quiet]
-```
-
-Codex integration hook handlers for restoring shared context, syncing Codex session activity into `h5i recall context`, and auto-checkpointing the context workspace. `h5i hook setup --write --target codex` wires `h5i hook session-start` (SessionStart) and `h5i hook codex finish --quiet` (Stop) into `.codex/config.toml`. (The bare `h5i codex …` path remains as a deprecated alias.)
-
-Unlike Claude Code's handlers under [`h5i hook claude`](#h5i-hook-claude), these read the active Codex JSONL session under `~/.codex/sessions/` directly and replay relevant file activity into `refs/h5i/context`, so they also work as plain commands you can run by hand if Codex's hook layer isn't trusted.
-
-#### h5i hook codex prelude
-
-```
-h5i hook codex prelude
-```
-
-Print the current shared context in a compact session-start format: goal, branch, milestones, recent THINK/ACT entries, and open TODOs.
-
-Use this at the beginning of a Codex session, or whenever you want to re-orient the agent without manually stitching together `h5i recall context show`, `status`, and `todo`.
-
-#### h5i hook codex sync
-
-```
-h5i hook codex sync
-```
-
-Scan the active Codex session log for this repository and backfill `OBSERVE` / `ACT` trace entries into `h5i recall context`.
-
-Currently synced activity includes:
-
-- file reads
-- searches
-- file listing operations
-- `apply_patch` edits, adds, and deletes
-
-Sync state is recorded in `.git/.h5i/codex_sync_state.json`, so repeated runs only process new session events.
-
-#### h5i hook codex finish
-
-```
-h5i hook codex finish [--summary <text>] [--quiet]
-```
-
-Run `h5i hook codex sync`, then auto-checkpoint the current context workspace. This is the command installed as Codex's `Stop` hook (as `h5i hook codex finish --quiet`).
-
-If `--summary` is omitted, h5i derives a short checkpoint summary from the most recent `ACT` entries. Pass `--quiet` to suppress stdout for hook use.
 
 ---
 
