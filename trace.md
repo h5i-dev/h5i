@@ -2787,3 +2787,4 @@ _[Checkpoint: 6a432399 — edited pitch/index.html; edited pitch/index.html; edi
 [02:09:44] THINK: Let me apply the pitch copy replacements via a single batch (mechanical, exact-match):
 [02:09:44] THINK: Let me redo in byte mode (no `-C`), and also fix the three meta lines and the pre-existing slide-8 headline:
 [02:09:44] THINK: To keep the preference consistent across the page, let me clean the remaining **visible** pitch copy too (leaving comments alone):
+[02:09:44] THINK: I'll clean the visible copy (title, meta, structured data, the embedded-demo text, my cards, and the pre-existing FAQ/table copy), leaving CSS/HTML comments untouched:
