@@ -2763,3 +2763,4 @@ _[Checkpoint: 6a432389 — Restructure docs site toward 'Auditable Workspaces' c
 
 [02:02:01] THINK: html` (122KB). Let me understand its structure — particularly the hero and problem sections.
 [02:02:01] THINK: Let me reframe the title slide (slide 1):
+[02:02:01] THINK: Both pages updated. Let me validate the HTML is well-formed (no broken tags from the edits):
