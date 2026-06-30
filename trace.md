@@ -2786,3 +2786,4 @@ _[Checkpoint: 6a432399 — edited pitch/index.html; edited pitch/index.html; edi
 [02:09:44] THINK: I'll rewrite the em-dashes in the copy I authored, replacing them with periods, colons, or commas as the flow dictates (keeping only standard compound hyphens like "fail-closed").
 [02:09:44] THINK: Let me apply the pitch copy replacements via a single batch (mechanical, exact-match):
 [02:09:44] THINK: Let me redo in byte mode (no `-C`), and also fix the three meta lines and the pre-existing slide-8 headline:
+[02:09:44] THINK: To keep the preference consistent across the page, let me clean the remaining **visible** pitch copy too (leaving comments alone):
