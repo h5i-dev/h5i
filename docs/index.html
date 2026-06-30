@@ -273,7 +273,10 @@
       background: radial-gradient(ellipse at center, rgba(224,36,27,0.10) 0%, transparent 68%);
       border-radius: 50%; pointer-events: none; z-index: 0;
     }
-    .hero-inner { position: relative; z-index: 1; max-width: 880px; }
+    /* width:100% so the column (and the embedded dashboard inside it) sizes to
+       the hero, not to the title's text width — a flex item otherwise shrinks
+       to fit its widest child, coupling the embed width to the headline. */
+    .hero-inner { position: relative; z-index: 1; width: 100%; max-width: 980px; }
     .hero-logo-wrap { margin-bottom: 2rem; }
     .hero-logo-wrap img {
       width: 132px; height: auto; margin: 0 auto;
