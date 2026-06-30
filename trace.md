@@ -2857,3 +2857,4 @@ _[Checkpoint: 6a43a981 — edited docs/index.html; edited docs/index.html; edite
 ---
 
 [12:13:15] OBSERVE: read scripts/gen_manual.py
+[12:13:46] OBSERVE: read MANUAL.md
