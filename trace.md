@@ -2808,3 +2808,4 @@ _[Checkpoint: 6a4332b5 — edited index.html; wrote avoid-dashes-in-copy.md; edi
 ---
 
 [03:08:16] THINK: I'll start by exploring the docs structure to understand the current state before applying the review's suggestions.
+[03:08:16] NOTE: DEFERRAL (~/Dev/h5i/docs/pitch/index.html): ew. The 6 net-new SEO landing pages are noted as a deferred follow-up (worth canonicalizing against the existing sandboxing series + provenance guide …
