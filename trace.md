@@ -2885,3 +2885,4 @@ _[Checkpoint: 6a43ba1a — edited MANUAL.md; edited MANUAL.md; edited MANUAL.md]
 _[Checkpoint: 6a43ba8d — edited MANUAL.md; edited MANUAL.md; edited MANUAL.md]_
 ---
 
+[14:42:20] OBSERVE: read docs/pitch/index.html
