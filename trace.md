@@ -2761,3 +2761,4 @@ _[Checkpoint: 6a3f0162 — edited docs/index.html; edited docs/index.html; edite
 _[Checkpoint: 6a432389 — Restructure docs site toward 'Auditable Workspaces' category framing]_
 ---
 
+[02:02:01] THINK: html` (122KB). Let me understand its structure — particularly the hero and problem sections.
