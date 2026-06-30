@@ -2789,3 +2789,9 @@ _[Checkpoint: 6a432399 — edited pitch/index.html; edited pitch/index.html; edi
 [02:09:44] THINK: To keep the preference consistent across the page, let me clean the remaining **visible** pitch copy too (leaving comments alone):
 [02:09:44] THINK: I'll clean the visible copy (title, meta, structured data, the embedded-demo text, my cards, and the pre-existing FAQ/table copy), leaving CSS/HTML comments untouched:
 [02:09:44] THINK: Let me also check for en-dashes (–) and spaced hyphens (` - `) used as punctuation in visible copy, and re-validate HTML balance:
+
+
+---
+_[Checkpoint: 6a432568 — edited index.html; wrote avoid-dashes-in-copy.md; edited MEMORY.md]_
+---
+
