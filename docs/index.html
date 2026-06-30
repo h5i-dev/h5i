@@ -1466,32 +1466,32 @@
       <div class="feat-card">
         <span class="feat-cmd">h5i capture</span>
         <div class="feat-name">Record provenance</div>
-        <div class="feat-desc"><code>capture commit</code> attaches the prompt, model, agent, and tests to every commit; <code>capture run</code> wraps noisy commands so the raw output is stored out of band while the agent sees a compact summary, for up to <strong>95% less</strong> tool-output token waste; <code>capture memory</code> snapshots agent memory.</div>
+        <div class="feat-desc">Pin the prompt, model, and tests to each commit. <code>capture run</code> keeps raw logs out of context for up to <strong>95% less</strong> token waste.</div>
       </div>
       <div class="feat-card">
         <span class="feat-cmd">h5i recall</span>
         <div class="feat-name">Read the AI history</div>
-        <div class="feat-desc">Query everything h5i captured. <code>recall log</code> and <code>blame</code> annotate commits and lines with their prompts; <code>recall context</code> shows the reasoning workspace; <code>recall notes</code> surfaces per-commit risk signals; <code>recall object</code> rehydrates any stored output by id.</div>
+        <div class="feat-desc">Read it back: <code>log</code> and <code>blame</code> with prompts, the <code>context</code> reasoning workspace, risk <code>notes</code>, and any captured output by id.</div>
       </div>
       <div class="feat-card">
         <span class="feat-cmd">h5i env</span>
         <div class="feat-name">Sandboxed worktrees</div>
-        <div class="feat-desc">Each agent runs in a disposable, confined worktree with a fail-closed policy: Landlock, seccomp, and namespaces, up to a rootless network egress allowlist. Every command and blocked access is recorded, and nothing reaches your branch until you <code>apply</code>.</div>
+        <div class="feat-desc">A disposable, confined worktree per agent: fail-closed Landlock, seccomp, and namespaces, up to a network egress allowlist. Nothing lands until you <code>apply</code>.</div>
       </div>
       <div class="feat-card">
         <span class="feat-cmd">h5i team</span>
         <div class="feat-name">Agent teams, one verified winner</div>
-        <div class="feat-desc">Scale one task across many agents, each sealed in its own <code>env</code>. Independent attempts are frozen, peer review is permissioned, and a neutral <code>verify</code> replays each candidate at the shared base and runs the tests itself to pick one winner. No agent grades its own work.</div>
+        <div class="feat-desc">One task, many sealed agents. Attempts are frozen, then a neutral <code>verify</code> replays each at the shared base to pick one winner. No agent grades its own work.</div>
       </div>
       <div class="feat-card">
         <span class="feat-cmd">h5i audit</span>
         <div class="feat-name">Deterministic risk assessment</div>
-        <div class="feat-desc"><code>audit review</code> ranks the riskiest commits; <code>audit scan</code> flags prompt-injection and exfil patterns in reasoning traces with no model in the loop; <code>audit policy</code> enforces <code>.h5i</code> rules and <code>audit vibe</code> reports the repo's AI footprint for compliance.</div>
+        <div class="feat-desc"><code>review</code> ranks the riskiest commits and <code>scan</code> flags prompt-injection in reasoning traces, with no model in the loop. <code>policy</code> and <code>vibe</code> cover rules and AI footprint.</div>
       </div>
       <div class="feat-card">
         <span class="feat-cmd">h5i share</span>
         <div class="feat-name">Evidence travels with the branch</div>
-        <div class="feat-desc">All of it lives in <code>refs/h5i/*</code>. <code>share push</code> and <code>pull</code> carry the whole evidence trail to any remote, and <code>share pr</code> posts a sticky GitHub PR comment with per-commit AI provenance. No SaaS, no new system of record.</div>
+        <div class="feat-desc">It all lives in <code>refs/h5i/*</code>. <code>push</code> and <code>pull</code> carry the evidence to any remote; <code>share pr</code> posts a sticky PR comment with per-commit provenance. No SaaS.</div>
       </div>
     </div>
   </div>
