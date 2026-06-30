@@ -1459,14 +1459,19 @@
     <div class="section-head reveal">
       <span class="section-tag">What h5i is</span>
       <h2 class="section-title">An auditable workspace around every agent run.</h2>
-      <p class="section-sub">h5i wraps each agent run, whether one Claude Code session or a whole team, in a sandboxed Git worktree and records the evidence behind every change. Five capabilities, all stored as Git-native sidecar refs that travel with your repo.</p>
+      <p class="section-sub">h5i wraps each agent run, whether one Claude Code session or a whole team, in a sandboxed Git worktree and records the evidence behind every change. Six command families, all writing to and reading from Git-native sidecar refs under <code>refs/h5i/*</code> that travel with your repo.</p>
       <div class="divider"></div>
     </div>
     <div class="feat-grid reveal">
       <div class="feat-card">
-        <span class="feat-cmd">h5i capture commit</span>
-        <div class="feat-name">Prompt-aware versioning</div>
-        <div class="feat-desc">Every change carries the prompt, model, and agent behind it. h5i captures the verbatim human prompt and the reasoning trace, versioned in <code>refs/h5i/*</code> beside the diff, so a commit explains <em>why</em>, not just <em>what</em>.</div>
+        <span class="feat-cmd">h5i capture</span>
+        <div class="feat-name">Record provenance</div>
+        <div class="feat-desc"><code>capture commit</code> attaches the prompt, model, agent, and tests to every commit; <code>capture run</code> wraps noisy commands so the raw output is stored out of band while the agent sees a compact summary, for up to <strong>95% less</strong> tool-output token waste; <code>capture memory</code> snapshots agent memory.</div>
+      </div>
+      <div class="feat-card">
+        <span class="feat-cmd">h5i recall</span>
+        <div class="feat-name">Read the AI history</div>
+        <div class="feat-desc">Query everything h5i captured. <code>recall log</code> and <code>blame</code> annotate commits and lines with their prompts; <code>recall context</code> shows the reasoning workspace; <code>recall notes</code> surfaces per-commit risk signals; <code>recall object</code> rehydrates any stored output by id.</div>
       </div>
       <div class="feat-card">
         <span class="feat-cmd">h5i env</span>
@@ -1475,18 +1480,18 @@
       </div>
       <div class="feat-card">
         <span class="feat-cmd">h5i team</span>
-        <div class="feat-name">Agent teams &amp; sealed attempts</div>
-        <div class="feat-desc">Scale one task across many agents, each sealed in its own box so no agent sees a peer's attempt before it's frozen. Independence is protected until <code>freeze</code>, so you get diverse attempts instead of one opaque guess.</div>
+        <div class="feat-name">Agent teams, one verified winner</div>
+        <div class="feat-desc">Scale one task across many agents, each sealed in its own <code>env</code>. Independent attempts are frozen, peer review is permissioned, and a neutral <code>verify</code> replays each candidate at the shared base and runs the tests itself to pick one winner. No agent grades its own work.</div>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">h5i team verify</span>
-        <div class="feat-name">Neutral verifier</div>
-        <div class="feat-desc">A fair winner, not the loudest agent. h5i replays each frozen candidate at the shared base in a fresh sandbox and runs the tests itself, so finalization never trusts an agent's own captures. Smallest diff only breaks ties among gate-passers.</div>
+        <span class="feat-cmd">h5i audit</span>
+        <div class="feat-name">Deterministic risk assessment</div>
+        <div class="feat-desc"><code>audit review</code> ranks the riskiest commits; <code>audit scan</code> flags prompt-injection and exfil patterns in reasoning traces with no model in the loop; <code>audit policy</code> enforces <code>.h5i</code> rules and <code>audit vibe</code> reports the repo's AI footprint for compliance.</div>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">refs/h5i/*</span>
-        <div class="feat-name">Git-native audit trail</div>
-        <div class="feat-desc">Commands, logs, reviews, policies, and verdicts live in dedicated sidecar refs that travel with the branch. No SaaS, no new system of record. Share the whole evidence trail with <code>h5i share push</code> / <code>pull</code>.</div>
+        <span class="feat-cmd">h5i share</span>
+        <div class="feat-name">Evidence travels with the branch</div>
+        <div class="feat-desc">All of it lives in <code>refs/h5i/*</code>. <code>share push</code> and <code>pull</code> carry the whole evidence trail to any remote, and <code>share pr</code> posts a sticky GitHub PR comment with per-commit AI provenance. No SaaS, no new system of record.</div>
       </div>
     </div>
   </div>
