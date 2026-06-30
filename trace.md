@@ -2879,3 +2879,9 @@ _[Checkpoint: 6a43ba1a — edited MANUAL.md; edited MANUAL.md; edited MANUAL.md]
 ---
 
 [12:46:05] NOTE: DEFERRAL (~/Dev/h5i/MANUAL.md): r GitHub, where that hand-written TOC actually renders), so I'll leave it. Committing
+
+
+---
+_[Checkpoint: 6a43ba8d — edited MANUAL.md; edited MANUAL.md; edited MANUAL.md]_
+---
+
