@@ -34,7 +34,7 @@ Command reference for all h5i subcommands and flags.
   - [h5i recall resume](#h5i-recall-resume)
   - [h5i recall object / objects](#h5i-recall-object--objects)
   - [h5i recall rm](#h5i-recall-rm)
-- [h5i objects (token reduction)](#h5i-objects-token-reduction)
+- [h5i objects](#h5i-objects)
   - [h5i objects gc / pin / fsck](#h5i-objects-gc--pin--fsck)
   - [h5i objects push / pull — sharing raw blobs (optional)](#h5i-objects-push--pull--sharing-raw-blobs-optional)
   - [h5i objects filters / trust](#h5i-objects-filters--trust)
@@ -118,7 +118,7 @@ legacy equivalents, and the corresponding MCP tool names.
 | `h5i recall` | `log`, `blame`, `diff`, `context`, `notes`, `memory`, `recap`, `resume`, `object`, `objects` | Read history, context, and captured tool output. |
 | `h5i audit` | `review`, `scan`, `compliance`, `policy`, `vibe` | Assess risk on AI-generated changes. |
 | `h5i share` | `push`, `pull`, `pr`, `memory` | Publish: push refs, pull refs, post a GitHub PR comment. |
-| `h5i objects` | `run`, `put`, `get`, `list`, `gc`, `pin`, `unpin`, `fsck`, `push`, `pull`, `filters`, `trust`, `setup` | Token-reduction object store: capture huge output, surface a summary, share raw blobs, maintain the store. See [h5i objects](#h5i-objects-token-reduction). |
+| `h5i objects` | `run`, `put`, `get`, `list`, `gc`, `pin`, `unpin`, `fsck`, `push`, `pull`, `filters`, `trust`, `setup` | Token-reduction object store: capture huge output, surface a summary, share raw blobs, maintain the store. See [h5i objects](#h5i-objects). |
 
 All four nouns route through a pre-clap argv rewriter into the legacy
 verbs — so the noun form and the legacy form are functionally identical;
@@ -223,7 +223,7 @@ Record provenance: commit code, snapshot agent memory.
 |---|---|---|
 | `h5i capture commit` | `h5i commit` | Git commit + AI provenance (prompt, model, agent, tokens, tests, decisions). See [h5i capture commit](#h5i-capture-commit). |
 | `h5i capture memory` | `h5i memory snapshot` | Snapshot the active agent's memory directory into `refs/h5i/memory`. See [h5i capture memory](#h5i-capture-memory). |
-| `h5i capture run` | _(new)_ | Run a command, store its full output out-of-band, surface only a filtered/structured summary. See [h5i objects](#h5i-objects-token-reduction). |
+| `h5i capture run` | _(new)_ | Run a command, store its full output out-of-band, surface only a filtered/structured summary. See [h5i objects](#h5i-objects). |
 
 ```bash
 h5i capture commit -m "switch session store to Redis" \
@@ -625,7 +625,7 @@ Read AI history & context.
 | `h5i recall memory <sub>` | `h5i memory <sub>` | Log / diff / restore agent memory snapshots. |
 | `h5i recall recap` | `h5i context recap` | Import Claude Code `away_summary` entries as milestones. |
 | `h5i recall resume` | `h5i resume` | Print a structured handoff briefing. |
-| `h5i recall object` | _(new)_ | Rehydrate a captured raw output (full bytes, or `--summary`/`--manifest`). See [h5i objects](#h5i-objects-token-reduction). |
+| `h5i recall object` | _(new)_ | Rehydrate a captured raw output (full bytes, or `--summary`/`--manifest`). See [h5i objects](#h5i-objects). |
 | `h5i recall objects` | _(new)_ | List captured outputs; filter by `--status`/`--tool`/`--branch`/`--file`/`--diff`. |
 
 ---
@@ -1815,7 +1815,7 @@ To remove *only* a stale reasoning branch (not the rest), use the narrower
 
 ---
 
-## h5i objects (token reduction)
+## h5i objects
 
 Large tool outputs — test logs, build output, big JSON, traces — are the biggest
 avoidable drain on an agent's context window. The object store keeps the **full
@@ -2515,7 +2515,7 @@ disclosure-safe by default:
 **🪙 Token reduction**
 
 When the branch has token-reduction captures (`h5i capture run`, see
-[h5i objects](#h5i-objects-token-reduction)), the comment includes a one-line
+[h5i objects](#h5i-objects)), the comment includes a one-line
 `[!NOTE]` summarising how much raw tool output was kept out of the agent's
 context — `raw → summary` tokens and `% saved` across the branch's captures —
 with a collapsible per-tool breakdown when more than one tool was captured. It

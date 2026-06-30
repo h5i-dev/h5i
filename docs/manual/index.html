@@ -190,7 +190,7 @@
 <a class="t3" href="#h5i-recall-object--objects">h5i recall object / objects</a>
 <a class="t3" href="#h5i-recall-rm">h5i recall rm</a>
 </div>
-<a class="t2" href="#h5i-objects-token-reduction">h5i objects (token reduction)</a>
+<a class="t2" href="#h5i-objects">h5i objects</a>
 <div class="t3group">
 <a class="t3" href="#h5i-objects-gc--pin--fsck">h5i objects gc / pin / fsck</a>
 <a class="t3" href="#h5i-objects-push--pull--sharing-raw-blobs-optional">h5i objects push / pull — sharing raw blobs (optional)</a>
@@ -317,7 +317,7 @@ legacy equivalents, and the corresponding MCP tool names.</p>
 <tr>
 <td><code>h5i objects</code></td>
 <td><code>run</code>, <code>put</code>, <code>get</code>, <code>list</code>, <code>gc</code>, <code>pin</code>, <code>unpin</code>, <code>fsck</code>, <code>push</code>, <code>pull</code>, <code>filters</code>, <code>trust</code>, <code>setup</code></td>
-<td>Token-reduction object store: capture huge output, surface a summary, share raw blobs, maintain the store. See <a href="#h5i-objects-token-reduction">h5i objects</a>.</td>
+<td>Token-reduction object store: capture huge output, surface a summary, share raw blobs, maintain the store. See <a href="#h5i-objects">h5i objects</a>.</td>
 </tr>
 </tbody>
 </table>
@@ -474,7 +474,7 @@ merge.</p>
 <tr>
 <td><code>h5i capture run</code></td>
 <td><em>(new)</em></td>
-<td>Run a command, store its full output out-of-band, surface only a filtered/structured summary. See <a href="#h5i-objects-token-reduction">h5i objects</a>.</td>
+<td>Run a command, store its full output out-of-band, surface only a filtered/structured summary. See <a href="#h5i-objects">h5i objects</a>.</td>
 </tr>
 </tbody>
 </table>
@@ -895,7 +895,7 @@ h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
 <tr>
 <td><code>h5i recall object</code></td>
 <td><em>(new)</em></td>
-<td>Rehydrate a captured raw output (full bytes, or <code>--summary</code>/<code>--manifest</code>). See <a href="#h5i-objects-token-reduction">h5i objects</a>.</td>
+<td>Rehydrate a captured raw output (full bytes, or <code>--summary</code>/<code>--manifest</code>). See <a href="#h5i-objects">h5i objects</a>.</td>
 </tr>
 <tr>
 <td><code>h5i recall objects</code></td>
@@ -2181,7 +2181,7 @@ inverse of <code>h5i share push --branch &lt;b&gt;</code>. It removes, scoped to
 <p>To remove <em>only</em> a stale reasoning branch (not the rest), use the narrower
 <code>h5i recall context rm &lt;name&gt;</code> instead.</p>
 <hr />
-<h2 id="h5i-objects-token-reduction">h5i objects (token reduction)</h2>
+<h2 id="h5i-objects">h5i objects</h2>
 <p>Large tool outputs — test logs, build output, big JSON, traces — are the biggest
 avoidable drain on an agent's context window. The object store keeps the <strong>full
 raw output out-of-band</strong> (content-addressed) and surfaces only a small filtered,
@@ -3080,7 +3080,7 @@ disclosure-safe by default:</p>
 </ul>
 <p><strong>🪙 Token reduction</strong></p>
 <p>When the branch has token-reduction captures (<code>h5i capture run</code>, see
-<a href="#h5i-objects-token-reduction">h5i objects</a>), the comment includes a one-line
+<a href="#h5i-objects">h5i objects</a>), the comment includes a one-line
 <code>[!NOTE]</code> summarising how much raw tool output was kept out of the agent's
 context — <code>raw → summary</code> tokens and <code>% saved</code> across the branch's captures —
 with a collapsible per-tool breakdown when more than one tool was captured. It
