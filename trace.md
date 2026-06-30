@@ -2807,3 +2807,4 @@ _[Checkpoint: 6a4325dc — edited index.html; wrote avoid-dashes-in-copy.md; edi
 _[Checkpoint: 6a4332b5 — edited index.html; wrote avoid-dashes-in-copy.md; edited MEMORY.md]_
 ---
 
+[03:08:16] THINK: I'll start by exploring the docs structure to understand the current state before applying the review's suggestions.
