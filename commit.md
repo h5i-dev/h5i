@@ -2909,3 +2909,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a432389 — 2026-06-30 02:01 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Homepage: new H1 'Auditable Workspaces for AI Coding Agents', subhead covers single-agent+team, added secondary punchline + new 5-card Core-capabilities section (prompt-aware versioning / sandboxed worktrees / teams+sealed attempts / neutral verifier / git-native audit trail), broadened Problem into single-vs-multi-agent split, demoted 'Run many coding agents' to team-section H2, moved multilingual proverbs out of hero into Built-with. Pitch: unified slide 1 & 13 H1 to category, slide 1 now leads with 3 single-agent value cards, reframed slides 2/3/5, updated og/twitter meta on both. HTML validated balanced.
+
+---
+

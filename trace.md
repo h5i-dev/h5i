@@ -2755,3 +2755,9 @@ _[Checkpoint: 6a3f0162 — edited docs/index.html; edited docs/index.html; edite
 [02:00:26] ACT: edited pitch/index.html
 [02:00:34] ACT: edited pitch/index.html
 [02:00:47] ACT: edited index.html
+
+
+---
+_[Checkpoint: 6a432389 — Restructure docs site toward 'Auditable Workspaces' category framing]_
+---
+
