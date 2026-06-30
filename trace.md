@@ -2872,3 +2872,9 @@ _[Checkpoint: 6a43a981 — edited docs/index.html; edited docs/index.html; edite
 _[Checkpoint: 6a43b509 — edited MANUAL.md; edited MANUAL.md; edited MANUAL.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a43ba1a — edited MANUAL.md; edited MANUAL.md; edited MANUAL.md]_
+---
+
