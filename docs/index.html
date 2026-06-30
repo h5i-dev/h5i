@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i — Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)</title>
-  <meta name="description" content="h5i is an auditable workspace layer for AI coding agents — Claude Code, Codex, and agent teams. Run many coding agents in isolated workspaces, seal independent attempts, verify neutrally, and merge one auditable result — versioned in refs/h5i/*, no SaaS.">
+  <title>h5i: Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)</title>
+  <meta name="description" content="h5i is an auditable workspace layer for AI coding agents: Claude Code, Codex, and agent teams. Run many coding agents in isolated workspaces, seal independent attempts, verify neutrally, and merge one auditable result, versioned in refs/h5i/*, no SaaS.">
   <meta name="keywords" content="ai agent teams, agent ensembles, multi-agent coding, auditable workspace, neutral verifier, sealed submissions, ai agent audit, agent provenance, confined agent sandbox, ai code governance, prompt injection detection, claude code, codex, git sidecar, h5i">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
@@ -21,8 +21,8 @@
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i — Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)">
-  <meta property="og:description" content="Run many coding agents. Merge one auditable result. h5i is an auditable workspace layer for AI coding agents: isolated workspaces, sealed independent attempts, a neutral verifier, and one auditable verdict — in refs/h5i/*, no SaaS.">
+  <meta property="og:title" content="h5i: Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)">
+  <meta property="og:description" content="Run Claude Code, Codex, or whole agent teams in sandboxed Git worktrees. h5i records the prompts, commands, logs, policies, reviews, and verifier results behind every change. Start with one agent, scale to many, merge one auditable result. In refs/h5i/*, no SaaS.">
   <meta property="og:url" content="https://h5i.dev/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="og:image:width" content="2257">
@@ -31,8 +31,8 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i — Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)">
-  <meta name="twitter:description" content="Run many coding agents. Merge one auditable result. An auditable workspace layer for AI coding agents: isolated workspaces, sealed attempts, a neutral verifier — versioned beside your code, no SaaS.">
+  <meta name="twitter:title" content="h5i: Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)">
+  <meta name="twitter:description" content="Auditable workspaces for AI coding agents. Run Claude Code, Codex, or whole agent teams in sandboxed Git worktrees. Prompts, commands, logs, policies, reviews, and verifier results versioned beside your code. Start with one, scale to many. No SaaS.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta name="twitter:image:alt" content="h5i web dashboard showing AI provenance, integrity scores, and test badges for each commit">
 
@@ -66,7 +66,7 @@
         "alternateName": "high-five",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "Linux, macOS, Windows",
-        "description": "An auditable workspace layer for AI coding agents. It runs Claude Code, Codex, and other agents in isolated, sandboxed Git workspaces (tiered isolation + a network egress allowlist) and records the prompts, commands, reasoning traces, logs, sandbox policy, reviews, and verifier results behind every change as Git-native sidecar refs under refs/h5i/* — no SaaS.",
+        "description": "An auditable workspace layer for AI coding agents. It runs Claude Code, Codex, and other agents in isolated, sandboxed Git workspaces (tiered isolation + a network egress allowlist) and records the prompts, commands, reasoning traces, logs, sandbox policy, reviews, and verifier results behind every change as Git-native sidecar refs under refs/h5i/*, with no SaaS.",
         "url": "https://h5i.dev/",
         "downloadUrl": "https://github.com/h5i-dev/h5i",
         "softwareHelp": "/manual/",
@@ -93,7 +93,7 @@
           {
             "@type": "Question",
             "name": "What is h5i?",
-            "acceptedAnswer": {"@type": "Answer", "text": "h5i (pronounced high-five) is an open-source auditable workspace layer for AI coding agents. It runs Claude Code, Codex, and other agents in isolated Git workspaces and records the prompt, model, agent, reasoning, commands, logs, sandbox policy, reviews, and verifier results behind every change — then lets teams merge one evidence-backed result. Technically, h5i stores this evidence as Git-native sidecar refs under refs/h5i/*, so it travels with your repo with no hosted control plane."}
+            "acceptedAnswer": {"@type": "Answer", "text": "h5i (pronounced high-five) is an open-source auditable workspace layer for AI coding agents. It runs Claude Code, Codex, and other agents in isolated Git workspaces and records the prompt, model, agent, reasoning, commands, logs, sandbox policy, reviews, and verifier results behind every change, then lets teams merge one evidence-backed result. Technically, h5i stores this evidence as Git-native sidecar refs under refs/h5i/*, so it travels with your repo with no hosted control plane."}
           },
           {
             "@type": "Question",
@@ -128,12 +128,12 @@
           {
             "@type": "Question",
             "name": "Can h5i detect prompt injection in AI-generated code?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i audit scan applies deterministic regex rules to every OBSERVE/THINK/ACT entry in an agent's reasoning trace to flag prompt-injection signals — with no model in the audit path — and can rank which commits most need human review."}
+            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i audit scan applies deterministic regex rules to every OBSERVE/THINK/ACT entry in an agent's reasoning trace to flag prompt-injection signals, with no model in the audit path, and can rank which commits most need human review."}
           },
           {
             "@type": "Question",
             "name": "Can h5i sandbox an AI agent's commands?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i env gives an agent a disposable, confined environment — a git worktree plus a policy that limits what code can read, write, and reach over the network. It picks the strongest isolation the host can enforce (Landlock, seccomp, and namespaces, up to a rootless network egress allowlist), records every command and blocked access, and nothing reaches your branch until you apply. No root and no VM required."}
+            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i env gives an agent a disposable, confined environment: a git worktree plus a policy that limits what code can read, write, and reach over the network. It picks the strongest isolation the host can enforce (Landlock, seccomp, and namespaces, up to a rootless network egress allowlist), records every command and blocked access, and nothing reaches your branch until you apply. No root and no VM required."}
           }
         ]
       }
@@ -273,7 +273,10 @@
       background: radial-gradient(ellipse at center, rgba(224,36,27,0.10) 0%, transparent 68%);
       border-radius: 50%; pointer-events: none; z-index: 0;
     }
-    .hero-inner { position: relative; z-index: 1; max-width: 880px; }
+    /* width:100% so the column (and the embedded dashboard inside it) sizes to
+       the hero, not to the title's text width — a flex item otherwise shrinks
+       to fit its widest child, coupling the embed width to the headline. */
+    .hero-inner { position: relative; z-index: 1; width: 100%; max-width: 880px; }
     .hero-logo-wrap { margin-bottom: 2rem; }
     .hero-logo-wrap img {
       width: 132px; height: auto; margin: 0 auto;
@@ -334,9 +337,15 @@
       font-weight: 400; line-height: 1.7;
     }
     .hero-sub strong { color: var(--text); font-weight: 600; }
+    .hero-punch {
+      font-family: var(--mono); font-size: clamp(0.8rem, 1.6vw, 0.94rem);
+      letter-spacing: 0.01em; color: var(--text);
+      margin: -1.6rem auto 2.5rem; max-width: 640px;
+    }
+    .hero-punch::before { content: '→ '; color: var(--red-text); }
     .hero-proverbs {
       display: flex; flex-wrap: wrap; justify-content: center; gap: 0.55rem;
-      margin: -1.2rem auto 2.35rem; max-width: 900px;
+      margin: 1.6rem auto 0; max-width: 760px;
     }
     .hero-proverbs span {
       display: inline-flex; align-items: center;
@@ -1099,6 +1108,8 @@
     }
 
   /* ── Agent-teams components (mirrors /pitch) ───────────────── */
+  .fm-split { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 860px) { .fm-split { grid-template-columns: 1fr; } }
   .fm { width: 100%; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
   .fm-row { display: grid; grid-template-columns: 0.85fr 1.25fr; }
   .fm-row + .fm-row { border-top: 1px solid var(--border); }
@@ -1167,21 +1178,14 @@
     <!-- <div class="hero-logo-wrap">
       <img src="/_static/logo.png" width="1280" height="640" alt="h5i logo" fetchpriority="high">
     </div> -->
-    <div class="hero-badge">AUDITABLE WORKSPACES FOR AI CODING AGENTS · SEALED ATTEMPTS · NEUTRAL VERIFIER</div>
+    <div class="hero-badge">SANDBOXED GIT WORKTREES · PROMPT-AWARE VERSIONING · NEUTRAL VERIFIER</div>
     <h1 class="hero-title">
-      <span class="shine-text"><span class="hl">Run Many Coding Agents.</span><br><span class="hl">Merge One Auditable Result</span></span>
+      <span class="shine-text"><span class="hl">Auditable Workspaces</span><br><span class="hl">for AI Coding Agents</span></span>
     </h1>
     <p class="hero-sub">
-      <strong>Agent ensembles work because independent attempts beat isolated guesses.</strong> h5i gives coding agents separate sandboxes, sealed submissions, and a neutral verifier that picks one winner — all versioned in your repo.
+      Run <strong>Claude Code, Codex, or whole agent teams</strong> inside sandboxes. h5i records the prompts, commands, and reviews behind every change.
     </p>
-    <div class="hero-proverbs" aria-label="Ensemble sayings">
-      <span>Two heads are better than one.</span>
-      <span>Dos cabezas piensan mejor que una.</span>
-      <span>三个臭皮匠，胜过一个诸葛亮。</span>
-      <span>एक से भले दो।</span>
-      <span>三人寄れば文殊の知恵。</span>
-      <span>Deux avis valent mieux qu'un.</span>
-    </div>
+    <p class="hero-punch">Start with one agent. Scale to many. Merge one auditable result.</p>
     <div class="hero-actions">
       <a href="#install" class="btn btn-primary">Get Started</a>
       <a href="/workflows/" class="btn btn-ghost">See Workflows</a>
@@ -1328,7 +1332,7 @@
                   <div class="sbx-finding warning">
                     <span class="sbx-lane-chip lane-net">NET</span>
                     <span class="sbx-finding-title">egress denied</span>
-                    <span class="sbx-finding-detail">CONNECT pypi.org:443 blocked — not in the net.egress allowlist (fail-closed)</span>
+                    <span class="sbx-finding-detail">CONNECT pypi.org:443 blocked: not in the net.egress allowlist (fail-closed)</span>
                     <code class="ee-code">cap-7f3a</code>
                   </div>
                 </div>
@@ -1385,7 +1389,7 @@
               <div class="ctx-hero-text">Embed the live h5i serve dashboard into the docs landing hero</div>
               <div class="ctx-hero-purpose">
                 <span class="ctx-purpose-key">Context</span><span class="ee-tag round">main</span>
-                show, don't tell — replace the abstract stat-cards with the real UI
+                show, don't tell: replace the abstract stat-cards with the real UI
               </div>
             </div>
             <div class="ctx-kpis">
@@ -1449,23 +1453,73 @@
   </div>
 </aside>
 
+<!-- ── Core capabilities ─────────────────────────────────────── -->
+<section id="features">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">What h5i is</span>
+      <h2 class="section-title">An auditable workspace around every agent run.</h2>
+      <p class="section-sub">h5i wraps each agent run, whether one Claude Code session or a whole team, in a sandboxed Git worktree and records the evidence behind every change. Six command families, all writing to and reading from Git-native sidecar refs under <code>refs/h5i/*</code> that travel with your repo.</p>
+      <div class="divider"></div>
+    </div>
+    <div class="feat-grid reveal">
+      <div class="feat-card">
+        <span class="feat-cmd">h5i capture</span>
+        <div class="feat-name">Record provenance</div>
+        <div class="feat-desc">Pin the prompt, model, and tests to each commit. <code>capture run</code> keeps raw logs out of context for up to <strong>95% less</strong> token waste.</div>
+      </div>
+      <div class="feat-card">
+        <span class="feat-cmd">h5i recall</span>
+        <div class="feat-name">Read the AI history</div>
+        <div class="feat-desc">Read it back: <code>log</code> and <code>blame</code> with prompts, the <code>context</code> reasoning workspace, risk <code>notes</code>, and any captured output by id.</div>
+      </div>
+      <div class="feat-card">
+        <span class="feat-cmd">h5i env</span>
+        <div class="feat-name">Sandboxed worktrees</div>
+        <div class="feat-desc">A disposable, confined worktree per agent: fail-closed Landlock, seccomp, and namespaces, up to a network egress allowlist. Nothing lands until you <code>apply</code>.</div>
+      </div>
+      <div class="feat-card">
+        <span class="feat-cmd">h5i team</span>
+        <div class="feat-name">Agent teams, one verified winner</div>
+        <div class="feat-desc">One task, many sealed agents. Attempts are frozen, then a neutral <code>verify</code> replays each at the shared base to pick one winner. No agent grades its own work.</div>
+      </div>
+      <div class="feat-card">
+        <span class="feat-cmd">h5i audit</span>
+        <div class="feat-name">Deterministic risk assessment</div>
+        <div class="feat-desc"><code>review</code> ranks the riskiest commits and <code>scan</code> flags prompt-injection in reasoning traces, with no model in the loop. <code>policy</code> and <code>vibe</code> cover rules and AI footprint.</div>
+      </div>
+      <div class="feat-card">
+        <span class="feat-cmd">h5i share</span>
+        <div class="feat-name">Evidence travels with the branch</div>
+        <div class="feat-desc">It all lives in <code>refs/h5i/*</code>. <code>push</code> and <code>pull</code> carry the evidence to any remote; <code>share pr</code> posts a sticky PR comment with per-commit provenance. No SaaS.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ── Problem ───────────────────────────────────────────────── -->
 <section id="problem">
   <div class="container">
     <div class="section-head reveal">
       <span class="section-tag">The Problem</span>
-      <h2 class="section-title">Naive agent teams break immediately.</h2>
-      <p class="section-sub">In ML, ensembles beat the best single model — combining diverse estimators cut variance and won a decade of competitions. The same shift is coming to coding agents: architect, implementer, reviewer, security skeptic. But spawn several agents on one repo with no coordination layer and you don't get an ensemble — you get a pileup. Six failure modes Git was never built to handle:</p>
+      <h2 class="section-title">AI agents change production code with no durable record.</h2>
+      <p class="section-sub">A coding agent reads your repo, runs commands, and rewrites files, but Git only keeps the diff. The prompt, the model, the commands, the blocked accesses, the reasoning all evaporate. That's already painful with <strong>one</strong> agent; spin up <strong>several</strong> on one repo and the gaps compound into a pileup. Two layers of failure Git was never built to handle:</p>
       <div class="divider"></div>
     </div>
-    <div class="fm reveal">
-      <div class="fm-row head"><div class="fm-cell">Failure mode</div><div class="fm-cell">What happens</div></div>
-      <div class="fm-row"><div class="fm-cell">Environment conflict</div><div class="fm-cell">Agents overwrite each other's files, ports, caches, credentials, and branches.</div></div>
-      <div class="fm-row"><div class="fm-cell">Context contamination</div><div class="fm-cell">Agents see each other's output before an independent attempt — diversity collapses.</div></div>
-      <div class="fm-row"><div class="fm-cell">Token explosion</div><div class="fm-cell">Every agent re-reads the whole repo and drags raw logs into context.</div></div>
-      <div class="fm-row"><div class="fm-cell">Review overload</div><div class="fm-cell">Humans can't inspect every prompt, command, retry, and failure across N agents.</div></div>
-      <div class="fm-row"><div class="fm-cell">Unsafe autonomy</div><div class="fm-cell">Agents can run destructive commands without enough containment.</div></div>
-      <div class="fm-row"><div class="fm-cell">No fair winner</div><div class="fm-cell">You get many patches but no neutral evidence for which one to merge.</div></div>
+    <div class="fm-split reveal">
+      <div class="fm">
+        <div class="fm-row head"><div class="fm-cell">One agent, unaudited</div><div class="fm-cell">What happens</div></div>
+        <div class="fm-row"><div class="fm-cell">Opaque provenance</div><div class="fm-cell">The diff lands, but the prompt, model, and commands behind it are gone.</div></div>
+        <div class="fm-row"><div class="fm-cell">Token explosion</div><div class="fm-cell">Every run re-reads the whole repo and drags raw logs into context.</div></div>
+        <div class="fm-row"><div class="fm-cell">Unsafe autonomy</div><div class="fm-cell">An agent can run destructive commands without enough containment.</div></div>
+        <div class="fm-row"><div class="fm-cell">Review overload</div><div class="fm-cell">Humans can't reconstruct every prompt, command, retry, and failure.</div></div>
+      </div>
+      <div class="fm">
+        <div class="fm-row head"><div class="fm-cell">Many agents, uncoordinated</div><div class="fm-cell">What happens</div></div>
+        <div class="fm-row"><div class="fm-cell">Environment conflict</div><div class="fm-cell">Agents overwrite each other's files, ports, caches, credentials, and branches.</div></div>
+        <div class="fm-row"><div class="fm-cell">Context contamination</div><div class="fm-cell">Agents see each other's output before an independent attempt, and diversity collapses.</div></div>
+        <div class="fm-row"><div class="fm-cell">No fair winner</div><div class="fm-cell">You get many patches but no neutral evidence for which one to merge.</div></div>
+      </div>
     </div>
   </div>
 </section>
@@ -1474,9 +1528,9 @@
 <section id="team">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">The Solution</span>
-      <h2 class="section-title">Many attempts in. One verified verdict out.</h2>
-      <p class="section-sub">A team runs several agents on the <em>same</em> task, each in its own isolated <code>h5i env</code>, then drives them through a phased, permissioned protocol. A roster member is a <strong>persona, not a backend</strong> — three Claudes with different skills, a Claude+Codex mix, or one model under two roles. The audit records which configuration produced which candidate.</p>
+      <span class="section-tag">The killer workflow · then scale</span>
+      <h2 class="section-title">Run many coding agents. Merge one auditable result.</h2>
+      <p class="section-sub">The same auditable workspace that contains one agent scales to a whole team. <code>h5i team</code> runs several agents on the <em>same</em> task, each in its own isolated <code>h5i env</code>, then drives them through a phased, permissioned protocol. A roster member is a <strong>persona, not a backend</strong>: three Claudes with different skills, a Claude+Codex mix, or one model under two roles. The audit records which configuration produced which candidate.</p>
       <div class="divider"></div>
     </div>
 
@@ -1516,7 +1570,7 @@
           <div class="vh">verdict · explainable by default</div>
           <div class="vrow"><span class="vk">winner</span><span class="vv"><span style="color:var(--green)">claude-arch</span> · submission 7f3a</span></div>
           <div class="vrow"><span class="vk">method</span><span class="vv">TestsPass · AppliesCleanly · SmallestDiff</span></div>
-          <div class="vrow"><span class="vk">codex</span><span class="vv"><span style="color:var(--red-text)">rejected</span> — 1 test failed at base</span></div>
+          <div class="vrow"><span class="vk">codex</span><span class="vv"><span style="color:var(--red-text)">rejected</span>: 1 test failed at base</span></div>
           <div class="vrow"><span class="vk">apply</span><span class="vv"><span style="color:var(--green)">can_auto_apply ✓</span></span></div>
         </div>
         <div class="feat-card reveal"><span class="feat-cmd">h5i team verify</span><div class="feat-name">A fair winner, not the loudest agent</div><div class="feat-desc">Finalization never trusts an agent's own captures. Each candidate is replayed at the shared base in a fresh, sandboxed worktree; smallest-diff only breaks ties among gate-passers, so nothing wins by deleting tests. No gate-passer → <code>no_verdict</code>, never a loser.</div></div>
@@ -1583,6 +1637,14 @@
       <div class="hero-stat"><div class="val">96</div><div class="lbl">REASONING MILESTONES</div></div>
       <div class="hero-stat"><div class="val">1,200+</div><div class="lbl">OBSERVE / THINK / ACT TRACES</div></div>
       <div class="hero-stat"><div class="val">0</div><div class="lbl">EXTERNAL SERVICES, ALL IN GIT</div></div>
+    </div>
+    <div class="hero-proverbs reveal" aria-label="On working in concert">
+      <span>Two heads are better than one.</span>
+      <span>Dos cabezas piensan mejor que una.</span>
+      <span>三个臭皮匠，胜过一个诸葛亮。</span>
+      <span>एक से भले दो।</span>
+      <span>三人寄れば文殊の知恵。</span>
+      <span>Deux avis valent mieux qu'un.</span>
     </div>
   </div>
 </section>
@@ -1668,7 +1730,7 @@
     <div class="faq-list reveal">
       <details class="faq-item" open>
         <summary>How does h5i run an agent team?</summary>
-        <div class="faq-answer"><code>h5i team</code> runs several agents on the <em>same</em> task, each in its own isolated <code>h5i env</code>, through a phased protocol: <strong>create</strong> a roster of personas (runtime, model, role) → <strong>dispatch</strong> the task to all → each agent works <strong>sealed and independently</strong> → <strong>freeze</strong> immutable submissions → permissioned <strong>review</strong> → a neutral sandboxed <strong>verify</strong> → <strong>apply</strong> one winner. Run state is an append-only event log in <code>refs/h5i/team</code> that travels with the repo. It's a thin coordination layer — not a group chat, not a daemon.</div>
+        <div class="faq-answer"><code>h5i team</code> runs several agents on the <em>same</em> task, each in its own isolated <code>h5i env</code>, through a phased protocol: <strong>create</strong> a roster of personas (runtime, model, role) → <strong>dispatch</strong> the task to all → each agent works <strong>sealed and independently</strong> → <strong>freeze</strong> immutable submissions → permissioned <strong>review</strong> → a neutral sandboxed <strong>verify</strong> → <strong>apply</strong> one winner. Run state is an append-only event log in <code>refs/h5i/team</code> that travels with the repo. It's a thin coordination layer, not a group chat, not a daemon.</div>
       </details>
       <details class="faq-item">
         <summary>How is the winning patch chosen?</summary>
@@ -1676,7 +1738,7 @@
       </details>
       <details class="faq-item">
         <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an open-source <strong>auditable workspace layer for AI coding agents</strong>. It runs Claude Code, Codex, and other agents in isolated Git workspaces and records the prompt, model, agent, reasoning, commands, logs, sandbox policy, reviews, and verifier results behind every change — then lets teams merge one evidence-backed result. Technically, h5i stores this evidence as Git-native sidecar refs under <code>refs/h5i/*</code>, so it travels with your repo with no hosted control plane.</div>
+        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an open-source <strong>auditable workspace layer for AI coding agents</strong>. It runs Claude Code, Codex, and other agents in isolated Git workspaces and records the prompt, model, agent, reasoning, commands, logs, sandbox policy, reviews, and verifier results behind every change, then lets teams merge one evidence-backed result. Technically, h5i stores this evidence as Git-native sidecar refs under <code>refs/h5i/*</code>, so it travels with your repo with no hosted control plane.</div>
       </details>
       <details class="faq-item">
         <summary>Does h5i work with Claude Code and Codex?</summary>
