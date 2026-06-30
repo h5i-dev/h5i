@@ -221,7 +221,7 @@
 <a class="t3" href="#reading-and-replying">Reading and replying</a>
 <a class="t3" href="#delivery-modes">Delivery modes</a>
 </div>
-<a class="t2" href="#h5i-env-isolated-agent-sandboxes">h5i env (isolated agent sandboxes)</a>
+<a class="t2" href="#h5i-env">h5i env</a>
 <div class="t3group">
 <a class="t3" href="#lifecycle-commands">Lifecycle commands</a>
 <a class="t3" href="#in-box-git-capture--commit">In-box git, capture &amp; commit</a>
@@ -231,7 +231,7 @@
 <a class="t3" href="#services-and-dynamic-ports">Services and dynamic ports</a>
 <a class="t3" href="#resource-limits">Resource limits</a>
 </div>
-<a class="t2" href="#h5i-team-auditable-agent-ensembles">h5i team (auditable agent ensembles)</a>
+<a class="t2" href="#h5i-team">h5i team</a>
 <div class="t3group">
 <a class="t3" href="#phase-model">Phase model</a>
 <a class="t3" href="#lifecycle-commands_1">Lifecycle commands</a>
@@ -779,7 +779,7 @@ command = &quot;h5i hook codex finish --quiet&quot;
 </code></pre>
 <p>Codex requires reviewing/trusting local hooks via <code>/hooks</code>; project-local hooks only load after the project <code>.codex/</code> layer is trusted.</p>
 <p><strong>Bash capture-wrap (<code>--wrap-bash</code>, optional).</strong> Adds a <code>PreToolUse</code> Bash hook (<code>h5i hook wrap-bash</code>) that rewrites every Bash command into a <code>h5i capture run</code> wrapper, so the agent receives a token-reduced summary for large/failing output while the full raw bytes stay stored and searchable via <code>h5i recall</code>. Off by default. Note: with it enabled, permission allowlists then match the rewritten <code>h5i capture run …</code> command, not the original.</p>
-<p><strong>Team peer-review (<code>--team</code>, optional).</strong> Adds a second <code>Stop</code> hook — <code>h5i team agent hook --block</code> for <strong>both Claude and Codex</strong> (their Stop hooks share the same <code>{"decision":"block","reason":…}</code> continuation contract). When the agent is a member of a live <a href="#h5i-team-auditable-agent-ensembles"><code>h5i team</code></a> round, it keeps the agent from stopping while it still owes work, <strong>waits</strong> for the next review before releasing the stop, and surfaces requests between turns. Each entry carries a long per-hook <code>timeout</code> (~1830s) so the agent runtime doesn't kill it mid-wait (set as the Claude hook's <code>timeout</code>, and the Codex handler's <code>timeout</code> field); a <code>TEAM_DONE</code> signal (sent by <code>finalize</code>/<code>apply</code>) releases it. It <strong>no-ops outside a team</strong>, so it's safe to leave installed. This is what lets <code>scripts/team-run.sh</code> drive the full peer-review cycle hands-off — for <strong>both</strong> agent runtimes — with boxes staying alive between turns.</p>
+<p><strong>Team peer-review (<code>--team</code>, optional).</strong> Adds a second <code>Stop</code> hook — <code>h5i team agent hook --block</code> for <strong>both Claude and Codex</strong> (their Stop hooks share the same <code>{"decision":"block","reason":…}</code> continuation contract). When the agent is a member of a live <a href="#h5i-team"><code>h5i team</code></a> round, it keeps the agent from stopping while it still owes work, <strong>waits</strong> for the next review before releasing the stop, and surfaces requests between turns. Each entry carries a long per-hook <code>timeout</code> (~1830s) so the agent runtime doesn't kill it mid-wait (set as the Claude hook's <code>timeout</code>, and the Codex handler's <code>timeout</code> field); a <code>TEAM_DONE</code> signal (sent by <code>finalize</code>/<code>apply</code>) releases it. It <strong>no-ops outside a team</strong>, so it's safe to leave installed. This is what lets <code>scripts/team-run.sh</code> drive the full peer-review cycle hands-off — for <strong>both</strong> agent runtimes — with boxes staying alive between turns.</p>
 <p><strong>MCP server (manual).</strong> Hook setup no longer wires the MCP server — register it by hand if you want native h5i tools in Claude Code. Add the <code>mcpServers</code> block to <code>~/.claude/settings.json</code>:</p>
 <pre><code class="language-json">{
   &quot;mcpServers&quot;: {
@@ -3248,7 +3248,7 @@ h5i msg team                     # known agents
 <p>Incoming messages are framed as <strong>untrusted collaborator input</strong>, never as
 instructions; agents are told to evaluate and decide.</p>
 <hr />
-<h2 id="h5i-env-isolated-agent-sandboxes">h5i env (isolated agent sandboxes)</h2>
+<h2 id="h5i-env">h5i env</h2>
 <p>An <strong>environment</strong> is a Git-addressed, policy-confined, fully-observed unit of
 agent work — the "triple fusion" of:</p>
 <ul>
@@ -3604,9 +3604,9 @@ unavailable, it falls back to rlimits (<code>RLIMIT_AS</code>/<code>NPROC</code>
 <code>h5i env probe</code> reports whether cgroups are usable. A wall-clock timeout kills
 the whole process tree (<code>exit 124</code>).</p>
 <hr />
-<h2 id="h5i-team-auditable-agent-ensembles">h5i team (auditable agent ensembles)</h2>
+<h2 id="h5i-team">h5i team</h2>
 <p>A <strong>team</strong> runs several agents on the <em>same</em> task in their own isolated
-<a href="#h5i-env-isolated-agent-sandboxes"><code>h5i env</code></a> workspaces and drives them through
+<a href="#h5i-env"><code>h5i env</code></a> workspaces and drives them through
 a phased, permissioned <strong>evidence-publication</strong> protocol — <em>sealed workspaces,
 permissioned reviews, auditable convergence</em>. It is a thin orchestration layer:
 <code>env</code> keeps owning isolation, capture, and propose/apply; <code>team</code> owns only the
@@ -3949,7 +3949,7 @@ h5i serve --port 8080
 </tr>
 <tr>
 <td><strong>Sandbox</strong></td>
-<td>The "flight recorder" for <a href="#h5i-env-isolated-agent-sandboxes"><code>h5i env</code></a>: host-readiness strip (per-tier probe), an env fleet table with a deterministic <strong>boundary-pressure</strong> score, a five-lane (FS / NET / PROC / RESOURCE / PROVENANCE) per-run timeline, and the enforced-policy inspector. Read-only. Surfaces denials honestly — "Boundary blocked" only when enforcement fired, "Boundary pressure" for probing shapes, "Weak isolation" for capability gaps. Backed by <code>GET /api/envs</code>, <code>/api/env/:agent/:slug</code>, <code>/api/env/probe</code>.</td>
+<td>The "flight recorder" for <a href="#h5i-env"><code>h5i env</code></a>: host-readiness strip (per-tier probe), an env fleet table with a deterministic <strong>boundary-pressure</strong> score, a five-lane (FS / NET / PROC / RESOURCE / PROVENANCE) per-run timeline, and the enforced-policy inspector. Read-only. Surfaces denials honestly — "Boundary blocked" only when enforcement fired, "Boundary pressure" for probing shapes, "Weak isolation" for capability gaps. Backed by <code>GET /api/envs</code>, <code>/api/env/:agent/:slug</code>, <code>/api/env/probe</code>.</td>
 </tr>
 </tbody>
 </table>
@@ -4667,7 +4667,7 @@ h5i serve --port 8080
 </tr>
 </tbody>
 </table>
-<h3 id="sandbox--environments-h5i-env">Sandbox / environments (<a href="#h5i-env-isolated-agent-sandboxes">h5i env</a>)</h3>
+<h3 id="sandbox--environments-h5i-env">Sandbox / environments (<a href="#h5i-env">h5i env</a>)</h3>
 <table>
 <thead>
 <tr>

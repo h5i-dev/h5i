@@ -57,7 +57,7 @@ Command reference for all h5i subcommands and flags.
   - [Sending](#sending)
   - [Reading and replying](#reading-and-replying)
   - [Delivery modes](#delivery-modes)
-- [h5i env (isolated agent sandboxes)](#h5i-env-isolated-agent-sandboxes)
+- [h5i env](#h5i-env)
   - [Lifecycle commands](#lifecycle-commands)
   - [In-box git, capture & commit](#in-box-git-capture--commit)
   - [Isolation tiers](#isolation-tiers)
@@ -65,7 +65,7 @@ Command reference for all h5i subcommands and flags.
   - [Secrets broker](#secrets-broker)
   - [Services and dynamic ports](#services-and-dynamic-ports)
   - [Resource limits](#resource-limits)
-- [h5i team (auditable agent ensembles)](#h5i-team-auditable-agent-ensembles)
+- [h5i team](#h5i-team)
   - [Phase model](#phase-model)
   - [Lifecycle commands](#lifecycle-commands-1)
   - [The neutral verifier](#the-neutral-verifier-why-finalization-is-trustworthy)
@@ -86,7 +86,7 @@ Command reference for all h5i subcommands and flags.
 - [Appendix: Environment Variables](#appendix-environment-variables)
   - [Commit provenance](#commit-provenance)
   - [Tests](#tests)
-  - [Sandbox / environments ([h5i env](#h5i-env-isolated-agent-sandboxes))](#sandbox--environments-h5i-envh5i-env-isolated-agent-sandboxes)
+  - [Sandbox / environments ([h5i env](#h5i-env))](#sandbox--environments-h5i-env)
   - [Token reduction](#token-reduction)
   - [Intent / search](#intent--search)
   - [Logging](#logging)
@@ -493,7 +493,7 @@ Codex requires reviewing/trusting local hooks via `/hooks`; project-local hooks 
 
 **Bash capture-wrap (`--wrap-bash`, optional).** Adds a `PreToolUse` Bash hook (`h5i hook wrap-bash`) that rewrites every Bash command into a `h5i capture run` wrapper, so the agent receives a token-reduced summary for large/failing output while the full raw bytes stay stored and searchable via `h5i recall`. Off by default. Note: with it enabled, permission allowlists then match the rewritten `h5i capture run …` command, not the original.
 
-**Team peer-review (`--team`, optional).** Adds a second `Stop` hook — `h5i team agent hook --block` for **both Claude and Codex** (their Stop hooks share the same `{"decision":"block","reason":…}` continuation contract). When the agent is a member of a live [`h5i team`](#h5i-team-auditable-agent-ensembles) round, it keeps the agent from stopping while it still owes work, **waits** for the next review before releasing the stop, and surfaces requests between turns. Each entry carries a long per-hook `timeout` (~1830s) so the agent runtime doesn't kill it mid-wait (set as the Claude hook's `timeout`, and the Codex handler's `timeout` field); a `TEAM_DONE` signal (sent by `finalize`/`apply`) releases it. It **no-ops outside a team**, so it's safe to leave installed. This is what lets `scripts/team-run.sh` drive the full peer-review cycle hands-off — for **both** agent runtimes — with boxes staying alive between turns.
+**Team peer-review (`--team`, optional).** Adds a second `Stop` hook — `h5i team agent hook --block` for **both Claude and Codex** (their Stop hooks share the same `{"decision":"block","reason":…}` continuation contract). When the agent is a member of a live [`h5i team`](#h5i-team) round, it keeps the agent from stopping while it still owes work, **waits** for the next review before releasing the stop, and surfaces requests between turns. Each entry carries a long per-hook `timeout` (~1830s) so the agent runtime doesn't kill it mid-wait (set as the Claude hook's `timeout`, and the Codex handler's `timeout` field); a `TEAM_DONE` signal (sent by `finalize`/`apply`) releases it. It **no-ops outside a team**, so it's safe to leave installed. This is what lets `scripts/team-run.sh` drive the full peer-review cycle hands-off — for **both** agent runtimes — with boxes staying alive between turns.
 
 **MCP server (manual).** Hook setup no longer wires the MCP server — register it by hand if you want native h5i tools in Claude Code. Add the `mcpServers` block to `~/.claude/settings.json`:
 
@@ -2683,7 +2683,7 @@ instructions; agents are told to evaluate and decide.
 
 ---
 
-## h5i env (isolated agent sandboxes)
+## h5i env
 
 An **environment** is a Git-addressed, policy-confined, fully-observed unit of
 agent work — the "triple fusion" of:
@@ -2966,10 +2966,10 @@ the whole process tree (`exit 124`).
 
 ---
 
-## h5i team (auditable agent ensembles)
+## h5i team
 
 A **team** runs several agents on the *same* task in their own isolated
-[`h5i env`](#h5i-env-isolated-agent-sandboxes) workspaces and drives them through
+[`h5i env`](#h5i-env) workspaces and drives them through
 a phased, permissioned **evidence-publication** protocol — *sealed workspaces,
 permissioned reviews, auditable convergence*. It is a thin orchestration layer:
 `env` keeps owning isolation, capture, and propose/apply; `team` owns only the
@@ -3252,7 +3252,7 @@ h5i serve --port 8080
 | **Intent Graph** | Directed graph of causal commit chains |
 | **Memory** | Browse and diff agent memory snapshots linked to each commit |
 | **Sessions** | Per-commit session data: exploration footprint, uncertainty heatmap, omissions, churn |
-| **Sandbox** | The "flight recorder" for [`h5i env`](#h5i-env-isolated-agent-sandboxes): host-readiness strip (per-tier probe), an env fleet table with a deterministic **boundary-pressure** score, a five-lane (FS / NET / PROC / RESOURCE / PROVENANCE) per-run timeline, and the enforced-policy inspector. Read-only. Surfaces denials honestly — "Boundary blocked" only when enforcement fired, "Boundary pressure" for probing shapes, "Weak isolation" for capability gaps. Backed by `GET /api/envs`, `/api/env/:agent/:slug`, `/api/env/probe`. |
+| **Sandbox** | The "flight recorder" for [`h5i env`](#h5i-env): host-readiness strip (per-tier probe), an env fleet table with a deterministic **boundary-pressure** score, a five-lane (FS / NET / PROC / RESOURCE / PROVENANCE) per-run timeline, and the enforced-policy inspector. Read-only. Surfaces denials honestly — "Boundary blocked" only when enforcement fired, "Boundary pressure" for probing shapes, "Weak isolation" for capability gaps. Backed by `GET /api/envs`, `/api/env/:agent/:slug`, `/api/env/probe`. |
 
 ---
 
@@ -3552,7 +3552,7 @@ Auto-captured when the Claude Code hook is installed; you usually do not set the
 | `H5I_TEST_CONTAINER` | unset | When set, opts in the real-container (`isolation=container`) integration tests (they pull an image + make a live network call). |
 | `H5I_TEST_NET` | unset | When set, opts in the supervised `net.egress` allowlist e2e test (needs real outbound network). |
 
-### Sandbox / environments ([h5i env](#h5i-env-isolated-agent-sandboxes))
+### Sandbox / environments ([h5i env](#h5i-env))
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
