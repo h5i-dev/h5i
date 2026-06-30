@@ -1711,6 +1711,30 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_display_neutralises_csi_and_osc_sequences() {
+        let csi = sanitize_display("before\x1b[2Jafter");
+        assert_eq!(csi, "before[2Jafter");
+        assert!(!csi.chars().any(|c| c.is_control()));
+
+        let osc_title = sanitize_display("term\x1b]0;owned title\x07message");
+        assert_eq!(osc_title, "term]0;owned titlemessage");
+        assert!(!osc_title.chars().any(|c| c.is_control()));
+    }
+
+    #[test]
+    fn sanitize_display_neutralises_overwrite_and_control_chars() {
+        assert_eq!(
+            sanitize_display("safe line\rforged line"),
+            "safe line forged line"
+        );
+        assert_eq!(sanitize_display("abc\x08\x08X"), "abcX");
+
+        let controls = sanitize_display("a\0b\x7fc\u{009b}31md\u{0085}e");
+        assert_eq!(controls, "abc31mde");
+        assert!(!controls.chars().any(|c| c.is_control()));
+    }
+
+    #[test]
     fn late_arriving_older_message_is_still_delivered() {
         let (_d, repo, root) = fixture();
         // Read a current message → its id is now in bob's seen-set.
