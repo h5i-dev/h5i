@@ -2783,3 +2783,4 @@ _[Checkpoint: 6a432399 — edited pitch/index.html; edited pitch/index.html; edi
 [02:09:22] OBSERVE: read MEMORY.md
 [02:09:32] ACT: edited MEMORY.md
 [02:09:36] NOTE: Style: avoid dash punctuation in docs copy (em/en/spaced-hyphen). Cleaned all visible copy on docs/index.html + docs/pitch/index.html; only CSS/HTML comments retain dashes. Saved as feedback memory.
+[02:09:44] THINK: I'll rewrite the em-dashes in the copy I authored, replacing them with periods, colons, or commas as the flow dictates (keeping only standard compound hyphens like "fail-closed").
