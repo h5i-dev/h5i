@@ -2865,3 +2865,4 @@ _[Checkpoint: 6a43a981 — edited docs/index.html; edited docs/index.html; edite
 [12:20:40] OBSERVE: read MANUAL.md
 [12:20:49] ACT: edited MANUAL.md
 [12:22:33] THINK: Let me understand the current structure of MANUAL.
+[12:22:33] THINK: md also has a hand-written `## Table of Contents` (shown on GitHub) I'll need to update.
