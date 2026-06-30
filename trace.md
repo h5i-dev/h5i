@@ -2812,3 +2812,9 @@ _[Checkpoint: 6a4332b5 — edited index.html; wrote avoid-dashes-in-copy.md; edi
 [03:08:16] NOTE: DEFERRAL (~/Dev/h5i/docs/pitch/index.html): u to review. The 6 net-new SEO landing pages are noted as a deferred follow-up (worth canonicalizing against the existing sandboxing series + provenan…
 [03:08:16] NOTE: DEFERRAL (~/Dev/h5i/docs/pitch/index.html): rry them. The 6 net-new SEO landing pages remain a deferred follow-up
 [03:08:16] NOTE: DEFERRAL (~/Dev/h5i/docs/pitch/index.html): won't carry them. The 6 net-new SEO landing pages remain a deferred follow-up
+
+
+---
+_[Checkpoint: 6a433320 — edited index.html; wrote avoid-dashes-in-copy.md; edited MEMORY.md]_
+---
+
