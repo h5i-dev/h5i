@@ -3070,3 +3070,4 @@ _[Checkpoint: 6a44799e — edited docs/pitch/index.html; edited docs/pitch/index
 ---
 
 [02:25:16] OBSERVE: read docs/pitch/index.html
+[02:25:34] THINK: Since slide 4 is the "solved" answer with green pills, I'll color the titles green (`--green`) to match the theme and give them the same weight/strength as slide 3's red.
