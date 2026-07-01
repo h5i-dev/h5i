@@ -3048,3 +3048,4 @@ _[Checkpoint: 6a447756 — edited docs/pitch/index.html; edited docs/pitch/index
 [02:17:44] OBSERVE: read docs/pitch/index.html
 [02:17:47] OBSERVE: read docs/pitch/index.html
 [02:18:15] ACT: edited docs/pitch/index.html
+[02:18:19] THINK: I'll restructure its six feature cards into five that answer slide 3's five pains one-to-one, matching the same pill labels.
