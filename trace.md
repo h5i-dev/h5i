@@ -3321,3 +3321,9 @@ _[Checkpoint: 6a448d96 — edited docs/pitch/index.html; edited docs/pitch/index
 
 [03:51:33] ACT: edited docs/pitch/index.html
 [03:51:38] THINK: Since the content is really "one beachhead + expansion," I'll make that explicit: one emphasized beachhead card on top, then a consistent 3-card expansion row below (balanced, and every box in a row matches).
+
+
+---
+_[Checkpoint: 6a448eca — edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html]_
+---
+
