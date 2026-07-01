@@ -795,7 +795,7 @@
 
     /* ── Deck-derived sections: even spacing + separator line ── */
     #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more,
-    #what-you-saw, #primitives, #in-git {
+    #primitives, #in-git {
       padding: 120px 0; border-top: 1px solid var(--border);
     }
 
@@ -971,7 +971,7 @@
       .usecase-header { flex-direction: column; gap: 1rem; }
       .works-inner { gap: 0.8rem 1.6rem; }
       #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more,
-      #what-you-saw, #primitives, #in-git,
+      #primitives, #in-git,
       #install, #faq, #cta { padding: 80px 0; }
     }
     @media (max-width: 460px) {
@@ -1438,6 +1438,7 @@
       <span><b>Neutral</b> verifier</span>
       <span>Lives in your Git · <b>refs/h5i/*</b></span>
     </div>
+    <p style="max-width:640px;margin:1.5rem auto 0;font-size:0.98rem;color:var(--text-dim);line-height:1.6;">A live record of what each agent did, why it changed the code, and what evidence supports merging it.</p>
   </div>
 </section>
 
@@ -1454,18 +1455,6 @@
     <span class="works-item">Apache&nbsp;2.0</span>
   </div>
 </aside>
-
-<!-- ── What you just saw ─────────────────────────────────────── -->
-<section id="what-you-saw">
-  <div class="container">
-    <div class="section-head center reveal">
-      <span class="section-tag">What you just saw</span>
-      <h2 class="section-title">Not a dashboard. An acceptance layer.</h2>
-      <p class="section-sub">Every candidate above has a workspace, evidence, a review trail, and a verifier result. That is the layer behind an AI-generated change: the record of how it was produced and why it can be trusted, not a screen bolted on after the merge.</p>
-      <div class="divider"></div>
-    </div>
-  </div>
-</section>
 
 <!-- ── Problem ───────────────────────────────────────────────── -->
 <section id="problem">
