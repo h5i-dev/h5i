@@ -1179,11 +1179,21 @@
     <h2>Teams that generate code faster<br>than they can <span class="red">safely accept</span> it.</h2>
     <p class="lede" style="max-width:900px;">We spoke with dozens of developers during PhD research in AI and systems security. The repeated bottleneck was not code generation. It was <span class="cyan">safe code acceptance</span>.</p>
 
-    <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;margin-top:26px;align-items:stretch;">
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">beachhead</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.7rem;line-height:1.15;color:var(--green);">Agent-heavy engineering</span><p class="feat-desc" style="margin-top:8px;font-size:1.12rem;">Already using Claude Code, Codex, Cursor, or internal agents.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="feat-cmd" style="display:block;font-size:1.7rem;line-height:1.15;color:var(--yellow);">Platform / DevEx</span><p class="feat-desc" style="margin-top:8px;font-size:1.12rem;">Needs a standard workflow for running and reviewing many agents.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="feat-cmd" style="display:block;font-size:1.7rem;line-height:1.15;color:var(--yellow);">Security</span><p class="feat-desc" style="margin-top:8px;font-size:1.12rem;">Needs sandboxed autonomy and evidence for every blocked action.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill cyan">expansion</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.7rem;line-height:1.15;color:var(--cyan);">Governance &amp; regulated</span><p class="feat-desc" style="margin-top:8px;font-size:1.12rem;">Fintech, health, government: audit every AI-written change.</p></div>
+    <div style="margin-top:24px;display:flex;flex-direction:column;gap:16px;">
+      <div class="feat-card" style="border-color:rgba(98,201,140,0.4);background:rgba(98,201,140,0.05);display:flex;flex-direction:column;gap:6px;">
+        <span class="pill green" style="align-self:flex-start;">beachhead · buys first</span>
+        <span class="feat-cmd" style="display:block;font-size:1.9rem;line-height:1.15;color:var(--green);">Agent-heavy engineering</span>
+        <p class="feat-desc" style="font-size:1.15rem;">Already using Claude Code, Codex, Cursor, or internal agents, and drowning in unverifiable patches.</p>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <span class="mono" style="font-size:0.78rem;letter-spacing:0.16em;text-transform:uppercase;color:var(--cyan);">Expansion →</span>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:stretch;">
+          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Platform / DevEx</span><p class="feat-desc" style="margin-top:8px;">A standard workflow for running and reviewing many agents.</p></div>
+          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Security</span><p class="feat-desc" style="margin-top:8px;">Sandboxed autonomy and evidence for every blocked action.</p></div>
+          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Governance &amp; regulated</span><p class="feat-desc" style="margin-top:8px;">Fintech, health, government: audit every AI-written change.</p></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
