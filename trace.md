@@ -3105,3 +3105,9 @@ _[Checkpoint: 6a447ddd — edited docs/pitch/index.html; edited docs/pitch/index
 ---
 
 [02:39:37] NOTE: DEFERRAL (~/Dev/h5i/docs/pitch/index.html): No headless browser is installed, so I'll skip the screenshot rather than pull one in. The structural checks pass: still 11 slides, div
+
+
+---
+_[Checkpoint: 6a447de9 — edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html]_
+---
+
