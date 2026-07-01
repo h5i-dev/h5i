@@ -3400,3 +3400,4 @@ _[Checkpoint: 6a454b3b — Restructure docs front page to acceptance-layer narra
 ---
 
 [17:15:50] THINK: Let me find the body structure — the actual content sections.
+[17:15:50] THINK: Let me do a quick structural sanity check on tag balance:
