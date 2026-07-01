@@ -748,6 +748,70 @@
 
   /* Team SVG slide */
   .team-svg { width: 100%; max-width: 1040px; height: auto; display: block; margin: 6px auto 0; border: 1px solid var(--border); border-radius: 12px; }
+
+  /* ══════════════════════════════════════════════════════════
+     Mobile / small-screen reflow.
+     The deck is authored for a 1280×720 landscape stage: the body
+     is overflow:hidden and each slide is position:absolute; inset:0,
+     vertically centered. On a portrait phone that clips any slide
+     taller than the viewport and crushes the multi-column grids.
+     Here we turn the active slide into a scrollable single-column
+     card so nothing is cut off. Scoped to `screen` so the print /
+     PDF path (the 1280×720 @media print block above) is untouched.
+     ════════════════════════════════════════════════════════ */
+  @media screen and (max-width: 768px) {
+    body { overflow-x: hidden; }
+
+    /* Top-align + scroll the slide instead of centre-clipping tall content */
+    .slide {
+      padding: 74px 18px 84px;
+      justify-content: flex-start;
+      gap: 18px !important;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+    }
+    /* Content wrappers were width-capped for the wide stage — free them */
+    .slide > div[style*="max-width"] { max-width: 100% !important; }
+
+    h1 { font-size: clamp(2rem, 9vw, 2.8rem); }
+    h2 { font-size: clamp(1.55rem, 7vw, 2.2rem); }
+    .lede { font-size: 1.02rem; }
+    p, li { font-size: 1rem; }
+    .terminal { font-size: 0.8rem; }
+
+    /* Collapse every multi-column grid to a single column */
+    .g2, .g3, .g4, .lanes,
+    .ee .sbx-body { grid-template-columns: 1fr !important; }
+    /* …including the two inline-styled card rows (inline beats a class rule) */
+    .slide [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+
+    /* Horizontal card / pipeline rows stack vertically */
+    .oflow, .pipe { flex-direction: column; }
+    .pipe-step:not(:last-child)::after { display: none; }
+
+    /* Fixed label-column widths force horizontal overflow on a phone */
+    .ref-layer .ref-name, .ref-git .ref-name,
+    .rec-k, .verdict .vk, .rung .rk, .ps-lbl { min-width: 0; width: auto; }
+    .pr-sec { flex-direction: column; gap: 4px; }
+    .pr-sec .pr-h { min-width: 0; }
+
+    /* Shrink the hero wash so it doesn't dominate a tall phone slide */
+    .hero-glow { width: 130vw; height: 130vw; max-width: none; max-height: none; }
+
+    /* Dense product-UI embeds keep their shape but scroll horizontally,
+       rather than misaligning a control-room grid into one column */
+    .sandbox-embed, .ensemble-embed { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .sbx-fleet-table { min-width: 0; }
+
+    /* Slimmer fixed chrome so it doesn't crowd the narrow viewport */
+    .nav-arrow { width: 38px; height: 38px; font-size: 19px; }
+    .nav-arrow.prev { left: 8px; }
+    .nav-arrow.next { right: 8px; }
+    .slide-num { top: 14px; right: 14px; }
+    .export-btn { bottom: 14px; right: 14px; padding: 0.4rem 0.85rem; font-size: 0.7rem; }
+    .dots { bottom: 16px; }
+  }
 </style>
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Pitch Deck", "item": "https://h5i.dev/pitch/"}]}
