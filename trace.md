@@ -3369,3 +3369,4 @@ _[Checkpoint: 6a449fee — edited README.md; edited README.md; edited README.md]
 [10:33:33] OBSERVE: read docs/pitch/index.html
 [10:33:50] OBSERVE: read docs/pitch/index.html
 [10:35:41] NOTE: Mobile pitch fix: deck is fixed 1280x720 landscape (body overflow:hidden, slides position:absolute inset:0 centered) -> tall content clipped + grids crushed on phones. Adding @media screen and (max-width:768px) to make slides scrollable single-column; print @media (PDF) left intact since scoped to screen.
+[10:36:14] ACT: edited docs/pitch/index.html
