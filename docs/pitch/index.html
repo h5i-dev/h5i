@@ -637,6 +637,114 @@
   /* ── Inline paper citation link ────────────────────────────── */
   .cite { display: inline-block; margin-top: 8px; font-family: var(--mono); font-size: 0.72rem; color: var(--text-faint); text-decoration: underline; text-decoration-color: var(--border-hi); text-underline-offset: 3px; transition: color 0.18s, text-decoration-color 0.18s; }
   .cite:hover { color: var(--red-text); text-decoration-color: var(--red-text); }
+
+  /* ── Embedded h5i serve dashboard (sandbox tab) — ported from docs/index.html,
+       scoped under .ee so its palette stays self-contained on this dark deck. */
+  .ensemble-embed {
+    --bp-bg: #0a0c10; --bp-surface: #12161c; --bp-surface-2: #1a1f26;
+    --bp-elev: #232931; --bp-border: #2a3138; --bp-border-strong: #3a424b;
+    --bp-text: #f6f7f9; --bp-text-muted: #abb3bf; --bp-text-dim: #6b7785;
+    --h5-accent: #42e2d0; --h5-accent-hi: #7cefe0;
+    --h5-accent-bg: rgba(66,226,208,0.14); --h5-accent-glow: rgba(66,226,208,0.32);
+    --h5-pass: #5ee2a0; --h5-fail: #ff6b6b; --h5-run: #f0a050; --h5-model: #b48bd9;
+    --fd: var(--sans); --fm: var(--mono);
+    margin: 0 auto; max-width: 980px; width: 100%;
+    border: 1px solid #20262e; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 40px 90px rgba(0,0,0,0.55); text-align: left; color: var(--bp-text);
+  }
+  .ee-bar { display: flex; align-items: center; gap: 11px; padding: 9px 14px; background: #0d1117; border-bottom: 1px solid var(--bp-border); }
+  .ee-dots { display: flex; gap: 7px; }
+  .ee-dot { width: 11px; height: 11px; border-radius: 50%; background: #2a3138; }
+  .ee-dot.r { background: #e06c75; } .ee-dot.y { background: #e5c07b; } .ee-dot.g { background: #98c379; }
+  .ee-addr { font-family: var(--fm); font-size: 0.72rem; color: var(--bp-text-dim); }
+  .ee-addr b { color: var(--bp-text-muted); font-weight: 400; }
+  .ee-tabs { margin-left: auto; display: flex; gap: 2px; }
+  .ee-tab { font-family: var(--fm); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--bp-text-dim); padding: 4px 9px; border-radius: 5px; }
+  .ee-tab.active { color: #04201d; background: var(--h5-accent); font-weight: 700; }
+  .ee-body { padding: 18px 22px 24px; background: radial-gradient(120% 80% at 50% -10%, rgba(66,226,208,0.05), transparent 60%), var(--bp-bg); }
+
+  .ee-tag { display: inline-flex; align-items: center; font-family: var(--fm); font-size: 10px; padding: 1px 7px; border-radius: 3px; background: var(--bp-elev); color: var(--bp-text-muted); white-space: nowrap; }
+  .ee-tag.round { border-radius: 10px; }
+  .ee-tag.ok { background: rgba(94,226,160,0.14); color: var(--h5-pass); }
+  .ee-tag.pri { background: var(--h5-accent-bg); color: var(--h5-accent-hi); }
+  .ee-code { font-family: var(--fm); font-size: 10px; color: var(--h5-accent-hi); background: var(--bp-elev); border-radius: 3px; padding: 1px 5px; }
+
+  .ee .sbx-shell { display: flex; flex-direction: column; }
+  .ee .sbx-strip { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 14px; background: var(--bp-surface); border: 1px solid var(--bp-border); border-radius: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .ee .sbx-strip-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .ee .sbx-strip-label { font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); margin-right: 4px; }
+  .ee .sbx-strip-vitals { display: flex; align-items: center; gap: 18px; }
+  .ee .sbx-vital { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
+  .ee .sbx-vital-num { font-family: var(--fm); font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--bp-text); }
+  .ee .sbx-vital-label { font-family: var(--fm); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--bp-text-dim); }
+
+  .ee .sbx-body { display: grid; grid-template-columns: minmax(300px, 38%) 1fr; gap: 14px; }
+  .ee .sbx-fleet { display: flex; flex-direction: column; border: 1px solid var(--bp-border); border-radius: 8px; overflow: hidden; }
+  .ee .sbx-fleet-header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-family: var(--fd); font-weight: 600; font-size: 13px; color: var(--bp-text); border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
+  .ee .sbx-filters { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 10px; border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
+  .ee .sbx-chip { font-family: var(--fm); font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--bp-border); background: transparent; color: var(--bp-text-muted); }
+  .ee .sbx-chip.active { background: var(--h5-accent-hi); border-color: var(--h5-accent-hi); color: #0b0e12; font-weight: 600; }
+  .ee .sbx-fleet-body { flex: 1; overflow: auto; }
+  .ee .sbx-fleet-table { width: 100%; min-width: 380px; border-collapse: collapse; }
+  .ee .sbx-fleet-table th { text-align: left; font-family: var(--fm); font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--bp-text-dim); padding: 6px 10px; border-bottom: 1px solid var(--bp-border); }
+  .ee .sbx-fleet-table td { padding: 8px 10px; border-bottom: 1px solid var(--bp-border); vertical-align: middle; }
+  .ee .sbx-fleet-table tbody tr:last-child td { border-bottom: none; }
+  .ee .sbx-fleet-table tr.selected td { background: var(--bp-surface-2); }
+  .ee .sbx-env-id { font-family: var(--fd); font-weight: 600; font-size: 13px; color: var(--bp-text); white-space: nowrap; }
+  .ee .sbx-env-sub { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); }
+  .ee .sbx-drift { color: var(--h5-run); }
+  .ee .sbx-status { font-size: 12px; color: var(--bp-text-muted); font-family: var(--fm); }
+
+  .ee .sbx-pressure { display: inline-flex; align-items: center; gap: 6px; font-family: var(--fm); font-size: 12px; }
+  .ee .sbx-pressure.clean { color: var(--h5-pass); font-size: 11px; }
+  .ee .sbx-pressure-score { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 18px; }
+  .ee .sbx-pressure.warning .sbx-pressure-score { color: var(--h5-run); }
+  .ee .sbx-pressure-bar { width: 56px; height: 6px; border-radius: 3px; background: var(--bp-surface-2); overflow: hidden; }
+  .ee .sbx-pressure-fill { display: block; height: 100%; background: var(--bp-text-dim); }
+  .ee .sbx-pressure.warning .sbx-pressure-fill { background: var(--h5-run); }
+
+  .ee .sbx-detail { display: flex; flex-direction: column; border: 1px solid var(--bp-border); border-radius: 8px; overflow: hidden; }
+  .ee .sbx-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
+  .ee .sbx-detail-title { font-family: var(--fd); font-size: 15px; font-weight: 600; color: var(--bp-text); margin-right: 10px; }
+  .ee .sbx-detail-digest { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); margin-left: 8px; }
+  .ee .sbx-detail-body { padding: 13px 14px; display: flex; flex-direction: column; gap: 14px; }
+  .ee .sbx-findings { display: flex; flex-direction: column; gap: 6px; }
+  .ee .sbx-finding { display: flex; align-items: baseline; gap: 8px; padding: 7px 10px; border-radius: 4px; font-size: 12px; background: var(--bp-surface); border-left: 3px solid var(--bp-border); }
+  .ee .sbx-finding.warning { border-left-color: var(--h5-run); }
+  .ee .sbx-finding-title { font-family: var(--fd); font-weight: 600; white-space: nowrap; color: var(--bp-text); }
+  .ee .sbx-finding-detail { color: var(--bp-text-muted); flex: 1; }
+  .ee .sbx-lane-chip { font-family: var(--fm); font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 3px; color: #0b0e12; }
+  .ee .lane-net { background: #f0a050; }
+
+  .ee .sbx-timeline { border: 1px solid var(--bp-border); border-radius: 6px; overflow: hidden; }
+  .ee .sbx-timeline-head { padding: 6px 10px; font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); background: var(--bp-surface); border-bottom: 1px solid var(--bp-border); }
+  .ee .sbx-lane-grid { display: flex; flex-direction: column; }
+  .ee .sbx-lane-row { display: grid; grid-template-columns: minmax(200px, 1.4fr) repeat(3, 1fr); border-bottom: 1px solid var(--bp-border); }
+  .ee .sbx-lane-row:last-child { border-bottom: none; }
+  .ee .sbx-lane-policy { background: var(--bp-surface); }
+  .ee .sbx-run-cell { padding: 6px 10px; border-right: 1px solid var(--bp-border); min-width: 0; }
+  .ee .sbx-run-policy { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); display: flex; align-items: center; }
+  .ee .sbx-run-cmd { font-family: var(--fm); font-size: 12px; color: var(--bp-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ee .sbx-run-meta { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); }
+  .ee .sbx-lane-cell { padding: 6px 8px; border-right: 1px solid var(--bp-border); display: flex; flex-direction: column; gap: 2px; align-items: flex-start; justify-content: center; min-width: 0; }
+  .ee .sbx-lane-cell:last-child { border-right: none; }
+  .ee .sbx-lane-name { font-family: var(--fm); font-size: 10px; font-weight: 700; color: var(--bp-text-dim); }
+  .ee .sbx-lane-allow { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .ee .sbx-verdict { font-family: var(--fm); font-size: 11px; white-space: nowrap; }
+  .ee .sbx-verdict.none { color: var(--bp-border-strong); }
+  .ee .sbx-verdict.ok { color: var(--h5-pass); }
+  .ee .sbx-verdict.warning { color: var(--h5-run); font-weight: 600; }
+
+  .ee .sbx-policy { border: 1px solid var(--bp-border); border-radius: 6px; overflow: hidden; }
+  .ee .sbx-policy-head { padding: 6px 10px; font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); background: var(--bp-surface); border-bottom: 1px solid var(--bp-border); }
+  .ee .sbx-policy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1px; background: var(--bp-border); }
+  .ee .sbx-policy-row { display: flex; gap: 8px; padding: 5px 10px; background: var(--bp-bg); font-size: 12px; }
+  .ee .sbx-policy-key { color: var(--bp-text-dim); min-width: 66px; font-family: var(--fm); }
+  .ee .sbx-policy-val { color: var(--bp-text); font-family: var(--fm); word-break: break-word; flex: 1; }
+  @media (max-width: 720px) { .ee .sbx-body { grid-template-columns: 1fr; } }
+
+  /* Team SVG slide */
+  .team-svg { width: 100%; max-width: 1040px; height: auto; display: block; margin: 6px auto 0; border: 1px solid var(--border); border-radius: 12px; }
 </style>
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Pitch Deck", "item": "https://h5i.dev/pitch/"}]}
@@ -759,97 +867,202 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 6 — h5i team (the centerpiece) — phase model
+     SLIDE 5 — Prompt versioning & persistent context
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
   <div style="width:100%;max-width:1080px;">
-    <div class="section-tag">The killer workflow</div>
-    <h2><code style="font-size:0.82em;">h5i team</code> turns many attempts<br>into <span class="red">one verified verdict</span>.</h2>
-    <p class="lede" style="max-width:840px;">A thin Git-native protocol: roster, sealed submissions, review, neutral verifier, verdict. <span class="cyan">Not a group chat. Not a daemon.</span></p>
+    <div class="section-tag">Prompts &amp; memory</div>
+    <h2>Every prompt and every thought,<br><span class="red">versioned in Git</span>.</h2>
+    <p class="lede" style="max-width:860px;">h5i attaches the human prompt and the model to each commit, and carries the agent's reasoning across sessions. Recall either straight from the repo.</p>
 
-    <div class="pipe" style="margin-top:22px;">
-      <div class="pipe-step"><span class="pn">01 · create</span><span class="pt">Roster</span><span class="pd">N envs, each a persona: runtime · model · role</span></div>
-      <div class="pipe-step"><span class="pn">02 · dispatch</span><span class="pt">One task → all</span><span class="pd">single broadcast over <code>h5i msg</code></span></div>
-      <div class="pipe-step key"><span class="pn">03 · independent</span><span class="pt">Sealed work</span><span class="pd">no agent sees a peer's attempt</span></div>
-      <div class="pipe-step key"><span class="pn">04 · freeze</span><span class="pt">Submissions</span><span class="pd">immutable frozen candidates</span></div>
-      <div class="pipe-step"><span class="pn">05 · review</span><span class="pt">Permissioned</span><span class="pd">scoped peer review + opt-in discuss</span></div>
-      <div class="pipe-step key"><span class="pn">06 · verify</span><span class="pt">Neutral judge</span><span class="pd">sandboxed replay at shared base</span></div>
-      <div class="pipe-step"><span class="pn">07 · verdict</span><span class="pt">Apply winner</span><span class="pd">explainable, gated, one patch</span></div>
-    </div>
-    <p class="mono" style="margin-top:12px;font-size:0.82rem;color:var(--text-faint);text-align:center;">⟵ <span class="red">independence-first:</span> diversity is protected until <code>freeze</code> · discussion is opt-in and logged afterward ⟶</p>
+    <div class="g2" style="margin-top:20px;align-items:start;">
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <span class="pill green">prompts</span>
+        <div class="terminal">
+          <div class="terminal-bar">
+            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+            <span class="terminal-path">prompt provenance</span>
+          </div>
+          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --limit 2</span>
+<span class="t-bold">commit 6dce2176</span>  <span class="t-cmt"># recast the product slide</span>
+<span class="t-out">Agent:</span>  <span class="t-ai">claude-code (claude-opus-4-8)</span>
+<span class="t-out">Prompt:</span> <span class="t-out">"restructure slide 4 so each item</span>
+<span class="t-out">         answers one of the five pains…"</span>
 
-    <div class="card card-red" style="margin-top:16px;padding:14px 20px;">
-      <div class="mono" style="font-size:0.98rem;color:var(--ink);line-height:1.55;">a roster member is a <span class="red">persona, not a backend</span>: three Claudes with different skills, a Claude+Codex mix, or one model under two roles.<br><span class="cyan">the audit records which configuration produced which candidate.</span></div>
+<span class="t-bold">commit 19c32d6f</span>  <span class="t-cmt"># drop the kicker line</span>
+<span class="t-out">Agent:</span>  <span class="t-ai">claude-code (claude-opus-4-8)</span>
+<span class="t-out">Prompt:</span> <span class="t-out">"remove 'every agent needs an</span>
+<span class="t-out">         auditable workspace'…"</span></pre></div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <span class="pill green">context</span>
+        <div class="terminal">
+          <div class="terminal-bar">
+            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+            <span class="terminal-path">persistent context</span>
+          </div>
+          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context show</span>
+<span class="t-cmt">── Context (depth=2) ──────────────────</span>
+  <span class="t-out">Goal:</span> <span class="t-bold">redesign the pitch into feature slides</span>
+  <span class="t-out">Recent Trace:</span>
+    <span class="t-ai">THINK</span>    reuse the sandbox tab for env
+    <span class="t-pass">ACT</span>      edited docs/pitch/index.html
+    <span class="t-out">OBSERVE</span>  read docs/index.html
+  <span class="t-out">Open TODOs:</span>
+    <span class="t-warn">□</span> port the sandbox CSS under .ee</pre></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 7 — The workflow / control room
+     SLIDE 6 — h5i env (the supervised sandbox)
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:18px;">
+  <div style="width:100%;max-width:1040px;">
+    <div class="section-tag">The sandbox</div>
+    <h2><code style="font-size:0.82em;">h5i env</code> puts every agent in a<br><span class="red">supervised sandbox</span>.</h2>
+    <p class="lede" style="max-width:880px;">A policy-enforced worktree per agent: tiered isolation and a network egress allowlist. Every run is a fail-closed, secret-redacted flight record.</p>
+
+    <div class="ensemble-embed ee" style="margin-top:12px;" role="group" aria-label="A static preview of the h5i serve dashboard's Sandbox tab: an environment fleet, per-run flight recorder, and the enforced policy.">
+      <div class="ee-bar">
+        <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
+        <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span>
+        <div class="ee-tabs">
+          <span class="ee-tab">Ensemble</span>
+          <span class="ee-tab active">Sandbox</span>
+          <span class="ee-tab">Context</span>
+        </div>
+      </div>
+      <div class="ee-body">
+        <div class="sbx-shell">
+          <div class="sbx-strip">
+            <div class="sbx-strip-group">
+              <span class="sbx-strip-label">host</span>
+              <span class="ee-tag ok">workspace ✓</span>
+              <span class="ee-tag ok">process ✓</span>
+              <span class="ee-tag ok">supervised ✓</span>
+              <span class="ee-tag ok">container ✓</span>
+              <span class="ee-tag ok">cgroups ✓</span>
+            </div>
+            <div class="sbx-strip-vitals">
+              <span class="sbx-vital"><span class="sbx-vital-num">3</span><span class="sbx-vital-label">active</span></span>
+              <span class="sbx-vital"><span class="sbx-vital-num" style="color:var(--h5-accent-hi)">1</span><span class="sbx-vital-label">proposed</span></span>
+              <span class="sbx-vital"><span class="sbx-vital-num" style="color:var(--h5-fail)">1</span><span class="sbx-vital-label">boundary trips</span></span>
+              <span class="sbx-vital"><span class="sbx-vital-num">12</span><span class="sbx-vital-label">captures</span></span>
+            </div>
+          </div>
+          <div class="sbx-body">
+            <div class="sbx-fleet">
+              <div class="sbx-fleet-header"><span>Environments</span><span class="ee-tag round">3</span></div>
+              <div class="sbx-filters">
+                <span class="sbx-chip active">all</span>
+                <span class="sbx-chip">running</span>
+                <span class="sbx-chip">proposed</span>
+                <span class="sbx-chip">pressure</span>
+                <span class="sbx-chip">container</span>
+              </div>
+              <div class="sbx-fleet-body">
+                <table class="sbx-fleet-table">
+                  <thead><tr><th>Env</th><th>Isolation</th><th>Status</th><th>Pressure</th></tr></thead>
+                  <tbody>
+                    <tr class="selected">
+                      <td><div class="sbx-env-id">codex-1/<br>fix-auth</div><div class="sbx-env-sub">5 caps</div></td>
+                      <td><span class="ee-tag ok">container</span></td>
+                      <td><span class="sbx-status">proposed</span></td>
+                      <td><span class="sbx-pressure warning"><span class="sbx-pressure-score">38</span><span class="sbx-pressure-bar"><span class="sbx-pressure-fill" style="width:38%"></span></span></span></td>
+                    </tr>
+                    <tr>
+                      <td><div class="sbx-env-id">claude-1/<br>fix-auth</div><div class="sbx-env-sub">4 caps</div></td>
+                      <td><span class="ee-tag ok">container</span></td>
+                      <td><span class="sbx-status">idle</span></td>
+                      <td><span class="sbx-pressure clean">clean</span></td>
+                    </tr>
+                    <tr>
+                      <td><div class="sbx-env-id">claude-2/<br>fix-auth</div><div class="sbx-env-sub">3 caps<span class="sbx-drift"><br>behind 2</span></div></td>
+                      <td><span class="ee-tag pri">process</span></td>
+                      <td><span class="sbx-status">idle</span></td>
+                      <td><span class="sbx-pressure clean">clean</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="sbx-detail">
+              <div class="sbx-detail-head">
+                <div><span class="sbx-detail-title">codex-1/fix-auth</span><span class="ee-tag ok">container</span><span class="sbx-detail-digest">a3f1c0d8e7b4</span></div>
+                <span class="sbx-pressure warning"><span class="sbx-pressure-score">38</span><span class="sbx-pressure-bar"><span class="sbx-pressure-fill" style="width:38%"></span></span></span>
+              </div>
+              <div class="sbx-detail-body">
+                <div class="sbx-findings">
+                  <div class="sbx-finding warning">
+                    <span class="sbx-lane-chip lane-net">NET</span>
+                    <span class="sbx-finding-title">egress denied</span>
+                    <span class="sbx-finding-detail">CONNECT pypi.org:443 blocked: not in the net.egress allowlist (fail-closed)</span>
+                    <code class="ee-code">cap-7f3a</code>
+                  </div>
+                </div>
+
+                <div class="sbx-timeline">
+                  <div class="sbx-timeline-head">Flight recorder · 2 runs</div>
+                  <div class="sbx-lane-grid">
+                    <div class="sbx-lane-row sbx-lane-policy">
+                      <div class="sbx-run-cell sbx-run-policy">policy allows →</div>
+                      <div class="sbx-lane-cell"><div class="sbx-lane-name">FS</div><div class="sbx-lane-allow">$WORK rw</div></div>
+                      <div class="sbx-lane-cell"><div class="sbx-lane-name">NET</div><div class="sbx-lane-allow">allow 2</div></div>
+                      <div class="sbx-lane-cell"><div class="sbx-lane-name">PROC</div><div class="sbx-lane-allow">any tool</div></div>
+                    </div>
+                    <div class="sbx-lane-row">
+                      <div class="sbx-run-cell"><div class="sbx-run-cmd">cargo test --workspace</div><div class="sbx-run-meta">exit 0 · 14:32:01</div></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict ok">✓</span></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
+                    </div>
+                    <div class="sbx-lane-row">
+                      <div class="sbx-run-cell"><div class="sbx-run-cmd">pip install requests</div><div class="sbx-run-meta">exit 1 · 14:33:18</div></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict warning">⚠ pressure</span></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="sbx-policy">
+                  <div class="sbx-policy-head">Enforced policy · what was actually allowed</div>
+                  <div class="sbx-policy-grid">
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">isolation</span><span class="sbx-policy-val">container</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">net.mode</span><span class="sbx-policy-val">deny</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">net.egress</span><span class="sbx-policy-val">github.com, crates.io</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">fs.write</span><span class="sbx-policy-val">$WORK</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">tools</span><span class="sbx-policy-val">(unrestricted)</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">env.pass</span><span class="sbx-policy-val">CARGO_HOME, PATH</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">wall</span><span class="sbx-policy-val">900s</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">mem</span><span class="sbx-policy-val">2G</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SLIDE 7 — h5i team (the convergence)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:20px;">
   <div style="width:100%;max-width:1080px;">
-    <div class="section-tag">The workflow</div>
-    <h2>Independent attempts in.<br><span class="red">One auditable winner</span> out.</h2>
+    <div class="section-tag">The team</div>
+    <h2><code style="font-size:0.82em;">h5i team</code> turns many attempts<br>into <span class="red">one verified result</span>.</h2>
+    <p class="lede" style="max-width:900px;">One task fans out to sealed agents. They peer-review, a neutral verifier replays and tests every candidate, and only the winner merges. Each agent's tool output runs through <code>h5i capture run</code>, keeping raw logs out of context for <span class="green">up to 95% less</span> token waste.</p>
 
-    <div class="lanes" style="margin-top:18px;">
-      <div class="lane">
-        <div class="lane-head"><span class="lane-who">claude-arch</span><span class="lane-role">architect</span></div>
-        <div class="lane-body"><span class="ls green">submitted ✓</span><span class="lf">5 files · sealed candidate</span></div>
-      </div>
-      <div class="lane">
-        <div class="lane-head"><span class="lane-who">codex</span><span class="lane-role">implementer</span></div>
-        <div class="lane-body"><span class="ls yellow">1 test failing</span><span class="lf">re-running · not yet sealed</span></div>
-      </div>
-      <div class="lane win">
-        <div class="lane-head"><span class="lane-who">claude-impl</span><span class="lane-role">implementer</span></div>
-        <div class="lane-body"><span class="ls green">submitted ✓</span><span class="lf">3 files · verifier: pass</span></div>
-      </div>
-      <div class="lane">
-        <div class="lane-head"><span class="lane-who">claude-skeptic</span><span class="lane-role">skeptic</span></div>
-        <div class="lane-body"><span class="ls cyan">review open</span><span class="lf">scoped diff + tests only</span></div>
-      </div>
-    </div>
-
-    <div class="terminal" style="margin-top:18px;">
-      <div class="terminal-bar">
-        <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-        <span class="terminal-path">~/my-project · h5i team: fix-auth</span>
-      </div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i team create fix-auth --base HEAD</span>            <span class="t-cmt"># roster of persona envs</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team dispatch fix-auth &lt; task.md</span> <span class="t-cmt"># one broadcast → all agents</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team freeze fix-auth</span>                        <span class="t-cmt"># seals independent attempts</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team verify fix-auth -- cargo test</span>          <span class="t-ai"># neutral, sandboxed replay</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team apply fix-auth</span>   <span class="t-pass">→ verdict: claude-impl (gates pass, smallest diff)</span></pre></div>
-    </div>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 8 — The neutral verifier
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:22px;">
-  <div style="width:100%;max-width:1040px;">
-    <div class="section-tag">Fair by construction</div>
-    <h2>A neutral verifier picks the winner,<br>not the <span class="red">loudest agent</span>.</h2>
-    <p class="lede" style="max-width:820px;">Finalization never trusts an agent's own captures. For each frozen candidate, <code>h5i team verify</code> replays it at the <span class="cyan">shared base</span> in a fresh, sandboxed worktree and runs the declared command itself.</p>
-
-    <div class="g2" style="margin-top:20px;align-items:start;gap:26px;">
-      <div style="display:flex;flex-direction:column;gap:12px;">
-        <div class="feat-card"><span class="feat-cmd">hard gates first</span><p class="feat-desc" style="margin-top:6px;">Tests must pass and the patch must apply cleanly, measured by the verifier, not the author.</p></div>
-        <div class="feat-card"><span class="feat-cmd">can't game it</span><p class="feat-desc" style="margin-top:6px;">Smallest-diff only breaks ties <em>among gate-passers</em>, so no candidate wins by deleting tests or stubbing features.</p></div>
-        <div class="feat-card"><span class="feat-cmd">no_verdict &gt; wrong verdict</span><p class="feat-desc" style="margin-top:6px;">If nothing clears the gates it stops and pings a human. Apply is gated; <code>--force</code> is explicit and logged.</p></div>
-      </div>
-      <div class="verdict">
-        <div class="vh">verdict · explainable by default</div>
-        <div class="vrow"><span class="vk">winner</span><span class="vv"><span class="green">claude-impl</span> · submission 7f3a</span></div>
-        <div class="vrow"><span class="vk">method</span><span class="vv">VerifierTestsPass · AppliesCleanly · SmallestDiff</span></div>
-        <div class="vrow"><span class="vk">command</span><span class="vv"><code>cargo test</code> · supervised tier</span></div>
-        <div class="vrow"><span class="vk">codex</span><span class="vv"><span class="red">rejected</span>: 1 test failed at base</span></div>
-        <div class="vrow"><span class="vk">claude-arch</span><span class="vv"><span class="yellow">passed gates</span>: larger diff, lost tie</span></div>
-        <div class="vrow"><span class="vk">apply</span><span class="vv"><span class="green">can_auto_apply ✓</span></span></div>
-      </div>
-    </div>
+    <img class="team-svg" src="/_static/hero-team.svg" width="1280" height="420" loading="lazy" alt="h5i team: one task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo.">
   </div>
 </div>
 
