@@ -703,33 +703,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 3 — The problem (fragile one + naive-team pileup)
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:22px;">
-  <div style="width:100%;max-width:1020px;">
-    <div class="section-tag">The problem</div>
-    <h2>One agent is fragile.<br>Naive teams are a <span class="red">pileup</span>.</h2>
-    <p class="lede" style="max-width:840px;">Route a task through one model and every risk concentrates in one opaque run. Spawn five agents on one repo with no coordination layer and the gaps compound into collisions.</p>
-
-    <div class="g2" style="margin-top:18px;align-items:start;gap:22px;">
-      <div class="fm">
-        <div class="fm-row head"><div class="fm-cell">One agent, unaudited</div><div class="fm-cell">What happens</div></div>
-        <div class="fm-row"><div class="fm-cell">Opaque provenance</div><div class="fm-cell">The diff lands; the prompt, model, and commands behind it are gone.</div></div>
-        <div class="fm-row"><div class="fm-cell">Unsafe autonomy</div><div class="fm-cell">An agent runs destructive commands without enough containment.</div></div>
-        <div class="fm-row"><div class="fm-cell">Review overload</div><div class="fm-cell">Humans can't reconstruct every prompt, command, and retry.</div></div>
-      </div>
-      <div class="fm">
-        <div class="fm-row head"><div class="fm-cell">Many agents, uncoordinated</div><div class="fm-cell">What happens</div></div>
-        <div class="fm-row"><div class="fm-cell">Environment conflict</div><div class="fm-cell">Agents overwrite each other's files, ports, caches, and branches.</div></div>
-        <div class="fm-row"><div class="fm-cell">Context contamination</div><div class="fm-cell">Agents see each other's output before attempting independently.</div></div>
-        <div class="fm-row"><div class="fm-cell">No fair winner</div><div class="fm-cell">Many patches, but no neutral evidence for which one to merge.</div></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 4 — Already painful (honest, measured)
+     SLIDE 3 — Already painful (honest, measured)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:980px;">
@@ -756,6 +730,34 @@
     </div>
 
     <p class="kicker" style="margin-top:20px;text-align:center;">Runaway cost and destructive autonomy are exactly what a coordination layer is built to contain.</p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SLIDE 4 — The problem (three compounding pains)
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:22px;">
+  <div style="width:100%;max-width:1060px;">
+    <div class="section-tag">The problem</div>
+    <h2>Three pains that <span class="red">compound</span> with every agent.</h2>
+
+    <div class="g3" style="margin-top:28px;align-items:stretch;gap:22px;">
+      <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
+        <span class="pill red">context</span>
+        <h3 style="margin-top:12px;font-size:clamp(1.25rem,2vw,1.6rem);">Lost context, unversioned prompts</h3>
+        <p class="feat-desc" style="margin-top:10px;font-size:clamp(1rem,1.6vw,1.2rem);line-height:1.5;">An agent forgets what it did, and prompts are never version-controlled, so you can't improve them or reproduce a result.</p>
+      </div>
+      <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
+        <span class="pill red">safety</span>
+        <h3 style="margin-top:12px;font-size:clamp(1.25rem,2vw,1.6rem);">Unsafe autonomy</h3>
+        <p class="feat-desc" style="margin-top:10px;font-size:clamp(1rem,1.6vw,1.2rem);line-height:1.5;">An agent can wreck the environment, download malware, or send your secrets somewhere they should never go.</p>
+      </div>
+      <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
+        <span class="pill red">scale</span>
+        <h3 style="margin-top:12px;font-size:clamp(1.25rem,2vw,1.6rem);">Multi-agent waste</h3>
+        <p class="feat-desc" style="margin-top:10px;font-size:clamp(1rem,1.6vw,1.2rem);line-height:1.5;">Several agents burn tokens re-reading the repo and collide with each other, with no fair way to pick a winner.</p>
+      </div>
+    </div>
   </div>
 </div>
 
