@@ -703,61 +703,42 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 3 — Already painful (honest, measured)
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:24px;">
-  <div style="width:100%;max-width:980px;">
-    <div class="section-tag">Already painful</div>
-    <h2>The pain is <span class="red">already here</span>.</h2>
-    <p class="lede" style="max-width:820px;">Cost and autonomy risk are real today, and an unmanaged agent team multiplies both.</p>
-
-    <div class="g3" style="margin-top:24px;align-items:stretch;">
-      <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
-        <span class="pill red">reported · 2025</span>
-        <span class="mv" style="font-size:2.0rem;line-height:1.05;">prod data<br>wiped</span>
-        <span class="ml">AI coding agents have deleted production databases and ignored stop instructions, widely reported in 2025.</span>
-      </div>
-      <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
-        <span class="pill yellow">budget line</span>
-        <span class="mv" style="font-size:2.0rem;line-height:1.05;">token<br>ceilings</span>
-        <span class="ml">Agent token spend is now a tracked operational cost; teams set hard ceilings after surprising bills.</span>
-      </div>
-      <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
-        <span class="pill green">measured · h5i</span>
-        <span class="mv" style="font-size:2.6rem;">95%</span>
-        <span class="ml">Up to 95% less token waste in our own runs; raw tool logs kept out of context, recoverable on demand.</span>
-      </div>
-    </div>
-
-    <p class="kicker" style="margin-top:20px;text-align:center;">Runaway cost and destructive autonomy are exactly what a coordination layer is built to contain.</p>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 4 — The problem (three compounding pains)
+     SLIDE 3 — The problem (five pains → auditable workspace)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
-  <div style="width:100%;max-width:1060px;">
+  <div style="width:100%;max-width:1120px;">
     <div class="section-tag">The problem</div>
-    <h2>Three pains that <span class="red">compound</span> with every agent.</h2>
+    <h2>The pain is <span class="red">already here</span>.</h2>
 
-    <div class="g3" style="margin-top:28px;align-items:stretch;gap:22px;">
-      <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin-top:26px;align-items:stretch;">
+      <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
+        <span class="pill red">prompts</span>
+        <span class="mv" style="font-size:1.4rem;line-height:1.15;">Unversioned prompts</span>
+        <span class="ml">Prompts aren't version-controlled, so you can't improve them or reproduce a result.</span>
+      </div>
+      <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
         <span class="pill red">context</span>
-        <h3 style="margin-top:12px;font-size:clamp(1.25rem,2vw,1.6rem);">Lost context, unversioned prompts</h3>
-        <p class="feat-desc" style="margin-top:10px;font-size:clamp(1rem,1.6vw,1.2rem);line-height:1.5;">An agent forgets what it did, and prompts are never version-controlled, so you can't improve them or reproduce a result.</p>
+        <span class="mv" style="font-size:1.4rem;line-height:1.15;">Lost context</span>
+        <span class="ml">The agent forgets what it did; every session re-grounds from scratch.</span>
       </div>
-      <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
+      <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
         <span class="pill red">safety</span>
-        <h3 style="margin-top:12px;font-size:clamp(1.25rem,2vw,1.6rem);">Unsafe autonomy</h3>
-        <p class="feat-desc" style="margin-top:10px;font-size:clamp(1rem,1.6vw,1.2rem);line-height:1.5;">An agent can wreck the environment, download malware, or send your secrets somewhere they should never go.</p>
+        <span class="mv" style="font-size:1.4rem;line-height:1.15;">Unsafe, unmonitored autonomy</span>
+        <span class="ml">An agent can wreck the environment, download malware, or exfiltrate secrets, unwatched.</span>
       </div>
-      <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
-        <span class="pill red">scale</span>
-        <h3 style="margin-top:12px;font-size:clamp(1.25rem,2vw,1.6rem);">Multi-agent waste</h3>
-        <p class="feat-desc" style="margin-top:10px;font-size:clamp(1rem,1.6vw,1.2rem);line-height:1.5;">Several agents burn tokens re-reading the repo and collide with each other, with no fair way to pick a winner.</p>
+      <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
+        <span class="pill red">tokens</span>
+        <span class="mv" style="font-size:1.4rem;line-height:1.15;">Multi-agent waste</span>
+        <span class="ml">Each agent re-reads the whole repo and burns tokens no one is tracking.</span>
+      </div>
+      <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
+        <span class="pill red">conflict</span>
+        <span class="mv" style="font-size:1.4rem;line-height:1.15;">Multi-agent conflict</span>
+        <span class="ml">Agents overwrite each other's files and branches, with no fair winner.</span>
       </div>
     </div>
+
+    <p class="kicker" style="margin-top:26px;text-align:center;font-size:clamp(1.15rem,2.2vw,1.6rem);color:var(--ink);">This is why every agent needs an <span class="red">auditable workspace</span>.</p>
   </div>
 </div>
 
