@@ -3253,3 +3253,9 @@ _[Checkpoint: 6a448732 — edited docs/pitch/index.html; edited docs/pitch/index
 
 [03:21:18] ACT: edited docs/pitch/index.html
 [03:21:24] THINK: I'll restyle the "Who buys" boxes to match slide 4's pattern — big colored titles with short phrases in a centered flex-wrap — add a fifth buyer, and color the titles gold (fitting a market/buyers slide).
+
+
+---
+_[Checkpoint: 6a4487b5 — edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html]_
+---
+
