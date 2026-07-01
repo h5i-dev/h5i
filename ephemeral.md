@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: improve-website
+# Ephemeral traces — Branch: improve-pitch-mobile
 
