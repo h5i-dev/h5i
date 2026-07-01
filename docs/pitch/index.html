@@ -433,6 +433,9 @@
       break-after: page;
       overflow: hidden;
     }
+    /* The embedded dashboard is the tallest element on the deck; pin it to a
+       size that fits one 720px page in the PDF (screen uses a lighter zoom). */
+    .sandbox-embed { zoom: 0.75 !important; }
   }
   /* ── Accessibility ───────────────────────────────────────── */
   a:focus-visible, button:focus-visible, summary:focus-visible {
@@ -741,7 +744,7 @@
   .ee .sbx-policy-row { display: flex; gap: 8px; padding: 5px 10px; background: var(--bp-bg); font-size: 12px; }
   .ee .sbx-policy-key { color: var(--bp-text-dim); min-width: 66px; font-family: var(--fm); }
   .ee .sbx-policy-val { color: var(--bp-text); font-family: var(--fm); word-break: break-word; flex: 1; }
-  @media (max-width: 720px) { .ee .sbx-body { grid-template-columns: 1fr; } }
+  @media screen and (max-width: 720px) { .ee .sbx-body { grid-template-columns: 1fr; } }
 
   /* Team SVG slide */
   .team-svg { width: 100%; max-width: 1040px; height: auto; display: block; margin: 6px auto 0; border: 1px solid var(--border); border-radius: 12px; }
@@ -927,7 +930,7 @@
     <h2><span class="red">Supervised sandbox</span> for agents.</h2>
     <p class="lede" style="max-width:880px;">A sandboxed worktree per agent: tiered isolation and a network egress allowlist.</p>
 
-    <div class="ensemble-embed ee" style="margin-top:12px;zoom:0.82;" role="group" aria-label="A static preview of the h5i serve dashboard's Sandbox tab: an environment fleet, per-run flight recorder, and the enforced policy.">
+    <div class="ensemble-embed ee sandbox-embed" style="margin-top:12px;zoom:0.82;" role="group" aria-label="A static preview of the h5i serve dashboard's Sandbox tab: an environment fleet, per-run flight recorder, and the enforced policy.">
       <div class="ee-bar">
         <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
         <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span>
