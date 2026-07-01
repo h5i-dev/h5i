@@ -3120,3 +3120,4 @@ _[Checkpoint: 6a447e19 — edited docs/pitch/index.html; edited docs/pitch/index
 
 [02:47:14] ACT: edited docs/pitch/index.html
 [02:47:50] ACT: edited docs/pitch/index.html
+[02:48:01] THINK: Let me generate a representative capture (raw output → filtered summary) to copy the exact format.
