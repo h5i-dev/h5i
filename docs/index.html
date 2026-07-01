@@ -795,7 +795,7 @@
 
     /* ── Deck-derived sections: even spacing + separator line ── */
     #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more,
-    #primitives, #in-git {
+    #whatis, #primitives, #in-git {
       padding: 120px 0; border-top: 1px solid var(--border);
     }
 
@@ -971,7 +971,7 @@
       .usecase-header { flex-direction: column; gap: 1rem; }
       .works-inner { gap: 0.8rem 1.6rem; }
       #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more,
-      #primitives, #in-git,
+      #whatis, #primitives, #in-git,
       #install, #faq, #cta { padding: 80px 0; }
     }
     @media (max-width: 460px) {
@@ -1439,6 +1439,44 @@
       <span>Lives in your Git · <b>refs/h5i/*</b></span>
     </div>
     <p style="max-width:640px;margin:1.5rem auto 0;font-size:0.98rem;color:var(--text-dim);line-height:1.6;">A live record of what each agent did, why it changed the code, and what evidence supports merging it.</p>
+  </div>
+</section>
+
+<!-- ── What h5i is ───────────────────────────────────────────── -->
+<section id="whatis">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">What h5i is</span>
+      <h2 class="section-title">A sandboxed, auditable workspace for AI coding agents.</h2>
+      <p class="section-sub">h5i (pronounced <em>high-five</em>) gives every AI coding agent a sandboxed Git worktree, and records the prompts, commands, logs, policies, and reviews behind every change. Run one agent safely, scale to many via a conflict-free multi-agent orchestra, then merge one auditable result. It all lives in your repo, carried by Git, with no SaaS.</p>
+      <div class="divider"></div>
+    </div>
+    <div class="feat-grid reveal">
+      <div class="feat-card">
+        <div class="feat-name">Prompt versioning</div>
+        <div class="feat-desc">Every commit carries the prompt, model, and agent that produced it, versioned beside the code.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">Persistent context and memory</div>
+        <div class="feat-desc">Goals, reasoning traces, and memory snapshots restore across sessions, so the next run skips re-grounding.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">Supervised sandboxed environment</div>
+        <div class="feat-desc">Landlock, seccomp, and namespaces confine each run, up to a network egress allowlist. Nothing lands until you <code>apply</code>.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">Token reduction up to 95%</div>
+        <div class="feat-desc">Raw tool output stays out-of-band; agents see compact summaries of failures, counts, and paths.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">Conflict-free multi-agent orchestra</div>
+        <div class="feat-desc">Each agent works sealed in its own worktree, so files, branches, and ports never collide.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">Fully automated audit of AI code</div>
+        <div class="feat-desc">Deterministic risk scan and review ranking flag prompt-injection and the riskiest commits, with no model in the loop.</div>
+      </div>
+    </div>
   </div>
 </section>
 
