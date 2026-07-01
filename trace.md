@@ -3335,3 +3335,4 @@ _[Checkpoint: 6a44900c — edited docs/pitch/index.html; edited docs/pitch/index
 
 [03:57:50] ACT: edited README.md
 [03:57:53] ACT: edited README.md
+[03:57:57] THINK: (I'll keep it dash-free per your prose preference, and fix the obvious "audomated" typo in the nearby bullet while I'm here.
