@@ -1054,13 +1054,63 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 7 — h5i team (the convergence)
+     SLIDE 7 — Token reduction (h5i capture run)
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:20px;">
+  <div style="width:100%;max-width:1080px;">
+    <div class="section-tag">Token reduction</div>
+    <h2>Tool output is filtered before it<br>hits the <span class="red">context window</span>.</h2>
+    <p class="lede" style="max-width:900px;"><code>h5i capture run</code> keeps every command's raw output out-of-band and hands the agent a compact, structured summary. Nothing is lost, only the noise.</p>
+
+    <div style="margin-top:18px;display:flex;align-items:center;gap:16px;">
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;">
+        <span class="pill red">raw</span>
+        <div class="terminal">
+          <div class="terminal-bar">
+            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+            <span class="terminal-path">every line into context</span>
+          </div>
+          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">pytest -q</span>
+<span class="t-out">tests/test_api.py ....................  [ 18%]</span>
+<span class="t-out">tests/test_auth.py ...</span><span class="t-red">F</span><span class="t-out">................ [ 41%]</span>
+<span class="t-out">tests/test_cache.py .................    [ 60%]</span>
+<span class="t-out">tests/test_db.py ....................    [ 82%]</span>
+<span class="t-out">tests/test_util.py ..................    [100%]</span>
+<span class="t-cmt">  … 412 lines: every PASS, warning, and</span>
+<span class="t-cmt">    traceback frame streamed into context …</span>
+<span class="t-out">========= 1 failed, 240 passed =========</span></pre></div>
+        </div>
+        <span class="mono" style="font-size:0.95rem;color:var(--yellow);">≈ 4,600 tokens spent</span>
+      </div>
+
+      <span class="red" style="flex-shrink:0;font-family:var(--mono);font-size:2.2rem;line-height:1;">⇒</span>
+
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;">
+        <span class="pill green">filtered</span>
+        <div class="terminal">
+          <div class="terminal-bar">
+            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+            <span class="terminal-path">h5i capture run · structured</span>
+          </div>
+          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i capture run -- pytest -q</span>
+
+  <span class="t-bold">1 failed · 240 passed</span>  <span class="t-cmt">(240 ok collapsed)</span>
+  <span class="t-red">▸</span> tests/test_auth.py:88  expected 200, got 401</pre></div>
+        </div>
+        <span class="mono" style="font-size:0.95rem;color:var(--green);">≈ 280 tokens · 94% fewer<span style="color:var(--text-faint);"> · rehydrate: h5i recall object 41a337be</span></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SLIDE 8 — h5i team (the convergence)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:20px;">
   <div style="width:100%;max-width:1080px;">
     <div class="section-tag">The team</div>
     <h2><code style="font-size:0.82em;">h5i team</code> turns many attempts<br>into <span class="red">one verified result</span>.</h2>
-    <p class="lede" style="max-width:900px;">One task fans out to sealed agents. They peer-review, a neutral verifier replays and tests every candidate, and only the winner merges. Each agent's tool output runs through <code>h5i capture run</code>, keeping raw logs out of context for <span class="green">up to 95% less</span> token waste.</p>
+    <p class="lede" style="max-width:900px;">One task fans out to sealed agents. They peer-review, a neutral verifier replays and tests every candidate, and only the winner merges.</p>
 
     <img class="team-svg" src="/_static/hero-team.svg" width="1280" height="420" loading="lazy" alt="h5i team: one task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo.">
   </div>
