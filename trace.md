@@ -3407,3 +3407,9 @@ _[Checkpoint: 6a454b3b — Restructure docs front page to acceptance-layer narra
 _[Checkpoint: 6a454b46 — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
 ---
 
+
+
+---
+_[Checkpoint: 6a454cdc — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
+---
+
