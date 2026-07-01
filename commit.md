@@ -3884,3 +3884,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a454b3b — 2026-07-01 17:15 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+New flow: hero+demo → What you just saw (acceptance layer) → bottleneck changed (code gen cheap, acceptance risky) → Three primitives (Isolate/Record/Audit & Accept, replaces 6-feature grid) → h5i team → What lives in Git (refs/h5i/*, replaces tricks) → built-with → install → FAQ (now leads with What is h5i). Dissolved features + tricks sections; added CSS ids to padding rules.
+
+---
+
