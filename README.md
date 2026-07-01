@@ -17,12 +17,16 @@
 
 <h1 align="center">Auditable Workspaces for AI Coding Agents</h1>
 
+<p align="center">
+  <b>h5i</b> (pronounced <i>high-five</i>) gives every AI coding agent a sandboxed Git worktree, and records the prompts, commands, logs, policies, and reviews behind every change. Run one agent safely, scale to many via a conflict-free multi-agent orchestra, then merge one auditable result. It all lives in your repo, carried by Git, with no SaaS.
+</p>
+
 - Prompt versioning
 - Persistent context/memory
 - Supervised sandboxed environment
 - Token reduction up to 95%
 - Conflict-free multi-agent orchestra
-- Fully-audomated audit of AI-generated codes
+- Fully-automated audit of AI-generated code
 
 > ***Two heads are better than one.***
 
