@@ -3428,3 +3428,9 @@ _[Checkpoint: 6a454d79 — edited docs/index.html; edited docs/index.html; edite
 [17:29:44] ACT: edited docs/index.html
 [17:29:54] ACT: edited docs/index.html
 [17:30:33] THINK: Let me add a compact "What h5i is" section right after the hero (before the "Designed for" strip and the bottleneck section), reusing the existing `feat-grid` styling.
+
+
+---
+_[Checkpoint: 6a454eb9 — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
+---
+
