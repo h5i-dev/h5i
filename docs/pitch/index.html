@@ -713,12 +713,12 @@
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin-top:26px;align-items:stretch;">
       <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
         <span class="pill red">prompts</span>
-        <span class="mv" style="font-size:1.4rem;line-height:1.15;">Unversioned prompts</span>
+        <span class="mv" style="font-size:1.4rem;line-height:1.15;">Untracked prompts</span>
         <span class="ml">Prompts aren't version-controlled, so you can't improve them or reproduce a result.</span>
       </div>
       <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
         <span class="pill red">context</span>
-        <span class="mv" style="font-size:1.4rem;line-height:1.15;">Lost context</span>
+	<span class="mv" style="font-size:1.4rem;line-height:1.15;">Lost<br> context</span>
         <span class="ml">The agent forgets what it did; every session re-grounds from scratch.</span>
       </div>
       <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
@@ -728,7 +728,7 @@
       </div>
       <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
         <span class="pill red">tokens</span>
-        <span class="mv" style="font-size:1.4rem;line-height:1.15;">Multi-agent waste</span>
+        <span class="mv" style="font-size:1.4rem;line-height:1.15;">Multi-agent token waste</span>
         <span class="ml">Each agent re-reads the whole repo and burns tokens no one is tracking.</span>
       </div>
       <div class="metric" style="align-items:flex-start;text-align:left;gap:10px;">
