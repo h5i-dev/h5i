@@ -794,7 +794,8 @@
     .t-bold   { font-weight: 700; color: var(--ink); }
 
     /* ── Deck-derived sections: even spacing + separator line ── */
-    #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more {
+    #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more,
+    #what-you-saw, #primitives, #in-git {
       padding: 120px 0; border-top: 1px solid var(--border);
     }
 
@@ -970,6 +971,7 @@
       .usecase-header { flex-direction: column; gap: 1rem; }
       .works-inner { gap: 0.8rem 1.6rem; }
       #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more,
+      #what-you-saw, #primitives, #in-git,
       #install, #faq, #cta { padding: 80px 0; }
     }
     @media (max-width: 460px) {
@@ -1453,46 +1455,14 @@
   </div>
 </aside>
 
-<!-- ── Core capabilities ─────────────────────────────────────── -->
-<section id="features">
+<!-- ── What you just saw ─────────────────────────────────────── -->
+<section id="what-you-saw">
   <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">What h5i is</span>
-      <h2 class="section-title">An auditable workspace around every agent run.</h2>
-      <p class="section-sub">h5i wraps each agent run, whether one Claude Code session or a whole team, in a sandboxed Git worktree and records the evidence behind every change. Six command families, all writing to and reading from Git-native sidecar refs under <code>refs/h5i/*</code> that travel with your repo.</p>
+    <div class="section-head center reveal">
+      <span class="section-tag">What you just saw</span>
+      <h2 class="section-title">Not a dashboard. An acceptance layer.</h2>
+      <p class="section-sub">Every candidate above has a workspace, evidence, a review trail, and a verifier result. That is the layer behind an AI-generated change: the record of how it was produced and why it can be trusted, not a screen bolted on after the merge.</p>
       <div class="divider"></div>
-    </div>
-    <div class="feat-grid reveal">
-      <div class="feat-card">
-        <span class="feat-cmd">h5i capture</span>
-        <div class="feat-name">Record provenance</div>
-        <div class="feat-desc">Pin the prompt, model, and tests to each commit. <code>capture run</code> keeps raw logs out of context for up to <strong>95% less</strong> token waste.</div>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i recall</span>
-        <div class="feat-name">Read the AI history</div>
-        <div class="feat-desc">Read it back: <code>log</code> and <code>blame</code> with prompts, the <code>context</code> reasoning workspace, risk <code>notes</code>, and any captured output by id.</div>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i env</span>
-        <div class="feat-name">Sandboxed worktrees</div>
-        <div class="feat-desc">A disposable, confined worktree per agent: fail-closed Landlock, seccomp, and namespaces, up to a network egress allowlist. Nothing lands until you <code>apply</code>.</div>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i team</span>
-        <div class="feat-name">Agent teams, one verified winner</div>
-        <div class="feat-desc">One task, many sealed agents. Attempts are frozen, then a neutral <code>verify</code> replays each at the shared base to pick one winner. No agent grades its own work.</div>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i audit</span>
-        <div class="feat-name">Deterministic risk assessment</div>
-        <div class="feat-desc"><code>review</code> ranks the riskiest commits and <code>scan</code> flags prompt-injection in reasoning traces, with no model in the loop. <code>policy</code> and <code>vibe</code> cover rules and AI footprint.</div>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i share</span>
-        <div class="feat-name">Evidence travels with the branch</div>
-        <div class="feat-desc">It all lives in <code>refs/h5i/*</code>. <code>push</code> and <code>pull</code> carry the evidence to any remote; <code>share pr</code> posts a sticky PR comment with per-commit provenance. No SaaS.</div>
-      </div>
     </div>
   </div>
 </section>
@@ -1501,9 +1471,9 @@
 <section id="problem">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">The Problem</span>
-      <h2 class="section-title">AI agents change production code with no durable record.</h2>
-      <p class="section-sub">A coding agent reads your repo, runs commands, and rewrites files, but Git only keeps the diff. The prompt, the model, the commands, the blocked accesses, the reasoning all evaporate. That's already painful with <strong>one</strong> agent; spin up <strong>several</strong> on one repo and the gaps compound into a pileup. Two layers of failure Git was never built to handle:</p>
+      <span class="section-tag">The bottleneck changed</span>
+      <h2 class="section-title">Code generation got cheap. Code acceptance got risky.</h2>
+      <p class="section-sub">Agents now produce more patches than any team can safely review. Git shows you the diff, but not the prompt, the commands, the sandbox policy, the failed attempts, the peer reviews, or the verifier evidence behind it. The scarce resource is no longer writing code. It is accepting it, whether you run one agent or many:</p>
       <div class="divider"></div>
     </div>
     <div class="fm-split reveal">
@@ -1521,6 +1491,36 @@
         <div class="fm-row"><div class="fm-cell">No fair winner</div><div class="fm-cell">You get many patches but no neutral evidence for which one to merge.</div></div>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- ── Three primitives ──────────────────────────────────────── -->
+<section id="primitives">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">How it works</span>
+      <h2 class="section-title">Three primitives.</h2>
+      <p class="section-sub">Isolate the run, record the evidence, then review it before anything merges. It works the same for one Claude Code session or a whole team, and everything writes to Git-native sidecar refs under <code>refs/h5i/*</code> that travel with your repo.</p>
+      <div class="divider"></div>
+    </div>
+    <div class="cards3 reveal">
+      <div class="feat-card">
+        <span class="feat-cmd">01 · Isolate</span>
+        <div class="feat-name">Every agent runs in a sandbox</div>
+        <div class="feat-desc">A disposable, confined worktree per agent: fail-closed Landlock, seccomp, and namespaces, up to a network egress allowlist. Files, branches, and ports never collide, and nothing lands until you <code>apply</code>.</div>
+      </div>
+      <div class="feat-card">
+        <span class="feat-cmd">02 · Record</span>
+        <div class="feat-name">The evidence travels with the repo</div>
+        <div class="feat-desc">Prompts, commands, logs, policies, and reviews are stored beside the code in <code>refs/h5i/*</code>. Raw logs stay out-of-band, so agents see compact summaries and context stays lean, up to <strong>95% less</strong> token waste.</div>
+      </div>
+      <div class="feat-card">
+        <span class="feat-cmd">03 · Audit &amp; Accept</span>
+        <div class="feat-name">Review the diff before merge</div>
+        <div class="feat-desc">Read back the prompt, commands, and risk signals behind any change with <code>audit review</code>, then merge one evidence-backed result. For agent teams, sealed candidates can also be replayed by a neutral verifier.</div>
+      </div>
+    </div>
+    <p class="reveal" style="margin:1.5rem 0 0;text-align:center;font-family:var(--mono);font-size:0.8rem;color:var(--text-faint);">Powered by <code style="color:var(--red-text)">h5i env</code>, <code style="color:var(--red-text)">h5i capture</code>, <code style="color:var(--red-text)">h5i audit</code>, <code style="color:var(--red-text)">h5i team</code>, and <code style="color:var(--red-text)">refs/h5i/*</code>.</p>
   </div>
 </section>
 
@@ -1579,31 +1579,23 @@
   </div>
 </section>
 
-<!-- ── Tricks ────────────────────────────────────────────────── -->
-<section id="tricks">
+<!-- ── What lives in Git ─────────────────────────────────────── -->
+<section id="in-git">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">Tricks</span>
-      <h2 class="section-title">How h5i keeps agent ensembles practical</h2>
-      <p class="section-sub">Running many agents is only useful if the coordination overhead stays low. h5i's core tricks are small and concrete: isolate work, summarize evidence, and keep raw noise out of context.</p>
+      <span class="section-tag">What lives in Git</span>
+      <h2 class="section-title">The evidence is a Git ref,<br> not a SaaS.</h2>
+      <p class="section-sub">h5i adds no hosted control plane. Every workspace, capture, review, and verdict is stored under <code>refs/h5i/*</code> beside your code, so it clones, pushes, and pulls with the repo and outlives any one tool.</p>
       <div class="divider"></div>
     </div>
-    <div class="cards3 reveal">
-      <div class="feat-card">
-        <span class="feat-cmd">conflict avoidance</span>
-        <div class="feat-name">How do we stop agents from overwriting each other?</div>
-        <div class="feat-desc"><strong>Isolated environments.</strong> Each agent works in a separate confined worktree, so files, ports, caches, and branches do not collide before the verifier picks one result.</div>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">review overload</span>
-        <div class="feat-name">How do we quickly review many agents' activities?</div>
-        <div class="feat-desc"><strong>Auditability.</strong> h5i records prompts, commands, tests, blocked accesses, messages, and verdicts as Git sidecar evidence so reviewers inspect a concise trail instead of reconstructing chat history.</div>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">token pressure</span>
-        <div class="feat-name">Is token consumption too huge?</div>
-        <div class="feat-desc"><strong>Compact tool output.</strong> Long test and build logs are stored out-of-band while agents see structured summaries: failures, counts, paths, and next actions.</div>
-      </div>
+    <div class="refstack reveal">
+      <div class="ref-layer"><span class="ref-name">refs/h5i/env</span><span class="ref-desc">sandboxed workspaces, policies, and run evidence</span></div>
+      <div class="ref-layer"><span class="ref-name">refs/h5i/notes</span><span class="ref-desc">per-commit provenance: prompt, model, tests, audit</span></div>
+      <div class="ref-layer"><span class="ref-name">refs/h5i/context</span><span class="ref-desc">the reasoning workspace: goals, milestones, traces</span></div>
+      <div class="ref-layer"><span class="ref-name">refs/h5i/team</span><span class="ref-desc">roster, sealed submissions, and neutral verdicts</span></div>
+      <div class="ref-layer"><span class="ref-name">refs/h5i/msg</span><span class="ref-desc">cross-agent messages and handoffs</span></div>
+      <div class="ref-join">▽ all carried by</div>
+      <div class="ref-git"><span class="ref-name">h5i share push / pull</span><span class="ref-desc">evidence rides your existing remote · no external services</span></div>
     </div>
   </div>
 </section>
@@ -1729,16 +1721,16 @@
     </div>
     <div class="faq-list reveal">
       <details class="faq-item" open>
+        <summary>What is h5i?</summary>
+        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an open-source <strong>auditable workspace layer for AI coding agents</strong>. It runs Claude Code, Codex, and other agents in isolated Git workspaces and records the prompt, model, agent, reasoning, commands, logs, sandbox policy, reviews, and verifier results behind every change, then lets teams merge one evidence-backed result. Technically, h5i stores this evidence as Git-native sidecar refs under <code>refs/h5i/*</code>, so it travels with your repo with no hosted control plane.</div>
+      </details>
+      <details class="faq-item">
         <summary>How does h5i run an agent team?</summary>
         <div class="faq-answer"><code>h5i team</code> runs several agents on the <em>same</em> task, each in its own isolated <code>h5i env</code>, through a phased protocol: <strong>create</strong> a roster of personas (runtime, model, role) → <strong>dispatch</strong> the task to all → each agent works <strong>sealed and independently</strong> → <strong>freeze</strong> immutable submissions → permissioned <strong>review</strong> → a neutral sandboxed <strong>verify</strong> → <strong>apply</strong> one winner. Run state is an append-only event log in <code>refs/h5i/team</code> that travels with the repo. It's a thin coordination layer, not a group chat, not a daemon.</div>
       </details>
       <details class="faq-item">
         <summary>How is the winning patch chosen?</summary>
         <div class="faq-answer">By a <strong>neutral verifier</strong>, not by the agents. <code>h5i team verify</code> replays each frozen candidate at the shared base in a fresh, sandboxed worktree and runs the declared command itself, so finalization never trusts an agent's own captures. Hard gates (tests pass, applies cleanly) come only from that run; <em>smallest-diff</em> breaks ties only among gate-passers, so nothing wins by deleting tests or stubbing features. The verdict is explainable, <code>apply</code> is gated, and if nothing clears the gates it records <code>no_verdict</code> instead of merging a loser.</div>
-      </details>
-      <details class="faq-item">
-        <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an open-source <strong>auditable workspace layer for AI coding agents</strong>. It runs Claude Code, Codex, and other agents in isolated Git workspaces and records the prompt, model, agent, reasoning, commands, logs, sandbox policy, reviews, and verifier results behind every change, then lets teams merge one evidence-backed result. Technically, h5i stores this evidence as Git-native sidecar refs under <code>refs/h5i/*</code>, so it travels with your repo with no hosted control plane.</div>
       </details>
       <details class="faq-item">
         <summary>Does h5i work with Claude Code and Codex?</summary>
