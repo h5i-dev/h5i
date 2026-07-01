@@ -1572,36 +1572,8 @@
     </div>
     <p class="reveal" style="margin:0.9rem 0 0;text-align:center;font-family:var(--mono);font-size:0.8rem;color:var(--text-faint);">⟵ <span style="color:var(--red-text)">independence-first:</span> diversity is protected until <code>freeze</code> · discussion is opt-in and logged afterward ⟶</p>
 
-    <div class="split2 reveal" style="margin-top:2.5rem;">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">~/my-project · team: fix-auth</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create claude-arch --profile architect</span>  <span class="t-cmt"># persona baked from .h5i/env.toml</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env create codex-impl --profile implementer</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team create fix-auth --base HEAD</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/claude-arch/fix-auth --runtime claude</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/codex/codex-impl --runtime codex</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team status fix-auth</span>   <span class="t-cmt"># note the generated agent ids</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team dispatch fix-auth &lt; task.md</span>
-  <span class="t-out">…each agent works sealed in its own box…</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team freeze fix-auth</span>   <span class="t-cmt"># seals attempts</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team verify fix-auth --agent &lt;agent-id&gt; -- cargo test</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team finalize fix-auth</span>
-  <span class="t-pass">→ verdict: milo (gates pass, smallest diff)</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team apply fix-auth</span>   <span class="t-out">replays the winner · gated</span></pre></div>
-      </div>
-      <div class="stack">
-        <div class="verdict reveal">
-          <div class="vh">verdict · explainable by default</div>
-          <div class="vrow"><span class="vk">winner</span><span class="vv"><span style="color:var(--green)">claude-arch</span> · submission 7f3a</span></div>
-          <div class="vrow"><span class="vk">method</span><span class="vv">TestsPass · AppliesCleanly · SmallestDiff</span></div>
-          <div class="vrow"><span class="vk">codex</span><span class="vv"><span style="color:var(--red-text)">rejected</span>: 1 test failed at base</span></div>
-          <div class="vrow"><span class="vk">apply</span><span class="vv"><span style="color:var(--green)">can_auto_apply ✓</span></span></div>
-        </div>
-        <div class="feat-card reveal"><span class="feat-cmd">h5i team verify</span><div class="feat-name">A fair winner, not the loudest agent</div><div class="feat-desc">Finalization never trusts an agent's own captures. Each candidate is replayed at the shared base in a fresh, sandboxed worktree; smallest-diff only breaks ties among gate-passers, so nothing wins by deleting tests. No gate-passer → <code>no_verdict</code>, never a loser.</div></div>
-      </div>
+    <div class="dashboard-wrap reveal" style="margin-top:2.5rem;">
+      <img src="/_static/hero-team.svg" alt="h5i team flow: one task fans out to Claude and Codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the winning result is applied." loading="lazy">
     </div>
     <div class="hero-proverbs reveal" aria-label="On working in concert" style="margin-top:2.5rem;">
       <span>Two heads are better than one.</span>
