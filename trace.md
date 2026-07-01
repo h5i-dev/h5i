@@ -3223,3 +3223,9 @@ _[Checkpoint: 6a44856f — edited docs/pitch/index.html; edited docs/pitch/index
 [03:15:37] ACT: edited docs/pitch/index.html
 [03:16:14] ACT: edited docs/pitch/index.html
 [03:16:18] THINK: I can't render a PDF here (no headless browser installed) to eyeball it, so please re-export and check — if the panel is now too small or still a touch tall, tell me and I'll nudge the `0.
+
+
+---
+_[Checkpoint: 6a448682 — edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html]_
+---
+
