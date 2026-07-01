@@ -3399,3 +3399,4 @@ _[Checkpoint: 6a44ee63 — edited README.md; edited docs/pitch/index.html]_
 _[Checkpoint: 6a454b3b — Restructure docs front page to acceptance-layer narrative]_
 ---
 
+[17:15:50] THINK: Let me find the body structure — the actual content sections.
