@@ -795,7 +795,7 @@
 
     /* ── Deck-derived sections: even spacing + separator line ── */
     #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more,
-    #whatis, #primitives, #in-git {
+    #whatis, #primitives, #in-git, #team {
       padding: 120px 0; border-top: 1px solid var(--border);
     }
 
@@ -971,8 +971,8 @@
       .usecase-header { flex-direction: column; gap: 1rem; }
       .works-inner { gap: 0.8rem 1.6rem; }
       #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more,
-      #whatis, #primitives, #in-git,
-      #install, #faq, #cta { padding: 80px 0; }
+      #whatis, #primitives, #in-git, #team,
+      #faq, #cta { padding: 80px 0; }
     }
     @media (max-width: 460px) {
       .mode-grid { grid-template-columns: 1fr; }
@@ -996,6 +996,7 @@
     }
     .skip-link:focus { top: 0; }
     section[id] { scroll-margin-top: 80px; }
+    #quickstart { scroll-margin-top: 100px; }
 
 
     /* ════════════════════════════════════════════════════════
@@ -1159,7 +1160,7 @@
     <span>h5i</span>
   </a>
   <ul class="nav-links" id="nav-links">
-    <li><a href="#install">Install</a></li>
+    <li><a href="#quickstart">Install</a></li>
     <!-- <li><a href="#team">Teams</a></li> -->
     <li><a href="/guides/">Guides</a></li>
     <li><a href="/manual/">Manual</a></li>
@@ -1189,11 +1190,10 @@
     </p>
     <p class="hero-punch">Start with one agent. Scale to many. Merge one auditable result.</p>
     <div class="hero-actions">
-      <a href="#install" class="btn btn-primary">Get Started</a>
-      <a href="/workflows/" class="btn btn-ghost">See Workflows</a>
+      <a href="/workflows/" class="btn btn-primary">See Workflows</a>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-ghost">View on GitHub</a>
     </div>
-    <div class="hero-install">
+    <div class="hero-install" id="quickstart">
       <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</code>
       <button class="copy-btn" onclick="copyInstall()">copy</button>
     </div>
@@ -1681,61 +1681,6 @@
   </div>
 </section>
 
-
-<!-- ── Install ────────────────────────────────────────────────── -->
-<section id="install">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">Get Started</span>
-      <h2 class="section-title">Up and running in one minute</h2>
-      <div class="divider"></div>
-    </div>
-    <div class="install-grid">
-      <div class="install-card reveal">
-        <h3>INSTALL</h3>
-        <div class="code-block">
-<span class="cm"># Install h5i</span>
-<span class="hl">curl -fsSL <span class="st">https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh</span> | sh</span>
-
-<span class="cm"># …or build from source</span>
-<span class="hl">cargo install --git \</span>
-<span class="hl">  https://github.com/h5i-dev/h5i h5i-core</span>
-        </div>
-      </div>
-      <div class="install-card reveal">
-        <h3>60-SECOND FLOW</h3>
-        <div class="code-block">
-<span class="cm"># Initialize h5i in an existing Git repo</span>
-<span class="hl">h5i init</span>
-
-<span class="cm"># Install Claude Code or Codex hooks</span>
-<span class="hl">h5i hook setup --write --wrap-bash</span>
-        </div>
-      </div>
-      <div class="install-card reveal">
-        <h3>REVIEW</h3>
-        <div class="code-block">
-<span class="cm"># Post a sticky GitHub PR review brief</span>
-<span class="hl">h5i share pr post</span>
-
-<span class="cm"># Or render markdown for CI / another tool</span>
-<span class="hl">h5i share pr body</span>
-        </div>
-      </div>
-      <div class="install-card reveal">
-        <h3>SHARE</h3>
-        <div class="code-block">
-<span class="cm"># Sync h5i sidecar refs with teammates</span>
-<span class="hl">h5i share push</span>
-<span class="hl">h5i share pull</span>
-
-<span class="cm"># Browse locally</span>
-<span class="hl">h5i serve</span>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
 
 <!-- ── FAQ ────────────────────────────────────────────────────── -->
 <section id="faq">
