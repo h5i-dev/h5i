@@ -1706,6 +1706,53 @@ fn prepare_private_tmp(
     Ok(())
 }
 
+/// Top-level entries pruned from the per-env HOME seed ([`seed_home_copy`]).
+/// These are large, non-credential session/history/cache trees a fresh isolated
+/// box does not need — chiefly `~/.claude/projects/`, which holds the host's
+/// entire conversation-transcript history (hundreds of MB) and dominates the
+/// first `env shell` start. Skipping them copies **less** host data into the box
+/// (strictly more private) while the copy-in/persist isolation invariant is
+/// untouched: the box still gets its own writable copy of credentials/settings,
+/// the real HOME is still only ever read. The default is *copy* — only these
+/// known-bloat names are pruned — so any new credential file the runtime adds is
+/// seeded automatically rather than silently dropped. Matched by exact name at
+/// the seed root only (names distinct enough that applying the same set to
+/// `~/.codex` prunes nothing there).
+const HOME_SEED_SKIP: &[&str] = &[
+    "projects",        // Claude Code conversation transcripts (the bulk of the size)
+    "todos",           // per-session todo lists
+    "statsig",         // feature-flag / gate cache
+    "shell-snapshots", // captured shell-env snapshots
+    "file-history",    // edit-history backups
+    "history.jsonl",   // REPL command history
+];
+
+/// Seed a per-env HOME copy from the real HOME, pruning the known-large,
+/// non-credential top-level entries in [`HOME_SEED_SKIP`]. A single file (e.g.
+/// `~/.claude.json`) is copied whole; a directory (e.g. `~/.claude`) is copied
+/// entry-by-entry so the skip set can drop its immediate children before the
+/// expensive recursion. Everything not skipped is copied via [`copy_tree`]
+/// (modes preserved, symlinks skipped). Fail-closed on I/O.
+fn seed_home_copy(src: &Path, dst: &Path) -> Result<(), H5iError> {
+    let meta = std::fs::symlink_metadata(src).map_err(|e| H5iError::with_path(e, src))?;
+    if !meta.file_type().is_dir() {
+        return copy_tree(src, dst);
+    }
+    std::fs::create_dir_all(dst).map_err(|e| H5iError::with_path(e, dst))?;
+    for entry in std::fs::read_dir(src).map_err(|e| H5iError::with_path(e, src))? {
+        let entry = entry.map_err(|e| H5iError::with_path(e, src))?;
+        let name = entry.file_name();
+        if HOME_SEED_SKIP
+            .iter()
+            .any(|s| std::ffi::OsStr::new(s) == name)
+        {
+            continue;
+        }
+        copy_tree(&entry.path(), &dst.join(&name))?;
+    }
+    Ok(())
+}
+
 /// Recursively copy a regular file or directory tree, preserving file modes
 /// (`std::fs::copy` carries permissions — important for a `0600`
 /// `.credentials.json`). Symlinks are skipped (a credential store is regular
@@ -1785,9 +1832,12 @@ fn prepare_home_state(
         // distinct (`<env>/home/.claude`, `<env>/home/.claude.json`).
         let backing = home_root.join(rel);
         // Seed once (copy-in) and persist: only when absent, so a token refreshed
-        // by a prior run of THIS env survives into the next.
+        // by a prior run of THIS env survives into the next. The seed prunes the
+        // large non-credential trees (`~/.claude/projects`, caches — see
+        // HOME_SEED_SKIP) so the first `env shell` doesn't copy hundreds of MB of
+        // transcript history just to start.
         if !backing.exists() {
-            copy_tree(&real, &backing)?;
+            seed_home_copy(&real, &backing)?;
         }
         // Drop the real-HOME grant, grant the per-env copy instead (defence in
         // depth: even if the bind were bypassed the box can't reach the real file).
@@ -6793,6 +6843,44 @@ mod tests {
             std::fs::read_to_string(home.join(".claude.json")).unwrap(),
             "{\"session\":1}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_home_state_seed_prunes_bloat_keeps_credentials() {
+        use crate::sandbox::{AgentRuntime, Profile};
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let home = fake_claude_home(h5i_root);
+        // Add a large non-credential tree (transcripts) that must NOT be seeded,
+        // plus a settings file that must be.
+        std::fs::create_dir_all(home.join(".claude/projects/some-proj")).unwrap();
+        std::fs::write(
+            home.join(".claude/projects/some-proj/session.jsonl"),
+            "transcript",
+        )
+        .unwrap();
+        std::fs::write(home.join(".claude/settings.json"), "{\"k\":1}").unwrap();
+        let m = canonical_manifest("claude", "auth");
+        std::fs::create_dir_all(m.dir(h5i_root)).unwrap();
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude),
+        );
+
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
+
+        let backing = m.dir(h5i_root).join("home/.claude");
+        // Credentials + settings seeded.
+        assert!(backing.join(".credentials.json").exists());
+        assert!(backing.join("settings.json").exists());
+        // The transcript tree was pruned — not copied into the box seed.
+        assert!(
+            !backing.join("projects").exists(),
+            "the large projects/ tree must be pruned from the per-env seed"
+        );
+        // The real HOME still has its transcripts (only ever read, never touched).
+        assert!(home.join(".claude/projects/some-proj/session.jsonl").exists());
     }
 
     #[cfg(unix)]

@@ -2755,6 +2755,39 @@ fn env_shell_runs_in_box_and_passes_exit_code() {
     );
 }
 
+/// `env shell` on an already-local env must NOT eagerly sync the shared env
+/// roster: it operates on one named env that is already materialized, so the
+/// per-start `refs/h5i/env/meta` read + disk writes are pure overhead. A
+/// synthetic (malicious `..`-path) manifest planted in the shared ref proves it:
+/// an eager sync would print the "skipping shared env manifest" rejection and/or
+/// materialize it, and neither may happen on the shell hot path.
+#[test]
+fn env_shell_existing_local_env_skips_shared_manifest_sync() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default]\nisolation = \"workspace\"\n",
+    )
+    .unwrap();
+    r.h5i_ok(&["env", "create", "box"]);
+
+    let repo = git2::Repository::open(&r.dir).unwrap();
+    let bad = synthetic_env_manifest(&repo, "..", "escape");
+    append_synthetic_env_manifest(&repo, &bad);
+
+    let out = r.h5i_ok(&["env", "shell", "box", "--", "sh", "-c", "true"]);
+    let rendered = out_str(&out);
+    assert!(
+        !rendered.contains("skipping shared env manifest"),
+        "local env shell should not eagerly sync shared manifests:\n{rendered}"
+    );
+    assert!(
+        !r.dir.join(".git/.h5i/escape/manifest.json").exists(),
+        "local env shell must not materialize unrelated shared manifests"
+    );
+}
+
 /// `isolation=process` with `net.mode=host` must STILL confine the filesystem
 /// (Landlock applies without a network namespace) — proving the always-create
 /// user namespace works when egress is allowed. Capability-gated.

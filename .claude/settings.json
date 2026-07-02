@@ -1,7 +1,4 @@
 {
-  "env": {
-    "H5I_AGENT": "claude"
-  },
   "hooks": {
     "PostToolUse": [
       {
@@ -47,7 +44,8 @@
       {
         "hooks": [
           {
-            "command": "h5i msg hook --block",
+            "command": "h5i team agent hook --block",
+            "timeout": 1830,
             "type": "command"
           }
         ]

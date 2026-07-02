@@ -10777,7 +10777,15 @@ fn main() -> anyhow::Result<()> {
             // where the host-owned env manifests are read-only (the write only
             // fails with EACCES and spams a warning). The box already has its
             // own env materialized; the shared roster is the host's concern.
-            if std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_err() {
+            //
+            // `env shell` is on the interactive hot path and operates on a single
+            // named env that is almost always already materialized locally, so it
+            // skips the eager sync and materializes lazily (only on a `find` miss)
+            // below — trimming a `refs/h5i/env/meta` read + disk writes off every
+            // shell start.
+            let in_env_box = std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok();
+            let lazy_materialize_env_ref = matches!(&action, EnvCommands::Shell { .. });
+            if !in_env_box && !lazy_materialize_env_ref {
                 if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
                     eprintln!(
                         "{} could not sync shared env manifests: {e}",
@@ -10909,7 +10917,27 @@ fn main() -> anyhow::Result<()> {
                 }
 
                 EnvCommands::Shell { name, command } => {
-                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    // Lazy materialize: the eager shared-roster sync is skipped
+                    // for `shell` (above). The common case is a local env that
+                    // `find` resolves straight away; only on a miss do we pay the
+                    // shared-ref sync and retry (never inside a sealed box, whose
+                    // manifests are host-owned + read-only).
+                    let mut m = match h5i_core::env::find(&h5i_root, &name) {
+                        Ok(m) => m,
+                        Err(e) if !in_env_box => {
+                            if let Err(sync_err) =
+                                h5i_core::env::materialize_from_ref(git, &h5i_root)
+                            {
+                                eprintln!(
+                                    "{} could not sync shared env manifests: {sync_err}",
+                                    style("warning:").yellow()
+                                );
+                                return Err(e.into());
+                            }
+                            h5i_core::env::find(&h5i_root, &name)?
+                        }
+                        Err(e) => return Err(e.into()),
+                    };
                     // An empty `command` means "default interactive shell";
                     // `env::shell` builds the argv (host bashrc is replaced with a
                     // generated plain rc by default — see `default_shell_argv`).
