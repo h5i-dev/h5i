@@ -883,7 +883,18 @@ pub fn compare(
     run_id: &str,
 ) -> Result<Vec<TeamCompareRow>, H5iError> {
     let current = status(repo, run_id)?.run;
-    let names: Vec<String> = current.agents.iter().map(|a| a.env_id.clone()).collect();
+    // Only diff envs that are materialized locally. A roster env can legitimately
+    // be absent on this clone: an early-phase team (`dispatched`, no submits yet)
+    // whose envs live on another clone/box, or a pulled team. `env::compare`
+    // hard-errors on the first missing env, so pre-filter and emit a placeholder
+    // row (below) for the absent ones instead of failing the whole comparison —
+    // which the dashboard would surface as a misleading 404.
+    let names: Vec<String> = current
+        .agents
+        .iter()
+        .map(|a| a.env_id.clone())
+        .filter(|id| env::find(h5i_root, id).is_ok())
+        .collect();
     let env_rows = env::compare(repo, h5i_root, &names)?;
     let by_env: BTreeMap<String, env::CompareRow> =
         env_rows.into_iter().map(|r| (r.id.clone(), r)).collect();
@@ -904,25 +915,44 @@ pub fn compare(
     }
     let mut out = Vec::new();
     for agent in &current.agents {
-        let row = by_env
-            .get(&agent.env_id)
-            .ok_or_else(|| H5iError::Metadata(format!("missing env row for {}", agent.env_id)))?;
         let sub = latest_by_agent.get(&agent.agent_id).copied();
-        out.push(TeamCompareRow {
-            agent_id: agent.agent_id.clone(),
-            env_id: agent.env_id.clone(),
-            submitted: sub.is_some(),
-            submission_id: sub.map(|s| s.id.clone()),
-            status: row.status.clone(),
-            base_commit: row.base_commit.clone(),
-            files_changed: row.files_changed,
-            insertions: row.insertions,
-            deletions: row.deletions,
-            last_exit: row.last_exit,
-            last_tool: row.last_tool.clone(),
-            last_result: row.last_result.clone(),
-            last_counts: row.last_counts.clone(),
-        });
+        // An env absent locally (see the pre-filter above) yields a placeholder
+        // row — `status: "absent"`, zeroed diffstat, run base as the base commit —
+        // so the roster still renders (the agent + whether it has submitted)
+        // rather than the whole comparison erroring.
+        let row = match by_env.get(&agent.env_id) {
+            Some(row) => TeamCompareRow {
+                agent_id: agent.agent_id.clone(),
+                env_id: agent.env_id.clone(),
+                submitted: sub.is_some(),
+                submission_id: sub.map(|s| s.id.clone()),
+                status: row.status.clone(),
+                base_commit: row.base_commit.clone(),
+                files_changed: row.files_changed,
+                insertions: row.insertions,
+                deletions: row.deletions,
+                last_exit: row.last_exit,
+                last_tool: row.last_tool.clone(),
+                last_result: row.last_result.clone(),
+                last_counts: row.last_counts.clone(),
+            },
+            None => TeamCompareRow {
+                agent_id: agent.agent_id.clone(),
+                env_id: agent.env_id.clone(),
+                submitted: sub.is_some(),
+                submission_id: sub.map(|s| s.id.clone()),
+                status: "absent".into(),
+                base_commit: current.base_oid.clone(),
+                files_changed: 0,
+                insertions: 0,
+                deletions: 0,
+                last_exit: None,
+                last_tool: None,
+                last_result: None,
+                last_counts: BTreeMap::new(),
+            },
+        };
+        out.push(row);
     }
     Ok(out)
 }
@@ -2290,6 +2320,49 @@ mod tests {
             run.agents[0].latest_submission_id.as_deref(),
             Some(sub.id.as_str())
         );
+    }
+
+    #[test]
+    fn compare_tolerates_env_absent_locally() {
+        // A roster env that is not materialized on this clone (an early-phase
+        // `dispatched` team whose envs live on another clone/box, or a pulled
+        // team) must not fail the whole comparison — `env::compare` hard-errors on
+        // a missing env, and the dashboard would surface that as a bogus 404.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let m = manifest(&repo, h5i_root, "codex", "fix");
+
+        create(&repo, "run-absent", "run-absent", "HEAD", 1, "human").unwrap();
+        add_env(
+            &repo,
+            h5i_root,
+            "run-absent",
+            "env/codex/fix",
+            "codex-fix",
+            Some("codex".into()),
+            None,
+            "human",
+        )
+        .unwrap();
+
+        // Drop the on-disk manifest to simulate a clone where it was never
+        // materialized (the roster ref still lists it).
+        fs::remove_dir_all(m.dir(h5i_root)).unwrap();
+
+        let rows = compare(&repo, h5i_root, "run-absent").unwrap();
+        assert_eq!(rows.len(), 1, "the roster row must still render");
+        assert_eq!(rows[0].agent_id, "codex-fix");
+        assert_eq!(rows[0].env_id, "env/codex/fix");
+        assert_eq!(rows[0].status, "absent");
+        assert!(!rows[0].submitted);
+        assert_eq!(rows[0].files_changed, 0);
+        assert_eq!(rows[0].base_commit, run_base_oid(&repo, "run-absent"));
+    }
+
+    fn run_base_oid(repo: &Repository, run_id: &str) -> String {
+        status(repo, run_id).unwrap().run.base_oid
     }
 
     #[test]
