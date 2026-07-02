@@ -9,10 +9,11 @@
 //! blocking HTTP client — exercising the full handler path (repo open, env
 //! enumeration, risk classification, JSON serialization).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
+use h5i_core::sandbox::{load_profile, IsolationClaim, NetMode, Profile, POLICY_FILE};
 use tempfile::TempDir;
 
 const H5I: &str = env!("CARGO_BIN_EXE_h5i");
@@ -73,6 +74,107 @@ impl IntoString for std::borrow::Cow<'_, str> {
     fn into_string(self) -> String {
         self.into_owned()
     }
+}
+
+fn write_env_toml(dir: &Path, toml_text: &str) {
+    let policy_path = dir.join(POLICY_FILE);
+    std::fs::create_dir_all(policy_path.parent().expect("policy parent")).unwrap();
+    std::fs::write(policy_path, toml_text).unwrap();
+}
+
+fn load_env_profile(toml_text: &str, name: &str) -> Result<Profile, h5i_core::error::H5iError> {
+    let dir = TempDir::new().expect("tempdir");
+    write_env_toml(dir.path(), toml_text);
+    load_profile(dir.path(), name, None)
+}
+
+#[test]
+fn env_toml_minimal_profile_parses_with_safe_defaults() {
+    let profile = load_env_profile(
+        r#"
+[service.dev]
+cmd = "sleep 60"
+
+[profile.default]
+isolation = "process"
+"#,
+        "default",
+    )
+    .expect("minimal profile should parse");
+
+    assert_eq!(profile.name, "default");
+    assert_eq!(profile.isolation, IsolationClaim::Process);
+    assert_eq!(profile.net_mode, NetMode::Deny);
+    assert!(profile.fs_write.iter().any(|path| path == "$WORK"));
+    assert!(profile.fs_deny.iter().any(|path| path == "~/.ssh"));
+    assert_eq!(profile.max_procs, Some(256));
+    assert!(profile.tools.is_empty());
+}
+
+#[test]
+fn env_toml_rejects_unknown_profile_keys_and_malformed_values() {
+    let err = load_env_profile(
+        r#"
+[profile.default]
+isolation = "workspace"
+mystery = true
+"#,
+        "default",
+    )
+    .expect_err("unknown profile keys must fail closed");
+    assert!(err.to_string().contains("unknown field"), "{err}");
+
+    let err = load_env_profile(
+        r#"
+[profile.default]
+isolation = "workspace"
+resources = { mem = "lots" }
+"#,
+        "default",
+    )
+    .expect_err("malformed resources.mem must fail closed");
+    assert!(err.to_string().contains("invalid resources.mem"), "{err}");
+}
+
+#[test]
+fn env_toml_empty_sections_keep_deny_defaults() {
+    let profile = load_env_profile(
+        r#"
+[profile.default]
+isolation = "process"
+
+[profile.default.fs]
+[profile.default.net]
+[profile.default.env]
+"#,
+        "default",
+    )
+    .expect("empty sections should inherit built-in deny defaults");
+
+    assert_eq!(profile.net_mode, NetMode::Deny);
+    assert!(profile.fs_read.iter().any(|path| path == "/usr"));
+    assert!(profile.fs_write.iter().any(|path| path == "$WORK"));
+    assert!(profile.fs_deny.iter().any(|path| path == "~/.config/gh"));
+    assert!(profile.env_pass.iter().any(|name| name == "PATH"));
+}
+
+#[test]
+fn builtin_profiles_resolve_without_env_toml_file() {
+    let dir = TempDir::new().expect("tempdir");
+
+    let default = load_profile(dir.path(), "default", None).expect("default built-in");
+    assert_eq!(default.isolation, IsolationClaim::Workspace);
+    assert_eq!(default.net_mode, NetMode::Host);
+
+    let agent =
+        load_profile(dir.path(), "agent", Some(IsolationClaim::Supervised)).expect("agent built-in");
+    assert!(
+        matches!(agent.name.as_str(), "agent-claude" | "agent-codex"),
+        "agent selector should resolve to a concrete runtime profile: {}",
+        agent.name
+    );
+    assert_eq!(agent.isolation, IsolationClaim::Supervised);
+    assert!(!agent.net_egress.is_empty());
 }
 
 /// Boot the router on an ephemeral loopback port and return its base URL plus a
