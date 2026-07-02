@@ -16,3 +16,8 @@ type = "command"
 [[hooks.Stop.hooks]]
 command = "h5i hook codex finish --quiet"
 type = "command"
+
+[[hooks.Stop.hooks]]
+command = "h5i team agent hook --block"
+timeout = 1830
+type = "command"
