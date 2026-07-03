@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Render the h5i demo film (index.html) to an mp4.
+// Render an h5i demo film (a deterministic HTML timeline) to an mp4.
 //
-//   node render.mjs                 # full render -> out/h5i-demo.mp4
-//   node render.mjs --stills 5,30   # PNG stills at given seconds -> out/still-*.png
+//   node render.mjs                          # index.html -> out/h5i-demo.mp4
+//   node render.mjs --page marketing.html    # -> out/h5i-marketing.mp4
+//   node render.mjs --stills 5,30            # PNG stills at given seconds -> out/still-*.png
 //   node render.mjs --fps 30 --crf 18
 //
 // Needs: ffmpeg on PATH, and playwright (any install — a local node_modules,
@@ -56,6 +57,8 @@ const opt = (name, dflt) => {
 const FPS = Number(opt('fps', 30));
 const CRF = Number(opt('crf', 18));
 const stills = opt('stills', null);
+const PAGE = opt('page', 'index.html');
+const BASE = path.basename(PAGE, '.html');
 
 const outDir = path.join(here, 'out');
 mkdirSync(outDir, { recursive: true });
@@ -67,7 +70,7 @@ const browser = await chromium.launch({
   args: ['--force-device-scale-factor=1', '--hide-scrollbars', '--font-render-hinting=none'],
 });
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
-await page.goto('file://' + path.join(here, 'index.html') + '?render=1');
+await page.goto('file://' + path.join(here, PAGE) + '?render=1');
 await page.evaluate(() => document.fonts.ready);
 const TOTAL = await page.evaluate(() => window.TOTAL);
 
@@ -79,7 +82,7 @@ async function frame(ms, type, quality) {
 if (stills) {
   for (const s of stills.split(',')) {
     const buf = await frame(Number(s) * 1000, 'png');
-    const f = path.join(outDir, `still-${Number(s).toFixed(1)}s.png`);
+    const f = path.join(outDir, `still-${BASE}-${Number(s).toFixed(1)}s.png`);
     writeFileSync(f, buf);
     console.log('wrote', f);
   }
@@ -88,7 +91,7 @@ if (stills) {
 }
 
 const nFrames = Math.ceil((TOTAL / 1000) * FPS);
-const outFile = path.join(outDir, 'h5i-demo.mp4');
+const outFile = path.join(outDir, BASE === 'index' ? 'h5i-demo.mp4' : `h5i-${BASE}.mp4`);
 console.log(`rendering ${nFrames} frames @ ${FPS}fps (${(TOTAL / 1000).toFixed(0)}s) -> ${outFile}`);
 
 const ff = spawn('ffmpeg', [

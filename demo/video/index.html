@@ -169,9 +169,11 @@
   #s4 h2 em{font-style:normal;color:var(--ok)}
   #s4 .refs{margin-top:22px;font-family:var(--mono);font-size:24px;color:var(--dim);opacity:0}
   #s4 .refs b{color:var(--git);font-weight:400}
-  #s4 .install{margin-top:52px;padding:22px 34px;border-radius:14px;background:var(--term);
-    border:1px solid var(--border2);font-family:var(--mono);font-size:23px;opacity:0}
-  #s4 .install .pp{color:var(--faint)}
+  #s4 .tagline{margin-top:44px;font-size:46px;font-weight:700;opacity:0}
+  #s4 .tagline b{color:var(--git)} #s4 .tagline em{font-style:normal;color:var(--claude)}
+  #s4 .install{margin-top:40px;padding:22px 40px;border-radius:14px;background:var(--term);
+    border:1px solid var(--border2);font-family:var(--mono);font-size:24px;opacity:0}
+  #s4 .install b{color:var(--text);font-weight:400} #s4 .install span{color:var(--faint)}
   #s4 .fin{margin-top:60px;display:flex;flex-direction:column;align-items:center;gap:6px;opacity:0}
   #s4 .fin img{height:120px}
   #s4 .fin .fs{font-size:24px;color:var(--dim)}
@@ -221,7 +223,7 @@
     <div class="titlecard" id="s0title">
       <img src="assets/logo.png" alt="h5i">
       <h1>Auditable workspaces <br> for <em>AI coding agents</em>.</h1>
-      <p>h5i · a Git sidecar — sandboxed worktrees, recorded evidence, <b>no SaaS</b></p>
+      <p>Sealed worktrees. Recorded evidence. <b>Native Git.</b></p>
     </div>
   </div>
 
@@ -312,24 +314,24 @@ tests/test_worker.py ....<span class="f">F</span>.........  [100%]
     <div class="agents">
       <div class="term" id="w-cl">
         <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
-          <span class="tt">claude · env/qsort-demo-claude</span>
+          <span class="tt">claude · env/worker-demo-claude</span>
           <span class="tr">sealed</span><span class="agdot" style="background:var(--claude)"></span></div>
         <div class="tbody small" id="t-cl"></div>
       </div>
       <div class="term" id="w-cx">
         <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
-          <span class="tt">codex · env/qsort-demo-codex</span>
+          <span class="tt">codex · env/worker-demo-codex</span>
           <span class="tr">sealed</span><span class="agdot" style="background:var(--codex)"></span></div>
         <div class="tbody small" id="t-cx"></div>
       </div>
     </div>
     <div class="bub from-claude" id="b1" style="left:560px;top:520px">
       <div class="who">claude → codex · h5i msg review</div>
-      pivot dups look off-by-one — added a duplicate-heavy case, please check
+      jitter=0 shrinks to a flake — added a regression seed, please check
     </div>
     <div class="bub from-codex" id="b2" style="right:560px;top:640px">
       <div class="who">codex → claude · h5i msg review</div>
-      recursion depth blows up on sorted input — try median-of-three?
+      backoff can overflow past 2^31 ms — clamp the upper bound too?
     </div>
     <div class="verdict" id="verd">
       <div class="vt">verdict · recorded in refs/h5i</div>
@@ -343,11 +345,11 @@ tests/test_worker.py ....<span class="f">F</span>.........  [100%]
     <div class="wrap">
       <h2 id="o-h">Everything you just watched is <em>in your repo</em>.</h2>
       <div class="refs" id="o-refs"><b>refs/h5i/*</b> — prompts · contexts · policies · denials · reviews · verdicts</div>
-      <div class="install" id="o-inst"></div>
+      <div class="tagline" id="o-tag">Git tracks the <b>diff</b>. h5i tracks the <em>run</em>.</div>
+      <div class="install" id="o-inst"><b>github.com/h5i-dev/h5i</b><span>&nbsp;&nbsp;·&nbsp;&nbsp;</span><b>h5i.dev</b></div>
       <div class="fin" id="o-fin">
         <img src="assets/logo.png" alt="h5i">
         <div class="fs">Auditable workspaces for AI coding agents</div>
-        <div class="fu">h5i.dev</div>
       </div>
     </div>
   </div>
@@ -512,37 +514,36 @@ const DENIES = [
 
 /* ---- scene 3 : ensemble (40s) ---- */
 const evOrch = [
-  {at:.4,  cmd:'h5i team auto-create qsort-demo'},
-  {at:2.1, out:[`<span class="ok">✔</span> <span class="co">env qsort-demo-claude</span> · <span class="te">env qsort-demo-codex</span> · team registered`]},
-  {at:4.6, cmd:'echo "Implement quicksort with property tests." | h5i team dispatch qsort-demo'},
+  {at:.4,  cmd:'h5i team auto-create worker-demo'},
+  {at:2.1, out:[`<span class="ok">✔</span> <span class="co">env worker-demo-claude</span> · <span class="te">env worker-demo-codex</span> · team registered`]},
+  {at:4.6, cmd:'echo "Harden sync/worker.py: property tests for retry backoff." | h5i team dispatch worker-demo'},
   {at:7.0, out:[`<span class="vio">task</span> → 2 sealed inboxes`]},
-  {at:16.0, cmd:'h5i team auto-peer-review qsort-demo'},
+  {at:16.0, cmd:'h5i team auto-peer-review worker-demo'},
   {at:17.7, out:[`<span class="dim">sync → freeze → mutual grant → instruct</span>`]},
-  {at:26.4, cmd:'h5i team verify qsort-demo -- pytest'},
+  {at:26.4, cmd:'h5i team verify worker-demo -- pytest'},
   {at:28.0, out:[`<span class="co">claude</span> <span class="ok">✓ 12 passed</span>   <span class="te">codex</span> <span class="ok">✓ 14 passed</span>   <span class="faint">(neutral replay)</span>`]},
-  {at:30.4, cmd:'h5i team finalize qsort-demo'},
-  {at:34.6, cmd:'h5i team apply qsort-demo'},
+  {at:30.4, cmd:'h5i team finalize worker-demo'},
+  {at:34.6, cmd:'h5i team apply worker-demo'},
   {at:36.1, out:[`<span class="ok">✔</span> one auditable result merged onto main`]},
 ];
 const evCl = [
-  {at:7.6, out:[`<span class="faint">▸ task received — quicksort + property tests</span>`]},
-  {at:9.2, out:[`<span class="co">●</span> <span class="tool">Write</span><span class="dim">(quicksort.py)</span>`]},
+  {at:7.6, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
+  {at:9.2, out:[`<span class="co">●</span> <span class="tool">Write</span><span class="dim">(tests/test_worker_props.py)</span>`]},
   {at:10.8,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(pytest -q)</span> → <span class="ok">12 passed</span>`]},
   {at:12.6,out:[`<span class="faint">▸ candidate sealed · 9e11d2a</span>`]},
-  {at:23.8,out:[`<span class="te">◂ review from codex</span> <span class="dim">— median-of-three pivot</span>`]},
+  {at:23.8,out:[`<span class="te">◂ review from codex</span> <span class="dim">— clamp the upper bound too</span>`]},
   {at:25.2,out:[`<span class="faint">▸ revised & resealed · b302f1c</span>`]},
 ];
 const evCx = [
-  {at:8.2, out:[`<span class="faint">▸ task received — quicksort + property tests</span>`]},
-  {at:9.8, out:[`<span class="te">●</span> <span class="tool">Write</span><span class="dim">(qsort.py)</span>`]},
+  {at:8.2, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
+  {at:9.8, out:[`<span class="te">●</span> <span class="tool">Write</span><span class="dim">(tests/test_retry_props.py)</span>`]},
   {at:11.4,out:[`<span class="te">●</span> <span class="tool">Bash</span><span class="dim">(pytest -q)</span> → <span class="ok">14 passed</span>`]},
   {at:13.2,out:[`<span class="faint">▸ candidate sealed · 41c07be</span>`]},
-  {at:21.4,out:[`<span class="co">◂ review from claude</span> <span class="dim">— duplicate-heavy case added</span>`]},
+  {at:21.4,out:[`<span class="co">◂ review from claude</span> <span class="dim">— regression seed added</span>`]},
   {at:25.8,out:[`<span class="faint">▸ revised & resealed · 7d90aa4</span>`]},
 ];
 
 /* ---- scene 4 : outro (17s) ---- */
-const evInst = [{at:5.6, cmd:'curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh', cps:40}];
 
 /* ---- evidence rail (absolute seconds) ---- */
 const RAIL = [
@@ -632,9 +633,9 @@ const SCENES = [
     update(t){
       pop($('o-h'), t, .6, {d:.7, dy:24});
       pop($('o-refs'), t, 2.2);
-      const ip = pop($('o-inst'), t, 5.2);
-      if (ip > 0) renderTerm($('o-inst'), evInst, t);
-      pop($('o-fin'), t, 9.8, {d:.8});
+      pop($('o-tag'), t, 4.8, {d:.7});
+      pop($('o-inst'), t, 7.4);
+      pop($('o-fin'), t, 10.2, {d:.8});
     }},
 ];
 const TOTAL = 158000;

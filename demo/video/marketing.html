@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>h5i — marketing cut</title>
+<style>
+  @font-face{font-family:'Space Grotesk';src:url('assets/SpaceGrotesk-400.woff2') format('woff2');font-weight:300 700;font-style:normal;font-display:block}
+  @font-face{font-family:'Space Mono';src:url('assets/SpaceMono-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:block}
+  @font-face{font-family:'Space Mono';src:url('assets/SpaceMono-700.woff2') format('woff2');font-weight:700;font-style:normal;font-display:block}
+  :root{
+    --bg:#08080b; --panel:#0e0e12; --term:#0b0b0f; --border:#23262e; --border2:#2f333d;
+    --text:#e8e8ec; --dim:#9a9aa4; --faint:#6b6b75;
+    --claude:#ff7a59; --codex:#2dd4bf; --ok:#34d399; --ctx:#a78bfa; --git:#7aa2ff;
+    --danger:#ff6258; --warn:#d6a94e;
+    --sans:'Space Grotesk',system-ui,sans-serif; --mono:'Space Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#000;overflow:hidden}
+  body{font-family:var(--sans);color:var(--text)}
+  #stage{position:absolute;width:1920px;height:1080px;left:50%;top:50%;margin:-540px 0 0 -960px;
+    background:var(--bg);overflow:hidden;transform-origin:center center}
+  #stage::before{content:'';position:absolute;inset:0;pointer-events:none;
+    background:
+      radial-gradient(1100px 520px at 24% -10%, rgba(255,122,89,.05), transparent 60%),
+      radial-gradient(1100px 520px at 82% 112%, rgba(45,212,191,.05), transparent 60%)}
+  .scene{position:absolute;inset:88px 72px 96px;opacity:0}
+  #hdr{position:absolute;top:0;left:0;right:0;height:88px;display:flex;align-items:center;
+    justify-content:space-between;padding:0 72px;z-index:5}
+  #hdr .mark{font-family:var(--mono);font-weight:700;font-size:26px;letter-spacing:.02em}
+  #hdr .mark b{color:var(--claude);font-weight:700}
+  #eyebrow{font-family:var(--mono);font-size:19px;color:var(--faint);letter-spacing:.14em;text-transform:uppercase}
+  #eyebrow em{font-style:normal;color:var(--dim)}
+  #rail{position:absolute;left:0;right:0;bottom:0;height:96px;display:flex;align-items:center;
+    gap:18px;padding:0 72px;border-top:1px solid var(--border);
+    background:linear-gradient(180deg, rgba(11,11,15,.4), rgba(11,11,15,.9));z-index:5}
+  #rail .rlabel{font-family:var(--mono);font-size:19px;color:var(--faint);white-space:nowrap}
+  #rail .rlabel b{color:var(--git);font-weight:400}
+  #chips{display:flex;gap:10px;align-items:center;flex:1;overflow:hidden}
+  .chip{font-family:var(--mono);font-size:16px;padding:7px 14px;border-radius:999px;
+    border:1px solid var(--border2);color:var(--dim);white-space:nowrap;background:rgba(14,14,18,.9)}
+  .chip::before{content:'';display:inline-block;width:8px;height:8px;border-radius:50%;
+    margin-right:9px;background:var(--faint);vertical-align:1px}
+  .chip.c-ctx::before{background:var(--ctx)} .chip.c-ok::before{background:var(--ok)}
+  .chip.c-git::before{background:var(--git)} .chip.c-deny::before{background:var(--danger)}
+  .chip.c-warn::before{background:var(--warn)} .chip.c-claude::before{background:var(--claude)}
+  .chip.c-codex::before{background:var(--codex)}
+  .chip.c-deny{color:#ffb3ac;border-color:rgba(255,98,88,.35)}
+  #railnote{position:absolute;left:0;right:0;bottom:112px;text-align:center;font-size:27px;
+    color:var(--dim);opacity:0;z-index:6}
+  #railnote b{color:var(--text);font-weight:500}
+
+  .term{display:flex;flex-direction:column;background:var(--term);border:1px solid var(--border);
+    border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.5);overflow:hidden}
+  .tbar{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:1px solid var(--border);
+    background:rgba(255,255,255,.02);flex:none}
+  .tbar .d{width:12px;height:12px;border-radius:50%;background:#2a2d36}
+  .tbar .tt{font-family:var(--mono);font-size:17px;color:var(--dim);margin-left:8px}
+  .tbar .tr{margin-left:auto;font-family:var(--mono);font-size:15px;color:var(--faint)}
+  .tbar .agdot{width:10px;height:10px;border-radius:50%;margin-left:6px}
+  .tbody{flex:1;padding:20px 24px;font-family:var(--mono);font-size:20px;line-height:1.62;
+    overflow:hidden;text-align:left}
+  .tbody.small{font-size:18px;line-height:1.55}
+  .ln{white-space:pre-wrap;word-break:break-all;color:var(--text)}
+  .pp{color:var(--faint)} .pp.box{color:var(--claude)}
+  .cur{display:inline-block;width:11px;height:24px;background:var(--text);vertical-align:-4px;margin-left:2px}
+  .cur.off{opacity:0}
+  .dim{color:var(--dim)} .faint{color:var(--faint)} .ok{color:var(--ok)} .err{color:var(--danger)}
+  .vio{color:var(--ctx)} .blu{color:var(--git)} .co{color:var(--claude)} .te{color:var(--codex)}
+  .wr{color:var(--warn)} .wt{color:var(--text)}
+  .tool{color:var(--text);font-weight:700}
+
+  /* ---- m0 hook ---- */
+  #m0 .wrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;text-align:center}
+  #m0 .l1{font-size:64px;font-weight:700;letter-spacing:-.02em;opacity:0}
+  #m0 .l2{margin-top:18px;font-size:40px;font-weight:300;color:var(--dim);opacity:0}
+  #m0 .l2 b{color:var(--text);font-weight:500}
+  #m0 .term{width:920px;height:250px;margin-top:52px;border-color:rgba(255,98,88,.4);opacity:0}
+  .titlecard{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;text-align:center;opacity:0}
+  .titlecard img{height:140px;margin-bottom:14px}
+  .titlecard h1{font-size:60px;font-weight:700;letter-spacing:-.02em;line-height:1.14;max-width:1300px}
+  .titlecard h1 em{font-style:normal;color:var(--claude)}
+  .titlecard p{margin-top:24px;font-family:var(--mono);font-size:25px;color:var(--dim)}
+  .titlecard p b{color:var(--codex);font-weight:400}
+
+  /* ---- m1 sandbox ---- */
+  #m1 .cols{position:absolute;inset:0;display:flex;gap:36px}
+  #m1 .diag{width:700px;position:relative;flex:none}
+  #m1 .term{flex:1;height:868px}
+  .sealed{position:absolute;left:20px;top:60px;width:640px;height:430px;border-radius:20px;
+    border:2px dashed rgba(255,122,89,.65);background:rgba(255,122,89,.03)}
+  .sealed .slabel{position:absolute;top:-15px;left:26px;padding:2px 12px;background:var(--bg);
+    font-family:var(--mono);font-size:16px;color:var(--claude);letter-spacing:.08em}
+  .wkcard{position:absolute;left:34px;top:38px;right:34px;padding:18px 20px;border-radius:12px;
+    background:var(--term);border:1px solid var(--border2);font-family:var(--mono)}
+  .wkcard .t{font-size:18px;color:var(--text)} .wkcard .s{font-size:15px;color:var(--faint);margin-top:5px}
+  .polcard{position:absolute;left:34px;bottom:34px;right:34px;padding:16px 20px;border-radius:12px;
+    background:var(--term);border:1px solid var(--border2);font-family:var(--mono);font-size:16.5px;line-height:1.85}
+  .polcard .pt{color:var(--warn);font-size:15px;letter-spacing:.12em;margin-bottom:4px}
+  .polcard .row{display:flex;justify-content:space-between;color:var(--dim)}
+  .polcard .row b{color:var(--text);font-weight:400}
+  .wall{position:absolute;padding:8px 16px;border-radius:999px;background:var(--bg);
+    border:1px solid var(--border2);font-family:var(--mono);font-size:16px;color:var(--dim)}
+  #wall-fs{left:-52px;top:190px} #wall-net{left:470px;top:-19px} #wall-refs{right:-58px;top:190px}
+  .blockcard{position:absolute;left:50px;top:200px;width:580px;padding:22px 30px;border-radius:16px;z-index:5;
+    background:rgba(38,10,10,.97);border:2px solid var(--danger);opacity:0;
+    box-shadow:0 24px 70px rgba(0,0,0,.65);font-family:var(--mono)}
+  .blockcard .bl{font-size:15px;letter-spacing:.18em;color:var(--danger);margin-bottom:8px}
+  .blockcard .bt{font-size:30px;color:#ffd9d4}
+  .blockcard .bt b{color:#fff;font-weight:700}
+  .bigline{position:absolute;left:20px;top:700px;width:660px;font-size:40px;font-weight:700;
+    line-height:1.3;opacity:0}
+  .bigline em{font-style:normal;color:var(--ok)}
+  .callout{position:absolute;max-width:600px;padding:18px 24px;border-radius:14px;
+    background:rgba(14,14,18,.96);border:1px solid var(--border2);
+    box-shadow:0 18px 50px rgba(0,0,0,.55);font-size:23px;line-height:1.45;color:var(--dim);opacity:0;z-index:4}
+  .callout b{color:var(--text);font-weight:500}
+
+  /* ---- m2 receipt ---- */
+  #m2 h2{position:absolute;left:0;right:0;top:8px;text-align:center;font-size:56px;font-weight:700;
+    letter-spacing:-.02em;opacity:0}
+  #m2 h2 em{font-style:normal;color:var(--git)}
+  #m2 .term{position:absolute;left:40px;top:130px;width:860px;height:520px}
+  .checklist{position:absolute;right:110px;top:150px;display:flex;flex-direction:column;gap:26px}
+  .ck{display:flex;align-items:center;gap:20px;font-size:34px;color:var(--dim);opacity:0}
+  .ck .box{width:40px;height:40px;border-radius:10px;border:2px solid var(--border2);
+    display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--ok)}
+  .ck.on{color:var(--text)} .ck.on .box{border-color:rgba(52,211,153,.6);background:rgba(52,211,153,.1)}
+  #m2 .sub{position:absolute;left:0;right:0;top:700px;text-align:center;font-size:33px;
+    font-weight:300;color:var(--dim);opacity:0}
+  #m2 .sub b{color:var(--text);font-weight:500}
+
+  /* ---- m3 scale ---- */
+  #m3 .agents{position:absolute;left:80px;right:80px;top:40px;height:420px;display:flex;gap:32px}
+  #m3 .agents .term{flex:1}
+  #m3 .l1{position:absolute;left:0;right:0;top:540px;text-align:center;font-size:52px;font-weight:700;opacity:0}
+  #m3 .l1 b{color:var(--codex)} #m3 .l1 i{font-style:normal;color:var(--claude)}
+  #m3 .l2{position:absolute;left:0;right:0;top:626px;text-align:center;font-size:30px;
+    color:var(--dim);opacity:0}
+  #m3 .l2 b{color:var(--ok);font-weight:500}
+
+  /* ---- m4 close ---- */
+  #m4 .wrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;text-align:center}
+  #m4 .t1{font-size:64px;font-weight:300;color:var(--dim);opacity:0}
+  #m4 .t1 b{color:var(--text);font-weight:700}
+  #m4 .t2{margin-top:10px;font-size:64px;font-weight:700;opacity:0}
+  #m4 .t2 em{font-style:normal;color:var(--claude)}
+  #m4 .links{margin-top:52px;padding:22px 40px;border-radius:14px;background:var(--term);
+    border:1px solid var(--border2);font-family:var(--mono);font-size:24px;opacity:0}
+  #m4 .links span{color:var(--faint)}
+  #m4 .fin{margin-top:52px;display:flex;flex-direction:column;align-items:center;gap:8px;opacity:0}
+  #m4 .fin img{height:104px}
+  #m4 .fin .fs{font-size:23px;color:var(--dim)}
+  #m4 .fin .fr{font-family:var(--mono);font-size:19px;color:var(--git)}
+
+  #fade{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none;z-index:50}
+  #ctl{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);display:flex;gap:14px;
+    align-items:center;padding:10px 18px;border-radius:999px;background:rgba(10,10,14,.9);
+    border:1px solid var(--border2);z-index:99;font-family:var(--mono);font-size:14px;color:var(--dim)}
+  #ctl button{background:none;border:none;color:var(--text);font-size:18px;cursor:pointer;font-family:var(--mono)}
+  #ctl input[type=range]{width:420px;accent-color:var(--claude)}
+  body.render #ctl{display:none}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="hdr">
+    <div class="mark">h<b>5</b>i</div>
+    <div id="eyebrow"></div>
+  </div>
+
+  <!-- m0 : hook -->
+  <div class="scene" id="m0">
+    <div class="wrap" id="m0g1">
+      <div class="l1" id="h-l1">Your AI agent is editing production code.</div>
+      <div class="l2" id="h-l2">Git only shows the <b>final diff</b>.</div>
+      <div class="term" id="h-term">
+        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+          <span class="tt">an agent, no box</span>
+          <span class="tr">your real $HOME</span><span class="agdot" style="background:var(--danger)"></span></div>
+        <div class="tbody" id="t-hookm"></div>
+      </div>
+    </div>
+    <div class="titlecard" id="m0title">
+      <img src="assets/logo.png" alt="h5i">
+      <h1>h5i gives every agent a <em>sealed, auditable</em> workspace.</h1>
+      <p>Sealed worktrees. Recorded evidence. <b>Native Git.</b></p>
+    </div>
+  </div>
+
+  <!-- m1 : sandbox -->
+  <div class="scene" id="m1">
+    <div class="cols">
+      <div class="diag">
+        <div class="sealed" id="d-box">
+          <div class="slabel">env/worker-env — sealed</div>
+          <div class="wkcard"><div class="t">$WORK — private worktree</div>
+            <div class="s">.git/.h5i/env/you/worker-env/work</div></div>
+          <div class="polcard" id="d-pol">
+            <div class="pt">POLICY MANIFEST</div>
+            <div class="row"><span>fs.write</span><b>$WORK only</b></div>
+            <div class="row"><span>net.egress</span><b>api.anthropic.com</b></div>
+            <div class="row"><span>refs</span><b>env branch only</b></div>
+          </div>
+          <div class="wall" id="wall-fs">✋ fs</div>
+          <div class="wall" id="wall-net">✋ net</div>
+          <div class="wall" id="wall-refs">✋ refs</div>
+        </div>
+        <div class="blockcard" id="bcard">
+          <div class="bl">BLOCKED BY POLICY</div>
+          <div class="bt" id="bcard-t"></div>
+        </div>
+        <div class="bigline" id="big1">The agent still finishes the task.</div>
+        <div class="bigline" id="big2" style="top:762px">Only the <em>reviewed diff</em> is merged.</div>
+      </div>
+      <div class="term">
+        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+          <span class="tt">terminal — you</span><span class="tr">host</span></div>
+        <div class="tbody" id="t-envm"></div>
+      </div>
+    </div>
+    <div class="callout" id="cm1" style="left:20px;top:560px;max-width:640px">
+      <b>Turn off agent prompts. Keep the guardrails.</b> The box is the permission.
+    </div>
+  </div>
+
+  <!-- m2 : receipt -->
+  <div class="scene" id="m2">
+    <h2 id="r-h">Every diff gets a <em>receipt</em>.</h2>
+    <div class="term">
+      <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+        <span class="tt">you — a week later, any clone</span><span class="tr">main</span></div>
+      <div class="tbody" id="t-recm"></div>
+    </div>
+    <div class="checklist" id="cklist">
+      <div class="ck" id="ck0"><span class="box"></span>Prompt</div>
+      <div class="ck" id="ck1"><span class="box"></span>Commands</div>
+      <div class="ck" id="ck2"><span class="box"></span>Test output</div>
+      <div class="ck" id="ck3"><span class="box"></span>Denied actions</div>
+      <div class="ck" id="ck4"><span class="box"></span>Final diff</div>
+    </div>
+    <div class="sub" id="r-sub">One week later, you can still answer: <b>why did this diff happen?</b></div>
+  </div>
+
+  <!-- m3 : scale -->
+  <div class="scene" id="m3">
+    <div class="agents">
+      <div class="term" id="w-clm">
+        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+          <span class="tt">claude · env/worker-demo-claude</span>
+          <span class="tr">sealed</span><span class="agdot" style="background:var(--claude)"></span></div>
+        <div class="tbody small" id="t-clm"></div>
+      </div>
+      <div class="term" id="w-cxm">
+        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+          <span class="tt">codex · env/worker-demo-codex</span>
+          <span class="tr">sealed</span><span class="agdot" style="background:var(--codex)"></span></div>
+        <div class="tbody small" id="t-cxm"></div>
+      </div>
+    </div>
+    <div class="l1" id="s-l1">Works for one agent. Scales to many.</div>
+    <div class="l2" id="s-l2"><i>Claude</i> and <b>Codex</b> in parallel — <b>one audited result</b> merged.</div>
+  </div>
+
+  <!-- m4 : close -->
+  <div class="scene" id="m4">
+    <div class="wrap">
+      <div class="t1" id="c-t1">Git tracks the <b>diff</b>.</div>
+      <div class="t2" id="c-t2">h5i tracks the <em>run</em>.</div>
+      <div class="links" id="c-links">github.com/h5i-dev/h5i<span>&nbsp;&nbsp;·&nbsp;&nbsp;</span>h5i.dev</div>
+      <div class="fin" id="c-fin">
+        <img src="assets/logo.png" alt="h5i">
+        <div class="fs">Auditable workspaces for AI coding agents</div>
+        <div class="fr">refs/h5i/* — the audit trail, in your repo</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="rail">
+    <span class="rlabel">evidence · <b>refs/h5i/</b></span>
+    <div id="chips"></div>
+  </div>
+  <div id="railnote">Every action becomes <b>reviewable evidence</b>.</div>
+  <div id="fade"></div>
+</div>
+
+<div id="ctl">
+  <button id="pb">⏸</button>
+  <input type="range" id="scrub" min="0" max="1000" value="0">
+  <span id="tm">0:00</span>
+</div>
+
+<script>
+'use strict';
+/* h5i marketing cut — same deterministic-timeline engine as index.html. */
+const $ = id => document.getElementById(id);
+const clamp = (x,a,b) => Math.max(a, Math.min(b, x));
+const ramp = (t, at, d) => clamp((t-at)/d, 0, 1);
+const eo  = x => 1 - Math.pow(1-x, 3);
+const pop = (el, t, at, opts={}) => {
+  const {d=.55, dy=16} = opts;
+  const p = eo(ramp(t, at, d));
+  el.style.opacity = p;
+  el.style.transform = `translateY(${(1-p)*dy}px)`;
+  return p;
+};
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const cur = t => `<span class="cur${Math.floor(t*2)%2 ? ' off':''}"></span>`;
+function renderTerm(el, ev, t, opts={}) {
+  const cps = 30;
+  let html = '', typing = false;
+  for (const v of ev) {
+    if (t < v.at) break;
+    if (v.cmd !== undefined) {
+      const n = Math.floor((t - v.at) * (v.cps || cps));
+      const shown = v.cmd.slice(0, n);
+      const mid = n < v.cmd.length;
+      if (mid) typing = true;
+      html += `<div class="ln"><span class="pp ${v.pcls||''}">${v.prompt ?? '$'}</span> ${esc(shown)}` +
+              (mid ? cur(t) : '') + `</div>`;
+    } else if (v.out) {
+      const st = v.stagger ?? .13;
+      v.out.forEach((line, i) => { if (t >= v.at + i*st) html += `<div class="ln">${line}</div>`; });
+    }
+  }
+  if (!typing && opts.cursor && html) html += `<div class="ln"><span class="pp">${opts.cursor}</span> ${cur(t)}</div>`;
+  if (el._h !== html) { el._h = html; el.innerHTML = html; el.scrollTop = el.scrollHeight; }
+}
+
+/* ---- m0 hook (0–13) ---- */
+const evHookM = [
+  {at:5.3, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(./upload.sh ~/.aws/credentials)</span>`]},
+  {at:6.0, out:[`  <span class="dim">⎿</span> aws_secret_access_key → <span class="wr">uploaded</span>`]},
+  {at:7.0, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(git checkout -f main)</span>`]},
+  {at:7.7, out:[`  <span class="dim">⎿</span> <span class="wr">3 uncommitted files from another agent — overwritten</span>`]},
+];
+
+/* ---- m1 sandbox (13–43) ---- */
+const evEnvM = [
+  {at:.3,  cmd:'h5i env create worker-env --profile agent-claude', cps:34},
+  {at:1.8, out:[
+    `<span class="ok">✔</span> worktree  <span class="dim">.git/.h5i/env/you/worker-env/work</span>`,
+    `<span class="ok">✔</span> policy    agent-claude · isolation: <span class="wt">process</span> <span class="faint">(Landlock + seccomp)</span>`], stagger:.3},
+  {at:3.4, cmd:'h5i env shell worker-env', cps:34},
+  {at:4.4, out:[`<span class="dim">entering confined session — walls up: fs · net · refs</span>`]},
+  {at:5.2, cmd:'claude --dangerously-skip-permissions', prompt:'h5i:worker-env$', pcls:'box', cps:34},
+  {at:6.5, out:[`<span class="co">✻</span> Claude Code <span class="dim">— permissions off</span>`]},
+  {at:7.9, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(cat ~/.ssh/id_rsa)</span>`]},
+  {at:8.5, out:[`  <span class="err">⛔ Permission denied — outside fs.read</span>`]},
+  {at:10.9,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(curl https://internal-billing.corp/api)</span>`]},
+  {at:11.5,out:[`  <span class="err">⛔ 403 — not on the net.egress allowlist</span>`]},
+  {at:13.9,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(git push origin main)</span>`]},
+  {at:14.5,out:[`  <span class="err">⛔ refused — env branch only</span>`]},
+  {at:16.6,out:[
+    `<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(sync/worker.py)</span> <span class="ok">✓</span>   <span class="co">●</span> <span class="tool">Bash</span><span class="dim">(pytest -q)</span> → <span class="ok">241 passed</span>`,
+    `<span class="faint">task finished inside $WORK — every command captured</span>`], stagger:.4},
+  {at:18.4, cmd:'exit', prompt:'h5i:worker-env$', pcls:'box', cps:20},
+  {at:19.4, cmd:'h5i env diff worker-env --stat', cps:34},
+  {at:20.6, out:[
+    ` sync/worker.py       | 14 <span class="ok">++++++</span><span class="err">--</span>`,
+    ` tests/test_worker.py |  9 <span class="ok">+++++</span>`], stagger:.25},
+  {at:22.2, cmd:'h5i env propose worker-env', cps:34},
+  {at:23.4, out:[`<span class="ok">✔</span> review brief — 2 files · <span class="err">3 denials logged</span> · 6 captures`]},
+  {at:25.0, cmd:'h5i env apply worker-env', cps:34},
+  {at:26.2, out:[`<span class="ok">✔</span> merged onto main — <span class="wt">after your review, never before</span>`]},
+];
+const BLOCKS = [
+  {at:8.5,  wall:'wall-fs',   txt:'<b>~/.ssh/id_rsa</b> → BLOCKED'},
+  {at:11.5, wall:'wall-net',  txt:'<b>internal-billing.corp</b> → BLOCKED'},
+  {at:14.5, wall:'wall-refs', txt:'<b>git push origin main</b> → BLOCKED'},
+];
+
+/* ---- m2 receipt (43–57) ---- */
+const evRecM = [
+  {at:1.0, cmd:'h5i recall log --limit 1', cps:34},
+  {at:2.4, out:[
+    `commit <span class="wr">4f2c9e1</span>  fix: clamp retry jitter`,
+    `  <span class="dim">agent</span>    claude-code · claude-sonnet`,
+    `  <span class="dim">intent</span>   <span class="vio">"Fix the flaky retry test in tests/test_worker.py"</span>`,
+    `  <span class="dim">tests</span>    <span class="ok">241 passed</span> · coverage +1`,
+    `  <span class="dim">denials</span>  <span class="err">3 blocked</span> · logged`,
+    `  <span class="dim">tokens</span>   −97% (412 → 9 lines, raw recoverable)`], stagger:.22},
+];
+
+/* ---- m3 scale (57–67) ---- */
+const evClM = [
+  {at:.6, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
+  {at:1.6, out:[`<span class="co">●</span> <span class="tool">Write</span><span class="dim">(tests/test_worker_props.py)</span>  <span class="ok">✓</span>`]},
+  {at:2.6, out:[`<span class="te">◂ peer review from codex</span> · <span class="faint">revised & resealed</span>`]},
+];
+const evCxM = [
+  {at:1.0, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
+  {at:2.0, out:[`<span class="te">●</span> <span class="tool">Write</span><span class="dim">(tests/test_retry_props.py)</span>  <span class="ok">✓</span>`]},
+  {at:3.0, out:[`<span class="co">◂ peer review from claude</span> · <span class="faint">revised & resealed</span>`]},
+];
+
+/* ---- evidence rail (absolute seconds) ---- */
+const RAIL = [
+  {t:15.2, cls:'c-warn',  label:'policy'},
+  {t:21.6, cls:'c-deny',  label:'deny:fs'},
+  {t:24.6, cls:'c-deny',  label:'deny:net'},
+  {t:27.6, cls:'c-deny',  label:'deny:refs'},
+  {t:36.5, cls:'c-ok',    label:'brief'},
+  {t:39.3, cls:'c-ok',    label:'apply'},
+  {t:45.6, cls:'c-ctx',   label:'intent'},
+  {t:47.4, cls:'c-git',   label:'receipt'},
+  {t:59.8, cls:'c-claude',label:'review'},
+  {t:61.2, cls:'c-codex', label:'review'},
+  {t:63.8, cls:'c-ok',    label:'merge'},
+];
+
+const SCENES = [
+  { id:'m0', start:0, end:13, eyebrow:'',
+    update(t){
+      pop($('h-l1'), t, .4, {d:.7, dy:22});
+      pop($('h-l2'), t, 2.6, {d:.7});
+      pop($('h-term'), t, 4.8);
+      renderTerm($('t-hookm'), evHookM, t);
+      $('m0g1').style.opacity = Math.min(1, 1 - ramp(t, 8.6, .5));
+      pop($('m0title'), t, 9.0, {d:.8, dy:26});
+    }},
+  { id:'m1', start:13, end:43, eyebrow:'the sandboxed worktree',
+    update(t){
+      renderTerm($('t-envm'), evEnvM, t, {cursor:'$'});
+      const bp = eo(ramp(t, 1.8, .9));
+      const box = $('d-box');
+      box.style.opacity = bp; box.style.transform = `scale(${.94 + .06*bp})`;
+      ['wall-fs','wall-net','wall-refs'].forEach(w => { $(w).style.opacity = ramp(t, 3.0, .5); });
+      // one big red card per denial
+      let card = null;
+      for (const b of BLOCKS) {
+        const k = t < b.at ? 0 : Math.max(0, 1 - (t - b.at)/1.6);
+        const w = $(b.wall);
+        w.style.borderColor = k ? `rgba(255,98,88,${.35+.65*k})` : '';
+        w.style.color = k ? '#ffb3ac' : '';
+        w.style.boxShadow = k ? `0 0 ${34*k}px rgba(255,98,88,${.55*k})` : '';
+        w.style.transform = `scale(${1 + .18*k})`;
+        if (k) box.style.borderColor = `rgba(255,98,88,${.65+.35*k})`;
+        if (t >= b.at && t < b.at + 2.5) card = b;
+      }
+      const bc = $('bcard');
+      if (card) {
+        $('bcard-t').innerHTML = card.txt;
+        bc.style.opacity = Math.min(eo(ramp(t, card.at, .3)), 1 - ramp(t, card.at + 2.1, .4));
+        bc.style.transform = `scale(${.94 + .06*eo(ramp(t, card.at, .3))})`;
+      } else bc.style.opacity = 0;
+      // callout, then the two big closing lines
+      const con = Math.min(pop($('cm1'), t, 6.2), 1 - ramp(t, 17.0, .45));
+      $('cm1').style.opacity = Math.max(0, con);
+      pop($('big1'), t, 26.0, {d:.6});
+      pop($('big2'), t, 27.2, {d:.6});
+    }},
+  { id:'m2', start:43, end:57, eyebrow:'the receipt',
+    update(t){
+      pop($('r-h'), t, .3, {d:.6, dy:20});
+      renderTerm($('t-recm'), evRecM, t, {cursor:'$'});
+      for (let i = 0; i < 5; i++) {
+        const at = 2.0 + i*.9;
+        const el = $('ck' + i);
+        pop(el, t, at);
+        const on = t >= at + .35;
+        if (el._on !== on) { el._on = on; el.classList.toggle('on', on);
+          el.querySelector('.box').textContent = on ? '✓' : ''; }
+      }
+      pop($('r-sub'), t, 8.8, {d:.7});
+    }},
+  { id:'m3', start:57, end:67, eyebrow:'scale',
+    update(t){
+      renderTerm($('t-clm'), evClM, t);
+      renderTerm($('t-cxm'), evCxM, t);
+      $('w-clm').style.opacity = .35 + .65*eo(ramp(t, .3, .5));
+      $('w-cxm').style.opacity = .35 + .65*eo(ramp(t, .7, .5));
+      pop($('s-l1'), t, 4.6, {d:.6, dy:20});
+      pop($('s-l2'), t, 6.2, {d:.6});
+    }},
+  { id:'m4', start:67, end:75, eyebrow:'refs/h5i/*',
+    update(t){
+      pop($('c-t1'), t, .4, {d:.6, dy:20});
+      pop($('c-t2'), t, 1.4, {d:.6, dy:20});
+      pop($('c-links'), t, 3.2);
+      pop($('c-fin'), t, 4.8, {d:.8});
+    }},
+];
+const TOTAL = 75000;
+
+const chipsEl = $('chips');
+function draw(ms){
+  const ts = ms/1000;
+  for (const sc of SCENES) {
+    const el = $(sc.id);
+    const vis = ts >= sc.start - .1 && ts <= sc.end + .55;
+    el.style.display = vis ? 'block' : 'none';
+    if (!vis) continue;
+    const lt = ts - sc.start;
+    const oIn = eo(ramp(lt, 0, .6));
+    const oOut = 1 - ramp(ts, sc.end - .45, .45);
+    el.style.opacity = Math.min(oIn, oOut);
+    sc.update(lt);
+    if (Math.min(oIn,oOut) > .02) {
+      const eb = $('eyebrow');
+      if (eb._e !== sc.eyebrow) { eb._e = sc.eyebrow; eb.innerHTML = sc.eyebrow; }
+    }
+  }
+  const vis = RAIL.filter(r => ts >= r.t);
+  let ch = '';
+  if (vis.length > 12) ch += `<span class="chip" style="opacity:.8">⋯ ${vis.length - 11} more</span>`;
+  for (const r of vis.slice(vis.length > 12 ? -11 : 0)) {
+    const p = eo(ramp(ts, r.t, .45));
+    const glow = ts > 70.5 && ts < 74 ? 'border-color:rgba(122,162,255,.6);' : '';
+    ch += `<span class="chip ${r.cls}" style="opacity:${p};transform:scale(${.6+.4*p});${glow}">${r.label}</span>`;
+  }
+  if (chipsEl._h !== ch) { chipsEl._h = ch; chipsEl.innerHTML = ch; }
+  // the one-time rail introduction (during the denial run)
+  const rn = $('railnote');
+  rn.style.opacity = Math.min(eo(ramp(ts, 21.8, .5)), 1 - ramp(ts, 27.0, .6));
+  $('fade').style.opacity = Math.max(ramp(ms, TOTAL-1100, 1100), 1 - ramp(ms, 0, 600));
+}
+
+function fit(){
+  const s = Math.min(innerWidth/1920, innerHeight/1080);
+  $('stage').style.transform = `scale(${s})`;
+}
+addEventListener('resize', fit); fit();
+
+const RENDER = new URLSearchParams(location.search).has('render');
+window.TOTAL = TOTAL;
+window.SEEK = ms => { draw(clamp(ms, 0, TOTAL)); };
+
+if (RENDER) {
+  document.body.classList.add('render');
+  draw(0);
+} else {
+  let playing = true, t0 = performance.now(), acc = 0;
+  const scrub = $('scrub'), pb = $('pb'), tm = $('tm');
+  const now = () => playing ? acc + (performance.now() - t0) : acc;
+  function loop(){
+    let ms = now();
+    if (ms >= TOTAL) { ms = TOTAL; playing = false; acc = TOTAL; pb.textContent = '↺'; }
+    draw(ms);
+    scrub.value = Math.round(ms/TOTAL*1000);
+    tm.textContent = `${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')} / 1:15`;
+    requestAnimationFrame(loop);
+  }
+  const setT = ms => { acc = clamp(ms,0,TOTAL); t0 = performance.now(); };
+  pb.onclick = () => {
+    if (acc >= TOTAL) { setT(0); playing = true; }
+    else { acc = now(); playing = !playing; t0 = performance.now(); }
+    pb.textContent = playing ? '⏸' : '▶';
+  };
+  scrub.oninput = e => setT(e.target.value/1000*TOTAL);
+  addEventListener('keydown', e => { if (e.key === ' ') { e.preventDefault(); pb.onclick(); } });
+  document.fonts.ready.then(() => { setT(0); loop(); });
+}
+</script>
+</body>
+</html>
