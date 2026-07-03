@@ -1,9 +1,12 @@
 # h5i demo film
 
-A ~2:30 product demo video of h5i, built as a deterministic HTML timeline and
+A ~2:40 product demo video of h5i, built as a deterministic HTML timeline and
 rendered to mp4. It follows the README's 60-second flow:
 
-1. **Hook** — `git log` remembers *what* changed, not *why*.
+1. **Hook** — two terminals: the `git log` you see, and meanwhile an unboxed
+   agent piping attacker-malware.com scripts to `sh`, uploading
+   `~/.aws/credentials`, clobbering another agent's worktree, deleting tests.
+   `git log` remembers *what* changed — not *why*, and not any of that.
 2. **Capture → recall** — Claude works on the left (prompts, compressed tool
    output, `h5i capture commit`); on the right a human replays it all with
    `h5i recall log` / `h5i recall context show`, then `h5i share push`.
