@@ -2692,7 +2692,7 @@ async fn api_cockpit(
             .as_ref()
             .and_then(|r| r.ai_metadata.as_ref())
             .map(|ai| crate::prompt_score::score_prompt(&ai.prompt))
-            .filter(|s| s.words > 0);
+            .filter(|s| s.words > 0 && !s.is_unscored());
 
         let model = record.as_ref().and_then(|r| r.ai_metadata.as_ref()).map(|ai| ai.model_name.clone()).filter(|s| !s.is_empty());
         let prov = record.as_ref().and_then(|r| r.env_provenance.as_ref());
@@ -2890,11 +2890,16 @@ pub struct PromptMaturity {
     pub level: String,
     pub words: usize,
     pub flags: Vec<String>,
-    /// The seven weighted sub-signals behind `score` (composition before the
-    /// anti-gaming guards / length caps, which can lower the final number).
+    /// The core + enrichment sub-signals behind `score`. The three core slots
+    /// combine multiplicatively; enrichment lifts above the core. Empty when
+    /// `unscored` is set.
     pub dimensions: Vec<PromptDimension>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggested_upgrade: Option<String>,
+    /// When set, the prompt was not assessable (no authored request, or
+    /// non-English text); `score`/`dimensions` are placeholders.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unscored: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -2914,6 +2919,8 @@ fn suggested_upgrade(prompt: &str, flags: &[crate::prompt_score::Flag]) -> Optio
             Flag::WeakContext => adds.push("Scope: change only <file/module>; do not touch <out-of-scope area>."),
             Flag::Vague => adds.push("Acceptance criteria: <observable outcome that means done>."),
             Flag::TooShort => adds.push("State the goal, the files in scope, and how to verify the result."),
+            Flag::MostlyPaste => adds.push("Summarize what the pasted output shows and state the outcome you want from it."),
+            Flag::NoObjective => adds.push("Lead with the positive goal — what to build/change — not only what to avoid."),
             _ => {}
         }
     }
@@ -2954,23 +2961,49 @@ async fn api_prompt_score(
             return Ok(None);
         };
         let s = crate::prompt_score::score_prompt(&prompt);
+        if let Some(reason) = s.unscored {
+            // Abstained: report the reason, no score/dimensions to show.
+            return Ok(Some(PromptMaturity {
+                prompt,
+                score: 0.0,
+                level: "unscored".to_string(),
+                words: s.words,
+                flags: Vec::new(),
+                dimensions: Vec::new(),
+                suggested_upgrade: None,
+                unscored: Some(reason.to_string()),
+            }));
+        }
         let upgrade = suggested_upgrade(&prompt, &s.flags);
         let b = &s.breakdown;
-        let w = &crate::prompt_score::WEIGHTS;
+        let en = &crate::prompt_score::ENRICHMENT;
         let dim = |label: &str, signal: f64, weight: f64| PromptDimension {
             label: label.to_string(),
             signal: (signal * 100.0).clamp(0.0, 100.0),
             points: 100.0 * signal * weight,
             max_points: 100.0 * weight,
         };
+        // The three core slots combine multiplicatively, not by weight — their
+        // display `weight` is a nominal share (documented) so the meter reads
+        // sensibly; the enrichment slots use their real ENRICHMENT weights.
+        const CORE_DISPLAY_W: f64 = 0.20;
         let dimensions = vec![
-            dim("Specificity", b.specificity, w.specificity),
-            dim("Control", b.control, w.control),
-            dim("Context", b.context, w.context),
-            dim("Structure", b.structure, w.structure),
-            dim("Diversity", b.diversity, w.diversity),
-            dim("Clarity", b.clarity, w.clarity),
-            dim("Adequacy", b.adequacy, w.adequacy),
+            dim("Objective (core)", b.objective, CORE_DISPLAY_W),
+            dim("Grounding (core)", b.grounding, CORE_DISPLAY_W),
+            dim("Direction (core)", b.direction, CORE_DISPLAY_W),
+            dim("Context", b.context, en.context),
+            dim("Examples", b.examples, en.examples),
+            dim("Structure", b.structure, en.structure),
+            dim("Diversity", b.diversity, en.diversity),
+            dim("Clarity", b.clarity, en.clarity),
+            dim("Adequacy", b.adequacy, en.adequacy),
+            // Evidence is a bonus outside the composite; its "weight" here only
+            // shapes the display so points/max match the real bonus.
+            dim(
+                "Evidence (bonus)",
+                b.evidence,
+                crate::prompt_score::EVIDENCE_BONUS_MAX / 100.0,
+            ),
         ];
         Ok(Some(PromptMaturity {
             prompt,
@@ -2980,6 +3013,7 @@ async fn api_prompt_score(
             flags: s.flags.iter().map(|f| f.label().to_string()).collect(),
             dimensions,
             suggested_upgrade: upgrade,
+            unscored: None,
         }))
     })
     .await;

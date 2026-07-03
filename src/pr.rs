@@ -984,14 +984,17 @@ fn render_prompt_maturity_section(ps: &crate::prompt_score::BranchPromptScore) -
     // Collapsible per-signal breakdown. The order matches the weight ranking so
     // the signals that move the score most are read first.
     let b = &ps.breakdown;
-    let rows: [(&str, f64); 7] = [
-        ("Specificity", b.specificity),
-        ("Control / acceptance", b.control),
-        ("Context grounding", b.context),
+    let rows: [(&str, f64); 10] = [
+        ("Objective (core)", b.objective),
+        ("Grounding (core)", b.grounding),
+        ("Direction / acceptance (core)", b.direction),
+        ("Context", b.context),
+        ("Examples", b.examples),
         ("Structure", b.structure),
         ("Lexical diversity", b.diversity),
         ("Clarity (readability band)", b.clarity),
         ("Length adequacy", b.adequacy),
+        ("Evidence attached (bonus)", b.evidence),
     ];
     s.push_str("<details><summary>📊 heuristic breakdown</summary>\n\n");
     s.push_str("| Dimension | Signal |\n|---|---|\n");
@@ -2475,17 +2478,21 @@ fn render_per_commit_section(
         let _ = writeln!(s, "- **prompt** — _{}_", escape_md(&truncate(&ai.prompt, 280)));
         if !ai.prompt.trim().is_empty() {
             let pscore = crate::prompt_score::score_prompt(&ai.prompt);
-            let mut line = format!(
-                "  - {} **prompt maturity** {}/100 _{}_",
-                pscore.level.emoji(),
-                pscore.score.round() as i64,
-                pscore.level.label(),
-            );
-            if !pscore.flags.is_empty() {
-                let flags: Vec<&str> = pscore.flags.iter().map(|f| f.label()).collect();
-                let _ = write!(line, " — {}", flags.join(", "));
+            if let Some(reason) = pscore.unscored {
+                let _ = writeln!(s, "  - **prompt maturity** _unscored ({})_", reason);
+            } else {
+                let mut line = format!(
+                    "  - {} **prompt maturity** {}/100 _{}_",
+                    pscore.level.emoji(),
+                    pscore.score.round() as i64,
+                    pscore.level.label(),
+                );
+                if !pscore.flags.is_empty() {
+                    let flags: Vec<&str> = pscore.flags.iter().map(|f| f.label()).collect();
+                    let _ = write!(line, " — {}", flags.join(", "));
+                }
+                let _ = writeln!(s, "{}", line);
             }
-            let _ = writeln!(s, "{}", line);
         }
         let mut line = format!("- **model** `{}` · **agent** `{}`", ai.model_name, ai.agent_id);
         if let Some(u) = ai.usage.as_ref() {
@@ -3311,7 +3318,8 @@ mod tests {
         assert!(out.contains("/100"));
         assert!(out.contains("prompts scored"));
         assert!(out.contains("heuristic breakdown"));
-        assert!(out.contains("Specificity"));
+        assert!(out.contains("Objective (core)"));
+        assert!(out.contains("Direction / acceptance (core)"));
         assert!(out.contains("Flesch"));
         // Honesty disclaimer must be present so the number isn't read as a rating.
         assert!(out.contains("not a developer rating"), "{out}");
