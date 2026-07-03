@@ -610,6 +610,7 @@ struct Features {
     quoted: usize,
     numbers: usize,
     action_verbs: usize,
+    imprecise_verbs: usize,
     weak_words: usize,
     grounding_refs: usize,
     // ── objective inputs ──
@@ -709,6 +710,7 @@ impl Features {
                 .filter(|w| w.chars().any(|c| c.is_ascii_digit()))
                 .count(),
             action_verbs: lexicon_hits(&lower, &lower_counts, &word_set, ACTION_VERBS),
+            imprecise_verbs: lexicon_hits(&lower, &lower_counts, &word_set, IMPRECISE_VERBS),
             weak_words: lexicon_hits(&lower, &lower_counts, &word_set, WEAK_WORDS),
             grounding_refs: lexicon_hits(&lower, &lower_counts, &word_set, GROUNDING_REFS),
             imperative_open: opens_with_imperative(text),
@@ -761,6 +763,10 @@ impl Features {
         // bonus, not a requirement. Dragged down by vagueness; a prompt of pure
         // prohibitions (no action verb) scores ~0 here, which the multiplicative
         // core then turns into a real cap.
+        // Imprecise-verb penalty (Paska's "not precise verb" smell): a prompt
+        // whose actionable content is dominated by verbs like "handle" /
+        // "process" / "support" names no real action.
+        let imprecise = (per100(self.imprecise_verbs) / 6.0).clamp(0.0, 1.0);
         let objective = {
             let base = if self.action_verbs == 0 {
                 0.0
@@ -768,7 +774,7 @@ impl Features {
                 0.6 + 0.2 * f64::from(self.action_verbs >= 2)
                     + 0.2 * f64::from(self.imperative_open)
             };
-            (base - 0.5 * vagueness).clamp(0.0, 1.0)
+            (base - 0.5 * vagueness - 0.4 * imprecise).clamp(0.0, 1.0)
         };
 
         // ── Core slot: grounding — concrete references ──────────────────────
@@ -938,12 +944,25 @@ impl Features {
 const ACTION_VERBS: &[&str] = &[
     "implement", "fix", "refactor", "add", "remove", "delete", "update", "design",
     "build", "create", "write", "migrate", "debug", "optimize", "rename", "extract",
-    "replace", "wire", "integrate", "parse", "render", "validate", "handle", "edit",
-    "ensure", "support", "improve", "convert", "move", "split", "guard", "harden",
+    "replace", "wire", "integrate", "parse", "render", "validate", "edit",
+    "convert", "move", "split", "guard", "harden",
     "sanitize", "reject", "return", "cache", "expose", "document", "cover", "port",
     "upgrade", "patch", "register", "normalize", "serialize", "deserialize", "strip",
     "compute", "check", "enforce", "apply", "disable", "enable", "configure",
     "extend", "adjust", "drop", "wrap", "cap", "emit", "escape", "trim", "raise",
+];
+
+/// Verbs that *look* actionable but name no precise action — Paska's
+/// "not precise verb" smell (Veizaga et al., arXiv 2305.07097). A prompt whose
+/// only "action" is one of these ("handle the errors", "process the data",
+/// "support pagination") is not a clear objective, so their density is a
+/// *negative* signal on `objective` — never counted as an [`ACTION_VERBS`] hit.
+// NB: "do" and "make" are deliberately excluded — they fire on "do not change"
+// and "make sure" (a constraint and an acceptance phrase), not on an imprecise
+// action. We keep only verbs that are almost always imprecise *actions*.
+const IMPRECISE_VERBS: &[&str] = &[
+    "handle", "support", "process", "manage", "deal", "perform", "consider",
+    "accomplish", "propose", "ensure", "improve", "address",
 ];
 
 /// NALABS / Femmer "requirements smells" — vague, subjective, or non-actionable
@@ -2049,6 +2068,27 @@ mod tests {
              3. Add a test in tests/config_test.rs covering the default value",
         );
         assert!(s.breakdown.structure > 0.5, "structure {}", s.breakdown.structure);
+    }
+
+    #[test]
+    fn imprecise_verbs_do_not_earn_objective_credit() {
+        // Paska's "not precise verb" smell: "handle"/"process"/"support" look
+        // actionable but name no action — they must not score like a real verb.
+        let precise = score_prompt(
+            "Add pagination to `list_items()` in src/api.rs, capping the page size at 100.",
+        );
+        let imprecise = score_prompt(
+            "Handle the errors and process the data and support pagination properly.",
+        );
+        assert!(
+            precise.breakdown.objective > imprecise.breakdown.objective + 0.3,
+            "precise {} vs imprecise {}",
+            precise.breakdown.objective,
+            imprecise.breakdown.objective
+        );
+        // The imprecise-only ask reads as objectiveless and scores low.
+        assert!(imprecise.breakdown.objective < 0.2, "obj {}", imprecise.breakdown.objective);
+        assert!(imprecise.score < 30.0, "imprecise-verb prompt scored {}", imprecise.score);
     }
 
     #[test]
