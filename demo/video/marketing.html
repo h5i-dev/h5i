@@ -423,21 +423,21 @@ const evCxM = [
 
 /* ---- evidence rail (absolute seconds) ---- */
 const RAIL = [
-  {t:16.2, cls:'c-warn',  label:'policy'},
-  {t:22.6, cls:'c-deny',  label:'deny:fs'},
-  {t:25.6, cls:'c-deny',  label:'deny:net'},
-  {t:28.6, cls:'c-deny',  label:'deny:refs'},
-  {t:37.6, cls:'c-ok',    label:'brief'},
-  {t:40.4, cls:'c-ok',    label:'apply'},
-  {t:45.6, cls:'c-ctx',   label:'intent'},
-  {t:47.4, cls:'c-git',   label:'receipt'},
-  {t:59.8, cls:'c-claude',label:'review'},
-  {t:61.2, cls:'c-codex', label:'review'},
-  {t:63.8, cls:'c-ok',    label:'merge'},
+  {t:17.7, cls:'c-warn',  label:'policy'},
+  {t:24.1, cls:'c-deny',  label:'deny:fs'},
+  {t:27.1, cls:'c-deny',  label:'deny:net'},
+  {t:30.1, cls:'c-deny',  label:'deny:refs'},
+  {t:39.1, cls:'c-ok',    label:'brief'},
+  {t:41.9, cls:'c-ok',    label:'apply'},
+  {t:47.1, cls:'c-ctx',   label:'intent'},
+  {t:48.9, cls:'c-git',   label:'receipt'},
+  {t:61.3, cls:'c-claude',label:'review'},
+  {t:62.7, cls:'c-codex', label:'review'},
+  {t:65.3, cls:'c-ok',    label:'merge'},
 ];
 
 const SCENES = [
-  { id:'m0', start:0, end:14, eyebrow:'',
+  { id:'m0', start:0, end:15.5, eyebrow:'',
     update(t){
       pop($('h-l1'), t, .4, {d:.7, dy:22});
       pop($('h-l2'), t, 1.4, {d:.7});
@@ -448,7 +448,7 @@ const SCENES = [
       $('m0g1').style.opacity = Math.min(1, 1 - ramp(t, 10.4, .5));
       pop($('m0title'), t, 10.8, {d:.8, dy:26});
     }},
-  { id:'m1', start:14, end:43, eyebrow:'the sandboxed worktree',
+  { id:'m1', start:15.5, end:44.5, eyebrow:'the sandboxed worktree',
     update(t){
       renderTerm($('t-envm'), evEnvM, t, {cursor:'$'});
       const bp = eo(ramp(t, 1.8, .9));
@@ -479,7 +479,7 @@ const SCENES = [
       pop($('big1'), t, 26.0, {d:.6});
       pop($('big2'), t, 27.2, {d:.6});
     }},
-  { id:'m2', start:43, end:57, eyebrow:'the receipt',
+  { id:'m2', start:44.5, end:58.5, eyebrow:'the receipt',
     update(t){
       pop($('r-h'), t, .3, {d:.6, dy:20});
       renderTerm($('t-recm'), evRecM, t, {cursor:'$'});
@@ -493,7 +493,7 @@ const SCENES = [
       }
       pop($('r-sub'), t, 8.8, {d:.7});
     }},
-  { id:'m3', start:57, end:67, eyebrow:'scale',
+  { id:'m3', start:58.5, end:68.5, eyebrow:'scale',
     update(t){
       renderTerm($('t-clm'), evClM, t);
       renderTerm($('t-cxm'), evCxM, t);
@@ -504,7 +504,7 @@ const SCENES = [
       hold($('s-b2'), t, 4.4, 9.3);
       pop($('s-l2'), t, 5.8, {d:.6});
     }},
-  { id:'m4', start:67, end:75, eyebrow:'refs/h5i/*',
+  { id:'m4', start:68.5, end:76.5, eyebrow:'refs/h5i/*',
     update(t){
       pop($('c-t1'), t, .4, {d:.6, dy:20});
       pop($('c-t2'), t, 1.4, {d:.6, dy:20});
@@ -512,7 +512,7 @@ const SCENES = [
       pop($('c-fin'), t, 4.8, {d:.8});
     }},
 ];
-const TOTAL = 75000;
+const TOTAL = 76500;
 
 const chipsEl = $('chips');
 function draw(ms){
@@ -537,13 +537,13 @@ function draw(ms){
   if (vis.length > 12) ch += `<span class="chip" style="opacity:.8">⋯ ${vis.length - 11} more</span>`;
   for (const r of vis.slice(vis.length > 12 ? -11 : 0)) {
     const p = eo(ramp(ts, r.t, .45));
-    const glow = ts > 70.5 && ts < 74 ? 'border-color:rgba(122,162,255,.6);' : '';
+    const glow = ts > 72 && ts < 75.5 ? 'border-color:rgba(122,162,255,.6);' : '';
     ch += `<span class="chip ${r.cls}" style="opacity:${p};transform:scale(${.6+.4*p});${glow}">${r.label}</span>`;
   }
   if (chipsEl._h !== ch) { chipsEl._h = ch; chipsEl.innerHTML = ch; }
   // the one-time rail introduction (during the denial run)
   const rn = $('railnote');
-  rn.style.opacity = Math.min(eo(ramp(ts, 21.8, .5)), 1 - ramp(ts, 27.0, .6));
+  rn.style.opacity = Math.min(eo(ramp(ts, 23.3, .5)), 1 - ramp(ts, 28.5, .6));
   $('fade').style.opacity = Math.max(ramp(ms, TOTAL-1100, 1100), 1 - ramp(ms, 0, 600));
 }
 
@@ -569,7 +569,7 @@ if (RENDER) {
     if (ms >= TOTAL) { ms = TOTAL; playing = false; acc = TOTAL; pb.textContent = '↺'; }
     draw(ms);
     scrub.value = Math.round(ms/TOTAL*1000);
-    tm.textContent = `${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')} / 1:15`;
+    tm.textContent = `${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')} / 1:17`;
     requestAnimationFrame(loop);
   }
   const setT = ms => { acc = clamp(ms,0,TOTAL); t0 = performance.now(); };
