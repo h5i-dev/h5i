@@ -564,7 +564,7 @@ const SCENES = [
       renderTerm($('t-agent'), evAgent, t);
       renderTerm($('t-you'),   evYou,   t, {cursor:'$'});
       $('w-you').style.opacity = .38 + .62*eo(ramp(t, 19.2, .6));
-      hold($('c1a'), t, 4.4, 10.5);
+      pop($('c1a'), t, 4.4);
       hold($('c1b'), t, 30.6, 38.0);
     }},
   { id:'s2', start:54, end:101, eyebrow:'02 — <em>the sandboxed worktree</em>',
