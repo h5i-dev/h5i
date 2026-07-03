@@ -2,7 +2,6 @@
 // Render an h5i demo film (a deterministic HTML timeline) to an mp4.
 //
 //   node render.mjs                          # index.html -> out/h5i-demo.mp4
-//   node render.mjs --page marketing.html    # -> out/h5i-marketing.mp4
 //   node render.mjs --stills 5,30            # PNG stills at given seconds -> out/still-*.png
 //   node render.mjs --fps 30 --crf 18
 //
