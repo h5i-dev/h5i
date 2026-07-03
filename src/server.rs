@@ -2914,6 +2914,7 @@ fn suggested_upgrade(prompt: &str, flags: &[crate::prompt_score::Flag]) -> Optio
             Flag::WeakContext => adds.push("Scope: change only <file/module>; do not touch <out-of-scope area>."),
             Flag::Vague => adds.push("Acceptance criteria: <observable outcome that means done>."),
             Flag::TooShort => adds.push("State the goal, the files in scope, and how to verify the result."),
+            Flag::MostlyPaste => adds.push("Summarize what the pasted output shows and state the outcome you want from it."),
             _ => {}
         }
     }
@@ -2971,6 +2972,13 @@ async fn api_prompt_score(
             dim("Diversity", b.diversity, w.diversity),
             dim("Clarity", b.clarity, w.clarity),
             dim("Adequacy", b.adequacy, w.adequacy),
+            // Evidence is a bonus outside the weighted sum; its "weight" here
+            // only shapes the display so points/max match the real bonus.
+            dim(
+                "Evidence (bonus)",
+                b.evidence,
+                crate::prompt_score::EVIDENCE_BONUS_MAX / 100.0,
+            ),
         ];
         Ok(Some(PromptMaturity {
             prompt,

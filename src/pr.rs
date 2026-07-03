@@ -984,7 +984,7 @@ fn render_prompt_maturity_section(ps: &crate::prompt_score::BranchPromptScore) -
     // Collapsible per-signal breakdown. The order matches the weight ranking so
     // the signals that move the score most are read first.
     let b = &ps.breakdown;
-    let rows: [(&str, f64); 7] = [
+    let rows: [(&str, f64); 8] = [
         ("Specificity", b.specificity),
         ("Control / acceptance", b.control),
         ("Context grounding", b.context),
@@ -992,6 +992,7 @@ fn render_prompt_maturity_section(ps: &crate::prompt_score::BranchPromptScore) -
         ("Lexical diversity", b.diversity),
         ("Clarity (readability band)", b.clarity),
         ("Length adequacy", b.adequacy),
+        ("Evidence attached (bonus)", b.evidence),
     ];
     s.push_str("<details><summary>📊 heuristic breakdown</summary>\n\n");
     s.push_str("| Dimension | Signal |\n|---|---|\n");

@@ -43,6 +43,41 @@
 //! *balance gates* — a keyword-stuffed but context-free prompt is capped at 69
 //! so it can never read as "advanced".
 //!
+//! # Artifact segmentation (v2) — craft ≠ paste volume
+//!
+//! Real prompts routinely *contain machine output*: error logs, stack traces,
+//! compiler diagnostics, test-runner output, diffs. That text was **pasted, not
+//! written** — yet to v1 it looked like craft: paths and numbers farmed
+//! `specificity`, `test`/`line`/`file` tokens farmed verification and
+//! grounding, and sheer length lifted the adequacy curve and hard length caps.
+//! Measured on a real cargo-test failure paste, `"fix this failing test"` went
+//! 18 → 32 just by attaching the log — while a *well-crafted* prompt **dropped**
+//! 53 → 35 when the same log was attached (the paste drowned its diversity and
+//! tripped the repetition penalty). Wrong in both directions.
+//!
+//! v2 therefore splits the prompt line-wise into **authored prose** and
+//! **pasted artifact** ([`segment_artifacts`]: stack-frame / diagnostic /
+//! test-runner / log-level / timestamp / diff-marker patterns seed blocks;
+//! machine-ish neighbours — stopword-free, symbol-dense, deeply indented, or
+//! code-token-majority lines — join by contagion; fenced ``` blocks are
+//! artifact by construction). Every craft signal, the length caps, and the
+//! branch length-weighting are computed on the **authored text only**. The
+//! artifact instead feeds one new, deliberately *saturating* signal:
+//! `evidence` — attaching machine output is good grounding practice, so it
+//! earns a small fixed bonus (up to [`EVIDENCE_BONUS_MAX`] points, more when
+//! the prose explicitly frames the paste), but it can never scale with paste
+//! volume and never dilutes the authored signals.
+//!
+//! The segmentation features follow the natural-language-vs-machine-text
+//! literature: NLoN (Mäntylä et al., MSR 2018, arXiv 1803.07292) reaches
+//! AUC ≈ 0.97 line-level from exactly these cheap signals (stopword density,
+//! special-character ratio, digit ratio, indentation); infoZilla and the
+//! bug-report de-noising line (arXiv 2110.01336) show stack traces / diffs /
+//! logs are regex-friendly with precision > 0.9. The evidence-not-length move
+//! mirrors the standard length-bias countermeasure in text-quality metrics
+//! (Length-Controlled AlpacaEval, arXiv 2404.04475): credit *per unit of
+//! authored signal*, never total volume.
+//!
 //! # Scope vs. prompt-eval frameworks
 //!
 //! This is deliberately *not* an LLM-eval. Frameworks like PromptBench
@@ -87,6 +122,14 @@ pub const WEIGHTS: Weights = Weights {
     adequacy: 0.06,
 };
 
+/// Maximum bonus points the `evidence` signal can add to the composite.
+/// Attaching machine output (a log, trace, diff, or fenced block) is good
+/// grounding practice, so it earns a small fixed credit — deliberately a
+/// *bonus outside the weighted sum* so its absence never penalises the many
+/// prompts that have no artifact to attach, and deliberately saturating so it
+/// can never scale with paste volume.
+pub const EVIDENCE_BONUS_MAX: f64 = 5.0;
+
 /// Weighting of the seven sub-signals. See [`WEIGHTS`].
 #[derive(Debug, Clone, Copy)]
 pub struct Weights {
@@ -125,6 +168,11 @@ pub struct PromptScoreBreakdown {
     pub diversity: f64,
     pub clarity: f64,
     pub adequacy: f64,
+    /// Evidence signal (`0.0..=1.0`): pasted machine output / fenced blocks
+    /// attached (0.7) and explicitly framed by the authored prose (up to 1.0).
+    /// A *bonus* signal — not part of the weighted sum; it adds up to
+    /// [`EVIDENCE_BONUS_MAX`] points on top and its absence costs nothing.
+    pub evidence: f64,
     /// Raw Flesch Reading Ease (≈0–100, higher = easier). Display-only.
     pub flesch_reading_ease: f64,
     /// Raw Flesch-Kincaid Grade Level (US school grade). Display-only.
@@ -143,6 +191,7 @@ impl PromptScoreBreakdown {
             diversity: 0.0,
             clarity: 0.0,
             adequacy: 0.0,
+            evidence: 0.0,
             flesch_reading_ease: 0.0,
             fk_grade: 0.0,
             gunning_fog: 0.0,
@@ -210,6 +259,9 @@ pub enum Flag {
     WeakVerification,
     Repetitive,
     HardToScan,
+    /// The prompt is dominated by pasted machine output (log / trace / diff)
+    /// with only a thin authored ask around it.
+    MostlyPaste,
 }
 
 impl Flag {
@@ -221,6 +273,7 @@ impl Flag {
             Flag::WeakVerification => "no acceptance criteria",
             Flag::Repetitive => "repetitive",
             Flag::HardToScan => "hard to scan",
+            Flag::MostlyPaste => "mostly pasted output",
         }
     }
 }
@@ -232,7 +285,8 @@ pub struct PromptScore {
     pub score: f64,
     pub level: MaturityLevel,
     pub breakdown: PromptScoreBreakdown,
-    /// Prose word count (code-masked).
+    /// *Authored* prose word count — pasted artifact lines and code spans are
+    /// excluded, so a giant log paste doesn't read as a long prompt.
     pub words: usize,
     /// Up to two diagnostic flags, weakest dimension first.
     pub flags: Vec<Flag>,
@@ -285,12 +339,22 @@ impl BranchPromptScore {
 pub fn score_prompt(prompt: &str) -> PromptScore {
     let f = Features::extract(prompt);
     if f.words == 0 {
+        // No authored prose at all. A pure artifact paste still shows its
+        // evidence signal (and earns the bonus alone), but there is no craft
+        // to score.
+        let mut breakdown = PromptScoreBreakdown::zero();
+        breakdown.evidence = f.evidence_signal();
+        let score = (EVIDENCE_BONUS_MAX * breakdown.evidence).clamp(0.0, 100.0);
+        let mut flags = vec![Flag::TooShort];
+        if f.artifact_lines > 0 {
+            flags.push(Flag::MostlyPaste);
+        }
         return PromptScore {
-            score: 0.0,
-            level: MaturityLevel::Nascent,
-            breakdown: PromptScoreBreakdown::zero(),
+            score,
+            level: MaturityLevel::from_score(score),
+            breakdown,
             words: 0,
-            flags: vec![Flag::TooShort],
+            flags,
         };
     }
 
@@ -325,6 +389,12 @@ pub fn score_prompt(prompt: &str) -> PromptScore {
         // a 1200+ word unstructured wall is a dump, not a mature prompt
         score = score.min(75.0);
     }
+
+    // (4) Evidence bonus — attached machine output is grounding, not craft:
+    //     a small fixed credit on top, saturating (never scales with paste
+    //     volume) and applied *after* the caps so a lazy one-liner around a
+    //     log wall stays capped as the one-liner it is.
+    score += EVIDENCE_BONUS_MAX * breakdown.evidence;
 
     let score = score.clamp(0.0, 100.0);
 
@@ -384,6 +454,7 @@ where
         diversity: wmean_b(&|b| b.diversity),
         clarity: wmean_b(&|b| b.clarity),
         adequacy: wmean_b(&|b| b.adequacy),
+        evidence: wmean_b(&|b| b.evidence),
         flesch_reading_ease: wmean_b(&|b| b.flesch_reading_ease),
         fk_grade: wmean_b(&|b| b.fk_grade),
         gunning_fog: wmean_b(&|b| b.gunning_fog),
@@ -420,8 +491,11 @@ where
 // ── Feature extraction ───────────────────────────────────────────────────────
 
 /// Everything we measure off one prompt. Built once in [`Features::extract`].
+/// All fields describe the **authored** portion of the prompt — pasted
+/// machine-artifact lines are split off first by [`segment_artifacts`] and
+/// only feed `artifact_lines` / the evidence signal.
 struct Features {
-    /// Prose word count (code spans masked out before counting).
+    /// Authored prose word count (artifact lines and code spans excluded).
     words: usize,
     /// Prose tokens (lowercased), code spans removed — for diversity/readability.
     prose_tokens: Vec<String>,
@@ -451,10 +525,24 @@ struct Features {
     code_fences: usize,
     // ── anti-gaming ──
     repetition_factor: f64,
+    // ── artifact / evidence inputs ──
+    /// Lines classified as pasted machine output (logs, traces, diffs, fenced
+    /// block interiors).
+    artifact_lines: usize,
+    /// Non-blank lines that remained authored.
+    authored_lines: usize,
+    /// Deictic references from the authored prose to the paste ("the error
+    /// below", "this log", …).
+    evidence_refs: usize,
 }
 
 impl Features {
     fn extract(text: &str) -> Self {
+        // Split pasted machine artifacts (logs, stack traces, diffs, fenced
+        // blocks) from the authored prose first — everything below measures
+        // only what the engineer actually *wrote*.
+        let seg = segment_artifacts(text);
+        let text: &str = &seg.authored;
         // Mask code/paths/URLs so prose metrics aren't corrupted, but keep the
         // raw text for code-ref counting and lexicon matching.
         let masked = mask_code(text);
@@ -501,6 +589,9 @@ impl Features {
             edge_cases: lexicon_hits(&lower, &lower_counts, &word_set, EDGE_CASES),
             safety: lexicon_hits(&lower, &lower_counts, &word_set, SAFETY),
             scope: lexicon_hits(&lower, &lower_counts, &word_set, SCOPE),
+            evidence_refs: lexicon_hits(&lower, &lower_counts, &word_set, EVIDENCE_REFS),
+            artifact_lines: seg.artifact_lines,
+            authored_lines: seg.authored_lines,
             repetition_factor: repetition_factor(&prose_tokens),
             bullets,
             numbered,
@@ -567,6 +658,9 @@ impl Features {
         // ── Adequacy — length sweet spot (additive, gentle) ─────────────────
         let adequacy = length_adequacy(self.words);
 
+        // ── Evidence — attached artifact, saturating ────────────────────────
+        let evidence = self.evidence_signal();
+
         PromptScoreBreakdown {
             specificity,
             control,
@@ -575,10 +669,22 @@ impl Features {
             diversity,
             clarity,
             adequacy,
+            evidence,
             flesch_reading_ease,
             fk_grade,
             gunning_fog,
         }
+    }
+
+    /// Evidence signal in `0.0..=1.0`. Binary-ish and saturating by design:
+    /// *having* an artifact attached is worth 0.7; explicitly framing it from
+    /// the prose ("the error below", "this log") tops it up to 1.0. Volume is
+    /// deliberately not a factor — see the module docs on paste-gaming.
+    fn evidence_signal(&self) -> f64 {
+        if self.artifact_lines == 0 {
+            return 0.0;
+        }
+        0.7 + 0.3 * cap_ratio(self.evidence_refs, 2)
     }
 
     /// Up to two diagnostic flags, weakest qualifying dimension first.
@@ -586,6 +692,15 @@ impl Features {
         let mut out = Vec::new();
         if self.words < 15 {
             out.push(Flag::TooShort);
+        }
+        // A wall of pasted output around a thin ask: enough artifact lines to
+        // dominate (≥5 and ≥3× the authored lines) with under 40 authored
+        // words. Diagnostic: "write the ask, don't just paste".
+        if self.artifact_lines >= 5
+            && self.words < 40
+            && self.artifact_lines >= 3 * self.authored_lines.max(1)
+        {
+            out.push(Flag::MostlyPaste);
         }
         // Candidate (signal, flag) pairs, lowest signal surfaced first.
         let mut cands: Vec<(f64, Flag)> = vec![
@@ -679,6 +794,308 @@ const SCOPE: &[&str] = &[
     "only", "scope", "do not change", "don't change", "no unrelated", "out of scope",
     "in scope", "leave", "untouched", "just",
 ];
+
+/// Deictic references from the authored prose to an attached artifact — the
+/// difference between *framing* a paste ("the trace below shows…") and just
+/// dumping it. Tops up the evidence signal; matched on authored text only.
+const EVIDENCE_REFS: &[&str] = &[
+    "below", "above", "following", "attached", "pasted", "paste", "this error",
+    "the error", "this log", "the log", "this output", "the output", "the trace",
+    "the backtrace", "the stack trace", "this diff", "the diff", "stderr",
+    "stdout", "error message", "test output", "the failure", "this failure",
+];
+
+// ── Artifact segmentation ────────────────────────────────────────────────────
+//
+// Line-level split of a prompt into authored prose and pasted machine output,
+// following the NL-vs-machine-text literature (NLoN, infoZilla — see module
+// docs): high-precision *strong* patterns (stack frames, compiler diagnostics,
+// test-runner lines, log levels, timestamps, diff markers) seed artifact
+// blocks; cheap *weak* machine-ish signals (stopword-free, symbol-dense,
+// deeply indented, code-token-majority lines) join a block only by contagion
+// with an adjacent artifact line, so an isolated technical sentence in prose
+// stays authored. Fenced ``` interiors are artifact by construction (the
+// fence markers themselves stay authored so structure credit survives).
+// Fails toward *authored*: a missed artifact line costs a little noise, an
+// eaten prose line costs real signal.
+
+/// Result of [`segment_artifacts`].
+struct Segmented {
+    /// The authored lines, rejoined with `\n`.
+    authored: String,
+    /// Lines classified as pasted machine output.
+    artifact_lines: usize,
+    /// Non-blank lines that stayed authored.
+    authored_lines: usize,
+}
+
+/// Split `text` into authored prose and pasted machine artifacts.
+fn segment_artifacts(text: &str) -> Segmented {
+    let lines: Vec<&str> = text.lines().collect();
+    let n = lines.len();
+    let mut strength = vec![0u8; n];
+    let mut fence_marker = vec![false; n];
+    let mut in_fence = false;
+    for (i, l) in lines.iter().enumerate() {
+        if l.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            fence_marker[i] = true; // marker stays authored (structure credit)
+            continue;
+        }
+        strength[i] = if in_fence { 2 } else { line_artifact_strength(l) };
+    }
+
+    // Strong lines are artifact; weak lines join by contagion with a
+    // neighbouring artifact line (forward then backward pass, so runs grow
+    // from strong seeds in both directions).
+    let mut artifact: Vec<bool> = strength.iter().map(|&s| s >= 2).collect();
+    for i in 0..n {
+        if strength[i] == 1 && i > 0 && artifact[i - 1] {
+            artifact[i] = true;
+        }
+    }
+    for i in (0..n).rev() {
+        if strength[i] == 1 && i + 1 < n && artifact[i + 1] {
+            artifact[i] = true;
+        }
+    }
+
+    let mut authored = String::with_capacity(text.len());
+    let mut artifact_lines = 0usize;
+    let mut authored_lines = 0usize;
+    for (i, l) in lines.iter().enumerate() {
+        if artifact[i] && !fence_marker[i] {
+            artifact_lines += 1;
+            continue;
+        }
+        if !authored.is_empty() {
+            authored.push('\n');
+        }
+        authored.push_str(l);
+        if !l.trim().is_empty() && !fence_marker[i] {
+            authored_lines += 1;
+        }
+    }
+    Segmented { authored, artifact_lines, authored_lines }
+}
+
+/// Classify one line: `2` = unmistakable machine output (seeds an artifact
+/// block on its own), `1` = machine-ish (artifact only next to one), `0` =
+/// authored.
+fn line_artifact_strength(line: &str) -> u8 {
+    let t = line.trim();
+    if t.is_empty() {
+        return 0;
+    }
+    let lower = t.to_ascii_lowercase();
+
+    // ── Strong: high-precision machine-output patterns ──────────────────────
+    // Stack frames: "at src/…" / "at pkg.Class.method(File.java:123)" /
+    // 'File "x.py", line N' / numbered Rust/gdb frames.
+    if lower.starts_with("at ") && (t.contains('/') || t.contains("::") || t.contains('(')) {
+        return 2;
+    }
+    if t.starts_with("File \"") || is_frame_line(t) {
+        return 2;
+    }
+    // Panics / tracebacks / exception headlines.
+    if lower.contains("panicked at")
+        || lower.contains("stack backtrace")
+        || lower.contains("rust_backtrace")
+        || lower.starts_with("traceback (")
+        || lower.starts_with("caused by:")
+        || lower.starts_with("exception in thread")
+        || is_exception_headline(t)
+    {
+        return 2;
+    }
+    // Compiler / tool diagnostics.
+    if lower.starts_with("error:")
+        || lower.starts_with("error[")
+        || lower.starts_with("warning:")
+        || lower.starts_with("fatal:")
+        || t.starts_with("-->")
+        || t.contains("npm ERR!")
+    {
+        return 2;
+    }
+    if lower.contains("expected") && lower.contains("found") && t.contains('`') {
+        return 2; // rustc "expected `X`, found `Y`"
+    }
+    if lower.starts_with("assertion") && lower.contains("fail") {
+        return 2; // "assertion `left == right` failed" / "assertion failed: …"
+    }
+    if lower.starts_with("left:") || lower.starts_with("right:") {
+        return 2; // rustc assert_eq! operand dump
+    }
+    // Test-runner output.
+    if lower.starts_with("test ")
+        && (lower.ends_with("... ok")
+            || lower.contains("... failed")
+            || lower.contains("... ignored"))
+    {
+        return 2;
+    }
+    if (lower.starts_with("running ") && (lower.ends_with(" tests") || lower.ends_with(" test")))
+        || t == "failures:"
+        || t.starts_with("----")
+        || t.starts_with("====")
+    {
+        return 2;
+    }
+    // Log lines: leading timestamp or log-level token.
+    if starts_with_timestamp(t) || starts_with_log_level(t) {
+        return 2;
+    }
+    // Unified diff markers.
+    if t.starts_with("@@") || t.starts_with("+++ ") || t.starts_with("--- ")
+        || t.starts_with("diff --git")
+    {
+        return 2;
+    }
+
+    // ── Weak: machine-ish (NLoN-style cheap features) ───────────────────────
+    // Deep indentation (continuation lines of dumps / assertion diffs).
+    if line.starts_with("      ") || line.starts_with('\t') {
+        return 1;
+    }
+    // Diff content lines: +/- glued to content ("- item" bullets keep a space).
+    if t.len() > 1
+        && (t.starts_with('+') || t.starts_with('-'))
+        && !t[1..].starts_with(' ')
+        && !t.starts_with("--")
+    {
+        return 1;
+    }
+    // Terminal capture ("$ cargo test").
+    if t.starts_with("$ ") {
+        return 1;
+    }
+    // Very long unwrapped line — machine text doesn't wrap.
+    if t.len() > 180 {
+        return 1;
+    }
+    // Stopword-free multi-token line: authored English virtually always
+    // carries a function word; key:value dumps and identifier soup don't.
+    let toks: Vec<&str> = t.split_whitespace().collect();
+    if toks.len() >= 5 && !line_has_stopword(&lower) {
+        return 1;
+    }
+    // Majority of tokens look like code (paths, idents, calls).
+    if toks.len() >= 3 {
+        let codey = toks.iter().filter(|k| token_is_code(k)).count();
+        if codey * 10 >= toks.len() * 6 {
+            return 1;
+        }
+    }
+    // Symbol-dense line (braces, colons, equals — dump shrapnel).
+    if t.len() >= 12 && symbol_density(t) > 0.22 {
+        return 1;
+    }
+    0
+}
+
+/// Tiny function-word list for the natural-language-or-not signal (NLoN's
+/// strongest single feature). A ≥5-token line with *zero* of these is almost
+/// never authored English.
+const LINE_STOPWORDS: &[&str] = &[
+    "the", "a", "an", "and", "or", "but", "if", "then", "else", "for", "to",
+    "of", "in", "on", "at", "is", "are", "was", "were", "be", "been", "it",
+    "this", "that", "these", "those", "with", "as", "by", "from", "so", "we",
+    "you", "i", "not", "no", "do", "does", "did", "don't", "should", "must",
+    "can", "could", "will", "would", "when", "what", "how", "why", "which",
+    "there", "their", "our", "your", "my", "me", "us", "them", "they", "he",
+    "she", "his", "her", "its", "also", "than", "into", "over", "under",
+    "after", "before", "while", "where", "all", "any", "some", "please",
+];
+
+/// Does the (lowercased) line contain at least one English function word?
+fn line_has_stopword(lower: &str) -> bool {
+    lower.split_whitespace().any(|tok| {
+        let w: String = tok.chars().filter(|c| c.is_ascii_alphabetic() || *c == '\'').collect();
+        LINE_STOPWORDS.contains(&w.as_str())
+    })
+}
+
+/// Ratio of machine-punctuation characters (braces, colons, equals, …) to
+/// line length. Prose punctuation and backticks are excluded so a normal
+/// technical sentence stays low.
+fn symbol_density(t: &str) -> f64 {
+    let total = t.chars().count().max(1);
+    let sym = t
+        .chars()
+        .filter(|c| {
+            !c.is_alphanumeric()
+                && !c.is_whitespace()
+                && !matches!(c, '.' | ',' | '!' | '?' | '\'' | '"' | '-' | '`')
+        })
+        .count();
+    sym as f64 / total as f64
+}
+
+/// Numbered stack frame: "  3: core::ops::…", "0: rust_begin_unwind",
+/// "#2 0x00007f8e…".
+fn is_frame_line(t: &str) -> bool {
+    if let Some(rest) = t.strip_prefix('#') {
+        let digits = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+        return digits > 0 && rest[digits..].trim_start().starts_with("0x");
+    }
+    let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits == 0 {
+        return false;
+    }
+    if let Some(r) = t[digits..].strip_prefix(": ") {
+        return r.contains("::")
+            || r.contains('/')
+            || r.starts_with("0x")
+            || r.split_whitespace().next().map(is_code_like).unwrap_or(false);
+    }
+    false
+}
+
+/// Leading ISO date (`2026-07-03…`) or clock time (`07:12:33…`), optionally
+/// bracketed — the log-shipper heuristic for "this is a log line".
+fn starts_with_timestamp(t: &str) -> bool {
+    let s = t.trim_start_matches('[');
+    let c: Vec<char> = s.chars().take(10).collect();
+    if c.len() >= 10
+        && c[..4].iter().all(|c| c.is_ascii_digit())
+        && c[4] == '-'
+        && c[5..7].iter().all(|c| c.is_ascii_digit())
+        && c[7] == '-'
+        && c[8..10].iter().all(|c| c.is_ascii_digit())
+    {
+        return true;
+    }
+    c.len() >= 8
+        && c[0].is_ascii_digit()
+        && c[1].is_ascii_digit()
+        && c[2] == ':'
+        && c[3].is_ascii_digit()
+        && c[4].is_ascii_digit()
+        && c[5] == ':'
+        && c[6].is_ascii_digit()
+        && c[7].is_ascii_digit()
+}
+
+/// First token is an all-caps log-level keyword (optionally bracketed).
+fn starts_with_log_level(t: &str) -> bool {
+    let first = t.split_whitespace().next().unwrap_or("");
+    let w = first.trim_matches(|c: char| matches!(c, '[' | ']' | '(' | ')' | ':'));
+    matches!(
+        w,
+        "INFO" | "WARN" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | "PANIC"
+            | "FAIL" | "PASS" // jest/tap runner result lines
+    )
+}
+
+/// One of the first tokens is an exception headline ("TypeError:",
+/// "java.lang.NullPointerException: …").
+fn is_exception_headline(t: &str) -> bool {
+    t.split_whitespace()
+        .take(3)
+        .any(|tok| tok.ends_with("Exception:") || tok.ends_with("Error:") || (tok.ends_with("Exception") && tok.contains('.')))
+}
 
 // ── Tokenisation & counting primitives ───────────────────────────────────────
 
@@ -844,6 +1261,9 @@ fn is_code_like(t: &str) -> bool {
     }
     if t.contains('/') && t.len() > 2 {
         return true; // path
+    }
+    if t.contains("::") {
+        return true; // Rust/C++ qualified path
     }
     if let Some(idx) = t.find('(') {
         if idx > 0 && t[..idx].chars().all(|c| c.is_alphanumeric() || c == '_') {
@@ -1609,6 +2029,130 @@ mod tests {
         let s2 = score_branch(vec![x, p], 2);
         assert!((s1.score - s2.score).abs() < 1e-9);
         assert_eq!(s1.level, s2.level);
+    }
+
+    // ── Artifact segmentation & evidence ─────────────────────────────────────
+
+    #[test]
+    fn segments_rust_panic_from_prose() {
+        let text = "Fix the parser bug shown below.\n\
+                    running 3 tests\n\
+                    test parser::tests::nested ... FAILED\n\
+                    thread 'parser::tests::nested' panicked at src/parser.rs:214:9:\n\
+                    assertion `left == right` failed\n\
+                    \u{20}\u{20}left: 3\n\
+                    \u{20}\u{20}right: 2\n\
+                    stack backtrace:\n\
+                    \u{20}\u{20} 0: rust_begin_unwind\n\
+                    \u{20}\u{20}           at /rustc/07dca48/library/std/src/panicking.rs:652:5\n\
+                    Keep the public signature unchanged.";
+        let seg = segment_artifacts(text);
+        assert!(seg.authored.contains("Fix the parser bug"));
+        assert!(seg.authored.contains("Keep the public signature"));
+        assert!(!seg.authored.contains("panicked"), "authored: {}", seg.authored);
+        assert!(!seg.authored.contains("rust_begin_unwind"));
+        assert!(!seg.authored.contains("FAILED"));
+        assert!(seg.artifact_lines >= 8);
+        assert_eq!(seg.authored_lines, 2);
+    }
+
+    #[test]
+    fn segments_python_traceback_java_frames_and_diffs() {
+        let py = segment_artifacts(
+            "The import fails, trace below.\n\
+             Traceback (most recent call last):\n\
+             \u{20}\u{20}File \"app.py\", line 3, in main\n\
+             TypeError: run() missing 1 required argument: 'x'\n\
+             Make main() pass a default.",
+        );
+        assert!(!py.authored.contains("Traceback"));
+        assert!(!py.authored.contains("TypeError"));
+        assert!(py.authored.contains("Make main() pass a default."));
+
+        let java = segment_artifacts(
+            "NPE on startup:\n\
+             Exception in thread \"main\" java.lang.NullPointerException\n\
+             \tat com.foo.Bar.baz(Bar.java:42)\n\
+             Guard the config lookup.",
+        );
+        assert!(!java.authored.contains("NullPointerException"));
+        assert!(!java.authored.contains("com.foo.Bar.baz"));
+        assert!(java.authored.contains("Guard the config lookup."));
+
+        let diff = segment_artifacts(
+            "Apply this diff and add a test:\n\
+             --- a/src/foo.rs\n\
+             +++ b/src/foo.rs\n\
+             @@ -1,3 +1,4 @@\n\
+             +use std::fmt;\n\
+             \u{20}fn main() {}\n",
+        );
+        assert!(!diff.authored.contains("@@"));
+        assert!(!diff.authored.contains("+use"));
+        assert!(diff.authored.contains("Apply this diff"));
+        assert!(diff.artifact_lines >= 5);
+    }
+
+    #[test]
+    fn structured_prose_is_not_misread_as_artifact() {
+        // Bullets, numbered steps, backticked idents, paths — all authored.
+        let seg = segment_artifacts(
+            "Harden `Invoice::finalize()` in src/billing.rs in three steps:\n\
+             - Reject a zero-quantity item by returning `Err(BillingError::EmptyLine)`.\n\
+             1. Round each subtotal to two decimals.\n\
+             2. Sanitize the note to drop control characters.\n\
+             Keep the signature stable and edit only billing.rs.",
+        );
+        assert_eq!(seg.artifact_lines, 0, "authored: {}", seg.authored);
+        assert_eq!(seg.authored_lines, 5);
+    }
+
+    #[test]
+    fn fenced_interior_is_artifact_but_fence_structure_survives() {
+        let text = "Reproduce with this snippet:\n```\nspam0 = 1\nspam1 = 2\nspam2 = 3\n```\nThen fix the overflow in `sum()`.";
+        let seg = segment_artifacts(text);
+        assert!(!seg.authored.contains("spam1"));
+        assert!(seg.authored.contains("```"), "fence markers must stay for structure");
+        assert_eq!(seg.artifact_lines, 3);
+        // End-to-end: the code_fences structure signal still counts the block.
+        let f = Features::extract(text);
+        assert_eq!(f.code_fences, 1);
+        assert!(f.artifact_lines == 3);
+    }
+
+    #[test]
+    fn evidence_bonus_is_additive_and_framing_tops_it_up() {
+        let ask = "Fix the flaky retry in src/net.rs and add a regression test.";
+        let plain = score_prompt(ask);
+        assert_eq!(plain.breakdown.evidence, 0.0);
+
+        // Same ask + a pasted diagnostic → identical craft signals, evidence 0.7,
+        // score up by exactly the bonus.
+        let with_log = score_prompt(&format!("{ask}\nerror[E0308]: mismatched types"));
+        assert!((with_log.breakdown.evidence - 0.7).abs() < 1e-9);
+        assert!((with_log.score - plain.score - EVIDENCE_BONUS_MAX * 0.7).abs() < 1e-6);
+        assert_eq!(with_log.words, plain.words, "paste must not count as words");
+
+        // Framing the paste ("the error below") tops evidence up to 1.0.
+        let framed = score_prompt(&format!(
+            "{ask} The error below shows the failing case.\nerror[E0308]: mismatched types"
+        ));
+        assert!((framed.breakdown.evidence - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn mostly_paste_flag_fires_on_thin_ask_around_log_wall() {
+        let mut p = String::from("fix this\n");
+        for i in 0..12 {
+            p.push_str(&format!("error[E0308]: mismatched types --> src/a.rs:{i}:5\n"));
+        }
+        let s = score_prompt(&p);
+        assert!(s.flags.contains(&Flag::MostlyPaste), "flags: {:?}", s.flags);
+        // Artifact-only paste: no craft, evidence bonus only, both flags.
+        let only = score_prompt("error[E0308]: mismatched types --> src/a.rs:1:5");
+        assert_eq!(only.words, 0);
+        assert!(only.score <= EVIDENCE_BONUS_MAX);
+        assert!(only.flags.contains(&Flag::TooShort) && only.flags.contains(&Flag::MostlyPaste));
     }
 
     #[test]
