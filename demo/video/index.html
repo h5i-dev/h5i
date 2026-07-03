@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>h5i — demo film</title>
+<style>
+  /* ---------- fonts (local, offline) ---------- */
+  @font-face{font-family:'Space Grotesk';src:url('assets/SpaceGrotesk-400.woff2') format('woff2');font-weight:300 700;font-style:normal;font-display:block}
+  @font-face{font-family:'Space Mono';src:url('assets/SpaceMono-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:block}
+  @font-face{font-family:'Space Mono';src:url('assets/SpaceMono-700.woff2') format('woff2');font-weight:700;font-style:normal;font-display:block}
+
+  /* ---------- tokens (from h5i.dev) ---------- */
+  :root{
+    --bg:#08080b; --panel:#0e0e12; --term:#0b0b0f; --border:#23262e; --border2:#2f333d;
+    --text:#e8e8ec; --dim:#9a9aa4; --faint:#6b6b75;
+    --claude:#ff7a59; --codex:#2dd4bf; --ok:#34d399; --ctx:#a78bfa; --git:#7aa2ff;
+    --danger:#ff6258; --warn:#d6a94e;
+    --sans:'Space Grotesk',system-ui,sans-serif; --mono:'Space Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#000;overflow:hidden}
+  body{font-family:var(--sans);color:var(--text)}
+
+  /* ---------- stage (fixed 1920x1080, scaled to fit) ---------- */
+  #stage{position:absolute;width:1920px;height:1080px;left:50%;top:50%;
+    transform-origin:0 0;background:var(--bg);overflow:hidden}
+  #stage::before{content:'';position:absolute;inset:0;pointer-events:none;
+    background:
+      radial-gradient(1100px 520px at 24% -10%, rgba(255,122,89,.05), transparent 60%),
+      radial-gradient(1100px 520px at 82% 112%, rgba(45,212,191,.05), transparent 60%)}
+  .scene{position:absolute;inset:88px 72px 96px;opacity:0}
+
+  /* ---------- persistent chrome ---------- */
+  #hdr{position:absolute;top:0;left:0;right:0;height:88px;display:flex;align-items:center;
+    justify-content:space-between;padding:0 72px;z-index:5}
+  #hdr .mark{font-family:var(--mono);font-weight:700;font-size:26px;letter-spacing:.02em}
+  #hdr .mark b{color:var(--claude);font-weight:700}
+  #eyebrow{font-family:var(--mono);font-size:19px;color:var(--faint);letter-spacing:.14em;text-transform:uppercase}
+  #eyebrow em{font-style:normal;color:var(--dim)}
+
+  /* signature: the evidence rail — everything the film shows lands here as a chip */
+  #rail{position:absolute;left:0;right:0;bottom:0;height:96px;display:flex;align-items:center;
+    gap:18px;padding:0 72px;border-top:1px solid var(--border);
+    background:linear-gradient(180deg, rgba(11,11,15,.4), rgba(11,11,15,.9));z-index:5}
+  #rail .rlabel{font-family:var(--mono);font-size:19px;color:var(--faint);white-space:nowrap}
+  #rail .rlabel b{color:var(--git);font-weight:400}
+  #chips{display:flex;gap:10px;align-items:center;flex:1;overflow:hidden}
+  .chip{font-family:var(--mono);font-size:16px;padding:7px 14px;border-radius:999px;
+    border:1px solid var(--border2);color:var(--dim);white-space:nowrap;background:rgba(14,14,18,.9)}
+  .chip::before{content:'';display:inline-block;width:8px;height:8px;border-radius:50%;
+    margin-right:9px;background:var(--faint);vertical-align:1px}
+  .chip.c-ctx::before{background:var(--ctx)} .chip.c-ok::before{background:var(--ok)}
+  .chip.c-git::before{background:var(--git)} .chip.c-deny::before{background:var(--danger)}
+  .chip.c-warn::before{background:var(--warn)} .chip.c-claude::before{background:var(--claude)}
+  .chip.c-codex::before{background:var(--codex)}
+  .chip.c-deny{color:#ffb3ac;border-color:rgba(255,98,88,.35)}
+
+  /* ---------- terminals ---------- */
+  .term{display:flex;flex-direction:column;background:var(--term);border:1px solid var(--border);
+    border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.5);overflow:hidden}
+  .tbar{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:1px solid var(--border);
+    background:rgba(255,255,255,.02);flex:none}
+  .tbar .d{width:12px;height:12px;border-radius:50%;background:#2a2d36}
+  .tbar .tt{font-family:var(--mono);font-size:17px;color:var(--dim);margin-left:8px}
+  .tbar .tr{margin-left:auto;font-family:var(--mono);font-size:15px;color:var(--faint)}
+  .tbar .agdot{width:10px;height:10px;border-radius:50%;margin-left:6px}
+  .tbody{flex:1;padding:20px 24px;font-family:var(--mono);font-size:20px;line-height:1.62;
+    overflow:hidden;display:flex;flex-direction:column;justify-content:flex-start}
+  .tbody.small{font-size:18px;line-height:1.55}
+  .ln{white-space:pre-wrap;word-break:break-all;color:var(--text)}
+  .pp{color:var(--faint)} .pp.box{color:var(--claude)}
+  .cur{display:inline-block;width:11px;height:24px;background:var(--text);vertical-align:-4px;margin-left:2px}
+  .cur.off{opacity:0}
+  /* transcript vocabulary */
+  .dim{color:var(--dim)} .faint{color:var(--faint)} .ok{color:var(--ok)} .err{color:var(--danger)}
+  .vio{color:var(--ctx)} .blu{color:var(--git)} .co{color:var(--claude)} .te{color:var(--codex)}
+  .wr{color:var(--warn)} .wt{color:var(--text)}
+  .tool{color:var(--text);font-weight:700}
+  .badge{display:inline-block;font-size:15px;padding:2px 10px;border-radius:6px;
+    background:rgba(52,211,153,.12);color:var(--ok);border:1px solid rgba(52,211,153,.3)}
+
+  /* ---------- callouts ---------- */
+  .callout{position:absolute;max-width:600px;padding:18px 24px;border-radius:14px;
+    background:rgba(14,14,18,.96);border:1px solid var(--border2);
+    box-shadow:0 18px 50px rgba(0,0,0,.55);font-size:23px;line-height:1.45;color:var(--dim);opacity:0;z-index:4}
+  .callout b{color:var(--text);font-weight:500}
+  .callout .k{font-family:var(--mono);font-size:19px;color:var(--git)}
+
+  /* ---------- scene 0 / 4 ---------- */
+  #s0 .wrap,#s4 .wrap{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;text-align:center}
+  #s0 .term{width:980px;height:330px}
+  #s0 .qs{margin-top:44px;display:flex;flex-direction:column;gap:10px}
+  #s0 .q{font-size:34px;font-weight:300;color:var(--dim);opacity:0}
+  #s0 .q b{color:var(--text);font-weight:500}
+  .titlecard{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;text-align:center;opacity:0}
+  .titlecard img{height:150px;margin-bottom:8px}
+  .titlecard h1{font-size:78px;font-weight:700;letter-spacing:-.02em;line-height:1.08;max-width:1250px}
+  .titlecard h1 em{font-style:normal;color:var(--claude)}
+  .titlecard p{margin-top:26px;font-family:var(--mono);font-size:24px;color:var(--dim)}
+  .titlecard p b{color:var(--codex);font-weight:400}
+
+  /* ---------- scene 1 : capture -> recall ---------- */
+  #s1 .cols{position:absolute;inset:0;display:flex;gap:32px}
+  #s1 .term{flex:1;height:772px}
+
+  /* ---------- scene 2 : sandbox ---------- */
+  #s2 .cols{position:absolute;inset:0;display:flex;gap:36px}
+  #s2 .diag{width:760px;position:relative;flex:none}
+  #s2 .term{flex:1;height:868px}
+  .repocard{position:absolute;left:16px;top:40px;width:300px;padding:20px 22px;border-radius:14px;
+    background:var(--panel);border:1px solid var(--border2)}
+  .repocard .t{font-family:var(--mono);font-size:18px;color:var(--text)}
+  .repocard .s{font-family:var(--mono);font-size:15px;color:var(--faint);margin-top:6px}
+  .repocard .dots{margin-top:14px;display:flex;align-items:center;gap:8px}
+  .repocard .dots i{width:10px;height:10px;border-radius:50%;background:var(--git);opacity:.85}
+  .repocard .dots s{flex:1;height:2px;background:var(--border2);text-decoration:none}
+  .sealed{position:absolute;left:70px;top:250px;width:620px;height:470px;border-radius:20px;
+    border:2px dashed rgba(255,122,89,.65);background:rgba(255,122,89,.03)}
+  .sealed .slabel{position:absolute;top:-15px;left:26px;padding:2px 12px;background:var(--bg);
+    font-family:var(--mono);font-size:16px;color:var(--claude);letter-spacing:.08em}
+  .wkcard{position:absolute;left:34px;top:38px;right:34px;padding:18px 20px;border-radius:12px;
+    background:var(--term);border:1px solid var(--border2);font-family:var(--mono)}
+  .wkcard .t{font-size:18px;color:var(--text)} .wkcard .s{font-size:15px;color:var(--faint);margin-top:5px}
+  .polcard{position:absolute;left:34px;bottom:34px;right:34px;padding:18px 20px;border-radius:12px;
+    background:var(--term);border:1px solid var(--border2);font-family:var(--mono);font-size:16.5px;line-height:1.9}
+  .polcard .pt{color:var(--warn);font-size:15px;letter-spacing:.12em;margin-bottom:6px}
+  .polcard .row{display:flex;justify-content:space-between;color:var(--dim)}
+  .polcard .row b{color:var(--text);font-weight:400}
+  .wall{position:absolute;padding:8px 16px;border-radius:999px;background:var(--bg);
+    border:1px solid var(--border2);font-family:var(--mono);font-size:16px;color:var(--dim)}
+  #wall-fs{left:-58px;top:200px} #wall-net{left:452px;top:-19px} #wall-refs{right:-64px;top:200px}
+  .denytoast{position:absolute;padding:12px 18px;border-radius:12px;background:rgba(38,12,12,.97);
+    border:1px solid rgba(255,98,88,.55);font-family:var(--mono);font-size:17px;color:#ffb3ac;
+    opacity:0;max-width:420px;box-shadow:0 14px 40px rgba(0,0,0,.6)}
+  .applyflow{position:absolute;left:96px;top:150px;font-family:var(--mono);font-size:17px;
+    color:var(--ok);opacity:0}
+  .applyflow .arr{color:var(--ok)}
+
+  /* ---------- scene 3 : ensemble ---------- */
+  #s3 .orch{position:absolute;left:0;right:0;top:0;height:352px}
+  #s3 .agents{position:absolute;left:0;right:0;top:384px;bottom:0;display:flex;gap:32px}
+  #s3 .agents .term{flex:1}
+  .bub{position:absolute;padding:14px 20px;border-radius:14px;font-size:19px;line-height:1.4;
+    max-width:520px;opacity:0;z-index:4;background:var(--panel);box-shadow:0 16px 44px rgba(0,0,0,.55)}
+  .bub.from-claude{border:1px solid rgba(255,122,89,.5)} .bub.from-codex{border:1px solid rgba(45,212,191,.5)}
+  .bub .who{font-family:var(--mono);font-size:15px;margin-bottom:4px}
+  .bub.from-claude .who{color:var(--claude)} .bub.from-codex .who{color:var(--codex)}
+  .verdict{position:absolute;left:50%;top:46%;width:660px;margin-left:-330px;padding:30px 36px;
+    border-radius:18px;background:rgba(10,14,12,.97);border:1px solid rgba(52,211,153,.5);
+    box-shadow:0 30px 90px rgba(0,0,0,.7);opacity:0;z-index:6;text-align:center}
+  .verdict .vt{font-family:var(--mono);font-size:16px;color:var(--ok);letter-spacing:.16em;text-transform:uppercase}
+  .verdict h3{font-size:42px;font-weight:700;margin:10px 0 6px}
+  .verdict h3 b{color:var(--codex)}
+  .verdict p{font-family:var(--mono);font-size:18px;color:var(--dim)}
+
+  /* ---------- scene 4 : outro ---------- */
+  #s4 h2{font-size:66px;font-weight:700;letter-spacing:-.02em;opacity:0}
+  #s4 h2 em{font-style:normal;color:var(--ok)}
+  #s4 .refs{margin-top:22px;font-family:var(--mono);font-size:24px;color:var(--dim);opacity:0}
+  #s4 .refs b{color:var(--git);font-weight:400}
+  #s4 .install{margin-top:52px;padding:22px 34px;border-radius:14px;background:var(--term);
+    border:1px solid var(--border2);font-family:var(--mono);font-size:23px;opacity:0}
+  #s4 .install .pp{color:var(--faint)}
+  #s4 .fin{margin-top:60px;display:flex;flex-direction:column;align-items:center;gap:6px;opacity:0}
+  #s4 .fin img{height:120px}
+  #s4 .fin .fs{font-size:24px;color:var(--dim)}
+  #s4 .fin .fu{font-family:var(--mono);font-size:20px;color:var(--claude);margin-top:6px}
+
+  #fade{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none;z-index:50}
+
+  /* ---------- player controls (hidden in render mode) ---------- */
+  #ctl{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);display:flex;gap:14px;
+    align-items:center;padding:10px 18px;border-radius:999px;background:rgba(10,10,14,.9);
+    border:1px solid var(--border2);z-index:99;font-family:var(--mono);font-size:14px;color:var(--dim)}
+  #ctl button{background:none;border:none;color:var(--text);font-size:18px;cursor:pointer;font-family:var(--mono)}
+  #ctl input[type=range]{width:420px;accent-color:var(--claude)}
+  body.render #ctl{display:none}
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <div id="hdr">
+    <div class="mark">h<b>5</b>i</div>
+    <div id="eyebrow"></div>
+  </div>
+
+  <!-- ================= scene 0 : hook ================= -->
+  <div class="scene" id="s0">
+    <div class="wrap" id="s0g1">
+      <div class="term">
+        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+          <span class="tt">your repo</span><span class="tr">main</span></div>
+        <div class="tbody" id="t-hook"></div>
+      </div>
+      <div class="qs">
+        <div class="q" id="q1">Which of these did an <b>AI</b> write?</div>
+        <div class="q" id="q2">From what <b>prompt</b>? Inside what <b>walls</b>?</div>
+        <div class="q" id="q3">Git remembers <b>what</b> changed. Not <b>why</b>.</div>
+      </div>
+    </div>
+    <div class="titlecard" id="s0title">
+      <img src="assets/logo.png" alt="h5i">
+      <h1>Auditable workspaces for <em>AI coding agents</em>.</h1>
+      <p>h5i · a Git sidecar — sandboxed worktrees, recorded evidence, <b>no SaaS</b></p>
+    </div>
+  </div>
+
+  <!-- ================= scene 1 : capture -> recall ================= -->
+  <div class="scene" id="s1">
+    <div class="cols">
+      <div class="term" id="w-agent">
+        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+          <span class="tt">claude code — agent session</span>
+          <span class="tr">$WORK</span><span class="agdot" style="background:var(--claude)"></span></div>
+        <div class="tbody" id="t-agent"></div>
+      </div>
+      <div class="term" id="w-you">
+        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+          <span class="tt">you — same repo, any clone</span>
+          <span class="tr">later</span><span class="agdot" style="background:var(--git)"></span></div>
+        <div class="tbody" id="t-you"></div>
+      </div>
+    </div>
+    <div class="callout" id="c1a" style="left:90px;top:690px">
+      <b>Tool output, compressed.</b> Failures survive verbatim; the raw log stays recoverable in
+      <span class="k">refs/h5i</span>.
+    </div>
+    <div class="callout" id="c1b" style="right:60px;top:690px">
+      <b>The why behind every diff.</b> Prompts, commands, reasoning — versioned next to your commits,
+      pushed with <span class="k">h5i share push</span>.
+    </div>
+  </div>
+
+  <!-- ================= scene 2 : the sandboxed worktree ================= -->
+  <div class="scene" id="s2">
+    <div class="cols">
+      <div class="diag">
+        <div class="repocard" id="d-repo">
+          <div class="t">your repo</div><div class="s">main · 88ab21c</div>
+          <div class="dots"><i></i><s></s><i></i><s></s><i style="background:var(--ok)" id="d-mergedot"></i></div>
+        </div>
+        <div class="applyflow" id="d-apply">reviewed diff<br><span class="arr">▲</span> h5i env apply</div>
+        <div class="sealed" id="d-box">
+          <div class="slabel">env/claude-env — sealed</div>
+          <div class="wkcard"><div class="t">$WORK — private worktree</div>
+            <div class="s">.git/.h5i/env/you/claude-env/work</div></div>
+          <div class="polcard" id="d-pol">
+            <div class="pt">POLICY MANIFEST</div>
+            <div class="row"><span>fs.write</span><b>$WORK only</b></div>
+            <div class="row"><span>net.egress</span><b>api.anthropic.com</b></div>
+            <div class="row"><span>secrets</span><b>none</b></div>
+            <div class="row"><span>mem · wall</span><b>2 GiB · 120 s</b></div>
+          </div>
+          <div class="wall" id="wall-fs">✋ fs</div>
+          <div class="wall" id="wall-net">✋ net</div>
+          <div class="wall" id="wall-refs">✋ refs</div>
+        </div>
+        <div class="denytoast" id="d-toast"></div>
+      </div>
+      <div class="term">
+        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+          <span class="tt">terminal — you</span><span class="tr">host</span></div>
+        <div class="tbody" id="t-env"></div>
+      </div>
+    </div>
+    <div class="callout" id="c2a" style="left:420px;top:50px;max-width:340px">
+      <b>Let the agent run free.</b> Permissions off — the box <b>is</b> the permission.
+    </div>
+    <div class="callout" id="c2b" style="left:420px;top:50px;max-width:340px">
+      <b>Nothing lands on your branch</b> until you've reviewed it — denials on the record.
+    </div>
+  </div>
+
+  <!-- ================= scene 3 : the ensemble ================= -->
+  <div class="scene" id="s3">
+    <div class="term orch">
+      <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+        <span class="tt">you — orchestrator</span><span class="tr">host</span></div>
+      <div class="tbody" id="t-orch"></div>
+    </div>
+    <div class="agents">
+      <div class="term" id="w-cl">
+        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+          <span class="tt">claude · env/qsort-demo-claude</span>
+          <span class="tr">sealed</span><span class="agdot" style="background:var(--claude)"></span></div>
+        <div class="tbody small" id="t-cl"></div>
+      </div>
+      <div class="term" id="w-cx">
+        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+          <span class="tt">codex · env/qsort-demo-codex</span>
+          <span class="tr">sealed</span><span class="agdot" style="background:var(--codex)"></span></div>
+        <div class="tbody small" id="t-cx"></div>
+      </div>
+    </div>
+    <div class="bub from-claude" id="b1" style="left:560px;top:520px">
+      <div class="who">claude → codex · h5i msg review</div>
+      pivot dups look off-by-one — added a duplicate-heavy case, please check
+    </div>
+    <div class="bub from-codex" id="b2" style="right:560px;top:640px">
+      <div class="who">codex → claude · h5i msg review</div>
+      recursion depth blows up on sorted input — try median-of-three?
+    </div>
+    <div class="verdict" id="verd">
+      <div class="vt">verdict · recorded in refs/h5i</div>
+      <h3>winner: <b>codex</b></h3>
+      <p>all gates green · neutral replay ✓ · smallest diff</p>
+    </div>
+  </div>
+
+  <!-- ================= scene 4 : outro ================= -->
+  <div class="scene" id="s4">
+    <div class="wrap">
+      <h2 id="o-h">Everything you just watched is <em>in your repo</em>.</h2>
+      <div class="refs" id="o-refs"><b>refs/h5i/*</b> — prompts · contexts · policies · denials · reviews · verdicts</div>
+      <div class="install" id="o-inst"></div>
+      <div class="fin" id="o-fin">
+        <img src="assets/logo.png" alt="h5i">
+        <div class="fs">Auditable workspaces for AI coding agents</div>
+        <div class="fu">h5i.dev</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="rail">
+    <span class="rlabel">evidence · <b>refs/h5i/</b></span>
+    <div id="chips"></div>
+  </div>
+  <div id="fade"></div>
+</div>
+
+<div id="ctl">
+  <button id="pb">⏸</button>
+  <input type="range" id="scrub" min="0" max="1000" value="0">
+  <span id="tm">0:00</span>
+</div>
+
+<script>
+'use strict';
+/* ============================================================
+   h5i demo film — deterministic timeline.
+   Every visual state is a pure function of t (ms), so the film
+   can be played live OR seeked frame-by-frame by render.mjs.
+   ============================================================ */
+const $ = id => document.getElementById(id);
+const clamp = (x,a,b) => Math.max(a, Math.min(b, x));
+const ramp = (t, at, d) => clamp((t-at)/d, 0, 1);           // linear 0..1
+const eo  = x => 1 - Math.pow(1-x, 3);                       // ease-out cubic
+const pop = (el, t, at, opts={}) => {                        // fade+rise in
+  const {d=.55, dy=16} = opts;
+  const p = eo(ramp(t, at, d));
+  el.style.opacity = p;
+  el.style.transform = `translateY(${(1-p)*dy}px)`;
+  return p;
+};
+const hold = (el, t, at, until, opts={}) => {                // pop in, fade out
+  const p = pop(el, t, at, opts);
+  if (until != null && t > until) el.style.opacity = Math.max(0, 1 - ramp(t, until, .45));
+  return p;
+};
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+/* ---------- terminal engine ---------- */
+function renderTerm(el, ev, t, opts={}) {
+  const cps = 30;
+  let html = '', typing = false;
+  for (const v of ev) {
+    if (t < v.at) break;
+    if (v.cmd !== undefined) {
+      const n = Math.floor((t - v.at) * (v.cps || cps));
+      const shown = v.cmd.slice(0, n);
+      const mid = n < v.cmd.length;
+      if (mid) typing = true;
+      html += `<div class="ln"><span class="pp ${v.pcls||''}">${v.prompt ?? '$'}</span> ${esc(shown)}` +
+              (mid ? cur(t) : '') + `</div>`;
+    } else if (v.out) {
+      const st = v.stagger ?? .13;
+      v.out.forEach((line, i) => { if (t >= v.at + i*st) html += `<div class="ln">${line}</div>`; });
+    }
+  }
+  if (!typing && opts.cursor && html) html += `<div class="ln"><span class="pp">${opts.cursor}</span> ${cur(t)}</div>`;
+  if (el._h !== html) { el._h = html; el.innerHTML = html; el.scrollTop = el.scrollHeight; }
+}
+const cur = t => `<span class="cur${Math.floor(t*2)%2 ? ' off':''}"></span>`;
+
+/* ============================================================
+   SCRIPTS — times are SECONDS, local to each scene.
+   ============================================================ */
+
+/* ---- scene 0 : hook (0–9s) ---- */
+const evHook = [
+  {at:.3,  cmd:'git log --oneline -3'},
+  {at:1.3, out:[
+    `<span class="wr">4f2c9e1</span> fix: clamp retry jitter`,
+    `<span class="wr">88ab21c</span> refactor sync worker`,
+    `<span class="wr">d3e01fa</span> add retry backoff`]},
+];
+
+/* ---- scene 1 : capture -> recall (39s) ---- */
+const evAgent = [
+  {at:.4,  cmd:'Fix the flaky retry test in tests/test_worker.py', prompt:'›', pcls:'box', cps:38},
+  {at:2.0, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(h5i capture run -- pytest -q tests/test_worker.py)</span>`]},
+  {at:3.0, out:[
+    `  <span class="dim">⎿</span> <span class="err">FAIL</span> test_retry_backoff — expected 3 retries, got 2`,
+    `  <span class="dim">⎿</span> <span class="badge">412 lines → 9 · raw stored · −97% tokens</span>`], stagger:.5},
+  {at:7.2, out:[`<span class="co">●</span> <span class="tool">Read</span><span class="dim">(sync/worker.py)</span>  <span class="faint">⎿ 96 lines</span>`]},
+  {at:9.2, out:[`<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(sync/worker.py)</span>  <span class="faint">⎿ clamp backoff jitter before enqueue</span>`]},
+  {at:11.6,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(h5i capture run -- pytest -q tests/test_worker.py)</span>`]},
+  {at:12.8,out:[`  <span class="dim">⎿</span> <span class="ok">24 passed · 1.9 s</span>`]},
+  {at:14.6,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(git add sync/worker.py tests/test_worker.py)</span>`]},
+  {at:16.0,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(h5i capture commit -m "fix: clamp retry jitter" --tests)</span>`]},
+  {at:17.6,out:[
+    `  <span class="dim">⎿</span> [main <span class="wr">4f2c9e1</span>] fix: clamp retry jitter`,
+    `  <span class="dim">⎿</span> <span class="vio">intent</span> · <span class="vio">context</span> · <span class="ok">test metrics</span> → <span class="blu">refs/h5i/notes</span>`], stagger:.5},
+];
+const evYou = [
+  {at:20.0, cmd:'h5i recall log --limit 1'},
+  {at:21.6, out:[
+    `commit <span class="wr">4f2c9e1</span>  fix: clamp retry jitter`,
+    `  <span class="dim">agent</span>   claude-code · claude-sonnet`,
+    `  <span class="dim">intent</span>  <span class="vio">"Fix the flaky retry test in tests/test_worker.py"</span>`,
+    `  <span class="dim">tests</span>   <span class="ok">24 passed</span> · coverage +1`,
+    `  <span class="dim">tokens</span>  −97% (412 → 9 lines, raw recoverable)`], stagger:.18},
+  {at:26.6, cmd:'h5i recall context show'},
+  {at:28.3, out:[
+    `<span class="wt">GOAL</span>  fix the flaky retry test`,
+    `  <span class="blu">OBSERVE</span>  read sync/worker.py`,
+    `  <span class="vio">THINK</span>    backoff jitter is unbounded → flaky under load`,
+    `  <span class="co">ACT</span>      edit sync/worker.py — clamp jitter`,
+    `  <span class="ok">CHECK</span>    pytest · 24 passed`], stagger:.2},
+  {at:33.6, cmd:'h5i share push'},
+  {at:34.9, out:[`<span class="ok">✔</span> refs/h5i/* → origin  <span class="faint">(notes · context · msg · env)</span>`]},
+];
+
+/* ---- scene 2 : sandbox (47s) ---- */
+const evEnv = [
+  {at:.5,  cmd:'h5i env create claude-env --profile agent-claude'},
+  {at:2.3, out:[
+    `<span class="ok">✔</span> worktree  <span class="dim">.git/.h5i/env/you/claude-env/work</span>`,
+    `<span class="ok">✔</span> policy    agent-claude · isolation: <span class="wt">process</span> <span class="faint">(Landlock + seccomp)</span>`,
+    `<span class="ok">✔</span> branches  code + reasoning, pinned to main <span class="faint">(88ab21c)</span>`], stagger:.3},
+  {at:6.6, cmd:'h5i env shell claude-env'},
+  {at:7.9, out:[`<span class="dim">entering confined session — walls up: fs · net · refs</span>`]},
+  {at:9.6, cmd:'claude --dangerously-skip-permissions', prompt:'h5i:claude-env$', pcls:'box'},
+  {at:11.3,out:[`<span class="co">✻</span> Claude Code <span class="dim">— permissions off</span>`]},
+  {at:14.6,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(cat ~/.ssh/id_rsa)</span>`]},
+  {at:15.6,out:[`  <span class="err">⛔ Permission denied — Landlock: ~/.ssh is outside fs.read</span>`]},
+  {at:19.6,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(curl https://internal-billing.corp/api)</span>`]},
+  {at:20.6,out:[`  <span class="err">⛔ 403 — egress proxy: host not on the net.egress allowlist</span>`]},
+  {at:24.6,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(git push origin main)</span>`]},
+  {at:25.6,out:[`  <span class="err">⛔ refused — box commits stay on the env branch until review</span>`]},
+  {at:28.6,out:[
+    `<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(sync/worker.py)</span> <span class="ok">✓</span>   <span class="co">●</span> <span class="tool">Bash</span><span class="dim">(pytest -q)</span> → <span class="ok">24 passed</span>`,
+    `<span class="faint">work continues inside $WORK — every command captured as evidence</span>`], stagger:.4},
+  {at:31.8, cmd:'exit', prompt:'h5i:claude-env$', pcls:'box', cps:20},
+  {at:33.2, cmd:'h5i env diff claude-env --stat'},
+  {at:34.7, out:[
+    ` sync/worker.py       | 14 <span class="ok">++++++</span><span class="err">--</span>`,
+    ` tests/test_worker.py |  9 <span class="ok">+++++</span>`], stagger:.25},
+  {at:37.4, cmd:'h5i env propose claude-env'},
+  {at:39.0, out:[`<span class="ok">✔</span> review brief — 2 files · <span class="err">3 denials logged</span> · 6 evidence captures`]},
+  {at:41.8, cmd:'h5i env apply claude-env'},
+  {at:43.3, out:[`<span class="ok">✔</span> merged onto main — <span class="wt">after your review, never before</span>`]},
+];
+const DENIES = [
+  {at:15.6, wall:'wall-fs',   x:-30, y:485, msg:'fs: read ~/.ssh/id_rsa<br><b>denied</b> — outside policy'},
+  {at:20.6, wall:'wall-net',  x:330, y:-105, msg:'net: internal-billing.corp<br><b>blocked</b> — not on allowlist'},
+  {at:25.6, wall:'wall-refs', x:360, y:485, msg:'refs: push to main<br><b>refused</b> — env branch only'},
+];
+
+/* ---- scene 3 : ensemble (40s) ---- */
+const evOrch = [
+  {at:.4,  cmd:'h5i team auto-create qsort-demo'},
+  {at:2.1, out:[`<span class="ok">✔</span> <span class="co">env qsort-demo-claude</span> · <span class="te">env qsort-demo-codex</span> · team registered`]},
+  {at:4.6, cmd:'echo "Implement quicksort with property tests." | h5i team dispatch qsort-demo'},
+  {at:7.0, out:[`<span class="vio">task</span> → 2 sealed inboxes`]},
+  {at:16.0, cmd:'h5i team auto-peer-review qsort-demo'},
+  {at:17.7, out:[`<span class="dim">sync → freeze → mutual grant → instruct</span>`]},
+  {at:26.4, cmd:'h5i team verify qsort-demo -- pytest'},
+  {at:28.0, out:[`<span class="co">claude</span> <span class="ok">✓ 12 passed</span>   <span class="te">codex</span> <span class="ok">✓ 14 passed</span>   <span class="faint">(neutral replay)</span>`]},
+  {at:30.4, cmd:'h5i team finalize qsort-demo'},
+  {at:34.6, cmd:'h5i team apply qsort-demo'},
+  {at:36.1, out:[`<span class="ok">✔</span> one auditable result merged onto main`]},
+];
+const evCl = [
+  {at:7.6, out:[`<span class="faint">▸ task received — quicksort + property tests</span>`]},
+  {at:9.2, out:[`<span class="co">●</span> <span class="tool">Write</span><span class="dim">(quicksort.py)</span>`]},
+  {at:10.8,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(pytest -q)</span> → <span class="ok">12 passed</span>`]},
+  {at:12.6,out:[`<span class="faint">▸ candidate sealed · 9e11d2a</span>`]},
+  {at:23.8,out:[`<span class="te">◂ review from codex</span> <span class="dim">— median-of-three pivot</span>`]},
+  {at:25.2,out:[`<span class="faint">▸ revised & resealed · b302f1c</span>`]},
+];
+const evCx = [
+  {at:8.2, out:[`<span class="faint">▸ task received — quicksort + property tests</span>`]},
+  {at:9.8, out:[`<span class="te">●</span> <span class="tool">Write</span><span class="dim">(qsort.py)</span>`]},
+  {at:11.4,out:[`<span class="te">●</span> <span class="tool">Bash</span><span class="dim">(pytest -q)</span> → <span class="ok">14 passed</span>`]},
+  {at:13.2,out:[`<span class="faint">▸ candidate sealed · 41c07be</span>`]},
+  {at:21.4,out:[`<span class="co">◂ review from claude</span> <span class="dim">— duplicate-heavy case added</span>`]},
+  {at:25.8,out:[`<span class="faint">▸ revised & resealed · 7d90aa4</span>`]},
+];
+
+/* ---- scene 4 : outro (17s) ---- */
+const evInst = [{at:5.6, cmd:'curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh', cps:40}];
+
+/* ---- evidence rail (absolute seconds) ---- */
+const RAIL = [
+  {t:11.0,  cls:'c-ctx',   label:'intent'},
+  {t:13.4,  cls:'c-ok',    label:'capture'},
+  {t:27.4,  cls:'c-git',   label:'commit+notes'},
+  {t:39.2,  cls:'c-ctx',   label:'context'},
+  {t:44.4,  cls:'c-git',   label:'push'},
+  {t:51.5,  cls:'c-warn',  label:'policy'},
+  {t:63.8,  cls:'c-deny',  label:'deny:fs'},
+  {t:68.8,  cls:'c-deny',  label:'deny:net'},
+  {t:73.8,  cls:'c-deny',  label:'deny:refs'},
+  {t:87.2,  cls:'c-ok',    label:'brief'},
+  {t:91.5,  cls:'c-ok',    label:'apply'},
+  {t:100.2, cls:'c-ctx',   label:'dispatch'},
+  {t:114.8, cls:'c-claude',label:'review'},
+  {t:117.6, cls:'c-codex', label:'review'},
+  {t:127.6, cls:'c-ok',    label:'verdict'},
+  {t:131.3, cls:'c-ok',    label:'merge'},
+];
+
+/* ============================================================
+   SCENES
+   ============================================================ */
+const SCENES = [
+  { id:'s0', start:0, end:9, eyebrow:'',
+    update(t){
+      renderTerm($('t-hook'), evHook, t, {cursor:'$'});
+      pop($('q1'), t, 2.6); pop($('q2'), t, 3.4); pop($('q3'), t, 4.2);
+      $('s0g1').style.opacity = 1 - ramp(t, 5.5, .5);
+      pop($('s0title'), t, 5.9, {d:.8, dy:26});
+    }},
+  { id:'s1', start:9, end:48, eyebrow:'01 — <em>capture → recall</em>',
+    update(t){
+      renderTerm($('t-agent'), evAgent, t);
+      renderTerm($('t-you'),   evYou,   t, {cursor:'$'});
+      $('w-you').style.opacity = .38 + .62*eo(ramp(t, 19.2, .6));
+      hold($('c1a'), t, 4.4, 10.5);
+      hold($('c1b'), t, 30.6, 38.0);
+    }},
+  { id:'s2', start:48, end:95, eyebrow:'02 — <em>the sandboxed worktree</em>',
+    update(t){
+      renderTerm($('t-env'), evEnv, t, {cursor:'$'});
+      // box materializes with the env
+      const bp = eo(ramp(t, 2.3, .9));
+      const box = $('d-box');
+      box.style.opacity = bp; box.style.transform = `scale(${.94 + .06*bp})`;
+      pop($('d-pol'), t, 3.4);
+      ['wall-fs','wall-net','wall-refs'].forEach(w => { $(w).style.opacity = ramp(t, 4.2, .5); });
+      // denial flashes
+      let toastHtml = '', toastOn = 0, tx = 0, ty = 0;
+      for (const d of DENIES) {
+        const k = t < d.at ? 0 : Math.max(0, 1 - (t - d.at)/1.6);
+        const w = $(d.wall);
+        w.style.borderColor = k ? `rgba(255,98,88,${.35+.65*k})` : '';
+        w.style.color = k ? '#ffb3ac' : '';
+        w.style.boxShadow = k ? `0 0 ${34*k}px rgba(255,98,88,${.55*k})` : '';
+        w.style.transform = `scale(${1 + .18*k})`;
+        if (t >= d.at && t < d.at + 3.4) { toastHtml = d.msg; toastOn = Math.min(eo(ramp(t,d.at,.35)), 1-ramp(t,d.at+2.9,.5)); tx = d.x; ty = d.y; }
+        if (k) box.style.borderColor = `rgba(255,98,88,${.65+.35*k})`;
+      }
+      const toast = $('d-toast');
+      toast.innerHTML = toastHtml; toast.style.opacity = toastOn;
+      toast.style.left = tx+'px'; toast.style.top = (ty+250)+'px';
+      // apply flow back to repo
+      pop($('d-apply'), t, 43.3, {dy:-14});
+      $('d-mergedot').style.opacity = t > 43.3 ? 1 : .15;
+      hold($('c2a'), t, 12.0, 17.5);
+      hold($('c2b'), t, 44.6, 46.4);
+    }},
+  { id:'s3', start:95, end:135, eyebrow:'03 — <em>the ensemble</em>',
+    update(t){
+      renderTerm($('t-orch'), evOrch, t, {cursor:'$'});
+      renderTerm($('t-cl'), evCl, t);
+      renderTerm($('t-cx'), evCx, t);
+      $('w-cl').style.opacity = .35 + .65*eo(ramp(t, 7.2, .6));
+      $('w-cx').style.opacity = .35 + .65*eo(ramp(t, 7.8, .6));
+      hold($('b1'), t, 19.6, 25.4);
+      hold($('b2'), t, 22.4, 27.8);
+      hold($('verd'), t, 31.9, 38.4, {d:.5, dy:22});
+    }},
+  { id:'s4', start:135, end:152, eyebrow:'<em>refs/h5i/*</em>',
+    update(t){
+      pop($('o-h'), t, .6, {d:.7, dy:24});
+      pop($('o-refs'), t, 2.2);
+      const ip = pop($('o-inst'), t, 5.2);
+      if (ip > 0) renderTerm($('o-inst'), evInst, t);
+      pop($('o-fin'), t, 9.8, {d:.8});
+    }},
+];
+const TOTAL = 152000;
+
+/* ---------- master draw ---------- */
+const chipsEl = $('chips');
+function draw(ms){
+  const ts = ms/1000;
+  for (const sc of SCENES) {
+    const el = $(sc.id);
+    const vis = ts >= sc.start - .1 && ts <= sc.end + .55;
+    el.style.display = vis ? 'block' : 'none';
+    if (!vis) continue;
+    const lt = ts - sc.start;
+    const oIn = eo(ramp(lt, 0, .6));
+    const oOut = 1 - ramp(ts, sc.end - .45, .45);
+    el.style.opacity = Math.min(oIn, oOut);
+    sc.update(lt);
+    if (Math.min(oIn,oOut) > .02) {
+      const eb = $('eyebrow');
+      if (eb._e !== sc.eyebrow) { eb._e = sc.eyebrow; eb.innerHTML = sc.eyebrow; }
+    }
+  }
+  // evidence rail — oldest chips collapse into a counter so the rail never overflows
+  const vis = RAIL.filter(r => ts >= r.t);
+  let ch = '';
+  if (vis.length > 12) ch += `<span class="chip" style="opacity:.8">⋯ ${vis.length - 11} more</span>`;
+  for (const r of vis.slice(vis.length > 12 ? -11 : 0)) {
+    const p = eo(ramp(ts, r.t, .45));
+    const glow = ts > 137.5 && ts < 141 ? 'border-color:rgba(122,162,255,.6);' : '';
+    ch += `<span class="chip ${r.cls}" style="opacity:${p};transform:scale(${.6+.4*p});${glow}">${r.label}</span>`;
+  }
+  if (chipsEl._h !== ch) { chipsEl._h = ch; chipsEl.innerHTML = ch; }
+  // final fade to black + opening fade in
+  $('fade').style.opacity = Math.max(ramp(ms, TOTAL-1200, 1200), 1 - ramp(ms, 0, 600));
+}
+
+/* ---------- scaling ---------- */
+function fit(){
+  const s = Math.min(innerWidth/1920, innerHeight/1080);
+  const st = $('stage');
+  st.style.transform = `translate(-50%,-50%) scale(${s}) translate(0,0)`;
+  st.style.transformOrigin = '50% 50%';
+  st.style.left = '50%'; st.style.top = '50%';
+  st.style.marginLeft = '-960px'; st.style.marginTop = '-540px';
+  st.style.transform = `scale(${s})`;
+  st.style.transformOrigin = 'center center';
+}
+addEventListener('resize', fit); fit();
+
+/* ---------- player / render modes ---------- */
+const RENDER = new URLSearchParams(location.search).has('render');
+window.TOTAL = TOTAL;
+window.SEEK = ms => { draw(clamp(ms, 0, TOTAL)); };
+
+if (RENDER) {
+  document.body.classList.add('render');
+  draw(0);
+} else {
+  let playing = true, t0 = performance.now(), acc = 0;
+  const scrub = $('scrub'), pb = $('pb'), tm = $('tm');
+  const now = () => playing ? acc + (performance.now() - t0) : acc;
+  function loop(){
+    let ms = now();
+    if (ms >= TOTAL) { ms = TOTAL; playing = false; acc = TOTAL; pb.textContent = '↺'; }
+    draw(ms);
+    scrub.value = Math.round(ms/TOTAL*1000);
+    tm.textContent = `${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')} / 2:32`;
+    requestAnimationFrame(loop);
+  }
+  const setT = ms => { acc = clamp(ms,0,TOTAL); t0 = performance.now(); };
+  pb.onclick = () => {
+    if (acc >= TOTAL) { setT(0); playing = true; }
+    else { acc = now(); playing = !playing; t0 = performance.now(); }
+    pb.textContent = playing ? '⏸' : '▶';
+  };
+  scrub.oninput = e => setT(e.target.value/1000*TOTAL);
+  addEventListener('keydown', e => { if (e.key === ' ') { e.preventDefault(); pb.onclick(); } });
+  document.fonts.ready.then(() => { setT(0); loop(); });
+}
+</script>
+</body>
+</html>
