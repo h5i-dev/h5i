@@ -113,6 +113,8 @@
   .blockcard .bl{font-size:15px;letter-spacing:.18em;color:var(--danger);margin-bottom:8px}
   .blockcard .bt{font-size:30px;color:#ffd9d4}
   .blockcard .bt b{color:#fff;font-weight:700}
+  .blockcard.hookalert{padding:15px 26px}
+  .blockcard.hookalert .bt{font-size:27px}
   .bigline{position:absolute;left:20px;top:700px;width:660px;font-size:40px;font-weight:700;
     line-height:1.3;opacity:0}
   .bigline em{font-style:normal;color:var(--ok)}
@@ -193,10 +195,12 @@
       </div>
       <div class="q" id="h-q1">What <b>prompt</b> produced this diff?</div>
       <div class="q" id="h-q2">Did the agent run <b>unsafe tools</b>?</div>
-    </div>
-    <div class="blockcard" id="halert" style="left:680px;top:428px;width:560px">
-      <div class="bl">NOTHING BLOCKED IT</div>
-      <div class="bt" id="halert-t"></div>
+      <div class="blockcard hookalert" id="ha1" style="left:1130px;top:438px;width:450px">
+        <div class="bt">credentials <b>leaked</b></div>
+      </div>
+      <div class="blockcard hookalert" id="ha2" style="left:1168px;top:545px;width:450px">
+        <div class="bt">important files <b>deleted</b></div>
+      </div>
     </div>
     <div class="titlecard" id="m0title">
       <img src="assets/logo.png" alt="h5i">
@@ -366,10 +370,6 @@ const evHookM = [
   {at:7.4, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(rm -rf ~/.ssh)</span>`]},
   {at:8.0, out:[`  <span class="dim">⎿</span> <span class="wr">id_rsa · known_hosts · config — gone</span>`]},
 ];
-const HOOK_ALERTS = [
-  {at:6.3, txt:'credentials <b>leaked</b>'},
-  {at:8.1, txt:'important files <b>deleted</b>'},
-];
 
 /* ---- m1 sandbox (13–43) ---- */
 const evEnvM = [
@@ -458,15 +458,9 @@ const SCENES = [
       pop($('h-l2'), t, 1.4, {d:.7});
       pop($('h-term'), t, 3.4);
       renderTerm($('t-hookm'), evHookM, t);
-      // incident alert cards — the hook's mirror of the sandbox's BLOCKED cards
-      let al = null;
-      for (const a of HOOK_ALERTS) if (t >= a.at && t < a.at + 2.2) al = a;
-      const ha = $('halert');
-      if (al) {
-        $('halert-t').innerHTML = al.txt;
-        ha.style.opacity = Math.min(eo(ramp(t, al.at, .3)), 1 - ramp(t, al.at + 1.8, .4));
-        ha.style.transform = `scale(${.94 + .06*eo(ramp(t, al.at, .3))})`;
-      } else ha.style.opacity = 0;
+      // incident alert cards — the hook's mirror of the sandbox's BLOCKED cards; they stay
+      pop($('ha1'), t, 6.3, {d:.4, dy:10});
+      pop($('ha2'), t, 8.1, {d:.4, dy:10});
       pop($('h-q1'), t, 8.8, {d:.6});
       pop($('h-q2'), t, 9.9, {d:.6});
       $('m0g1').style.opacity = Math.min(1, 1 - ramp(t, 11.8, .5));
