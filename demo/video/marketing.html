@@ -406,16 +406,21 @@ const BLOCKS = [
   {at:14.5, wall:'wall-refs', txt:'<b>git push origin main</b> → BLOCKED'},
 ];
 
-/* ---- m2 receipt (43–57) ---- */
+/* ---- m2 receipt (44.5–58.5) ---- */
 const evRecM = [
   {at:1.0, cmd:'h5i recall log --limit 1', cps:34},
   {at:2.4, out:[
     `commit <span class="wr">4f2c9e1</span>  fix: clamp retry jitter`,
     `  <span class="dim">agent</span>    claude-code · claude-sonnet`,
-    `  <span class="dim">intent</span>   <span class="vio">"Fix the flaky retry test in tests/test_worker.py"</span>`,
+    `  <span class="dim">prompt</span>   <span class="vio">"Fix the flaky retry test in tests/test_worker.py"</span>`,
     `  <span class="dim">tests</span>    <span class="ok">241 passed</span> · coverage +1`,
     `  <span class="dim">denials</span>  <span class="err">3 blocked</span> · logged`,
     `  <span class="dim">tokens</span>   −97% (412 → 9 lines, raw recoverable)`], stagger:.22},
+  {at:5.8, cmd:'h5i audit', cps:34},
+  {at:6.8, out:[
+    `  <span class="dim">prompt maturity</span>   <span class="ok">A−</span> <span class="faint">· clear goal, scoped files</span>`,
+    `  <span class="dim">prompt injection</span>  <span class="ok">none detected</span>`,
+    `  <span class="dim">secret leaks</span>      <span class="ok">none detected</span> <span class="faint">(2 candidates redacted)</span>`], stagger:.25},
 ];
 
 /* ---- m3 scale (57–67) ---- */
@@ -438,8 +443,9 @@ const RAIL = [
   {t:30.1, cls:'c-deny',  label:'deny:refs'},
   {t:39.1, cls:'c-ok',    label:'brief'},
   {t:41.9, cls:'c-ok',    label:'apply'},
-  {t:47.1, cls:'c-ctx',   label:'intent'},
+  {t:47.1, cls:'c-ctx',   label:'prompt'},
   {t:48.9, cls:'c-git',   label:'receipt'},
+  {t:52.3, cls:'c-ok',    label:'audit'},
   {t:61.3, cls:'c-claude',label:'review'},
   {t:62.7, cls:'c-codex', label:'review'},
   {t:65.3, cls:'c-ok',    label:'merge'},
