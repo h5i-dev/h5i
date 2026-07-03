@@ -89,3 +89,104 @@ impl ReviewPoint {
         self.quality_score >= PR_QUALITY_THRESHOLD
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn trigger(rule_id: &str, weight: f32, tier: Tier) -> ReviewTrigger {
+        ReviewTrigger {
+            rule_id: rule_id.to_string(),
+            weight,
+            detail: format!("{rule_id} detail"),
+            tier,
+        }
+    }
+
+    fn review_point(
+        triggers: Vec<ReviewTrigger>,
+        quality_score: f32,
+        shape_score: f32,
+    ) -> ReviewPoint {
+        ReviewPoint {
+            commit_oid: "abcdef1234567890".to_string(),
+            short_oid: "abcdef12".to_string(),
+            message: "test commit".to_string(),
+            author: "test author".to_string(),
+            timestamp: Utc.timestamp_opt(0, 0).single().unwrap(),
+            score: (quality_score + shape_score).min(1.0),
+            quality_score,
+            shape_score,
+            triggers,
+        }
+    }
+
+    #[test]
+    fn quality_triggers_returns_only_quality_tier_rules() {
+        let point = review_point(
+            vec![
+                trigger("BLIND_EDIT", 0.4, Tier::Quality),
+                trigger("LARGE_DIFF", 0.2, Tier::Shape),
+                trigger("TEST_REGRESSION", 0.5, Tier::Quality),
+            ],
+            0.9,
+            0.2,
+        );
+
+        let ids: Vec<&str> = point
+            .quality_triggers()
+            .map(|trigger| trigger.rule_id.as_str())
+            .collect();
+
+        assert_eq!(ids, vec!["BLIND_EDIT", "TEST_REGRESSION"]);
+    }
+
+    #[test]
+    fn shape_triggers_returns_only_shape_tier_rules() {
+        let point = review_point(
+            vec![
+                trigger("POLYGLOT_CHANGE", 0.15, Tier::Shape),
+                trigger("SECRET_TOUCH", 0.8, Tier::Quality),
+                trigger("LARGE_DIFF", 0.2, Tier::Shape),
+            ],
+            0.8,
+            0.35,
+        );
+
+        let ids: Vec<&str> = point
+            .shape_triggers()
+            .map(|trigger| trigger.rule_id.as_str())
+            .collect();
+
+        assert_eq!(ids, vec!["POLYGLOT_CHANGE", "LARGE_DIFF"]);
+    }
+
+    #[test]
+    fn should_flag_in_pr_uses_quality_threshold() {
+        let point = review_point(
+            vec![trigger("BLIND_EDIT", PR_QUALITY_THRESHOLD, Tier::Quality)],
+            PR_QUALITY_THRESHOLD,
+            0.0,
+        );
+
+        assert!(point.should_flag_in_pr());
+    }
+
+    #[test]
+    fn should_flag_in_pr_ignores_shape_only_score() {
+        let point = review_point(
+            vec![trigger("LARGE_DIFF", 1.0, Tier::Shape)],
+            PR_QUALITY_THRESHOLD - 0.01,
+            1.0,
+        );
+
+        assert!(!point.should_flag_in_pr());
+    }
+
+    #[test]
+    fn review_threshold_constants_document_current_cutoffs() {
+        assert_eq!(REVIEW_THRESHOLD, 0.5);
+        assert_eq!(PR_QUALITY_THRESHOLD, 0.25);
+    }
+}
