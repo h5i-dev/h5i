@@ -139,9 +139,9 @@ fn diag_print_scores() {
         ("crafted+log", format!("The nested-list parser miscounts children. Fix `parse_nested()` in src/parser.rs so a trailing separator does not produce a phantom child. Add a regression test covering the trailing-separator case and keep the public signature unchanged. Done when `cargo test parser::` passes.\n\n{log}")),
     ] {
         let s = score_prompt(&p);
-        println!("{name:12} score={:6.2} level={:?} words={} spec={:.2} ctrl={:.2} ctx={:.2} struct={:.2} div={:.2} clar={:.2} adeq={:.2}",
-            s.score, s.level, s.words,
-            s.breakdown.specificity, s.breakdown.control, s.breakdown.context,
-            s.breakdown.structure, s.breakdown.diversity, s.breakdown.clarity, s.breakdown.adequacy);
+        println!("{name:12} score={:6.2} level={:?} words={} unscored={:?} obj={:.2} grd={:.2} dir={:.2} ctx={:.2} ex={:.2} evid={:.2}",
+            s.score, s.level, s.words, s.unscored,
+            s.breakdown.objective, s.breakdown.grounding, s.breakdown.direction,
+            s.breakdown.context, s.breakdown.examples, s.breakdown.evidence);
     }
 }

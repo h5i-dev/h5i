@@ -23,25 +23,34 @@
 //!   the text so file paths and `func()` tokens don't corrupt the syllable
 //!   counter.
 //!
-//! # The composite (locked with the `codex` agent over i5h)
+//! # The composite (v2 — slot rubric + multiplicative core)
 //!
-//! Seven sub-signals, each normalised to `0.0..=1.0`, combined by a fixed
-//! weighted sum (see [`WEIGHTS`], which sums to 1.0):
+//! Every signal is normalised to `0.0..=1.0`. Three **core slots** are
+//! *necessary* and combine **multiplicatively** (each floored at [`CORE_MIN`]);
+//! the rest are **enrichment** that lifts an already-solid core additively (see
+//! [`ENRICHMENT`], which sums to 1.0). See the "Aggregation model (v2)" section
+//! below for the full formula and the rationale for replacing v1's flat
+//! weighted sum + balance-gate caps.
 //!
-//! | Signal          | Weight | Captures                                          |
-//! |-----------------|-------:|---------------------------------------------------|
-//! | `specificity`   | 24%    | concreteness (code refs, idents) − vague words    |
-//! | `control`       | 24%    | constraints, output shape, acceptance/verification|
-//! | `context`       | 18%    | background, goal/why, current state, grounding    |
-//! | `structure`     | 10%    | decomposition — bullets, steps, multi-sentence    |
-//! | `diversity`     | 10%    | lexical richness (adaptive MATTR), non-repetitive |
-//! | `clarity`       |  8%    | readability in a target band (trapezoid)          |
-//! | `adequacy`      |  6%    | length in a sweet spot (not one word, not a wall) |
+//! | Slot          | Role        | Captures                                        |
+//! |---------------|-------------|-------------------------------------------------|
+//! | `objective`   | core (×)    | a positive, actionable goal − vague words       |
+//! | `grounding`   | core (×)    | concrete refs: paths, `func()`, idents, numbers |
+//! | `direction`   | core (×)    | acceptance · constraints · pre/post/IO/exception|
+//! | `context`     | enrichment  | background, goal/why, current state             |
+//! | `examples`    | enrichment  | examples, doctests, input→output illustrations  |
+//! | `structure`   | enrichment  | decomposition — bullets, steps, headings        |
+//! | `diversity`   | enrichment  | lexical richness (adaptive MATTR)               |
+//! | `clarity`     | enrichment  | readability in a target band (trapezoid)        |
+//! | `adequacy`    | enrichment  | authored length in a sweet spot                 |
 //!
-//! On top of the weighted sum sit **anti-gaming guards** (locked with codex):
-//! per-category keyword caps, a repetition penalty, hard length caps, and
-//! *balance gates* — a keyword-stuffed but context-free prompt is capped at 69
-//! so it can never read as "advanced".
+//! On top sit **anti-gaming guards**: per-category keyword caps, a repetition
+//! penalty, a vagueness penalty (folded into the core), a single short-prompt
+//! floor, and a saturating **evidence** bonus for attached machine output. The
+//! multiplicative core means a prompt empty on any necessary axis is *capped*
+//! with no special-case gate — a keyword-stuffed but ungrounded prompt can never
+//! read as "advanced". Prompts the heuristics can't assess (no authored request,
+//! non-English) are **abstained** on rather than mis-scored.
 //!
 //! # Artifact segmentation (v2) — craft ≠ paste volume
 //!
@@ -94,83 +103,148 @@
 
 use std::collections::{HashMap, HashSet};
 
-// ── Weights ──────────────────────────────────────────────────────────────────
+// ── Aggregation model (v2) ─────────────────────────────────────────────────────
+//
+// v1 was a flat weighted sum of seven sub-signals plus a stack of special-case
+// caps (the 69/79 "balance gates", the tactical exemption, tiered length caps).
+// v2 replaces both with a **slot rubric + multiplicative core** — the shape the
+// bug-report-quality (CTQRS) and code-gen prompt-guideline literature
+// (Midolo et al., arXiv 2601.13118) both converge on:
+//
+//   * Three **core slots** are *necessary* and combine **multiplicatively**, so
+//     a prompt cannot look mature on one axis while empty on another (this is
+//     what the balance gates hand-coded). Each slot is floored at [`CORE_MIN`]
+//     so a genuine weakness *caps* the score gracefully instead of zeroing it:
+//       - `objective`  — is there a positive, actionable goal? (not just "don't…")
+//       - `grounding`  — concrete references: paths, `func()`, idents, numbers
+//       - `direction`  — did they bound the agent: acceptance criteria,
+//                        constraints, and the pre/post/IO/exception contract
+//   * Five **enrichment signals** (context, examples, structure, diversity,
+//     clarity, adequacy) form an *additive lift* above a floor of
+//     [`ENRICHMENT_BASE`]: they can only raise a prompt that already has a solid
+//     core, never rescue one that doesn't.
+//   * A **repetition** multiplier and a **vagueness** penalty (folded into
+//     `objective`) defeat keyword-farming; an **evidence** bonus (outside the
+//     composite, saturating) credits attached machine output — see the
+//     artifact-segmentation docs above.
+//
+// The tactical exemption falls out for free: `context` is enrichment, not core,
+// so a concrete + bounded ask with no "why" keeps its core and simply forgoes
+// the context lift — no special case needed.
+//
+// TODO(empirical-calibration, v2): the slot weights, [`CORE_MIN`], and
+// [`ENRICHMENT_BASE`] are still *normative* (hand-tuned; the enrichment/direction
+// weights seeded from the guideline-prevalence rates in arXiv 2601.13118 — I/O
+// format 44%, post-conditions 23%, requirements 19%, …). They are an explainable
+// proxy, not a validated model. `PromptScoreBreakdown` exposes every slot per
+// prompt, so a future PR can join them against h5i's per-commit outcome signals
+// (test pass/fail, review-flag score, churn, later reverts) and *learn* the
+// weights while keeping the features explainable. Do NOT regress from a tiny
+// biased sample — that needs a corpus and confound controls.
 
-// TODO(empirical-calibration, v2): these weights — and the gate thresholds in
-// `score_prompt` — are *normative* (hand-tuned, locked with codex). They are an
-// explainable proxy, not a validated model. The `PromptScoreBreakdown` features
-// are already exposed per prompt, so a future PR can join them against h5i's
-// existing per-commit outcome signals — test pass/fail (`metadata::TestMetrics`),
-// review-flag score (`ReviewPoint`), diff churn, and later reverts — over a real
-// commit corpus and *learn* / validate these weights while keeping the features
-// explainable. Do NOT regress from a tiny biased sample: that needs a corpus and
-// confound controls (a senior writes good prompts AND good code). No durable
-// schema change belongs here — feature persistence is its own design.
+/// Per-factor floor for the three core slots. A core slot at 0 still contributes
+/// `CORE_MIN` to the geometric-mean core, so a single missing axis caps the
+/// score rather than annihilating it (an all-empty core equals `CORE_MIN`).
+pub const CORE_MIN: f64 = 0.18;
 
-/// Relative weights of the seven sub-signals. Sums to 1.0 (asserted in tests).
-/// Specificity and control dominate (they are what a manager actually wants to
-/// see — "the engineer was concrete and bounded the agent"); the
-/// readability-derived `clarity` band is the smallest voice because it is the
-/// signal most likely to mislead on technical text.
-pub const WEIGHTS: Weights = Weights {
-    specificity: 0.24,
-    control: 0.24,
-    context: 0.18,
-    structure: 0.10,
-    diversity: 0.10,
-    clarity: 0.08,
-    adequacy: 0.06,
-};
+/// Floor of the enrichment lift: a prompt with a perfect core but zero
+/// enrichment still keeps this fraction of its core-driven score. Enrichment
+/// fills the remaining `1 - ENRICHMENT_BASE`.
+pub const ENRICHMENT_BASE: f64 = 0.63;
+
+/// Prompts under this many *authored* words can't fully specify a coding task;
+/// their score is capped at [`SHORT_PROMPT_CAP`]. Replaces v1's tiered word caps
+/// with a single gentle floor so crisp 8–15 word tactical asks can still breathe.
+const SHORT_PROMPT_WORDS: usize = 6;
+const SHORT_PROMPT_CAP: f64 = 35.0;
+
+/// Branch-roll-up shrinkage: the neutral prior a small sample is pulled toward,
+/// and its strength in prompt-equivalents. At `n` scored prompts the branch
+/// score is `(STRENGTH·PRIOR + n·mean) / (STRENGTH + n)` — so 1 prompt is pulled
+/// strongly toward the prior, ~10 prompts barely at all.
+pub const BRANCH_PRIOR_MEAN: f64 = 50.0;
+pub const BRANCH_PRIOR_STRENGTH: f64 = 2.5;
 
 /// Maximum bonus points the `evidence` signal can add to the composite.
 /// Attaching machine output (a log, trace, diff, or fenced block) is good
 /// grounding practice, so it earns a small fixed credit — deliberately a
-/// *bonus outside the weighted sum* so its absence never penalises the many
-/// prompts that have no artifact to attach, and deliberately saturating so it
-/// can never scale with paste volume.
+/// *bonus outside the composite* so its absence never penalises the many prompts
+/// that have no artifact to attach, and deliberately saturating so it can never
+/// scale with paste volume.
 pub const EVIDENCE_BONUS_MAX: f64 = 5.0;
 
-/// Weighting of the seven sub-signals. See [`WEIGHTS`].
+/// Relative weights of the six enrichment signals (the additive lift above the
+/// multiplicative core). Sums to 1.0 (asserted in tests). Seeded from the
+/// guideline-prevalence rates in arXiv 2601.13118 where they map (I/O format and
+/// examples are the most impactful enrichers observed there).
+pub const ENRICHMENT: EnrichmentWeights = EnrichmentWeights {
+    context: 0.30,
+    examples: 0.20,
+    structure: 0.20,
+    diversity: 0.12,
+    clarity: 0.10,
+    adequacy: 0.08,
+};
+
+/// Weighting of the six enrichment signals. See [`ENRICHMENT`].
 #[derive(Debug, Clone, Copy)]
-pub struct Weights {
-    pub specificity: f64,
-    pub control: f64,
+pub struct EnrichmentWeights {
     pub context: f64,
+    pub examples: f64,
     pub structure: f64,
     pub diversity: f64,
     pub clarity: f64,
     pub adequacy: f64,
 }
 
-impl Weights {
+impl EnrichmentWeights {
+    /// The additive enrichment lift in `0.0..=1.0` for one breakdown.
+    fn lift(&self, b: &PromptScoreBreakdown) -> f64 {
+        (self.context * b.context
+            + self.examples * b.examples
+            + self.structure * b.structure
+            + self.diversity * b.diversity
+            + self.clarity * b.clarity
+            + self.adequacy * b.adequacy)
+            .clamp(0.0, 1.0)
+    }
+
     #[cfg(test)]
     fn sum(&self) -> f64 {
-        self.specificity
-            + self.control
-            + self.context
-            + self.structure
-            + self.diversity
-            + self.clarity
-            + self.adequacy
+        self.context + self.examples + self.structure + self.diversity + self.clarity + self.adequacy
     }
 }
 
 // ── Public result types ──────────────────────────────────────────────────────
 
-/// The seven normalised sub-signals (`0.0..=1.0`) plus the raw readability
-/// numbers, retained for transparent display.
+/// The normalised sub-signals (`0.0..=1.0`) plus the raw readability numbers,
+/// retained for transparent display. The first three are the multiplicative
+/// **core slots**; the next six are the additive **enrichment** signals;
+/// `evidence` is a saturating bonus outside the composite.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PromptScoreBreakdown {
-    pub specificity: f64,
-    pub control: f64,
+    /// Core: a positive, actionable goal is stated (not merely prohibitions).
+    pub objective: f64,
+    /// Core: concrete references — paths, `func()`, identifiers, numbers.
+    pub grounding: f64,
+    /// Core: the agent is bounded — acceptance criteria, constraints, and the
+    /// pre/post-condition · I/O-format · exception contract.
+    pub direction: f64,
+    /// Enrichment: background / why / current state.
     pub context: f64,
+    /// Enrichment: examples, doctests, input→output illustrations.
+    pub examples: f64,
+    /// Enrichment: decomposition — bullets, numbered steps, headings.
     pub structure: f64,
+    /// Enrichment: lexical richness (adaptive MATTR).
     pub diversity: f64,
+    /// Enrichment: readability in a target band (trapezoid).
     pub clarity: f64,
+    /// Enrichment: authored length in a sweet spot.
     pub adequacy: f64,
     /// Evidence signal (`0.0..=1.0`): pasted machine output / fenced blocks
     /// attached (0.7) and explicitly framed by the authored prose (up to 1.0).
-    /// A *bonus* signal — not part of the weighted sum; it adds up to
+    /// A *bonus* signal — not part of the composite; it adds up to
     /// [`EVIDENCE_BONUS_MAX`] points on top and its absence costs nothing.
     pub evidence: f64,
     /// Raw Flesch Reading Ease (≈0–100, higher = easier). Display-only.
@@ -184,9 +258,11 @@ pub struct PromptScoreBreakdown {
 impl PromptScoreBreakdown {
     fn zero() -> Self {
         PromptScoreBreakdown {
-            specificity: 0.0,
-            control: 0.0,
+            objective: 0.0,
+            grounding: 0.0,
+            direction: 0.0,
             context: 0.0,
+            examples: 0.0,
             structure: 0.0,
             diversity: 0.0,
             clarity: 0.0,
@@ -196,6 +272,16 @@ impl PromptScoreBreakdown {
             fk_grade: 0.0,
             gunning_fog: 0.0,
         }
+    }
+
+    /// The multiplicative core in `[CORE_MIN, 1]`: the **geometric mean** of the
+    /// three core slots, each floored at [`CORE_MIN`]. Geometric (not raw
+    /// product) so three healthy-but-imperfect slots don't over-compound to a
+    /// tiny number, while a single weak slot still drags the whole core down and
+    /// a missing one floors it at `CORE_MIN`.
+    fn core(&self) -> f64 {
+        let floor = |x: f64| CORE_MIN + (1.0 - CORE_MIN) * x.clamp(0.0, 1.0);
+        (floor(self.objective) * floor(self.grounding) * floor(self.direction)).cbrt()
     }
 }
 
@@ -262,6 +348,9 @@ pub enum Flag {
     /// The prompt is dominated by pasted machine output (log / trace / diff)
     /// with only a thin authored ask around it.
     MostlyPaste,
+    /// Constraints / prohibitions but no positive, actionable goal — "don't do
+    /// X" with no "do Y". (arXiv 2601.13118 / OpenAI: say what to do.)
+    NoObjective,
 }
 
 impl Flag {
@@ -274,6 +363,7 @@ impl Flag {
             Flag::Repetitive => "repetitive",
             Flag::HardToScan => "hard to scan",
             Flag::MostlyPaste => "mostly pasted output",
+            Flag::NoObjective => "no clear objective",
         }
     }
 }
@@ -281,7 +371,9 @@ impl Flag {
 /// Score for a single prompt.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromptScore {
-    /// Composite maturity score, `0.0..=100.0` (after guards & caps).
+    /// Composite maturity score, `0.0..=100.0`. `0.0` when [`unscored`] is set.
+    ///
+    /// [`unscored`]: PromptScore::unscored
     pub score: f64,
     pub level: MaturityLevel,
     pub breakdown: PromptScoreBreakdown,
@@ -290,6 +382,18 @@ pub struct PromptScore {
     pub words: usize,
     /// Up to two diagnostic flags, weakest dimension first.
     pub flags: Vec<Flag>,
+    /// When `Some(reason)`, the prompt was **not assessable** as prompt craft
+    /// (no authored request, or non-English / unsupported text) and the score is
+    /// a placeholder `0.0` that callers should render as "unscored", not as a
+    /// bad score. Abstaining beats confidently mis-scoring text the heuristics
+    /// don't cover.
+    pub unscored: Option<&'static str>,
+}
+
+impl PromptScore {
+    pub fn is_unscored(&self) -> bool {
+        self.unscored.is_some()
+    }
 }
 
 /// Branch-level roll-up across every AI-commit prompt.
@@ -338,62 +442,44 @@ impl BranchPromptScore {
 /// Score a single prompt string.
 pub fn score_prompt(prompt: &str) -> PromptScore {
     let f = Features::extract(prompt);
-    if f.words == 0 {
-        // No authored prose at all. A pure artifact paste still shows its
-        // evidence signal (and earns the bonus alone), but there is no craft
-        // to score.
-        let mut breakdown = PromptScoreBreakdown::zero();
-        breakdown.evidence = f.evidence_signal();
-        let score = (EVIDENCE_BONUS_MAX * breakdown.evidence).clamp(0.0, 100.0);
-        let mut flags = vec![Flag::TooShort];
-        if f.artifact_lines > 0 {
-            flags.push(Flag::MostlyPaste);
-        }
+
+    // ── Abstention: refuse to score what the heuristics don't cover ──────────
+    // Better an honest "unscored (reason)" than a confident wrong number.
+    if let Some(reason) = f.unscored_reason() {
         return PromptScore {
-            score,
-            level: MaturityLevel::from_score(score),
-            breakdown,
-            words: 0,
-            flags,
+            score: 0.0,
+            level: MaturityLevel::Nascent,
+            breakdown: PromptScoreBreakdown::zero(),
+            words: f.words,
+            flags: Vec::new(),
+            unscored: Some(reason),
         };
     }
 
     let breakdown = f.breakdown();
 
-    // Weighted sum → 0..100.
-    let w = &WEIGHTS;
-    let mut score = 100.0
-        * (breakdown.specificity * w.specificity
-            + breakdown.control * w.control
-            + breakdown.context * w.context
-            + breakdown.structure * w.structure
-            + breakdown.diversity * w.diversity
-            + breakdown.clarity * w.clarity
-            + breakdown.adequacy * w.adequacy);
+    // ── Multiplicative core × additive enrichment lift ──────────────────────
+    // core ∈ [CORE_MIN^3, 1]; lift ∈ [ENRICHMENT_BASE, 1]. A weak core slot caps
+    // the whole score (no balance gate needed); enrichment only lifts an already
+    // solid core.
+    let core = breakdown.core();
+    let lift = ENRICHMENT_BASE + (1.0 - ENRICHMENT_BASE) * ENRICHMENT.lift(&breakdown);
+    let mut score = 100.0 * core * lift;
 
-    // ── Anti-gaming guards ──────────────────────────────────────────────────
-    // (1) Repetition penalty: a prompt that farms keywords by repeating phrases
-    //     ("must test format must test format") is multiplied down.
+    // (1) Repetition penalty — phrase-farming ("must test format must test
+    //     format") is multiplied down.
     score *= f.repetition_factor;
 
-    // (2) Balance gates — you cannot look mature on one axis alone.
-    score = apply_balance_gates(score, &breakdown);
-
-    // (3) Hard length caps — short prompts can't score high no matter how many
-    //     keywords they pack.
-    if f.words < 8 {
-        score = score.min(20.0);
-    } else if f.words < 15 {
-        score = score.min(45.0);
-    } else if f.words > 1200 && breakdown.structure < 0.6 {
-        // a 1200+ word unstructured wall is a dump, not a mature prompt
-        score = score.min(75.0);
+    // (2) Short-prompt floor — under a handful of authored words you can't fully
+    //     specify a coding task, however many keywords are packed in.
+    if f.words < SHORT_PROMPT_WORDS {
+        score = score.min(SHORT_PROMPT_CAP);
     }
 
-    // (4) Evidence bonus — attached machine output is grounding, not craft:
-    //     a small fixed credit on top, saturating (never scales with paste
-    //     volume) and applied *after* the caps so a lazy one-liner around a
-    //     log wall stays capped as the one-liner it is.
+    // (3) Evidence bonus — attached machine output is grounding, not craft: a
+    //     small fixed credit on top, saturating (never scales with paste
+    //     volume) and applied last so a lazy one-liner around a log wall can't
+    //     ride the paste into a higher band.
     score += EVIDENCE_BONUS_MAX * breakdown.evidence;
 
     let score = score.clamp(0.0, 100.0);
@@ -404,6 +490,7 @@ pub fn score_prompt(prompt: &str) -> PromptScore {
         words: f.words,
         breakdown,
         score,
+        unscored: None,
     }
 }
 
@@ -417,7 +504,14 @@ pub fn score_prompt(prompt: &str) -> PromptScore {
 /// (weight `= clamp(words, 20, 250)`), so a single rambling prompt can't
 /// dominate and a disciplined engineer is rewarded for every crisp ask. Prompts
 /// are **never concatenated** — concatenation lets many weak prompts look mature
-/// by pooling vocabulary and structure.
+/// by pooling vocabulary and structure. **Unscored** prompts (no authored
+/// request, non-English) are dropped from the mean but still count against
+/// coverage.
+///
+/// The mean is then **shrunk toward a neutral prior** ([`BRANCH_PRIOR_MEAN`],
+/// pseudo-count [`BRANCH_PRIOR_STRENGTH`]) so a branch with only one or two
+/// prompts can't be crowned or condemned on a tiny sample: three great prompts
+/// pull most of the way to their mean, one great prompt only part way.
 pub fn score_branch<I, S>(prompts: I, ai_commits: usize) -> BranchPromptScore
 where
     I: IntoIterator<Item = S>,
@@ -427,6 +521,7 @@ where
         .into_iter()
         .filter(|p| !p.as_ref().trim().is_empty())
         .map(|p| score_prompt(p.as_ref()))
+        .filter(|s| !s.is_unscored())
         .collect();
 
     if scored.is_empty() {
@@ -447,9 +542,11 @@ where
     };
 
     let breakdown = PromptScoreBreakdown {
-        specificity: wmean_b(&|b| b.specificity),
-        control: wmean_b(&|b| b.control),
+        objective: wmean_b(&|b| b.objective),
+        grounding: wmean_b(&|b| b.grounding),
+        direction: wmean_b(&|b| b.direction),
         context: wmean_b(&|b| b.context),
+        examples: wmean_b(&|b| b.examples),
         structure: wmean_b(&|b| b.structure),
         diversity: wmean_b(&|b| b.diversity),
         clarity: wmean_b(&|b| b.clarity),
@@ -459,7 +556,13 @@ where
         fk_grade: wmean_b(&|b| b.fk_grade),
         gunning_fog: wmean_b(&|b| b.gunning_fog),
     };
-    let score = wmean(&|s| s.score);
+    // Empirical-Bayes shrinkage toward a neutral prior: with `n` scored prompts,
+    // pull the length-weighted mean toward BRANCH_PRIOR_MEAN with weight
+    // BRANCH_PRIOR_STRENGTH (in prompt-equivalents). Stabilises small samples.
+    let raw = wmean(&|s| s.score);
+    let n = scored.len() as f64;
+    let score = (BRANCH_PRIOR_STRENGTH * BRANCH_PRIOR_MEAN + n * raw)
+        / (BRANCH_PRIOR_STRENGTH + n);
 
     // Coverage / confidence.
     let denom = ai_commits.max(scored.len());
@@ -502,22 +605,36 @@ struct Features {
     sentences: usize,
     syllables: usize,
     polysyllables: usize,
-    // ── concreteness inputs ──
+    // ── concreteness / grounding inputs ──
     code_refs: usize,
     quoted: usize,
     numbers: usize,
     action_verbs: usize,
     weak_words: usize,
+    grounding_refs: usize,
+    // ── objective inputs ──
+    /// Imperative opener ("Add …", "Fix …") — a positive directive up front.
+    imperative_open: bool,
     // ── context inputs ──
     context_markers: usize,
-    grounding_refs: usize,
-    // ── control inputs ──
-    constraints: usize,
+    // ── direction inputs ──
+    strong_constraints: usize,
+    soft_constraints: usize,
+    negative_directives: usize,
     output_shape: usize,
     verification: usize,
+    /// A named, runnable acceptance check ("done when `cargo test` passes").
+    executable_acceptance: bool,
+    preconditions: usize,
+    postconditions: usize,
+    exceptions: usize,
     edge_cases: usize,
     safety: usize,
     scope: usize,
+    ambiguous_cond: usize,
+    // ── examples inputs ──
+    example_markers: usize,
+    arrows: usize,
     // ── structure inputs ──
     bullets: usize,
     numbered: usize,
@@ -525,6 +642,9 @@ struct Features {
     code_fences: usize,
     // ── anti-gaming ──
     repetition_factor: f64,
+    /// Fraction of authored prose tokens that are English function words — the
+    /// natural-language discriminator (NLoN). Drives non-English abstention.
+    stopword_ratio: f64,
     // ── artifact / evidence inputs ──
     /// Lines classified as pasted machine output (logs, traces, diffs, fenced
     /// block interiors).
@@ -572,6 +692,15 @@ impl Features {
         // (not code-masked spans) score.
         let lower_counts = word_counts(&lower);
 
+        // Fraction of prose tokens that are English function words (NLoN's
+        // strongest NL discriminator) — near-zero on non-English / code-soup text.
+        let stopword_ratio = if prose_tokens.is_empty() {
+            0.0
+        } else {
+            prose_tokens.iter().filter(|w| LINE_STOPWORDS.contains(&w.as_str())).count() as f64
+                / prose_tokens.len() as f64
+        };
+
         Features {
             code_refs: count_code_refs(text),
             quoted: text.matches('`').count() / 2 + text.matches('"').count() / 2,
@@ -581,18 +710,29 @@ impl Features {
                 .count(),
             action_verbs: lexicon_hits(&lower, &lower_counts, &word_set, ACTION_VERBS),
             weak_words: lexicon_hits(&lower, &lower_counts, &word_set, WEAK_WORDS),
-            context_markers: lexicon_hits(&lower, &lower_counts, &word_set, CONTEXT_MARKERS),
             grounding_refs: lexicon_hits(&lower, &lower_counts, &word_set, GROUNDING_REFS),
-            constraints: lexicon_hits(&lower, &lower_counts, &word_set, CONSTRAINTS),
+            imperative_open: opens_with_imperative(text),
+            context_markers: lexicon_hits(&lower, &lower_counts, &word_set, CONTEXT_MARKERS),
+            strong_constraints: lexicon_hits(&lower, &lower_counts, &word_set, STRONG_CONSTRAINTS),
+            soft_constraints: lexicon_hits(&lower, &lower_counts, &word_set, SOFT_CONSTRAINTS),
+            negative_directives: lexicon_hits(&lower, &lower_counts, &word_set, NEGATIVE_DIRECTIVES),
             output_shape: lexicon_hits(&lower, &lower_counts, &word_set, OUTPUT_SHAPE),
             verification: lexicon_hits(&lower, &lower_counts, &word_set, VERIFICATION),
+            executable_acceptance: lower_matches_any(&lower, RUNNERS),
+            preconditions: lexicon_hits(&lower, &lower_counts, &word_set, PRECONDITIONS),
+            postconditions: lexicon_hits(&lower, &lower_counts, &word_set, POSTCONDITIONS),
+            exceptions: lexicon_hits(&lower, &lower_counts, &word_set, EXCEPTIONS),
             edge_cases: lexicon_hits(&lower, &lower_counts, &word_set, EDGE_CASES),
             safety: lexicon_hits(&lower, &lower_counts, &word_set, SAFETY),
             scope: lexicon_hits(&lower, &lower_counts, &word_set, SCOPE),
+            ambiguous_cond: lexicon_hits(&lower, &lower_counts, &word_set, AMBIGUOUS_COND),
+            example_markers: lexicon_hits(&lower, &lower_counts, &word_set, EXAMPLE_MARKERS),
+            arrows: count_arrows(text),
             evidence_refs: lexicon_hits(&lower, &lower_counts, &word_set, EVIDENCE_REFS),
             artifact_lines: seg.artifact_lines,
             authored_lines: seg.authored_lines,
             repetition_factor: repetition_factor(&prose_tokens),
+            stopword_ratio,
             bullets,
             numbered,
             headings,
@@ -609,30 +749,66 @@ impl Features {
         let n = self.words.max(1) as f64;
         let per100 = |count: usize| (count as f64) / n * 100.0;
 
-        // ── Specificity = concreteness − vagueness ──────────────────────────
-        // Concreteness from capped category contributions (no single category
-        // can farm the whole signal).
-        let concreteness = 0.40 * cap_ratio(self.code_refs, 4)
-            + 0.22 * cap_ratio(self.action_verbs, 3)
-            + 0.20 * cap_ratio(self.quoted, 3)
-            + 0.18 * cap_ratio(self.numbers, 4);
         // Vagueness penalty from the NALABS/Femmer requirements-smell lexicon:
-        // density of weak words (per 100 words) drags the signal down.
+        // density of weak words (per 100 words) is a negative signal shared by
+        // objective and grounding.
         let vagueness = (per100(self.weak_words) / 8.0).clamp(0.0, 1.0);
-        let specificity = (concreteness - 0.5 * vagueness).clamp(0.0, 1.0);
 
-        // ── Context grounding ───────────────────────────────────────────────
-        let context = (0.60 * cap_ratio(self.context_markers, 4)
-            + 0.40 * cap_ratio(self.grounding_refs, 3))
+        // ── Core slot: objective — is there a positive, actionable goal? ─────
+        // A single clear action verb earns most of the credit; a second verb or
+        // an imperative opener tops it up. Leading with the problem statement
+        // ("The parser miscounts…") must NOT be penalised, so the opener is a
+        // bonus, not a requirement. Dragged down by vagueness; a prompt of pure
+        // prohibitions (no action verb) scores ~0 here, which the multiplicative
+        // core then turns into a real cap.
+        let objective = {
+            let base = if self.action_verbs == 0 {
+                0.0
+            } else {
+                0.6 + 0.2 * f64::from(self.action_verbs >= 2)
+                    + 0.2 * f64::from(self.imperative_open)
+            };
+            (base - 0.5 * vagueness).clamp(0.0, 1.0)
+        };
+
+        // ── Core slot: grounding — concrete references ──────────────────────
+        // Paths, `func()`, idents, quoted spans, numbers, and grounding nouns.
+        let grounding = (0.42 * cap_ratio(self.code_refs, 3)
+            + 0.18 * cap_ratio(self.quoted, 2)
+            + 0.12 * cap_ratio(self.numbers, 3)
+            + 0.28 * cap_ratio(self.grounding_refs, 2)
+            - 0.4 * vagueness)
+            .clamp(0.0, 1.0);
+
+        // ── Core slot: direction — did they bound the agent? ────────────────
+        // Acceptance (a runnable check beats a bare "ensure"), constraints
+        // (must-class weighted over should-class), and the behavioral contract
+        // (I/O format · post- · pre-conditions · exceptions — weights seeded
+        // from arXiv 2601.13118 prevalence). "Otherwise"-style ambiguous
+        // conditionals dock a little.
+        let acceptance = (0.6 * cap_ratio(self.verification, 3)
+            + 0.4 * f64::from(self.executable_acceptance))
         .clamp(0.0, 1.0);
+        let constraint_sig = (0.7 * cap_ratio(self.strong_constraints, 3)
+            + 0.3 * cap_ratio(self.soft_constraints, 2)
+            + 0.15 * cap_ratio(self.scope, 2))
+        .clamp(0.0, 1.0);
+        let contract = (0.36 * cap_ratio(self.output_shape, 3)
+            + 0.24 * cap_ratio(self.postconditions, 2)
+            + 0.20 * cap_ratio(self.preconditions, 2)
+            + 0.20 * cap_ratio(self.exceptions + self.edge_cases + self.safety, 2))
+        .clamp(0.0, 1.0);
+        let ambiguity = (0.15 * cap_ratio(self.ambiguous_cond, 2)).clamp(0.0, 1.0);
+        let direction = (0.42 * acceptance + 0.34 * constraint_sig + 0.24 * contract
+            - ambiguity)
+            .clamp(0.0, 1.0);
 
-        // ── Control / specification ─ reward breadth of categories hit ───────
-        let control = (0.26 * cap_ratio(self.constraints, 4)
-            + 0.22 * cap_ratio(self.verification, 3)
-            + 0.20 * cap_ratio(self.output_shape, 3)
-            + 0.14 * cap_ratio(self.edge_cases, 2)
-            + 0.10 * cap_ratio(self.scope, 2)
-            + 0.08 * cap_ratio(self.safety, 2))
+        // ── Enrichment: context grounding (background / why) ────────────────
+        let context = cap_ratio(self.context_markers, 4).clamp(0.0, 1.0);
+
+        // ── Enrichment: examples / illustrations ────────────────────────────
+        let examples = (0.6 * cap_ratio(self.example_markers, 2)
+            + 0.4 * cap_ratio(self.arrows, 2))
         .clamp(0.0, 1.0);
 
         // ── Structure / decomposition ───────────────────────────────────────
@@ -662,9 +838,11 @@ impl Features {
         let evidence = self.evidence_signal();
 
         PromptScoreBreakdown {
-            specificity,
-            control,
+            objective,
+            grounding,
+            direction,
             context,
+            examples,
             structure,
             diversity,
             clarity,
@@ -687,6 +865,23 @@ impl Features {
         0.7 + 0.3 * cap_ratio(self.evidence_refs, 2)
     }
 
+    /// Reason to **abstain** from scoring, or `None` if the prompt is assessable.
+    /// Narrow by design — very short *English* asks stay scored (and score low
+    /// with advice); we only refuse text the heuristics genuinely don't cover.
+    fn unscored_reason(&self) -> Option<&'static str> {
+        if self.words == 0 {
+            // Pure paste, punctuation, or empty — no authored request to assess.
+            return Some("no authored request");
+        }
+        // Substantial text with almost no English function words is not English
+        // (or is code-soup that survived masking): the lexicon/readability
+        // signals are meaningless on it, so abstain rather than mis-score.
+        if self.words >= 8 && self.stopword_ratio < 0.05 {
+            return Some("non-English or unsupported text");
+        }
+        None
+    }
+
     /// Up to two diagnostic flags, weakest qualifying dimension first.
     fn flags(&self, b: &PromptScoreBreakdown) -> Vec<Flag> {
         let mut out = Vec::new();
@@ -702,11 +897,17 @@ impl Features {
         {
             out.push(Flag::MostlyPaste);
         }
-        // Candidate (signal, flag) pairs, lowest signal surfaced first.
+        // Prohibitions with no positive goal: constraints present but objective
+        // essentially absent. Surfaced ahead of the generic weak-signal flags.
+        if b.objective < 0.2 && self.negative_directives >= 1 && out.len() < 2 {
+            out.push(Flag::NoObjective);
+        }
+        // Candidate (signal, flag) pairs, lowest signal surfaced first. The core
+        // slots map to the actionable flags; grounding+objective share "vague".
         let mut cands: Vec<(f64, Flag)> = vec![
-            (b.specificity, Flag::Vague),
+            (b.objective.max(b.grounding), Flag::Vague),
             (b.context, Flag::WeakContext),
-            (b.control, Flag::WeakVerification),
+            (b.direction, Flag::WeakVerification),
         ];
         if self.repetition_factor < 0.9 {
             cands.push((b.diversity.min(self.repetition_factor), Flag::Repetitive));
@@ -719,7 +920,7 @@ impl Features {
             if out.len() >= 2 {
                 break;
             }
-            if sig < 0.35 {
+            if sig < 0.35 && !out.contains(&fl) {
                 out.push(fl);
             }
         }
@@ -737,7 +938,12 @@ impl Features {
 const ACTION_VERBS: &[&str] = &[
     "implement", "fix", "refactor", "add", "remove", "delete", "update", "design",
     "build", "create", "write", "migrate", "debug", "optimize", "rename", "extract",
-    "replace", "wire", "integrate", "parse", "render", "validate", "handle",
+    "replace", "wire", "integrate", "parse", "render", "validate", "handle", "edit",
+    "ensure", "support", "improve", "convert", "move", "split", "guard", "harden",
+    "sanitize", "reject", "return", "cache", "expose", "document", "cover", "port",
+    "upgrade", "patch", "register", "normalize", "serialize", "deserialize", "strip",
+    "compute", "check", "enforce", "apply", "disable", "enable", "configure",
+    "extend", "adjust", "drop", "wrap", "cap", "emit", "escape", "trim", "raise",
 ];
 
 /// NALABS / Femmer "requirements smells" — vague, subjective, or non-actionable
@@ -763,10 +969,59 @@ const GROUNDING_REFS: &[&str] = &[
     "manager",
 ];
 
-const CONSTRAINTS: &[&str] = &[
-    "must", "should", "only", "without", "avoid", "never", "always", "do not",
-    "don't", "dont", "at least", "at most", "no more than", "limit", "require",
-    "offline", "keep", "preserve", "backward", "compatible", "minimal",
+/// Strong (imperative) constraints — "must"-class. Weighted above the soft
+/// class in `direction` (arXiv 2601.13118 / OpenAI: prefer assertive language).
+const STRONG_CONSTRAINTS: &[&str] = &[
+    "must", "only", "without", "avoid", "never", "always", "do not", "don't",
+    "dont", "at least", "at most", "no more than", "limit", "require", "required",
+    "offline", "backward", "compatible", "minimal",
+];
+
+/// Soft constraints — "should"-class, hedged. Real but weaker bounding.
+const SOFT_CONSTRAINTS: &[&str] = &[
+    "should", "prefer", "preferably", "try to", "ideally", "keep", "preserve",
+];
+
+/// Negative directives — the "don't do X" prohibitions. Used to detect
+/// prohibitions-without-objective (the `NoObjective` flag).
+const NEGATIVE_DIRECTIVES: &[&str] =
+    &["without", "avoid", "never", "do not", "don't", "dont", "no unrelated", "don't change"];
+
+/// Pre-conditions — assumptions that must hold on the input before execution.
+const PRECONDITIONS: &[&str] = &[
+    "precondition", "assume", "assumes", "assuming", "given that", "input is",
+    "when the input", "must be non-empty", "expects", "requires that", "invariant",
+];
+
+/// Post-conditions — guarantees on the output/result after execution.
+const POSTCONDITIONS: &[&str] = &[
+    "postcondition", "should return", "must return", "returns", "result is",
+    "guarantee", "guarantees", "ensures that", "resulting", "so that the result",
+    "the output should",
+];
+
+/// Exception / error-handling behaviour the agent must specify.
+const EXCEPTIONS: &[&str] = &[
+    "raise", "throw", "throws", "exception", "panic", "error case", "on error",
+    "fail with", "return an error", "handle the error", "err(", "result<",
+];
+
+/// Ambiguous conditionals — the "otherwise"-style smell (arXiv 2601.13118):
+/// a branch that refers to an unstated second condition.
+const AMBIGUOUS_COND: &[&str] = &["otherwise", "or else", "if not", "as appropriate"];
+
+/// Example / illustration markers.
+const EXAMPLE_MARKERS: &[&str] = &[
+    "for example", "e.g.", "example:", "examples:", "for instance", "such as",
+    "sample", "doctest", "input:", "output:", "expected output", "given input",
+];
+
+/// Runnable acceptance checks — a named command the agent can execute to know
+/// it is done. A far stronger acceptance signal than the word "ensure".
+const RUNNERS: &[&str] = &[
+    "cargo test", "cargo build", "cargo clippy", "npm test", "npm run", "yarn ",
+    "pytest", "go test", "make ", "./", "mvn ", "gradle", "done when", "done-when",
+    "acceptance criteria", "ci passes", "the test passes", "tests pass",
 ];
 
 const OUTPUT_SHAPE: &[&str] = &[
@@ -804,6 +1059,40 @@ const EVIDENCE_REFS: &[&str] = &[
     "the backtrace", "the stack trace", "this diff", "the diff", "stderr",
     "stdout", "error message", "test output", "the failure", "this failure",
 ];
+
+// ── Slot detector helpers ────────────────────────────────────────────────────
+
+/// True if any entry (a phrase or word, matched as a substring) is present in
+/// the lowercased text. For multi-token acceptance/runner phrases.
+fn lower_matches_any(lower: &str, lex: &[&str]) -> bool {
+    lex.iter().any(|e| lower.contains(e))
+}
+
+/// Does the prompt (or one of its first bulleted/numbered lines) open with an
+/// imperative action verb? A positive directive up front — "Add …", "Fix …",
+/// "Refactor …" — is the clearest signal of a stated objective.
+fn opens_with_imperative(text: &str) -> bool {
+    for raw in text.lines().take(6) {
+        let l = raw.trim_start();
+        // Strip a leading bullet / number marker so "1. Add the struct" counts.
+        let l = l
+            .trim_start_matches(|c: char| {
+                matches!(c, '-' | '*' | '•' | '+' | '#' | '.' | ')' | '(')
+                    || c.is_ascii_digit()
+                    || c.is_whitespace()
+            });
+        let first = l.split(|c: char| !c.is_ascii_alphabetic()).next().unwrap_or("");
+        if !first.is_empty() && ACTION_VERBS.contains(&first.to_ascii_lowercase().as_str()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Count input→output arrows (`->`, `=>`, `⇒`) — a compact example/spec form.
+fn count_arrows(text: &str) -> usize {
+    text.matches("->").count() + text.matches("=>").count() + text.matches('⇒').count()
+}
 
 // ── Artifact segmentation ────────────────────────────────────────────────────
 //
@@ -1548,34 +1837,6 @@ fn clarity_band(fk_grade: f64, flesch: f64, words: usize) -> f64 {
     ((grade_fit + flesch_fit) / 2.0).clamp(0.0, 1.0)
 }
 
-/// Balance gates (v1.1, locked with the codex agent over i5h). You cannot look
-/// mature on one axis alone, but the policy distinguishes the two specification
-/// axes:
-///
-/// * `control` — *did the engineer bound the agent?* — is a **hard gate**: a
-///   prompt that sets no constraints / acceptance criteria is capped below
-///   "advanced" regardless of how concrete it is.
-/// * `context` — *did they explain why?* — is **soft**: a prompt that is already
-///   both specific (`>=0.6`) and bounded (`control>=0.5`) is a legitimate
-///   *tactical* ask ("run `cargo test`, fix the clippy warning in `src/foo.rs`")
-///   and must not be dragged into mediocrity merely for omitting background —
-///   the agent often already holds the repo / h5i context. Weak context still
-///   surfaces as a flag; it just no longer hard-caps a crisp tactical prompt.
-///
-/// A low specificity additionally caps at 79 (you can't be "exemplary" while
-/// vague).
-fn apply_balance_gates(score: f64, b: &PromptScoreBreakdown) -> f64 {
-    let tactical = b.specificity >= 0.6 && b.control >= 0.5;
-    let mut s = score;
-    if b.control < 0.35 || (b.context < 0.35 && !tactical) {
-        s = s.min(69.0);
-    }
-    if b.specificity < 0.45 {
-        s = s.min(79.0);
-    }
-    s
-}
-
 /// Trapezoid membership: 0 outside `[min,max]`, 1 on the `[ideal_min,ideal_max]`
 /// plateau, linear on the shoulders.
 fn trapezoid(v: f64, min: f64, ideal_min: f64, ideal_max: f64, max: f64) -> f64 {
@@ -1595,8 +1856,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn weights_sum_to_one() {
-        assert!((WEIGHTS.sum() - 1.0).abs() < 1e-9, "weights sum = {}", WEIGHTS.sum());
+    #[ignore]
+    fn diag_calibration() {
+        let cases = [
+            ("vague-make", "make it better"),
+            ("vague-fix", "fix the bug please"),
+            ("tactical", "Edit `foo()` in src/a.rs and `bar()` in src/b.rs. Must return JSON. Add tests and run `cargo test`. Do not change signatures. Only touch those two files."),
+            ("rich", "Refactor `parse_range()` in src/util.rs so it handles the off-by-one when the upper bound is inclusive. Add a unit test for the empty-range case and make sure the existing tests still pass. Do not change the public signature."),
+            ("loaded", "The nested-list parser miscounts children. Fix `parse_nested()` in src/parser.rs so a trailing separator does not produce a phantom child. Add a regression test covering the trailing-separator case and keep the public signature unchanged. Done when `cargo test parser::` passes."),
+            ("stuffed", "must must should ensure test test verify return format handle error case must test format must test format edge case must verify only"),
+            ("prohib", "Do not change the public signature. Never touch src/legacy.rs. Avoid adding new dependencies. Don't reformat unrelated code."),
+        ];
+        for (name, p) in cases {
+            let s = score_prompt(p);
+            let b = &s.breakdown;
+            println!(
+                "{name:10} score={:5.1} {:11} obj={:.2} grd={:.2} dir={:.2} ctx={:.2} ex={:.2} core={:.2}",
+                s.score, s.level.label(), b.objective, b.grounding, b.direction, b.context, b.examples, b.core()
+            );
+        }
+    }
+
+    #[test]
+    fn enrichment_weights_sum_to_one() {
+        assert!(
+            (ENRICHMENT.sum() - 1.0).abs() < 1e-9,
+            "enrichment weights sum = {}",
+            ENRICHMENT.sum()
+        );
     }
 
     #[test]
@@ -1643,63 +1930,77 @@ mod tests {
             rich.score,
             vague.score
         );
-        assert!(rich.breakdown.specificity > 0.4);
-        assert!(rich.breakdown.control > 0.3);
+        assert!(rich.breakdown.objective > 0.4);
+        assert!(rich.breakdown.grounding > 0.4);
+        assert!(rich.breakdown.direction > 0.3);
         assert!(rich.level >= MaturityLevel::Proficient);
     }
 
-    /// Build a breakdown with the three gate-relevant axes set and everything
-    /// else neutral — lets the gate policy be tested in isolation.
-    fn bd(specificity: f64, control: f64, context: f64) -> PromptScoreBreakdown {
+    /// Build a breakdown with the three multiplicative core slots set and
+    /// everything else neutral — lets the core policy be tested in isolation.
+    fn bd_core(objective: f64, grounding: f64, direction: f64) -> PromptScoreBreakdown {
         PromptScoreBreakdown {
-            specificity,
-            control,
-            context,
+            objective,
+            grounding,
+            direction,
             ..PromptScoreBreakdown::zero()
         }
     }
 
     #[test]
-    fn gate_control_is_a_hard_cap() {
-        // No constraints/acceptance → capped at 69 no matter how concrete.
-        assert_eq!(apply_balance_gates(90.0, &bd(0.9, 0.2, 0.9)), 69.0);
+    fn core_is_multiplicative_with_floor() {
+        // Geometric mean of three floored factors, ranging [CORE_MIN, 1]. A full
+        // core → 1.0; an all-empty one → CORE_MIN.
+        assert!((bd_core(1.0, 1.0, 1.0).core() - 1.0).abs() < 1e-9);
+        let empty = bd_core(0.0, 0.0, 0.0).core();
+        assert!((empty - CORE_MIN).abs() < 1e-9, "empty core {}", empty);
+        // A single weak slot caps the core below the two-strong-slots case.
+        assert!(bd_core(1.0, 1.0, 0.1).core() < bd_core(1.0, 1.0, 0.9).core());
     }
 
     #[test]
-    fn gate_weak_context_caps_a_non_tactical_prompt() {
-        // Thin on both context and specificity → capped.
-        assert_eq!(apply_balance_gates(85.0, &bd(0.5, 0.6, 0.1)), 69.0);
-    }
-
-    #[test]
-    fn gate_exempts_specific_and_bounded_tactical_prompt() {
-        // v1.1: specific (>=.6) AND bounded (control>=.5) with weak context is a
-        // legitimate tactical ask — NOT capped for missing "why".
-        assert_eq!(apply_balance_gates(85.0, &bd(0.7, 0.6, 0.1)), 85.0);
-        // …but if control slips below .5 it's no longer tactical → capped again.
-        assert_eq!(apply_balance_gates(85.0, &bd(0.7, 0.45, 0.1)), 69.0);
-    }
-
-    #[test]
-    fn gate_low_specificity_caps_at_79() {
-        assert_eq!(apply_balance_gates(95.0, &bd(0.4, 0.9, 0.9)), 79.0);
-    }
-
-    #[test]
-    fn tactical_prompt_keeps_weak_context_flag() {
-        // The exemption must not hide the diagnostic — a concrete, bounded,
-        // context-free prompt should still *flag* weak context even though it's
-        // no longer hard-capped.
+    fn missing_core_slot_caps_the_score() {
+        // No direction (unbounded) → score capped well under "advanced" no
+        // matter how concrete — this replaces the old hard control gate.
         let s = score_prompt(
-            "Harden `Invoice::finalize()` in src/billing.rs in three steps:\n\
-             - Reject a zero-quantity item by returning `Err(BillingError::EmptyLine)`.\n\
-             - Round each subtotal to two decimals, then sanitize the note to drop \
-               control characters.\n\
-             - Add focused checks: an empty item, a rounding boundary, and a \
-               happy-path total; assert the exact cents. Keep the signature stable \
-               and edit only billing.rs.",
+            "Refactor `parse_range()` in src/util.rs and rename the helper in \
+             src/helpers.rs to match the new module path.",
         );
-        assert!(s.breakdown.specificity >= 0.6 && s.breakdown.control >= 0.5);
+        assert!(s.breakdown.direction < 0.35, "direction {}", s.breakdown.direction);
+        assert!(s.score < 75.0, "unbounded prompt reached advanced: {}", s.score);
+    }
+
+    #[test]
+    fn tactical_prompt_survives_missing_context() {
+        // Concrete + bounded but no "why": context is *enrichment*, not core,
+        // so the multiplicative core keeps this a proficient tactical ask — the
+        // old tactical-exemption behaviour, now with no special case.
+        let s = score_prompt(
+            "Edit `foo()` in src/a.rs and `bar()` in src/b.rs. Must return JSON. \
+             Add tests and run `cargo test`. Do not change signatures. Only touch \
+             those two files.",
+        );
+        assert!(s.breakdown.context < 0.35, "should read as context-free");
+        assert!(
+            s.breakdown.objective >= 0.5 && s.breakdown.direction >= 0.4,
+            "should be concrete+bounded (obj {:.2}, dir {:.2})",
+            s.breakdown.objective,
+            s.breakdown.direction,
+        );
+        assert!(s.level >= MaturityLevel::Proficient, "tactical prompt scored {}", s.score);
+    }
+
+    #[test]
+    fn prohibitions_without_objective_flag_and_cap() {
+        // All "don't", no "do": low objective drags the core, and the smell is
+        // surfaced as a flag.
+        let s = score_prompt(
+            "Do not change the public signature. Never touch src/legacy.rs. Avoid \
+             adding new dependencies. Don't reformat unrelated code.",
+        );
+        assert!(s.breakdown.objective < 0.2, "objective {}", s.breakdown.objective);
+        assert!(s.flags.contains(&Flag::NoObjective), "flags {:?}", s.flags);
+        assert!(s.score < 50.0, "prohibitions-only scored {}", s.score);
     }
 
     #[test]
@@ -1708,29 +2009,35 @@ mod tests {
             "must must should ensure test test verify return format handle error \
              case must test format must test format edge case must verify only",
         );
-        // balance gate (no context) + repetition penalty keep it out of advanced
+        // No grounding (no code refs) → core capped; repetition penalty compounds.
         assert!(spam.score <= 69.0, "stuffed prompt scored {}", spam.score);
+        assert!(spam.breakdown.grounding < 0.35, "grounding {}", spam.breakdown.grounding);
     }
 
     #[test]
-    fn tactical_context_free_prompt_is_exempt_from_context_gate() {
-        // v1.1 end-to-end: this prompt is concrete AND bounded (tactical) but
-        // states no "why". The context gate must NOT cap it — verify the real
-        // feature profile is *exempt* (a high base score survives the gate),
-        // which is the opposite of the pre-v1.1 behavior.
-        let s = score_prompt(
-            "Edit `foo()` in src/a.rs and `bar()` in src/b.rs. Must return JSON. \
-             Add tests. Do not change signatures. Only touch those two files.",
+    fn executable_acceptance_beats_bare_keyword() {
+        // A named runnable check is stronger direction than the word "ensure".
+        let runnable = score_prompt(
+            "Add a retry wrapper in `src/net.rs`. Done when `cargo test net::` passes.",
         );
-        assert!(s.breakdown.context < 0.35, "prompt should read as context-free");
+        let bare = score_prompt(
+            "Add a retry wrapper in `src/net.rs`. Ensure it works and is correct.",
+        );
         assert!(
-            s.breakdown.specificity >= 0.6 && s.breakdown.control >= 0.5,
-            "prompt should qualify as tactical (spec {:.2}, control {:.2})",
-            s.breakdown.specificity,
-            s.breakdown.control,
+            runnable.breakdown.direction > bare.breakdown.direction,
+            "runnable {} vs bare {}",
+            runnable.breakdown.direction,
+            bare.breakdown.direction
         );
-        // A high base score is NOT clamped to 69 for this tactical profile.
-        assert_eq!(apply_balance_gates(85.0, &s.breakdown), 85.0);
+    }
+
+    #[test]
+    fn examples_slot_detected() {
+        let with_ex = score_prompt(
+            "Add a `slugify()` helper in `src/util.rs`. For example, slugify(\"Hi There\") \
+             -> \"hi-there\" and slugify(\"a  b\") -> \"a-b\". Add tests.",
+        );
+        assert!(with_ex.breakdown.examples > 0.3, "examples {}", with_ex.breakdown.examples);
     }
 
     #[test]
@@ -1745,18 +2052,80 @@ mod tests {
     }
 
     #[test]
-    fn weak_words_lower_specificity() {
+    fn weak_words_lower_objective_and_grounding() {
         let crisp = score_prompt(
             "Add a `retry()` wrapper around the HTTP call in src/net.rs with a 3x cap.",
         );
         let weak = score_prompt(
             "Make the thing handle stuff appropriately and maybe make it better somehow.",
         );
-        assert!(crisp.breakdown.specificity > weak.breakdown.specificity);
+        assert!(crisp.breakdown.grounding > weak.breakdown.grounding);
+        assert!(crisp.breakdown.objective > weak.breakdown.objective);
     }
 
     #[test]
-    fn branch_aggregation_is_length_weighted_mean() {
+    fn abstains_on_no_authored_request() {
+        // A pasted error line with no authored ask around it → no authored
+        // words after segmentation → unscored, not a confident bad number.
+        let s = score_prompt("error[E0308]: mismatched types --> src/a.rs:1:5");
+        assert!(s.is_unscored(), "expected unscored, got {:?}", s.unscored);
+        assert_eq!(s.score, 0.0);
+        assert_eq!(s.unscored, Some("no authored request"));
+    }
+
+    #[test]
+    fn abstains_on_non_english() {
+        // Substantial text, essentially no English function words → abstain.
+        let s = score_prompt(
+            "実装してください パーサー モジュール テスト 関数 修正 変更 追加 引数 戻り値",
+        );
+        assert_eq!(s.unscored, Some("non-English or unsupported text"));
+    }
+
+    #[test]
+    fn english_short_prompt_is_scored_not_abstained() {
+        // Narrow abstention: a short *English* ask stays scored (low, with a
+        // flag), it is not refused.
+        let s = score_prompt("fix the bug please");
+        assert!(!s.is_unscored());
+        assert!(s.flags.contains(&Flag::TooShort));
+    }
+
+    #[test]
+    fn branch_shrinkage_pulls_small_samples_toward_prior() {
+        // One strong prompt should not crown a branch: it is pulled toward the
+        // neutral prior, so the branch score sits below the single-prompt score.
+        let strong = "Refactor `parse_range()` in src/util.rs to fix the inclusive \
+                      off-by-one. Add a regression test for the empty range and run \
+                      `cargo test`. Do not change the public signature.";
+        let one = score_prompt(strong).score;
+        let branch = score_branch(vec![strong], 1);
+        let expect = (BRANCH_PRIOR_STRENGTH * BRANCH_PRIOR_MEAN + 1.0 * one)
+            / (BRANCH_PRIOR_STRENGTH + 1.0);
+        assert!((branch.score - expect).abs() < 1e-6, "branch {} expect {}", branch.score, expect);
+        // Pulled toward the prior: closer to it than the single prompt was.
+        assert!(
+            (branch.score - BRANCH_PRIOR_MEAN).abs() < (one - BRANCH_PRIOR_MEAN).abs(),
+            "shrinkage should pull {} toward {} from {}",
+            branch.score,
+            BRANCH_PRIOR_MEAN,
+            one
+        );
+    }
+
+    #[test]
+    fn branch_drops_unscored_prompts() {
+        // A non-English prompt alongside a real one is excluded from the mean
+        // but still counts against coverage.
+        let real = "Add a test for `foo()` in src/foo.rs and run `cargo test`.";
+        let branch = score_branch(vec![real, "実装 テスト 関数 引数 戻り値 修正 変更 追加"], 2);
+        assert_eq!(branch.scored_prompts, 1);
+        assert_eq!(branch.ai_commits, 2);
+        assert!(branch.low_confidence);
+    }
+
+    #[test]
+    fn branch_aggregation_is_length_weighted_and_shrunk() {
         let a = "fix it"; // short, low
         let b = "Add a unit test for `foo()` in src/foo.rs and ensure it passes \
                  without changing the public signature, covering the empty input case.";
@@ -1764,11 +2133,19 @@ mod tests {
         assert_eq!(branch.scored_prompts, 2);
         assert_eq!(branch.ai_commits, 2);
         assert!((branch.coverage - 1.0).abs() < 1e-9);
-        // weighted toward the longer, better prompt
         let sa = score_prompt(a);
         let sb = score_prompt(b);
-        let plain_mean = (sa.score + sb.score) / 2.0;
-        assert!(branch.score > plain_mean, "length weighting should lift {} above {}", branch.score, plain_mean);
+        let wa = sa.words.clamp(20, 250) as f64;
+        let wb = sb.words.clamp(20, 250) as f64;
+        let lw = (sa.score * wa + sb.score * wb) / (wa + wb);
+        let plain = (sa.score + sb.score) / 2.0;
+        // Length weighting favors the longer, better prompt over a plain mean.
+        assert!(lw > plain, "length weighting should lift {} above {}", lw, plain);
+        // The branch score is that length-weighted mean, then shrunk toward the
+        // prior (n = 2 prompts).
+        let expect = (BRANCH_PRIOR_STRENGTH * BRANCH_PRIOR_MEAN + 2.0 * lw)
+            / (BRANCH_PRIOR_STRENGTH + 2.0);
+        assert!((branch.score - expect).abs() < 1e-6, "branch {} expect {}", branch.score, expect);
     }
 
     #[test]
@@ -1828,10 +2205,14 @@ mod tests {
 
     #[test]
     fn empty_and_flags() {
+        // Whitespace-only → no authored request → abstained.
         let e = score_prompt("   ");
         assert_eq!(e.score, 0.0);
-        assert_eq!(e.flags, vec![Flag::TooShort]);
+        assert!(e.is_unscored());
+        assert!(e.flags.is_empty());
+        // A real (if terse) English ask is scored, with a TooShort flag.
         let short = score_prompt("fix bug");
+        assert!(!short.is_unscored());
         assert!(short.flags.contains(&Flag::TooShort));
         assert!(short.flags.len() <= 2);
     }
@@ -2005,11 +2386,14 @@ mod tests {
         let branch = score_branch(prompts.clone(), prompts.len());
         let scored: Vec<PromptScore> = prompts.iter().map(|p| score_prompt(p)).collect();
         let wsum: f64 = scored.iter().map(|s| s.words.clamp(20, 250) as f64).sum();
-        let expect: f64 = scored
+        let lw: f64 = scored
             .iter()
             .map(|s| s.score * s.words.clamp(20, 250) as f64)
             .sum::<f64>()
             / wsum;
+        // Roll-up equals the length-weighted mean, then shrunk toward the prior.
+        let n = scored.len() as f64;
+        let expect = (BRANCH_PRIOR_STRENGTH * BRANCH_PRIOR_MEAN + n * lw) / (BRANCH_PRIOR_STRENGTH + n);
         assert!((branch.score - expect).abs() < 1e-9, "branch {} vs expect {}", branch.score, expect);
     }
 
@@ -2148,11 +2532,11 @@ mod tests {
         }
         let s = score_prompt(&p);
         assert!(s.flags.contains(&Flag::MostlyPaste), "flags: {:?}", s.flags);
-        // Artifact-only paste: no craft, evidence bonus only, both flags.
+        // Artifact-only paste: no authored request at all → abstained, not scored.
         let only = score_prompt("error[E0308]: mismatched types --> src/a.rs:1:5");
         assert_eq!(only.words, 0);
-        assert!(only.score <= EVIDENCE_BONUS_MAX);
-        assert!(only.flags.contains(&Flag::TooShort) && only.flags.contains(&Flag::MostlyPaste));
+        assert!(only.is_unscored());
+        assert_eq!(only.unscored, Some("no authored request"));
     }
 
     #[test]
