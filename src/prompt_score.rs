@@ -15,6 +15,16 @@
 //! * **Fully offline, deterministic.** Readability indices, lexical-diversity
 //!   measures, and curated lexicons only — no LLM, no network. Reproducible in
 //!   CI and Git hooks.
+//! * **Bilingual (English + Japanese), dictionary-free.** The scorer is
+//!   script-aware ([`Lang`]/[`detect_lang`]). Japanese is scored on a dedicated
+//!   path — segmented by character-class run ([`tokenize_ja`]) and matched
+//!   against parallel `JA_*` lexicons by substring — with **no morphological
+//!   analyser / MeCab dependency**, to keep the offline contract. The slot
+//!   rubric, multiplicative core, and aggregation are language-neutral (they
+//!   consume feature *counts*). Readability indices are English-specific, so
+//!   Japanese uses a sentence-length clarity proxy. Other languages **abstain**
+//!   (`unscored`) rather than being mis-scored. English calibration is
+//!   unaffected. See the "Language detection & Japanese support" section.
 //! * **Readability ≠ maturity.** A terse, precise ask
 //!   (*"fix the off-by-one in `parse_range()` in src/util.rs, add a test"*) is
 //!   an *excellent* prompt that scores badly on raw reading-ease. So readability
@@ -377,8 +387,12 @@ pub struct PromptScore {
     pub score: f64,
     pub level: MaturityLevel,
     pub breakdown: PromptScoreBreakdown,
-    /// *Authored* prose word count — pasted artifact lines and code spans are
-    /// excluded, so a giant log paste doesn't read as a long prompt.
+    /// Detected authored-prose language (English or Japanese). Selects the
+    /// lexicon/tokenizer/readability path; exposed so callers can label the score.
+    pub lang: Lang,
+    /// *Authored* word count — pasted artifact lines and code spans are excluded,
+    /// so a giant log paste doesn't read as a long prompt. For Japanese this is a
+    /// word-equivalent estimate (see [`Features`]).
     pub words: usize,
     /// Up to two diagnostic flags, weakest dimension first.
     pub flags: Vec<Flag>,
@@ -450,6 +464,7 @@ pub fn score_prompt(prompt: &str) -> PromptScore {
             score: 0.0,
             level: MaturityLevel::Nascent,
             breakdown: PromptScoreBreakdown::zero(),
+            lang: f.lang,
             words: f.words,
             flags: Vec::new(),
             unscored: Some(reason),
@@ -487,6 +502,7 @@ pub fn score_prompt(prompt: &str) -> PromptScore {
     PromptScore {
         level: MaturityLevel::from_score(score),
         flags: f.flags(&breakdown),
+        lang: f.lang,
         words: f.words,
         breakdown,
         score,
@@ -598,9 +614,16 @@ where
 /// machine-artifact lines are split off first by [`segment_artifacts`] and
 /// only feed `artifact_lines` / the evidence signal.
 struct Features {
-    /// Authored prose word count (artifact lines and code spans excluded).
+    /// Detected script of the authored prose. Selects the lexicon set,
+    /// tokenizer, and readability handling.
+    lang: Lang,
+    /// Authored word count (artifact lines and code spans excluded). For
+    /// Japanese this is a *word-equivalent* estimate (content chars ÷ 2 + Latin
+    /// word runs) so length thresholds and per-100-word densities stay
+    /// comparable across scripts.
     words: usize,
     /// Prose tokens (lowercased), code spans removed — for diversity/readability.
+    /// Japanese is segmented by character-class run (see [`tokenize_ja`]).
     prose_tokens: Vec<String>,
     sentences: usize,
     syllables: usize,
@@ -664,20 +687,32 @@ impl Features {
         // only what the engineer actually *wrote*.
         let seg = segment_artifacts(text);
         let text: &str = &seg.authored;
+        let lang = detect_lang(text);
         // Mask code/paths/URLs so prose metrics aren't corrupted, but keep the
         // raw text for code-ref counting and lexicon matching.
         let masked = mask_code(text);
-        let prose_tokens = tokenize_words(&masked);
-        let words = prose_tokens.len();
-        // Single pass over the prose tokens: total syllables and the polysyllable
-        // (>=3) count together, rather than walking the vec twice.
-        let mut syllables = 0usize;
-        let mut polysyllables = 0usize;
-        for w in &prose_tokens {
-            let s = count_syllables(w);
-            syllables += s;
-            if s >= 3 {
-                polysyllables += 1;
+        // Tokenise for diversity/repetition: Japanese by character-class run
+        // (no spaces), everything else by word.
+        let prose_tokens = match lang {
+            Lang::Japanese => tokenize_ja(&masked),
+            Lang::English => tokenize_words(&masked),
+        };
+        // Word count. English: prose tokens. Japanese: a word-equivalent estimate
+        // so length gating and per-100-word densities stay comparable.
+        let words = match lang {
+            Lang::Japanese => ja_word_equiv(&masked),
+            Lang::English => prose_tokens.len(),
+        };
+        // English readability inputs (syllables). Japanese uses a char-based
+        // proxy in `breakdown`, so these stay zero for JA.
+        let (mut syllables, mut polysyllables) = (0usize, 0usize);
+        if lang == Lang::English {
+            for w in &prose_tokens {
+                let s = count_syllables(w);
+                syllables += s;
+                if s >= 3 {
+                    polysyllables += 1;
+                }
             }
         }
         let sentences = count_sentences(&masked).max(1);
@@ -686,51 +721,65 @@ impl Features {
         let lower = text.to_ascii_lowercase();
         let word_set: HashSet<&str> = prose_tokens.iter().map(|s| s.as_str()).collect();
         // Word-occurrence map over the raw lowercased text, built once and shared
-        // by every single-word lexicon lookup below. Replaces re-splitting the
-        // whole text per lexicon entry (was O(entries × text_len)). Keyed on the
-        // same word-boundary split the old per-entry filter used, so counts are
-        // identical; `word_set` still gates so only words appearing as *prose*
-        // (not code-masked spans) score.
+        // by every English single-word lexicon lookup below.
         let lower_counts = word_counts(&lower);
 
-        // Fraction of prose tokens that are English function words (NLoN's
-        // strongest NL discriminator) — near-zero on non-English / code-soup text.
-        let stopword_ratio = if prose_tokens.is_empty() {
-            0.0
-        } else {
-            prose_tokens.iter().filter(|w| LINE_STOPWORDS.contains(&w.as_str())).count() as f64
-                / prose_tokens.len() as f64
+        // Language-dispatched lexicon hit: English uses the word-gated counter;
+        // Japanese counts substring occurrences (a space-less script has no word
+        // boundaries, so substring matching is the natural fit).
+        let hit = |en: &[&str], ja: &[&str]| -> usize {
+            match lang {
+                Lang::Japanese => ja_hits(&lower, ja),
+                Lang::English => lexicon_hits(&lower, &lower_counts, &word_set, en),
+            }
+        };
+
+        // Function-word ratio (NLoN's NL discriminator) — English only; drives
+        // the non-supported-language abstention. Japanese is scored, so it is
+        // exempt (reported as fully "natural language").
+        let stopword_ratio = match lang {
+            Lang::Japanese => 1.0,
+            Lang::English if prose_tokens.is_empty() => 0.0,
+            Lang::English => {
+                prose_tokens.iter().filter(|w| LINE_STOPWORDS.contains(&w.as_str())).count() as f64
+                    / prose_tokens.len() as f64
+            }
         };
 
         Features {
+            lang,
             code_refs: count_code_refs(text),
             quoted: text.matches('`').count() / 2 + text.matches('"').count() / 2,
             numbers: prose_tokens
                 .iter()
                 .filter(|w| w.chars().any(|c| c.is_ascii_digit()))
                 .count(),
-            action_verbs: lexicon_hits(&lower, &lower_counts, &word_set, ACTION_VERBS),
-            imprecise_verbs: lexicon_hits(&lower, &lower_counts, &word_set, IMPRECISE_VERBS),
-            weak_words: lexicon_hits(&lower, &lower_counts, &word_set, WEAK_WORDS),
-            grounding_refs: lexicon_hits(&lower, &lower_counts, &word_set, GROUNDING_REFS),
-            imperative_open: opens_with_imperative(text),
-            context_markers: lexicon_hits(&lower, &lower_counts, &word_set, CONTEXT_MARKERS),
-            strong_constraints: lexicon_hits(&lower, &lower_counts, &word_set, STRONG_CONSTRAINTS),
-            soft_constraints: lexicon_hits(&lower, &lower_counts, &word_set, SOFT_CONSTRAINTS),
-            negative_directives: lexicon_hits(&lower, &lower_counts, &word_set, NEGATIVE_DIRECTIVES),
-            output_shape: lexicon_hits(&lower, &lower_counts, &word_set, OUTPUT_SHAPE),
-            verification: lexicon_hits(&lower, &lower_counts, &word_set, VERIFICATION),
-            executable_acceptance: lower_matches_any(&lower, RUNNERS),
-            preconditions: lexicon_hits(&lower, &lower_counts, &word_set, PRECONDITIONS),
-            postconditions: lexicon_hits(&lower, &lower_counts, &word_set, POSTCONDITIONS),
-            exceptions: lexicon_hits(&lower, &lower_counts, &word_set, EXCEPTIONS),
-            edge_cases: lexicon_hits(&lower, &lower_counts, &word_set, EDGE_CASES),
-            safety: lexicon_hits(&lower, &lower_counts, &word_set, SAFETY),
-            scope: lexicon_hits(&lower, &lower_counts, &word_set, SCOPE),
-            ambiguous_cond: lexicon_hits(&lower, &lower_counts, &word_set, AMBIGUOUS_COND),
-            example_markers: lexicon_hits(&lower, &lower_counts, &word_set, EXAMPLE_MARKERS),
+            action_verbs: hit(ACTION_VERBS, JA_ACTION_VERBS),
+            imprecise_verbs: hit(IMPRECISE_VERBS, JA_IMPRECISE_VERBS),
+            weak_words: hit(WEAK_WORDS, JA_WEAK_WORDS),
+            grounding_refs: hit(GROUNDING_REFS, JA_GROUNDING_REFS),
+            imperative_open: match lang {
+                Lang::Japanese => ja_hits(&lower, JA_IMPERATIVE) > 0,
+                Lang::English => opens_with_imperative(text),
+            },
+            context_markers: hit(CONTEXT_MARKERS, JA_CONTEXT_MARKERS),
+            strong_constraints: hit(STRONG_CONSTRAINTS, JA_STRONG_CONSTRAINTS),
+            soft_constraints: hit(SOFT_CONSTRAINTS, JA_SOFT_CONSTRAINTS),
+            negative_directives: hit(NEGATIVE_DIRECTIVES, JA_NEGATIVE_DIRECTIVES),
+            output_shape: hit(OUTPUT_SHAPE, JA_OUTPUT_SHAPE),
+            verification: hit(VERIFICATION, JA_VERIFICATION),
+            executable_acceptance: lower_matches_any(&lower, RUNNERS)
+                || (lang == Lang::Japanese && ja_hits(&lower, JA_RUNNERS) > 0),
+            preconditions: hit(PRECONDITIONS, JA_PRECONDITIONS),
+            postconditions: hit(POSTCONDITIONS, JA_POSTCONDITIONS),
+            exceptions: hit(EXCEPTIONS, JA_EXCEPTIONS),
+            edge_cases: hit(EDGE_CASES, JA_EDGE_CASES),
+            safety: hit(SAFETY, JA_SAFETY),
+            scope: hit(SCOPE, JA_SCOPE),
+            ambiguous_cond: hit(AMBIGUOUS_COND, JA_AMBIGUOUS_COND),
+            example_markers: hit(EXAMPLE_MARKERS, JA_EXAMPLE_MARKERS),
             arrows: count_arrows(text),
-            evidence_refs: lexicon_hits(&lower, &lower_counts, &word_set, EVIDENCE_REFS),
+            evidence_refs: hit(EVIDENCE_REFS, JA_EVIDENCE_REFS),
             artifact_lines: seg.artifact_lines,
             authored_lines: seg.authored_lines,
             repetition_factor: repetition_factor(&prose_tokens),
@@ -828,14 +877,23 @@ impl Features {
         // ── Diversity — adaptive MATTR over prose tokens ────────────────────
         let diversity = lexical_diversity(&self.prose_tokens);
 
-        // ── Clarity — trapezoid readability band on code-masked prose ───────
+        // ── Clarity — readability band on code-masked prose ─────────────────
+        // English uses the Flesch/FK/Fog indices. Those are English-specific
+        // (syllable-based), so Japanese instead uses a sentence-length proxy —
+        // the dominant driver of Japanese readability — and leaves the English
+        // indices at 0 for display.
         let words_per_sentence = n / self.sentences as f64;
-        let syll_per_word = self.syllables as f64 / n;
-        let fk_grade = 0.39 * words_per_sentence + 11.8 * syll_per_word - 15.59;
-        let flesch_reading_ease = 206.835 - 1.015 * words_per_sentence - 84.6 * syll_per_word;
-        let complex_ratio = self.polysyllables as f64 / n;
-        let gunning_fog = 0.4 * (words_per_sentence + 100.0 * complex_ratio);
-        let clarity = clarity_band(fk_grade, flesch_reading_ease, self.words);
+        let (fk_grade, flesch_reading_ease, gunning_fog, clarity) = match self.lang {
+            Lang::English => {
+                let syll_per_word = self.syllables as f64 / n;
+                let fk = 0.39 * words_per_sentence + 11.8 * syll_per_word - 15.59;
+                let fre = 206.835 - 1.015 * words_per_sentence - 84.6 * syll_per_word;
+                let fog = 0.4 * (words_per_sentence + 100.0 * self.polysyllables as f64 / n);
+                let clar = clarity_band(fk, fre, self.words);
+                (fk, fre, fog, clar)
+            }
+            Lang::Japanese => (0.0, 0.0, 0.0, ja_clarity(words_per_sentence, self.words)),
+        };
 
         // ── Adequacy — length sweet spot (additive, gentle) ─────────────────
         let adequacy = length_adequacy(self.words);
@@ -872,18 +930,20 @@ impl Features {
     }
 
     /// Reason to **abstain** from scoring, or `None` if the prompt is assessable.
-    /// Narrow by design — very short *English* asks stay scored (and score low
-    /// with advice); we only refuse text the heuristics genuinely don't cover.
+    /// Narrow by design — very short English/Japanese asks stay scored (and score
+    /// low with advice); we only refuse text the heuristics genuinely don't
+    /// cover. English and Japanese are supported; other languages abstain.
     fn unscored_reason(&self) -> Option<&'static str> {
         if self.words == 0 {
             // Pure paste, punctuation, or empty — no authored request to assess.
             return Some("no authored request");
         }
-        // Substantial text with almost no English function words is not English
-        // (or is code-soup that survived masking): the lexicon/readability
-        // signals are meaningless on it, so abstain rather than mis-score.
+        // Japanese is exempt (stopword_ratio is forced to 1.0 for it). Otherwise,
+        // substantial text with almost no English function words is neither
+        // English nor Japanese (or is code-soup that survived masking): the
+        // lexicon/readability signals are meaningless on it, so abstain.
         if self.words >= 8 && self.stopword_ratio < 0.05 {
-            return Some("non-English or unsupported text");
+            return Some("unsupported language");
         }
         None
     }
@@ -1079,6 +1139,102 @@ const EVIDENCE_REFS: &[&str] = &[
     "stdout", "error message", "test output", "the failure", "this failure",
 ];
 
+// ── Japanese lexicons (substring-matched; see `ja_hits`) ─────────────────────
+//
+// Parallel to the English lexicons above, one per slot signal. Entries are kanji
+// compounds or grammatical markers chosen to be specific enough that incidental
+// substring collisions are rare. Known limitation: because matching is by
+// substring, a precise action stem (e.g. 変更 "modify") also matches inside a
+// prohibition (変更しない "do not modify"), so a pure-prohibition Japanese prompt
+// can score a little objective credit it wouldn't in English. Acceptable for a
+// dictionary-free path; a morphological analyser would resolve it.
+
+const JA_ACTION_VERBS: &[&str] = &[
+    "実装", "修正", "追加", "削除", "変更", "作成", "生成", "更新", "リファクタ",
+    "リネーム", "抽出", "置換", "統合", "移行", "最適化", "解析", "描画", "導入",
+    "定義", "分割", "拡張", "実行",
+];
+
+const JA_IMPRECISE_VERBS: &[&str] =
+    &["対応", "処理", "サポート", "管理", "改善", "考慮", "検討", "対処"];
+
+const JA_WEAK_WORDS: &[&str] = &[
+    "適切", "適宜", "ちゃんと", "きちんと", "いい感じ", "綺麗", "柔軟", "効率的",
+    "簡単", "シンプル", "何とか", "なるべく", "うまく", "しっかり", "正しく", "など",
+];
+
+const JA_GROUNDING_REFS: &[&str] = &[
+    "関数", "メソッド", "ファイル", "モジュール", "クラス", "構造体", "引数",
+    "戻り値", "変数", "ディレクトリ", "コマンド", "エンドポイント", "ブランチ",
+    "インターフェース", "フィールド", "定数",
+];
+
+/// Request / imperative markers (verb-final in Japanese, so this is not an
+/// "opener" but a whole-text signal that a directive was actually made).
+const JA_IMPERATIVE: &[&str] = &[
+    "ください", "て下さい", "せよ", "なさい", "すること", "ましょう", "してほしい",
+    "お願い",
+];
+
+const JA_CONTEXT_MARKERS: &[&str] = &[
+    "現在", "既存", "現状", "背景", "目的", "なぜなら", "理由", "以前", "問題",
+    "課題", "レガシー", "従来", "現行",
+];
+
+const JA_STRONG_CONSTRAINTS: &[&str] = &[
+    "必ず", "必須", "してはいけない", "してはならない", "しないで", "禁止", "のみ",
+    "だけ", "決して", "常に", "絶対",
+];
+
+const JA_SOFT_CONSTRAINTS: &[&str] =
+    &["べき", "望ましい", "できれば", "推奨", "維持", "保持"];
+
+const JA_NEGATIVE_DIRECTIVES: &[&str] = &[
+    "してはいけない", "してはならない", "しないで", "禁止", "避ける", "変更しない",
+    "触らない",
+];
+
+const JA_OUTPUT_SHAPE: &[&str] = &[
+    "フォーマット", "形式", "テーブル", "スキーマ", "シグネチャ", "出力", "構造",
+    "json", "yaml", "markdown",
+];
+
+const JA_VERIFICATION: &[&str] = &[
+    "テスト", "検証", "確認", "アサート", "通る", "パス", "合格", "カバレッジ",
+    "回帰", "受け入れ",
+];
+
+const JA_RUNNERS: &[&str] =
+    &["テストが通", "テストをパス", "テストが成功", "ビルドが通", "成功すること"];
+
+const JA_PRECONDITIONS: &[&str] = &["前提", "仮定", "事前条件", "入力が"];
+
+const JA_POSTCONDITIONS: &[&str] = &["事後条件", "を返す", "結果は", "保証", "出力は"];
+
+const JA_EXCEPTIONS: &[&str] = &["例外", "エラー", "失敗", "パニック", "異常"];
+
+const JA_EDGE_CASES: &[&str] = &[
+    "エッジケース", "境界", "空文字", "境界値", "特殊ケース", "オーバーフロー",
+    "競合", "並行",
+];
+
+const JA_SAFETY: &[&str] = &[
+    "セキュリティ", "脆弱性", "認証", "秘密", "資格情報", "サニタイズ",
+    "インジェクション", "権限", "プライバシー",
+];
+
+const JA_SCOPE: &[&str] = &["範囲", "対象外", "限定", "スコープ"];
+
+const JA_AMBIGUOUS_COND: &[&str] = &["それ以外", "そうでなければ", "場合によって"];
+
+const JA_EXAMPLE_MARKERS: &[&str] =
+    &["例えば", "たとえば", "例:", "サンプル", "具体例", "入力例", "出力例"];
+
+const JA_EVIDENCE_REFS: &[&str] = &[
+    "以下", "上記", "添付", "貼り付け", "このエラー", "このログ", "スタックトレース",
+    "エラーメッセージ", "下記",
+];
+
 // ── Slot detector helpers ────────────────────────────────────────────────────
 
 /// True if any entry (a phrase or word, matched as a substring) is present in
@@ -1111,6 +1267,134 @@ fn opens_with_imperative(text: &str) -> bool {
 /// Count input→output arrows (`->`, `=>`, `⇒`) — a compact example/spec form.
 fn count_arrows(text: &str) -> usize {
     text.matches("->").count() + text.matches("=>").count() + text.matches('⇒').count()
+}
+
+// ── Language detection & Japanese support ────────────────────────────────────
+//
+// The scorer is script-aware. English is the default; Japanese gets a dedicated
+// path — dictionary-free and fully offline, consistent with the module contract
+// (no morphological analyser / MeCab dependency). Japanese is detected by kana,
+// tokenised by character-class run, and matched against parallel `JA_*` lexicons
+// by substring (a space-less script has no word boundaries). Code references,
+// structure, numbers, and arrows are script-agnostic and shared. Readability
+// indices are English-specific, so `breakdown` uses a character-based proxy for
+// Japanese instead of emitting a meaningless Flesch score. Everything else — the
+// slot rubric, multiplicative core, guards, aggregation — is language-neutral:
+// it consumes feature *counts*, so it works unchanged for either script.
+
+/// Detected authored-prose script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lang {
+    English,
+    Japanese,
+}
+
+fn is_hiragana(c: char) -> bool {
+    ('\u{3040}'..='\u{309F}').contains(&c)
+}
+fn is_katakana(c: char) -> bool {
+    ('\u{30A0}'..='\u{30FF}').contains(&c) || ('\u{FF66}'..='\u{FF9D}').contains(&c)
+}
+fn is_kanji(c: char) -> bool {
+    ('\u{4E00}'..='\u{9FFF}').contains(&c) || ('\u{3400}'..='\u{4DBF}').contains(&c)
+}
+fn is_ja_char(c: char) -> bool {
+    is_hiragana(c) || is_katakana(c) || is_kanji(c)
+}
+
+/// Classify by script. Kana (hiragana/katakana) is unambiguously Japanese, so
+/// its presence — beyond an incidental stray char — selects the Japanese path.
+/// Kanji alone stays English (it could be Chinese, and code identifiers never
+/// contain kana). Threshold: at least 3 kana characters.
+fn detect_lang(text: &str) -> Lang {
+    let kana = text.chars().filter(|&c| is_hiragana(c) || is_katakana(c)).count();
+    if kana >= 3 {
+        Lang::Japanese
+    } else {
+        Lang::English
+    }
+}
+
+/// Segment Japanese text into character-class runs: each maximal run of one
+/// class (kanji / hiragana / katakana / Latin-alphanumeric) is one token.
+/// Dictionary-free and deterministic — coarser than morphological analysis, but
+/// enough for lexical-diversity and repetition signals. Punctuation and
+/// whitespace are boundaries and dropped.
+fn tokenize_ja(text: &str) -> Vec<String> {
+    #[derive(PartialEq, Clone, Copy)]
+    enum Class {
+        Kanji,
+        Hira,
+        Kata,
+        Latin,
+    }
+    fn class_of(c: char) -> Option<Class> {
+        if is_kanji(c) {
+            Some(Class::Kanji)
+        } else if is_hiragana(c) {
+            Some(Class::Hira)
+        } else if is_katakana(c) {
+            Some(Class::Kata)
+        } else if c.is_ascii_alphanumeric() {
+            Some(Class::Latin)
+        } else {
+            None
+        }
+    }
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut cur_class: Option<Class> = None;
+    for ch in text.chars() {
+        match class_of(ch) {
+            Some(cl) if Some(cl) == cur_class => cur.push(ch.to_ascii_lowercase()),
+            Some(cl) => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                cur.push(ch.to_ascii_lowercase());
+                cur_class = Some(cl);
+            }
+            None => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                cur_class = None;
+            }
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Word-equivalent size of Japanese text: content characters (kana + kanji) ÷ 2
+/// — Japanese words average ~2 characters — plus each Latin-alphanumeric run as
+/// one word. Keeps length thresholds and per-100-word densities on a comparable
+/// scale to English.
+fn ja_word_equiv(masked: &str) -> usize {
+    let ja_chars = masked.chars().filter(|&c| is_ja_char(c)).count();
+    let mut latin_runs = 0usize;
+    let mut in_latin = false;
+    for c in masked.chars() {
+        if c.is_ascii_alphanumeric() {
+            if !in_latin {
+                latin_runs += 1;
+                in_latin = true;
+            }
+        } else {
+            in_latin = false;
+        }
+    }
+    ja_chars / 2 + latin_runs
+}
+
+/// Count Japanese lexicon hits: total substring occurrences of each entry. No
+/// word-boundary gating (Japanese has none); entries are chosen to be specific
+/// enough (kanji compounds, grammatical markers) that incidental collisions are
+/// rare.
+fn ja_hits(lower: &str, lex: &[&str]) -> usize {
+    lex.iter().map(|e| lower.matches(e).count()).sum()
 }
 
 // ── Artifact segmentation ────────────────────────────────────────────────────
@@ -1496,13 +1780,14 @@ fn tokenize_words(text: &str) -> Vec<String> {
     out
 }
 
-/// Count sentence-ish units. Splits on `.`/`!`/`?`/`;` and newlines (each
-/// bulleted line counts as a clause). Consecutive terminators collapse.
+/// Count sentence-ish units. Splits on `.`/`!`/`?`/`;`, the Japanese
+/// terminators `。`/`！`/`？`, and newlines (each bulleted line counts as a
+/// clause). Consecutive terminators collapse.
 fn count_sentences(text: &str) -> usize {
     let mut count = 0usize;
     let mut in_sentence = false;
     for ch in text.chars() {
-        if matches!(ch, '.' | '!' | '?' | '\n' | ';') {
+        if matches!(ch, '.' | '!' | '?' | '\n' | ';' | '。' | '！' | '？') {
             if in_sentence {
                 count += 1;
                 in_sentence = false;
@@ -1843,6 +2128,18 @@ fn length_adequacy(words: usize) -> f64 {
     (1.0 - (n - 700.0) / 700.0 * 0.4).clamp(0.6, 1.0)
 }
 
+/// Japanese clarity proxy in `0.0..=1.0`. Readability indices don't transfer to
+/// Japanese, so we use the dominant driver — sentence length. Full credit for
+/// sentences of ~6–40 word-equivalents (≈12–80 characters), tapering for a
+/// choppy stream of fragments or a tangled run-on. Neutral 0.6 for very short
+/// prompts where the estimate is too noisy to trust.
+fn ja_clarity(words_per_sentence: f64, words: usize) -> f64 {
+    if words < 6 {
+        return 0.6;
+    }
+    trapezoid(words_per_sentence, 2.0, 6.0, 40.0, 80.0)
+}
+
 /// Map readability to a clarity score in `0.0..=1.0` via a trapezoid band — full
 /// credit for clear technical English (FK grade ~7–13 / Flesch ~35–85), tapering
 /// for both a childishly-simple ask and a tangled run-on. Neutral 0.6 for very
@@ -1873,6 +2170,27 @@ fn trapezoid(v: f64, min: f64, ideal_min: f64, ideal_max: f64, max: f64) -> f64 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore]
+    fn diag_calibration_ja() {
+        let cases = [
+            ("vague", "いい感じにしておいて"),
+            ("fix-vague", "バグを修正して"),
+            ("tactical", "src/a.rs の `foo()` と src/b.rs の `bar()` を修正してください。JSON を返すこと。テストを追加し `cargo test` を実行してください。シグネチャは変更しないでください。この2つのファイルのみ変更すること。"),
+            ("rich", "src/util.rs の `parse_range()` をリファクタして、上限が包含的なときのオフバイワンを修正してください。空の範囲のユニットテストを追加し、既存のテストが通ることを確認してください。公開シグネチャは変更しないでください。"),
+            ("loaded", "背景: ネストしたリストのパーサが子要素を誤って数えています。目的として src/parser.rs の `parse_nested()` を修正し、末尾の区切り文字が余分な子要素を生成しないようにしてください。末尾区切りのケースの回帰テストを追加し、公開シグネチャは維持してください。`cargo test parser::` が通ることを確認。"),
+            ("prohib", "公開シグネチャは変更しないでください。src/legacy.rs は触らないでください。新しい依存は禁止です。"),
+        ];
+        for (name, p) in cases {
+            let s = score_prompt(p);
+            let b = &s.breakdown;
+            println!(
+                "ja/{name:10} score={:5.1} {:11} words={} obj={:.2} grd={:.2} dir={:.2} ctx={:.2} ex={:.2} clar={:.2}",
+                s.score, s.level.label(), s.words, b.objective, b.grounding, b.direction, b.context, b.examples, b.clarity
+            );
+        }
+    }
 
     #[test]
     #[ignore]
@@ -2114,12 +2432,90 @@ mod tests {
     }
 
     #[test]
-    fn abstains_on_non_english() {
-        // Substantial text, essentially no English function words → abstain.
+    fn abstains_on_unsupported_language() {
+        // Japanese is supported (see the ja_* tests); a Latin-script language we
+        // have no lexicon for (German here) is abstained rather than mis-scored.
         let s = score_prompt(
-            "実装してください パーサー モジュール テスト 関数 修正 変更 追加 引数 戻り値",
+            "Implementieren Parser reparieren Funktion hinzufügen Tests Argumente \
+             Rückgabewert Modul Klasse Schnittstelle",
         );
-        assert_eq!(s.unscored, Some("non-English or unsupported text"));
+        assert_eq!(s.unscored, Some("unsupported language"));
+    }
+
+    // ── Japanese support ─────────────────────────────────────────────────────
+
+    #[test]
+    fn detect_lang_by_kana() {
+        assert_eq!(detect_lang("バグを修正してください"), Lang::Japanese);
+        assert_eq!(detect_lang("Fix the bug in src/util.rs"), Lang::English);
+        // Code identifiers / kanji-free ASCII stay English.
+        assert_eq!(detect_lang("refactor parse_range() in src/util.rs"), Lang::English);
+        // A stray kana char or two is not enough to flip the language.
+        assert_eq!(detect_lang("use the ア marker"), Lang::English);
+    }
+
+    #[test]
+    fn tokenize_ja_splits_by_character_class() {
+        // 実装(kanji) して(hira) ください(hira) → kanji run + hiragana run; the
+        // Latin/punct is dropped. Katakana forms its own run.
+        let toks = tokenize_ja("実装してテストする");
+        assert!(toks.contains(&"実装".to_string()), "{toks:?}");
+        assert!(toks.contains(&"テスト".to_string()), "{toks:?}");
+        // Kana and kanji never merge into one token.
+        assert!(toks.iter().all(|t| !t.chars().any(is_kanji) || t.chars().all(is_kanji)));
+    }
+
+    #[test]
+    fn japanese_prompt_is_scored_not_abstained() {
+        let s = score_prompt(
+            "src/util.rs の `parse_range()` を修正して、空の範囲のテストを追加してください。",
+        );
+        assert!(!s.is_unscored(), "Japanese must be scored, got {:?}", s.unscored);
+        assert_eq!(s.lang, Lang::Japanese);
+        assert!(s.words > 0);
+    }
+
+    #[test]
+    fn japanese_rich_beats_vague_by_wide_margin() {
+        let vague = score_prompt("いい感じにしておいて");
+        let rich = score_prompt(
+            "src/util.rs の `parse_range()` をリファクタして、上限が包含的なときの\
+             オフバイワンを修正してください。空の範囲のユニットテストを追加し、\
+             既存のテストが通ることを確認してください。公開シグネチャは変更しないでください。",
+        );
+        assert!(
+            rich.score > vague.score + 30.0,
+            "rich {} vs vague {}",
+            rich.score,
+            vague.score
+        );
+        assert!(vague.level == MaturityLevel::Nascent, "vague was {}", vague.score);
+        assert!(rich.level >= MaturityLevel::Proficient, "rich was {}", rich.score);
+    }
+
+    #[test]
+    fn japanese_grounding_uses_language_agnostic_code_refs() {
+        // Code paths / func() are ASCII and score grounding regardless of prose
+        // language: the same ask with vs. without concrete refs differs.
+        let grounded = score_prompt(
+            "`parse_range()` を src/util.rs で修正し、`cargo test` を実行してください。",
+        );
+        let vague = score_prompt("パーサーをいい感じに直してください。");
+        assert!(
+            grounded.breakdown.grounding > vague.breakdown.grounding + 0.2,
+            "grounded {} vs vague {}",
+            grounded.breakdown.grounding,
+            vague.breakdown.grounding
+        );
+    }
+
+    #[test]
+    fn japanese_weak_words_lower_objective() {
+        // 適切に / ちゃんと (vague adverbs) drag the objective the way English
+        // weak words do.
+        let crisp = score_prompt("src/net.rs に3回上限のリトライ処理を実装してください。");
+        let weak = score_prompt("その辺をいい感じに適切に何とかしておいてください。");
+        assert!(crisp.breakdown.objective > weak.breakdown.objective);
     }
 
     #[test]
@@ -2155,10 +2551,13 @@ mod tests {
 
     #[test]
     fn branch_drops_unscored_prompts() {
-        // A non-English prompt alongside a real one is excluded from the mean
-        // but still counts against coverage.
+        // An unsupported-language prompt alongside a real one is excluded from
+        // the mean but still counts against coverage.
         let real = "Add a test for `foo()` in src/foo.rs and run `cargo test`.";
-        let branch = score_branch(vec![real, "実装 テスト 関数 引数 戻り値 修正 変更 追加"], 2);
+        let branch = score_branch(
+            vec![real, "Implementieren Parser Funktion Argumente Rückgabewert Modul Klasse Schnittstelle"],
+            2,
+        );
         assert_eq!(branch.scored_prompts, 1);
         assert_eq!(branch.ai_commits, 2);
         assert!(branch.low_confidence);
