@@ -133,13 +133,18 @@
   #m2 .sub b{color:var(--text);font-weight:500}
 
   /* ---- m3 scale ---- */
-  #m3 .agents{position:absolute;left:80px;right:80px;top:40px;height:420px;display:flex;gap:32px}
+  #m3 .agents{position:absolute;left:80px;right:80px;top:110px;height:420px;display:flex;gap:32px}
   #m3 .agents .term{flex:1}
-  #m3 .l1{position:absolute;left:0;right:0;top:540px;text-align:center;font-size:52px;font-weight:700;opacity:0}
+  #m3 .l1{position:absolute;left:0;right:0;top:0;text-align:center;font-size:52px;font-weight:700;opacity:0}
   #m3 .l1 b{color:var(--codex)} #m3 .l1 i{font-style:normal;color:var(--claude)}
-  #m3 .l2{position:absolute;left:0;right:0;top:626px;text-align:center;font-size:30px;
+  #m3 .l2{position:absolute;left:0;right:0;top:600px;text-align:center;font-size:32px;
     color:var(--dim);opacity:0}
-  #m3 .l2 b{color:var(--ok);font-weight:500}
+  #m3 .l2 b{color:var(--ok);font-weight:500} #m3 .l2 em{font-style:normal;color:var(--text);font-weight:500}
+  .bub{position:absolute;padding:14px 20px;border-radius:14px;font-size:19px;line-height:1.4;
+    max-width:520px;opacity:0;z-index:4;background:var(--panel);box-shadow:0 16px 44px rgba(0,0,0,.55)}
+  .bub.from-claude{border:1px solid rgba(255,122,89,.5)} .bub.from-codex{border:1px solid rgba(45,212,191,.5)}
+  .bub .who{font-family:var(--mono);font-size:15px;margin-bottom:4px}
+  .bub.from-claude .who{color:var(--claude)} .bub.from-codex .who{color:var(--codex)}
 
   /* ---- m4 close ---- */
   #m4 .wrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
@@ -262,7 +267,15 @@
       </div>
     </div>
     <div class="l1" id="s-l1">Works for one agent. Scales to many.</div>
-    <div class="l2" id="s-l2"><i>Claude</i> and <b>Codex</b> in parallel — <b>one audited result</b> merged.</div>
+    <div class="bub from-claude" id="s-b1" style="left:620px;top:300px">
+      <div class="who">claude → codex · h5i msg review</div>
+      jitter=0 shrinks to a flake — added a regression seed, please check
+    </div>
+    <div class="bub from-codex" id="s-b2" style="right:620px;top:400px">
+      <div class="who">codex → claude · h5i msg review</div>
+      backoff can overflow past 2^31 ms — clamp the upper bound too?
+    </div>
+    <div class="l2" id="s-l2">A <em>conflict-free multi-agent orchestra</em> — agents <b>peer-review</b> each other's work.</div>
   </div>
 
   <!-- m4 : close -->
@@ -305,6 +318,11 @@ const pop = (el, t, at, opts={}) => {
   const p = eo(ramp(t, at, d));
   el.style.opacity = p;
   el.style.transform = `translateY(${(1-p)*dy}px)`;
+  return p;
+};
+const hold = (el, t, at, until, opts={}) => {
+  const p = pop(el, t, at, opts);
+  if (until != null && t > until) el.style.opacity = Math.max(0, 1 - ramp(t, until, .45));
   return p;
 };
 const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
@@ -473,8 +491,10 @@ const SCENES = [
       renderTerm($('t-cxm'), evCxM, t);
       $('w-clm').style.opacity = .35 + .65*eo(ramp(t, .3, .5));
       $('w-cxm').style.opacity = .35 + .65*eo(ramp(t, .7, .5));
-      pop($('s-l1'), t, 4.6, {d:.6, dy:20});
-      pop($('s-l2'), t, 6.2, {d:.6});
+      pop($('s-l1'), t, .3, {d:.6, dy:20});
+      hold($('s-b1'), t, 3.0, 9.3);
+      hold($('s-b2'), t, 4.4, 9.3);
+      pop($('s-l2'), t, 5.8, {d:.6});
     }},
   { id:'m4', start:67, end:75, eyebrow:'refs/h5i/*',
     update(t){
