@@ -44,7 +44,7 @@ impl ComplianceReport {
 
     pub fn pass_rate(&self) -> f64 {
         if self.total_commits == 0 {
-            1.0
+            100.0
         } else {
             let passing = self.total_commits.saturating_sub(
                 self.commits.iter().filter(|c| c.has_violation).count(),
@@ -669,4 +669,96 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn commit_stat(has_violation: bool) -> CommitStat {
+        CommitStat {
+            oid: "abcdef1234567890".to_string(),
+            short_oid: "abcdef12".to_string(),
+            message: "test commit".to_string(),
+            author: "test author".to_string(),
+            timestamp: "2026-01-01 00:00 UTC".to_string(),
+            is_ai: false,
+            has_violation,
+            violations: Vec::new(),
+            blind_edits: 0,
+            uncertainty_count: 0,
+            injection_hits: 0,
+            injection_risk: None,
+        }
+    }
+
+    fn report(
+        total_commits: usize,
+        ai_commits: usize,
+        commits: Vec<CommitStat>,
+    ) -> ComplianceReport {
+        ComplianceReport {
+            since: None,
+            until: None,
+            total_commits,
+            ai_commits,
+            human_commits: total_commits.saturating_sub(ai_commits),
+            policy_violations: commits.iter().filter(|c| c.has_violation).count(),
+            injection_hits: 0,
+            commits,
+            violations: Vec::new(),
+            path_stats: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn ai_pct_returns_zero_for_empty_report() {
+        let report = report(0, 0, Vec::new());
+
+        assert_eq!(report.ai_pct(), 0.0);
+    }
+
+    #[test]
+    fn ai_pct_calculates_percentage_of_ai_commits() {
+        let report = report(4, 3, Vec::new());
+
+        assert_eq!(report.ai_pct(), 75.0);
+    }
+
+    #[test]
+    fn pass_rate_is_one_hundred_when_all_commits_pass() {
+        let report = report(2, 0, vec![commit_stat(false), commit_stat(false)]);
+
+        assert_eq!(report.pass_rate(), 100.0);
+    }
+
+    #[test]
+    fn pass_rate_is_zero_when_all_commits_fail() {
+        let report = report(2, 0, vec![commit_stat(true), commit_stat(true)]);
+
+        assert_eq!(report.pass_rate(), 0.0);
+    }
+
+    #[test]
+    fn pass_rate_calculates_mixed_passing_and_failing_commits() {
+        let report = report(
+            4,
+            0,
+            vec![
+                commit_stat(false),
+                commit_stat(true),
+                commit_stat(false),
+                commit_stat(true),
+            ],
+        );
+
+        assert_eq!(report.pass_rate(), 50.0);
+    }
+
+    #[test]
+    fn pass_rate_treats_empty_report_as_fully_passing() {
+        let report = report(0, 0, Vec::new());
+
+        assert_eq!(report.pass_rate(), 100.0);
+    }
 }
