@@ -86,14 +86,13 @@
     box-shadow:0 18px 50px rgba(0,0,0,.55);font-size:23px;line-height:1.45;color:var(--dim);opacity:0;z-index:4}
   .callout b{color:var(--text);font-weight:500}
   .callout .k{font-family:var(--mono);font-size:19px;color:var(--git)}
-  /* compression demo card (scene 1) */
-  .callout .cmpraw{margin-top:12px;font-family:var(--mono);font-size:13.5px;line-height:1.55;
+  /* compression demo (scene 1): raw box -> arrow -> compressed box */
+  .cmpraw{margin-top:10px;font-family:var(--mono);font-size:13.5px;line-height:1.55;
     color:var(--faint);white-space:pre;opacity:.85}
-  .callout .cmpraw .f{color:var(--danger);font-weight:700}
-  .callout .cmparrow{margin:10px 0;font-family:var(--mono);font-size:14.5px;color:var(--ok)}
-  .callout .cmpmin{font-family:var(--mono);font-size:14.5px;line-height:1.7;color:var(--text);
-    white-space:pre;padding:10px 14px;border:1px solid rgba(52,211,153,.3);border-radius:8px;
-    background:rgba(52,211,153,.06)}
+  .cmpraw .f{color:var(--danger);font-weight:700}
+  .cmparrow{position:absolute;font-family:var(--mono);font-size:15px;color:var(--ok);opacity:0;z-index:4}
+  .callout.cmin{border-color:rgba(52,211,153,.4);background:rgba(10,18,14,.97)}
+  .cmpmin{font-family:var(--mono);font-size:14.5px;line-height:1.7;color:var(--text);white-space:pre}
 
   /* ---------- scene 0 / 4 ---------- */
   #s0 .wrap,#s4 .wrap{position:absolute;inset:0;display:flex;flex-direction:column;
@@ -242,8 +241,8 @@
         <div class="tbody" id="t-you"></div>
       </div>
     </div>
-    <div class="callout" id="c1a" style="left:90px;top:530px;max-width:680px">
-      <b>Tool output, compressed.</b>
+    <div class="callout" id="c1araw" style="left:90px;top:498px;max-width:680px">
+      <b>Raw pytest output</b> <span class="faint">· 412 lines</span>
       <div class="cmpraw">tests/test_api.py .................   [ 22%]
 tests/test_auth.py ................   [ 46%]
 tests/test_db.py ..................   [ 71%]
@@ -251,7 +250,9 @@ tests/test_worker.py ....<span class="f">F</span>.........  [100%]
   … 412 lines: every PASS, warning, and
     traceback frame streamed into context …
 ======== 1 failed, 240 passed ========</div>
-      <div class="cmparrow">▼ h5i capture run · 9 lines kept · −97% tokens</div>
+    </div>
+    <div class="cmparrow" id="c1aarr" style="left:118px;top:742px">▼ h5i capture run · 9 lines kept · −97% tokens</div>
+    <div class="callout cmin" id="c1amin" style="left:90px;top:778px;max-width:680px">
       <div class="cmpmin"><span class="err">1 failed</span> · <span class="ok">240 passed</span>  <span class="faint">(240 ok collapsed)</span>
 <span class="err">▸</span> test_worker.py::test_retry_backoff — expected 3, got 2</div>
     </div>
@@ -581,7 +582,9 @@ const SCENES = [
       renderTerm($('t-agent'), evAgent, t);
       renderTerm($('t-you'),   evYou,   t, {cursor:'$'});
       $('w-you').style.opacity = .38 + .62*eo(ramp(t, 19.2, .6));
-      pop($('c1a'), t, 4.4);
+      pop($('c1araw'), t, 4.4);
+      pop($('c1aarr'), t, 5.3, {dy:10});
+      pop($('c1amin'), t, 5.9);
       hold($('c1b'), t, 30.6, 38.0);
     }},
   { id:'s2', start:54, end:101, eyebrow:'02 — <em>the sandboxed worktree</em>',
