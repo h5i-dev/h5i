@@ -76,7 +76,7 @@
   #m0 .l1{font-size:64px;font-weight:700;letter-spacing:-.02em;opacity:0}
   #m0 .l2{margin-top:18px;font-size:40px;font-weight:300;color:var(--dim);opacity:0}
   #m0 .l2 b{color:var(--text);font-weight:500}
-  #m0 .term{width:920px;height:282px;margin-top:40px;border-color:rgba(255,98,88,.4);opacity:0}
+  #m0 .term{width:920px;height:308px;margin-top:36px;border-color:rgba(255,98,88,.4);opacity:0}
   #m0 .q{margin-top:26px;font-size:34px;font-weight:300;color:var(--dim);opacity:0}
   #m0 .q b{color:var(--text);font-weight:500}
   #m0 .q + .q{margin-top:10px}
@@ -193,6 +193,10 @@
       </div>
       <div class="q" id="h-q1">What <b>prompt</b> produced this diff?</div>
       <div class="q" id="h-q2">Did the agent run <b>unsafe tools</b>?</div>
+    </div>
+    <div class="blockcard" id="halert" style="left:680px;top:428px;width:560px">
+      <div class="bl">NOTHING BLOCKED IT</div>
+      <div class="bt" id="halert-t"></div>
     </div>
     <div class="titlecard" id="m0title">
       <img src="assets/logo.png" alt="h5i">
@@ -356,10 +360,15 @@ function renderTerm(el, ev, t, opts={}) {
 /* ---- m0 hook (0–13) ---- */
 const evHookM = [
   {at:3.8, cmd:'Refactor the billing sync worker.', prompt:'›', pcls:'box', cps:40},
-  {at:4.7, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(./upload.sh ~/.aws/credentials)</span>`]},
-  {at:5.3, out:[`  <span class="dim">⎿</span> aws_secret_access_key → <span class="wr">uploaded</span>`]},
-  {at:6.0, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(rm -rf ~/.ssh)</span>`]},
-  {at:6.6, out:[`  <span class="dim">⎿</span> <span class="wr">id_rsa · known_hosts · config — gone</span>`]},
+  {at:4.7, out:[`<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(src/payment.py)</span>  <span class="ok">✓</span>`]},
+  {at:5.6, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(./upload.sh ~/.aws/credentials)</span>`]},
+  {at:6.2, out:[`  <span class="dim">⎿</span> aws_secret_access_key → <span class="wr">uploaded</span>`]},
+  {at:7.4, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(rm -rf ~/.ssh)</span>`]},
+  {at:8.0, out:[`  <span class="dim">⎿</span> <span class="wr">id_rsa · known_hosts · config — gone</span>`]},
+];
+const HOOK_ALERTS = [
+  {at:6.3, txt:'credentials <b>leaked</b>'},
+  {at:8.1, txt:'important files <b>deleted</b>'},
 ];
 
 /* ---- m1 sandbox (13–43) ---- */
@@ -443,10 +452,19 @@ const SCENES = [
       pop($('h-l2'), t, 1.4, {d:.7});
       pop($('h-term'), t, 3.4);
       renderTerm($('t-hookm'), evHookM, t);
-      pop($('h-q1'), t, 7.4, {d:.6});
-      pop($('h-q2'), t, 8.6, {d:.6});
-      $('m0g1').style.opacity = Math.min(1, 1 - ramp(t, 10.4, .5));
-      pop($('m0title'), t, 10.8, {d:.8, dy:26});
+      // incident alert cards — the hook's mirror of the sandbox's BLOCKED cards
+      let al = null;
+      for (const a of HOOK_ALERTS) if (t >= a.at && t < a.at + 2.2) al = a;
+      const ha = $('halert');
+      if (al) {
+        $('halert-t').innerHTML = al.txt;
+        ha.style.opacity = Math.min(eo(ramp(t, al.at, .3)), 1 - ramp(t, al.at + 1.8, .4));
+        ha.style.transform = `scale(${.94 + .06*eo(ramp(t, al.at, .3))})`;
+      } else ha.style.opacity = 0;
+      pop($('h-q1'), t, 8.8, {d:.6});
+      pop($('h-q2'), t, 9.9, {d:.6});
+      $('m0g1').style.opacity = Math.min(1, 1 - ramp(t, 11.8, .5));
+      pop($('m0title'), t, 12.2, {d:.8, dy:26});
     }},
   { id:'m1', start:15.5, end:44.5, eyebrow:'the sandboxed worktree',
     update(t){
