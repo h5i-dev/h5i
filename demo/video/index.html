@@ -86,6 +86,14 @@
     box-shadow:0 18px 50px rgba(0,0,0,.55);font-size:23px;line-height:1.45;color:var(--dim);opacity:0;z-index:4}
   .callout b{color:var(--text);font-weight:500}
   .callout .k{font-family:var(--mono);font-size:19px;color:var(--git)}
+  /* compression demo card (scene 1) */
+  .callout .cmpraw{margin-top:12px;font-family:var(--mono);font-size:13.5px;line-height:1.55;
+    color:var(--faint);white-space:pre;opacity:.85}
+  .callout .cmpraw .f{color:var(--danger);font-weight:700}
+  .callout .cmparrow{margin:10px 0;font-family:var(--mono);font-size:14.5px;color:var(--ok)}
+  .callout .cmpmin{font-family:var(--mono);font-size:14.5px;line-height:1.7;color:var(--text);
+    white-space:pre;padding:10px 14px;border:1px solid rgba(52,211,153,.3);border-radius:8px;
+    background:rgba(52,211,153,.06)}
 
   /* ---------- scene 0 / 4 ---------- */
   #s0 .wrap,#s4 .wrap{position:absolute;inset:0;display:flex;flex-direction:column;
@@ -234,9 +242,18 @@
         <div class="tbody" id="t-you"></div>
       </div>
     </div>
-    <div class="callout" id="c1a" style="left:90px;top:690px">
-      <b>Tool output, compressed.</b> Failures survive verbatim; the raw log stays recoverable in
-      <span class="k">refs/h5i</span>.
+    <div class="callout" id="c1a" style="left:90px;top:530px;max-width:680px">
+      <b>Tool output, compressed.</b>
+      <div class="cmpraw">tests/test_api.py .................   [ 22%]
+tests/test_auth.py ................   [ 46%]
+tests/test_db.py ..................   [ 71%]
+tests/test_worker.py ....<span class="f">F</span>.........  [100%]
+  … 412 lines: every PASS, warning, and
+    traceback frame streamed into context …
+======== 1 failed, 240 passed ========</div>
+      <div class="cmparrow">▼ h5i capture run · 9 lines kept · −97% tokens</div>
+      <div class="cmpmin"><span class="err">1 failed</span> · <span class="ok">240 passed</span>  <span class="faint">(240 ok collapsed)</span>
+<span class="err">▸</span> test_worker.py::test_retry_backoff — expected 3, got 2</div>
     </div>
     <div class="callout" id="c1b" style="right:60px;top:690px">
       <b>The why behind every diff.</b> Prompts, commands, reasoning — versioned next to your commits,
@@ -423,14 +440,14 @@ const evDanger = [
 /* ---- scene 1 : capture -> recall (39s) ---- */
 const evAgent = [
   {at:.4,  cmd:'Fix the flaky retry test in tests/test_worker.py', prompt:'›', pcls:'box', cps:38},
-  {at:2.0, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(h5i capture run -- pytest -q tests/test_worker.py)</span>`]},
+  {at:2.0, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(h5i capture run -- pytest -q)</span>`]},
   {at:3.0, out:[
     `  <span class="dim">⎿</span> <span class="err">FAIL</span> test_retry_backoff — expected 3 retries, got 2`,
     `  <span class="dim">⎿</span> <span class="badge">412 lines → 9 · raw stored · −97% tokens</span>`], stagger:.5},
   {at:7.2, out:[`<span class="co">●</span> <span class="tool">Read</span><span class="dim">(sync/worker.py)</span>  <span class="faint">⎿ 96 lines</span>`]},
   {at:9.2, out:[`<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(sync/worker.py)</span>  <span class="faint">⎿ clamp backoff jitter before enqueue</span>`]},
-  {at:11.6,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(h5i capture run -- pytest -q tests/test_worker.py)</span>`]},
-  {at:12.8,out:[`  <span class="dim">⎿</span> <span class="ok">24 passed · 1.9 s</span>`]},
+  {at:11.6,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(h5i capture run -- pytest -q)</span>`]},
+  {at:12.8,out:[`  <span class="dim">⎿</span> <span class="ok">241 passed · 8.4 s</span>`]},
   {at:14.6,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(git add sync/worker.py tests/test_worker.py)</span>`]},
   {at:16.0,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(h5i capture commit -m "fix: clamp retry jitter" --tests)</span>`]},
   {at:17.6,out:[
@@ -443,7 +460,7 @@ const evYou = [
     `commit <span class="wr">4f2c9e1</span>  fix: clamp retry jitter`,
     `  <span class="dim">agent</span>   claude-code · claude-sonnet`,
     `  <span class="dim">intent</span>  <span class="vio">"Fix the flaky retry test in tests/test_worker.py"</span>`,
-    `  <span class="dim">tests</span>   <span class="ok">24 passed</span> · coverage +1`,
+    `  <span class="dim">tests</span>   <span class="ok">241 passed</span> · coverage +1`,
     `  <span class="dim">tokens</span>  −97% (412 → 9 lines, raw recoverable)`], stagger:.18},
   {at:26.6, cmd:'h5i recall context show'},
   {at:28.3, out:[
@@ -451,7 +468,7 @@ const evYou = [
     `  <span class="blu">OBSERVE</span>  read sync/worker.py`,
     `  <span class="vio">THINK</span>    backoff jitter is unbounded → flaky under load`,
     `  <span class="co">ACT</span>      edit sync/worker.py — clamp jitter`,
-    `  <span class="ok">CHECK</span>    pytest · 24 passed`], stagger:.2},
+    `  <span class="ok">CHECK</span>    pytest · 241 passed`], stagger:.2},
   {at:33.6, cmd:'h5i share push'},
   {at:34.9, out:[`<span class="ok">✔</span> refs/h5i/* → origin  <span class="faint">(notes · context · msg · env)</span>`]},
 ];
@@ -474,7 +491,7 @@ const evEnv = [
   {at:24.6,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(git push origin main)</span>`]},
   {at:25.6,out:[`  <span class="err">⛔ refused — box commits stay on the env branch until review</span>`]},
   {at:28.6,out:[
-    `<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(sync/worker.py)</span> <span class="ok">✓</span>   <span class="co">●</span> <span class="tool">Bash</span><span class="dim">(pytest -q)</span> → <span class="ok">24 passed</span>`,
+    `<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(sync/worker.py)</span> <span class="ok">✓</span>   <span class="co">●</span> <span class="tool">Bash</span><span class="dim">(pytest -q)</span> → <span class="ok">241 passed</span>`,
     `<span class="faint">work continues inside $WORK — every command captured as evidence</span>`], stagger:.4},
   {at:31.8, cmd:'exit', prompt:'h5i:claude-env$', pcls:'box', cps:20},
   {at:33.2, cmd:'h5i env diff claude-env --stat'},
