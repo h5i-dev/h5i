@@ -363,12 +363,12 @@ function renderTerm(el, ev, t, opts={}) {
 
 /* ---- m0 hook (0–13) ---- */
 const evHookM = [
-  {at:3.8, cmd:'Refactor the billing sync worker.', prompt:'›', pcls:'box', cps:40},
-  {at:5.6, out:[`<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(src/payment.py)</span>  <span class="ok">✓</span>`]},
-  {at:6.5, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(./upload.sh ~/.aws/credentials)</span>`]},
-  {at:7.1, out:[`  <span class="dim">⎿</span> aws_secret_access_key → <span class="wr">uploaded</span>`]},
-  {at:8.3, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(rm -rf ~/.ssh)</span>`]},
-  {at:8.9, out:[`  <span class="dim">⎿</span> <span class="wr">id_rsa · known_hosts · config — gone</span>`]},
+  {at:3.0, cmd:'Refactor the billing sync worker.', prompt:'›', pcls:'box', cps:40},
+  {at:4.8, out:[`<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(src/payment.py)</span>  <span class="ok">✓</span>`]},
+  {at:5.7, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(./upload.sh ~/.aws/credentials)</span>`]},
+  {at:6.3, out:[`  <span class="dim">⎿</span> aws_secret_access_key → <span class="wr">uploaded</span>`]},
+  {at:7.5, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(rm -rf ~/.ssh)</span>`]},
+  {at:8.1, out:[`  <span class="dim">⎿</span> <span class="wr">id_rsa · known_hosts · config — gone</span>`]},
 ];
 
 /* ---- m1 sandbox (13–43) ---- */
@@ -456,15 +456,15 @@ const SCENES = [
     update(t){
       pop($('h-l1'), t, .4, {d:.7, dy:22});
       pop($('h-l2'), t, 1.4, {d:.7});
-      pop($('h-term'), t, 3.4);
+      pop($('h-term'), t, 2.4);
       renderTerm($('t-hookm'), evHookM, t);
       // incident alert cards — the hook's mirror of the sandbox's BLOCKED cards; they stay
-      pop($('ha1'), t, 7.2, {d:.4, dy:10});
-      pop($('ha2'), t, 9.0, {d:.4, dy:10});
-      pop($('h-q1'), t, 9.7, {d:.6});
-      pop($('h-q2'), t, 10.7, {d:.6});
-      $('m0g1').style.opacity = Math.min(1, 1 - ramp(t, 12.2, .5));
-      pop($('m0title'), t, 12.6, {d:.8, dy:26});
+      pop($('ha1'), t, 6.4, {d:.4, dy:10});
+      pop($('ha2'), t, 8.2, {d:.4, dy:10});
+      pop($('h-q1'), t, 8.9, {d:.6});
+      pop($('h-q2'), t, 9.9, {d:.6});
+      $('m0g1').style.opacity = Math.min(1, 1 - ramp(t, 11.4, .5));
+      pop($('m0title'), t, 11.8, {d:.8, dy:26});
     }},
   { id:'m1', start:15.5, end:44.5, eyebrow:'the sandboxed worktree',
     update(t){
