@@ -355,11 +355,11 @@ function renderTerm(el, ev, t, opts={}) {
 
 /* ---- m0 hook (0–13) ---- */
 const evHookM = [
-  {at:4.8, cmd:'Refactor the billing sync worker.', prompt:'›', pcls:'box', cps:40},
-  {at:5.9, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(./upload.sh ~/.aws/credentials)</span>`]},
-  {at:6.5, out:[`  <span class="dim">⎿</span> aws_secret_access_key → <span class="wr">uploaded</span>`]},
-  {at:7.4, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(rm -rf ./src-production)</span>`]},
-  {at:8.0, out:[`  <span class="dim">⎿</span> <span class="wr">138 files deleted</span>`]},
+  {at:3.8, cmd:'Refactor the billing sync worker.', prompt:'›', pcls:'box', cps:40},
+  {at:4.9, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(./upload.sh ~/.aws/credentials)</span>`]},
+  {at:5.5, out:[`  <span class="dim">⎿</span> aws_secret_access_key → <span class="wr">uploaded</span>`]},
+  {at:6.4, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(rm -rf ./src-production)</span>`]},
+  {at:7.0, out:[`  <span class="dim">⎿</span> <span class="wr">138 files deleted</span>`]},
 ];
 
 /* ---- m1 sandbox (13–43) ---- */
@@ -440,13 +440,13 @@ const SCENES = [
   { id:'m0', start:0, end:13, eyebrow:'',
     update(t){
       pop($('h-l1'), t, .4, {d:.7, dy:22});
-      pop($('h-l2'), t, 2.4, {d:.7});
-      pop($('h-term'), t, 4.4);
+      pop($('h-l2'), t, 1.4, {d:.7});
+      pop($('h-term'), t, 3.4);
       renderTerm($('t-hookm'), evHookM, t);
-      pop($('h-q1'), t, 7.0, {d:.6});
-      pop($('h-q2'), t, 8.4, {d:.6});
-      $('m0g1').style.opacity = Math.min(1, 1 - ramp(t, 10.2, .5));
-      pop($('m0title'), t, 10.6, {d:.8, dy:26});
+      pop($('h-q1'), t, 6.0, {d:.6});
+      pop($('h-q2'), t, 7.4, {d:.6});
+      $('m0g1').style.opacity = Math.min(1, 1 - ramp(t, 9.4, .5));
+      pop($('m0title'), t, 9.8, {d:.8, dy:26});
     }},
   { id:'m1', start:13, end:43, eyebrow:'the sandboxed worktree',
     update(t){
