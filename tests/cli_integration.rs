@@ -450,6 +450,59 @@ fn log_respects_limit() {
     );
 }
 
+#[test]
+fn recall_log_limit_caps_entries() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+
+    for i in 0..3 {
+        repo.make_commit(
+            &format!("limited{i}.txt"),
+            &format!("content {i}"),
+            &format!("limited commit {i}"),
+        );
+    }
+
+    let limited = stdout(&repo.h5i_ok(&["recall", "log", "--limit", "2"]));
+    let all = stdout(&repo.h5i_ok(&["recall", "log", "--limit", "10"]));
+    let zero = stdout(&repo.h5i_ok(&["recall", "log", "--limit", "0"]));
+
+    assert!(
+        limited.contains("limited commit 2") && limited.contains("limited commit 1"),
+        "limit 2 should include the two newest commits: {limited}"
+    );
+    assert!(
+        !limited.contains("limited commit 0"),
+        "limit 2 should omit older commits: {limited}"
+    );
+    assert!(
+        all.contains("limited commit 0"),
+        "larger limit should include older commits: {all}"
+    );
+    assert!(
+        !zero.contains("limited commit"),
+        "limit 0 should not render commit entries: {zero}"
+    );
+}
+
+#[test]
+fn capture_run_passes_through_child_exit_codes() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+
+    let ok = repo.h5i(&["capture", "run", "--", "sh", "-c", "exit 0"]);
+    assert_eq!(ok.status.code(), Some(0), "stderr: {}", stderr(&ok));
+
+    let failed = repo.h5i(&["capture", "run", "--", "sh", "-c", "exit 7"]);
+    assert_eq!(
+        failed.status.code(),
+        Some(7),
+        "capture run must pass through the wrapped command exit code; stdout: {} stderr: {}",
+        stdout(&failed),
+        stderr(&failed)
+    );
+}
+
 // ─── context init ───────────────────────────────────────────────────────────
 
 #[test]
