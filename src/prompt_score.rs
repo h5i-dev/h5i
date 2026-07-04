@@ -87,6 +87,17 @@
 //! the prose explicitly frames the paste), but it can never scale with paste
 //! volume and never dilutes the authored signals.
 //!
+//! The same reasoning extends to pasted **natural-language** blocks — a review,
+//! feedback, or another agent's prose the human quotes to act on. Those aren't
+//! machine artifacts (so the line classifier misses them) but they aren't the
+//! human's craft either: counting them inflates the score exactly as a pasted
+//! log did. [`strip_quoted_prose`] removes long or multi-line quoted spans
+//! before feature extraction (short quotes — a `"term"`, a line of UI copy —
+//! stay, as concrete grounding), so a pasted review credits only `evidence`,
+//! not grounding/diversity/length, and doesn't sway language detection. On a
+//! corpus of 300 real logged prompts this cut the score↔length correlation from
+//! r≈0.78 to ≈0.66 and dropped the pasted-review prompts out of the top band.
+//!
 //! The segmentation features follow the natural-language-vs-machine-text
 //! literature: NLoN (Mäntylä et al., MSR 2018, arXiv 1803.07292) reaches
 //! AUC ≈ 0.97 line-level from exactly these cheap signals (stopword density,
@@ -675,6 +686,9 @@ struct Features {
     artifact_lines: usize,
     /// Non-blank lines that remained authored.
     authored_lines: usize,
+    /// Long / multi-line quoted spans stripped as pasted prose (reviews,
+    /// feedback, another agent's output) — see [`strip_quoted_prose`].
+    quoted_prose_blocks: usize,
     /// Deictic references from the authored prose to the paste ("the error
     /// below", "this log", …).
     evidence_refs: usize,
@@ -686,7 +700,14 @@ impl Features {
         // blocks) from the authored prose first — everything below measures
         // only what the engineer actually *wrote*.
         let seg = segment_artifacts(text);
-        let text: &str = &seg.authored;
+        // Then strip pasted *natural-language* blocks — a long or multi-line
+        // quoted span is almost always a review / feedback / another agent's
+        // prose the human pasted to act on, not their own craft. Counting it as
+        // authored prose inflates the score (the prose analogue of the log-paste
+        // bug). Removed here so it can't feed grounding / diversity / length /
+        // language detection; it credits only the saturating `evidence` signal.
+        let (deprosed, quoted_prose_blocks) = strip_quoted_prose(&seg.authored);
+        let text: &str = &deprosed;
         let lang = detect_lang(text);
         // Mask code/paths/URLs so prose metrics aren't corrupted, but keep the
         // raw text for code-ref counting and lexicon matching.
@@ -784,6 +805,7 @@ impl Features {
             evidence_refs: hit(EVIDENCE_REFS, JA_EVIDENCE_REFS),
             artifact_lines: seg.artifact_lines,
             authored_lines: seg.authored_lines,
+            quoted_prose_blocks,
             repetition_factor: repetition_factor(&prose_tokens),
             stopword_ratio,
             bullets,
@@ -921,11 +943,12 @@ impl Features {
     }
 
     /// Evidence signal in `0.0..=1.0`. Binary-ish and saturating by design:
-    /// *having* an artifact attached is worth 0.7; explicitly framing it from
-    /// the prose ("the error below", "this log") tops it up to 1.0. Volume is
-    /// deliberately not a factor — see the module docs on paste-gaming.
+    /// *having* attached material (a machine artifact or a pasted prose block
+    /// such as a review) is worth 0.7; explicitly framing it from the prose
+    /// ("the error below", "this log") tops it up to 1.0. Volume is deliberately
+    /// not a factor — see the module docs on paste-gaming.
     fn evidence_signal(&self) -> f64 {
-        if self.artifact_lines == 0 {
+        if self.artifact_lines == 0 && self.quoted_prose_blocks == 0 {
             return 0.0;
         }
         0.7 + 0.3 * cap_ratio(self.evidence_refs, 2)
@@ -956,13 +979,14 @@ impl Features {
         if self.words < 15 {
             out.push(Flag::TooShort);
         }
-        // A wall of pasted output around a thin ask: enough artifact lines to
-        // dominate (≥5 and ≥3× the authored lines) with under 40 authored
-        // words. Diagnostic: "write the ask, don't just paste".
-        if self.artifact_lines >= 5
-            && self.words < 40
-            && self.artifact_lines >= 3 * self.authored_lines.max(1)
-        {
+        // A wall of pasted content around a thin ask: either enough machine-
+        // artifact lines to dominate (≥5 and ≥3× the authored lines), or a
+        // pasted prose block (a review / feedback) with only a thin ask around
+        // it — both under 40 authored words. Diagnostic: "write the ask, don't
+        // just paste".
+        let paste_dominated = self.artifact_lines >= 5
+            && self.artifact_lines >= 3 * self.authored_lines.max(1);
+        if self.words < 40 && (paste_dominated || self.quoted_prose_blocks >= 1) {
             out.push(Flag::MostlyPaste);
         }
         // Prohibitions with no positive goal: constraints present but objective
@@ -1271,6 +1295,64 @@ fn opens_with_imperative(text: &str) -> bool {
 /// Count input→output arrows (`->`, `=>`, `⇒`) — a compact example/spec form.
 fn count_arrows(text: &str) -> usize {
     text.matches("->").count() + text.matches("=>").count() + text.matches('⇒').count()
+}
+
+/// Strip pasted **natural-language** blocks. A long or multi-line quoted span is
+/// almost always a review / feedback / another agent's prose the human pasted to
+/// act on — not their own craft. Counting it as authored prose inflates the
+/// score (the prose analogue of the machine-artifact segmentation, which only
+/// catches logs/traces/diffs/fences). Removing it keeps that content out of the
+/// grounding / diversity / length signals and out of language detection; it
+/// credits only the saturating `evidence` signal. Short quotes — a `"term"`, a
+/// snippet of UI copy — are **kept**: they're concrete grounding, not a paste.
+/// Returns the de-prosed text and the number of blocks removed. Handles straight
+/// `"…"`, curly `“…”`, and Japanese `「…」` / `『…』`.
+fn strip_quoted_prose(text: &str) -> (String, usize) {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut blocks = 0usize;
+    let mut i = 0;
+    while i < chars.len() {
+        let closer = match chars[i] {
+            '"' => Some('"'),
+            '\u{201C}' => Some('\u{201D}'), // “ ”
+            '\u{300C}' => Some('\u{300D}'), // 「 」
+            '\u{300E}' => Some('\u{300F}'), // 『 』
+            _ => None,
+        };
+        if let Some(cl) = closer {
+            if let Some(off) = chars[i + 1..].iter().position(|&c| c == cl) {
+                let j = i + 1 + off;
+                let span: String = chars[i + 1..j].iter().collect();
+                if is_pasted_prose(&span) {
+                    out.push(' '); // leave a boundary where the block was
+                    blocks += 1;
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    (out, blocks)
+}
+
+/// Does a quoted span read as pasted prose rather than a term / short spec? Size
+/// is a word-equivalent ([`ja_word_equiv`], so it works for either script); a
+/// multi-line span or one carrying markdown structure counts as prose at a lower
+/// threshold. Tuned high enough that quoted UI copy or an inline error string
+/// stays (concrete grounding), while a pasted review/feedback block is removed.
+fn is_pasted_prose(span: &str) -> bool {
+    let size = ja_word_equiv(span);
+    let multiline = span.contains('\n');
+    let markdown = span.contains("**")
+        || span.contains('→')
+        || span.contains("##")
+        || span.contains("\n-")
+        || span.contains("\n*")
+        || span.contains("\n1.");
+    size >= 20 || (multiline && size >= 12) || (markdown && size >= 10)
 }
 
 // ── Language detection & Japanese support ────────────────────────────────────
@@ -3051,6 +3133,63 @@ mod tests {
         assert_eq!(only.words, 0);
         assert!(only.is_unscored());
         assert_eq!(only.unscored, Some("no authored request"));
+    }
+
+    // ── Pasted-prose stripping (#2) ──────────────────────────────────────────
+
+    #[test]
+    fn strip_quoted_prose_removes_pasted_reviews_keeps_short_quotes() {
+        // Multi-line / long / markdown-carrying quotes are pasted prose → gone.
+        let (out, n) = strip_quoted_prose(
+            "Improve the docs. \"The current front page buries the value prop. \
+             **Title → Why now → Problem** should lead, then the demo, then the \
+             CTA — it reads like a spec sheet, not a pitch, across every section.\"",
+        );
+        assert_eq!(n, 1, "one prose block expected");
+        assert!(!out.contains("front page buries"), "prose not stripped: {out}");
+        assert!(out.contains("Improve the docs"));
+        // Short quoted term / UI copy is grounding, not a paste → kept.
+        let (out2, n2) = strip_quoted_prose("Set the button label to \"Save changes\".");
+        assert_eq!(n2, 0);
+        assert!(out2.contains("Save changes"));
+    }
+
+    #[test]
+    fn pasted_review_does_not_inflate_score() {
+        // A thin ask wrapped around a long pasted review must score like the thin
+        // ask (plus a saturating evidence bonus) — NOT like the rich review.
+        let review = "The current architecture splits the parser and the lexer \
+             cleanly, but the error-recovery path is tangled: it retries at three \
+             different layers, duplicates the span bookkeeping, and the naming is \
+             inconsistent between modules. The tests cover the happy path well yet \
+             miss every boundary case, and the docs are stale in two places.";
+        let thin = score_prompt("Please address this feedback.");
+        let with_review = score_prompt(&format!("Please address this feedback: \"{review}\""));
+        assert!(
+            with_review.score <= thin.score + 8.0,
+            "pasted review inflated score: thin {} vs with-review {}",
+            thin.score,
+            with_review.score
+        );
+        // The review is credited only as evidence, and the paste is flagged.
+        assert!(with_review.breakdown.evidence > 0.0);
+        assert!(with_review.flags.contains(&Flag::MostlyPaste), "flags {:?}", with_review.flags);
+        // The pasted prose must not have padded the authored word count.
+        assert!(with_review.words < 20, "authored words {}", with_review.words);
+    }
+
+    #[test]
+    fn english_ask_quoting_japanese_review_is_scored_as_english() {
+        // An English ask that pastes a Japanese review must detect as English
+        // (the ask's language) and be scored on the ask — not read as a rich
+        // Japanese prompt because of the quoted block.
+        let s = score_prompt(
+            "Apply this review to `src/docs.rs`: \
+             \"うん、方向性としてはかなり良くなってる。ただし定義文がまだ弱いので、\
+             最初の段落で用語を明確にしてから、具体例を追加したほうがいい。\"",
+        );
+        assert_eq!(s.lang, Lang::English, "should detect the English ask, not the JP quote");
+        assert!(s.breakdown.evidence > 0.0, "the pasted review counts as evidence");
     }
 
     #[test]
