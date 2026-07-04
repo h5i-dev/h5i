@@ -724,14 +724,17 @@ impl Features {
         // by every English single-word lexicon lookup below.
         let lower_counts = word_counts(&lower);
 
-        // Language-dispatched lexicon hit: English uses the word-gated counter;
-        // Japanese counts substring occurrences (a space-less script has no word
-        // boundaries, so substring matching is the natural fit).
+        // Bilingual lexicon hit: count matches from **both** the English
+        // (word-gated) and Japanese (substring) lexicons and sum them, so a
+        // code-switched prompt (English objective, Japanese constraints, or vice
+        // versa) gets slot credit for content in either language rather than
+        // losing whatever isn't the dominant script. This is safe for the pure
+        // cases: `ja_hits` is 0 on kana-free text, and the English word-gated
+        // counter is ~0 on kana text (its tokens aren't ASCII words) — so single-
+        // language calibration is unchanged. `lang` still selects the tokenizer
+        // and readability path.
         let hit = |en: &[&str], ja: &[&str]| -> usize {
-            match lang {
-                Lang::Japanese => ja_hits(&lower, ja),
-                Lang::English => lexicon_hits(&lower, &lower_counts, &word_set, en),
-            }
+            lexicon_hits(&lower, &lower_counts, &word_set, en) + ja_hits(&lower, ja)
         };
 
         // Function-word ratio (NLoN's NL discriminator) — English only; drives
@@ -758,10 +761,9 @@ impl Features {
             imprecise_verbs: hit(IMPRECISE_VERBS, JA_IMPRECISE_VERBS),
             weak_words: hit(WEAK_WORDS, JA_WEAK_WORDS),
             grounding_refs: hit(GROUNDING_REFS, JA_GROUNDING_REFS),
-            imperative_open: match lang {
-                Lang::Japanese => ja_hits(&lower, JA_IMPERATIVE) > 0,
-                Lang::English => opens_with_imperative(text),
-            },
+            // Directive present in either language (English imperative opener or
+            // a Japanese request marker anywhere — Japanese is verb-final).
+            imperative_open: opens_with_imperative(text) || ja_hits(&lower, JA_IMPERATIVE) > 0,
             context_markers: hit(CONTEXT_MARKERS, JA_CONTEXT_MARKERS),
             strong_constraints: hit(STRONG_CONSTRAINTS, JA_STRONG_CONSTRAINTS),
             soft_constraints: hit(SOFT_CONSTRAINTS, JA_SOFT_CONSTRAINTS),
@@ -769,7 +771,7 @@ impl Features {
             output_shape: hit(OUTPUT_SHAPE, JA_OUTPUT_SHAPE),
             verification: hit(VERIFICATION, JA_VERIFICATION),
             executable_acceptance: lower_matches_any(&lower, RUNNERS)
-                || (lang == Lang::Japanese && ja_hits(&lower, JA_RUNNERS) > 0),
+                || ja_hits(&lower, JA_RUNNERS) > 0,
             preconditions: hit(PRECONDITIONS, JA_PRECONDITIONS),
             postconditions: hit(POSTCONDITIONS, JA_POSTCONDITIONS),
             exceptions: hit(EXCEPTIONS, JA_EXCEPTIONS),
@@ -1194,10 +1196,12 @@ const JA_NEGATIVE_DIRECTIVES: &[&str] = &[
     "触らない",
 ];
 
-const JA_OUTPUT_SHAPE: &[&str] = &[
-    "フォーマット", "形式", "テーブル", "スキーマ", "シグネチャ", "出力", "構造",
-    "json", "yaml", "markdown",
-];
+// NB: JA_* lexicons must contain **Japanese-script entries only** — ASCII terms
+// (json/yaml/markdown, cargo test, …) are already covered by the English
+// lexicons, which are always matched too (see the `hit` closure). Putting an
+// ASCII term here would double-count it on English text.
+const JA_OUTPUT_SHAPE: &[&str] =
+    &["フォーマット", "形式", "テーブル", "スキーマ", "シグネチャ", "出力", "構造"];
 
 const JA_VERIFICATION: &[&str] = &[
     "テスト", "検証", "確認", "アサート", "通る", "パス", "合格", "カバレッジ",
@@ -1281,6 +1285,15 @@ fn count_arrows(text: &str) -> usize {
 // Japanese instead of emitting a meaningless Flesch score. Everything else — the
 // slot rubric, multiplicative core, guards, aggregation — is language-neutral:
 // it consumes feature *counts*, so it works unchanged for either script.
+//
+// Slot lexicons are matched **bilingually**: `detect_lang` only selects the
+// tokenizer and readability path, but every slot counts hits from *both* the
+// English and Japanese lexicons (see the `hit` closure in `extract`). So a
+// code-switched prompt — an English objective with Japanese constraints, or the
+// reverse — gets credit for content in either language rather than losing
+// whatever isn't the dominant script. This is why `JA_*` lexicons must hold
+// Japanese-script entries only: an ASCII term would double-count against its
+// English counterpart, which is always matched too.
 
 /// Detected authored-prose script.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2173,6 +2186,25 @@ mod tests {
 
     #[test]
     #[ignore]
+    fn diag_mixed() {
+        let cases = [
+            // English objective + Japanese detail + English constraint.
+            ("en-obj/ja-detail", "Refactor `parse_range()` in src/util.rs. 上限が包含的なときのオフバイワンを修正してください。Add a unit test. Do not change the public signature."),
+            // Japanese frame + English acceptance command.
+            ("ja/en-accept", "src/util.rs の `parse_range()` を修正してください。Done when `cargo test` passes. 公開シグネチャは変更しないこと。"),
+        ];
+        for (name, p) in cases {
+            let s = score_prompt(p);
+            let b = &s.breakdown;
+            println!(
+                "mix/{name:18} score={:5.1} {:11} lang={:?} obj={:.2} grd={:.2} dir={:.2}",
+                s.score, s.level.label(), s.lang, b.objective, b.grounding, b.direction
+            );
+        }
+    }
+
+    #[test]
+    #[ignore]
     fn diag_calibration_ja() {
         let cases = [
             ("vague", "いい感じにしておいて"),
@@ -2516,6 +2548,49 @@ mod tests {
         let crisp = score_prompt("src/net.rs に3回上限のリトライ処理を実装してください。");
         let weak = score_prompt("その辺をいい感じに適切に何とかしておいてください。");
         assert!(crisp.breakdown.objective > weak.breakdown.objective);
+    }
+
+    #[test]
+    fn mixed_english_constraint_credited_in_japanese_prompt() {
+        // Japanese-dominant prompt whose constraint is written in English: the
+        // bilingual union must still credit "Do not change …", not drop it for
+        // not being the detected script.
+        let without = score_prompt("src/util.rs の `parse_range()` を修正してください。");
+        let with_en = score_prompt(
+            "src/util.rs の `parse_range()` を修正してください。\
+             Do not change the public signature and add a unit test.",
+        );
+        assert_eq!(with_en.lang, Lang::Japanese);
+        assert!(!with_en.is_unscored());
+        assert!(
+            with_en.breakdown.direction > without.breakdown.direction + 0.1,
+            "English constraint in a JP prompt should lift direction: {:.2} → {:.2}",
+            without.breakdown.direction,
+            with_en.breakdown.direction,
+        );
+    }
+
+    #[test]
+    fn mixed_japanese_slot_credited_alongside_english() {
+        // English-authored ask with a Japanese constraint appended (which flips
+        // detection to Japanese): the English objective/grounding still count via
+        // the union, and the Japanese 変更しない / テスト register too.
+        let en_only = score_prompt("Refactor `parse_range()` in src/util.rs.");
+        let with_ja = score_prompt(
+            "Refactor `parse_range()` in src/util.rs. テストを追加し、\
+             シグネチャは変更しないでください。",
+        );
+        assert!(!with_ja.is_unscored());
+        // English objective survives even though the prompt now reads as Japanese.
+        assert!(with_ja.breakdown.objective >= 0.6, "obj {}", with_ja.breakdown.objective);
+        assert!(with_ja.breakdown.grounding > 0.3, "grd {}", with_ja.breakdown.grounding);
+        // The appended Japanese constraint/acceptance lifts direction.
+        assert!(
+            with_ja.breakdown.direction > en_only.breakdown.direction + 0.1,
+            "JP constraint should lift direction: {:.2} → {:.2}",
+            en_only.breakdown.direction,
+            with_ja.breakdown.direction,
+        );
     }
 
     #[test]
