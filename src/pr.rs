@@ -574,7 +574,7 @@ fn resolve_branch_commit(repo: &git2::Repository, name: &str) -> Option<git2::Oi
 /// (`origin/HEAD`), then `main` / `master`. Returns `None` (→ unscoped, full
 /// `HEAD` walk) when nothing resolves or `HEAD` already *is* the base (e.g. the
 /// branch has not diverged), so the renderer degrades gracefully.
-fn detect_base_oid(repo: &git2::Repository, workdir: &Path) -> Option<git2::Oid> {
+pub fn detect_base_oid(repo: &git2::Repository, workdir: &Path) -> Option<git2::Oid> {
     let head = repo.head().ok()?.peel_to_commit().ok()?.id();
 
     let mut names: Vec<String> = Vec::new();
