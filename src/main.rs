@@ -8916,6 +8916,13 @@ fn main() -> anyhow::Result<()> {
                             branch: Option<&'a str>,
                             #[serde(skip_serializing_if = "Option::is_none")]
                             env_id: Option<&'a str>,
+                            /// Authoritative egress verdicts (container proxy /
+                            /// supervised socket-gate): allowed/denied counts +
+                            /// per-host. `denied > 0` is an *enforced* boundary
+                            /// block — not inferred from an exit code. Absent on
+                            /// tiers with no egress enforcement.
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            egress: Option<&'a objects::EgressSummary>,
                             raw_size: u64,
                             raw_present: bool,
                         }
@@ -8941,6 +8948,7 @@ fn main() -> anyhow::Result<()> {
                                     kind: &m.kind,
                                     branch: m.branch.as_deref(),
                                     env_id: m.env_id.as_deref(),
+                                    egress: m.egress.as_ref(),
                                     raw_size: m.raw_size,
                                     raw_present: store.has(m.hex()),
                                 }
