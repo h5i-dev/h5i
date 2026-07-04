@@ -114,6 +114,7 @@ struct PolicyFileToml {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProfileToml {
     isolation: Option<String>,
     #[serde(default)]
@@ -149,12 +150,14 @@ struct ProfileToml {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ContainerToml {
     /// Base image for `isolation=container`.
     image: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FsToml {
     #[serde(default)]
     read: Vec<String>,
@@ -165,6 +168,7 @@ struct FsToml {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct NetToml {
     mode: Option<String>,
     #[serde(default)]
@@ -172,6 +176,7 @@ struct NetToml {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ResourcesToml {
     mem: Option<String>,
     procs: Option<u64>,
@@ -181,12 +186,14 @@ struct ResourcesToml {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EnvVarsToml {
     #[serde(default)]
     pass: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ShellToml {
     /// `[profile.X.shell] rcfile = ".h5i/box.bashrc"` — a custom bash rcfile for
     /// interactive `env shell`, relative to `$WORK`. Unset → generated plain rc.
@@ -194,6 +201,7 @@ struct ShellToml {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SecretGrantToml {
     source: Option<String>,
     inject: Option<String>,
@@ -201,6 +209,7 @@ struct SecretGrantToml {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PrivatePathToml {
     /// `cache` (default) | `scratch` | `private`.
     kind: Option<String>,
