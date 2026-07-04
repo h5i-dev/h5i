@@ -2615,6 +2615,11 @@ enum ObjectsCommands {
         /// full id `env/<agent>/<slug>`, `<agent>/<slug>`, or a bare `<slug>`.
         #[arg(long)]
         env: Option<String>,
+        /// Emit a structured JSON array (id, cmd, exit, action, tool, status,
+        /// env_id, …) instead of the human listing — a typed feed for headless
+        /// grading, so a consumer never regex-parses the text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Search captured objects by their normalized findings (and metadata).
@@ -8812,6 +8817,7 @@ fn main() -> anyhow::Result<()> {
                     status,
                     tool,
                     env,
+                    json,
                 } => {
                     let all = objects::read_manifests(git);
 
@@ -8880,6 +8886,69 @@ fn main() -> anyhow::Result<()> {
                             })
                         })
                         .collect();
+
+                    if json {
+                        // Typed feed for headless grading: newest first, capped at
+                        // --limit. Structured fields lifted from the manifest +
+                        // structured result so a consumer never parses text.
+                        let store = objects::LocalStore::new(&h5i_root);
+                        #[derive(serde::Serialize)]
+                        struct ObjJson<'a> {
+                            id: &'a str,
+                            timestamp: &'a str,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            cmd: Option<&'a str>,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            exit_code: Option<i32>,
+                            /// Action class (test|build|read|write|egress|other).
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            action: Option<&'a str>,
+                            /// Program adapter (pytest|cargo|…), from the structured result.
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            tool: Option<&'a str>,
+                            /// Validated pass/fail (passed|failed|error|…), when known.
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            status: Option<String>,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            duration_ms: Option<u64>,
+                            kind: &'a str,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            branch: Option<&'a str>,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            env_id: Option<&'a str>,
+                            raw_size: u64,
+                            raw_present: bool,
+                        }
+                        let rows: Vec<ObjJson> = manifests
+                            .iter()
+                            .rev()
+                            .take(limit)
+                            .map(|m| {
+                                let st = m.structured.as_ref();
+                                ObjJson {
+                                    id: &m.id,
+                                    timestamp: &m.timestamp,
+                                    cmd: m.cmd.as_deref(),
+                                    exit_code: m.exit_code,
+                                    action: m.action.as_deref(),
+                                    tool: st.map(|s| s.tool.as_str()),
+                                    status: st.and_then(|s| {
+                                        serde_json::to_value(s.status)
+                                            .ok()
+                                            .and_then(|v| v.as_str().map(str::to_string))
+                                    }),
+                                    duration_ms: st.and_then(|s| s.duration_ms),
+                                    kind: &m.kind,
+                                    branch: m.branch.as_deref(),
+                                    env_id: m.env_id.as_deref(),
+                                    raw_size: m.raw_size,
+                                    raw_present: store.has(m.hex()),
+                                }
+                            })
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&rows)?);
+                        return Ok(());
+                    }
 
                     let filtered = branch.is_some()
                         || file.is_some()

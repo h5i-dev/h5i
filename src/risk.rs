@@ -689,6 +689,7 @@ mod tests {
             evidence_source: None,
             egress: None,
             redactions: vec![],
+            action: None,
         }
     }
 

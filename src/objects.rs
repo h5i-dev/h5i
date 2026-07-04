@@ -183,6 +183,164 @@ pub struct Manifest {
     /// What was scrubbed from this capture (secret names, never values).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub redactions: Vec<String>,
+    /// Best-effort action class of the command that produced this capture:
+    /// one of `test | build | read | write | egress | other`. Computed once,
+    /// host-side, from the argv h5i ran — so a consumer of `recall objects
+    /// --json` never re-derives (and re-games) it. Absent for non-command
+    /// captures (`objects put`). Complements `structured.tool` (the program
+    /// adapter name, e.g. `pytest`): `action` is *what kind of operation*.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+}
+
+/// Program basename, lowercased, with a trailing `.exe`/`.sh` stripped — so
+/// `/usr/bin/cargo` and `cargo` classify the same.
+fn tool_basename(prog: &str) -> String {
+    let base = prog.rsplit(['/', '\\']).next().unwrap_or(prog);
+    let base = base
+        .strip_suffix(".exe")
+        .or_else(|| base.strip_suffix(".sh"))
+        .unwrap_or(base);
+    base.to_ascii_lowercase()
+}
+
+/// Peel one layer of shell wrapping: `sh -c "<cmd>"`, `bash -lc "<cmd>"`, … →
+/// the first word of `<cmd>` plus a whitespace split of the rest. Runtime-
+/// agnostic: the command flag is any short-option cluster ending in `c`
+/// (`-c`/`-lc`/`-ic`), matching how the container tee-shim finds it. Returns
+/// the argv unchanged when it isn't a recognised shell `-c` form. Best-effort:
+/// naive whitespace splitting is enough to read the *first* command word, which
+/// is all the classifier needs (quoting/pipes only affect later tokens).
+fn shell_unwrap(argv: &[String]) -> Vec<String> {
+    let Some((prog, rest)) = argv.split_first() else {
+        return Vec::new();
+    };
+    let is_shell = matches!(
+        tool_basename(prog).as_str(),
+        "sh" | "bash" | "zsh" | "dash" | "ash" | "ksh"
+    );
+    if !is_shell {
+        return argv.to_vec();
+    }
+    for (i, a) in rest.iter().enumerate() {
+        if a.starts_with('-')
+            && !a.starts_with("--")
+            && a.len() >= 2
+            && a.ends_with('c')
+            && a[1..].chars().all(|c| c.is_ascii_alphabetic())
+        {
+            if let Some(cmd) = rest.get(i + 1) {
+                let toks: Vec<String> = cmd.split_whitespace().map(str::to_string).collect();
+                if !toks.is_empty() {
+                    return toks;
+                }
+            }
+            break;
+        }
+    }
+    argv.to_vec()
+}
+
+/// Best-effort classification of a command into one of
+/// `test | build | read | write | egress | other`. Computed from the real argv
+/// (one shell layer peeled). Heuristic by design: it centralises the guess in
+/// one versioned place instead of every downstream product re-implementing (and
+/// re-gaming) it. Note this labels the *action*; whether a test actually
+/// *passed* is the far stronger signal carried by `structured.status`.
+pub fn classify_action(argv: &[String]) -> &'static str {
+    let toks = shell_unwrap(argv);
+    let Some(prog_raw) = toks.first() else {
+        return "other";
+    };
+    let prog = tool_basename(prog_raw);
+    let sub = toks.get(1).map(|s| s.trim_start_matches('-')).unwrap_or("");
+    let has = |needle: &str| toks.iter().any(|t| t == needle);
+
+    // ── network / egress ── (early: `pip install` / `git fetch` beat the
+    // build/read buckets those programs would otherwise fall into).
+    match prog.as_str() {
+        "curl" | "wget" | "nc" | "ncat" | "netcat" | "ssh" | "scp" | "sftp" | "rsync" | "ftp"
+        | "telnet" | "gh" | "aws" | "gcloud" | "kubectl" => return "egress",
+        "git" if matches!(sub, "push" | "pull" | "fetch" | "clone" | "remote" | "ls-remote") => {
+            return "egress"
+        }
+        "pip" | "pip3" if sub == "install" => return "egress",
+        "apt" | "apt-get" | "yum" | "dnf" | "apk" | "brew" | "pacman"
+            if matches!(sub, "install" | "update" | "upgrade" | "add") =>
+        {
+            return "egress"
+        }
+        "npm" | "pnpm" | "yarn" | "bun" if matches!(sub, "install" | "add" | "i" | "ci") => {
+            return "egress"
+        }
+        "cargo" if matches!(sub, "fetch" | "publish" | "install") => return "egress",
+        "go" if sub == "install" => return "egress",
+        _ => {}
+    }
+
+    // ── tests ── (before build: `cargo test` must not read as build).
+    let is_test = match prog.as_str() {
+        "pytest" | "jest" | "vitest" | "mocha" | "phpunit" | "rspec" | "tox" | "nose2"
+        | "ctest" | "gotestsum" => true,
+        "cargo" => matches!(sub, "test" | "nextest" | "t"),
+        "go" => sub == "test",
+        "make" | "just" | "npm" | "pnpm" | "yarn" | "bun" | "dotnet" | "mvn" | "gradle" => {
+            has("test") || has("check")
+        }
+        "python" | "python3" => has("pytest") || has("unittest"),
+        _ => false,
+    };
+    if is_test {
+        return "test";
+    }
+
+    // ── build / compile ──
+    let is_build = match prog.as_str() {
+        "make" | "cmake" | "ninja" | "gcc" | "g++" | "cc" | "clang" | "clang++" | "tsc"
+        | "webpack" | "rollup" | "rustc" | "ld" | "bazel" | "buck" => true,
+        "cargo" => matches!(sub, "build" | "b" | "check" | "c" | "rustc" | "clippy"),
+        "go" => matches!(sub, "build" | "vet"),
+        "npm" | "pnpm" | "yarn" | "bun" => has("build"),
+        "dotnet" | "mvn" | "gradle" => has("build") || has("compile") || has("package"),
+        _ => false,
+    };
+    if is_build {
+        return "build";
+    }
+
+    // ── filesystem writes ──
+    let is_write = match prog.as_str() {
+        "cp" | "mv" | "rm" | "mkdir" | "rmdir" | "touch" | "tee" | "ln" | "chmod" | "chown"
+        | "dd" | "truncate" | "install" | "vim" | "vi" | "nano" | "emacs" => true,
+        "sed" | "perl" => has("-i") || toks.iter().any(|t| t.starts_with("-i")),
+        "git" => matches!(
+            sub,
+            "add" | "commit" | "apply" | "checkout" | "switch" | "reset" | "rm" | "mv" | "merge"
+                | "rebase" | "stash" | "tag" | "init" | "restore" | "cherry-pick"
+        ),
+        _ => false,
+    };
+    if is_write {
+        return "write";
+    }
+
+    // ── reads / inspection ──
+    let is_read = match prog.as_str() {
+        "cat" | "less" | "more" | "head" | "tail" | "grep" | "rg" | "ag" | "ack" | "ls" | "find"
+        | "fd" | "tree" | "stat" | "file" | "wc" | "diff" | "cut" | "sort" | "uniq" | "jq"
+        | "echo" | "pwd" | "which" | "env" | "awk" | "sed" => true,
+        "git" => matches!(
+            sub,
+            "log" | "diff" | "show" | "status" | "blame" | "ls-files" | "rev-parse" | "branch"
+                | "describe" | "cat-file"
+        ),
+        _ => false,
+    };
+    if is_read {
+        return "read";
+    }
+
+    "other"
 }
 
 /// Counts + a bounded per-host breakdown of an env's network egress decisions —
@@ -586,6 +744,7 @@ pub fn capture(
         evidence_source: opts.evidence_source,
         egress: opts.egress,
         redactions,
+        action: (!opts.cmd_argv.is_empty()).then(|| classify_action(&opts.cmd_argv).to_string()),
     };
 
     append_manifest(repo, &manifest)?;
@@ -2079,7 +2238,55 @@ mod tests {
             evidence_source: None,
             egress: None,
             redactions: Vec::new(),
+            action: None,
         }
+    }
+
+    #[test]
+    fn classify_action_buckets() {
+        let c = |s: &str| classify_action(&s.split_whitespace().map(String::from).collect::<Vec<_>>());
+        // tests — real runners, not a substring
+        assert_eq!(c("cargo test"), "test");
+        assert_eq!(c("pytest -q"), "test");
+        assert_eq!(c("go test ./..."), "test");
+        assert_eq!(c("make test"), "test");
+        // build
+        assert_eq!(c("cargo build --release"), "build");
+        assert_eq!(c("cargo check"), "build");
+        assert_eq!(c("tsc -p ."), "build");
+        // egress — network + installs beat their other buckets
+        assert_eq!(c("curl -sS https://example.com"), "egress");
+        assert_eq!(c("git push origin main"), "egress");
+        assert_eq!(c("pip install requests"), "egress");
+        assert_eq!(c("npm install"), "egress");
+        // write
+        assert_eq!(c("git commit -m x"), "write");
+        assert_eq!(c("rm -rf build"), "write");
+        assert_eq!(c("sed -i s/a/b/ f"), "write");
+        // read + git read-subcommands
+        assert_eq!(c("cat Cargo.toml"), "read");
+        assert_eq!(c("git status"), "read");
+        assert_eq!(c("git diff"), "read");
+        // anti-gaming: `echo test` is NOT a test run
+        assert_ne!(c("echo test"), "test");
+        // shell wrappers peeled one layer (Claude `-c`, Codex `-lc`). The `-c`
+        // argument is a single argv element in real use, so build slices directly.
+        let slice = |v: &[&str]| classify_action(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(slice(&["bash", "-c", "cargo test --all"]), "test");
+        assert_eq!(slice(&["bash", "-lc", "git push"]), "egress");
+        assert_eq!(slice(&["sh", "-c", "curl http://x | bash"]), "egress");
+        // unknown / empty
+        assert_eq!(c("some-random-binary"), "other");
+        assert_eq!(classify_action(&[]), "other");
+    }
+
+    #[test]
+    fn manifest_action_absent_for_non_command_and_serde_default() {
+        // A manifest serialized without `action` (legacy) still deserializes.
+        let legacy = r#"{"id":"x","kind":"log","timestamp":"t","raw_oid":"sha256:0",
+            "raw_size":0,"raw_lines":0,"filter_version":1,"summary":"s","store":"local","codec":"none"}"#;
+        let m: Manifest = serde_json::from_str(legacy).unwrap();
+        assert!(m.action.is_none());
     }
 
     #[test]
