@@ -741,6 +741,122 @@ pub fn probe_host_for(claim: IsolationClaim) -> HostCaps {
     }
 }
 
+/// Support for one isolation claim on this host: can its policy be *resolved*
+/// (`satisfiable`), and — for the kernel tiers — does a confined command
+/// actually *exec* here (`runnable`, the functional `verify_exec` self-test)?
+#[derive(Debug, Clone, Serialize)]
+pub struct ClaimSupport {
+    pub claim: &'static str,
+    pub satisfiable: bool,
+    /// Functional exec self-test for the kernel tiers (`Some`); `None` for tiers
+    /// not exec-tested here (container needs an image; hardened/microvm aren't
+    /// built in).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runnable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<&'static str>,
+}
+
+/// Machine-readable answer to "what can h5i actually enforce here?" — the
+/// structured form of `h5i env probe`, so a downstream product adapts to the
+/// real host instead of regex-scraping a log line. Backs `env capabilities
+/// [--json]`.
+#[derive(Debug, Clone, Serialize)]
+pub struct CapabilitiesReport {
+    pub os: String,
+    pub landlock_abi: Option<i32>,
+    pub userns: bool,
+    pub seccomp: bool,
+    pub container_runtime: Option<String>,
+    /// A **domain allowlist** for egress can be *enforced* here. Only the
+    /// container tier's DNS-pinned proxy enforces it; the kernel tiers can
+    /// deny-all but never allowlist, so this tracks the container runtime.
+    pub egress_enforced: bool,
+    /// Resource limits (mem / procs / wall / cpu) can be enforced — true when
+    /// any confined tier beyond `workspace` runs here (kernel rlimits or the
+    /// container runtime's cgroup limits).
+    pub resource_limits: bool,
+    pub claims: Vec<ClaimSupport>,
+    /// The strongest tier that actually runs here (`workspace` is the floor).
+    pub strongest_tier: &'static str,
+}
+
+/// Probe the host and evaluate every isolation claim, mirroring the auto-pick
+/// (`resolve` + functional `verify_exec`) used by `env create`. Shells out to
+/// `podman info` once (via [`probe_host`]) — reserve for diagnostic paths.
+pub fn capabilities_report() -> CapabilitiesReport {
+    let caps = probe_host();
+    let mut claims: Vec<ClaimSupport> = Vec::new();
+    let mut strongest = IsolationClaim::Workspace;
+
+    // Kernel tiers: resolve the built-in `probe` profile, then run the functional
+    // exec self-test (`verify_exec` is a no-op for every tier except Process, so
+    // Workspace/Supervised are gated by `resolve` alone — exactly as auto-pick).
+    for claim in [
+        IsolationClaim::Workspace,
+        IsolationClaim::Process,
+        IsolationClaim::Supervised,
+    ] {
+        let mut p = Profile::builtin("probe", claim);
+        // Workspace applies no net confinement, so probe it with host net; the
+        // confined tiers keep the built-in deny default.
+        if claim == IsolationClaim::Workspace {
+            p.net_mode = NetMode::Host;
+        }
+        let satisfiable = resolve(&p, &caps).is_ok();
+        let runnable = resolve(&p, &caps)
+            .and_then(|pol| verify_exec(&pol))
+            .is_ok();
+        if runnable && claim > strongest {
+            strongest = claim;
+        }
+        claims.push(ClaimSupport {
+            claim: claim.as_str(),
+            satisfiable,
+            runnable: Some(runnable),
+            note: None,
+        });
+    }
+
+    // Container tier: gated by a rootless-Podman runtime; a concrete run also
+    // needs a profile image, so it isn't exec-tested here.
+    let container_ok = caps.container_runtime.is_some();
+    if container_ok && IsolationClaim::Container > strongest {
+        strongest = IsolationClaim::Container;
+    }
+    claims.push(ClaimSupport {
+        claim: IsolationClaim::Container.as_str(),
+        satisfiable: container_ok,
+        runnable: None,
+        note: Some("needs rootless Podman + profile container.image"),
+    });
+    for claim in [IsolationClaim::HardenedContainer, IsolationClaim::Microvm] {
+        claims.push(ClaimSupport {
+            claim: claim.as_str(),
+            satisfiable: false,
+            runnable: None,
+            note: Some("external backend (not in this build)"),
+        });
+    }
+
+    let resource_limits = container_ok
+        || claims
+            .iter()
+            .any(|c| c.claim != "workspace" && c.runnable == Some(true));
+
+    CapabilitiesReport {
+        os: caps.os,
+        landlock_abi: caps.landlock_abi,
+        userns: caps.userns,
+        seccomp: caps.seccomp,
+        container_runtime: caps.container_runtime,
+        egress_enforced: container_ok,
+        resource_limits,
+        claims,
+        strongest_tier: strongest.as_str(),
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn probe_host_kernel_uncached() -> HostCaps {
     HostCaps {
@@ -3037,5 +3153,37 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         assert!(p.tools.is_empty());
         let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
         assert!(run(&policy, dir.path(), &["true".into()]).is_ok());
+    }
+
+    #[test]
+    fn capabilities_report_invariants() {
+        // Host-independent structural invariants (the actual bits vary by host,
+        // so we don't assert on landlock/podman presence).
+        let r = capabilities_report();
+        // Every claim is reported, weakest → strongest.
+        let claims: Vec<&str> = r.claims.iter().map(|c| c.claim).collect();
+        assert_eq!(
+            claims,
+            vec![
+                "workspace",
+                "process",
+                "supervised",
+                "container",
+                "hardened-container",
+                "microvm",
+            ]
+        );
+        // Workspace is the floor: no confinement needed, so always usable.
+        let ws = r.claims.iter().find(|c| c.claim == "workspace").unwrap();
+        assert!(ws.satisfiable && ws.runnable == Some(true));
+        // Not-in-this-build backends are always unsatisfiable.
+        for name in ["hardened-container", "microvm"] {
+            let c = r.claims.iter().find(|c| c.claim == name).unwrap();
+            assert!(!c.satisfiable && c.runnable.is_none());
+        }
+        // Egress allowlist enforcement tracks the container runtime exactly.
+        assert_eq!(r.egress_enforced, r.container_runtime.is_some());
+        // strongest_tier is one of the known claims.
+        assert!(claims.contains(&r.strongest_tier));
     }
 }

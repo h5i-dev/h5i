@@ -68,6 +68,7 @@ h5i env create <name> [--from REV] [--profile P] [--isolation workspace|process|
 h5i env run <name> -- <cmd>              # policy-enforced, capture-wrapped
 h5i env shell <name> [-- <cmd>]          # interactive confined session (agent-in-box)
 h5i env probe                            # host isolation capabilities (incl. rootless Podman)
+h5i env capabilities [--json]            # machine-readable enforcement report (tier, egress, limits)
 h5i env list | status <name> [--json] | log <name> | diff <name> [--stat]
 h5i env context <name> [--trace]        # show the env's reasoning/context branch
 h5i env rebase <name>                   # re-pin base onto the advanced parent

@@ -92,7 +92,7 @@ pub fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
             "log", "blame", "context", "notes", "memory", "recap", "resume",
             "object", "objects", "search", "rm",
         ],
-        "audit" => &["review", "scan", "compliance", "policy", "vibe"],
+        "audit" => &["review", "scan", "compliance", "policy", "vibe", "maturity"],
         "share" => &[
             "push",
             "pull",
@@ -168,6 +168,7 @@ pub fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("audit", "compliance") => &["compliance"],
         ("audit", "policy") => &["policy"],
         ("audit", "vibe") => &["vibe"],
+        ("audit", "maturity") => &["maturity"],
         ("audit", "notes") => &["notes", "review"],
 
         // ── share ───────────────────────────────────────────────────────
@@ -286,6 +287,11 @@ mod tests {
         assert_eq!(
             plan_noun_route(&argv(&["h5i", "recall", "rm", "feature/x", "--force"])),
             NounRoute::Rewritten(argv(&["h5i", "recall-rm", "feature/x", "--force"]))
+        );
+        // `audit maturity` routes to the hidden maturity command, flags preserved.
+        assert_eq!(
+            plan_noun_route(&argv(&["h5i", "audit", "maturity", "--json"])),
+            NounRoute::Rewritten(argv(&["h5i", "maturity", "--json"]))
         );
     }
 
