@@ -5,7 +5,7 @@ At the start of a session, read `PERSONA.md` at the repo root (if present) and f
 
 ## h5i Integration
 
-This repository uses **h5i** (a Git sidecar for AI-era version control).
+This repository uses **h5i** — auditable workspaces for AI coding agents.
 
 Codex should use `h5i recall context` as shared cross-session memory and `h5i capture commit` to record AI provenance on code commits.
 

@@ -2858,7 +2858,7 @@ enum PolicyCommands {
 
 const H5I_CLAUDE_INSTRUCTIONS: &str = r#"## h5i Integration
 
-This repository uses **h5i** (a Git sidecar for AI-era version control).
+This repository uses **h5i** — auditable workspaces for AI coding agents.
 
 **Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
 
@@ -3043,7 +3043,7 @@ h5i share pull   # pull h5i refs from origin
 
 const H5I_CODEX_INSTRUCTIONS: &str = r#"## h5i Integration
 
-This repository uses **h5i** (a Git sidecar for AI-era version control).
+This repository uses **h5i** — auditable workspaces for AI coding agents.
 
 Codex should use `h5i recall context` as shared cross-session memory and `h5i capture commit` to record AI provenance on code commits.
 
