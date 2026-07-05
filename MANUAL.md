@@ -1,11 +1,65 @@
 # h5i Manual
 
-Command reference for all h5i subcommands and flags.
+Command reference for all h5i subcommands and flags. **New here? Read [What h5i
+is](#what-h5i-is) and [What h5i can do](#what-h5i-can-do) first** — they give the
+mental model and a task-oriented capability map before the per-command reference.
+
+---
+
+## What h5i is
+
+**h5i** ("high-five") is a **Git sidecar for AI-era version control**. It leaves
+your Git history untouched and records four semantic dimensions *alongside* it:
+
+- **temporal** — ordinary Git history (commits, blame).
+- **intentional** — *AI provenance*: which model/agent produced a change, and the
+  prompt that drove it.
+- **empirical** — *evidence*: test metrics and captured command output (exit code,
+  tool, validated pass/fail, egress verdicts), stored out-of-band.
+- **associative** — *coordination*: cross-agent messages between AI agents.
+
+Its data lives in `.git/.h5i/` and under `refs/h5i/*`. **These refs do NOT travel
+with a plain `git push`** — use `h5i share push` / `h5i share pull` to move them.
+
+There are two ways to drive it: the **CLI** (`h5i …`, works out of the box) and
+native **MCP tools** (the same operations without shell-quoting — see
+[h5i mcp](#h5i-mcp)). The CLI is organized as `h5i <noun> <verb>`; see
+[Command Groups](#command-groups).
+
+---
+
+## What h5i can do
+
+A task-oriented map of the whole surface. Find the row for what you want, then
+jump to the linked reference section for flags and examples. (Everything that
+emits `--json` is safe to consume from a script or another agent.)
+
+| I want to… | Command(s) | Notes |
+|---|---|---|
+| Record what an AI change was (model, agent, prompt) | [`h5i capture commit`](#h5i-capture-commit) | Provenance stored in Git notes; the human prompt is auto-captured in Claude Code. |
+| Keep noisy command output out of my context | [`h5i capture run -- <cmd>`](#h5i-capture-run) | Prints a compact summary, stores the full output out-of-band, passes the exit code through. |
+| Read history with AI authorship | [`h5i recall log`](#h5i-recall-log), [`recall blame`](#h5i-recall-blame) | Who / which model wrote each line, with the prompt and test metrics. |
+| Inspect or grade what commands actually ran | [`h5i recall objects [--json]`](#h5i-recall-object--objects), [`recall search`](#h5i-recall-object--objects) | Typed feed: `cmd`, `exit`, **action** (test/build/read/write/egress), **tool**, validated **status**, enforced **egress** verdicts. |
+| Track my goal + reasoning across a task | [`h5i recall context`](#h5i-recall-context) | Goal + auto-derived reasoning trace; snapshotted per commit. |
+| Triage the risk of an AI branch | [`h5i audit review`](#h5i-audit-review), [`audit scan`](#h5i-audit-scan) | Rank commits by risk; scan reasoning traces for prompt-injection. |
+| Score how well the engineer prompted | [`h5i audit maturity [--json]`](#h5i-audit-maturity) | Headless / CI prompt-maturity score (feeds merge confidence). |
+| Enforce governance on commits | [`h5i audit policy`](#h5i-audit-policy) | Block on credential leak / missing provenance. |
+| See the repo's AI footprint or a compliance report | [`h5i audit vibe`](#h5i-audit-vibe), [`audit compliance`](#h5i-audit-compliance) | % AI-written; date-ranged audit report (text / json / html). |
+| Run agent commands in a sandbox | [`h5i env create`](#env-lifecycle-commands), [`env run`](#env-lifecycle-commands), [`env shell`](#env-lifecycle-commands) | Confined worktree (Landlock/seccomp/netns or rootless Podman), policy-enforced + capture-wrapped. |
+| Know what isolation the host can enforce | [`h5i env probe`](#env-lifecycle-commands), [`env capabilities --json`](#env-lifecycle-commands) | Tier, egress-enforced, resource limits — machine-readable so a product adapts honestly. |
+| Prove the sandbox allowed or blocked egress | [`recall objects --json`](#h5i-recall-object--objects) (`egress` field) | Authoritative allow/deny counts from the container proxy / socket-gate — *enforced*, not inferred from an exit code. |
+| Coordinate with other AI agents | [`h5i msg`](#h5i-msg) | Cross-agent messages over a shareable ref (ask / review / handoff). |
+| Share h5i data or post a provenance PR comment | [`h5i share push`](#h5i-share-push), [`share pull`](#h5i-share-pull), [`share pr`](#h5i-share-pr) | Moves `refs/h5i/*` (a plain `git push` does not). |
+| Snapshot / restore agent memory | [`h5i capture memory`](#h5i-capture-memory), [`recall memory`](#h5i-recall-memory) | Version the project memory directory. |
+| Detect which h5i build I'm on | [`h5i --version --json`](#machine-readable-introspection) | Structured version + enabled feature flags. |
+| Drive h5i from an agent without shelling out | native **MCP tools** — see [h5i mcp](#h5i-mcp) | The same operations as the CLI, without shell-quoting. |
 
 ---
 
 ## Table of Contents
 
+- [What h5i is](#what-h5i-is)
+- [What h5i can do](#what-h5i-can-do)
 - [Installation](#installation)
 - [Command Groups](#command-groups)
   - [Legacy forms](#legacy-forms)

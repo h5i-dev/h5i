@@ -152,6 +152,8 @@
   <aside class="manual-toc" aria-label="Manual contents">
     <div class="toc-head">CLI Reference</div>
     <nav>
+<a class="t2" href="#what-h5i-is">What h5i is</a>
+<a class="t2" href="#what-h5i-can-do">What h5i can do</a>
 <a class="t2" href="#installation">Installation</a>
 <a class="t2" href="#command-groups">Command Groups</a>
 <div class="t3group">
@@ -271,7 +273,128 @@
   </aside>
   <article class="manual-body">
 <h1 id="h5i-manual">h5i Manual</h1>
-<p>Command reference for all h5i subcommands and flags.</p>
+<p>Command reference for all h5i subcommands and flags. <strong>New here? Read <a href="#what-h5i-is">What h5i
+is</a> and <a href="#what-h5i-can-do">What h5i can do</a> first</strong> — they give the
+mental model and a task-oriented capability map before the per-command reference.</p>
+<hr />
+<h2 id="what-h5i-is">What h5i is</h2>
+<p><strong>h5i</strong> ("high-five") is a <strong>Git sidecar for AI-era version control</strong>. It leaves
+your Git history untouched and records four semantic dimensions <em>alongside</em> it:</p>
+<ul>
+<li><strong>temporal</strong> — ordinary Git history (commits, blame).</li>
+<li><strong>intentional</strong> — <em>AI provenance</em>: which model/agent produced a change, and the
+  prompt that drove it.</li>
+<li><strong>empirical</strong> — <em>evidence</em>: test metrics and captured command output (exit code,
+  tool, validated pass/fail, egress verdicts), stored out-of-band.</li>
+<li><strong>associative</strong> — <em>coordination</em>: cross-agent messages between AI agents.</li>
+</ul>
+<p>Its data lives in <code>.git/.h5i/</code> and under <code>refs/h5i/*</code>. <strong>These refs do NOT travel
+with a plain <code>git push</code></strong> — use <code>h5i share push</code> / <code>h5i share pull</code> to move them.</p>
+<p>There are two ways to drive it: the <strong>CLI</strong> (<code>h5i …</code>, works out of the box) and
+native <strong>MCP tools</strong> (the same operations without shell-quoting — see
+<a href="#h5i-mcp">h5i mcp</a>). The CLI is organized as <code>h5i &lt;noun&gt; &lt;verb&gt;</code>; see
+<a href="#command-groups">Command Groups</a>.</p>
+<hr />
+<h2 id="what-h5i-can-do">What h5i can do</h2>
+<p>A task-oriented map of the whole surface. Find the row for what you want, then
+jump to the linked reference section for flags and examples. (Everything that
+emits <code>--json</code> is safe to consume from a script or another agent.)</p>
+<table>
+<thead>
+<tr>
+<th>I want to…</th>
+<th>Command(s)</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Record what an AI change was (model, agent, prompt)</td>
+<td><a href="#h5i-capture-commit"><code>h5i capture commit</code></a></td>
+<td>Provenance stored in Git notes; the human prompt is auto-captured in Claude Code.</td>
+</tr>
+<tr>
+<td>Keep noisy command output out of my context</td>
+<td><a href="#h5i-capture-run"><code>h5i capture run -- &lt;cmd&gt;</code></a></td>
+<td>Prints a compact summary, stores the full output out-of-band, passes the exit code through.</td>
+</tr>
+<tr>
+<td>Read history with AI authorship</td>
+<td><a href="#h5i-recall-log"><code>h5i recall log</code></a>, <a href="#h5i-recall-blame"><code>recall blame</code></a></td>
+<td>Who / which model wrote each line, with the prompt and test metrics.</td>
+</tr>
+<tr>
+<td>Inspect or grade what commands actually ran</td>
+<td><a href="#h5i-recall-object--objects"><code>h5i recall objects [--json]</code></a>, <a href="#h5i-recall-object--objects"><code>recall search</code></a></td>
+<td>Typed feed: <code>cmd</code>, <code>exit</code>, <strong>action</strong> (test/build/read/write/egress), <strong>tool</strong>, validated <strong>status</strong>, enforced <strong>egress</strong> verdicts.</td>
+</tr>
+<tr>
+<td>Track my goal + reasoning across a task</td>
+<td><a href="#h5i-recall-context"><code>h5i recall context</code></a></td>
+<td>Goal + auto-derived reasoning trace; snapshotted per commit.</td>
+</tr>
+<tr>
+<td>Triage the risk of an AI branch</td>
+<td><a href="#h5i-audit-review"><code>h5i audit review</code></a>, <a href="#h5i-audit-scan"><code>audit scan</code></a></td>
+<td>Rank commits by risk; scan reasoning traces for prompt-injection.</td>
+</tr>
+<tr>
+<td>Score how well the engineer prompted</td>
+<td><a href="#h5i-audit-maturity"><code>h5i audit maturity [--json]</code></a></td>
+<td>Headless / CI prompt-maturity score (feeds merge confidence).</td>
+</tr>
+<tr>
+<td>Enforce governance on commits</td>
+<td><a href="#h5i-audit-policy"><code>h5i audit policy</code></a></td>
+<td>Block on credential leak / missing provenance.</td>
+</tr>
+<tr>
+<td>See the repo's AI footprint or a compliance report</td>
+<td><a href="#h5i-audit-vibe"><code>h5i audit vibe</code></a>, <a href="#h5i-audit-compliance"><code>audit compliance</code></a></td>
+<td>% AI-written; date-ranged audit report (text / json / html).</td>
+</tr>
+<tr>
+<td>Run agent commands in a sandbox</td>
+<td><a href="#env-lifecycle-commands"><code>h5i env create</code></a>, <a href="#env-lifecycle-commands"><code>env run</code></a>, <a href="#env-lifecycle-commands"><code>env shell</code></a></td>
+<td>Confined worktree (Landlock/seccomp/netns or rootless Podman), policy-enforced + capture-wrapped.</td>
+</tr>
+<tr>
+<td>Know what isolation the host can enforce</td>
+<td><a href="#env-lifecycle-commands"><code>h5i env probe</code></a>, <a href="#env-lifecycle-commands"><code>env capabilities --json</code></a></td>
+<td>Tier, egress-enforced, resource limits — machine-readable so a product adapts honestly.</td>
+</tr>
+<tr>
+<td>Prove the sandbox allowed or blocked egress</td>
+<td><a href="#h5i-recall-object--objects"><code>recall objects --json</code></a> (<code>egress</code> field)</td>
+<td>Authoritative allow/deny counts from the container proxy / socket-gate — <em>enforced</em>, not inferred from an exit code.</td>
+</tr>
+<tr>
+<td>Coordinate with other AI agents</td>
+<td><a href="#h5i-msg"><code>h5i msg</code></a></td>
+<td>Cross-agent messages over a shareable ref (ask / review / handoff).</td>
+</tr>
+<tr>
+<td>Share h5i data or post a provenance PR comment</td>
+<td><a href="#h5i-share-push"><code>h5i share push</code></a>, <a href="#h5i-share-pull"><code>share pull</code></a>, <a href="#h5i-share-pr"><code>share pr</code></a></td>
+<td>Moves <code>refs/h5i/*</code> (a plain <code>git push</code> does not).</td>
+</tr>
+<tr>
+<td>Snapshot / restore agent memory</td>
+<td><a href="#h5i-capture-memory"><code>h5i capture memory</code></a>, <a href="#h5i-recall-memory"><code>recall memory</code></a></td>
+<td>Version the project memory directory.</td>
+</tr>
+<tr>
+<td>Detect which h5i build I'm on</td>
+<td><a href="#machine-readable-introspection"><code>h5i --version --json</code></a></td>
+<td>Structured version + enabled feature flags.</td>
+</tr>
+<tr>
+<td>Drive h5i from an agent without shelling out</td>
+<td>native <strong>MCP tools</strong> — see <a href="#h5i-mcp">h5i mcp</a></td>
+<td>The same operations as the CLI, without shell-quoting.</td>
+</tr>
+</tbody>
+</table>
 <hr />
 <h2 id="installation">Installation</h2>
 <p>Requires Rust 1.70+.</p>
