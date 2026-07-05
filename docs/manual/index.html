@@ -155,6 +155,7 @@
 <a class="t2" href="#installation">Installation</a>
 <a class="t2" href="#command-groups">Command Groups</a>
 <div class="t3group">
+<a class="t3" href="#machine-readable-introspection">Machine-readable introspection</a>
 <a class="t3" href="#legacy-forms">Legacy forms</a>
 </div>
 <a class="t2" href="#migration-cheat-sheet">Migration Cheat Sheet</a>
@@ -203,6 +204,7 @@
 <a class="t3" href="#h5i-audit-review">h5i audit review</a>
 <a class="t3" href="#h5i-audit-scan">h5i audit scan</a>
 <a class="t3" href="#h5i-audit-vibe">h5i audit vibe</a>
+<a class="t3" href="#h5i-audit-maturity">h5i audit maturity</a>
 <a class="t3" href="#h5i-audit-policy">h5i audit policy</a>
 <a class="t3" href="#h5i-audit-compliance">h5i audit compliance</a>
 </div>
@@ -306,7 +308,7 @@ legacy equivalents, and the corresponding MCP tool names.</p>
 </tr>
 <tr>
 <td><code>h5i audit</code></td>
-<td><code>review</code>, <code>scan</code>, <code>compliance</code>, <code>policy</code>, <code>vibe</code></td>
+<td><code>review</code>, <code>scan</code>, <code>compliance</code>, <code>policy</code>, <code>vibe</code>, <code>maturity</code></td>
 <td>Assess risk on AI-generated changes.</td>
 </tr>
 <tr>
@@ -324,6 +326,15 @@ legacy equivalents, and the corresponding MCP tool names.</p>
 <p>All four nouns route through a pre-clap argv rewriter into the legacy
 verbs — so the noun form and the legacy form are functionally identical;
 the noun form is just the canonical name and the only one shown in <code>--help</code>.</p>
+<h3 id="machine-readable-introspection">Machine-readable introspection</h3>
+<p>A product embedding h5i can ask, in JSON, <em>which h5i is this</em> and <em>what can it
+enforce here</em> — no parsing of human text:</p>
+<pre><code class="language-bash">h5i --version --json        # { &quot;name&quot;: &quot;h5i&quot;, &quot;version&quot;: &quot;0.2.6&quot;, &quot;features&quot;: [&quot;web&quot;] }
+h5i env capabilities --json # isolation tier, egress-enforced, resource limits, per-claim support
+</code></pre>
+<p><code>h5i --version</code> alone still prints the plain <code>h5i 0.2.6</code> line; adding <code>--json</code>
+(either order) switches to the structured form. See
+<a href="#env-lifecycle-commands">h5i env capabilities</a> for the capability report.</p>
 <h3 id="legacy-forms">Legacy forms</h3>
 <p>The original top-level verbs (<code>h5i commit</code>, <code>h5i log</code>, <code>h5i push</code>, …) keep
 working. The reference pages below are headed by their canonical noun-verb
@@ -2103,11 +2114,57 @@ h5i capture memory -m &quot;end of session&quot;  # checkpoint memory
 <pre><code class="language-bash">h5i recall objects                       # list captures (newest first) with summaries
 h5i recall objects --status failed       # filter by structured status
 h5i recall objects --tool pytest         # by tool  (compose with --branch/--file/--diff)
+h5i recall objects --env fix-auth --json # typed feed for headless / CI grading
 h5i recall object &lt;id&gt;                    # rehydrate the FULL raw bytes
 h5i recall object &lt;id&gt; --summary          # the reduced summary only
 h5i recall object &lt;id&gt; --manifest         # the full manifest JSON record
+h5i recall object &lt;id&gt; --format json      # re-render the structured findings as JSON
 </code></pre>
 <p>Handles accept the short id, a full <code>sha256:&lt;hex&gt;</code>, or any unambiguous prefix.</p>
+<p><strong><code>--json</code> — a typed feed instead of text.</strong> <code>recall objects --json</code> emits one
+JSON object per capture (newest first, capped at <code>--limit</code>, honoring every
+<code>--branch</code>/<code>--file</code>/<code>--env</code>/<code>--tool</code>/<code>--status</code> filter) so a downstream grader
+never has to regex-parse the human listing. Each record carries:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cmd</code>, <code>exit_code</code></td>
+<td>the command h5i ran and its exit code</td>
+</tr>
+<tr>
+<td><code>action</code></td>
+<td>best-effort <strong>action class</strong>: <code>test \| build \| read \| write \| egress \| other</code>, computed host-side from the argv (one shell layer peeled). Robust to gaming — <code>echo test</code> classifies as <code>read</code>, not <code>test</code></td>
+</tr>
+<tr>
+<td><code>tool</code></td>
+<td>the program adapter the structured parser recognized (<code>pytest</code>, <code>cargo</code>, …)</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>the <strong>validated</strong> pass/fail (<code>passed</code>/<code>failed</code>/<code>error</code>) — a stronger verification signal than <code>action</code>, because it's parsed from the real output, not the command name</td>
+</tr>
+<tr>
+<td><code>duration_ms</code>, <code>env_id</code>, <code>branch</code>, <code>kind</code></td>
+<td>timing + provenance</td>
+</tr>
+<tr>
+<td><code>egress</code></td>
+<td><strong>authoritative</strong> egress verdicts when an enforcing tier ran (container proxy / supervised socket-gate): <code>allowed</code>/<code>denied</code> counts + per-host tallies. <code>denied &gt; 0</code> is an <em>enforced</em> boundary block, not an exit-code guess. Absent on tiers with no egress enforcement (<code>workspace</code>/<code>process</code>), so a reader never over-claims a block that wasn't enforced</td>
+</tr>
+</tbody>
+</table>
+<p><code>action</code> is <em>what kind of operation</em>; <code>tool</code>+<code>status</code> is <em>what tool ran and
+whether it passed</em>; <code>egress</code> is <em>what the sandbox refused</em> — three
+independent, non-inferred signals. Note that in the default <code>signal</code> capture
+mode small <strong>successful</strong> commands aren't stored; create the env with
+<code>h5i env create &lt;name&gt; --audit all</code> (or set <code>H5I_ENV_AUDIT_CAPTURE=all</code>) to
+record every wrapped command for a complete ledger.</p>
 <p>Inside a sandboxed env, a capture you just made is <strong>staged</strong> in the box's spool
 and not yet ingested into <code>refs/h5i/objects</code>; <code>h5i recall object &lt;cap-id&gt;</code> still
 rehydrates its full raw bytes from the spool (so an agent can re-read output that
@@ -2346,12 +2403,18 @@ Idempotent; <code>h5i init</code> already includes the guidance for new projects
 <td><code>h5i vibe</code></td>
 <td>Repo-wide AI footprint summary. See <a href="#h5i-audit-vibe">h5i audit vibe</a>.</td>
 </tr>
+<tr>
+<td><code>h5i audit maturity</code></td>
+<td><code>h5i maturity</code></td>
+<td>Prompt-maturity score for headless / CI grading. See <a href="#h5i-audit-maturity">h5i audit maturity</a>.</td>
+</tr>
 </tbody>
 </table>
 <pre><code class="language-bash">h5i audit review --limit 50
 h5i audit compliance --since 2026-01-01 --until 2026-03-31 \
     --format html --output audit.html
 h5i audit vibe --limit 1000 --json
+h5i audit maturity --json
 </code></pre>
 <h3 id="quality-vs-shape-signals">Quality vs Shape signals</h3>
 <p><code>h5i audit review</code> (and the PR-comment 🚩) split rules into two tiers so
@@ -2720,6 +2783,81 @@ h5i audit scan
   &quot;total_blind_edits&quot;: 23,
   &quot;blind_edit_file_count&quot;: 7
 }
+</code></pre>
+<hr />
+<h3 id="h5i-audit-maturity">h5i audit maturity</h3>
+<pre><code>h5i audit maturity [--text &lt;str&gt; | --oid &lt;sha&gt;] [--limit N] [--json]
+</code></pre>
+<p>Score <strong>prompt maturity</strong> — how well the engineer directed the agent. This is
+the same signal that feeds <code>merge_confidence</code> and the PR-comment prompt-maturity
+card; before, it was only reachable by running <code>h5i serve</code> and hitting an HTTP
+route. <code>h5i audit maturity</code> exposes it for headless / CI grading.</p>
+<p><strong>Two modes:</strong></p>
+<ul>
+<li><strong>Branch (default)</strong> — rolls up every AI-commit prompt on this branch
+  (<code>base..HEAD</code>) into one length-weighted score, with a coverage fraction so a
+  branch where most AI commits carried no prompt reads as low-confidence rather
+  than over-confident.</li>
+<li><strong>Single prompt</strong> — <code>--text "&lt;prompt&gt;"</code> scores a literal string; <code>--oid &lt;sha&gt;</code>
+  scores one commit's captured prompt. Useful for grading an arbitrary prompt in
+  a pipeline.</li>
+</ul>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--text &lt;str&gt;</code></td>
+<td>—</td>
+<td>Score this literal prompt instead of the branch</td>
+</tr>
+<tr>
+<td><code>--oid &lt;sha&gt;</code></td>
+<td>—</td>
+<td>Score one commit's captured prompt (mutually exclusive with <code>--text</code>)</td>
+</tr>
+<tr>
+<td><code>-l, --limit N</code></td>
+<td><code>500</code></td>
+<td>Commits to scan in branch mode</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>off</td>
+<td>Emit the structured score instead of the styled report</td>
+</tr>
+</tbody>
+</table>
+<p>The score is a heuristic proxy (no LLM): a multiplicative <strong>core</strong> (a positive
+objective, concrete grounding, bounded direction) times an additive
+<strong>enrichment</strong> lift (context, examples, structure, diversity, clarity,
+adequacy), with an evidence bonus for attached machine output. Length alone does
+not help — a long pasted log without an authored ask is discounted, not rewarded.</p>
+<p><strong>Example</strong></p>
+<pre><code class="language-bash">h5i audit maturity --json
+</code></pre>
+<pre><code class="language-json">{
+  &quot;mode&quot;: &quot;branch&quot;,
+  &quot;score&quot;: 61.4,
+  &quot;level&quot;: &quot;proficient&quot;,
+  &quot;scored_prompts&quot;: 8,
+  &quot;ai_commits&quot;: 9,
+  &quot;coverage&quot;: 0.89,
+  &quot;low_confidence&quot;: false,
+  &quot;flags&quot;: [&quot;weak context&quot;],
+  &quot;breakdown&quot;: { &quot;objective&quot;: 0.8, &quot;grounding&quot;: 0.62, &quot;direction&quot;: 0.57, &quot;...&quot;: 0 }
+}
+</code></pre>
+<pre><code class="language-bash">h5i audit maturity --text &quot;make it better&quot;
+# 🧠 Prompt maturity: 14.8/100  🌱 nascent   (3 words)
+#    flags: too short, vague / under-specified
+#    Objective (core)   ░░░░░░░░░░ 0.00   …
 </code></pre>
 <hr />
 <h3 id="h5i-audit-policy">h5i audit policy</h3>
@@ -3292,6 +3430,10 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 <tr>
 <td><code>h5i env probe</code></td>
 <td>Show what isolation this host can actually provide (Landlock ABI, user namespaces, seccomp, seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are satisfiable.</td>
+</tr>
+<tr>
+<td><code>h5i env capabilities [--json]</code></td>
+<td><strong>Machine-readable</strong> enforcement report — the structured form of <code>probe</code>, so a product adapts to the host without scraping text. Reports <code>os</code>, <code>landlock_abi</code>, <code>userns</code>, <code>seccomp</code>, <code>container_runtime</code>, <code>egress_enforced</code> (only the container tier enforces a domain <strong>allowlist</strong>), <code>resource_limits</code>, <code>strongest_tier</code>, and per-claim <code>satisfiable</code> + (kernel tiers) functional <code>runnable</code>.</td>
 </tr>
 <tr>
 <td><code>h5i env list [--json]</code></td>
