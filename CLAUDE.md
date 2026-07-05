@@ -20,7 +20,7 @@ CI runs clippy (`-D warnings`), `cargo build --verbose` then `cargo test --verbo
 
 ## Architecture
 
-**h5i** ("high-five") is a Git sidecar that extends version control with semantic dimensions: temporal (Git history), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging via `refs/h5i/msg`). It stores its data in `.git/.h5i/` with subdirectories `metadata/` and `msg/` (per-agent identity, read cursors, and reply views).
+**h5i** ("high-five") gives every AI coding agent an auditable workspace: a sandboxed Git worktree to work in, plus a complete record of the prompts, commands, test metrics, policies, and cross-agent messages behind every change. Internally the code is organized around four dimensions that record this: temporal (Git history), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging via `refs/h5i/msg`) — these map to the `error.rs` categories. It stores its data in `.git/.h5i/` with subdirectories `metadata/` and `msg/` (per-agent identity, read cursors, and reply views).
 
 ### Module Overview
 

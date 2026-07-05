@@ -15,7 +15,7 @@ h5i solves the problems that show up once agents — not just humans — write t
 - Local-first, no SaaS required
 
 ## Technical model
-h5i stores agent evidence as Git-native sidecar refs under `refs/h5i/*` — prompts, model/agent provenance, reasoning traces, test metrics, reviews, verifier decisions, and cross-agent messages — so it lives alongside the repository with no hosted control plane, and travels with `h5i share push` / `h5i share pull`. It extends version control with four dimensions: temporal (Git history), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging).
+h5i stores agent evidence as Git-native sidecar refs under `refs/h5i/*` — prompts, model/agent provenance, reasoning traces, test metrics, reviews, verifier decisions, and cross-agent messages — so it lives alongside the repository with no hosted control plane, and travels with `h5i share push` / `h5i share pull`. It gives each agent a sandboxed, policy-enforced Git worktree and records the provenance, evidence, and coordination behind every change.
 
 ## Docs
 - [Features](https://h5i.dev/features/): What h5i gives Claude Code and Codex — sandboxed worktrees, prompt-aware commits, compressed tool logs, agent handoffs.

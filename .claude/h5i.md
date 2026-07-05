@@ -1,6 +1,6 @@
 ## h5i Integration
 
-This repository uses **h5i** (a Git sidecar for AI-era version control).
+This repository uses **h5i** — auditable workspaces for AI coding agents.
 
 **Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
 
@@ -71,7 +71,9 @@ h5i capture run --file <path> -- <command>    # tag the files it relates to
 It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Small *successful* output (under ~2 KB) passes through unstored — but failures are always captured regardless of size, so they stay searchable. Safe to wrap anything. Rehydrate the full raw only if the summary isn't enough:
 
 ```bash
-h5i recall objects [--branch <b>|--file <p>|--env <e>]   # list captures
+h5i recall objects [--branch <b>|--file <p>|--env <e>] [--json]   # list captures
+                                               # --json: typed feed (cmd, exit, action
+                                               # test|build|read|write|egress, tool, status)
 h5i recall search <query> [--severity|--rule|--path|--fingerprint|--tool|--since]
                                                # query findings across captures
 h5i recall object <id>                         # full raw bytes

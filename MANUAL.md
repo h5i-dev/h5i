@@ -1,11 +1,74 @@
 # h5i Manual
 
-Command reference for all h5i subcommands and flags.
+Command reference for all h5i subcommands and flags. **New here? Read [What h5i
+is](#what-h5i-is) and [What h5i can do](#what-h5i-can-do) first** — they give the
+mental model and a task-oriented capability map before the per-command reference.
+
+---
+
+## What h5i is
+
+**h5i** (pronounced *high-five*) gives every AI coding agent an **auditable
+workspace**: a sandboxed Git worktree to work in, plus a complete record of the
+prompts, commands, logs, policies, and reviews behind every change. Run one agent
+safely, scale to many via a conflict-free multi-agent orchestra, then merge one
+auditable result. It all lives in your repo, carried by Git — no SaaS.
+
+Concretely, h5i gives you four things *alongside* ordinary Git history:
+
+- **isolation** — each agent works in a policy-enforced sandbox (a Git worktree
+  confined by Landlock/seccomp/netns, or rootless Podman), so what it can read,
+  write, and reach on the network is bounded — and recorded.
+- **provenance** — which model/agent produced a change, and the prompt that drove
+  it.
+- **evidence** — test metrics and captured command output (exit code, tool,
+  validated pass/fail, and *enforced* egress verdicts), stored out-of-band so it
+  never bloats an agent's context.
+- **coordination** — cross-agent messages so several agents collaborate on one
+  repo.
+
+This data lives in `.git/.h5i/` and under `refs/h5i/*`. **It does NOT travel with
+a plain `git push`** — use `h5i share push` / `h5i share pull` to move it.
+
+Two ways to drive h5i: the **CLI** (`h5i …`, works out of the box) and native
+**MCP tools** (the same operations without shell-quoting — see [h5i mcp](#h5i-mcp)).
+The CLI is organized as `h5i <noun> <verb>`; see [Command Groups](#command-groups).
+
+---
+
+## What h5i can do
+
+A task-oriented map of the whole surface. Find the row for what you want, then
+jump to the linked reference section for flags and examples. (Everything that
+emits `--json` is safe to consume from a script or another agent.)
+
+| I want to… | Command(s) | Notes |
+|---|---|---|
+| Record what an AI change was (model, agent, prompt) | [`h5i capture commit`](#h5i-capture-commit) | Provenance stored in Git notes; the human prompt is auto-captured in Claude Code. |
+| Keep noisy command output out of my context | [`h5i capture run -- <cmd>`](#h5i-capture-run) | Prints a compact summary, stores the full output out-of-band, passes the exit code through. |
+| Read history with AI authorship | [`h5i recall log`](#h5i-recall-log), [`recall blame`](#h5i-recall-blame) | Who / which model wrote each line, with the prompt and test metrics. |
+| Inspect or grade what commands actually ran | [`h5i recall objects [--json]`](#h5i-recall-object--objects), [`recall search`](#h5i-recall-object--objects) | Typed feed: `cmd`, `exit`, **action** (test/build/read/write/egress), **tool**, validated **status**, enforced **egress** verdicts. |
+| Track my goal + reasoning across a task | [`h5i recall context`](#h5i-recall-context) | Goal + auto-derived reasoning trace; snapshotted per commit. |
+| Triage the risk of an AI branch | [`h5i audit review`](#h5i-audit-review), [`audit scan`](#h5i-audit-scan) | Rank commits by risk; scan reasoning traces for prompt-injection. |
+| Score how well the engineer prompted | [`h5i audit maturity [--json]`](#h5i-audit-maturity) | Headless / CI prompt-maturity score (feeds merge confidence). |
+| Enforce governance on commits | [`h5i audit policy`](#h5i-audit-policy) | Block on credential leak / missing provenance. |
+| See the repo's AI footprint or a compliance report | [`h5i audit vibe`](#h5i-audit-vibe), [`audit compliance`](#h5i-audit-compliance) | % AI-written; date-ranged audit report (text / json / html). |
+| Run agent commands in a sandbox | [`h5i env create`](#env-lifecycle-commands), [`env run`](#env-lifecycle-commands), [`env shell`](#env-lifecycle-commands) | Confined worktree (Landlock/seccomp/netns or rootless Podman), policy-enforced + capture-wrapped. |
+| Run several agents on one task and merge one result | [`h5i team`](#h5i-team) | Conflict-free multi-agent orchestra: sealed workspaces, peer review, one auditable merge. |
+| Know what isolation the host can enforce | [`h5i env probe`](#env-lifecycle-commands), [`env capabilities --json`](#env-lifecycle-commands) | Tier, egress-enforced, resource limits — machine-readable so a product adapts honestly. |
+| Prove the sandbox allowed or blocked egress | [`recall objects --json`](#h5i-recall-object--objects) (`egress` field) | Authoritative allow/deny counts from the container proxy / socket-gate — *enforced*, not inferred from an exit code. |
+| Coordinate with other AI agents | [`h5i msg`](#h5i-msg) | Cross-agent messages over a shareable ref (ask / review / handoff). |
+| Share h5i data or post a provenance PR comment | [`h5i share push`](#h5i-share-push), [`share pull`](#h5i-share-pull), [`share pr`](#h5i-share-pr) | Moves `refs/h5i/*` (a plain `git push` does not). |
+| Snapshot / restore agent memory | [`h5i capture memory`](#h5i-capture-memory), [`recall memory`](#h5i-recall-memory) | Version the project memory directory. |
+| Detect which h5i build I'm on | [`h5i --version --json`](#machine-readable-introspection) | Structured version + enabled feature flags. |
+| Drive h5i from an agent without shelling out | native **MCP tools** — see [h5i mcp](#h5i-mcp) | The same operations as the CLI, without shell-quoting. |
 
 ---
 
 ## Table of Contents
 
+- [What h5i is](#what-h5i-is)
+- [What h5i can do](#what-h5i-can-do)
 - [Installation](#installation)
 - [Command Groups](#command-groups)
   - [Legacy forms](#legacy-forms)
@@ -44,6 +107,7 @@ Command reference for all h5i subcommands and flags.
   - [h5i audit review](#h5i-audit-review)
   - [h5i audit scan](#h5i-audit-scan)
   - [h5i audit vibe](#h5i-audit-vibe)
+  - [h5i audit maturity](#h5i-audit-maturity)
   - [h5i audit policy](#h5i-audit-policy)
   - [h5i audit compliance](#h5i-audit-compliance)
 - [h5i share](#h5i-share)
@@ -116,13 +180,27 @@ legacy equivalents, and the corresponding MCP tool names.
 |---|---|---|
 | `h5i capture` | `commit`, `memory`, `run` | Record provenance, memory snapshots, and large command output (token reduction). |
 | `h5i recall` | `log`, `blame`, `diff`, `context`, `notes`, `memory`, `recap`, `resume`, `object`, `objects` | Read history, context, and captured tool output. |
-| `h5i audit` | `review`, `scan`, `compliance`, `policy`, `vibe` | Assess risk on AI-generated changes. |
+| `h5i audit` | `review`, `scan`, `compliance`, `policy`, `vibe`, `maturity` | Assess risk on AI-generated changes. |
 | `h5i share` | `push`, `pull`, `pr`, `memory` | Publish: push refs, pull refs, post a GitHub PR comment. |
 | `h5i objects` | `run`, `put`, `get`, `list`, `gc`, `pin`, `unpin`, `fsck`, `push`, `pull`, `filters`, `trust`, `setup` | Token-reduction object store: capture huge output, surface a summary, share raw blobs, maintain the store. See [h5i objects](#h5i-objects). |
 
 All four nouns route through a pre-clap argv rewriter into the legacy
 verbs — so the noun form and the legacy form are functionally identical;
 the noun form is just the canonical name and the only one shown in `--help`.
+
+### Machine-readable introspection
+
+A product embedding h5i can ask, in JSON, *which h5i is this* and *what can it
+enforce here* — no parsing of human text:
+
+```bash
+h5i --version --json        # { "name": "h5i", "version": "0.2.6", "features": ["web"] }
+h5i env capabilities --json # isolation tier, egress-enforced, resource limits, per-claim support
+```
+
+`h5i --version` alone still prints the plain `h5i 0.2.6` line; adding `--json`
+(either order) switches to the structured form. See
+[h5i env capabilities](#env-lifecycle-commands) for the capability report.
 
 ### Legacy forms
 
@@ -1753,12 +1831,35 @@ h5i recall resume                               # get the full briefing
 h5i recall objects                       # list captures (newest first) with summaries
 h5i recall objects --status failed       # filter by structured status
 h5i recall objects --tool pytest         # by tool  (compose with --branch/--file/--diff)
+h5i recall objects --env fix-auth --json # typed feed for headless / CI grading
 h5i recall object <id>                    # rehydrate the FULL raw bytes
 h5i recall object <id> --summary          # the reduced summary only
 h5i recall object <id> --manifest         # the full manifest JSON record
+h5i recall object <id> --format json      # re-render the structured findings as JSON
 ```
 
 Handles accept the short id, a full `sha256:<hex>`, or any unambiguous prefix.
+
+**`--json` — a typed feed instead of text.** `recall objects --json` emits one
+JSON object per capture (newest first, capped at `--limit`, honoring every
+`--branch`/`--file`/`--env`/`--tool`/`--status` filter) so a downstream grader
+never has to regex-parse the human listing. Each record carries:
+
+| Field | Meaning |
+|-------|---------|
+| `cmd`, `exit_code` | the command h5i ran and its exit code |
+| `action` | best-effort **action class**: `test \| build \| read \| write \| egress \| other`, computed host-side from the argv (one shell layer peeled). Robust to gaming — `echo test` classifies as `read`, not `test` |
+| `tool` | the program adapter the structured parser recognized (`pytest`, `cargo`, …) |
+| `status` | the **validated** pass/fail (`passed`/`failed`/`error`) — a stronger verification signal than `action`, because it's parsed from the real output, not the command name |
+| `duration_ms`, `env_id`, `branch`, `kind` | timing + provenance |
+| `egress` | **authoritative** egress verdicts when an enforcing tier ran (container proxy / supervised socket-gate): `allowed`/`denied` counts + per-host tallies. `denied > 0` is an *enforced* boundary block, not an exit-code guess. Absent on tiers with no egress enforcement (`workspace`/`process`), so a reader never over-claims a block that wasn't enforced |
+
+`action` is *what kind of operation*; `tool`+`status` is *what tool ran and
+whether it passed*; `egress` is *what the sandbox refused* — three
+independent, non-inferred signals. Note that in the default `signal` capture
+mode small **successful** commands aren't stored; create the env with
+`h5i env create <name> --audit all` (or set `H5I_ENV_AUDIT_CAPTURE=all`) to
+record every wrapped command for a complete ledger.
 
 Inside a sandboxed env, a capture you just made is **staged** in the box's spool
 and not yet ingested into `refs/h5i/objects`; `h5i recall object <cap-id>` still
@@ -1943,12 +2044,14 @@ Assess risk on AI-generated changes.
 | `h5i audit compliance` | `h5i compliance` | Date-ranged audit report (text / json / html). |
 | `h5i audit policy <sub>` | `h5i policy <sub>` | Manage `.h5i/policy.toml` rules. |
 | `h5i audit vibe` | `h5i vibe` | Repo-wide AI footprint summary. See [h5i audit vibe](#h5i-audit-vibe). |
+| `h5i audit maturity` | `h5i maturity` | Prompt-maturity score for headless / CI grading. See [h5i audit maturity](#h5i-audit-maturity). |
 
 ```bash
 h5i audit review --limit 50
 h5i audit compliance --since 2026-01-01 --until 2026-03-31 \
     --format html --output audit.html
 h5i audit vibe --limit 1000 --json
+h5i audit maturity --json
 ```
 
 ### Quality vs Shape signals
@@ -2185,6 +2288,71 @@ The blind-edit and uncertainty data come from session analyses stored by [`h5i r
   "total_blind_edits": 23,
   "blind_edit_file_count": 7
 }
+```
+
+---
+
+### h5i audit maturity
+
+```
+h5i audit maturity [--text <str> | --oid <sha>] [--limit N] [--json]
+```
+
+Score **prompt maturity** — how well the engineer directed the agent. This is
+the same signal that feeds `merge_confidence` and the PR-comment prompt-maturity
+card; before, it was only reachable by running `h5i serve` and hitting an HTTP
+route. `h5i audit maturity` exposes it for headless / CI grading.
+
+**Two modes:**
+
+- **Branch (default)** — rolls up every AI-commit prompt on this branch
+  (`base..HEAD`) into one length-weighted score, with a coverage fraction so a
+  branch where most AI commits carried no prompt reads as low-confidence rather
+  than over-confident.
+- **Single prompt** — `--text "<prompt>"` scores a literal string; `--oid <sha>`
+  scores one commit's captured prompt. Useful for grading an arbitrary prompt in
+  a pipeline.
+
+**Options**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--text <str>` | — | Score this literal prompt instead of the branch |
+| `--oid <sha>` | — | Score one commit's captured prompt (mutually exclusive with `--text`) |
+| `-l, --limit N` | `500` | Commits to scan in branch mode |
+| `--json` | off | Emit the structured score instead of the styled report |
+
+The score is a heuristic proxy (no LLM): a multiplicative **core** (a positive
+objective, concrete grounding, bounded direction) times an additive
+**enrichment** lift (context, examples, structure, diversity, clarity,
+adequacy), with an evidence bonus for attached machine output. Length alone does
+not help — a long pasted log without an authored ask is discounted, not rewarded.
+
+**Example**
+
+```bash
+h5i audit maturity --json
+```
+
+```json
+{
+  "mode": "branch",
+  "score": 61.4,
+  "level": "proficient",
+  "scored_prompts": 8,
+  "ai_commits": 9,
+  "coverage": 0.89,
+  "low_confidence": false,
+  "flags": ["weak context"],
+  "breakdown": { "objective": 0.8, "grounding": 0.62, "direction": 0.57, "...": 0 }
+}
+```
+
+```bash
+h5i audit maturity --text "make it better"
+# 🧠 Prompt maturity: 14.8/100  🌱 nascent   (3 words)
+#    flags: too short, vague / under-specified
+#    Objective (core)   ░░░░░░░░░░ 0.00   …
 ```
 
 ---
@@ -2714,6 +2882,7 @@ another reviews and applies). See `docs/environments-design.md` and the live
 | `h5i env run <name> -- <cmd> [args…]` | Run a command inside the env, policy-enforced + capture-wrapped. Exit code passes through; evidence is captured. |
 | `h5i env shell <name> [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. With `-- <cmd>` that command becomes the session (e.g. `-- claude "<task>"` launches the agent). Boxed agents use staged in-box commands such as `h5i capture run` and `h5i team agent submit`; host-owned refs are ingested when the shell exits. Defaults to a login shell. Exit code passes through. The session is **observed**: a `shell` event is logged, and per-command evidence is staged + ingested where the tier supports it (see [In-box git, capture & commit](#in-box-git-capture--commit)). |
 | `h5i env probe` | Show what isolation this host can actually provide (Landlock ABI, user namespaces, seccomp, seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are satisfiable. |
+| `h5i env capabilities [--json]` | **Machine-readable** enforcement report — the structured form of `probe`, so a product adapts to the host without scraping text. Reports `os`, `landlock_abi`, `userns`, `seccomp`, `container_runtime`, `egress_enforced` (only the container tier enforces a domain **allowlist**), `resource_limits`, `strongest_tier`, and per-claim `satisfiable` + (kernel tiers) functional `runnable`. |
 | `h5i env list [--json]` | List environments on this clone (the fleet view). `--json` emits an array of manifests, each enriched with base `drift`. |
 | `h5i env status <name> [--json]` | Lifecycle state + enforced policy + evidence + base drift. `--json` emits the raw manifest. |
 | `h5i env doctor <name> [--json]` | Enforcement-readiness + structural-health check: can this host actually enforce the env's isolation claim (functional `verify_exec` self-test), plus policy-digest integrity, workspace/code-branch/context presence, and base drift. Exits non-zero when unhealthy. `--json` emits the structured report (per-check `ok`/`warn` + overall `healthy`). |
