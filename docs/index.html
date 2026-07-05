@@ -355,16 +355,12 @@
       font-size: 0.86rem; line-height: 1.2;
     }
     .hero-actions { display: flex; gap: 0.9rem; justify-content: center; flex-wrap: wrap; margin-bottom: 2.8rem; }
-    .hero-film { display: inline-flex; flex-direction: column; align-items: center; gap: 0.65rem; margin: 0 auto 2.8rem; text-decoration: none; }
-    .hero-film-frame { position: relative; width: min(420px, 78vw); border-radius: 14px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 18px 50px rgba(0,0,0,0.5); transition: transform 0.2s ease, border-color 0.2s ease; }
-    .hero-film:hover .hero-film-frame { transform: translateY(-3px); border-color: rgba(210,28,28,0.6); }
-    .hero-film-frame img { display: block; width: 100%; height: auto; }
-    .hero-film-play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-    .hero-film-play span { width: 60px; height: 60px; border-radius: 50%; background: rgba(210,28,28,0.92); display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 30px rgba(0,0,0,0.5); transition: transform 0.2s ease; }
-    .hero-film:hover .hero-film-play span { transform: scale(1.08); }
-    .hero-film-play span::before { content: ''; border-style: solid; border-width: 11px 0 11px 18px; border-color: transparent transparent transparent #fff; margin-left: 5px; }
-    .hero-film-cap { font-size: 0.82rem; letter-spacing: 0.02em; color: var(--text-faint); }
-    .hero-film:hover .hero-film-cap { color: var(--text); }
+    .hero-film { width: min(900px, 94vw); margin: 4.5rem auto 0; text-align: center; }
+    .hero-film-frame { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 16px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 24px 70px rgba(0,0,0,0.55); background: #08080b; }
+    .hero-film-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+    .hero-film-fs { display: inline-block; margin-top: 1rem; font-family: var(--mono); font-size: 0.82rem; letter-spacing: 0.04em; color: var(--text-faint); text-decoration: none; }
+    .hero-film-fs:hover { color: var(--text); }
+    .hero-film-fs::before { content: '\26F6'; margin-right: 0.5rem; color: var(--red-text); }
     .btn {
       display: inline-flex; align-items: center; gap: 0.5rem;
       padding: 0.8rem 1.7rem; border-radius: 8px;
@@ -810,7 +806,7 @@
     }
 
     /* ── Dashboard ─────────────────────────────────────────── */
-    #dashboard { padding: 120px 0; border-top: 1px solid var(--border); }
+    #overview { padding: 120px 0; border-top: 1px solid var(--border); }
     .dashboard-wrap {
       border: 1px solid var(--border); border-radius: var(--radius-lg);
       overflow: hidden; box-shadow: 0 40px 90px rgba(0,0,0,0.55);
@@ -1206,23 +1202,22 @@
       <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</code>
       <button class="copy-btn" onclick="copyInstall()">copy</button>
     </div>
-    <a href="/demo/" class="hero-film" aria-label="Watch the h5i demo film">
-      <span class="hero-film-frame">
-        <img src="/demo/poster.png" width="1920" height="1080" alt="h5i demo film — a sealed, auditable workspace for every AI coding agent" loading="lazy">
-        <span class="hero-film-play"><span></span></span>
-      </span>
-      <span class="hero-film-cap">&#9654;&nbsp; Watch the 74-second film</span>
-    </a>
+    <div class="hero-film">
+      <div class="hero-film-frame">
+        <iframe src="/demo/?embed=1" title="h5i demo film — a sealed, auditable workspace for every AI coding agent" loading="lazy" allow="fullscreen"></iframe>
+      </div>
+      <a href="/demo/" class="hero-film-fs">Watch full-screen</a>
+    </div>
   </div>
 </section>
 
-<!-- ── The h5i serve dashboard ───────────────────────────────── -->
-<section id="dashboard">
+<!-- ── Overview ──────────────────────────────────────────────── -->
+<section id="overview">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">The flight recorder</span>
-      <h2 class="section-title">Every run, in one dashboard.</h2>
-      <p class="section-sub">The <code>h5i serve</code> dashboard: agents attempting one task in sealed lanes, a sandbox flight recorder, and the reasoning workspace behind every change.</p>
+      <span class="section-tag">Overview</span>
+      <h2 class="section-title">One to start. Many to scale. Every run safe and auditable.</h2>
+      <p class="section-sub">Run a single agent or a whole ensemble in sealed worktrees, then watch it in <code>h5i serve</code>: each sealed attempt, the neutral verdict, and the evidence behind the merge, all in one place.</p>
       <div class="divider"></div>
     </div>
     <!-- Embedded ENSEMBLE tab — the real `h5i serve` dashboard, as live HTML -->

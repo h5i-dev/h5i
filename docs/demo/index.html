@@ -179,7 +179,7 @@
     border:1px solid var(--border2);z-index:99;font-family:var(--mono);font-size:14px;color:var(--dim)}
   #ctl button{background:none;border:none;color:var(--text);font-size:18px;cursor:pointer;font-family:var(--mono)}
   #ctl input[type=range]{width:420px;accent-color:var(--claude)}
-  body.render #ctl{display:none}
+  body.render #ctl,body.embed #ctl{display:none}
 </style>
 </head>
 <body>
@@ -582,6 +582,7 @@ function fit(){
 addEventListener('resize', fit); fit();
 
 const RENDER = new URLSearchParams(location.search).has('render');
+const EMBED = new URLSearchParams(location.search).has('embed');
 window.TOTAL = TOTAL;
 window.SEEK = ms => { draw(clamp(ms, 0, TOTAL)); };
 
@@ -589,12 +590,13 @@ if (RENDER) {
   document.body.classList.add('render');
   draw(0);
 } else {
+  if (EMBED) document.body.classList.add('embed');
   let playing = true, t0 = performance.now(), acc = 0;
   const scrub = $('scrub'), pb = $('pb'), tm = $('tm');
   const now = () => playing ? acc + (performance.now() - t0) : acc;
   function loop(){
     let ms = now();
-    if (ms >= TOTAL) { ms = TOTAL; playing = false; acc = TOTAL; pb.textContent = '↺'; }
+    if (ms >= TOTAL) { if (EMBED) { acc = 0; t0 = performance.now(); ms = 0; } else { ms = TOTAL; playing = false; acc = TOTAL; pb.textContent = '↺'; } }
     draw(ms);
     scrub.value = Math.round(ms/TOTAL*1000);
     tm.textContent = `${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')} / 1:14`;
