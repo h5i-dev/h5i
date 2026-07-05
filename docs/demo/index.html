@@ -29,8 +29,9 @@
     justify-content:space-between;padding:0 72px;z-index:5}
   #hdr .mark{font-family:var(--mono);font-weight:700;font-size:26px;letter-spacing:.02em}
   #hdr .mark b{color:var(--claude);font-weight:700}
-  #eyebrow{font-family:var(--mono);font-size:19px;color:var(--faint);letter-spacing:.14em;text-transform:uppercase}
-  #eyebrow em{font-style:normal;color:var(--dim)}
+  #eyebrow{font-family:var(--mono);font-size:19px;font-weight:700;color:var(--claude);
+    letter-spacing:.16em;text-transform:uppercase;text-shadow:0 0 22px rgba(255,122,89,.45)}
+  #eyebrow em{font-style:normal;color:var(--danger)}
   #rail{position:absolute;left:0;right:0;bottom:0;height:96px;display:flex;align-items:center;
     gap:18px;padding:0 72px;border-top:1px solid var(--border);
     background:linear-gradient(180deg, rgba(11,11,15,.4), rgba(11,11,15,.9));z-index:5}
@@ -93,7 +94,13 @@
   #m1 .diag{width:700px;position:relative;flex:none}
   #m1 .term{flex:1;height:868px}
   .sealed{position:absolute;left:20px;top:60px;width:640px;height:430px;border-radius:20px;
-    border:2px dashed rgba(255,122,89,.65);background:rgba(255,122,89,.03)}
+    border:2px solid rgba(255,122,89,.5);background:rgba(255,122,89,.03)}
+  .sealed::before{content:'';position:absolute;inset:0;border-radius:18px;pointer-events:none;
+    background:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='26'%20height='22'%3E%3Crect%20width='26'%20height='22'%20fill='rgb(24,15,13)'/%3E%3Cg%20fill='rgb(138,64,44)'%3E%3Crect%20width='24'%20height='9'%20rx='1'/%3E%3Crect%20x='13'%20y='11'%20width='24'%20height='9'%20rx='1'/%3E%3Crect%20x='-13'%20y='11'%20width='24'%20height='9'%20rx='1'/%3E%3C/g%3E%3Cg%20fill='rgb(170,92,68)'%3E%3Crect%20width='24'%20height='2'/%3E%3Crect%20x='13'%20y='11'%20width='24'%20height='2'/%3E%3Crect%20x='-13'%20y='11'%20width='24'%20height='2'/%3E%3C/g%3E%3C/svg%3E");
+    background-size:26px 22px;padding:15px;
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    mask-composite:exclude}
   .sealed .slabel{position:absolute;top:-15px;left:26px;padding:2px 12px;background:var(--bg);
     font-family:var(--mono);font-size:16px;color:var(--claude);letter-spacing:.08em}
   .wkcard{position:absolute;left:34px;top:38px;right:34px;padding:18px 20px;border-radius:12px;
@@ -106,7 +113,7 @@
   .polcard .row b{color:var(--text);font-weight:400}
   .wall{position:absolute;padding:8px 16px;border-radius:999px;background:var(--bg);
     border:1px solid var(--border2);font-family:var(--mono);font-size:16px;color:var(--dim)}
-  #wall-fs{left:-52px;top:190px} #wall-net{left:470px;top:-19px} #wall-refs{right:-58px;top:190px}
+  #wall-fs{left:-52px;top:190px} #wall-net{left:470px;top:-19px}
   .blockcard{position:absolute;left:50px;top:200px;width:580px;padding:22px 30px;border-radius:16px;z-index:5;
     background:rgba(38,10,10,.97);border:2px solid var(--danger);opacity:0;
     box-shadow:0 24px 70px rgba(0,0,0,.65);font-family:var(--mono)}
@@ -172,7 +179,7 @@
     border:1px solid var(--border2);z-index:99;font-family:var(--mono);font-size:14px;color:var(--dim)}
   #ctl button{background:none;border:none;color:var(--text);font-size:18px;cursor:pointer;font-family:var(--mono)}
   #ctl input[type=range]{width:420px;accent-color:var(--claude)}
-  body.render #ctl{display:none}
+  body.render #ctl,body.embed #ctl{display:none}
 </style>
 </head>
 <body>
@@ -221,18 +228,16 @@
             <div class="pt">POLICY MANIFEST</div>
             <div class="row"><span>fs.write</span><b>$WORK only</b></div>
             <div class="row"><span>net.egress</span><b>api.anthropic.com</b></div>
-            <div class="row"><span>refs</span><b>env branch only</b></div>
           </div>
           <div class="wall" id="wall-fs">✋ fs</div>
           <div class="wall" id="wall-net">✋ net</div>
-          <div class="wall" id="wall-refs">✋ refs</div>
         </div>
         <div class="blockcard" id="bcard">
           <div class="bl">BLOCKED BY POLICY</div>
           <div class="bt" id="bcard-t"></div>
         </div>
-        <div class="bigline" id="big1">The agent still finishes the task.</div>
-        <div class="bigline" id="big2" style="top:762px">Only the <em>reviewed diff</em> is merged.</div>
+        <div class="bigline" id="big1">A safe workspace for agents.</div>
+        <div class="bigline" id="big2" style="top:762px">Dangerous operations are <em>blocked</em>.</div>
       </div>
       <div class="term">
         <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
@@ -254,7 +259,7 @@
       <div class="tbody" id="t-recm"></div>
     </div>
     <div class="checklist" id="cklist">
-      <div class="ck" id="ck0"><span class="box"></span>Prompt</div>
+      <div class="ck" id="ck0"><span class="box"></span>Prompt Quality</div>
       <div class="ck" id="ck1"><span class="box"></span>Commands</div>
       <div class="ck" id="ck2"><span class="box"></span>Test output</div>
       <div class="ck" id="ck3"><span class="box"></span>Denied actions</div>
@@ -281,11 +286,11 @@
       </div>
     </div>
     <div class="l1" id="s-l1">Works for one agent. Scales to many.</div>
-    <div class="bub from-claude" id="s-b1" style="left:620px;top:300px">
+    <div class="bub from-claude" id="s-b1" style="left:620px;top:405px">
       <div class="who">claude → codex · h5i msg review</div>
       jitter=0 shrinks to a flake — added a regression seed, please check
     </div>
-    <div class="bub from-codex" id="s-b2" style="right:620px;top:400px">
+    <div class="bub from-codex" id="s-b2" style="right:620px;top:478px">
       <div class="who">codex → claude · h5i msg review</div>
       backoff can overflow past 2^31 ms — clamp the upper bound too?
     </div>
@@ -372,42 +377,39 @@ const evHookM = [
   {at:8.1, out:[`  <span class="dim">⎿</span> <span class="wr">id_rsa · known_hosts · config — gone</span>`]},
 ];
 
-/* ---- m1 sandbox (13–43) ---- */
+/* ---- m1 sandbox (15.5–41.9) ---- */
 const evEnvM = [
   {at:.3,  cmd:'h5i env create worker-env --profile agent-claude', cps:34},
   {at:1.8, out:[
     `<span class="ok">✔</span> worktree  <span class="dim">.git/.h5i/env/you/worker-env/work</span>`,
     `<span class="ok">✔</span> policy    agent-claude · isolation: <span class="wt">process</span> <span class="faint">(Landlock + seccomp)</span>`], stagger:.3},
   {at:3.4, cmd:'h5i env shell worker-env', cps:34},
-  {at:4.4, out:[`<span class="dim">entering confined session — walls up: fs · net · refs</span>`]},
+  {at:4.4, out:[`<span class="dim">entering confined session — walls up: fs · net</span>`]},
   {at:5.2, cmd:'claude --dangerously-skip-permissions', prompt:'h5i:worker-env$', pcls:'box', cps:34},
   {at:6.5, out:[`<span class="co">✻</span> Claude Code <span class="dim">— permissions off</span>`]},
   {at:7.9, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(cat ~/.ssh/id_rsa)</span>`]},
   {at:8.5, out:[`  <span class="err">⛔ Permission denied — outside fs.read</span>`]},
   {at:10.9,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(curl https://internal-billing.corp/api)</span>`]},
   {at:11.5,out:[`  <span class="err">⛔ 403 — not on the net.egress allowlist</span>`]},
-  {at:13.9,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(git push origin main)</span>`]},
-  {at:14.5,out:[`  <span class="err">⛔ refused — env branch only</span>`]},
-  {at:16.6,out:[
+  {at:14.0,out:[
     `<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(sync/worker.py)</span> <span class="ok">✓</span>   <span class="co">●</span> <span class="tool">Bash</span><span class="dim">(pytest -q)</span> → <span class="ok">241 passed</span>`,
     `<span class="faint">task finished inside $WORK — every command captured</span>`], stagger:.4},
-  {at:18.4, cmd:'exit', prompt:'h5i:worker-env$', pcls:'box', cps:20},
-  {at:19.4, cmd:'h5i env diff worker-env --stat', cps:34},
-  {at:20.6, out:[
+  {at:15.8, cmd:'exit', prompt:'h5i:worker-env$', pcls:'box', cps:20},
+  {at:16.8, cmd:'h5i env diff worker-env --stat', cps:34},
+  {at:18.0, out:[
     ` sync/worker.py       | 14 <span class="ok">++++++</span><span class="err">--</span>`,
     ` tests/test_worker.py |  9 <span class="ok">+++++</span>`], stagger:.25},
-  {at:22.2, cmd:'h5i env propose worker-env', cps:34},
-  {at:23.4, out:[`<span class="ok">✔</span> review brief — 2 files · <span class="err">3 denials logged</span> · 6 captures`]},
-  {at:25.0, cmd:'h5i env apply worker-env', cps:34},
-  {at:26.2, out:[`<span class="ok">✔</span> merged onto main — <span class="wt">after your review, never before</span>`]},
+  {at:19.6, cmd:'h5i env propose worker-env', cps:34},
+  {at:20.8, out:[`<span class="ok">✔</span> review brief — 2 files · <span class="err">2 denials logged</span> · 6 captures`]},
+  {at:22.4, cmd:'h5i env apply worker-env', cps:34},
+  {at:23.6, out:[`<span class="ok">✔</span> merged onto main — <span class="wt">after your review, never before</span>`]},
 ];
 const BLOCKS = [
   {at:8.5,  wall:'wall-fs',   txt:'<b>~/.ssh/id_rsa</b> → BLOCKED'},
   {at:11.5, wall:'wall-net',  txt:'<b>internal-billing.corp</b> → BLOCKED'},
-  {at:14.5, wall:'wall-refs', txt:'<b>git push origin main</b> → BLOCKED'},
 ];
 
-/* ---- m2 receipt (44.5–58.5) ---- */
+/* ---- m2 receipt (41.9–55.9) ---- */
 const evRecM = [
   {at:1.0, cmd:'h5i recall log --limit 1', cps:34},
   {at:2.4, out:[
@@ -415,7 +417,7 @@ const evRecM = [
     `  <span class="dim">agent</span>    claude-code · claude-sonnet`,
     `  <span class="dim">prompt</span>   <span class="vio">"Fix the flaky retry test in tests/test_worker.py"</span>`,
     `  <span class="dim">tests</span>    <span class="ok">241 passed</span> · coverage +1`,
-    `  <span class="dim">denials</span>  <span class="err">3 blocked</span> · logged`,
+    `  <span class="dim">denials</span>  <span class="err">2 blocked</span> · logged`,
     `  <span class="dim">tokens</span>   −97% (412 → 9 lines, raw recoverable)`], stagger:.22},
   {at:5.8, cmd:'h5i audit', cps:34},
   {at:6.8, out:[
@@ -424,16 +426,24 @@ const evRecM = [
     `  <span class="dim">secret leaks</span>      <span class="ok">none detected</span> <span class="faint">(2 candidates redacted)</span>`], stagger:.25},
 ];
 
-/* ---- m3 scale (57–67) ---- */
+/* ---- m3 scale (55.9–65.9) ---- */
 const evClM = [
-  {at:.6, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
-  {at:1.6, out:[`<span class="co">●</span> <span class="tool">Write</span><span class="dim">(tests/test_worker_props.py)</span>  <span class="ok">✓</span>`]},
-  {at:2.6, out:[`<span class="te">◂ peer review from codex</span> · <span class="faint">revised & resealed</span>`]},
+  {at:.1, out:[
+    `<span class="co"> ▐▛███▜▌</span>   <span class="wt">Claude Code</span> <span class="faint">v2.1.201</span>`,
+    `<span class="co">▝▜█████▛▘</span>  <span class="dim">Opus · Claude Max</span>`,
+    `<span class="co">  ▘▘ ▝▝</span>    <span class="faint">~/Dev/h5i</span>`], stagger:0},
+  {at:1.4, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
+  {at:2.4, out:[`<span class="co">●</span> <span class="tool">Write</span><span class="dim">(tests/test_worker_props.py)</span>  <span class="ok">✓</span>`]},
+  {at:3.4, out:[`<span class="te">◂ peer review from codex</span> · <span class="faint">revised & resealed</span>`]},
 ];
 const evCxM = [
-  {at:1.0, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
-  {at:2.0, out:[`<span class="te">●</span> <span class="tool">Write</span><span class="dim">(tests/test_retry_props.py)</span>  <span class="ok">✓</span>`]},
-  {at:3.0, out:[`<span class="co">◂ peer review from claude</span> · <span class="faint">revised & resealed</span>`]},
+  {at:.1, out:[
+    `<span class="te">╭────────────────────────────────╮</span>`,
+    `<span class="te">│ <span class="wt">&gt;_ OpenAI Codex</span> · <span class="wt">gpt-5.5 high</span>                     │</span>`,
+    `<span class="te">╰────────────────────────────────╯</span>`], stagger:0},
+  {at:1.8, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
+  {at:2.8, out:[`<span class="te">●</span> <span class="tool">Write</span><span class="dim">(tests/test_retry_props.py)</span>  <span class="ok">✓</span>`]},
+  {at:3.8, out:[`<span class="co">◂ peer review from claude</span> · <span class="faint">revised & resealed</span>`]},
 ];
 
 /* ---- evidence rail (absolute seconds) ---- */
@@ -441,15 +451,14 @@ const RAIL = [
   {t:17.7, cls:'c-warn',  label:'policy'},
   {t:24.1, cls:'c-deny',  label:'deny:fs'},
   {t:27.1, cls:'c-deny',  label:'deny:net'},
-  {t:30.1, cls:'c-deny',  label:'deny:refs'},
-  {t:39.1, cls:'c-ok',    label:'brief'},
-  {t:41.9, cls:'c-ok',    label:'apply'},
-  {t:47.1, cls:'c-ctx',   label:'prompt'},
-  {t:48.9, cls:'c-git',   label:'receipt'},
-  {t:52.3, cls:'c-ok',    label:'audit'},
-  {t:61.3, cls:'c-claude',label:'review'},
-  {t:62.7, cls:'c-codex', label:'review'},
-  {t:65.3, cls:'c-ok',    label:'merge'},
+  {t:36.5, cls:'c-ok',    label:'brief'},
+  {t:39.3, cls:'c-ok',    label:'apply'},
+  {t:44.5, cls:'c-ctx',   label:'prompt'},
+  {t:46.3, cls:'c-git',   label:'receipt'},
+  {t:49.7, cls:'c-ok',    label:'audit'},
+  {t:58.7, cls:'c-claude',label:'review'},
+  {t:60.1, cls:'c-codex', label:'review'},
+  {t:62.7, cls:'c-ok',    label:'merge'},
 ];
 
 const SCENES = [
@@ -467,13 +476,13 @@ const SCENES = [
       $('m0g1').style.opacity = Math.min(1, 1 - ramp(t, 11.4, .5));
       pop($('m0title'), t, 11.8, {d:.8, dy:26});
     }},
-  { id:'m1', start:15.5, end:44.5, eyebrow:'the sandboxed worktree',
+  { id:'m1', start:15.5, end:41.9, eyebrow:'the sandboxed worktree',
     update(t){
       renderTerm($('t-envm'), evEnvM, t, {cursor:'$'});
       const bp = eo(ramp(t, 1.8, .9));
       const box = $('d-box');
       box.style.opacity = bp; box.style.transform = `scale(${.94 + .06*bp})`;
-      ['wall-fs','wall-net','wall-refs'].forEach(w => { $(w).style.opacity = ramp(t, 3.0, .5); });
+      ['wall-fs','wall-net'].forEach(w => { $(w).style.opacity = ramp(t, 3.0, .5); });
       // one big red card per denial
       let card = null;
       for (const b of BLOCKS) {
@@ -493,12 +502,12 @@ const SCENES = [
         bc.style.transform = `scale(${.94 + .06*eo(ramp(t, card.at, .3))})`;
       } else bc.style.opacity = 0;
       // callout, then the two big closing lines
-      const con = Math.min(pop($('cm1'), t, 6.2), 1 - ramp(t, 17.0, .45));
+      const con = Math.min(pop($('cm1'), t, 6.2), 1 - ramp(t, 14.4, .45));
       $('cm1').style.opacity = Math.max(0, con);
-      pop($('big1'), t, 26.0, {d:.6});
-      pop($('big2'), t, 27.2, {d:.6});
+      pop($('big1'), t, 23.4, {d:.6});
+      pop($('big2'), t, 24.6, {d:.6});
     }},
-  { id:'m2', start:44.5, end:58.5, eyebrow:'the receipt',
+  { id:'m2', start:41.9, end:55.9, eyebrow:'the receipt',
     update(t){
       pop($('r-h'), t, .3, {d:.6, dy:20});
       renderTerm($('t-recm'), evRecM, t, {cursor:'$'});
@@ -512,7 +521,7 @@ const SCENES = [
       }
       pop($('r-sub'), t, 8.8, {d:.7});
     }},
-  { id:'m3', start:58.5, end:68.5, eyebrow:'scale',
+  { id:'m3', start:55.9, end:65.9, eyebrow:'scale to multi agents',
     update(t){
       renderTerm($('t-clm'), evClM, t);
       renderTerm($('t-cxm'), evCxM, t);
@@ -523,7 +532,7 @@ const SCENES = [
       hold($('s-b2'), t, 4.4, 9.3);
       pop($('s-l2'), t, 5.8, {d:.6});
     }},
-  { id:'m4', start:68.5, end:76.5, eyebrow:'refs/h5i/*',
+  { id:'m4', start:65.9, end:73.9, eyebrow:'refs/h5i/*',
     update(t){
       pop($('c-t1'), t, .4, {d:.6, dy:20});
       pop($('c-t2'), t, 1.4, {d:.6, dy:20});
@@ -531,7 +540,7 @@ const SCENES = [
       pop($('c-fin'), t, 4.8, {d:.8});
     }},
 ];
-const TOTAL = 76500;
+const TOTAL = 73900;
 
 const chipsEl = $('chips');
 function draw(ms){
@@ -556,7 +565,7 @@ function draw(ms){
   if (vis.length > 12) ch += `<span class="chip" style="opacity:.8">⋯ ${vis.length - 11} more</span>`;
   for (const r of vis.slice(vis.length > 12 ? -11 : 0)) {
     const p = eo(ramp(ts, r.t, .45));
-    const glow = ts > 72 && ts < 75.5 ? 'border-color:rgba(122,162,255,.6);' : '';
+    const glow = ts > 69.4 && ts < 72.9 ? 'border-color:rgba(122,162,255,.6);' : '';
     ch += `<span class="chip ${r.cls}" style="opacity:${p};transform:scale(${.6+.4*p});${glow}">${r.label}</span>`;
   }
   if (chipsEl._h !== ch) { chipsEl._h = ch; chipsEl.innerHTML = ch; }
@@ -573,6 +582,7 @@ function fit(){
 addEventListener('resize', fit); fit();
 
 const RENDER = new URLSearchParams(location.search).has('render');
+const EMBED = new URLSearchParams(location.search).has('embed');
 window.TOTAL = TOTAL;
 window.SEEK = ms => { draw(clamp(ms, 0, TOTAL)); };
 
@@ -580,15 +590,16 @@ if (RENDER) {
   document.body.classList.add('render');
   draw(0);
 } else {
+  if (EMBED) document.body.classList.add('embed');
   let playing = true, t0 = performance.now(), acc = 0;
   const scrub = $('scrub'), pb = $('pb'), tm = $('tm');
   const now = () => playing ? acc + (performance.now() - t0) : acc;
   function loop(){
     let ms = now();
-    if (ms >= TOTAL) { ms = TOTAL; playing = false; acc = TOTAL; pb.textContent = '↺'; }
+    if (ms >= TOTAL) { if (EMBED) { acc = 0; t0 = performance.now(); ms = 0; } else { ms = TOTAL; playing = false; acc = TOTAL; pb.textContent = '↺'; } }
     draw(ms);
     scrub.value = Math.round(ms/TOTAL*1000);
-    tm.textContent = `${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')} / 1:17`;
+    tm.textContent = `${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')} / 1:14`;
     requestAnimationFrame(loop);
   }
   const setT = ms => { acc = clamp(ms,0,TOTAL); t0 = performance.now(); };
