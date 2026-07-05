@@ -8,23 +8,31 @@ mental model and a task-oriented capability map before the per-command reference
 
 ## What h5i is
 
-**h5i** ("high-five") is a **Git sidecar for AI-era version control**. It leaves
-your Git history untouched and records four semantic dimensions *alongside* it:
+**h5i** (pronounced *high-five*) gives every AI coding agent an **auditable
+workspace**: a sandboxed Git worktree to work in, plus a complete record of the
+prompts, commands, logs, policies, and reviews behind every change. Run one agent
+safely, scale to many via a conflict-free multi-agent orchestra, then merge one
+auditable result. It all lives in your repo, carried by Git — no SaaS.
 
-- **temporal** — ordinary Git history (commits, blame).
-- **intentional** — *AI provenance*: which model/agent produced a change, and the
-  prompt that drove it.
-- **empirical** — *evidence*: test metrics and captured command output (exit code,
-  tool, validated pass/fail, egress verdicts), stored out-of-band.
-- **associative** — *coordination*: cross-agent messages between AI agents.
+Concretely, h5i gives you four things *alongside* ordinary Git history:
 
-Its data lives in `.git/.h5i/` and under `refs/h5i/*`. **These refs do NOT travel
-with a plain `git push`** — use `h5i share push` / `h5i share pull` to move them.
+- **isolation** — each agent works in a policy-enforced sandbox (a Git worktree
+  confined by Landlock/seccomp/netns, or rootless Podman), so what it can read,
+  write, and reach on the network is bounded — and recorded.
+- **provenance** — which model/agent produced a change, and the prompt that drove
+  it.
+- **evidence** — test metrics and captured command output (exit code, tool,
+  validated pass/fail, and *enforced* egress verdicts), stored out-of-band so it
+  never bloats an agent's context.
+- **coordination** — cross-agent messages so several agents collaborate on one
+  repo.
 
-There are two ways to drive it: the **CLI** (`h5i …`, works out of the box) and
-native **MCP tools** (the same operations without shell-quoting — see
-[h5i mcp](#h5i-mcp)). The CLI is organized as `h5i <noun> <verb>`; see
-[Command Groups](#command-groups).
+This data lives in `.git/.h5i/` and under `refs/h5i/*`. **It does NOT travel with
+a plain `git push`** — use `h5i share push` / `h5i share pull` to move it.
+
+Two ways to drive h5i: the **CLI** (`h5i …`, works out of the box) and native
+**MCP tools** (the same operations without shell-quoting — see [h5i mcp](#h5i-mcp)).
+The CLI is organized as `h5i <noun> <verb>`; see [Command Groups](#command-groups).
 
 ---
 
@@ -46,6 +54,7 @@ emits `--json` is safe to consume from a script or another agent.)
 | Enforce governance on commits | [`h5i audit policy`](#h5i-audit-policy) | Block on credential leak / missing provenance. |
 | See the repo's AI footprint or a compliance report | [`h5i audit vibe`](#h5i-audit-vibe), [`audit compliance`](#h5i-audit-compliance) | % AI-written; date-ranged audit report (text / json / html). |
 | Run agent commands in a sandbox | [`h5i env create`](#env-lifecycle-commands), [`env run`](#env-lifecycle-commands), [`env shell`](#env-lifecycle-commands) | Confined worktree (Landlock/seccomp/netns or rootless Podman), policy-enforced + capture-wrapped. |
+| Run several agents on one task and merge one result | [`h5i team`](#h5i-team) | Conflict-free multi-agent orchestra: sealed workspaces, peer review, one auditable merge. |
 | Know what isolation the host can enforce | [`h5i env probe`](#env-lifecycle-commands), [`env capabilities --json`](#env-lifecycle-commands) | Tier, egress-enforced, resource limits — machine-readable so a product adapts honestly. |
 | Prove the sandbox allowed or blocked egress | [`recall objects --json`](#h5i-recall-object--objects) (`egress` field) | Authoritative allow/deny counts from the container proxy / socket-gate — *enforced*, not inferred from an exit code. |
 | Coordinate with other AI agents | [`h5i msg`](#h5i-msg) | Cross-agent messages over a shareable ref (ask / review / handoff). |

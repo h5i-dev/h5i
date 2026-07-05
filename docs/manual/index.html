@@ -278,22 +278,29 @@ is</a> and <a href="#what-h5i-can-do">What h5i can do</a> first</strong> — the
 mental model and a task-oriented capability map before the per-command reference.</p>
 <hr />
 <h2 id="what-h5i-is">What h5i is</h2>
-<p><strong>h5i</strong> ("high-five") is a <strong>Git sidecar for AI-era version control</strong>. It leaves
-your Git history untouched and records four semantic dimensions <em>alongside</em> it:</p>
+<p><strong>h5i</strong> (pronounced <em>high-five</em>) gives every AI coding agent an <strong>auditable
+workspace</strong>: a sandboxed Git worktree to work in, plus a complete record of the
+prompts, commands, logs, policies, and reviews behind every change. Run one agent
+safely, scale to many via a conflict-free multi-agent orchestra, then merge one
+auditable result. It all lives in your repo, carried by Git — no SaaS.</p>
+<p>Concretely, h5i gives you four things <em>alongside</em> ordinary Git history:</p>
 <ul>
-<li><strong>temporal</strong> — ordinary Git history (commits, blame).</li>
-<li><strong>intentional</strong> — <em>AI provenance</em>: which model/agent produced a change, and the
-  prompt that drove it.</li>
-<li><strong>empirical</strong> — <em>evidence</em>: test metrics and captured command output (exit code,
-  tool, validated pass/fail, egress verdicts), stored out-of-band.</li>
-<li><strong>associative</strong> — <em>coordination</em>: cross-agent messages between AI agents.</li>
+<li><strong>isolation</strong> — each agent works in a policy-enforced sandbox (a Git worktree
+  confined by Landlock/seccomp/netns, or rootless Podman), so what it can read,
+  write, and reach on the network is bounded — and recorded.</li>
+<li><strong>provenance</strong> — which model/agent produced a change, and the prompt that drove
+  it.</li>
+<li><strong>evidence</strong> — test metrics and captured command output (exit code, tool,
+  validated pass/fail, and <em>enforced</em> egress verdicts), stored out-of-band so it
+  never bloats an agent's context.</li>
+<li><strong>coordination</strong> — cross-agent messages so several agents collaborate on one
+  repo.</li>
 </ul>
-<p>Its data lives in <code>.git/.h5i/</code> and under <code>refs/h5i/*</code>. <strong>These refs do NOT travel
-with a plain <code>git push</code></strong> — use <code>h5i share push</code> / <code>h5i share pull</code> to move them.</p>
-<p>There are two ways to drive it: the <strong>CLI</strong> (<code>h5i …</code>, works out of the box) and
-native <strong>MCP tools</strong> (the same operations without shell-quoting — see
-<a href="#h5i-mcp">h5i mcp</a>). The CLI is organized as <code>h5i &lt;noun&gt; &lt;verb&gt;</code>; see
-<a href="#command-groups">Command Groups</a>.</p>
+<p>This data lives in <code>.git/.h5i/</code> and under <code>refs/h5i/*</code>. <strong>It does NOT travel with
+a plain <code>git push</code></strong> — use <code>h5i share push</code> / <code>h5i share pull</code> to move it.</p>
+<p>Two ways to drive h5i: the <strong>CLI</strong> (<code>h5i …</code>, works out of the box) and native
+<strong>MCP tools</strong> (the same operations without shell-quoting — see <a href="#h5i-mcp">h5i mcp</a>).
+The CLI is organized as <code>h5i &lt;noun&gt; &lt;verb&gt;</code>; see <a href="#command-groups">Command Groups</a>.</p>
 <hr />
 <h2 id="what-h5i-can-do">What h5i can do</h2>
 <p>A task-oriented map of the whole surface. Find the row for what you want, then
@@ -357,6 +364,11 @@ emits <code>--json</code> is safe to consume from a script or another agent.)</p
 <td>Run agent commands in a sandbox</td>
 <td><a href="#env-lifecycle-commands"><code>h5i env create</code></a>, <a href="#env-lifecycle-commands"><code>env run</code></a>, <a href="#env-lifecycle-commands"><code>env shell</code></a></td>
 <td>Confined worktree (Landlock/seccomp/netns or rootless Podman), policy-enforced + capture-wrapped.</td>
+</tr>
+<tr>
+<td>Run several agents on one task and merge one result</td>
+<td><a href="#h5i-team"><code>h5i team</code></a></td>
+<td>Conflict-free multi-agent orchestra: sealed workspaces, peer review, one auditable merge.</td>
 </tr>
 <tr>
 <td>Know what isolation the host can enforce</td>
