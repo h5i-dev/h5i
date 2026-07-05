@@ -282,11 +282,11 @@
       </div>
     </div>
     <div class="l1" id="s-l1">Works for one agent. Scales to many.</div>
-    <div class="bub from-claude" id="s-b1" style="left:620px;top:300px">
+    <div class="bub from-claude" id="s-b1" style="left:620px;top:405px">
       <div class="who">claude → codex · h5i msg review</div>
       jitter=0 shrinks to a flake — added a regression seed, please check
     </div>
-    <div class="bub from-codex" id="s-b2" style="right:620px;top:400px">
+    <div class="bub from-codex" id="s-b2" style="right:620px;top:478px">
       <div class="who">codex → claude · h5i msg review</div>
       backoff can overflow past 2^31 ms — clamp the upper bound too?
     </div>
@@ -427,14 +427,25 @@ const evRecM = [
 
 /* ---- m3 scale (57–67) ---- */
 const evClM = [
-  {at:.6, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
-  {at:1.6, out:[`<span class="co">●</span> <span class="tool">Write</span><span class="dim">(tests/test_worker_props.py)</span>  <span class="ok">✓</span>`]},
-  {at:2.6, out:[`<span class="te">◂ peer review from codex</span> · <span class="faint">revised & resealed</span>`]},
+  {at:.1, out:[
+    `<span class="co"> ▐▛███▜▌</span>   <span class="wt">Claude Code</span> <span class="faint">v2.1.201</span>`,
+    `<span class="co">▝▜█████▛▘</span>  <span class="dim">Opus · Claude Max</span>`,
+    `<span class="co">  ▘▘ ▝▝</span>    <span class="faint">~/Dev/h5i</span>`], stagger:0},
+  {at:1.4, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
+  {at:2.4, out:[`<span class="co">●</span> <span class="tool">Write</span><span class="dim">(tests/test_worker_props.py)</span>  <span class="ok">✓</span>`]},
+  {at:3.4, out:[`<span class="te">◂ peer review from codex</span> · <span class="faint">revised & resealed</span>`]},
 ];
 const evCxM = [
-  {at:1.0, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
-  {at:2.0, out:[`<span class="te">●</span> <span class="tool">Write</span><span class="dim">(tests/test_retry_props.py)</span>  <span class="ok">✓</span>`]},
-  {at:3.0, out:[`<span class="co">◂ peer review from claude</span> · <span class="faint">revised & resealed</span>`]},
+  {at:.1, out:[
+    `<span class="te">╭────────────────────────────────────────────╮</span>`,
+    `<span class="te">│ <span class="wt">&gt;_ OpenAI Codex</span> <span class="faint">(v0.142.5)</span>                 │</span>`,
+    `<span class="te">│                                            │</span>`,
+    `<span class="te">│ <span class="dim">model:</span>     <span class="wt">gpt-5.5 high</span>   <span class="faint">/model to change</span> │</span>`,
+    `<span class="te">│ <span class="dim">directory:</span> ~/Dev/h5i                       │</span>`,
+    `<span class="te">╰────────────────────────────────────────────╯</span>`], stagger:0},
+  {at:1.8, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
+  {at:2.8, out:[`<span class="te">●</span> <span class="tool">Write</span><span class="dim">(tests/test_retry_props.py)</span>  <span class="ok">✓</span>`]},
+  {at:3.8, out:[`<span class="co">◂ peer review from claude</span> · <span class="faint">revised & resealed</span>`]},
 ];
 
 /* ---- evidence rail (absolute seconds) ---- */
