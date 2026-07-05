@@ -1,6 +1,6 @@
 # h5i demo film
 
-The h5i product video (~1:15), built as a deterministic HTML timeline and
+The h5i product video (~1:14), built as a deterministic HTML timeline and
 rendered to mp4.
 
 ## The film — `index.html`
