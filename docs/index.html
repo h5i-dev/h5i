@@ -355,6 +355,16 @@
       font-size: 0.86rem; line-height: 1.2;
     }
     .hero-actions { display: flex; gap: 0.9rem; justify-content: center; flex-wrap: wrap; margin-bottom: 2.8rem; }
+    .hero-film { display: inline-flex; flex-direction: column; align-items: center; gap: 0.65rem; margin: 0 auto 2.8rem; text-decoration: none; }
+    .hero-film-frame { position: relative; width: min(420px, 78vw); border-radius: 14px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 18px 50px rgba(0,0,0,0.5); transition: transform 0.2s ease, border-color 0.2s ease; }
+    .hero-film:hover .hero-film-frame { transform: translateY(-3px); border-color: rgba(210,28,28,0.6); }
+    .hero-film-frame img { display: block; width: 100%; height: auto; }
+    .hero-film-play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+    .hero-film-play span { width: 60px; height: 60px; border-radius: 50%; background: rgba(210,28,28,0.92); display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 30px rgba(0,0,0,0.5); transition: transform 0.2s ease; }
+    .hero-film:hover .hero-film-play span { transform: scale(1.08); }
+    .hero-film-play span::before { content: ''; border-style: solid; border-width: 11px 0 11px 18px; border-color: transparent transparent transparent #fff; margin-left: 5px; }
+    .hero-film-cap { font-size: 0.82rem; letter-spacing: 0.02em; color: var(--text-faint); }
+    .hero-film:hover .hero-film-cap { color: var(--text); }
     .btn {
       display: inline-flex; align-items: center; gap: 0.5rem;
       padding: 0.8rem 1.7rem; border-radius: 8px;
@@ -1193,6 +1203,13 @@
       <a href="/workflows/" class="btn btn-primary">See Workflows</a>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-ghost">View on GitHub</a>
     </div>
+    <a href="/demo/" class="hero-film" aria-label="Watch the h5i demo film">
+      <span class="hero-film-frame">
+        <img src="/demo/poster.png" width="1920" height="1080" alt="h5i demo film — a sealed, auditable workspace for every AI coding agent" loading="lazy">
+        <span class="hero-film-play"><span></span></span>
+      </span>
+      <span class="hero-film-cap">&#9654;&nbsp; Watch the 74-second film</span>
+    </a>
     <div class="hero-install" id="quickstart">
       <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</code>
       <button class="copy-btn" onclick="copyInstall()">copy</button>
