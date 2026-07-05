@@ -107,7 +107,7 @@
   .polcard .row b{color:var(--text);font-weight:400}
   .wall{position:absolute;padding:8px 16px;border-radius:999px;background:var(--bg);
     border:1px solid var(--border2);font-family:var(--mono);font-size:16px;color:var(--dim)}
-  #wall-fs{left:-52px;top:190px} #wall-net{left:470px;top:-19px} #wall-refs{right:-58px;top:190px}
+  #wall-fs{left:-52px;top:190px} #wall-net{left:470px;top:-19px}
   .blockcard{position:absolute;left:50px;top:200px;width:580px;padding:22px 30px;border-radius:16px;z-index:5;
     background:rgba(38,10,10,.97);border:2px solid var(--danger);opacity:0;
     box-shadow:0 24px 70px rgba(0,0,0,.65);font-family:var(--mono)}
@@ -222,11 +222,9 @@
             <div class="pt">POLICY MANIFEST</div>
             <div class="row"><span>fs.write</span><b>$WORK only</b></div>
             <div class="row"><span>net.egress</span><b>api.anthropic.com</b></div>
-            <div class="row"><span>refs</span><b>env branch only</b></div>
           </div>
           <div class="wall" id="wall-fs">✋ fs</div>
           <div class="wall" id="wall-net">✋ net</div>
-          <div class="wall" id="wall-refs">✋ refs</div>
         </div>
         <div class="blockcard" id="bcard">
           <div class="bl">BLOCKED BY POLICY</div>
@@ -380,15 +378,13 @@ const evEnvM = [
     `<span class="ok">✔</span> worktree  <span class="dim">.git/.h5i/env/you/worker-env/work</span>`,
     `<span class="ok">✔</span> policy    agent-claude · isolation: <span class="wt">process</span> <span class="faint">(Landlock + seccomp)</span>`], stagger:.3},
   {at:3.4, cmd:'h5i env shell worker-env', cps:34},
-  {at:4.4, out:[`<span class="dim">entering confined session — walls up: fs · net · refs</span>`]},
+  {at:4.4, out:[`<span class="dim">entering confined session — walls up: fs · net</span>`]},
   {at:5.2, cmd:'claude --dangerously-skip-permissions', prompt:'h5i:worker-env$', pcls:'box', cps:34},
   {at:6.5, out:[`<span class="co">✻</span> Claude Code <span class="dim">— permissions off</span>`]},
   {at:7.9, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(cat ~/.ssh/id_rsa)</span>`]},
   {at:8.5, out:[`  <span class="err">⛔ Permission denied — outside fs.read</span>`]},
   {at:10.9,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(curl https://internal-billing.corp/api)</span>`]},
   {at:11.5,out:[`  <span class="err">⛔ 403 — not on the net.egress allowlist</span>`]},
-  {at:13.9,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(git push origin main)</span>`]},
-  {at:14.5,out:[`  <span class="err">⛔ refused — env branch only</span>`]},
   {at:16.6,out:[
     `<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(sync/worker.py)</span> <span class="ok">✓</span>   <span class="co">●</span> <span class="tool">Bash</span><span class="dim">(pytest -q)</span> → <span class="ok">241 passed</span>`,
     `<span class="faint">task finished inside $WORK — every command captured</span>`], stagger:.4},
@@ -398,14 +394,13 @@ const evEnvM = [
     ` sync/worker.py       | 14 <span class="ok">++++++</span><span class="err">--</span>`,
     ` tests/test_worker.py |  9 <span class="ok">+++++</span>`], stagger:.25},
   {at:22.2, cmd:'h5i env propose worker-env', cps:34},
-  {at:23.4, out:[`<span class="ok">✔</span> review brief — 2 files · <span class="err">3 denials logged</span> · 6 captures`]},
+  {at:23.4, out:[`<span class="ok">✔</span> review brief — 2 files · <span class="err">2 denials logged</span> · 6 captures`]},
   {at:25.0, cmd:'h5i env apply worker-env', cps:34},
   {at:26.2, out:[`<span class="ok">✔</span> merged onto main — <span class="wt">after your review, never before</span>`]},
 ];
 const BLOCKS = [
   {at:8.5,  wall:'wall-fs',   txt:'<b>~/.ssh/id_rsa</b> → BLOCKED'},
   {at:11.5, wall:'wall-net',  txt:'<b>internal-billing.corp</b> → BLOCKED'},
-  {at:14.5, wall:'wall-refs', txt:'<b>git push origin main</b> → BLOCKED'},
 ];
 
 /* ---- m2 receipt (44.5–58.5) ---- */
@@ -416,7 +411,7 @@ const evRecM = [
     `  <span class="dim">agent</span>    claude-code · claude-sonnet`,
     `  <span class="dim">prompt</span>   <span class="vio">"Fix the flaky retry test in tests/test_worker.py"</span>`,
     `  <span class="dim">tests</span>    <span class="ok">241 passed</span> · coverage +1`,
-    `  <span class="dim">denials</span>  <span class="err">3 blocked</span> · logged`,
+    `  <span class="dim">denials</span>  <span class="err">2 blocked</span> · logged`,
     `  <span class="dim">tokens</span>   −97% (412 → 9 lines, raw recoverable)`], stagger:.22},
   {at:5.8, cmd:'h5i audit', cps:34},
   {at:6.8, out:[
@@ -450,7 +445,6 @@ const RAIL = [
   {t:17.7, cls:'c-warn',  label:'policy'},
   {t:24.1, cls:'c-deny',  label:'deny:fs'},
   {t:27.1, cls:'c-deny',  label:'deny:net'},
-  {t:30.1, cls:'c-deny',  label:'deny:refs'},
   {t:39.1, cls:'c-ok',    label:'brief'},
   {t:41.9, cls:'c-ok',    label:'apply'},
   {t:47.1, cls:'c-ctx',   label:'prompt'},
@@ -482,7 +476,7 @@ const SCENES = [
       const bp = eo(ramp(t, 1.8, .9));
       const box = $('d-box');
       box.style.opacity = bp; box.style.transform = `scale(${.94 + .06*bp})`;
-      ['wall-fs','wall-net','wall-refs'].forEach(w => { $(w).style.opacity = ramp(t, 3.0, .5); });
+      ['wall-fs','wall-net'].forEach(w => { $(w).style.opacity = ramp(t, 3.0, .5); });
       // one big red card per denial
       let card = null;
       for (const b of BLOCKS) {
