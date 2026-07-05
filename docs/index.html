@@ -1198,10 +1198,13 @@
     <p class="hero-sub">
       Run <strong>Claude Code, Codex, or whole agent teams</strong> inside sandboxes. h5i records the prompts, commands, and reviews behind every change.
     </p>
-    <p class="hero-punch">Start with one agent. Scale to many. Merge one auditable result.</p>
     <div class="hero-actions">
       <a href="/workflows/" class="btn btn-primary">See Workflows</a>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-ghost">View on GitHub</a>
+    </div>
+    <div class="hero-install" id="quickstart">
+      <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</code>
+      <button class="copy-btn" onclick="copyInstall()">copy</button>
     </div>
     <a href="/demo/" class="hero-film" aria-label="Watch the h5i demo film">
       <span class="hero-film-frame">
@@ -1210,9 +1213,17 @@
       </span>
       <span class="hero-film-cap">&#9654;&nbsp; Watch the 74-second film</span>
     </a>
-    <div class="hero-install" id="quickstart">
-      <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</code>
-      <button class="copy-btn" onclick="copyInstall()">copy</button>
+  </div>
+</section>
+
+<!-- ── The h5i serve dashboard ───────────────────────────────── -->
+<section id="dashboard">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">The flight recorder</span>
+      <h2 class="section-title">Every run, in one dashboard.</h2>
+      <p class="section-sub">The <code>h5i serve</code> dashboard: agents attempting one task in sealed lanes, a sandbox flight recorder, and the reasoning workspace behind every change.</p>
+      <div class="divider"></div>
     </div>
     <!-- Embedded ENSEMBLE tab — the real `h5i serve` dashboard, as live HTML -->
     <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve dashboard: agents attempting one task in sealed lanes (Ensemble), the sandbox flight recorder (Sandbox), and the reasoning/context workspace (Context).">
