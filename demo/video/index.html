@@ -94,7 +94,12 @@
   #m1 .diag{width:700px;position:relative;flex:none}
   #m1 .term{flex:1;height:868px}
   .sealed{position:absolute;left:20px;top:60px;width:640px;height:430px;border-radius:20px;
-    border:2px dashed rgba(255,122,89,.65);background:rgba(255,122,89,.03)}
+    border:2px solid rgba(255,122,89,.5);
+    background:
+      linear-gradient(180deg, rgba(255,122,89,.08), rgba(255,122,89,.02)),
+      url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='52'%20height='48'%3E%3Crect%20width='52'%20height='48'%20fill='rgb(24,15,13)'/%3E%3Cg%20fill='rgb(138,64,44)'%3E%3Crect%20width='48'%20height='20'%20rx='2'/%3E%3Crect%20x='26'%20y='24'%20width='48'%20height='20'%20rx='2'/%3E%3Crect%20x='-26'%20y='24'%20width='48'%20height='20'%20rx='2'/%3E%3C/g%3E%3Cg%20fill='rgb(168,90,66)'%3E%3Crect%20width='48'%20height='3'%20rx='1'/%3E%3Crect%20x='26'%20y='24'%20width='48'%20height='3'%20rx='1'/%3E%3Crect%20x='-26'%20y='24'%20width='48'%20height='3'%20rx='1'/%3E%3C/g%3E%3C/svg%3E");
+    background-size:100% 100%, 52px 48px;
+    box-shadow:inset 0 0 70px rgba(0,0,0,.6)}
   .sealed .slabel{position:absolute;top:-15px;left:26px;padding:2px 12px;background:var(--bg);
     font-family:var(--mono);font-size:16px;color:var(--claude);letter-spacing:.08em}
   .wkcard{position:absolute;left:34px;top:38px;right:34px;padding:18px 20px;border-radius:12px;
