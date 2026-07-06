@@ -36,7 +36,7 @@
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}]}
   </script>
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "ItemList", "name": "h5i Guides", "itemListElement": [{"@type": "ListItem", "position": 1, "url": "https://h5i.dev/workflows/"}, {"@type": "ListItem", "position": 2, "url": "https://h5i.dev/guides/token-reduction-capture-run/"}, {"@type": "ListItem", "position": 3, "url": "https://h5i.dev/guides/claude-code-memory/"}, {"@type": "ListItem", "position": 4, "url": "https://h5i.dev/guides/codex-claude-code-collaboration/"}, {"@type": "ListItem", "position": 5, "url": "https://h5i.dev/guides/ai-code-provenance/"}, {"@type": "ListItem", "position": 6, "url": "https://h5i.dev/guides/ai-code-review-audit/"}, {"@type": "ListItem", "position": 7, "url": "https://h5i.dev/guides/prompt-injection-detection-for-agents/"}, {"@type": "ListItem", "position": 8, "url": "https://h5i.dev/guides/git-blame-for-ai-code/"}]}
+  {"@context": "https://schema.org", "@type": "ItemList", "name": "h5i Guides", "itemListElement": [{"@type": "ListItem", "position": 1, "url": "https://h5i.dev/workflows/"}, {"@type": "ListItem", "position": 2, "url": "https://h5i.dev/guides/token-reduction-capture-run/"}, {"@type": "ListItem", "position": 3, "url": "https://h5i.dev/guides/claude-code-memory/"}, {"@type": "ListItem", "position": 4, "url": "https://h5i.dev/guides/codex-claude-code-collaboration/"}, {"@type": "ListItem", "position": 5, "url": "https://h5i.dev/guides/ai-code-provenance/"}, {"@type": "ListItem", "position": 6, "url": "https://h5i.dev/guides/ai-code-review-audit/"}, {"@type": "ListItem", "position": 7, "url": "https://h5i.dev/guides/secure-api-tokens-in-agent-box/"}, {"@type": "ListItem", "position": 8, "url": "https://h5i.dev/guides/prompt-injection-detection-for-agents/"}, {"@type": "ListItem", "position": 9, "url": "https://h5i.dev/guides/git-blame-for-ai-code/"}]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -113,6 +113,14 @@
     </div>
     <h2>Auditing AI-generated code: risk-rank what to review</h2>
     <p>Rank AI commits by uncertainty, blind edits, churn, and scope so reviewers spend their attention on the riskiest changes first.</p>
+  </a>
+
+  <a class="post-card" href="/guides/secure-api-tokens-in-agent-box/">
+    <div class="card-meta">
+      <span>Guide · Security</span>
+    </div>
+    <h2>Pass API tokens to a coding agent without leaking them</h2>
+    <p>Keep the real API key on the host. The agent box authenticates through a credential-injecting proxy, so a prompt-injected agent has no reusable token to steal.</p>
   </a>
 
   <a class="post-card" href="/guides/prompt-injection-detection-for-agents/">

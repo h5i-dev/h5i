@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pass API tokens to a coding agent without leaking them — h5i</title>
+  <meta name="description" content="Run Claude Code or Codex in an h5i sandbox and authenticate to the provider API without the token ever being usable inside the box. A host-side credential-injecting proxy keeps the real key on the host.">
+  <meta name="keywords" content="secure api token coding agent, claude code api key sandbox, agent credential isolation, credential proxy, anthropic api key sandbox, openai api key sandbox, h5i env credential">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/guides/secure-api-tokens-in-agent-box/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Pass API tokens to a coding agent without leaking them">
+  <meta property="og:description" content="Keep the real API key on the host. The agent box authenticates through a credential-injecting proxy, so a prompt-injected agent has no reusable token to steal.">
+  <meta property="og:url" content="https://h5i.dev/guides/secure-api-tokens-in-agent-box/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-07-06">
+  <meta property="article:author" content="Koukyosyumei">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Pass API tokens to a coding agent without leaking them">
+  <meta name="twitter:description" content="The real API key stays on the host. The agent box gets only a base URL and a dummy token; a host-side proxy injects the credential upstream.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Pass API tokens to a coding agent without leaking them",
+    "description": "How to authenticate Claude Code or Codex inside an h5i sandbox without the API token ever being usable inside the box, using h5i's credential-injecting egress proxy.",
+    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
+    "datePublished": "2026-07-06",
+    "dateModified": "2026-07-06",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/guides/secure-api-tokens-in-agent-box/"},
+    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+    "keywords": "secure api token coding agent, claude code api key sandbox, agent credential isolation, credential proxy, h5i env credential"
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}, {"@type": "ListItem", "position": 3, "name": "Pass API tokens to a coding agent without leaking them", "item": "https://h5i.dev/guides/secure-api-tokens-in-agent-box/"}]}
+  </script>
+  <script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Why not just export the API key inside the agent box?", "acceptedAnswer": {"@type": "Answer", "text": "An environment variable is readable by the agent and everything it spawns via /proc/self/environ. A prompt-injected agent could read the key and, on a tier without an airtight egress boundary, exfiltrate it. The credential-injecting proxy keeps the real key on the host so there is nothing reusable to steal."}}, {"@type": "Question", "name": "How does the agent authenticate if the token is not in the box?", "acceptedAnswer": {"@type": "Answer", "text": "The box is pointed at a host-side proxy with a base URL override and a per-run dummy token. The proxy strips the dummy, injects the real credential, and forwards the request to the provider over TLS. The genuine token lives only in the proxy's memory on the host."}}, {"@type": "Question", "name": "Which host environment variables does h5i use for the credential?", "acceptedAnswer": {"@type": "Answer", "text": "For Claude it checks ANTHROPIC_AUTH_TOKEN, then ANTHROPIC_API_KEY, then CLAUDE_CODE_OAUTH_TOKEN. For Codex it uses OPENAI_API_KEY. This matches each runtime's own precedence. Export the token on the host before creating or entering the env."}}, {"@type": "Question", "name": "Can the agent point the proxy at a different host to steal the token?", "acceptedAnswer": {"@type": "Answer", "text": "No. The proxy forwards to a single upstream host pinned per runtime. It ignores the request's own Host header and reuses only the path, so it cannot be aimed at an attacker host. The upstream address is DNS-pinned once at startup."}}, {"@type": "Question", "name": "Does this work on the kernel-level supervised tier too?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. On the supervised tier the box's network egress is locked by nftables to the proxy alone, and the credential file is removed from the box's per-env HOME copy, so the token is absent from the box entirely. The container tier never mounts host HOME, so nothing to remove there."}}, {"@type": "Question", "name": "How do I turn it off for a session that should log in inside the box?", "acceptedAnswer": {"@type": "Answer", "text": "Set H5I_CREDENTIAL_PROXY=off. The box then keeps its own in-box login, which is useful when you want to bill a subscription logged in inside the box rather than a host-exported API key."}}]}
+</script>
+  <link rel="stylesheet" href="/_static/highlight.css">
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Guide · Security</div>
+      <h1>Pass API tokens to a coding agent without leaking them</h1>
+      <p class="post-deck">A sandboxed agent still has to authenticate to its provider API. h5i keeps the real key on the host and lets the box authenticate through a credential-injecting proxy, so a prompt-injected agent has no reusable token to read or exfiltrate.</p>
+      <div class="post-meta">
+        <span><strong>Guide</strong> h5i</span>
+        <span><strong>Reading time</strong> 7 min</span>
+        <span><strong>Tags</strong> Security · Sandbox · Credentials</span>
+      </div>
+    </header>
+
+    <p>
+      When you run Claude Code or Codex inside an <code>h5i env</code> sandbox, the agent still needs a credential
+      to reach <code>api.anthropic.com</code> or <code>api.openai.com</code>. The obvious approaches all put the
+      token where the agent can read it: an environment variable shows up in <code>/proc/self/environ</code>, and a
+      credential file sits on disk in the box. A prompt-injected agent can read either one. On a tier without an
+      airtight network boundary it could even send the key somewhere.
+    </p>
+
+    <h2>The idea: keep the token on the host</h2>
+    <p>
+      h5i runs a small <strong>credential-injecting proxy</strong> on the host. The box is pointed at it with a
+      base URL override and a per-run <em>dummy</em> token. The proxy strips the dummy, injects the real
+      credential, and forwards the request to the provider over TLS. The genuine token never enters the box: it
+      lives only in the proxy's memory on the host.
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">flow</span></div>
+      <div class="terminal-body"><pre><span class="t-out">box ──http(dummy)──▶ 10.0.2.2:PORT  (host loopback)</span>
+<span class="t-out">                     h5i proxy: verify dummy → inject REAL key</span>
+<span class="t-out">                     └──TLS──▶ https://api.anthropic.com  (real key, host only)</span></pre></div>
+    </div>
+
+    <h2>Step 1: export the token on the host</h2>
+    <p>
+      Set the credential in the shell you launch h5i from. h5i reads it with the same precedence the runtime's
+      own CLI uses.
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># Claude: ANTHROPIC_AUTH_TOKEN, then ANTHROPIC_API_KEY, then CLAUDE_CODE_OAUTH_TOKEN</span>
+<span class="t-prompt">$</span> <span class="t-cmd">export ANTHROPIC_API_KEY=sk-ant-...</span>
+
+<span class="t-cmt"># Codex: OPENAI_API_KEY</span>
+<span class="t-prompt">$</span> <span class="t-cmd">export OPENAI_API_KEY=sk-...</span></pre></div>
+    </div>
+
+    <h2>Step 2: create and enter a sandboxed env</h2>
+    <p>
+      Create an agent env on a tier that can enforce network egress. The credential proxy engages automatically
+      when the profile is an agent runtime and a host token is present. No extra flag.
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create review --isolation container</span>
+<span class="t-out">  env 'review' created  (profile agent-claude, isolation container)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell review</span>
+<span class="t-out">  h5i:review$</span></pre></div>
+    </div>
+    <p>
+      Prefer the kernel-level tier when you want an airtight L3/L4 boundary rather than an HTTP-level one. The
+      credential handling is the same.
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create review --isolation supervised</span></pre></div>
+    </div>
+
+    <h2>Step 3: verify the token is not in the box</h2>
+    <p>
+      Inside the session, the base URL points at the host proxy and the only token present is the per-run dummy.
+      Your real key is nowhere in the box.
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">h5i:review</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">h5i:review$</span> <span class="t-cmd">env | grep -i anthropic</span>
+<span class="t-out">ANTHROPIC_BASE_URL=http://10.0.2.2:47213</span>
+<span class="t-out">ANTHROPIC_AUTH_TOKEN=h5i-proxy-9f3c1a...</span>   <span class="t-cmt"># a per-run dummy, not your key</span>
+
+<span class="t-prompt">h5i:review$</span> <span class="t-cmd">printenv ANTHROPIC_API_KEY</span>       <span class="t-cmt"># the real key is absent</span>
+
+<span class="t-cmt"># supervised tier: the stored credential file is scrubbed from the box copy too</span>
+<span class="t-prompt">h5i:review$</span> <span class="t-cmd">cat ~/.claude/.credentials.json</span>
+<span class="t-red">cat: /home/agent/.claude/.credentials.json: No such file or directory</span>
+
+<span class="t-cmt"># and the agent still works — it authenticates through the proxy</span>
+<span class="t-prompt">h5i:review$</span> <span class="t-cmd">claude -p "summarize the staged diff"</span>
+<span class="t-out">  The change adds a retry around the upload and a test for the timeout path…</span></pre></div>
+    </div>
+
+    <h2>What makes it secure</h2>
+    <ul>
+      <li><strong>Token never usable in the box.</strong> The box holds only a base URL and a per-run dummy. The genuine credential is resolved from the host environment and handed straight to the upstream request.</li>
+      <li><strong>No SSRF.</strong> The proxy forwards to one upstream host, pinned per runtime. It ignores the request's own <code>Host</code> and reuses only the path, so the box cannot aim the real key at an attacker host. The upstream address is DNS-pinned at startup.</li>
+      <li><strong>Loopback plus a shared-secret gate.</strong> The proxy listens on host loopback and injects the real credential only for a request that presents the per-run dummy, so other processes on the host cannot borrow it.</li>
+      <li><strong>Egress locked to the proxy.</strong> On the supervised tier, nftables default-drops everything except the single proxy port. Direct calls to the provider and every other host port are blocked at L3/L4.</li>
+      <li><strong>Credential absent, not just inert.</strong> On the supervised tier the credential file is removed from the box's per-env HOME copy. Only the env's own copy is touched, never your real HOME.</li>
+    </ul>
+
+    <h2>Tier differences at a glance</h2>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">tiers</span></div>
+      <div class="terminal-body"><pre><span class="t-bold">                     container                supervised</span>
+<span class="t-out">real token in box    never (no HOME mount)    scrubbed from HOME copy</span>
+<span class="t-out">egress boundary      L7 CONNECT allowlist     L3/L4 nftables, proxy-only</span>
+<span class="t-out">box reaches          proxy at 10.0.2.2        proxy at 10.0.2.2 (1 nft accept)</span>
+<span class="t-out">host requirement     rootless podman          slirp4netns + nft</span></pre></div>
+    </div>
+    <p>
+      Check what a host can actually enforce before you rely on it:
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env probe</span>            <span class="t-cmt"># isolation tiers available on this host</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env capabilities</span>     <span class="t-cmt"># the enforced tier, egress, and limits</span></pre></div>
+    </div>
+
+    <h2>Turning it off</h2>
+    <p>
+      Sometimes you want the box to use its own in-box login instead, for example to bill a subscription that is
+      logged in inside the box rather than a host-exported key. Set <code>H5I_CREDENTIAL_PROXY=off</code> and the
+      proxy stays out of the way.
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">H5I_CREDENTIAL_PROXY=off h5i env shell review</span></pre></div>
+    </div>
+
+    <div class="callout warn">
+      <strong>Defense in depth.</strong> The proxy removes the token as a target. Pair it with least-privilege
+      tools and egress limits, and audit the agent's reasoning trace for injection attempts, so a hijacked agent
+      is both contained and visible.
+    </div>
+
+<h2 id="faq">Frequently asked questions</h2>
+    <h3>Why not just export the API key inside the agent box?</h3>
+    <p>An environment variable is readable by the agent and everything it spawns via <code>/proc/self/environ</code>. A prompt-injected agent could read the key and, on a tier without an airtight egress boundary, exfiltrate it. The credential-injecting proxy keeps the real key on the host so there is nothing reusable to steal.</p>
+    <h3>How does the agent authenticate if the token is not in the box?</h3>
+    <p>The box is pointed at a host-side proxy with a base URL override and a per-run dummy token. The proxy strips the dummy, injects the real credential, and forwards the request to the provider over TLS. The genuine token lives only in the proxy's memory on the host.</p>
+    <h3>Which host environment variables does h5i use for the credential?</h3>
+    <p>For Claude it checks <code>ANTHROPIC_AUTH_TOKEN</code>, then <code>ANTHROPIC_API_KEY</code>, then <code>CLAUDE_CODE_OAUTH_TOKEN</code>. For Codex it uses <code>OPENAI_API_KEY</code>. This matches each runtime's own precedence. Export the token on the host before creating or entering the env.</p>
+    <h3>Can the agent point the proxy at a different host to steal the token?</h3>
+    <p>No. The proxy forwards to a single upstream host pinned per runtime. It ignores the request's own <code>Host</code> header and reuses only the path, so it cannot be aimed at an attacker host. The upstream address is DNS-pinned once at startup.</p>
+    <h3>Does this work on the kernel-level supervised tier too?</h3>
+    <p>Yes. On the supervised tier the box's network egress is locked by nftables to the proxy alone, and the credential file is removed from the box's per-env HOME copy, so the token is absent from the box entirely. The container tier never mounts host HOME, so there is nothing to remove there.</p>
+    <h3>How do I turn it off for a session that should log in inside the box?</h3>
+    <p>Set <code>H5I_CREDENTIAL_PROXY=off</code>. The box then keeps its own in-box login, which is useful when you want to bill a subscription logged in inside the box rather than a host-exported API key.</p>
+
+    <div class="next-up">
+      <span class="label">Related</span>
+      <a href="/guides/prompt-injection-detection-for-agents/">
+        <h3>Detecting prompt injection in agent traces</h3>
+        <p>Removing the token as a target pairs with auditing the reasoning trace for the injection attempts that would have gone after it.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Try h5i in your repo</h3>
+      <p>One <code>cargo install</code>, then <code>h5i init</code>. Give each agent a sealed sandbox that authenticates without holding your keys.</p>
+      <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/guides/" class="btn btn-ghost">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/guides/">Guides</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/h5i-dev/h5i">GitHub</a>
+      <a href="/manual/">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+<script src="/_static/highlight.js" defer></script>
+</body>
+</html>
