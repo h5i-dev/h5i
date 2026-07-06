@@ -50,6 +50,7 @@ pub mod server;
 // be depended on externally and stays free to refactor; types that need a
 // public path (e.g. the sandbox policy vocabulary) are re-exported `pub` from a
 // public module like `sandbox`.
+pub(crate) mod auth_proxy;
 pub(crate) mod cgroup;
 pub(crate) mod container;
 pub(crate) mod idents;

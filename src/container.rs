@@ -835,6 +835,50 @@ pub fn build_run_argv(
     a
 }
 
+// ─── credential-injecting auth proxy wiring ─────────────────────────────────
+
+/// When a container run is an **agent-runtime** box on the egress-proxy net plan
+/// *and* a host-side credential is resolvable, spawn the credential-injecting
+/// [`crate::auth_proxy`] and return its handle plus the box env additions
+/// (base-URL override + per-run dummy token + `NO_PROXY`). The genuine token
+/// stays host-side in the proxy; the box never receives it — this is "option 2":
+/// the box can authenticate to its provider API without ever holding the token.
+///
+/// Returns `None` (keeping the box on its existing in-box-login path) when: the
+/// net plan has no proxy to reach the host loopback, the profile is not a known
+/// agent runtime, no host credential is available, or the proxy fails to spawn.
+/// We never *downgrade* an active protection, and never break a working
+/// interactive-login flow that has no host token to broker.
+fn maybe_auth_proxy(
+    profile: &Profile,
+    net: &NetPlan,
+) -> Option<(crate::auth_proxy::AuthProxyHandle, Vec<(String, String)>)> {
+    if !matches!(net, NetPlan::Proxy(_)) {
+        return None;
+    }
+    // Explicit opt-out: keep the box on its own in-box login (e.g. to bill a
+    // subscription logged in inside the box rather than a host-exported API key).
+    if std::env::var("H5I_CREDENTIAL_PROXY").is_ok_and(|v| {
+        let v = v.trim().to_ascii_lowercase();
+        v == "off" || v == "0" || v == "false"
+    }) {
+        return None;
+    }
+    let rt = crate::sandbox_policy::AgentRuntime::from_profile_name(&profile.name)?;
+    let cred = crate::auth_proxy::resolve_credential(rt)?;
+    let token = crate::auth_proxy::new_client_token();
+    match crate::auth_proxy::spawn(rt, cred, token.clone()) {
+        Ok(handle) => {
+            let extra = crate::auth_proxy::box_env(rt, handle.port, &token);
+            Some((handle, extra))
+        }
+        Err(e) => {
+            eprintln!("note: credential proxy unavailable ({e}); box uses in-box login");
+            None
+        }
+    }
+}
+
 // ─── run ─────────────────────────────────────────────────────────────────────
 
 /// Run `argv` for `policy` inside a hardened rootless container. Spawns the
@@ -884,6 +928,19 @@ pub fn run(
     } else {
         NetPlan::None
     };
+
+    // Credential-injecting auth proxy (option 2): held for the container's
+    // lifetime. When engaged, the real API token stays host-side and the box is
+    // handed only a base-URL override + per-run dummy (appended to the env).
+    let (_auth_proxy, effective_env) = match maybe_auth_proxy(p, &net) {
+        Some((handle, extra)) => {
+            let mut env = injected_env.to_vec();
+            env.extend(extra);
+            (Some(handle), env)
+        }
+        None => (None, injected_env.to_vec()),
+    };
+    let injected_env: &[(String, String)] = &effective_env;
 
     // A unique, filesystem-safe container name for cleanup on timeout.
     let name = format!(
@@ -975,6 +1032,17 @@ pub fn run_interactive(
     } else {
         NetPlan::None
     };
+
+    // Credential-injecting auth proxy (option 2), held for the session lifetime.
+    let (_auth_proxy, effective_env) = match maybe_auth_proxy(p, &net) {
+        Some((handle, extra)) => {
+            let mut env = injected_env.to_vec();
+            env.extend(extra);
+            (Some(handle), env)
+        }
+        None => (None, injected_env.to_vec()),
+    };
+    let injected_env: &[(String, String)] = &effective_env;
 
     // Allocate a TTY only when we actually have one on both ends (a piped/CI
     // invocation must not request `-t`, which Podman would reject).
