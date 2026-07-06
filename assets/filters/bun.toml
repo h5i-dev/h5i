@@ -1,0 +1,75 @@
+[filters.bun]
+description = "Compact Bun output — keep test/install summaries and failures, drop per-package/progress noise"
+match_command = "^bun\\b"
+strip_ansi = true
+keep_lines_matching = [
+  "(?i)\\b(error|failed|failure|fail|panic|exception)\\b",
+  "(?i)^\\s*(installed|saved lockfile|checked)\\b",
+  "(?i)^\\s*\\d+\\s+packages? installed\\b",
+  "^\\s*\\d+\\s+(pass|passed|fail|failed|skip|skipped|todo)s?\\b",
+  "^\\s*(✓|✗|×|error:)\\s+",
+]
+truncate_lines_at = 240
+max_lines = 100
+on_empty = "bun: clean"
+
+[[tests.bun]]
+name = "keeps test summary and drops passing-test noise"
+input = """
+bun test v1.2.17 (282dda62)
+
+tests/math.test.ts:
+(pass) add > sums two numbers [0.32ms]
+(pass) add > handles zero [0.08ms]
+
+ 2 pass
+ 0 fail
+ 4 expect() calls
+Ran 2 tests across 1 file. [7.00ms]
+"""
+expected = """ 2 pass
+ 0 fail"""
+
+[[tests.bun]]
+name = "keeps failing test details and summary"
+input = """
+bun test v1.2.17 (282dda62)
+
+tests/api.test.ts:
+(pass) api > healthcheck [0.20ms]
+(fail) api > returns user [1.04ms]
+  Error: expected 500 to be 200
+      at tests/api.test.ts:12:18
+
+ 1 pass
+ 1 fail
+ 3 expect() calls
+Ran 2 tests across 1 file. [8.00ms]
+"""
+expected = """(fail) api > returns user [1.04ms]
+  Error: expected 500 to be 200
+ 1 pass
+ 1 fail"""
+
+[[tests.bun]]
+name = "install keeps summary but drops package progress"
+input = """
+bun install v1.2.17 (282dda62)
+Resolving dependencies
+Resolved, downloaded and extracted [123]
+Saved lockfile
+
++ @types/node@22.10.2
++ typescript@5.7.2
+
+15 packages installed [412.00ms]
+"""
+expected = """Saved lockfile
+15 packages installed [412.00ms]"""
+
+[[tests.bun]]
+name = "empty run collapses to clean message"
+input = """
+
+"""
+expected = "bun: clean"
