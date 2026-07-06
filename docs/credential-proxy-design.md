@@ -66,11 +66,13 @@ back to the box as bytes arrive.
 
 ## When it engages
 
-Automatically, in `container::run` / `run_interactive`, when **all** hold:
+Automatically, on both the **container** and **supervised** backends, when
+**all** hold (shared logic: `auth_proxy::engage`):
 
-1. `isolation=container` (this is the container backend), and the net plan is the
-   egress **proxy** plan (so the box can reach host loopback via slirp
-   `allow_host_loopback`);
+1. the box can reach the host proxy on this tier:
+   - **container** — the net plan is the egress **proxy** plan (slirp
+     `allow_host_loopback` at `10.0.2.2`);
+   - **supervised** — `net.egress` is non-empty (the netns has a slirp uplink);
 2. the profile is a known agent runtime (`agent-claude` / `agent-codex`, incl.
    the bare `agent` profile, which resolves to one);
 3. a host-side credential is resolvable for that runtime.
@@ -81,15 +83,45 @@ no host token to broker. Set `H5I_CREDENTIAL_PROXY=off` to force the in-box path
 (e.g. to bill a subscription logged in inside the box rather than a
 host-exported API key).
 
+### Supervised tier specifics
+
+The supervised (kernel) tier has no slirp `allow_host_loopback` by default — it
+starts `slirp4netns` with `--disable-host-loopback` for an airtight L3/L4 netns.
+When the auth proxy engages (`supervisor::setup_egress` with `auth_port`):
+
+- `--disable-host-loopback` is **dropped** so the gateway `10.0.2.2` forwards to
+  the host proxy on loopback;
+- the nftables ruleset is rebuilt to a **proxy-only** allowlist: default-drop,
+  with a single `ip daddr 10.0.2.2 tcp dport <auth_port> accept`. Every other
+  host-loopback port **and all direct API egress** stay dropped. So the box's
+  only reachable destination is the proxy — the boundary is the same nftables
+  mechanism that enforces all supervised egress, now with one narrowly-scoped
+  accept.
+- the box's per-env `~/.claude` / `~/.codex` copy is **scrubbed** of its
+  credential file (`.credentials.json` / `auth.json`) via `scrub_box_credentials`
+  (only the env's own backing copy is touched — never the real HOME), so the
+  token is *absent* from the box, not merely inert. Auth flows entirely through
+  the proxy + the dummy env token.
+
+Because egress is locked to the proxy alone, a token that somehow remained in the
+box would still be inert: unusable directly (nftables drops the API host),
+unexfiltratable (no other egress), and useless through the proxy (which injects
+its own credential and ignores the client's).
+
 ## Follow-ups
 
 - **Audit line.** The egress proxy records an allow/deny tally; the auth proxy
   should emit an evidence record (runtime, upstream host, credential
   *fingerprint* only, request count) so a reviewer can see the box authenticated
   via the broker. Integrate with `secrets_broker`'s fingerprint/audit path.
-- **Kernel tiers.** `process`/`supervised` have no egress allowlist proxy today,
-  so option 2 is container-only. A loopback auth proxy plus a netns route is the
-  natural extension.
+- **Process tier.** `supervised` is supported (above); the static `process` tier
+  has no egress netns (domain allowlists are meaningless there), so it stays on
+  the in-box-login path. No further work planned unless `process` gains egress.
+- **Credential persistence edge (supervised).** `scrub_box_credentials` removes
+  the credential from the persisted per-env HOME copy. If the same env is later
+  run with the proxy disabled (opt-out or host token removed), the box has no
+  stored credential and will prompt an in-box login (which repopulates the copy).
+  This is the pre-option-2 behaviour, not a break — noted for awareness.
 - **Short-lived minting.** `SecretGrant::ttl` anticipates a source that mints a
   scoped, expiring credential; the proxy could refresh it per window so even the
   host-side value is short-lived.

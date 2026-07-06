@@ -537,14 +537,92 @@ impl Drop for EgressNetns {
 /// pinned `/etc/hosts`, and launch a helper that spawns the `slirp4netns` uplink
 /// for the confined child's netns and signals readiness. Fails closed if nothing
 /// resolves or the tools are missing.
+/// The slirp gateway address a supervised netns routes through; also where the
+/// host's loopback (and our auth proxy) appears when host-loopback is enabled.
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
-fn setup_egress(policy: &crate::sandbox::ResolvedPolicy) -> Result<EgressNetns, H5iError> {
-    let resolved = resolve_egress(&policy.profile.net_egress);
-    if resolved.dests.is_empty() {
-        return Err(H5iError::Metadata(
-            "net.egress resolved to no reachable address — refusing (fail-closed)".into(),
-        ));
+const SLIRP_GATEWAY: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 2, 2));
+
+/// `slirp4netns` argv for a child netns (pid). `--disable-host-loopback` is
+/// present UNLESS host-loopback is intentionally allowed (auth proxy engaged),
+/// in which case the box can reach the host proxy via the gateway (nftables
+/// still restricts egress to the single proxy port). Pure — unit-tested.
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn slirp_args(pid: u32, allow_host_loopback: bool) -> Vec<String> {
+    let mut a: Vec<String> = vec!["--configure".into()];
+    if !allow_host_loopback {
+        a.push("--disable-host-loopback".into());
     }
+    a.push("--mtu=65520".into());
+    a.push(pid.to_string());
+    a.push("tap0".into());
+    a
+}
+
+/// The credential files to remove from the box's per-env HOME copies for `rt`
+/// (pure: maps runtime + home binds → backing paths). A bind is matched by its
+/// *target* dir name (the real `~/.claude` / `~/.codex`); the returned path is
+/// under the env's own `backing`, never the real HOME. See
+/// [`scrub_box_credentials`].
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn cred_scrub_paths(
+    rt: crate::sandbox_policy::AgentRuntime,
+    home_binds: &[crate::sandbox_policy::HomeBind],
+) -> Vec<std::path::PathBuf> {
+    use crate::sandbox_policy::AgentRuntime;
+    let (dir_name, cred_file) = match rt {
+        AgentRuntime::Claude => (".claude", ".credentials.json"),
+        AgentRuntime::Codex => (".codex", "auth.json"),
+    };
+    home_binds
+        .iter()
+        .filter(|b| b.target.file_name().and_then(|n| n.to_str()) == Some(dir_name))
+        .map(|b| b.backing.join(cred_file))
+        .collect()
+}
+
+/// Remove the runtime's credential file from the box's **per-env HOME copy** when
+/// the auth proxy is engaged, so the token is absent from the box (not merely
+/// inert). Auth then flows entirely through the proxy + dummy env token. Only
+/// ever touches the env's own backing copy (`policy.home_binds[..].backing`) —
+/// never the real HOME, which `prepare_home_state` only reads. Best-effort and
+/// idempotent; a later in-box login self-heals the copy if the proxy is disabled.
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn scrub_box_credentials(
+    policy: &crate::sandbox::ResolvedPolicy,
+    rt: crate::sandbox_policy::AgentRuntime,
+) {
+    for path in cred_scrub_paths(rt, &policy.home_binds) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Build the egress jail. When `auth_port` is `Some`, the credential-injecting
+/// auth proxy is engaged: the box's egress is locked to **only** the proxy at
+/// `10.0.2.2:<auth_port>` (host-loopback re-enabled for that single port; the
+/// default-drop policy still blocks every other host port and all direct API
+/// egress), so a token in the box — even if present — is inert (unusable
+/// directly, unexfiltratable). Otherwise the box egresses to the resolved
+/// `net.egress` allowlist with host-loopback disabled (airtight).
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn setup_egress(
+    policy: &crate::sandbox::ResolvedPolicy,
+    auth_port: Option<u16>,
+) -> Result<EgressNetns, H5iError> {
+    let (dests, host_pins): (Vec<EgressDest>, Vec<(String, IpAddr)>) = match auth_port {
+        // Proxy-only egress: one accept, for the host-side auth proxy. No DNS
+        // needed (the base URL is the gateway IP), so no host pins.
+        Some(port) => (vec![EgressDest { ip: SLIRP_GATEWAY, port }], Vec::new()),
+        None => {
+            let resolved = resolve_egress(&policy.profile.net_egress);
+            if resolved.dests.is_empty() {
+                return Err(H5iError::Metadata(
+                    "net.egress resolved to no reachable address — refusing (fail-closed)".into(),
+                ));
+            }
+            (resolved.dests, resolved.host_pins)
+        }
+    };
+    let allow_host_loopback = auth_port.is_some();
     let nft = find_bin("nft").ok_or_else(|| H5iError::Metadata("`nft` not found on PATH".into()))?;
     let slirp = slirp4netns_path()
         .ok_or_else(|| H5iError::Metadata("`slirp4netns` not found on PATH".into()))?;
@@ -553,12 +631,12 @@ fn setup_egress(policy: &crate::sandbox::ResolvedPolicy) -> Result<EgressNetns, 
     let tmp = std::env::temp_dir().join(format!("h5i-egress-{}-{seq}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(H5iError::Io)?;
     // No resolver port: DNS is pinned via /etc/hosts, so port 53 stays closed.
-    let rules = build_nft_ruleset(&resolved.dests, None);
+    let rules = build_nft_ruleset(&dests, None);
     let rules_path = tmp.join("egress.nft");
     std::fs::write(&rules_path, rules).map_err(H5iError::Io)?;
 
     let mut hosts = String::from("127.0.0.1 localhost\n::1 localhost\n");
-    for (h, ip) in &resolved.host_pins {
+    for (h, ip) in &host_pins {
         hosts.push_str(&format!("{ip} {h}\n"));
     }
     let hosts_path = tmp.join("hosts");
@@ -592,16 +670,12 @@ fn setup_egress(policy: &crate::sandbox::ResolvedPolicy) -> Result<EgressNetns, 
         }
         let pid = u32::from_ne_bytes(pidbuf);
         // Spawn the uplink for the child's netns (by pid). --configure sets up
-        // tap0 (10.0.2.100/24, gw 10.0.2.2); --disable-host-loopback blocks the
-        // child from reaching host services via the gateway.
+        // tap0 (10.0.2.100/24, gw 10.0.2.2). --disable-host-loopback blocks the
+        // child from reaching host services via the gateway — kept UNLESS the
+        // auth proxy is engaged, which needs the gateway to forward to the host
+        // proxy on loopback (nftables still restricts egress to that one port).
         let child = std::process::Command::new(&slirp)
-            .args([
-                "--configure",
-                "--disable-host-loopback",
-                "--mtu=65520",
-                &pid.to_string(),
-                "tap0",
-            ])
+            .args(slirp_args(pid, allow_host_loopback))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -671,11 +745,34 @@ fn run_supervised(
         libc::close(fd);
     };
 
+    // Credential-injecting auth proxy (option 2), host-side, held for the whole
+    // run. Engages for an agent box with a resolvable host credential when egress
+    // is active (the netns reaches the host proxy through the slirp uplink). When
+    // engaged, the box's egress is locked to the proxy alone (see `setup_egress`)
+    // and the real credential is scrubbed from the box's per-env HOME copy, so
+    // the token is absent from the box entirely.
+    let auth = if !policy.profile.net_egress.is_empty() {
+        crate::auth_proxy::engage(&policy.profile.name, true)
+    } else {
+        None
+    };
+    let (_auth_proxy, effective_env, auth_port) = match auth {
+        Some(e) => {
+            scrub_box_credentials(policy, e.runtime);
+            let port = e.handle.port;
+            let mut env = injected_env.to_vec();
+            env.extend(e.box_env);
+            (Some(e.handle), env, Some(port))
+        }
+        None => (None, injected_env.to_vec(), None),
+    };
+    let injected_env: &[(String, String)] = &effective_env;
+
     // Egress allowlist (increment 2): when net.egress is set, stand up the
     // slirp4netns uplink + nftables jail. `_egress` lives for the whole run; its
     // Drop tears the uplink down. `None` ⇒ net.mode=deny (airtight empty netns).
     let _egress = if !policy.profile.net_egress.is_empty() {
-        match setup_egress(policy) {
+        match setup_egress(policy, auth_port) {
             Ok(e) => Some(e),
             Err(e) => {
                 close(sv_parent);
@@ -1016,5 +1113,69 @@ mod tests {
             m.contains("Missing") || m.contains("slirp4netns"),
             "must fail closed with the missing component, got: {m}"
         );
+    }
+
+    #[test]
+    fn slirp_args_toggle_host_loopback() {
+        // Airtight default: host-loopback disabled.
+        let off = slirp_args(4321, false);
+        assert!(off.contains(&"--disable-host-loopback".to_string()));
+        // Auth proxy engaged: host-loopback allowed so the box can reach the
+        // host proxy via the gateway.
+        let on = slirp_args(4321, true);
+        assert!(!on.contains(&"--disable-host-loopback".to_string()));
+        // Common structure preserved either way.
+        for a in [&off, &on] {
+            assert_eq!(a.first().unwrap(), "--configure");
+            assert!(a.contains(&"4321".to_string()), "pid passed through");
+            assert!(a.contains(&"tap0".to_string()));
+            assert!(a.iter().any(|s| s == "--mtu=65520"));
+        }
+    }
+
+    #[test]
+    fn proxy_only_egress_ruleset_allows_just_the_gateway_port() {
+        assert_eq!(SLIRP_GATEWAY, "10.0.2.2".parse::<IpAddr>().unwrap());
+        // What setup_egress builds when the auth proxy is engaged: a single
+        // accept for the host proxy at the gateway, default-drop for the rest.
+        let rs = build_nft_ruleset(&[EgressDest { ip: SLIRP_GATEWAY, port: 8080 }], None);
+        assert!(rs.contains("policy drop;"), "must default-drop:\n{rs}");
+        assert!(rs.contains("ip daddr 10.0.2.2 tcp dport 8080 accept"), "{rs}");
+        assert!(rs.contains("oif \"lo\" accept"));
+        // No DNS (port 53) and no other external destination is opened.
+        assert!(!rs.contains("dport 53"), "proxy-only egress needs no resolver:\n{rs}");
+        assert!(!rs.contains("dport 443"), "direct API egress must NOT be opened:\n{rs}");
+    }
+
+    #[test]
+    fn cred_scrub_targets_backing_copy_not_real_home() {
+        use crate::sandbox_policy::{AgentRuntime, HomeBind};
+        use std::path::PathBuf;
+        let binds = vec![
+            HomeBind {
+                backing: PathBuf::from("/env/home/.claude"),
+                target: PathBuf::from("/home/u/.claude"),
+            },
+            // The `~/.claude.json` bind must NOT be matched (token isn't there).
+            HomeBind {
+                backing: PathBuf::from("/env/home/.claude.json"),
+                target: PathBuf::from("/home/u/.claude.json"),
+            },
+        ];
+        let paths = cred_scrub_paths(AgentRuntime::Claude, &binds);
+        assert_eq!(paths, vec![PathBuf::from("/env/home/.claude/.credentials.json")]);
+        // Only the env's own backing copy is ever named — never the real HOME.
+        assert!(paths.iter().all(|p| p.starts_with("/env/home")));
+
+        let codex = vec![HomeBind {
+            backing: PathBuf::from("/env/home/.codex"),
+            target: PathBuf::from("/home/u/.codex"),
+        }];
+        assert_eq!(
+            cred_scrub_paths(AgentRuntime::Codex, &codex),
+            vec![PathBuf::from("/env/home/.codex/auth.json")]
+        );
+        // No matching bind → nothing scrubbed.
+        assert!(cred_scrub_paths(AgentRuntime::Claude, &codex).is_empty());
     }
 }

@@ -468,6 +468,51 @@ pub fn new_client_token() -> String {
     format!("h5i-proxy-{:016x}{:016x}", fastrand::u64(..), fastrand::u64(..))
 }
 
+/// The operator opt-out: keep the box on its own in-box login (e.g. to bill a
+/// subscription logged in inside the box rather than a host-exported token).
+pub fn opted_out() -> bool {
+    std::env::var("H5I_CREDENTIAL_PROXY").is_ok_and(|v| {
+        let v = v.trim().to_ascii_lowercase();
+        v == "off" || v == "0" || v == "false"
+    })
+}
+
+/// A live credential-proxy engagement for a run.
+pub struct Engagement {
+    /// Hold for the box's lifetime; dropping it shuts the proxy (and the only
+    /// in-memory copy of the credential) down.
+    pub handle: AuthProxyHandle,
+    /// Box env additions: base-URL override + per-run dummy token + `NO_PROXY`.
+    pub box_env: Vec<(String, String)>,
+    /// The runtime, so a kernel-tier caller knows which credential file to scrub
+    /// from its per-env HOME copy.
+    pub runtime: AgentRuntime,
+}
+
+/// Decide + spawn the credential-injecting proxy for a run. Shared by both the
+/// container and supervised backends (their only difference is `tier_ok` —
+/// whether the box can reach the host proxy on this tier). `None` keeps the box
+/// on its existing in-box-login path — never a downgrade of an active protection.
+pub fn engage(profile_name: &str, tier_ok: bool) -> Option<Engagement> {
+    if !tier_ok || opted_out() {
+        return None;
+    }
+    let rt = AgentRuntime::from_profile_name(profile_name)?;
+    let cred = resolve_credential(rt)?;
+    let token = new_client_token();
+    match spawn(rt, cred, token.clone()) {
+        Ok(handle) => Some(Engagement {
+            box_env: box_env(rt, handle.port, &token),
+            handle,
+            runtime: rt,
+        }),
+        Err(e) => {
+            eprintln!("note: credential proxy unavailable ({e}); box uses in-box login");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

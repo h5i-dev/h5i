@@ -853,30 +853,12 @@ fn maybe_auth_proxy(
     profile: &Profile,
     net: &NetPlan,
 ) -> Option<(crate::auth_proxy::AuthProxyHandle, Vec<(String, String)>)> {
-    if !matches!(net, NetPlan::Proxy(_)) {
-        return None;
-    }
-    // Explicit opt-out: keep the box on its own in-box login (e.g. to bill a
-    // subscription logged in inside the box rather than a host-exported API key).
-    if std::env::var("H5I_CREDENTIAL_PROXY").is_ok_and(|v| {
-        let v = v.trim().to_ascii_lowercase();
-        v == "off" || v == "0" || v == "false"
-    }) {
-        return None;
-    }
-    let rt = crate::sandbox_policy::AgentRuntime::from_profile_name(&profile.name)?;
-    let cred = crate::auth_proxy::resolve_credential(rt)?;
-    let token = crate::auth_proxy::new_client_token();
-    match crate::auth_proxy::spawn(rt, cred, token.clone()) {
-        Ok(handle) => {
-            let extra = crate::auth_proxy::box_env(rt, handle.port, &token);
-            Some((handle, extra))
-        }
-        Err(e) => {
-            eprintln!("note: credential proxy unavailable ({e}); box uses in-box login");
-            None
-        }
-    }
+    // The box reaches the host proxy only on the egress-proxy net plan (slirp
+    // `allow_host_loopback` at 10.0.2.2). `engage` handles opt-out + runtime +
+    // credential resolution; the container tier ignores the returned runtime
+    // (there is no per-env HOME copy to scrub — the rootfs never mounts host HOME).
+    let e = crate::auth_proxy::engage(&profile.name, matches!(net, NetPlan::Proxy(_)))?;
+    Some((e.handle, e.box_env))
 }
 
 // ─── run ─────────────────────────────────────────────────────────────────────
