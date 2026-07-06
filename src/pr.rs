@@ -739,8 +739,24 @@ fn compute_aggregates(
     let mut cost_total: f64 = 0.0;
     let mut cost_seen: bool = false;
     for r in records {
+        // A `--patch` env-apply commit carries the squashed env prompts in
+        // `env_provenance.prompts` (it has no ai_metadata of its own, since the
+        // env commits left the ancestry). Count each folded prompt as one AI
+        // prompt for the coverage denominator. Merge/FF apply leave this empty —
+        // their env commits are walked as ordinary records — so no double count.
+        let folded = r
+            .env_provenance
+            .as_ref()
+            .map(|p| p.prompts.len())
+            .unwrap_or(0);
+        a.ai_count += folded;
+
         let Some(meta) = r.ai_metadata.as_ref() else {
-            a.human_count += 1;
+            // No own ai_metadata: a human/tooling commit — unless it exists only
+            // to carry folded env prompts (the squash apply commit).
+            if folded == 0 {
+                a.human_count += 1;
+            }
             continue;
         };
         a.ai_count += 1;
@@ -776,11 +792,19 @@ fn compute_aggregates(
     // the coverage denominator so a branch where most AI commits carried no
     // prompt reads as low-confidence rather than over-confident.
     if a.ai_count > 0 {
-        let prompts: Vec<&str> = records
+        let mut prompts: Vec<&str> = records
             .iter()
             .filter_map(|r| r.ai_metadata.as_ref())
             .map(|m| m.prompt.as_str())
             .collect();
+        // Folded squash-apply prompts (see the loop above): score each
+        // individually so a squashed env contributes the same prompt maturity it
+        // would on a merge/FF apply. Empty for merge/FF records → no double count.
+        for r in records {
+            if let Some(prov) = r.env_provenance.as_ref() {
+                prompts.extend(prov.prompts.iter().map(String::as_str));
+            }
+        }
         let branch = crate::prompt_score::score_branch(prompts, a.ai_count);
         if !branch.is_empty() {
             a.prompt_score = Some(branch);
@@ -3143,6 +3167,82 @@ mod tests {
             decisions: Vec::new(),
             env_provenance: None,
         }
+    }
+
+    #[test]
+    fn compute_aggregates_scores_folded_env_apply_prompts() {
+        use crate::metadata::EnvProvenance;
+        // A squash (`--patch`) apply commit: no ai_metadata of its own, but it
+        // carries the squashed env prompts in env_provenance.prompts. The scorer
+        // must treat each folded prompt as an AI prompt so the maturity survives
+        // the squash — not read it as a bare human commit.
+        let mut rec = fake_record("dead00000000beef");
+        rec.env_provenance = Some(EnvProvenance {
+            env_id: "env/tester/feat".into(),
+            agent: "tester".into(),
+            isolation_claim: "workspace".into(),
+            policy_digest: "d".into(),
+            base_commit: "b".into(),
+            captures: vec![],
+            captures_total: 0,
+            evidence_sources: Default::default(),
+            prompts: vec![
+                "Refactor `parse_range()` in src/util.rs to fix the off-by-one when the \
+                 upper bound is inclusive. Add a unit test for the empty-range case and \
+                 ensure existing tests pass. Do not change the public signature."
+                    .into(),
+                "Add a doc comment to the fixed function explaining the inclusive-bound \
+                 convention and reference the new test."
+                    .into(),
+            ],
+            folded_test_metrics: None,
+            context_tip: String::new(),
+        });
+        let records = vec![rec];
+        let by_oid: HashMap<String, &ReviewPoint> = HashMap::new();
+        let agg = compute_aggregates(&records, &by_oid);
+        // Two folded prompts counted as AI prompts, not one human commit.
+        assert_eq!(agg.ai_count, 2, "folded prompts count as AI prompts");
+        assert_eq!(agg.human_count, 0, "squash apply commit is not a human commit");
+        let ps = agg.prompt_score.expect("folded prompts must produce a score");
+        assert_eq!(ps.scored_prompts, 2, "both folded prompts scored individually");
+    }
+
+    #[test]
+    fn compute_aggregates_no_double_count_on_merge_apply() {
+        use crate::metadata::EnvProvenance;
+        // Merge/FF apply: the env commits ride along in the ancestry as ordinary
+        // ai_metadata records, and env_provenance.prompts is EMPTY. The scorer
+        // must not invent extra prompts from the (empty) fold.
+        let mut ai = fake_record("aaaa00000000bbbb");
+        ai.ai_metadata = Some(crate::metadata::AiMetadata {
+            model_name: "claude".into(),
+            prompt: "Implement the retry with jitter and cover the exhausted-budget path \
+                     with a test; keep the existing public API unchanged."
+                .into(),
+            agent_id: "tester".into(),
+            usage: None,
+        });
+        let mut merge = fake_record("cccc00000000dddd");
+        merge.env_provenance = Some(EnvProvenance {
+            env_id: "env/tester/feat".into(),
+            agent: "tester".into(),
+            isolation_claim: "workspace".into(),
+            policy_digest: "d".into(),
+            base_commit: "b".into(),
+            captures: vec![],
+            captures_total: 0,
+            evidence_sources: Default::default(),
+            prompts: vec![], // merge/FF leaves this empty
+            folded_test_metrics: None,
+            context_tip: String::new(),
+        });
+        let records = vec![ai, merge];
+        let by_oid: HashMap<String, &ReviewPoint> = HashMap::new();
+        let agg = compute_aggregates(&records, &by_oid);
+        assert_eq!(agg.ai_count, 1, "only the real ai_metadata commit counts");
+        let ps = agg.prompt_score.expect("the one real prompt scores");
+        assert_eq!(ps.scored_prompts, 1, "no phantom folded prompts");
     }
 
     #[test]

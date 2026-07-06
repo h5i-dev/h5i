@@ -4890,7 +4890,67 @@ fn build_env_provenance(repo: &Repository, m: &EnvManifest) -> crate::metadata::
             .collect(),
         captures_total: m.captures.len(),
         evidence_sources: evidence_sources_by_lane(repo, m),
+        // Filled by the caller (`stamp_apply_provenance`) only for squash apply;
+        // merge/FF leave these empty so the branch scorer reads the preserved
+        // per-commit notes instead (no double count).
+        prompts: Vec::new(),
+        folded_test_metrics: None,
+        context_tip: String::new(),
     }
+}
+
+/// Collect what a `--patch`/squash apply is about to fold away: the human
+/// prompts and test metrics recorded on each env commit in `base..env_tip`, plus
+/// their subject lines (oldest → newest) for the squash message. Squash mints a
+/// single new commit whose parent is the *old* parent tip, so these env commits
+/// leave the parent's ancestry entirely — without this fold their per-commit
+/// `refs/h5i/notes` provenance (prompts, test metrics) is lost. Best-effort: a
+/// commit with no note simply contributes nothing.
+fn fold_env_commit_records(
+    repo: &Repository,
+    base: git2::Oid,
+    env_tip: git2::Oid,
+) -> (Vec<String>, Option<crate::metadata::TestMetrics>, Vec<String>) {
+    let mut prompts = Vec::new();
+    let mut subjects = Vec::new();
+    let mut tm_acc: Option<crate::metadata::TestMetrics> = None;
+    let mut walk = match repo.revwalk() {
+        Ok(w) => w,
+        Err(_) => return (prompts, tm_acc, subjects),
+    };
+    let _ = walk.push(env_tip);
+    let _ = walk.hide(base);
+    // Oldest → newest so the folded squash message reads in commit order.
+    let _ = walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE);
+    for oid in walk.flatten() {
+        if let Ok(commit) = repo.find_commit(oid) {
+            let subject = commit.summary().unwrap_or("").trim();
+            if !subject.is_empty() {
+                subjects.push(format!("{} {}", &oid.to_string()[..7], subject));
+            }
+        }
+        let Ok(note) = repo.find_note(Some(crate::repository::H5I_NOTES_REF), oid) else {
+            continue;
+        };
+        let Some(msg) = note.message() else { continue };
+        let Ok(rec) = serde_json::from_str::<crate::metadata::H5iCommitRecord>(msg) else {
+            continue;
+        };
+        if let Some(ai) = rec.ai_metadata.as_ref() {
+            if !ai.prompt.trim().is_empty() {
+                prompts.push(ai.prompt.clone());
+            }
+        }
+        if let Some(tm) = rec.test_metrics.as_ref() {
+            let acc = tm_acc.get_or_insert_with(crate::metadata::TestMetrics::default);
+            acc.passed += tm.passed;
+            acc.failed += tm.failed;
+            acc.skipped += tm.skipped;
+            acc.total += tm.total;
+            acc.duration_secs += tm.duration_secs;
+        }
+    }
+    (prompts, tm_acc, subjects)
 }
 
 /// Stamp the commit `apply` produced on the parent branch with an h5i note that
@@ -4899,24 +4959,54 @@ fn build_env_provenance(repo: &Repository, m: &EnvManifest) -> crate::metadata::
 /// must not undo an already-applied merge, so it returns a human note rather
 /// than erroring. Idempotent by construction (apply runs once per env — the
 /// `ST_PROPOSED` guard — and the note is written with `force`).
-fn stamp_apply_provenance(repo: &Repository, m: &EnvManifest, applied: git2::Oid) -> String {
-    let prov = build_env_provenance(repo, m);
+/// What a squash (`--patch`) apply folds forward onto the single applied commit
+/// so it stays self-describing after the env commits leave the ancestry (and
+/// after the env is gc'd). Empty for merge/FF apply — those preserve the env
+/// OIDs, so the per-commit notes ride along and folding would double-count.
+struct FoldedProvenance {
+    prompts: Vec<String>,
+    test_metrics: Option<crate::metadata::TestMetrics>,
+    context_tip: String,
+}
+
+fn stamp_apply_provenance(
+    repo: &Repository,
+    m: &EnvManifest,
+    applied: git2::Oid,
+    folded: FoldedProvenance,
+) -> String {
+    let mut prov = build_env_provenance(repo, m);
+    prov.prompts = folded.prompts;
+    prov.folded_test_metrics = folded.test_metrics;
+    prov.context_tip = folded.context_tip;
     let parent_oid = repo
         .find_commit(applied)
         .ok()
         .filter(|c| c.parent_count() > 0)
         .and_then(|c| c.parent_id(0).ok())
         .map(|o| o.to_string());
-    let record = crate::metadata::H5iCommitRecord {
-        git_oid: applied.to_string(),
-        parent_oid,
-        ai_metadata: None,
-        test_metrics: None,
-        timestamp: chrono::Utc::now(),
-        caused_by: Vec::new(),
-        decisions: Vec::new(),
-        env_provenance: Some(prov.clone()),
-    };
+    // Read-modify-write: a fast-forward apply lands *on* the env-tip commit,
+    // which may already carry an in-box `capture commit` record (its own
+    // ai_metadata + test metrics). Preserve that record and only attach
+    // env_provenance — a fresh force-write would clobber the commit's own
+    // prompt. When there is no prior note (merge/squash mint a new commit), fall
+    // back to a minimal record.
+    let mut record = repo
+        .find_note(Some(crate::repository::H5I_NOTES_REF), applied)
+        .ok()
+        .and_then(|n| n.message().map(str::to_owned))
+        .and_then(|s| serde_json::from_str::<crate::metadata::H5iCommitRecord>(&s).ok())
+        .unwrap_or_else(|| crate::metadata::H5iCommitRecord {
+            git_oid: applied.to_string(),
+            parent_oid,
+            ai_metadata: None,
+            test_metrics: None,
+            timestamp: chrono::Utc::now(),
+            caused_by: Vec::new(),
+            decisions: Vec::new(),
+            env_provenance: None,
+        });
+    record.env_provenance = Some(prov.clone());
     let sig = match objects::signature(repo) {
         Ok(s) => s,
         Err(e) => return format!("WARNING: apply note skipped (no signature: {e})"),
@@ -5671,6 +5761,19 @@ pub fn apply(
     }
 
     let base_oid = repo.merge_base(parent_tip.id(), env_tip.id())?;
+
+    // A `--patch` apply squashes the env commits into one new commit whose only
+    // parent is the current parent tip, so those env commits leave the parent's
+    // ancestry — fold their prompts / test metrics / subjects forward onto the
+    // squash commit. Merge and fast-forward apply preserve the env OIDs, so
+    // nothing is folded here (the per-commit notes ride along; folding would
+    // double-count in branch scoring).
+    let (folded_prompts, folded_tm, folded_subjects) = if patch_mode {
+        fold_env_commit_records(repo, base_oid, env_tip.id())
+    } else {
+        (Vec::new(), None, Vec::new())
+    };
+
     let new_commit: git2::Oid = if !patch_mode && base_oid == parent_tip.id() {
         // Fast-forward.
         env_tip.id()
@@ -5701,7 +5804,16 @@ pub fn apply(
         let tree = repo.find_tree(idx.write_tree_to(repo)?)?;
         let sig = objects::signature(repo)?;
         let msg = if patch_mode {
-            format!("h5i env apply --patch: {} → {}", m.id, m.parent_branch)
+            let mut msg = format!("h5i env apply --patch: {} → {}", m.id, m.parent_branch);
+            if !folded_subjects.is_empty() {
+                msg.push_str("\n\nSquashed env commits:\n");
+                for s in &folded_subjects {
+                    msg.push_str("  ");
+                    msg.push_str(s);
+                    msg.push('\n');
+                }
+            }
+            msg
         } else {
             format!("h5i env apply: merge {} → {}", m.id, m.parent_branch)
         };
@@ -5728,9 +5840,25 @@ pub fn apply(
     )?;
 
     // Stamp the applied commit with env provenance (links it back to the env +
-    // a labeled evidence summary) so the parent-branch commit is
-    // self-describing. Best-effort — the merge is already committed.
-    let prov_note = stamp_apply_provenance(repo, m, new_commit);
+    // a labeled evidence summary, plus any squash-folded prompts/metrics) so the
+    // parent-branch commit is self-describing. Best-effort — the merge is
+    // already committed.
+    let context_tip = repo
+        .find_reference(&m.context_branch)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .map(|c| c.id().to_string())
+        .unwrap_or_default();
+    let prov_note = stamp_apply_provenance(
+        repo,
+        m,
+        new_commit,
+        FoldedProvenance {
+            prompts: folded_prompts,
+            test_metrics: folded_tm,
+            context_tip,
+        },
+    );
 
     // Fold the env's reasoning back into the parent context branch. The code
     // is already applied — a context-merge failure is surfaced, not fatal.
@@ -6079,6 +6207,121 @@ pub fn rm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Write an H5iCommitRecord note (ai_metadata prompt + optional test metrics)
+    // onto `oid`, exactly as an in-box `capture commit` would. Used to seed env
+    // commits so the fold / RMW tests have real per-commit provenance to carry.
+    fn seed_note(
+        repo: &git2::Repository,
+        oid: git2::Oid,
+        prompt: &str,
+        passed: u64,
+    ) {
+        let rec = crate::metadata::H5iCommitRecord {
+            git_oid: oid.to_string(),
+            parent_oid: None,
+            ai_metadata: Some(crate::metadata::AiMetadata {
+                model_name: "claude".into(),
+                prompt: prompt.into(),
+                agent_id: "tester".into(),
+                usage: None,
+            }),
+            test_metrics: Some(crate::metadata::TestMetrics {
+                passed,
+                total: passed,
+                ..Default::default()
+            }),
+            timestamp: chrono::Utc::now(),
+            caused_by: Vec::new(),
+            decisions: Vec::new(),
+            env_provenance: None,
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        let sig = git2::Signature::now("t", "t@e.com").unwrap();
+        repo.note(
+            &sig,
+            &sig,
+            Some(crate::repository::H5I_NOTES_REF),
+            oid,
+            &json,
+            true,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn fold_env_commit_records_collects_prompts_and_sums_metrics() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        {
+            let mut cfg = repo.config().unwrap();
+            cfg.set_str("user.name", "t").unwrap();
+            cfg.set_str("user.email", "t@e.com").unwrap();
+        }
+        let base = commit_file(&repo, "a.txt", "base\n");
+        let c1 = commit_file(&repo, "a.txt", "one\n");
+        seed_note(&repo, c1, "First prompt: add the parser skeleton.", 2);
+        let c2 = commit_file(&repo, "a.txt", "two\n");
+        seed_note(&repo, c2, "Second prompt: wire it into main and test.", 3);
+
+        let (prompts, tm, subjects) = fold_env_commit_records(&repo, base, c2);
+        // Prompts collected oldest → newest, as a list (never concatenated).
+        assert_eq!(prompts.len(), 2, "{prompts:?}");
+        assert!(prompts[0].starts_with("First prompt"), "{prompts:?}");
+        assert!(prompts[1].starts_with("Second prompt"), "{prompts:?}");
+        // Test metrics summed across the squashed commits.
+        let tm = tm.expect("metrics folded");
+        assert_eq!(tm.passed, 5);
+        assert_eq!(tm.total, 5);
+        // One subject line per env commit (base excluded via `hide`).
+        assert_eq!(subjects.len(), 2, "{subjects:?}");
+    }
+
+    #[test]
+    fn stamp_apply_provenance_preserves_existing_prompt_note() {
+        // Fast-forward apply lands on the env-tip commit, which already carries
+        // its own in-box prompt note. Stamping env_provenance must PRESERVE that
+        // ai_metadata (read-modify-write), not clobber it with a fresh record.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        {
+            let mut cfg = repo.config().unwrap();
+            cfg.set_str("user.name", "t").unwrap();
+            cfg.set_str("user.email", "t@e.com").unwrap();
+        }
+        let c1 = commit_file(&repo, "a.txt", "one\n");
+        seed_note(&repo, c1, "Keep me: the original in-box prompt.", 4);
+
+        let m = canonical_manifest("tester", "feat");
+        let note = stamp_apply_provenance(
+            &repo,
+            &m,
+            c1,
+            FoldedProvenance {
+                prompts: vec![],
+                test_metrics: None,
+                context_tip: "ctx123".into(),
+            },
+        );
+        assert!(note.contains("provenance note on"), "{note}");
+
+        let n = repo
+            .find_note(Some(crate::repository::H5I_NOTES_REF), c1)
+            .unwrap();
+        let rec: crate::metadata::H5iCommitRecord =
+            serde_json::from_str(n.message().unwrap()).unwrap();
+        // The original prompt + metrics survive.
+        assert_eq!(
+            rec.ai_metadata.as_ref().unwrap().prompt,
+            "Keep me: the original in-box prompt.",
+            "FF stamp must not clobber the env-tip's own prompt"
+        );
+        assert_eq!(rec.test_metrics.as_ref().unwrap().passed, 4);
+        // ...and env_provenance is now attached alongside it.
+        let prov = rec.env_provenance.expect("provenance attached");
+        assert_eq!(prov.env_id, "env/tester/feat");
+        assert_eq!(prov.context_tip, "ctx123");
+    }
 
     #[test]
     fn resolve_work_rcfile_accepts_in_tree_and_rejects_escapes() {

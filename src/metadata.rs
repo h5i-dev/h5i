@@ -69,6 +69,25 @@ pub struct EnvProvenance {
     pub captures_total: usize,
     /// Capture count by trust lane, e.g. `{"host-env-run": 3, "inbox-capture": 5}`.
     pub evidence_sources: std::collections::BTreeMap<String, usize>,
+    /// Human prompts/intents folded from the env's own commits onto this applied
+    /// commit. Populated ONLY for `--patch`/squash apply, where the env commits
+    /// are absent from the parent's ancestry so their per-commit `refs/h5i/notes`
+    /// prompts would otherwise be lost. Left empty in merge/FF apply — there the
+    /// env OIDs are preserved, so the branch scorer reads the per-commit notes
+    /// directly and a list here too would double-count. A LIST, never a concat,
+    /// so branch scoring weighs each prompt independently.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prompts: Vec<String>,
+    /// Test metrics summed across the squashed env commits (best-effort), so the
+    /// applied commit stays self-describing after the env is gc'd. `None` when
+    /// nothing was folded (merge/FF apply, or no env test metrics).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folded_test_metrics: Option<TestMetrics>,
+    /// The env's reasoning/context branch tip at apply time — links the applied
+    /// commit straight to the reasoning that was merged back into the parent
+    /// context branch. Empty when the context branch could not be resolved.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub context_tip: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
