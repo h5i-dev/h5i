@@ -3454,7 +3454,15 @@ fn h5i_capture_store_writable(repo: &git2::Repository) -> bool {
         return false;
     };
     let objects = h5i_root.join("objects");
-    if !objects.is_dir() {
+    // Bootstrap the store if it's missing, exactly as the first `h5i capture
+    // run` would. Requiring it to *pre-exist* made the wrap-bash hook silently
+    // no-op in a git repo that was never `h5i init`'d: the hook was registered,
+    // yet commands ran raw until some other h5i command happened to create the
+    // store — then wrapping abruptly "woke up". Creating it here makes "hook
+    // registered" reliably mean "commands are wrapped". Fail-closed: if the
+    // layout can't be created the writability probe below returns false and the
+    // original command runs untouched.
+    if !objects.is_dir() && h5i_core::storage::ensure_layout(&h5i_root).is_err() {
         return false;
     }
     let probe = objects.join(format!(
