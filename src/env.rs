@@ -2134,6 +2134,63 @@ pub fn read_staged_capture(id: &str) -> Option<StagedCapture> {
     read_staged_capture_at(&spool, id)
 }
 
+/// Pending-context filename inside the env capture spool. Distinct from the
+/// `cmd-*`/`cap-*`/`codex-hook-*`/`note-*`/`ctxsnap-*` records the spool ingest
+/// drains, so [`ingest_shell_spool`] leaves it alone.
+const SPOOL_PENDING_CONTEXT: &str = "pending_context.json";
+
+/// The pending-context file path **when running inside an env box**, or `None`
+/// on the host. Inside a box the `.git/.h5i` sidecar is sealed (no read/write
+/// grant), so the human prompt captured by the `UserPromptSubmit` hook can't
+/// land there; it is redirected to the box-writable capture spool the host
+/// injects (`$H5I_ENV_CAPTURE_SPOOL`), where the in-box `h5i capture commit`
+/// reads it back. Gated on the same trio of vars as the in-box note spool
+/// (`H5I_ENV_ID` + `H5I_ENV_POLICY_DIGEST` + `H5I_ENV_CAPTURE_SPOOL`) so a stray
+/// spool var alone never diverts host prompt capture.
+pub fn inbox_pending_context_path() -> Option<PathBuf> {
+    inbox_pending_context_path_from(
+        std::env::var_os(H5I_ENV_ID_VAR),
+        std::env::var_os(H5I_ENV_POLICY_DIGEST_VAR),
+        std::env::var_os(H5I_ENV_CAPTURE_SPOOL_VAR),
+    )
+}
+
+/// Pure core of [`inbox_pending_context_path`] (env reads factored out so the
+/// gating is unit-testable without racing on process-global env vars). All three
+/// box markers must be present, else `None`.
+fn inbox_pending_context_path_from(
+    env_id: Option<std::ffi::OsString>,
+    policy_digest: Option<std::ffi::OsString>,
+    capture_spool: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    if env_id.is_none() || policy_digest.is_none() {
+        return None;
+    }
+    Some(PathBuf::from(capture_spool?).join(SPOOL_PENDING_CONTEXT))
+}
+
+/// Fold a leftover in-box pending-context prompt into the host pending context,
+/// then remove the spool file. Called host-side at session end (out of the box,
+/// so the `.git/.h5i` sidecar `record_human_prompt` targets is writable again).
+/// Best-effort: an in-box `h5i capture commit` already consumed + cleared this
+/// file, so this only preserves a prompt the box never committed. No-op when the
+/// file is absent. Pure over its inputs (spool dir + worktree) for testability.
+fn drain_leftover_pending_context(spool: &Path, work: &Path) {
+    let pending_spool = spool.join(SPOOL_PENDING_CONTEXT);
+    if let Ok(Some(pending)) = crate::repository::read_pending_context_at(&pending_spool) {
+        if let Some(prompt) = pending
+            .human_prompt
+            .as_deref()
+            .filter(|p| !p.trim().is_empty())
+        {
+            if let Ok(h5i_repo) = crate::repository::H5iRepository::open(work) {
+                let _ = h5i_repo.record_human_prompt(prompt, pending.session_id.as_deref());
+            }
+        }
+        let _ = std::fs::remove_file(&pending_spool);
+    }
+}
+
 pub fn write_codex_hook_spool(
     spool: &Path,
     record: &CodexHookSpoolRecord,
@@ -3319,6 +3376,13 @@ fn ingest_shell_spool(
 
     let codex_observed = ingest_codex_hook_spool(repo, h5i_root, m, &spool)?;
     count += codex_observed;
+
+    // Leftover in-box pending context: the human prompt(s) the box captured but
+    // never committed in-box (an in-box `h5i capture commit` consumes + clears
+    // this file, so anything here is genuinely uncommitted). Fold it into the
+    // host pending context so a subsequent host-side commit still records what
+    // the human asked.
+    drain_leftover_pending_context(&spool, &m.work_dir(h5i_root));
 
     // In-box `h5i commit` notes. The box can land a commit on its own env
     // branch but can't write `refs/h5i/notes`; the note is staged here and
@@ -6609,6 +6673,55 @@ mod tests {
             .any(|n| n.contains("..") || n.contains('/') || n.contains('#')));
         // An all-non-alnum oid leaves nothing to name → error, no file written.
         assert!(write_note_spool(&spool, "../", "{}").is_err());
+    }
+
+    #[test]
+    fn inbox_pending_context_path_gated_on_all_three_box_markers() {
+        use std::ffi::OsString;
+        let spool = OsString::from("/tmp/spool");
+        let id = OsString::from("env/human/x");
+        let dig = OsString::from("digest");
+
+        // All three present → redirected into the spool's pending_context.json.
+        let p = inbox_pending_context_path_from(
+            Some(id.clone()),
+            Some(dig.clone()),
+            Some(spool.clone()),
+        )
+        .expect("all markers set → Some");
+        assert_eq!(p, PathBuf::from("/tmp/spool").join(SPOOL_PENDING_CONTEXT));
+
+        // Any missing marker → None (host uses the normal .git/.h5i path).
+        assert!(inbox_pending_context_path_from(None, Some(dig.clone()), Some(spool.clone())).is_none());
+        assert!(inbox_pending_context_path_from(Some(id.clone()), None, Some(spool.clone())).is_none());
+        // Env id + digest present but no spool dir → None (nowhere box-writable).
+        assert!(inbox_pending_context_path_from(Some(id), Some(dig), None).is_none());
+    }
+
+    #[test]
+    fn drain_leftover_pending_context_folds_prompt_then_removes_spool() {
+        // An uncommitted in-box prompt sitting in the spool is folded into the
+        // host pending context and the spool file is removed.
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        git2::Repository::init(&work).unwrap();
+        let spool = dir.path().join("spool");
+        std::fs::create_dir_all(&spool).unwrap();
+        let pending_spool = spool.join(SPOOL_PENDING_CONTEXT);
+        crate::repository::record_human_prompt_at(&pending_spool, "uncommitted ask", Some("s9"))
+            .unwrap();
+
+        drain_leftover_pending_context(&spool, &work);
+
+        // Spool file consumed.
+        assert!(!pending_spool.exists(), "leftover spool file removed");
+        // Prompt landed in the host pending context.
+        let repo = crate::repository::H5iRepository::open(&work).unwrap();
+        let ctx = repo.read_pending_context().unwrap().unwrap();
+        assert_eq!(ctx.human_prompt.as_deref(), Some("uncommitted ask"));
+
+        // Absent spool file → no-op, no panic.
+        drain_leftover_pending_context(&spool, &work);
     }
 
     #[test]

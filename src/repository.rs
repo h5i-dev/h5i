@@ -1247,6 +1247,55 @@ fn tempdir_in_repo(h5i_root: &Path) -> Result<PathBuf, H5iError> {
     Ok(dir)
 }
 
+/// Read a [`PendingContext`] from an explicit file path (host sidecar or the
+/// in-box capture spool). Returns `Ok(None)` when the file is absent.
+pub fn read_pending_context_at(path: &Path) -> Result<Option<PendingContext>, H5iError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(path)?;
+    let ctx: PendingContext = serde_json::from_str(&raw)
+        .map_err(|e| H5iError::Metadata(format!("Failed to parse pending_context.json: {e}")))?;
+    Ok(Some(ctx))
+}
+
+/// Persist a [`PendingContext`] to an explicit file path, creating the parent
+/// directory if needed.
+pub fn write_pending_context_at(path: &Path, ctx: &PendingContext) -> Result<(), H5iError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let raw = serde_json::to_string_pretty(ctx)
+        .map_err(|e| H5iError::Metadata(format!("Failed to serialize pending_context.json: {e}")))?;
+    fs::write(path, raw)?;
+    Ok(())
+}
+
+/// Append a verbatim human prompt to the pending-context file at `path`,
+/// accumulating across turns (see [`H5iRepository::record_human_prompt`]).
+/// Empty/blank prompts are ignored. Standalone (path-based) so the in-box
+/// `UserPromptSubmit` hook can target the env capture spool directly without
+/// opening an [`H5iRepository`] against the sealed `.git/.h5i` sidecar.
+pub fn record_human_prompt_at(
+    path: &Path,
+    prompt: &str,
+    session_id: Option<&str>,
+) -> Result<(), H5iError> {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Ok(());
+    }
+    let mut ctx = read_pending_context_at(path)?.unwrap_or_default();
+    ctx.human_prompt = Some(match ctx.human_prompt.take() {
+        Some(prev) if !prev.trim().is_empty() => format!("{prev}\n\n{prompt}"),
+        _ => prompt.to_string(),
+    });
+    if let Some(sid) = session_id.filter(|s| !s.is_empty()) {
+        ctx.session_id = Some(sid.to_string());
+    }
+    write_pending_context_at(path, &ctx)
+}
+
 // ============================================================
 // Internal helpers
 // ============================================================
@@ -1271,36 +1320,34 @@ impl H5iRepository {
         &self.h5i_root
     }
 
+    /// The pending-context file path. On the host it lives under the sealed-off
+    /// `.git/.h5i` sidecar. **Inside an env box** that sidecar is not granted
+    /// (read *or* write) to the sandboxed process, so the file is redirected to
+    /// the box-writable capture spool: the in-box `UserPromptSubmit` hook writes
+    /// the human prompt there and the in-box `h5i capture commit` reads it back
+    /// to stamp the note — both run inside the box, before the host ingests.
+    fn pending_context_path(&self) -> PathBuf {
+        crate::env::inbox_pending_context_path()
+            .unwrap_or_else(|| self.h5i_root.join("pending_context.json"))
+    }
+
     pub fn read_pending_context(&self) -> Result<Option<PendingContext>, H5iError> {
-        let path = self.h5i_root.join("pending_context.json");
-        if !path.exists() {
-            return Ok(None);
-        }
-        let raw = fs::read_to_string(&path)?;
-        let ctx: PendingContext = serde_json::from_str(&raw).map_err(|e| {
-            H5iError::Metadata(format!("Failed to parse pending_context.json: {e}"))
-        })?;
-        Ok(Some(ctx))
+        read_pending_context_at(&self.pending_context_path())
     }
 
     /// Deletes the pending context file after it has been consumed by a commit.
     pub fn clear_pending_context(&self) -> Result<(), H5iError> {
-        let path = self.h5i_root.join("pending_context.json");
+        let path = self.pending_context_path();
         if path.exists() {
             fs::remove_file(&path)?;
         }
         Ok(())
     }
 
-    /// Persists the pending context to `.git/.h5i/pending_context.json`.
+    /// Persists the pending context (`.git/.h5i/pending_context.json` on the
+    /// host, or the env capture spool inside a box — see [`Self::pending_context_path`]).
     pub fn write_pending_context(&self, ctx: &PendingContext) -> Result<(), H5iError> {
-        fs::create_dir_all(&self.h5i_root)?;
-        let path = self.h5i_root.join("pending_context.json");
-        let raw = serde_json::to_string_pretty(ctx).map_err(|e| {
-            H5iError::Metadata(format!("Failed to serialize pending_context.json: {e}"))
-        })?;
-        fs::write(&path, raw)?;
-        Ok(())
+        write_pending_context_at(&self.pending_context_path(), ctx)
     }
 
     /// Records a verbatim human prompt (from the `UserPromptSubmit` hook) into
@@ -1315,19 +1362,7 @@ impl H5iRepository {
         prompt: &str,
         session_id: Option<&str>,
     ) -> Result<(), H5iError> {
-        let prompt = prompt.trim();
-        if prompt.is_empty() {
-            return Ok(());
-        }
-        let mut ctx = self.read_pending_context()?.unwrap_or_default();
-        ctx.human_prompt = Some(match ctx.human_prompt.take() {
-            Some(prev) if !prev.trim().is_empty() => format!("{prev}\n\n{prompt}"),
-            _ => prompt.to_string(),
-        });
-        if let Some(sid) = session_id.filter(|s| !s.is_empty()) {
-            ctx.session_id = Some(sid.to_string());
-        }
-        self.write_pending_context(&ctx)
+        record_human_prompt_at(&self.pending_context_path(), prompt, session_id)
     }
 
     /// Builds an [`IntentGraph`] for the most recent `limit` commits.
@@ -2825,6 +2860,48 @@ mod tests {
         // Clearing (as a commit does) drops the accumulated prompt.
         h5i.clear_pending_context().unwrap();
         assert!(h5i.read_pending_context().unwrap().is_none());
+    }
+
+    #[test]
+    fn pending_context_free_fns_round_trip_at_arbitrary_path() {
+        // These path-based helpers are what the in-box UserPromptSubmit hook uses
+        // to target the box-writable capture spool (the `.git/.h5i` sidecar is
+        // sealed inside an env box). Exercise them against a bare file path — no
+        // repo, no env vars — including auto-creating the parent directory.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("nested/spool/pending_context.json");
+
+        assert!(read_pending_context_at(&path).unwrap().is_none());
+
+        // Blank is ignored; first prompt creates the file + parent dir.
+        record_human_prompt_at(&path, "  ", Some("s1")).unwrap();
+        assert!(read_pending_context_at(&path).unwrap().is_none());
+        record_human_prompt_at(&path, "fix the retry loop", Some("s1")).unwrap();
+        assert!(path.is_file(), "parent dir auto-created and file written");
+
+        // Second turn accumulates.
+        record_human_prompt_at(&path, "also add a test", Some("s1")).unwrap();
+        let ctx = read_pending_context_at(&path).unwrap().unwrap();
+        assert_eq!(
+            ctx.human_prompt.as_deref(),
+            Some("fix the retry loop\n\nalso add a test")
+        );
+        assert_eq!(ctx.session_id.as_deref(), Some("s1"));
+
+        // Explicit write round-trips too.
+        let ctx2 = PendingContext {
+            human_prompt: Some("overwrite".to_string()),
+            ..PendingContext::default()
+        };
+        write_pending_context_at(&path, &ctx2).unwrap();
+        assert_eq!(
+            read_pending_context_at(&path)
+                .unwrap()
+                .unwrap()
+                .human_prompt
+                .as_deref(),
+            Some("overwrite")
+        );
     }
 
     // ── copy_scoped_notes_onto (branch-scoped `h5i share push`) ─────────────

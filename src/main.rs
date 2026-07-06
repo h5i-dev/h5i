@@ -7274,9 +7274,19 @@ fn main() -> anyhow::Result<()> {
             let session_id = data.get("session_id").and_then(|v| v.as_str());
 
             let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            // Only record inside a git repo that already has h5i initialized —
-            // never create `.git/.h5i` just because the global hook fired in
-            // some unrelated repo.
+            // Inside an env box the `.git/.h5i` sidecar is sealed (no read/write
+            // grant), so H5iRepository::open + `record_human_prompt` can't reach
+            // it — and the `h5i_root.exists()` probe below stats as false. Route
+            // the prompt to the box-writable capture spool instead; the in-box
+            // `h5i capture commit` reads it back from there to stamp the note.
+            if let Some(spool_path) = h5i_core::env::inbox_pending_context_path() {
+                let _ =
+                    h5i_core::repository::record_human_prompt_at(&spool_path, prompt, session_id);
+                return Ok(());
+            }
+            // On the host: only record inside a git repo that already has h5i
+            // initialized — never create `.git/.h5i` just because the global
+            // hook fired in some unrelated repo.
             let Ok(git_repo) = git2::Repository::discover(&workdir) else {
                 return Ok(());
             };
