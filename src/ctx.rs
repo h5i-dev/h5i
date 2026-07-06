@@ -318,9 +318,28 @@ fn ctx_write_files(
     Ok(())
 }
 
+/// Max attempts to land a context-ref commit when concurrent writers keep
+/// advancing the ref out from under us.
+///
+/// Context refs — especially the shared `refs/h5i/context/main`, which holds
+/// *every* git branch's goal under `git-goals/` — are written by many agents at
+/// once (each env box and the host all record goals/milestones/traces there).
+/// libgit2's `commit(Some(ref))` refuses to move a ref whose tip is no longer
+/// our commit's first parent, and the refdb lock is exclusive, so a naive
+/// single-shot write makes the losing writer's whole `h5i context` command fail
+/// — silently dropping that agent's goal or trace. Instead we re-read the tip
+/// and re-apply, reconciling per file, until we win or exhaust the budget.
+const CTX_WRITE_MAX_ATTEMPTS: usize = 24;
+
 /// Commit `(rel_path, content)` changes onto a single ref. The ref is created
-/// (orphan branch) if it does not yet exist; otherwise this appends one
-/// commit whose parent is the current tip.
+/// (orphan branch) if it does not yet exist; otherwise this appends one commit
+/// whose parent is the current tip.
+///
+/// **Concurrency-safe.** Because several agents write these refs simultaneously,
+/// the commit is retried on contention (the tip moved, or the ref was locked).
+/// On each retry the changes are re-applied onto the *current* tip and
+/// reconciled per file, so a concurrent writer's work is preserved rather than
+/// clobbered or hard-failed (see [`reconcile_change`]).
 fn write_ref_files(
     repo: &Repository,
     ref_name: &str,
@@ -332,20 +351,148 @@ fn write_ref_files(
         .or_else(|_| Signature::now("h5i", "h5i@local"))
         .map_err(H5iError::Git)?;
 
-    let parent = repo
+    let tip_oid = |r: &Repository| -> Option<Oid> {
+        r.find_reference(ref_name)
+            .ok()
+            .and_then(|rf| rf.peel_to_commit().ok())
+            .map(|c| c.id())
+    };
+
+    // Ancestor snapshot: each changed file's content at the tip we first observe
+    // — i.e. what the caller read and built its write on. It is the 3-way base
+    // used on retry, and the way we tell an *append* (fold in a concurrent
+    // writer's tail) from a *replacement* like a branch reset or ephemeral clear
+    // (last-writer-wins). On the uncontended first attempt the current tip equals
+    // this snapshot, so reconciliation is a no-op and behaviour is unchanged.
+    let ancestor_tree = repo
         .find_reference(ref_name)
         .ok()
-        .and_then(|r| r.peel_to_commit().ok());
-    let current_tree = parent.as_ref().and_then(|c| c.tree().ok());
+        .and_then(|r| r.peel_to_commit().ok())
+        .and_then(|c| c.tree().ok());
+    let ancestors: Vec<String> = changes
+        .iter()
+        .map(|&(rel, _)| read_tree_file(repo, ancestor_tree.as_ref(), rel).unwrap_or_default())
+        .collect();
 
-    let new_tree_oid = apply_changes_to_tree(repo, current_tree.as_ref(), changes)?;
-    let new_tree = repo.find_tree(new_tree_oid).map_err(H5iError::Git)?;
+    for attempt in 0..CTX_WRITE_MAX_ATTEMPTS {
+        let parent = repo
+            .find_reference(ref_name)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok());
+        let parent_oid = parent.as_ref().map(|c| c.id());
+        let current_tree = parent.as_ref().and_then(|c| c.tree().ok());
 
-    let parents: Vec<&git2::Commit> = parent.iter().collect();
-    repo.commit(Some(ref_name), &sig, &sig, message, &new_tree, &parents)
-        .map_err(H5iError::Git)?;
+        // Reconcile each change against the current tip so a concurrent writer's
+        // appends to the same file survive. A distinct file (e.g. another
+        // branch's goal) isn't in `changes`, so it's carried over untouched by
+        // `apply_changes_to_tree` building on the current tip.
+        let reconciled: Vec<(String, String)> = changes
+            .iter()
+            .enumerate()
+            .map(|(i, &(rel, content))| {
+                (
+                    rel.to_string(),
+                    reconcile_change(repo, current_tree.as_ref(), &ancestors[i], rel, content),
+                )
+            })
+            .collect();
+        let borrowed: Vec<(&str, &str)> = reconciled
+            .iter()
+            .map(|(p, c)| (p.as_str(), c.as_str()))
+            .collect();
 
-    Ok(())
+        let new_tree_oid = apply_changes_to_tree(repo, current_tree.as_ref(), &borrowed)?;
+        let new_tree = repo.find_tree(new_tree_oid).map_err(H5iError::Git)?;
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+
+        match repo.commit(Some(ref_name), &sig, &sig, message, &new_tree, &parents) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                // Retry only on contention: the ref moved under us (its tip is no
+                // longer the parent we built on) or the refdb lock was held. Any
+                // other failure (bad object, disk error) is propagated as-is.
+                let moved = tip_oid(repo) != parent_oid;
+                let locked = matches!(
+                    e.code(),
+                    git2::ErrorCode::Locked | git2::ErrorCode::Modified
+                ) || e.message().contains("lock")
+                    || e.message().contains("first parent");
+                if (moved || locked) && attempt + 1 < CTX_WRITE_MAX_ATTEMPTS {
+                    ctx_write_backoff(attempt);
+                    continue;
+                }
+                return Err(H5iError::Git(e));
+            }
+        }
+    }
+
+    Err(H5iError::Metadata(format!(
+        "context ref {ref_name} stayed contended after {CTX_WRITE_MAX_ATTEMPTS} attempts"
+    )))
+}
+
+/// Brief jittered backoff between contended context-ref write attempts, to break
+/// up a thundering herd of agents colliding on the same ref. Bounded so the
+/// worst case stays well under a second across all attempts.
+fn ctx_write_backoff(attempt: usize) {
+    let jitter = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::from(d.subsec_nanos() % 5))
+        .unwrap_or(0);
+    let ms = (attempt as u64).min(10) + jitter;
+    if ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+}
+
+/// Read a single file (`rel` path) from an optional tree. `None` when the tree
+/// or the path is absent, or the blob is not valid UTF-8.
+fn read_tree_file(repo: &Repository, tree: Option<&git2::Tree>, rel: &str) -> Option<String> {
+    let entry = tree?.get_path(Path::new(rel)).ok()?;
+    let blob = repo.find_blob(entry.id()).ok()?;
+    std::str::from_utf8(blob.content()).ok().map(str::to_owned)
+}
+
+/// Reconcile our intended `content` for `rel` against the version already on the
+/// current tip, using `ancestor` (the file as we first read it) as the 3-way
+/// base, so re-applying after a concurrent write neither overwrites their work
+/// nor resurrects content our write meant to drop:
+///
+/// - **Append** (`content` extends `ancestor`) to an append-only log
+///   (`commit.md`/`trace.md`/`ephemeral.md`) → keep the common base and fold in
+///   both sides' tails ([`union_append_only`]).
+/// - The trace DAG (`dag.json`) → union nodes by id ([`union_dag_json`]); it is a
+///   set, so this is always safe regardless of append-vs-replace.
+/// - **Replacement** (a branch reset, an ephemeral clear, or `content` no longer
+///   built on `ancestor`), or a non-log file (a branch's own `git-goals/<b>.md`,
+///   `main.md`, metadata) → last-writer-wins. A *different* owner's file is a
+///   different path we never touch here.
+///
+/// A no-op (returns `content`) when the tip lacks the file or already equals it —
+/// so the uncontended first attempt, where the tip still equals `ancestor`, is
+/// unchanged.
+fn reconcile_change(
+    repo: &Repository,
+    current_tree: Option<&git2::Tree>,
+    ancestor: &str,
+    rel: &str,
+    content: &str,
+) -> String {
+    let theirs = match read_tree_file(repo, current_tree, rel) {
+        Some(t) if t != content => t,
+        _ => return content.to_string(),
+    };
+    let filename = Path::new(rel)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    if filename == DAG_FILE {
+        union_dag_json(ancestor, content, &theirs).unwrap_or_else(|_| content.to_string())
+    } else if APPEND_ONLY_FILES.contains(&filename) && content.starts_with(ancestor) {
+        union_append_only(ancestor, content, &theirs)
+    } else {
+        content.to_string()
+    }
 }
 
 /// Recursively build a Git tree by applying `(relative_path, content)` changes onto
@@ -4531,6 +4678,124 @@ mod tests {
         init(dir.path(), "Build something great").unwrap();
         assert!(is_initialized(dir.path()));
         assert!(list_branches(dir.path()).contains(&"main".to_string()));
+    }
+
+    // ── concurrent context-ref writes (CAS-retry + reconcile) ─────────────────
+
+    #[test]
+    fn append_only_merge_folds_both_tails_from_ancestor() {
+        // The primitive the retry path uses to reconcile two concurrent appends
+        // to the same log, given the ancestor they both extended.
+        let base = "# log\n\n";
+        let ours = format!("{base}entry-OURS\n");
+        let theirs = format!("{base}entry-THEIRS\n");
+        let merged = union_append_only(base, &ours, &theirs);
+        assert!(merged.starts_with(base), "keeps the shared prefix: {merged:?}");
+        assert!(merged.contains("entry-OURS"), "keeps our tail: {merged:?}");
+        assert!(merged.contains("entry-THEIRS"), "keeps their tail: {merged:?}");
+        // The shared prefix appears exactly once (tails were folded, not whole files).
+        assert_eq!(merged.matches("# log").count(), 1, "prefix not duplicated: {merged:?}");
+    }
+
+    #[test]
+    fn reconcile_change_treats_a_replacement_as_last_writer_wins() {
+        // A branch reset / ephemeral clear does NOT start with the ancestor, so
+        // it must overwrite (win), never fold the old content back in — the
+        // regression that broke `gcc_branch` and the ephemeral clear. An append
+        // (content extends the ancestor) DOES fold in the tip's concurrent tail.
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let repo = Repository::open(dir.path()).unwrap();
+        let main_ref = branch_ref(MAIN_BRANCH);
+
+        // gcc_branch reset: the tip holds the forked parent's log; our write is a
+        // new-branch header that does not extend it → must win outright.
+        let ancestor = "# Branch: main\n\n**Purpose:** primary\n\nOLD\n";
+        write_ref_files(&repo, &main_ref, &[("commit.md", ancestor)], "seed").unwrap();
+        let tip_tree = || {
+            repo.find_reference(&main_ref)
+                .unwrap()
+                .peel_to_commit()
+                .unwrap()
+                .tree()
+                .unwrap()
+        };
+        let reset = "# Branch: option-a\n\n**Purpose:** \n\n";
+        assert_eq!(
+            reconcile_change(&repo, Some(&tip_tree()), ancestor, "commit.md", reset),
+            reset,
+            "a reset must win, not merge the old log back in"
+        );
+
+        // ephemeral clear: content is a prefix of the ancestor (shorter) → also a
+        // replacement, so the clear wins.
+        let clear = "# Branch: main\n\n";
+        assert_eq!(
+            reconcile_change(&repo, Some(&tip_tree()), ancestor, "commit.md", clear),
+            clear,
+            "a clear/truncation must win, not be undone"
+        );
+
+        // append: content extends the ancestor and the tip diverged with its own
+        // tail → both tails are folded in (nothing lost).
+        let ours_append = format!("{ancestor}MINE\n");
+        let their_tip = format!("{ancestor}THEIRS\n");
+        write_ref_files(&repo, &main_ref, &[("commit.md", &their_tip)], "concurrent append")
+            .unwrap();
+        let merged =
+            reconcile_change(&repo, Some(&tip_tree()), ancestor, "commit.md", &ours_append);
+        assert!(merged.contains("MINE") && merged.contains("THEIRS"), "both tails kept: {merged:?}");
+        assert!(merged.starts_with(ancestor), "shared base preserved: {merged:?}");
+    }
+
+    #[test]
+    fn concurrent_goal_writes_to_shared_main_ref_all_survive() {
+        // Regression: the old single-shot `write_ref_files` hard-failed
+        // ("current tip is not the first parent") when several agents wrote the
+        // shared `refs/h5i/context/main` ref at once, so only the race winner's
+        // goal landed. The CAS-retry must let every distinct goal through.
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "host goal").unwrap();
+        let path = dir.path().to_path_buf();
+        let main_ref = branch_ref(MAIN_BRANCH);
+
+        const N: usize = 8;
+        std::thread::scope(|s| {
+            for i in 0..N {
+                let path = path.clone();
+                let main_ref = main_ref.clone();
+                s.spawn(move || {
+                    // Each thread opens its own handle — models N separate agent
+                    // processes contending on the same on-disk ref.
+                    let repo = Repository::open(&path).unwrap();
+                    let rel = format!("git-goals/agent-{i}.md");
+                    let content = format!("goal-of-agent-{i}");
+                    write_ref_files(
+                        &repo,
+                        &main_ref,
+                        &[(rel.as_str(), content.as_str())],
+                        "concurrent goal",
+                    )
+                    .expect("goal write must retry on contention, not fail");
+                });
+            }
+        });
+
+        // Every agent's goal is present on the shared ref, plus the host's own.
+        let repo = Repository::open(&path).unwrap();
+        for i in 0..N {
+            assert_eq!(
+                read_ref_file(&repo, &main_ref, &format!("git-goals/agent-{i}.md")).as_deref(),
+                Some(format!("goal-of-agent-{i}").as_str()),
+                "agent-{i}'s goal was clobbered under concurrency"
+            );
+        }
+        assert!(
+            read_ref_file(&repo, &main_ref, "git-goals/main.md").is_some(),
+            "the host's own goal survived the concurrent writes"
+        );
     }
 
     // A repo that exists but cannot be opened (EACCES — e.g. a sandbox that
