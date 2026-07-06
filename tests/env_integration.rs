@@ -1116,6 +1116,82 @@ fn apply_stamps_commit_with_env_provenance_note() {
     );
 }
 
+/// A `--patch` (squash) apply squashes the env commits into one commit whose
+/// only parent is the parent tip — so those commits, and their per-commit
+/// prompt notes, leave the parent's ancestry. Apply must fold the prompts
+/// forward onto the squash commit's provenance note so the prompt that drove
+/// the work is still tracked on the parent branch (and survives gc). Regression
+/// guard for the squash path silently dropping prompt provenance.
+#[test]
+fn apply_patch_folds_env_prompts_into_provenance() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "sq"]);
+
+    // A genuine in-box `capture commit` carrying an --intent (the prompt), just
+    // as an agent working inside the box would produce.
+    let wt = r.work("sq");
+    std::fs::write(wt.join("lib.py"), "def f():\n    return 2\n").unwrap();
+    git(&wt, &["add", "lib.py"]);
+    let cc = Command::new(H5I)
+        .args([
+            "capture",
+            "commit",
+            "-m",
+            "impl f",
+            "--intent",
+            "Implement lib.f() to return the computed value and add a unit test \
+             for the empty case; keep the public signature stable.",
+            "--model",
+            "claude",
+            "--agent",
+            "tester",
+        ])
+        .env("H5I_AGENT", "tester")
+        .current_dir(&wt)
+        .output()
+        .expect("in-box capture commit");
+    assert!(
+        cc.status.success(),
+        "in-box capture commit failed: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+
+    r.h5i_ok(&["env", "propose", "sq"]);
+    let applied = r.h5i_ok(&["env", "apply", "sq", "--patch"]);
+    assert!(out_str(&applied).contains("applied onto main"));
+
+    // The applied commit is a squash: exactly one parent.
+    let parents = out_str(&git(&r.dir, &["rev-list", "--parents", "-n", "1", "main"]));
+    assert_eq!(
+        parents.split_whitespace().count(),
+        2, // <commit> <one-parent>
+        "squash apply must produce a single-parent commit: {parents}"
+    );
+
+    // Its provenance note carries the folded prompt as a LIST entry — the prompt
+    // is now tracked on the parent branch even though the env commit is gone.
+    let tip = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let note = out_str(&git(
+        &r.dir,
+        &["show", &format!("refs/h5i/notes:{}", tip.trim())],
+    ));
+    let rec: serde_json::Value =
+        serde_json::from_str(note.trim()).expect("note must be H5iCommitRecord JSON");
+    let prompts = rec["env_provenance"]["prompts"]
+        .as_array()
+        .expect("folded prompts array");
+    assert!(
+        prompts
+            .iter()
+            .any(|p| p.as_str().unwrap_or("").contains("Implement lib.f()")),
+        "the driving prompt must be folded onto the squash commit: {rec}"
+    );
+
+    // The squash message lists the collapsed env commit subjects.
+    let msg = out_str(&git(&r.dir, &["log", "-1", "--format=%B", "main"]));
+    assert!(msg.contains("Squashed env commits:"), "squash message: {msg}");
+}
+
 /// The provenance note is attached in the merge path too (parent advanced →
 /// a fresh merge commit gets the note, not just the fast-forward case).
 #[test]
