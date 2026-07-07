@@ -41,6 +41,60 @@ jobs:
       - name: cargo test
         run: cargo test --verbose
 
+  # The man page (man/man1/h5i.1) and the /manual/ HTML (docs/manual/index.html)
+  # are GENERATED, not hand-edited: the man page from the clap CLI via
+  # `scripts/gen_man.sh`, the HTML from MANUAL.md via `scripts/gen_manual.py`.
+  # This job regenerates both and fails if the committed copies drift, so a
+  # change to the CLI flags or to MANUAL.md can never land with a stale manual.
+  # Reproducibility: the man page is pinned by Cargo.lock (`--locked` build) +
+  # toolchain; the HTML is pinned by `scripts/requirements.txt` (the `markdown`
+  # version). Regenerate locally on Linux with the same pins and commit the diff.
+  docs:
+    name: manuals fresh (man + html)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # rust-embed's `#[folder = "web/dist/"]` must resolve at derive time, but
+      # the man page derives only from the clap command tree — web/dist contents
+      # don't affect it. Keep DEFAULT features on (so `serve` and other
+      # web-gated subcommands appear, matching the committed page), stub the
+      # bundle, and skip the npm build (no Node on this runner).
+      - name: Stub web/dist for rust-embed
+        run: |
+          mkdir -p web/dist
+          echo '<!doctype html><title>stub</title>' > web/dist/index.html
+
+      - name: Install manual-generator deps (pinned)
+        run: python3 -m pip install --quiet -r scripts/requirements.txt
+
+      - name: Regenerate the man page (from the clap CLI)
+        env:
+          H5I_SKIP_WEB_BUILD: '1'
+        run: ./scripts/gen_man.sh
+
+      - name: Regenerate the /manual/ HTML (from MANUAL.md)
+        run: python3 scripts/gen_manual.py
+
+      - name: Fail if the committed manuals are stale
+        run: |
+          if git diff --quiet -- man/man1/h5i.1 docs/manual/index.html; then
+            echo "manuals are up to date"
+            exit 0
+          fi
+          echo "::error::Generated manuals are out of date — a source change landed without regenerating."
+          echo "Run on Linux, then commit the result:"
+          echo "    ./scripts/gen_man.sh"
+          echo "    python3 -m pip install -r scripts/requirements.txt && python3 scripts/gen_manual.py"
+          echo "    git add man/man1/h5i.1 docs/manual/index.html"
+          echo "----------------------------- drift -----------------------------"
+          git --no-pager diff -- man/man1/h5i.1 docs/manual/index.html
+          exit 1
+
   # Compile-check every release target on PRs/main so cross-target breakage
   # (musl-vs-glibc libc cfg, arch-specific syscall consts, `target_os` gaps) is
   # caught BEFORE a tag is cut — not in `release.yaml`, which only runs on tags.

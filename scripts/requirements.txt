@@ -1,0 +1,8 @@
+# Pinned deps for the manual generators (scripts/gen_manual.py).
+# Pinned so the checked-in docs/manual/index.html is byte-reproducible: CI's
+# freshness gate regenerates and diffs, so the generator version must match the
+# one that produced the committed file. Bump this in the same commit that
+# regenerates docs/manual/index.html.
+#
+#   python3 -m pip install -r scripts/requirements.txt
+markdown==3.10.2

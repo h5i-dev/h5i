@@ -1,2397 +1,2041 @@
-.TH H5I 1 "2026-06-10" "h5i 0.1.7" "h5i Manual"
-.
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH h5i 1  "h5i 0.2.7" 
 .SH NAME
-h5i \- Advanced Git sidecar for the AI era
-.
+h5i \- Auditable workspaces for AI coding agents
 .SH SYNOPSIS
-.B h5i
-.I NOUN VERB
-.RI [ OPTIONS ]
-.RI [ ARGUMENTS ]
-.PP
-.B h5i
-.I COMMAND
-.RI [ OPTIONS ]
-.RI [ ARGUMENTS ]
-.RB "(legacy form, still supported with deprecation hint)"
-.
+\fBh5i\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
-.B h5i
-(\"high-five\") extends Git with semantic dimensions:
-.PP
-.RS 4
-.IP \(bu 2
-.B Temporal
-\(em standard Git history
-.IP \(bu 2
-.B Intentional
-\(em AI provenance (model, agent, prompt, token count)
-.IP \(bu 2
-.B Empirical
-\(em test metrics attached to every commit
-.RE
-.PP
-All metadata is stored as a Git sidecar under
-.I .git/.h5i/
-and dedicated refs under
-.IR refs/h5i/* .
-These refs are
-.B not
-pushed by a plain
-.BR "git push" ;
-use
-.B h5i share push
-to share them.
-.
-.SH COMMAND GROUPS
-.
-.B h5i
-organises its verbs around four nouns. Run
-.BR "h5i \fINOUN\fR \-\-help"
-(or
-.BR "h5i help \fINOUN\fR )
-for the verb table with runnable examples and the corresponding MCP tool names.
-.PP
-.RS 4
-.IP \(bu 2
-.B h5i capture
-\(em record provenance:
-.BR commit ,
-.BR memory ,
-.BR run .
-.IP \(bu 2
-.B h5i recall
-\(em read history:
-.BR log ,
-.BR blame ,
-.BR diff ,
-.BR context ,
-.BR notes ,
-.BR memory ,
-.BR recap ,
-.BR resume ,
-.BR object ,
-.BR objects .
-.IP \(bu 2
-.B h5i audit
-\(em assess risk:
-.BR review ,
-.BR scan ,
-.BR compliance ,
-.BR policy ,
-.BR vibe .
-.IP "" 4
-Rules split into
-.B Quality
-(high-precision: credential leak, code execution, blind edit, sensitive-file
-edit, CI/CD edit, permission change, test regression, duplicated code, mass
-deletion, binary file, missing AI prompt) and
-.B Shape
-(informational: large diff, wide impact, cross-cutting, polyglot, burst after
-gap, untested change). The PR-comment 🚩 fires only on Quality score; Shape
-signals appear as supplementary context.
-.IP \(bu 2
-.B h5i share
-\(em publish:
-.BR push ,
-.BR pull ,
-.BR pr ,
-.BR memory .
-.IP \(bu 2
-.B h5i objects
-\(em token-reduction object store:
-.BR run ,
-.BR put ,
-.BR get ,
-.BR list ,
-.BR gc ,
-.BR pin ,
-.BR unpin ,
-.BR fsck ,
-.BR filters ,
-.BR trust ,
-.BR setup .
-.RE
-.PP
-The legacy top-level verbs
-.RB ( "h5i commit" ,
-.BR "h5i log" ,
-.BR "h5i push" ,
-\&...) still work; running one prints a one-line
-.B h5i hint:
-line on stderr suggesting the canonical form, then proceeds normally. Pipes are
-unaffected because the hint goes to stderr.
-.PP
-Typos under a noun group are caught with a closest-match suggestion:
-.PP
-.RS 4
-.EX
-$ h5i audit revew
-error: `h5i audit revew` is not a known subcommand.
-       Did you mean `h5i audit review`?
-       Run `h5i audit --help` for the full list.
-.EE
-.RE
-.
-.SH COMMANDS
-.
-.\" ─── init ───────────────────────────────────────────────────────────────────
-.SS h5i init
-Initialize the h5i sidecar in the current Git repository.
-Creates
-.I .git/.h5i/
-with subdirectories
-.BR memory/ ,
-and
-.BR session_log/ .
-.
-.\" ─── completion ─────────────────────────────────────────────────────────────
-.SS h5i completion \fISHELL\fR
-Print a shell completion script for
-.I SHELL
-.RB ( bash ", " zsh ", " fish ", " powershell ", " elvish )
-to standard output, e.g.
-.BR "h5i completion bash | sudo tee /etc/bash_completion.d/h5i" .
-.
-.\" ─── commit ─────────────────────────────────────────────────────────────────
-.SS h5i capture commit \-m \fIMESSAGE\fR [\fIOPTIONS\fR]
-Commit staged changes with optional AI provenance, test metrics,
-and integrity audit.
-.PP
-.B Options
-.RS 4
-.TP
-.BI \-m,\ \-\-message\  MESSAGE
-Git commit message (required).
-.TP
-.BI \-\-prompt\  TEXT
-The user prompt that triggered this commit.
-Falls back to env
-.B H5I_PROMPT
-or
-.I .git/.h5i/pending_context.json
-(written by the Claude Code hook).
-.TP
-.BI \-\-model\  NAME
-AI model name, e.g.\&
-.IR claude\-sonnet\-4\-6 .
-Falls back to env
-.BR H5I_MODEL .
-.TP
-.BI \-\-agent\  ID
-Agent identifier, e.g.\&
-.IR claude\-code .
-Falls back to env
-.BR H5I_AGENT_ID .
-.TP
-.BI \-\-caused\-by\  OID
-Commit OID that causally triggered this one.
-Repeatable:
-.BR "\-\-caused\-by abc123 \-\-caused\-by def456" .
-Abbreviated OIDs are resolved at commit time.
-.TP
-.BI \-\-test\-results\  FILE
-Path to a JSON test results file produced by any adapter.
-Takes precedence over
-.B \-\-tests
-and env
-.BR H5I_TEST_RESULTS .
-Schema: see
-.B TEST RESULTS SCHEMA
-below.
-.TP
-.BI \-\-test\-cmd\  CMD
-Shell command whose stdout is parsed as h5i test JSON.
-Used when no
-.B \-\-test\-results
-file is provided.
-.TP
-.B \-\-tests
-Scan staged source files for inline
-.B // h5_i_test_start
-/
-.B // h5_i_test_end
-markers.
-.TP
-.B \-\-audit
-Run all twelve integrity rules before committing.
-Violations block the commit;
-.B \-\-force
-overrides warnings only.
-.TP
-.B \-\-force
-Commit despite integrity
-.I warnings
-(violations still block).
-.TP
-.BI \-\-add\  PATH
-Stage
-.I PATH
-before committing (equivalent to running
-.B git add
-.I PATH
-beforehand).
-Repeatable:
-.BR "\-\-add src/foo.rs \-\-add src/bar.rs" .
-Eliminates the separate
-.B git add
-step when calling from scripts or MCP tools.
-.RE
-.PP
-.B Flag resolution order:
-CLI flag \(rA environment variable \(rA pending context file.
-.
-.\" ─── log ────────────────────────────────────────────────────────────────────
-.SS h5i recall log [\fIOPTIONS\fR]
-Display the enriched 5D commit history annotated with AI metadata,
-test results, and causal links.
-.PP
-.B Options
-.RS 4
-.TP
-.BI \-l,\ \-\-limit\  N
-Number of recent commits to display (default:
-.BR 10 ).
-.RE
-.
-.\" ─── blame ──────────────────────────────────────────────────────────────────
-.SS h5i recall blame \fIFILE\fR [\fIOPTIONS\fR]
-Show per-line authorship annotated with AI metadata and test status.
-Each line is prefixed with a test-status column
-.RB ( \(OK\ passing ,\ \(mu\ failing ,\ blank\ =\ no\ data ).
-.PP
-.B Options
-.RS 4
-.TP
-.B \-\-show-prompt
-Annotate each commit boundary with the human prompt that triggered it.
-.RE
-.
-.\" ─── resolve ────────────────────────────────────────────────────────────────
-.SS h5i resolve \fIOURS\fR \fITHEIRS\fR \fIFILE\fR
-Text-based 3-way merge for
-.I FILE
-between two commits, using their
-.B git merge-base
-as the ancestor. h5i materializes the three blobs and delegates to
-.BR "git merge-file -p" ,
-then prints the merged content to stdout.
-.PP
-When textual conflicts cannot be resolved, the output contains the usual
-.B <<<<<<< / ======= / >>>>>>>
-markers and the command exits with status 1; otherwise it exits 0.
-.PP
-.B Note:
-earlier versions of
-.B h5i resolve
-did a Yjs CRDT semantic merge; that dependency has been removed and
-.B h5i resolve
-now behaves like a deterministic, git-native 3-way merge.
-.PP
-.B Arguments
-.RS 4
-.TP
-.I OURS
-OID of the local branch.
-.TP
-.I THEIRS
-OID of the incoming branch.
-.TP
-.I FILE
-Relative path to the file to resolve.
-.RE
-.
-.\" ─── serve ──────────────────────────────────────────────────────────────────
-.SS h5i serve [\fIOPTIONS\fR]
-Launch the embedded web dashboard.
-.PP
-.B Options
-.RS 4
-.TP
-.BI \-p,\ \-\-port\  PORT
-Port to listen on (default:
-.BR 7150 ).
-.RE
-.PP
-Dashboard tabs:
-.RS 4
-.IP \(bu 2
-.B Timeline
-\(em full commit history with test-status borders, AI prompt panels,
-and per-commit Audit buttons
-.IP \(bu 2
-.B Summary
-\(em aggregate stats, agent leaderboard, filter pills
-.IP \(bu 2
-.B Integrity
-\(em audit any commit message + prompt against all twelve rules without committing
-.IP \(bu 2
-.B Intent Graph
-\(em directed graph of causal commit chains
-.IP \(bu 2
-.B Memory
-\(em browse and diff Claude memory snapshots
-.IP \(bu 2
-.B Sessions
-\(em exploration footprint, uncertainty heatmap, and churn for each commit
-.IP \(bu 2
-.B Sandbox
-\(em the read-only "flight recorder" for
-.BR "h5i env" :
-host-readiness strip, an env fleet table with a deterministic boundary-pressure
-score, a five-lane (FS/NET/PROC/RESOURCE/PROVENANCE) per-run timeline, and the
-enforced-policy inspector. Denials are surfaced honestly ("Boundary blocked"
-only when enforcement fired; "Boundary pressure" for probing shapes; "Weak
-isolation" for capability gaps).
-.RE
-.
-.\" ─── env ────────────────────────────────────────────────────────────────────
-.SS h5i env \fISUBCOMMAND\fR
-Isolated agent environments: the fusion of a code branch + git worktree, a
-forked reasoning branch, and a digest-pinned, fail-closed policy manifest. Use
-one for risky or exploratory work instead of editing the main tree in place.
-Every
-.B run
-is policy-enforced and capture-wrapped (evidence in
-.IR refs/h5i/objects ,
-tagged with the env id + enforced policy digest). Lifecycle:
-.BR create " \(-> " run " \(-> " propose " \(-> " apply | abort " \(-> " gc ;
-.B apply
-is never automatic \(em a reviewer applies a proposal. Env state lives in
-.I refs/h5i/env
-and travels with
-.BR "h5i share push" / pull
-for a cross-clone review loop.
-.PP
-.B Subcommands
-.RS 4
-.TP
-.BI "create " "NAME " "[\-\-from REV] [\-\-profile P] [\-\-isolation TIER]"
-Create an env; base frozen at creation. With no
-.B \-\-isolation
-(or
-.BR "\-\-isolation auto" )
-it auto-picks the strongest tier the host can run; an explicit tier refuses
-(never downgrades) if the host cannot satisfy it.
-.TP
-.BI "run " "NAME " "\-\- COMMAND [ARGS...]"
-Run a command inside the env, policy-enforced + capture-wrapped.
-.TP
-.BI "shell " "NAME " "[\-\- COMMAND]"
-Open an interactive confined session inside the env (the "agent-in-box"): stdio
-is inherited, so every command the session spawns is confined by the box. With
-.B \-\- COMMAND
-that command becomes the session (e.g. \fB\-\- claude \(dq<task>\(dq\fR launches
-the agent; boxed agents use staged commands such as \fBh5i team agent submit\fR,
-which the host ingests when the shell exits).
-Defaults to a login shell; exit code passes through. The session is observed (a
-.B shell
-event is logged and per-command evidence is staged + ingested where the tier
-supports it) and the agent's config is locked read-only. See
-.B IN-BOX GIT, CAPTURE & COMMIT
-below.
-.TP
-.B probe
-Report what isolation this host can enforce (Landlock, user namespaces, seccomp,
-seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are
-satisfiable.
-.TP
-.BI "list " "[\-\-json]"
-List environments on this clone (the fleet view).
-.B \-\-json
-emits an array of manifests, each enriched with base drift.
-.TP
-.BI "status " "NAME " "[\-\-json]"
-Lifecycle + enforced policy + evidence + base drift.
-.TP
-.BI "doctor " "NAME " "[\-\-json]"
-Enforcement-readiness + structural-health check: whether this host can actually
-enforce the env's isolation claim (functional self-test), plus policy-digest
-integrity, workspace/branch/context presence, and base drift. Exits non-zero
-when unhealthy.
-.TP
-.BI "secrets " "NAME " "[\-\-json]"
-List the policy's secret grants with a dry-run resolution status \(em never the
-value, only a fingerprint when resolvable;
-.B command:
-extractors are not executed by a status query.
-.TP
-.BI "log " NAME
-Event log (created/exec/service/proposed/applied/aborted/gc/violation/secret).
-.TP
-.BI "diff " "NAME " "[\-\-stat]"
-Diff the env's work against its pinned base.
-.TP
-.BI "inspect " "NAME " "\-\-capture ID"
-Render one evidence capture (findings, exit code, policy digest, redactions).
-.TP
-.BI "compare " "NAMES... " "[\-\-json]"
-The "arena": rank environments side by side.
-.TP
-.BI "service " "start|stop|status|logs " "NAME [SERVICE]"
-Manage long-lived services declared as \fB[service.<name>]\fR in
-\fB.h5i/env.toml\fR, confined and pid-tracked \(em no daemon. Definitions are
-pinned at create (immutable from the box; digest in the manifest), so editing
-the worktree config later cannot change what a service runs.
-.B start
-runs the service in the box and injects a per-env port when one is declared;
-.B stop
-kills it and captures its log as an h5i object;
-.BR status / logs
-inspect it. Start/stop append \fBservice\fR events to \fIrefs/h5i/env\fR.
-.TP
-.BI "ports " "NAME " "[\-\-json]"
-The per-env injected port map. h5i allocates a free host port per declared
-service port and injects it as \fBPORT\fR / \fBH5I_ENV_PORT_<NAME>\fR; there is
-no host\(->box forwarder in v1, so a port is reachable only if the service binds
-the injected value (the URL is conditional, not a guarantee).
-.TP
-.BI "rebase " NAME
-Re-pin the base onto the parent branch's advanced tip (3-way; refuses conflicts).
-.TP
-.BI "propose " NAME
-Mediated commit (path-allowlist: rejects nested \fB.git\fR, symlink escapes,
-\fB..\fR) + review brief. Never writes the parent.
-.TP
-.BI "apply " "NAME " "[\-\-patch]"
-Apply a proposal onto its parent (reviewer-selected). Default merges; \fB\-\-patch\fR squashes.
-The applied commit is stamped with env provenance: a note linking it to the env
-and summarizing evidence by trust lane (\fBhost-env-run\fR vs box-claimed
-\fBinbox-capture\fR), shown in \fBh5i recall log\fR.
-.TP
-.BI "abort " NAME
-Discard the env; manifest + workspace retained for forensics.
-.TP
-.B gc
-Reclaim worktrees of applied/aborted envs (manifests, branches, captures kept).
-.RE
-.PP
-.B Isolation tiers
-.RS 4
-.IP \(bu 2
-.B workspace
-\(em git worktree only; no kernel confinement (trusted code).
-.IP \(bu 2
-.B process
-\(em Landlock FS allowlist + seccomp deny-list + user/mount/IPC/UTS/net
-namespaces + cgroup v2/rlimits + no-new-privs (rootless; Linux x86-64/aarch64).
-.IP \(bu 2
-.B supervised
-\(em process tier + a live seccomp user-notification socket gate (default-deny:
-only boring inet or granted AF_UNIX proceeds) + an always-on network namespace.
-The first tier that may claim untrusted-code containment; requires the whole
-stack green or is refused. A
-.B net.egress
-allowlist here is a real L3/L4 guard: a
-.B slirp4netns
-uplink + an
-.B nftables
-default-drop allowlist + DNS pinned via a private
-.IR /etc/hosts
-(no port 53) \(em a raw socket cannot bypass it, and the socket gate's AF_NETLINK
-denial stops the confined program from rewriting the rules.
-.IP \(bu 2
-.B container
-\(em rootless Podman (cap-drop=ALL, read-only rootfs, no docker.sock). Enforces a
-.B net.egress
-domain allowlist via a DNS-pinned host CONNECT proxy (L7, fail-closed; the
-.B supervised
-tier's nftables egress is the airtight L3/L4 equivalent).
-.IP \(bu 2
-.B "hardened-container, microvm"
-\(em external backends (gVisor/Kata, Firecracker); not in this build.
-.RE
-.PP
-Policy is defined per profile in
-.IR .h5i/env.toml " (" "isolation, fs.read/write/deny, net.mode/egress, "
-resources.mem/procs/wall/fsize/cpu, tools, env.pass, container.image, secrets,
-private_paths, shell.rcfile).
-.B private_paths
-give each env its own backing store for build-cache/lock dirs (kind
-.IR cache / scratch / private ),
-so concurrent envs of the same repo don't collide on inode-level locks \(em
-enforced by bind mounts (process/supervised) or
-.B \-\-mount
-(container), validated fail-closed. Declared
-.B secrets
-are brokered at run time (source
-.IR env: / file: / command: ),
-injected, scrubbed from captured evidence, and audited by fingerprint \(em all
-fail-closed; a
-.B command:
-extractor runs host-side code and is refused unless the profile sets
-.B allow_command_extractors
-(pinned in the digest), and is then bounded by a wall timeout + output cap.
-.B shell.rcfile
-points
-.B env shell
-at a custom bash rcfile (path relative to the worktree, e.g.
-.IR .h5i/box.bashrc );
-unset, an interactive bash gets a generated \fIplain\fR rc instead of the host
-.IR ~/.bashrc ,
-which under confinement routinely references blocked tools (e.g.\&
-.IR powerline-shell ).
-The plain rc sets a clear prompt and sources
-.I ~/.h5i_envrc
-if present.
-Long-lived
-.B [service.<name>]
-declarations are pinned at create. The fully-resolved policy's sha256 digest is
-pinned in the manifest and every capture (tamper-evident). The
-.B h5i_env_*
-MCP tools mirror these subcommands.
-.PP
-.B IN-BOX GIT, CAPTURE & COMMIT
-.RS 4
-.PP
-At the confined tiers the env worktree is a functional git checkout from inside
-the box: \fBgit\fR plumbing and \fBh5i recall context\fR work against the env's own
-branch (the box cannot move \fBmain\fR, plant hooks, or touch other branches).
-Interactive sessions lock the agent config read-only and observe per command:
-in-box \fBh5i capture run\fR / \fBh5i capture commit\fR work even though the evidence
-store is sealed \(em the git commit lands on the env branch and the evidence (and
-commit note) are staged to a spool the host ingests at session end, labeled
-\fBinbox-capture\fR (box-claimed) vs host-verified \fBhost-env-run\fR. On
-\fBcontainer\fR the observation hook is pinned via injected managed-settings; for
-Codex, launch \fBcodex \-\-dangerously\-bypass\-hook\-trust\fR so its hook runs.
-.PP
-.B Troubleshooting:
-a capture/commit that fails with \fI"h5i data store not writable"\fR means
-\fB.git/.h5i\fR is owned by another user (usually root, from an earlier
-\fBsudo\fR run). Repair with
-.BR "sudo chown \-R \(dq$(id \-u):$(id \-g)\(dq .git/.h5i" .
-.RE
-.
-.\" ─── team ───────────────────────────────────────────────────────────────────
-.SS h5i team \fISUBCOMMAND\fR
-Auditable agent ensembles: run several agents on the same task in their own
-isolated
-.B h5i env
-workspaces, driven through a phased, permissioned evidence-publication protocol
-\(em sealed workspaces, permissioned reviews, auditable convergence. A thin
-orchestration layer (\fBenv\fR keeps owning isolation/capture/apply; \fBteam\fR
-owns roster, phases, submissions, verdict); not a group chat and not a daemon. A
-roster member is a
-.I persona
-not a backend \(em the
-.I agent_id
-is the actor, while runtime/model/persona are attributes, so a team may be three
-Claudes with different personas or a Claude+Codex mix. Roles are not enforced:
-every member is an independent peer that implements and peer-reviews; an optional
-persona file shapes one member's working style. Run state is an
-append-only event log in
-.I refs/h5i/team/<run-id>
-(phase/roster/verdict are folded from events), travelling with
-.BR "h5i share push" /pull .
-.PP
-.B Phases:
-.BR draft " \(-> " sealed_submit " \(-> " review " \(-> " discuss " (opt-in) \(-> " verify " \(-> " compare " \(-> " verdict " \(-> " applied .
-Independence-first: no agent sees a peer's work before
-.BR freeze ;
-discussion is opt-in and post-freeze only, and a candidate revised after it is
-stamped \fIindependent=false\fR with its influence edges recorded.
-.PP
-.B Subcommands
-.RS 4
-.TP
-.BI "create " "NAME " "[\-\-base REV] [\-\-rounds N] [\-\-title T]"
-Create a run over existing envs;
-.B \-\-base
-(default HEAD) is the shared base every candidate is compared against.
-.TP
-.BI "auto-create " "NAME " "[\-\-base REV] [\-\-rounds N] [\-\-title T]"
-One-shot bootstrap of a two-agent
-.B claude + codex
-team: creates
-.IR NAME \-claude
-(profile
-.BR agent-claude )
-and
-.IR NAME \-codex
-(profile
-.BR agent-codex )
-envs, creates the team, and enrolls both \(em equivalent to one
-.B env create
-per agent plus a
-.B team create
-and two
-.BR add-env .
-Like manual
-.BR add-env ,
-each member's roster agent id is an auto-generated persona name (e.g.\&
-.IR tariq ,
-.IR ravi ),
-kept distinct from the
-.I runtime
-(recorded as
-.IR claude / codex );
-the command prints the persona \(-> runtime \(-> env mapping, and
-.B team status
-shows it. Env slugs are namespaced by the team id so auto-created teams never
-collide on env names. The pinned
-.B agent-*
-profiles are fail-closed: on a host that cannot enforce the agent-in-box tier,
-env creation errors rather than downgrading.
-.TP
-.BI "add-env " "TEAM ENV " "[\-\-as AGENT-ID] [\-\-runtime R] [\-\-model M] [\-\-persona FILE]"
-Add an existing env to the roster as a persona-bound member (draft phase only).
-.B \-\-as
-is the ref-safe actor key; omit it and h5i assigns a generated name (distinct
-members need distinct ids).
-.B \-\-persona
-is an optional markdown file (its sha256 is recorded; the body is stored
-host-side and injected into the agent's launch prompt as its standing working
-style \(em see \fIexamples/personas/\fR). Also binds the env's in-box
-\fBH5I_AGENT\fR and \fBH5I_TEAM\fR to this persona and run for scoped team-agent
-commands. The message store and team refs remain host-owned.
-.TP
-.BI "persona " "AGENT " "[\-\-team T]"
-Print an agent's persona markdown (what the launcher injects), or nothing if it
-has none.
-.TP
-.BI "submit " "TEAM " "\-\-agent ID [\-\-commit OID] [\-\-summary-file F]"
-Freeze the agent's env-branch tip (or
-.BR \-\-commit )
-as an immutable submission \(em frozen commit/tree oids + diffstat + capture ids.
-.TP
-.BI "agent submit " "[\-\-commit OID] [\-\-summary-file F]"
-Submit as the bound env persona. In sealed envs this writes a scoped request to
-the env spool; the host applies it to \fIrefs/h5i/team/*\fR when the env shell
-exits. Submitting marks the agent done for the current round: it records the
-round box-side so the team Stop hook stops re-surfacing that round's standing
-review requests (a host re-fan can't loop the agent); a newer round still breaks
-through.
-.TP
-.BI "agent inbox " "[TEAM] [\-\-peek] [\-\-wait] [\-\-interval 10] [\-\-timeout 1800] [\-\-json]"
-Scoped inbox for the team persona. In a sealed box it reads the host-fanned
-per-env inbox (\fB$H5I_ENV_INBOX\fR, read-only); host-side it reads the shared
-store. Each review grant shows its granted artifact kinds + artifact ids, which
-the reviewer reads with \fBh5i team artifact show\fR \fIID\fR \fB\-\-diff\fR (no
-host-only \fBcompare\fR).
-.B \-\-wait
-blocks (peek-only) until a message is waiting or the timeout \(em use it to await
-the next round's review request without ending the session.
-.TP
-.BI "agent hook " "[TEAM] [\-\-block] [\-\-quiet] [\-\-timeout 1800] [\-\-interval 10]"
-Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds
-in review requests.
-.B \-\-block
-(Claude and Codex \(em both honor the same block-decision continuation contract)
-waits up to
-.B \-\-timeout
-for the next message, then blocks the stop and hands it back;
-.B \-\-quiet
-prints one-shot (manual use). Released by a TEAM_DONE signal (sent on
-finalize/apply), by the agent submitting for the round (a round-\(<=-submitted
-re-fan no longer re-surfaces; a newer round still does), or the timeout.
-Registered via
-.BR "h5i hook setup \-\-team" ;
-no-ops outside a team.
-.TP
-.BI "freeze " "TEAM " "[\-\-allow-missing]"
-Transition draft \(-> sealed_submit; refuses if any member lacks a submission
-unless
-.BR \-\-allow-missing .
-.TP
-.BI "verify " "TEAM " "\-\-agent ID [\-\-isolation TIER] \-\- COMMAND..."
-Neutral, sandboxed verifier: replays the frozen candidate at the run base in a
-throwaway worktree and runs COMMAND under the fail-closed
-.B default
-build/test profile.
-.B \-\-isolation
-(workspace/process/supervised/container) defaults to the strongest tier the host
-can enforce (falls back to workspace); the tier is recorded on the verification.
-.TP
-.BI "compare " "TEAM " "[\-\-json]"
-Side-by-side candidates + verifier metrics (advisory; does not pick a winner).
-.TP
-.BI "artifact show " "ID " "[\-\-team T] [\-\-diff] [\-\-summary] [\-\-tests] [\-\-json]"
-Read one teammate's submission by artifact id \(em the in-box, read-only
-per-candidate view a granted reviewer uses, so a boxed reviewer never needs the
-host-only
-.BR compare .
-Defaults to the unified diff against the team base;
-.B \-\-summary
-/
-.B \-\-tests
-show the submission summary / captured test evidence. Resolves
-.B \-\-team
-from the current team or
-.BR $H5I_TEAM .
-.TP
-.BI "sync " "TEAM " "[\-\-json]"
-Live ingest: apply every agent's staged in-box submissions/reviews to
-\fIrefs/h5i/team/*\fR now, without the box exiting (on-demand counterpart to the
-at-exit ingest). Lets a run advance while the team Stop hook keeps boxes alive
-\(em no relaunch.
-.TP
-.BI "finalize " "TEAM " "[\-\-json]"
-Apply the finalization rule over verifier evidence \(-> a verdict event. Hard
-gates (tests pass, applies cleanly) first; smallest-diff only breaks ties among
-gate-passers. No gate-passer \(-> \fIno_verdict\fR (never applies a loser).
-.TP
-.BI "apply " "TEAM " "[\-\-winner SUBMISSION-ID] [\-\-agent ID] [\-\-force]"
-Replay the winning submission's recorded patch into the current branch and
-commit; records source + target oids. Gated on the verdict's
-.I can_auto_apply
-unless
-.BR \-\-force .
-.B \-\-agent
-.I ID
-picks that roster agent's latest submission directly, skipping verify/finalize
-\(em an explicit human override that bypasses the verdict gate (no
-.B \-\-force
-needed; mutually exclusive with
-.BR \-\-winner ).
-The agent must have submitted first (there is no apply-direct-from-env-branch).
-.TP
-.BI "worker " "\-\-once | \-\-watch " "[\-\-interval N] [\-\-id ID] [\-\-lease-ttl S]"
-Optional automation: one lease-and-finalize pass
-.RB ( \-\-once )
-or an opt-in in-process loop
-.RB ( \-\-watch ).
-Finalize-only \(em never auto-applies. Leases are idempotent + TTL'd; for
-production prefer an external scheduler driving
-.BR \-\-once .
-.TP
-.BI "dispatch " "TEAM " "[\-\-prompt-file F]"
-Send the task to every roster agent at once over
-.BR "h5i msg" " (no per-env pasting)."
-The task prompt is read from standard input by default
-.RB ( "h5i team dispatch TEAM < TASK.md" );
-.B \-\-prompt-file
-reads it from a named file instead.
-Notifies, does not launch: the shared message log and cursors are host-owned
-coordination state. For normal interactive runs use
-.B scripts/team-launch.sh --task
-to dispatch for the host log and embed the task text in each boxed agent's
-startup prompt.
-.TP
-.BI "grant-review " "TEAM " "\-\-reviewer A \-\-target B [\-\-artifacts KINDS]"
-Permissioned review: grant A scoped access to B's round artifacts (never raw logs
-or persona bodies by default) + send a REVIEW_REQUEST.
-.TP
-.BI "review submit " "TEAM " "\-\-reviewer A \-\-target B \-\-file F"
-Record a review body for a target candidate and deliver it to the reviewed
-agent: post-freeze the review is fanned into the target's per-env inbox (so a
-confined agent receives a peer's critique of its own work) and recorded as a
-.IR discussion_msg ,
-marking the target's next revision non-independent. Before freeze it is recorded
-for audit but not delivered (independence-first).
-.TP
-.BI "discuss " "TEAM " "\-\-from S \-\-to A,B \-\-file F [\-\-artifacts IDS]"
-Send a logged, influence-tracked discussion message (post-freeze only).
-.TP
-.BI "status " "TEAM " "[\-\-json]"
-Folded run state: phase, roster, per-agent submission state.
-.TP
-.BI "list " "[\-\-json]"
-All runs on this clone.
-.TP
-.BI "use " "[NAME] " "[\-\-clear]"
-Pin a current team (like git's current branch) so other single-\fITEAM\fR
-subcommands may omit it. No arg prints the current;
-.B \-\-clear
-unsets;
-.B create
-auto-pins the new run. The flat CLI stays canonical \(em always pass \fITEAM\fR in
-scripts/cron.
-.RE
-.PP
-The
-.BR scripts/team-launch.sh ", " scripts/team-review.sh ", and " scripts/team-run.sh
-helpers compose into a hands-off cycle (install the team Stop hook once with
-.BR "h5i hook setup \-\-team" ).
-.B team-run.sh
-launches the agents, then polls with
-.B h5i team sync
-to advance the run \(em wait until all submitted, freeze, grant mutual review,
-wait until all revised, verify each, finalize, optionally apply \(em so the boxes
-stay alive between turns and no relaunch is needed.
-.
-.\" ─── share push ─────────────────────────────────────────────────────────────
-.SS h5i share push [\fIOPTIONS\fR] (alias: h5i push)
-Push the h5i refs (everything under
-.IR refs/h5i/* )
-to a remote. Branch-scoped by default: like
-.BR "git push" ,
-only the
-.B current branch's
-h5i material travels.
-.PP
-.B Options
-.RS 4
-.TP
-.BI \-r,\ \-\-remote\  REMOTE
-Remote to push to (default:
-.BR origin ).
-.TP
-.BI \-b,\ \-\-branch\ [ BRANCH ]
-Scope to a specific branch instead of the current one. Pass a name, or
-.B \-\-branch
-bare for the current git branch (the default). Scoping carries the branch's
-context ref
-.RB ( refs/h5i/context/<branch> ),
-the
-.B notes
-for commits reachable from it, the
-.B objects
-manifests captured on it (plus the evidence of envs forked from it), the
-.B msg
-messages tagged with it, and the
-.B env
-state + code branches of envs whose
-.I parent_branch
-matches. memory always pushes in full. These aggregate refs are unioned
-onto the remote's current ref (a fast\-forward) rather than force\-pushing a
-subset \(em other branches' data on the remote is never deleted.
-.TP
-.B \-\-all\-branches
-Push every branch's h5i material (the pre-scoping behavior). Use for a first
-full sync or in CI. Mutually exclusive with
-.BR \-\-branch .
-.RE
-.
-.\" ─── share pr ───────────────────────────────────────────────────────────────
-.SS h5i share pr post [\fIOPTIONS\fR]
-Post (or upsert) a sticky GitHub pull-request comment summarising h5i
-provenance for every AI-authored commit on the current branch. Re-running
-edits the same comment in place via an HTML marker
-.RB ( "<!-- h5i:pr-comment v1 -->" )
-so the PR never accumulates duplicates.
-.PP
-The comment renders, per AI commit:
-.RS 4
-.IP \(bu 2
-the prompt that drove the change
-.IP \(bu 2
-model, agent, and token usage
-.IP \(bu 2
-test metrics (passed / failed / total, exit code)
-.IP \(bu 2
-structured
-.B \-\-decisions
-recorded at commit time
-.IP \(bu 2
-a 🚩 flag with
-.B h5i audit review
-triggers (uncertainty, blind edits, churn, scope) when the score crosses the
-review threshold
-.RE
-.PP
-.B Requirements:
-the
-.B gh
-CLI must be installed and authenticated
-.RB ( "gh auth status"
-clean) and the current branch must have an open pull request (or pass
-.BR \-\-number ).
-.PP
-.B Options
-.RS 4
-.TP
-.BI \-\-number\  N
-PR number (default: auto-detect from current branch).
-.TP
-.BI \-l,\ \-\-limit\  N
-Limit number of commits scanned (default: 25).
-.TP
-.BI \-\-style\  STYLE
-Hero-block layout for the comment's first viewport. One of:
-.RS
-.IP \(bu 2
-.B receipt
-(default) — punchline H1 headline, goal in IMPORTANT callout, centered HTML
-stat card, the triggering prompt promoted to its own section, cleaned
-milestone list. Optimised for screenshot / social share.
-.IP \(bu 2
-.B review
-— reviewer-first triage brief: merge status, review-focus files, evidence
-line, goal, a short reviewer checklist, then compact THINK/NOTE highlights.
-Keeps the Mermaid DAG collapsed below the audit sections.
-.IP \(bu 2
-.B detective
-— narrative arc: goal → by the numbers → considered → key insight → shipped.
-.IP \(bu 2
-.B replay
-— Mermaid reasoning swim-lane DAG promoted above the fold (expanded), with
-goal + stats above and milestone trail below.
-.IP \(bu 2
-.B minimal
-— quiet variant for internal PRs. Same data, no H1 headline, no stat table,
-no dollar figures, no IMPORTANT callout.
-.RE
-Secrets, duplicates, the collapsed reasoning DAG, and per-commit provenance
-are shared across styles, except
-.B replay
-, which promotes the DAG above the fold.
-.TP
-.B \-\-dry\-run
-Print the markdown body and exit without calling
-.BR gh .
-.TP
-.B \-\-no\-msg
-Omit the 💬 Agent coordination section (branch-scoped i5h message threads
-from
-.BR refs/h5i/msg ).
-.TP
-.B \-\-msg\-bodies
-Show a redacted excerpt for every message kind, not just review-typed ones.
-By default
-.BR FYI /free\-text
-messages are metadata-only; this opt-in publishes their excerpts too. All text
-remains secret-redacted and escaped.
-.TP
-.BI \-\-msg\-limit\  N
-Cap coordination threads rendered before eliding (default: 12).
-.RE
-.PP
-The Agent coordination section folds in cross-agent message threads relevant to
-the PR branch (a thread is included when one of its messages was tagged with the
-branch). It is collapsed, self-omits when empty, and is disclosure-safe: only
-review-typed messages
-.RB ( REVIEW_REQUEST ", " RISK ", " HANDOFF ", " ASK
-and their replies) show an excerpt, every field is secret-redacted and escaped,
-and a footer records the
-.B refs/h5i/msg
-tip OID.
-.PP
-.B Examples
-.RS 4
-.nf
-h5i share pr post                          # upsert sticky comment
-h5i share pr body \-\-limit 25               # render markdown to stdout (for CI)
-h5i share pr post \-\-dry\-run                # preview without calling gh
-h5i share pr post \-\-number 42              # target a specific PR
-h5i share pr body \-\-style review           # preview the reviewer-triage layout
-h5i share pr body \-\-style detective        # preview the narrative layout
-h5i share pr post \-\-style replay \-\-dry\-run # preview the DAG-as-hero layout
-h5i share pr body \-\-no\-msg                  # drop the Agent coordination section
-h5i share pr body \-\-msg\-bodies              # include FYI/free-text excerpts too
-.fi
-.RE
-.
-.\" ─── share pr body ──────────────────────────────────────────────────────────
-.SS h5i share pr body [\fIOPTIONS\fR]
-Render the PR comment markdown to stdout. Useful for CI pipelines that prefer
-to call
-.B gh pr edit \-\-body\-file \-
-themselves, or to commit the body to a file for review.
-.PP
-.B Options
-.RS 4
-.TP
-.BI \-l,\ \-\-limit\  N
-Limit number of commits scanned (default: 25).
-.TP
-.BI \-\-style\  STYLE
-Hero-block layout —
-.B receipt
-(default),
-.BR review ,
-.BR detective ,
-.BR replay ,
-or
-.BR minimal .
-See
-.B h5i share pr post
-above for descriptions.
-.TP
-.B \-\-no\-msg ", " \-\-msg\-bodies ", " \-\-msg\-limit \fIN\fR
-Control the 💬 Agent coordination section, exactly as for
-.BR "h5i share pr post" .
-.RE
-.
-.\" ─── objects / token reduction ──────────────────────────────────────────────
-.SS h5i capture run [\fIOPTIONS\fR] \-\- \fICOMMAND\fR [\fIARGS\fR...]
-Run
-.I COMMAND
-and surface only a filtered, structured summary of its output; the full raw
-output is stored content-addressed under
-.I .git/.h5i/objects/
-and a small manifest (pointer + structured summary) is appended to
-.IR refs/h5i/objects .
-The child's exit code is passed through, so this is a transparent wrapper.
-.TP
-.B \-\-format \fIcompact\fR|\fIstructured\fR|\fIjson\fR|\fIsummary\fR
-Output format. Default
-.B compact
-(one line per finding \(em token-minimal text);
-.B structured
-emits the full YAML;
-.B json
-emits the canonical
-.B ToolResult
-JSON;
-.B summary
-emits the legacy filtered text. Invalid values are rejected.
-.TP
-.B \-\-min\-bytes \fIN\fR
-Only store + summarize when the output is at least
-.I N
-bytes (default 2048); smaller output passes through unstored, making it safe to
-wrap any command.
-.B 0
-always captures.
-.TP
-.B \-\-kind \fITEST\fR|\fILOG\fR|\fIJSON\fR|\fIDIFF\fR|\fIGENERIC\fR
-Force a content kind instead of auto-detecting.
-.TP
-.B \-\-budget \fIN\fR, \-\-token\-budget \fIN\fR
-Cap the summary to
-.I N
-lines / tokens.
-.TP
-.B \-\-file \fIPATH\fR
-Associate the capture with a file (repeatable). The branch and working-tree
-diff are recorded automatically.
-.PP
-The default
-.B compact
-format prints one line per finding
-.RI ( "<sev> <location> <rule> <message>" );
-.B \-\-format structured
-shows the full schema below. The structured result is the AI-friendly schema: an envelope
-.RB ( tool ,
-.BR kind ,
-.B status
-\(em never
-.B passed/ok
-on a nonzero exit \(em
-.BR exit_code ,
-.BR counts ,
-.BR parser_confidence )
-plus a unified
-.B findings
-list (a test failure, compile error, and lint diagnostic share one shape, each
-with a deterministic
-.BR fingerprint ).
-Dedicated parsers: pytest, cargo test, go test, tsc, eslint, ruff, mypy; every
-other tool gets a generic result.
-.
-.SS h5i recall objects [\fIOPTIONS\fR]
-List captured outputs (newest first) with their summaries and local
-availability.
-.TP
-.B \-\-status \fIpassed\fR|\fIok\fR|\fIfailed\fR|\fIerror\fR|\fIunknown\fR
-Filter by structured status.
-.TP
-.B \-\-tool \fINAME\fR
-Filter by tool (e.g.
-.IR pytest ).
-.TP
-.B \-\-branch \fIB\fR, \-\-file \fIPATH\fR, \-\-diff
-Filter by the branch, an associated file, or intersection with the current
-working-tree diff.
-.
-.SS h5i recall object \fIID\fR [\fIOPTIONS\fR]
-Rehydrate a captured output by short id,
-.IR sha256:<hex> ,
-or unambiguous prefix. Default prints the full raw bytes;
-.B \-\-summary
-prints the reduced summary,
-.B \-\-manifest
-the full manifest JSON. An evicted/absent blob is reported clearly.
-.
-.SS h5i objects \fISUBCOMMAND\fR
-Maintenance for the object store.
-.TP
-.B run, put, get, list
-Aliases/peers of
-.BR "h5i capture run" ,
-.IR "objects put <file|->" ,
-.BR "h5i recall object" ,
-.BR "h5i recall objects" .
-.TP
-.B push [\-\-remote \fIR\fR] [\-\-backend \fIB\fR], pull [\-\-remote \fIR\fR] [\-\-backend \fIB\fR]
-Share raw blobs (separate from the metadata
-.BR "h5i share push" ,
-because raw output is heavy).
-.B \-\-backend
-is
-.IR auto | lfs | git-ref
-(default
-.IR auto ).
-.IP \(bu 3
-.B Git LFS
-(default for HTTP(S) remotes) \(em stores blobs on the remote's LFS server,
-content-addressed by sha256. Spoken natively over the LFS Batch API (no
-.B git lfs
-CLI, no pointer files; auth via
-.BR "git credential" ).
-With LFS,
-.B h5i recall object
-lazily fetches a blob on demand and caches it.
-.IP \(bu 3
-.B git-ref store
-.RI ( refs/h5i/objects-data ,
-fallback for SSH/file remotes) \(em
-.B objects push
-fetches and union-merges first, so a non-force push never clobbers a peer's
-blobs; after
-.BR "objects pull" ,
-.B recall
-falls back to the local git-ref store.
-.IP "" 3
-Both verify the content address on every read; tampered bytes are rejected and
-never cached.
-.TP
-.B gc [\-\-ttl \fIDUR\fR] [\-\-dry\-run]
-Evict local raw blobs to reclaim space. Without
-.BR \-\-ttl ,
-removes only orphan blobs (no manifest); with it, also evicts referenced blobs
-older than
-.I DUR
-(e.g.
-.IR 30d ).
-Manifests/summaries are never rewritten; pinned blobs are never evicted.
-.TP
-.B pin \fIID\fR, unpin \fIID\fR
-Protect a blob from
-.BR gc ,
-or release it.
-.TP
-.B fsck
-Verify manifests against the local store (absent blobs, orphans).
-.TP
-.B filters [\-\-verify]
-List the built-in declarative command filters;
-.B \-\-verify
-runs their inline golden tests.
-.TP
-.B trust [\-\-status] [\-\-remove]
-Review and trust a project-local
-.I .h5i/filters.toml
-so its rules apply. Untrusted or changed files are never applied (any edit
-re-arms the gate);
-.B H5I_TRUST_FILTERS=1
-overrides for CI.
-.TP
-.B setup
-Wire token-reduction guidance into
-.I .claude/h5i.md
-and
-.I AGENTS.md
-so agents wrap large-output commands. Idempotent.
-.
-.\" ─── hook ───────────────────────────────────────────────────────────────────
-.SS h5i hook \fISUBCOMMAND\fR
-Manage the agent hook wiring that drives automatic prompt capture and context
-tracing. The per-event handlers are agent-specific and live under
-.B h5i claude
-(Claude Code) and
-.B h5i codex
-(Codex);
-.B h5i hook
-owns the cross-agent
-.BR setup ", " session\-start ", and " wrap\-bash " subcommands."
-.PP
-.B Subcommands
-.RS 4
-.TP
-.B setup [\-\-write] [\-\-target claude|codex] [\-\-scope project|user] [\-\-wrap\-bash] [\-\-team]
-Without
-.B \-\-write
-print the install instructions. With
-.B \-\-write
-idempotently merge the hook wiring into
-.I .claude/settings.json
-(Claude) and
-.I .codex/config.toml
-(Codex):
-.B UserPromptSubmit
-\(->
-.BR "h5i claude prompt" ,
-.B SessionStart
-\(->
-.BR "h5i hook session\-start" ,
-.B PostToolUse
-(Edit|Write|Read) \(->
-.BR "h5i claude sync" ,
-.B Stop
-\(->
-.B h5i claude finish
-(Claude) or
-.B h5i codex finish \-\-quiet
-(Codex; Codex only takes the SessionStart/Stop events).
-.B \-\-target
-limits to one agent,
-.B \-\-scope user
-writes the user-level config, and
-.B \-\-wrap\-bash
-also registers the Bash capture-wrap hook, and
-.B \-\-team
-also registers the team peer-review Stop hook
-.RB ( "h5i team agent hook" ):
-in a live
-.B h5i team
-round it keeps the agent from stopping while it owes work and surfaces review
-requests between turns. Both Claude and Codex use the same blocking
-.RB ( \-\-block )
-hook \(em their Stop hooks honor the same block-decision continuation contract
-\(em waiting for the next review and carrying a long per-hook timeout so the
-runtime doesn't kill it mid-wait; a TEAM_DONE signal (finalize/apply) releases
-it. It no-ops outside a team. The MCP server is no longer wired by setup \(em register
-it by hand (see
-.BR "h5i mcp" ).
-.TP
-.B session\-start
-The shared
-.B SessionStart
-handler for Claude Code and Codex: injects prior context into the new session
-and notes any unread cross-agent messages on resume.
-.TP
-.B wrap\-bash
-Optional
-.B PreToolUse
-handler for the Bash tool (Claude Code \(>= 2.0.10). Reads the tool-event JSON
-from stdin and rewrites the command (via
-.BR updatedInput )
-into a
-.B h5i capture run
-wrapper, so the agent gets a token-reduced summary for large/failing output
-while the full raw bytes are stored for
-.BR "h5i recall" .
-Skips h5i's own commands, top-level
-.BR cd ,
-and anything outside a git repo; every failure path emits nothing, so the
-original command runs untouched. With it enabled, permission allowlists match
-the rewritten
-.B h5i capture run
-command, not the original.
-.RE
-.
-.\" ─── claude ─────────────────────────────────────────────────────────────────
-.SS h5i claude \fISUBCOMMAND\fR
-Claude Code integration hook handlers, wired into
-.I .claude/settings.json
-by
-.BR "h5i hook setup \-\-write" .
-They run automatically per event \(em you normally never invoke them by hand
-\(em and all fail open (no-op outside an h5i repo, never block the turn).
-.PP
-.B Subcommands
-.RS 4
-.TP
-.B sync
-The
-.B PostToolUse
-handler. Reads the tool-event JSON from stdin and emits an
-.B h5i recall context trace
-entry for the appropriate kind (OBSERVE on Read, ACT on Edit/Write); on
-.B Read
-events it injects prior reasoning about the file into Claude's context window
-so accumulated THINK entries surface before the file is modified.
-.TP
-.B finish
-The
-.B Stop
-handler. Mines THINK / NOTE entries from the session transcript (including
-deferrals and unfulfilled promises) and auto-checkpoints the context workspace
-milestone.
-.TP
-.B prompt
-The
-.B UserPromptSubmit
-handler. Reads the hook JSON from stdin and records the verbatim human prompt
-into
-.IR .git/.h5i/pending_context.json ,
-accumulating across turns.
-.B h5i capture commit
-then uses this raw prompt as the recorded prompt \(em it wins over an
-agent-authored
-.B \-\-intent
-\(em so AI provenance reflects what the human actually asked.
-.RE
-.
-.\" ─── codex ──────────────────────────────────────────────────────────────────
-.SS h5i codex \fISUBCOMMAND\fR
-Codex integration hook handlers.
-.B h5i hook setup \-\-write \-\-target codex
-wires
-.B h5i hook session\-start
-(SessionStart) and
-.B h5i codex finish \-\-quiet
-(Stop) into
-.IR .codex/config.toml .
-Unlike the Claude handlers, these read the active Codex JSONL session under
-.I ~/.codex/sessions/
-directly, so they also work as plain commands run by hand.
-.PP
-.B Subcommands
-.RS 4
-.TP
-.B prelude
-Print the current shared context in a compact session-start format: goal,
-branch, milestones, recent THINK/ACT entries, and open TODOs. Also delivers
-Codex's unread messages (Codex has no Stop hook for turn delivery).
-.TP
-.B sync
-Scan the active Codex session log for this repository and backfill
-OBSERVE / ACT trace entries into
-.BR "h5i recall context" .
-Sync state is recorded in
-.I .git/.h5i/codex_sync_state.json
-so repeated runs only process new events.
-.TP
-.B finish [\-\-summary \fITEXT\fR] [\-\-quiet]
-Run
-.B h5i codex sync
-then auto-checkpoint the context workspace. If
-.B \-\-summary
-is omitted, a short summary is derived from the most recent ACT entries.
-.B \-\-quiet
-suppresses stdout for hook use.
-.RE
-.
-.\" ─── msg ────────────────────────────────────────────────────────────────────
-.SS h5i msg [\fISUBCOMMAND\fR]
-Cross-agent messaging stored in the Git ref
-.I refs/h5i/msg
-(append-only
-.I messages.jsonl
-plus an
-.I agents.json
-roster), shared with
-.B h5i share push
-/
-.BR pull " (divergent sends union-merge by message id)."
-Follows the i5h protocol: typed, operational handoffs.
-Identity is per-agent and resolves
-.BR \-\-from / \-\-as " > " $H5I_AGENT " > stored default;"
-with
-.B $H5I_AGENT
-set, no flag is needed and several agents may share one clone.
-With no subcommand, prints the inbox dashboard.
-.PP
-.B Subcommands
-.RS 4
-.TP
-.B setup [\fINAME\fR] [\-\-scope project|user] [\-\-no\-block]
-One-time Claude Code wiring: write
-.B env.H5I_AGENT
-and a turn-delivery Stop hook into
-.IR settings.json .
-Default scope is the project with an autonomous
-.B \-\-block
-hook;
-.B \-\-no\-block
-uses a notify-only hook.
-For Codex, launch it with
-.B H5I_AGENT=codex
-instead.
-.TP
-.B send \fITO\fR \fITEXT\fR...
-Send a message (\fITO\fR =
-.B all
-broadcasts). Typed verbs
-.BR ask ", " review ", " risk ", " handoff
-set the i5h kind and structured fields
-(\fB\-\-branch\fR, \fB\-\-focus\fR, \fB\-\-risk\fR, \fB\-\-pr\fR, \fB\-\-priority\fR,
-\fB\-\-context\fR; options precede \fITO\fR).
-.TP
-.B reply \fIN\fR \fITEXT\fR... | ack \fIN\fR | done \fIN\fR | decline \fIN\fR
-Threaded reply to message
-.I N
-of your last view (sets \fBreply_to\fR / \fBthread_id\fR).
-.TP
-.B inbox [\-\-peek] | history [\-\-with \fIAGENT\fR] | team
-Show unread (marks read; \fB\-\-peek\fR does not), the full log, or the roster.
-.TP
-.B wait [\-\-all] [\-\-timeout \fIN\fR] | watch [\-\-all] | hook [\-\-block] | as \fINAME\fR | whoami
-.B wait
-blocks until a message arrives, prints it (peek), and exits \(em the wake
-primitive for autonomous delivery (run via background task or poll loop so an
-idle agent is woken on a reply).
-.B watch
-is a live human-facing stream.
-.B hook
-is Stop-hook turn delivery;
-.B as
-gets/sets the stored identity.
-.RE
-.PP
-Add
-.B \-\-plain
-to any read command for greppable output.
-Incoming messages are treated as untrusted collaborator input.
-.
-.\" ─── resume ─────────────────────────────────────────────────────────────────
-.SS h5i recall resume [\fIBRANCH\fR]
-Generate a structured session-handoff briefing assembled entirely from
-local h5i data (no AI API call required).
-Shows: branch / HEAD commit, project goal and milestone progress
-(from
-.IR .h5i\-ctx/ ),
-last session statistics, high-risk files (weighted by uncertainty +
-churn), causal exposure, memory changes since the last snapshot, and
-a suggested opening prompt.
-.PP
-.B Risk score formula
-.RS 4
-.PP
-.B risk\ =\ 0.4\ \(mu\ (1\ \-\ avg_confidence)\ +\ 0.3\ \(mu\ churn_score\ +\ 0.3\ \(mu\ (signal_count\ /\ max_signal_count)
-.PP
-Files are ranked descending and the top five are shown.
-.RE
-.
-.\" ─── memory ─────────────────────────────────────────────────────────────────
-.SS h5i recall memory \fIACTION\fR
-Version-control Claude Code's persistent memory files alongside your code.
-Claude Code stores per-project memory in
-.IR "~/.claude/projects/<repo\-path>/memory/" .
-h5i snapshots these files into
-.I .git/.h5i/memory/<commit\-oid>/
-and exposes them through the
-.I refs/h5i/memory
-ref.
-.PP
-.B Actions
-.RS 4
-.TP
-.B snapshot
-Snapshot current memory into the sidecar.
-.RS 4
-.TP
-.BI \-\-commit\  OID
-Associate with this commit OID (default: HEAD).
-.TP
-.BI \-\-path\  DIR
-Override the source directory (default:
-.IR "~/.claude/projects/<repo>/memory/" ).
-.RE
-.TP
-.B log
-List all memory snapshots.
-.TP
-.B diff [\fIFROM\fR [\fITO\fR]]
-Show how memory changed between two snapshots.
-Omit
-.I TO
-to compare against live memory.
-Omit both to compare the two most recent snapshots.
-.TP
-.B restore \fICOMMIT\fR [\fB\-y\fR]
-Restore Claude's memory to the state captured at
-.IR COMMIT .
-Prompts for confirmation unless
-.B \-y
-is given.
-.TP
-.B push [\fB\-r\fR \fIREMOTE\fR]
-Push snapshots to a remote via
-.IR refs/h5i/memory .
-.TP
-.B pull [\fB\-r\fR \fIREMOTE\fR]
-Pull snapshots from a remote.
-.RE
-.
-.\" ─── notes ──────────────────────────────────────────────────────────────────
-.SS h5i recall notes \fIACTION\fR
-Parse Claude Code session logs and attach enriched metadata
-(exploration footprint, uncertainty heatmap, omission report, file churn,
-intent graph) to commits.
-Analyses are stored in
-.IR .git/.h5i/session_log/<commit\-oid>/analysis.json .
-.PP
-.B Actions
-.RS 4
-.TP
-.B analyze [\-\-session \fIJSONL\fR] [\-\-commit \fIOID\fR]
-Parse a session log and link it to a commit (default: HEAD).
-Auto-detects the latest Claude Code session log when
-.B \-\-session
-is omitted.
-.TP
-.B show [\fICOMMIT\fR]
-Show stored session analysis for
-.I COMMIT
-(default: HEAD).
-Displays files consulted vs edited and the causal chain summary.
-.TP
-.B footprint [\fIOID\fR]
-Exploration footprint: every file the AI read before making a change,
-revealing implicit dependencies that Git's diff does not capture.
-.TP
-.B uncertainty [\-\-commit \fIOID\fR] [\-\-file \fIPATH\fR]
-Uncertainty heatmap.
-Records moments where Claude expressed uncertainty: "not sure", "let me check", "this might break", etc.
-Confidence thresholds:
-.BR red\ (<35%) ,\  yellow\ (35\(en55%) ,\  green\ (>55%) .
-.TP
-.B omissions [\-\-commit \fIOID\fR] [\-\-file \fIPATH\fR]
-Omission report.
-Detects three categories of incomplete work left behind in Claude's
-thinking blocks:
-.RS 4
-.TP
-.B Deferral\ (red)
-Claude acknowledged something and explicitly deferred it: "for now", "out of scope", "separate PR", "leave this for later".
-.TP
-.B Placeholder\ (yellow)
-Claude inserted an admittedly incomplete implementation: "stub", "hardcoded for now", "simplified version", "workaround".
-.TP
-.B Unfulfilled promise\ (cyan)
-Claude stated "I'll also update X" or "I should add Y" but the named file never appeared in the edit sequence.
-.RE
-.TP
-.B churn [\-l \fIN\fR]
-Per-file edit-churn scores across all analyzed sessions.
-Churn = edits / (edits + reads).
-Shows top
-.I N
-files (default: 20).
-.TP
-.B graph [\-l \fIN\fR] [\-\-mode \fIMODE\fR]
-Visualize the chain of intents across recent commits.
-.B \-\-mode prompt
-(default) uses stored prompts;
-.B \-\-mode analyze
-calls Claude for richer intent extraction.
-.TP
-.B review [\-l \fIN\fR] [\-\-min\-score \fIF\fR] [\-\-json]
-Identify commits most likely to need human review.
-Scores are computed from uncertainty, churn, and signal density.
-.B \-\-json
-emits raw JSON instead of the styled table.
-.RE
-.
-.\" ─── context ────────────────────────────────────────────────────────────────
-.SS h5i recall context \fIACTION\fR
-Git-style branching and committing applied to agent
-.I reasoning
-rather than code.
-Stores a version-controlled workspace in
-.I refs/h5i/context
-based on arXiv:2508.00031, enhanced with five capabilities from recent
-research (CMV arXiv:2602.22402, Claude Code design-space arXiv:2604.14228):
-(1) DAG trace nodes with explicit parent links,
-(2) ephemeral scratch traces cleared on each milestone commit,
-(3) three-pass structurally-lossless
-.BR pack ,
-(4) stable-prefix / dynamic-suffix split for prompt-cache efficiency,
-(5) subagent-scoped sub-contexts via
-.BR scope .
-.PP
-.B Workspace layout
-.RS 4
-.nf
-refs/h5i/context tree:
-    main.md                  \(em global roadmap: goal, milestones, notes
-    .current_branch          \(em active branch name
-    git-goals/<git-branch>.md \(em goal for a Git branch
-    branches/<context-branch>/
-        commit.md            \(em milestone summaries (append-only)
-        trace.md             \(em human-readable OTA execution trace
-        dag.json             \(em DAG of trace nodes with parent links
-        ephemeral.md         \(em scratch traces (cleared on context commit)
-        metadata.yaml        \(em file structure, dependencies, env config
-.fi
-.RE
-.PP
-.B Actions
-.RS 4
-.TP
-.B init \-\-goal \fITEXT\fR
-Create the workspace if needed and set the goal for the current Git branch.
-Run once per Git branch before writing context on that branch.
-.TP
-.B commit \fISUMMARY\fR [\-\-detail \fITEXT\fR]
-Save a milestone checkpoint (one-line summary + optional detail).
-Also clears the ephemeral scratch buffer for the current branch.
-Requires the current Git branch to have a goal and the active h5i context
-branch to have a purpose.
-.TP
-.B branch \fINAME\fR \-\-purpose \fITEXT\fR
-Create and switch to a new h5i context branch.
-Multiple h5i context branches can live under the same Git branch.
-.TP
-.B checkout \fINAME\fR
-Switch to an existing h5i context branch.
-.TP
-.B merge \fIBRANCH\fR
-Merge a completed branch's log and summaries into the current branch.
-Appends a two-parent DAG merge node to
-.I dag.json
-so both branch histories remain causally connected.
-.TP
-.B scope \fINAME\fR [\-\-purpose \fITEXT\fR]
-Create a subagent-scoped sub-context.
-The branch is stored as
-.BI scope/ NAME
-(the prefix is added automatically) and tagged in its
-.I metadata.yaml
-so it appears separately under
-.B Scoped subagents
-in
-.BR status .
-Merge back with
-.BI "h5i recall context merge scope/" NAME
-when the subagent finishes.
-.TP
-.B trace [\-\-ephemeral] \-\-kind \fIKIND\fR \fICONTENT\fR
-Append an OTA (Observe\(enThink\(enAct) trace entry.
-Requires the current Git branch to have a goal and the active h5i context
-branch to have a purpose.
-Valid
-.I KIND
-values:
-.BR OBSERVE ,\  THINK ,\  ACT ,\  NOTE
-(case-insensitive).
-.RS 4
-.TP
-Without
-.B \-\-ephemeral
-the entry is written to
-.I trace.md
-and to
-.I dag.json
-as a new DAG node with the previous node as parent.
-.TP
-With
-.B \-\-ephemeral
-the entry goes to
-.I ephemeral.md
-only \(em excluded from the DAG, excluded from snapshots, and cleared on
-the next
-.BR "h5i recall context commit" .
-Use this for scratch observations you only need for the current step.
-.RE
-.TP
-.B show [\fIOPTIONS\fR]
-Retrieve the current project state.
-.RS 4
-.TP
-.BI \-\-branch\  NAME
-Show a specific branch without switching.
-.TP
-.BI \-\-commit\  HASH
-Show a specific commit entry by hash prefix.
-.TP
-.B \-\-trace
-Include recent OTA trace lines.
-.TP
-.BI \-\-metadata\  SEGMENT
-Pull a named section from
-.IR metadata.yaml .
-.TP
-.BI \-\-window\  N
-Number of recent commits to include (default: 3).
-.TP
-.BI \-\-trace\-offset\  N
-Scroll back N lines from the end of the trace.
-.RE
-.TP
-.B status
-Overview of the current workspace: current Git branch goal, active h5i
-context branch, milestone commit count, trace line count, other context branches,
-.B scoped subagents
-.RI ( scope/*
-branches listed separately), and the
-.B stable-prefix / dynamic-suffix
-boundary showing how many trace lines are prompt-cache friendly vs. volatile.
-.TP
-.B prompt
-Print a Claude system prompt that explains how to use h5i context
-commands inside an agent session.
-.TP
-.B scan [\-\-branch \fINAME\fR] [\-\-json]
-Scan the trace for prompt-injection patterns and report a 0.0\(en1.0 risk score.
-.TP
-.B restore \fISHA\fR
-Restore the context workspace to the state captured when git commit
-.I SHA
-was made.
-Every
-.B h5i capture commit
-writes a snapshot automatically; this command replays it by appending a
-new commit to
-.IR refs/h5i/context ,
-so the full history is preserved.
-SHA prefixes are accepted (e.g.\&
-.BR a3f8c12 ).
-.TP
-.B diff \fIFROM\fR \fITO\fR
-Show how the context workspace evolved between two git commits.
-Reports new milestones, new OTA trace steps, and any change to the
-project goal.
-Both
-.I FROM
-and
-.I TO
-must have context snapshots (created automatically by
-.BR "h5i capture commit" ).
-.TP
-.B relevant \fIFILE\fR
-Retrieve all context entries that mention
-.IR FILE .
-Searches the current branch's trace and milestone log, plus all other
-context branches, and prints matching entries grouped by section.
-Run this
-.B before
-editing a file to recover accumulated reasoning about it without
-re-reading the full trace.
-.TP
-.B pack
-Compact the current branch's OTA trace using a
-.B three-pass structurally-lossless algorithm:
-(1)\~remove OBSERVE entries whose subject token appears in a later THINK or
-ACT entry (subsumed observations),
-(2)\~preserve every THINK, ACT, and NOTE entry verbatim,
-(3)\~merge consecutive OBSERVE entries that share the same subject token
-into one entry with a
-.BI \(mu N
-count annotation.
-Updates both
-.I trace.md
-and
-.IR dag.json .
-Run
-.B git gc
-afterwards to reclaim disk space.
-.TP
-.B todo
-Extract all open TODO / FIXME / BLOCKED items from the current branch's
-trace.
-Only NOTE and THINK entries are searched (OBSERVE lines are ignored).
-.TP
-.B knowledge
-Distill all THINK entries from every h5i context branch into a deduplicated
-project knowledge base.
-Useful at session start to re-absorb accumulated design rationale without
-re-reading every branch trace in full.
-The MCP equivalent is
-.BR h5i_context_knowledge ,
-which returns structured JSON.
-.TP
-.B ephemeral [\-\-branch \fINAME\fR]
-Display the current ephemeral scratch traces for a branch (default: current
-branch).
-Ephemeral entries are written with
-.B h5i recall context trace \-\-ephemeral
-and are automatically cleared on the next
-.BR "h5i recall context commit" .
-.TP
-.B cached\-prefix [\-\-tail \fIN\fR]
-Show the stable-prefix / dynamic-suffix boundary in the current trace
-(default tail: 40 lines).
-Lines in the stable prefix are unchanged across most agent steps and
-benefit from prompt-cache hits; lines in the dynamic suffix change every
-step.
-.TP
-.B recap [\-\-session \fIPATH\fR] [\-\-since \fIISO8601\fR] [\-\-dry\-run]
-Import Claude Code
-.B Recap
-entries (JSONL records with
-.I type=system
-and
-.IR subtype=away_summary )
-from the active session log as context commits.
-Each recap body
-.RI ( "Goal: ... Next: ... (disable recaps in /config)" )
-is split on the
-.I Next:
-boundary into a one-line summary and a detail block, then written as a
-milestone via
-.BR "h5i recall context commit" .
-Imported UUIDs are tracked in
-.I recaps.json
-at the root of
-.I refs/h5i/context
-so repeated runs are idempotent.
-.RS 4
-.TP
-.BI \-\-session\  PATH
-Explicit JSONL session log to scan.
-Defaults to the most recently modified Claude Code session for the current
-working directory.
-.TP
-.BI \-\-since\  ISO8601
-Only import recaps with a timestamp strictly after this cutoff,
-e.g.\&
-.BR 2026-04-23T00:00:00Z .
-.TP
-.B \-\-dry\-run
-Report what would be imported without modifying the workspace.
-.RE
-.RE
-.
-.\" ─── vibe ───────────────────────────────────────────────────────────────────
-.SS h5i audit vibe [\fIOPTIONS\fR]
-Show an instant AI footprint audit of the repository: what fraction of
-recent commits are AI-generated, which directories are fully AI-written,
-and which files carry the highest risk.
-.PP
-Output is divided into five sections, printed only when non-empty:
-.RS 4
-.IP \(bu 2
-.B AI %
-\(em fraction of scanned commits that carry AI provenance metadata
-.IP \(bu 2
-.B Contributors
-\(em count of distinct human authors and AI models, with names
-.IP \(bu 2
-.B Fully AI dirs
-\(em directories where every commit is AI-generated (\(>= 2 commits)
-.IP \(bu 2
-.B Hot dirs
-\(em directories with \(>= 80% AI commits (\(>= 3 commits)
-.IP \(bu 2
-.B Blind edits
-\(em total blind edits from all analysed sessions and the file count
-.IP \(bu 2
-.B Risky files
-\(em top 5 files with \(>= 70% AI commits plus at least one risk signal
-.RE
-.PP
-A file is flagged when its AI commit ratio is \(>= 70% and at least one of:
-no passing test metrics, one or more blind edits, or one or more
-uncertainty annotations.
-Blind-edit and uncertainty data come from session analyses stored by
-.BR "h5i recall notes analyze" .
-.PP
-.B Options
-.RS 4
-.TP
-.BI \-l,\ \-\-limit\  N
-Number of recent commits to scan (default:
-.BR 500 ).
-.TP
-.B \-\-json
-Output raw JSON instead of the styled report.
-.RE
-.
-.\" ─── mcp ────────────────────────────────────────────────────────────────────
-.SS h5i mcp
-Start the h5i MCP (Model Context Protocol) server on stdio.
-Implements the
-.B 2024-11-05
-specification over a newline-delimited JSON-RPC\~2.0 transport.
-.PP
-Register with Claude Code by adding to
-.I ~/.claude/settings.json
-or
-.IR .claude/settings.json :
-.PP
-.RS 4
-.nf
-{
-  "mcpServers": {
-    "h5i": { "command": "h5i", "args": ["mcp"] }
-  }
-}
-.fi
-.RE
-.PP
-.B Capabilities
-.RS 4
-.TP
-.B tools
-Twenty-four tools covering
-.BR h5i_commit ,\  h5i_notes_analyze ,\  h5i_log ,\  h5i_blame ,\  h5i_notes_* ,
-and
-.B h5i_context_*
-(including
-.BR h5i_context_knowledge ).
-See
-.I MANUAL.md
-for the full parameter reference.
-.TP
-.B resources
-Two resources:
-.B h5i://context/current
-(live reasoning workspace state) and
-.B h5i://log/recent
-(10 most recent commits with AI provenance).
-.TP
-.B resources.subscribe
-Both resources support live push notifications.
-.RE
-.PP
-.B Resource subscriptions
-.RS 4
-.PP
-The server advertises
-.B capabilities.resources.subscribe\ =\ true
-in the
-.B initialize
-response.
-Send
-.B resources/subscribe
-with a
-.I uri
-parameter to register; the server spawns a 2-second polling thread per URI
-and pushes
-.B notifications/resources/updated
-whenever the content changes.
-Send
-.B resources/unsubscribe
-to stop.
-.PP
-Subscribable URIs:
-.B h5i://log/recent
-(fires when a new
-.B h5i capture commit
-lands) and
-.B h5i://context/current
-(fires when the context workspace is updated).
-.RE
-.
-.\" ─── policy ──────────────────────────────────────────────────────────────────
-.SS h5i audit policy \fISUBCOMMAND\fR
-Manage governance rules for AI-assisted commits.
-Rules live in
-.I .h5i/policy.toml
-(workdir, not inside
-.IR .git/ ;
-commit it alongside your code).
-Policy is evaluated automatically on every
-.B h5i capture commit\c
-; violations block the commit unless
-.B \-\-force
-is passed.
-.PP
-.B Subcommands
-.RS 4
-.TP
-.B init
-Create
-.I .h5i/policy.toml
-with a commented-out starter configuration.
-.TP
-.B check
-Dry-run policy check against the currently staged files without committing.
-Exit code is non-zero when at least one error-level violation is found.
-.TP
-.B show
-Print the parsed policy configuration.
-.RE
-.PP
-.B Policy file schema
-.RS 4
-.nf
-[commit]
-require_ai_provenance = true   # reject commits with no AI provenance
-min_message_len = 10           # reject short messages
-require_audit_on_flagged_paths = true
-label = "company-standard-v1"
+Auditable workspaces for AI coding agents
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+h5i\-init(1)
+Initialize the h5i sidecar in the current repository
+.TP
+h5i\-completion(1)
+Generate a shell completion script (bash, zsh, fish, ...); e.g. `h5i completion bash > /etc/bash_completion.d/h5i`
+.TP
+h5i\-man(1)
+Generate the roff man page from the CLI definition (so it never drifts from the actual commands); e.g. `h5i man > man/man1/h5i.1`
+.TP
+h5i\-capture(1)
+Record provenance \(em commit, memory snapshot. Run `h5i capture \-\-help` for the verb table with runnable examples
+.TP
+h5i\-recall(1)
+Read AI history \(em log, blame, diff, context, notes, memory, recap, resume. Run `h5i recall \-\-help` for the verb table
+.TP
+h5i\-audit(1)
+Assess risk \(em review\-rank, prompt\-injection scan, compliance, policy, vibe. Run `h5i audit \-\-help` for the verb table
+.TP
+h5i\-share(1)
+Publish \(em push, pull, and post a sticky GitHub PR comment with AI provenance. Run `h5i share \-\-help` for the verb table
+.TP
+h5i\-env(1)
+Isolated agent environments \(em worktree + sandbox + provenance (docs/environments\-design.md). create/run/diff/propose/apply lifecycle
+.TP
+h5i\-team(1)
+Agent teams \(em phased evidence publication over existing h5i envs
+.TP
+h5i\-resolve(1)
+Resolve branch conflicts using CRDT\-based semantic merging
+.TP
+h5i\-serve(1)
+Launch the h5i web dashboard in your browser
+.TP
+h5i\-hook(1)
+Manage agent hook setup for automatic prompt capture and context tracing. Run `h5i hook setup` to print install instructions
+.TP
+h5i\-resume(1)
+Generate a structured handoff briefing to resume an AI session
+.TP
+h5i\-mcp(1)
+Start the h5i MCP (Model Context Protocol) server on stdio
+.TP
+h5i\-doctor(1)
+Validate and repair h5i sidecar storage and refs
+.TP
+h5i\-policy(1)
+Manage governance policy for AI\-assisted commits (.h5i/policy.toml)
+.TP
+h5i\-msg(1)
+Agent radio \(em cross\-agent messaging over a shareable Git ref
+.TP
+h5i\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.2.7
+.SH "H5I INIT"
+Initialize the h5i sidecar in the current repository
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBinit\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I COMPLETION"
+Generate a shell completion script (bash, zsh, fish, ...); e.g. `h5i completion bash > /etc/bash_completion.d/h5i`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcompletion\fR [\fB\-h\fR|\fB\-\-help\fR] <\fISHELL\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISHELL\fR>
+Shell to generate completions for
+.br
 
-[paths."src/auth/**"]
-require_ai_provenance = true   # enforced at commit time
-require_audit = true           # enforced at commit time (needs flag above)
-max_ai_ratio = 0.8             # compliance-only: flag if >80% AI commits
-max_blind_edit_ratio = 0.3     # compliance-only: flag if >30% blind edits
-.fi
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+bash
+.IP \(bu 2
+elvish
+.IP \(bu 2
+fish
+.IP \(bu 2
+powershell
+.IP \(bu 2
+zsh
 .RE
-.PP
-Glob patterns support
-.BR * ,\  ** ,
-and
-.BR ? .
-.
-.\" ─── compliance ──────────────────────────────────────────────────────────────
-.SS h5i audit compliance [\fIOPTIONS\fR]
-Generate a compliance audit report over a date range.
-Walks the commit history, re-evaluates policy rules, and aggregates session
-data (blind edits, uncertainty signals) into a text, JSON, or HTML report.
-.PP
-.B Options
-.RS 4
+.SH "H5I MAN"
+Generate the roff man page from the CLI definition (so it never drifts from the actual commands); e.g. `h5i man > man/man1/h5i.1`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBman\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
 .TP
-.BI \-\-since " YYYY-MM-DD"
-Start of date range (inclusive).
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I CAPTURE"
+Record provenance \(em commit, memory snapshot. Run `h5i capture --help` for the verb table with runnable examples
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcapture\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIREST\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
 .TP
-.BI \-\-until " YYYY-MM-DD"
-End of date range (inclusive).
+\fB\-h\fR, \fB\-\-help\fR
+Print help
 .TP
-.BI \-\-format " fmt"
-Output format:
-.BR text " (default), " json ", or " html .
-The HTML output is a self-contained dark-theme page.
+[\fIREST\fR]
+
+.SH "H5I RECALL"
+Read AI history \(em log, blame, diff, context, notes, memory, recap, resume. Run `h5i recall --help` for the verb table
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrecall\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIREST\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
 .TP
-.BI \-\-output " FILE"
-Write the report to a file instead of stdout.
+\fB\-h\fR, \fB\-\-help\fR
+Print help
 .TP
-.BI \-l, \-\-limit " N"
-Maximum commits to scan (default: 500).
+[\fIREST\fR]
+
+.SH "H5I AUDIT"
+Assess risk \(em review-rank, prompt-injection scan, compliance, policy, vibe. Run `h5i audit --help` for the verb table
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBaudit\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIREST\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIREST\fR]
+
+.SH "H5I SHARE"
+Publish \(em push, pull, and post a sticky GitHub PR comment with AI provenance. Run `h5i share --help` for the verb table
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshare\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIREST\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIREST\fR]
+
+.SH "H5I ENV"
+Isolated agent environments \(em worktree + sandbox + provenance (docs/environments-design.md). create/run/diff/propose/apply lifecycle
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBenv\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I ENV CREATE"
+Create an isolated environment: code branch + git worktree under .git/.h5i/env/, a forked reasoning branch, and a pinned, fail-closed policy. The base revision is frozen at creation
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<FROM>\fR
+Base revision (default: HEAD). Pinned immutably
+.TP
+\fB\-\-profile\fR \fI<PROFILE>\fR
+Policy profile from .h5i/env.toml. Built\-ins need no file: `agent` (agent\-in\-box, scoped to $H5I_AGENT\*(Aqs runtime), `agent\-claude` / `agent\-codex` (pin one runtime: only that agent\*(Aqs HOME state + API egress), and `default` (fail\-closed build/test confinement). Unset auto\-picks the creating runtime\*(Aqs agent profile when this host can enforce it, else `default`
+.TP
+\fB\-\-isolation\fR \fI<ISOLATION>\fR
+Isolation: auto (default) | workspace | process | supervised | container | hardened\-container | microvm. `auto` (or unset) picks the strongest tier the host can run; an explicit tier fails closed if the host cannot satisfy it (never silently downgrades)
+.TP
+\fB\-\-backend\fR \fI<BACKEND>\fR [default: auto]
+Workspace backend (auto|worktree)
+.TP
+\fB\-\-audit\fR \fI<AUDIT>\fR [default: signal]
+Audit capture mode for wrapped in\-env commands: signal (default) | all. `all` records every wrapped command, including small successful output
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+Environment name (lowercase slug, e.g. `fix\-auth`)
+.SH "H5I ENV RUN"
+Run a command inside an environment, policy-enforced and capture-wrapped: exit code passes through, evidence lands in refs/h5i/objects tagged with the env id + policy digest
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrun\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> [\fICOMMAND\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+Environment name (slug, `agent/slug`, or full `env/agent/slug`)
+.TP
+[\fICOMMAND\fR]
+The command to run, after `\-\-`
+.SH "H5I ENV SHELL"
+Open an interactive, confined session INSIDE the environment \(em the "agent-in-box". stdio is inherited (a real terminal), so every command the session spawns is contained by the box, not by the agent choosing to wrap each call. Defaults to a login shell when no command is given
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshell\fR [\fB\-\-readonly\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> [\fICOMMAND\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-readonly\fR
+Attach as a READ\-ONLY observer: `$WORK` is pinned read\-only, the box gets an ephemeral per\-session HOME/tmp, and no env state (status, captures, manifest) is touched. Multiple `\-\-readonly` sessions can run on one env at once (they take a shared lock); they still exclude a live read\-write session. Requires isolation=process or supervised
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+Environment name (slug, `agent/slug`, or full `env/agent/slug`)
+.TP
+[\fICOMMAND\fR]
+Command to run inside the box (after `\-\-`); default: an interactive shell
+.SH "H5I ENV PROBE"
+Probe what isolation this host can actually provide (Landlock, user namespaces, seccomp) and which claims are satisfiable
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBprobe\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I ENV CAPABILITIES"
+Machine-readable host enforcement report: isolation tier, egress-enforced yes/no, resource-limit support, and per-claim satisfiable/runnable \(em so a product can adapt to the real host without scraping `env probe` text
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcapabilities\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the structured report as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I ENV LIST"
+List environments on this clone (the fleet view)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit a machine\-readable JSON array (manifest + base drift per env)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I ENV STATUS"
+Show one environment's status: lifecycle, enforced policy, evidence, and base drift
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstatus\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the raw manifest JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV DOCTOR"
+Check one environment's enforcement readiness and structural health (can it actually enforce its isolation claim here? are its refs intact?)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdoctor\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the structured report as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV SECRETS"
+List the secret grants an environment's policy declares, with a dry-run resolution status (never the value \(em only a fingerprint when resolvable)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsecrets\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the status as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV SERVICE"
+Manage long-lived services declared in the env's `.h5i/env.toml` (`[service.<name>]`), confined and pid-tracked \(em no daemon
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBservice\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I ENV SERVICE START"
+Start a declared service as a confined background process
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstart\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIENV\fR> <\fISERVICE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIENV\fR>
+Environment name (slug, `agent/slug`, or full `env/agent/slug`)
+.TP
+<\fISERVICE\fR>
+Service name (a `[service.<name>]` in the env\*(Aqs `.h5i/env.toml`)
+.SH "H5I ENV SERVICE STOP"
+Stop a running service (and capture its log as evidence)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstop\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIENV\fR> <\fISERVICE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIENV\fR>
+
+.TP
+<\fISERVICE\fR>
+
+.SH "H5I ENV SERVICE STATUS"
+Show every recorded service for an env and its liveness
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstatus\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIENV\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIENV\fR>
+
+.SH "H5I ENV SERVICE LOGS"
+Tail a running service's log
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlogs\fR [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIENV\fR> <\fISERVICE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-tail\fR \fI<TAIL>\fR [default: 200]
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIENV\fR>
+
+.TP
+<\fISERVICE\fR>
+
+.SH "H5I ENV PORTS"
+Show the per-env dynamic port map (services with a declared port)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBports\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the port map as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV REBASE"
+Rebase the environment onto its parent branch's current tip, re-pinning the base (use when `status` reports the parent has advanced)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrebase\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV LOG"
+Show the event log (refs/h5i/env) for one environment
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlog\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV CONTEXT"
+Show the environment's reasoning/context branch (`refs/h5i/context/env/<agent>/<slug>`) \(em a convenience alias for `h5i context show --branch <that-branch>`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcontext\fR [\fB\-\-window\fR] [\fB\-\-trace\fR] [\fB\-\-depth\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-window\fR \fI<WINDOW>\fR [default: 3]
+Number of recent context commits to show (window K)
+.TP
+\fB\-\-trace\fR
+Include the full reasoning trace (equivalent to \-\-depth 3)
+.TP
+\fB\-\-depth\fR \fI<DEPTH>\fR [default: 2]
+Progressive disclosure depth: 1=compact index, 2=timeline (default), 3=full trace
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV DIFF"
+Diff the environment's work against its pinned base
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdiff\fR [\fB\-\-stat\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-stat\fR
+Show a diffstat instead of the full patch
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV INSPECT"
+Inspect one of an environment's evidence captures (structured findings, exit code, policy digest, redactions)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBinspect\fR <\fB\-\-capture\fR> [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-capture\fR \fI<CAPTURE>\fR
+Capture id (from `h5i env status`/`log`)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV COMPARE"
+Compare environments side by side \(em changes + latest run results (the "arena" reviewer comparison). Best on envs sharing one base
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcompare\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAMES\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit JSON instead of the table
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAMES\fR>
+Two or more environment names
+.SH "H5I ENV PROPOSE"
+Snapshot the worktree (mediated commit, path-allowlist enforced) and mark the env proposed \(em produces a review brief. Never writes the parent branch
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpropose\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV APPLY"
+Apply a proposed environment onto its parent branch (reviewer-selected, never automatic). Default is a merge (fast-forward when possible)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBapply\fR [\fB\-\-patch\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-patch\fR
+Squash the env\*(Aqs changes into a single commit instead of merging
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV ABORT"
+Abort an environment \(em manifest and workspace preserved for forensics
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBabort\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV RM"
+Permanently remove an environment from this clone: prune its worktree, delete its code + reasoning branches, and erase its manifest. Destroys local provenance (only the `removed` event in refs/h5i/env survives). A still-live env (created/running/proposed) needs --force
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrm\fR [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-force\fR
+Remove even if the env is still live (not applied/aborted)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I ENV GC"
+Reclaim workspaces of applied/aborted environments (worktree prune). Manifests, branches, and captures are retained
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBgc\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I TEAM"
+Agent teams \(em phased evidence publication over existing h5i envs
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBteam\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I TEAM CREATE"
+Create a team run over existing h5i environments
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcreate\fR [\fB\-\-base\fR] [\fB\-\-rounds\fR] [\fB\-\-title\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-base\fR \fI<BASE>\fR [default: HEAD]
+Base revision shared by all candidates
+.TP
+\fB\-\-rounds\fR \fI<ROUNDS>\fR [default: 1]
+Maximum improvement rounds planned for this run
+.TP
+\fB\-\-title\fR \fI<TITLE>\fR
+Human\-readable label; defaults to the team id
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+Team id (ref\-safe slug)
+.SH "H5I TEAM AUTO-CREATE"
+Bootstrap a two-agent (claude + codex) team in one shot: create an agent-claude env and an agent-codex env, create the team, and enroll both. Equivalent to running `env create`, `team create`, and two `team add-env` calls by hand
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBauto\-create\fR [\fB\-\-base\fR] [\fB\-\-rounds\fR] [\fB\-\-title\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-base\fR \fI<BASE>\fR [default: HEAD]
+Base revision shared by all candidates
+.TP
+\fB\-\-rounds\fR \fI<ROUNDS>\fR [default: 1]
+Maximum improvement rounds planned for this run
+.TP
+\fB\-\-title\fR \fI<TITLE>\fR
+Human\-readable label; defaults to the team id
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+Team id (ref\-safe slug); also used to name the per\-agent envs (`<name>\-claude`, `<name>\-codex`)
+.SH "H5I TEAM LIST"
+List team runs
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I TEAM BOOTSTRAP"
+Print the standing bootstrap prompt for a boxed team agent
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBbootstrap\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I TEAM USE"
+Show or set the current team (omit NAME to show; --clear to unset)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBuse\fR [\fB\-\-clear\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fINAME\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-clear\fR
+Clear the current\-team pointer
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fINAME\fR]
+Team id to make current; omit to print the current team
+.SH "H5I TEAM ADD-ENV"
+Add an existing env to a team roster
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBadd\-env\fR [\fB\-\-as\fR] [\fB\-\-runtime\fR] [\fB\-\-model\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITEAM\fR> <\fIENV\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-as\fR \fI<AS_AGENT>\fR
+Ref\-safe agent key for this team (default: a generated name)
+.TP
+\fB\-\-runtime\fR \fI<RUNTIME>\fR
+Runtime adapter (`claude`, `codex`, etc.)
+.TP
+\fB\-\-model\fR \fI<MODEL>\fR
+Model label
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITEAM\fR>
+Team id
+.TP
+<\fIENV\fR>
+Env name (`slug`, `agent/slug`, or `env/agent/slug`)
+.SH "H5I TEAM STATUS"
+Show a team run
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstatus\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (defaults to the current team \(em see `team use`)
+.SH "H5I TEAM SUBMIT"
+Freeze one agent's candidate as an immutable submission
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsubmit\fR <\fB\-\-agent\fR> [\fB\-\-commit\fR] [\fB\-\-summary\-file\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-agent\fR \fI<AGENT>\fR
+Team agent id
+.TP
+\fB\-\-commit\fR \fI<COMMIT>\fR
+Commit to submit; defaults to the env branch tip
+.TP
+\fB\-\-summary\-file\fR \fI<SUMMARY_FILE>\fR
+Summary text file
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (defaults to the current team \(em see `team use`)
+.SH "H5I TEAM FREEZE"
+Move a draft team into sealed_submit after required submissions exist
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBfreeze\fR [\fB\-\-allow\-missing\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-allow\-missing\fR
+Permit a partial freeze and record missing submissions
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (defaults to the current team \(em see `team use`)
+.SH "H5I TEAM COMPARE"
+Compare team candidates side by side
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcompare\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (defaults to the current team \(em see `team use`)
+.SH "H5I TEAM ARTIFACT"
+Show one teammate's submission by artifact id (read-only; safe in a box). Defaults to the diff; `--summary`/`--tests` show the other granted views
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBartifact\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I TEAM ARTIFACT SHOW"
+Show one teammate's submission by artifact id (read-only; safe in a box)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-\-team\fR] [\fB\-\-diff\fR] [\fB\-\-summary\fR] [\fB\-\-tests\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIID\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-team\fR \fI<TEAM>\fR
+Team id (defaults to the current team / $H5I_TEAM)
+.TP
+\fB\-\-diff\fR
+Show the unified diff against the team base (the default)
+.TP
+\fB\-\-summary\fR
+Show the submission\*(Aqs summary
+.TP
+\fB\-\-tests\fR
+Show the captured test evidence (capture ids + change stats)
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIID\fR>
+Submission artifact id, e.g. `sub\-hana\-r1\-4ea2333c040f`
+.SH "H5I TEAM SYNC"
+Ingest agents' staged submissions/reviews now, without exiting their boxes (live counterpart to the at-exit ingest). Lets a run advance while the team Stop hook keeps boxes alive \(em no relaunch needed
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsync\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (defaults to the current team \(em see `team use`)
+.SH "H5I TEAM VERIFY"
+Run neutral verifier evidence for one submitted candidate
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBverify\fR <\fB\-\-agent\fR> [\fB\-\-isolation\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITEAM\fR> [\fICMD\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-agent\fR \fI<AGENT>\fR
+Team agent id whose latest submission should be verified
+.TP
+\fB\-\-isolation\fR \fI<ISOLATION>\fR
+Isolation tier for the sandboxed verifier (workspace|process| supervised|container); default auto\-picks the strongest the host can enforce, falling back to workspace
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITEAM\fR>
+Team id
+.TP
+[\fICMD\fR]
+Verifier command and args (everything after `\-\-`), e.g. `\-\- cargo test`
+.SH "H5I TEAM FINALIZE"
+Evaluate the conservative verifier-based finalization policy
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBfinalize\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (defaults to the current team \(em see `team use`)
+.SH "H5I TEAM APPLY"
+Apply the selected winner into the current branch
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBapply\fR [\fB\-\-winner\fR] [\fB\-\-agent\fR] [\fB\-\-force\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-winner\fR \fI<WINNER>\fR
+Submission id; defaults to the finalized winner
+.TP
+\fB\-\-agent\fR \fI<AGENT>\fR
+Pick a team agent\*(Aqs latest submission directly, skipping verify/finalize. This is an explicit human override, so it implies the verifier\-verdict gate is bypassed (no `\-\-force` needed)
+.TP
+\fB\-\-force\fR
+Override verifier verdict / auto\-apply gate
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (defaults to the current team \(em see `team use`)
+.SH "H5I TEAM WORKER"
+Optional automation worker: lease runs and finalize verifier-ready teams
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBworker\fR [\fB\-\-once\fR] [\fB\-\-watch\fR] [\fB\-\-interval\fR] [\fB\-\-id\fR] [\fB\-\-lease\-ttl\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-once\fR
+Run one finalize pass and exit (mutually exclusive with \-\-watch)
+.TP
+\fB\-\-watch\fR
+Opt\-in convenience loop: repeat the one\-shot pass every \-\-interval seconds until interrupted. Still finalize\-only; never auto\-applies. For production prefer an external scheduler (cron/systemd/CI) driving `\-\-once` \(em crash\-resilient and needs no long\-lived process
+.TP
+\fB\-\-interval\fR \fI<INTERVAL>\fR [default: 30]
+Seconds to sleep between passes in \-\-watch mode
+.TP
+\fB\-\-id\fR \fI<ID>\fR [default: team\-worker]
+Worker id (ref\-safe)
+.TP
+\fB\-\-lease\-ttl\fR \fI<LEASE_TTL>\fR [default: 300]
+Lease TTL in seconds
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I TEAM DISPATCH"
+Dispatch a prompt to every team agent through h5i msg
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdispatch\fR [\fB\-\-prompt\-file\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-prompt\-file\fR \fI<PROMPT_FILE>\fR
+Read the task prompt from this file instead of stdin
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fITEAM\fR]
+Team id (defaults to the current team \(em see `team use`)
+.SH "H5I TEAM DISCUSS"
+Send a logged, influence-tracked post-submit discussion message
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdiscuss\fR <\fB\-\-from\fR> <\fB\-\-to\fR> <\fB\-\-file\fR> [\fB\-\-artifacts\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<FROM>\fR
+Sender team agent id
+.TP
+\fB\-\-to\fR \fI<TO>\fR
+Comma\-separated recipient team agent ids
+.TP
+\fB\-\-file\fR \fI<FILE>\fR
+Message body file
+.TP
+\fB\-\-artifacts\fR \fI<ARTIFACTS>\fR [default: ]
+Comma\-separated artifact ids referenced by this message
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (defaults to the current team \(em see `team use`)
+.SH "H5I TEAM GRANT-REVIEW"
+Grant one team agent review access to another agent's submitted artifacts
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBgrant\-review\fR <\fB\-\-reviewer\fR> <\fB\-\-target\fR> [\fB\-\-artifacts\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-reviewer\fR \fI<REVIEWER>\fR
+Reviewing team agent id
+.TP
+\fB\-\-target\fR \fI<TARGET>\fR
+Target team agent id
+.TP
+\fB\-\-artifacts\fR \fI<ARTIFACTS>\fR [default: diff,summary,tests]
+Comma\-separated artifact kinds (diff,summary,tests,test\-status)
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (defaults to the current team \(em see `team use`)
+.SH "H5I TEAM AUTO-PEER-REVIEW"
+Open the peer-review round in one shot: sync staged work, freeze the round, grant every agent mutual review access, and send each the review-and-revise instruction. Native equivalent of `scripts/team-review.sh`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBauto\-peer\-review\fR [\fB\-\-artifacts\fR] [\fB\-\-allow\-missing\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-artifacts\fR \fI<ARTIFACTS>\fR [default: diff,summary,tests]
+Comma\-separated artifact kinds to grant (diff,summary,tests,test\-status)
+.TP
+\fB\-\-allow\-missing\fR
+Freeze even if some agents have not submitted (seals a partial round)
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (defaults to the current team \(em see `team use`)
+.SH "H5I TEAM REVIEW"
+Record a review body for a target candidate
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBreview\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I TEAM REVIEW SUBMIT"
+Submit a review body
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsubmit\fR <\fB\-\-reviewer\fR> <\fB\-\-target\fR> <\fB\-\-file\fR> [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-reviewer\fR \fI<REVIEWER>\fR
+Reviewing team agent id
+.TP
+\fB\-\-target\fR \fI<TARGET>\fR
+Target team agent id
+.TP
+\fB\-\-file\fR \fI<FILE>\fR
+Review text file
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (defaults to the current team \(em see `team use`)
+.SH "H5I TEAM AGENT"
+Scoped commands for a team agent running from a bound env
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBagent\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I TEAM AGENT INBOX"
+Read this team persona's inbox when running host-side
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBinbox\fR [\fB\-\-peek\fR] [\fB\-\-wait\fR] [\fB\-\-interval\fR] [\fB\-\-timeout\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-peek\fR
+Show without advancing the cursor
+.TP
+\fB\-\-wait\fR
+Block until a team message is waiting, then print it and exit (peek\-only \(em does not consume). Use after submitting to await a review request without ending the session
+.TP
+\fB\-\-interval\fR \fI<INTERVAL>\fR [default: 10]
+Poll interval in seconds while \-\-wait is set
+.TP
+\fB\-\-timeout\fR \fI<TIMEOUT>\fR [default: 1800]
+Give up after this many seconds while \-\-wait is set (0 = forever)
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id; defaults to $H5I_TEAM or the current team
+.SH "H5I TEAM AGENT HOOK"
+Stop-hook: keep this agent working while its team round is unfinished and deliver pending review requests between turns. Registered by `h5i hook setup --team`. No-ops outside a team and inside a sealed box
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBhook\fR [\fB\-\-block\fR] [\fB\-\-quiet\fR] [\fB\-\-timeout\fR] [\fB\-\-interval\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-block\fR
+Block the stop (Claude Code) and feed pending messages back so the agent keeps working; without it, just surface them
+.TP
+\fB\-\-quiet\fR
+Print plain text with no JSON wrapper (Codex Stop hook / manual)
+.TP
+\fB\-\-timeout\fR \fI<TIMEOUT>\fR [default: 1800]
+While \-\-block, wait up to this many seconds for the next message before allowing the stop (0 = check once, don\*(Aqt wait). Lets a team agent stay alive between turns until a review arrives or the round ends, instead of relying on it to run `inbox \-\-wait` itself
+.TP
+\fB\-\-interval\fR \fI<INTERVAL>\fR [default: 10]
+Poll interval in seconds while waiting
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id; defaults to $H5I_TEAM or the current team
+.SH "H5I TEAM AGENT SUBMIT"
+Submit this env persona's candidate; boxed envs stage for host ingest
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsubmit\fR [\fB\-\-commit\fR] [\fB\-\-summary\-file\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-commit\fR \fI<COMMIT>\fR
+Commit to submit; defaults to the env branch tip
+.TP
+\fB\-\-summary\-file\fR \fI<SUMMARY_FILE>\fR
+Summary text file
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I RESOLVE"
+Resolve branch conflicts using CRDT-based semantic merging
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBresolve\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIOURS\fR> <\fITHEIRS\fR> <\fIFILE\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIOURS\fR>
+OID of the local branch (OURS)
+.TP
+<\fITHEIRS\fR>
+OID of the incoming branch (THEIRS)
+.TP
+<\fIFILE\fR>
+Relative path to the file to resolve
+.SH "H5I SERVE"
+Launch the h5i web dashboard in your browser
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBserve\fR [\fB\-p\fR|\fB\-\-port\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-p\fR, \fB\-\-port\fR \fI<PORT>\fR [default: 7150]
+Port to listen on
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I HOOK"
+Manage agent hook setup for automatic prompt capture and context tracing. Run `h5i hook setup` to print install instructions
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBhook\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I HOOK SETUP"
+Print install instructions for agent hooks, or write the hook wiring into Claude/Codex config directly with --write
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsetup\fR [\fB\-\-write\fR] [\fB\-\-target\fR] [\fB\-\-scope\fR] [\fB\-\-wrap\-bash\fR] [\fB\-\-team\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-write\fR
+Write the SessionStart/PostToolUse/Stop wiring into the agent config (idempotent merge) instead of printing instructions
+.TP
+\fB\-\-target\fR \fI<TARGET>\fR
+Which agent config to write. Omit to write both Claude and Codex
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+claude
+.IP \(bu 2
+codex
 .RE
-.PP
-.B What is checked
-.RS 4
 .TP
-At commit time:
-.BR commit.require_ai_provenance ,\  commit.min_message_len ,\  paths.*.require_ai_provenance ,
-and
-.B paths.*.require_audit
-(the last two require the global
-.B require_audit_on_flagged_paths
-flag).
-.TP
-Compliance-only:
-.B paths.*.max_ai_ratio
-and
-.B paths.*.max_blind_edit_ratio
-\(em trend rules designed for historical analysis rather than blocking
-individual commits.
+\fB\-\-scope\fR \fI<SCOPE>\fR [default: project]
+Where \-\-write puts the settings: the repo\*(Aqs agent config or your user\-level agent config
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+user
+.IP \(bu 2
+project
 .RE
-.PP
-.B Example
-.RS 4
-.nf
-h5i audit compliance \-\-since 2025-01-01 \-\-format html \-\-output report.html
-.fi
+.TP
+\fB\-\-wrap\-bash\fR
+Also register the OPTIONAL Bash capture\-wrap hook (`h5i hook wrap\-bash`): routes every Bash command through `h5i capture run`, so large/failing output reaches the agent as a token\-reduced summary (full raw stored for `h5i recall`). Off by default. Note: permission allowlists then match the rewritten `h5i capture run ...` command, not the original
+.TP
+\fB\-\-team\fR
+Also register the team peer\-review Stop hook (`h5i team agent hook`): when this agent is running in an active `h5i team` round, it keeps the agent from stopping while it still owes work and surfaces incoming review requests between turns. For Claude it blocks the stop; for Codex it prints the pending review. Off by default; safe to leave on outside a team (it no\-ops)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I HOOK SESSION-START"
+Run as the shared SessionStart handler: injects prior context into the agent context window. Register under "SessionStart" hooks as `h5i hook session-start`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsession\-start\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I HOOK WRAP-BASH"
+OPTIONAL PreToolUse handler for the Bash tool: rewrites the command into a `h5i capture run` wrapper (via updatedInput, Claude Code >= 2.0.10), so the agent receives a token-reduced summary for large/failing output while the full raw bytes are stored for `h5i recall`. Skips h5i's own commands, top-level `cd` (session cwd tracking), and anything outside a git repo; every failure path emits nothing, so the original command runs untouched. Register in .claude/settings.json under "PreToolUse" with matcher "Bash"
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBwrap\-bash\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I HOOK CLAUDE"
+Claude Code integration hook handlers (PostToolUse / Stop / UserPromptSubmit)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBclaude\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I HOOK CLAUDE SYNC"
+Run as Claude Code's PostToolUse handler: reads JSON from stdin and emits traces
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsync\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I HOOK CLAUDE FINISH"
+Run as Claude Code's Stop handler: mines reasoning and checkpoints context
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBfinish\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I HOOK CLAUDE PROMPT"
+Run as the UserPromptSubmit handler: reads the hook JSON from stdin and records the *verbatim* human prompt into `.git/.h5i/pending_context.json`, accumulating across turns. `h5i capture commit` then uses this raw human prompt as the recorded prompt \(em it wins over an agent-authored `--intent` \(em so AI provenance reflects what the human actually asked rather than the agent's paraphrase. No-ops outside an h5i-initialized repo and fails open on any error, so it never blocks the turn. Register in .claude/settings.json under "UserPromptSubmit" hooks
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBprompt\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I HOOK CODEX"
+Codex integration hook handlers for context restore, trace sync, and closeout
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcodex\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I HOOK CODEX PRELUDE"
+Print the current shared context so Codex can resume with prior reasoning
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBprelude\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I HOOK CODEX SYNC"
+Sync OBSERVE/ACT traces from the active Codex session JSONL
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsync\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I HOOK CODEX FINISH"
+Sync the current Codex session and auto-checkpoint the context workspace
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBfinish\fR [\fB\-\-summary\fR] [\fB\-\-quiet\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-summary\fR \fI<SUMMARY>\fR
+Optional summary for the context checkpoint
+.TP
+\fB\-\-quiet\fR
+Suppress stdout for hook use
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I RESUME"
+Generate a structured handoff briefing to resume an AI session
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBresume\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIBRANCH\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIBRANCH\fR]
+Branch to resume (defaults to current branch)
+.SH "H5I MCP"
+Start the h5i MCP (Model Context Protocol) server on stdio
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBmcp\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I DOCTOR"
+Validate and repair h5i sidecar storage and refs
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdoctor\fR [\fB\-\-repair\fR] [\fB\-\-export\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-repair\fR
+Create missing sidecar directories and schema metadata
+.TP
+\fB\-\-export\fR \fI<DIR>\fR
+Export a recovery copy of .git/.h5i plus a refs manifest into this directory
+.TP
+\fB\-\-json\fR
+Output raw JSON instead of the pretty report
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I POLICY"
+Manage governance policy for AI-assisted commits (.h5i/policy.toml)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpolicy\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I POLICY INIT"
+Create `.h5i/policy.toml` with starter rules
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBinit\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I POLICY CHECK"
+Check staged files against the current policy (dry-run)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcheck\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I POLICY SHOW"
+Display the current policy configuration
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I MSG"
+Agent radio \(em cross-agent messaging over a shareable Git ref
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBmsg\fR [\fB\-\-plain\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIsubcommands\fR]
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-plain\fR
+Plain, uncoloured output for the bare dashboard (scripts / hooks)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I MSG SEND"
+Send a message to another agent (or `all` to broadcast)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsend\fR [\fB\-\-from\fR] [\fB\-\-tag\fR] [\fB\-\-branch\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITO\fR> <\fIBODY\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<FROM>\fR
+Sender identity. Defaults to $H5I_AGENT or the stored identity; when given, it is remembered as this repo\*(Aqs default identity. Must be placed before the recipient (the body consumes trailing args)
+.TP
+\fB\-\-tag\fR \fI<TAG>\fR
+Optional classification, e.g. `review` or `risk` (coloured in the UI)
+.TP
+\fB\-\-branch\fR \fI<BRANCH>\fR
+Git branch this message relates to (default: current branch; pass "" to leave untagged)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fITO\fR>
+Recipient agent name, or `all` to broadcast to everyone else
+.TP
+<\fIBODY\fR>
+Message body. Multiple words are joined with spaces
+.SH "H5I MSG REPLY"
+Reply to a numbered message from your last inbox / dashboard view. h5i msg reply 1 on it, reviewing now
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBreply\fR [\fB\-\-from\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINUMBER\fR> <\fIBODY\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<FROM>\fR
+Reply as this identity (defaults to your stored identity)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINUMBER\fR>
+The message number shown in the most recent view
+.TP
+<\fIBODY\fR>
+Reply body. Multiple words are joined with spaces
+.SH "H5I MSG AS"
+Set this repo's default agent identity (e.g. `h5i msg as codex`)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBas\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+The agent name to act as
+.SH "H5I MSG SETUP"
+One-time wiring for Claude Code messaging: set this agent's identity (`env.H5I_AGENT`) and add the turn-delivery Stop hook to settings.json. Identity is per-agent (no `--as` needed afterward). For Codex, just launch it with `H5I_AGENT=<name>` \(em it doesn't read .claude/settings.json
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBsetup\fR [\fB\-\-scope\fR] [\fB\-\-no\-block\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fINAME\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-scope\fR \fI<SCOPE>\fR [default: project]
+`project` (default) -> ./.claude/settings.json; `user` -> ~/.claude/settings.json (all projects)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+user
+.IP \(bu 2
+project
 .RE
-.
-.SH INTEGRITY RULES
-The
-.B \-\-audit
-flag runs twelve deterministic, pure string/stat checks against the diff.
-No AI and no network access are required.
-.PP
 .TP
-.BR CREDENTIAL_LEAK \ (Violation)
-Added line contains a credential keyword + assignment + quoted value, or a PEM header.
+\fB\-\-no\-block\fR
+Notify\-only hook (`systemMessage`) instead of the default autonomous `\-\-block` hook that makes the agent handle incoming messages
 .TP
-.BR CODE_EXECUTION \ (Violation)
-Added non-comment line contains
-.BR eval() ,\  exec() ,\  os.system() ,
-or
-.BR subprocess.* .
+\fB\-h\fR, \fB\-\-help\fR
+Print help
 .TP
-.BR CI_CD_MODIFIED \ (Violation)
-.IR .github/workflows/ ,
-Jenkinsfile, etc. modified without CI/CD intent in the prompt.
+[\fINAME\fR] [default: claude]
+Identity this Claude Code uses (written to env.H5I_AGENT)
+.SH "H5I MSG ASK"
+i5h ASK: a general request that expects a response. h5i msg ask codex can you inspect the failing auth test
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBask\fR [\fB\-\-from\fR] [\fB\-\-branch\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITO\fR> <\fIBODY\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
 .TP
-.BR SENSITIVE_FILE_MODIFIED \ (Warning)
-.IR .env ,\  .pem ,\  .key ,\  id_rsa ,\  credentials
-appear in the diff.
-.TP
-.BR LOCKFILE_MODIFIED \ (Warning)
-.IR Cargo.lock ,\  package\-lock.json ,\  go.sum
-changed without dependency intent stated.
-.TP
-.BR UNDECLARED_DELETION \ (Warning)
-More than 60% of changes are deletions with no deletion/refactor intent.
-.TP
-.BR SCOPE_EXPANSION \ (Warning)
-Prompt names a specific file but other source files were also modified.
-.TP
-.BR LARGE_DIFF \ (Warning)
-More than 500 total lines changed.
-.TP
-.BR REFACTOR_ANOMALY \ (Warning)
-.RI \[dq] refactor \[dq]
-intent but insertions are 3x or more the deletions.
-.TP
-.BR PERMISSION_CHANGE \ (Warning)
-.BR chmod\ 777 ,\  sudo ,\  setuid ,\  chown\ root
-in added lines.
-.TP
-.BR BINARY_FILE_CHANGED \ (Info)
-A binary file appears in the diff.
-.TP
-.BR CONFIG_FILE_MODIFIED \ (Info)
-.IR .yaml ,\  .toml ,\  .json ,\  .ini ,
-etc. modified.
-.
-.SH TEST RESULTS SCHEMA
-Pass a JSON file to
-.B \-\-test\-results
-matching this schema (all fields optional):
-.PP
-.nf
-{
-  "tool":          "jest",
-  "passed":        42,
-  "failed":        1,
-  "skipped":       3,
-  "total":         46,
-  "duration_secs": 4.7,
-  "coverage":      0.87,
-  "exit_code":     1,
-  "summary":       "42 passed, 1 failed in 4.70s"
-}
-.fi
-.PP
-.B exit_code
-takes precedence over counts when determining pass/fail.
-.B total
-is computed from counts if omitted.
-Two bundled adapters are provided:
-.TP
-.I plugin/h5i\-pytest\-adapter.py
-Runs pytest, uses
-.B pytest\-json\-report
-when available, falls back to output parsing.
-.TP
-.I plugin/h5i\-cargo\-test\-adapter.sh
-Runs
-.BR "cargo test" ,
-accumulates counts across lib, integration, and doc-test sections.
-.
-.SH ENVIRONMENT
-.TP
-.B H5I_PROMPT
-Default prompt for
-.BR "h5i capture commit" .
-.TP
-.B H5I_MODEL
-Default model name for
-.BR "h5i capture commit" .
-.TP
-.B H5I_AGENT_ID
-Default agent ID for
-.BR "h5i capture commit" .
-.TP
-.B H5I_AGENT
-Per-agent messaging identity for
-.BR "h5i msg" .
-Takes precedence over the stored default and is the recommended way to give
-each agent (Claude Code, Codex) a distinct name when sharing one clone.
-.TP
-.B H5I_DEFAULT_ISOLATION
-Pin a clone's default isolation tier for
-.B "h5i env create"
-when no
-.B \-\-isolation
-is given (e.g.
-.BR workspace ", " process ).
-Unset \(em auto-pick the strongest runnable tier;
-.B "\-\-isolation auto"
-re-probes past it.
-.TP
-.B "H5I_SECRET_<NAME>"
-Default source for a brokered secret grant
-.I <name>
-(profile
-.IR "source = \(dqenv:H5I_SECRET_<NAME>\(dq" ).
-Injected into the run, redacted from evidence, audited by fingerprint.
-.TP
-.B H5I_TEST_RESULTS
-Default path to a test results JSON file.
-.TP
-.B H5I_TRUST_FILTERS
-When
-.BR 1 / true ,
-apply a project-local
-.I .h5i/filters.toml
-without the content-hash trust gate (for CI). See
-.BR "h5i objects trust" .
-.TP
-.B ANTHROPIC_API_KEY
-When set, enables Claude-assisted intent extraction in
-.BR "h5i recall notes graph \-\-mode analyze" .
-.
-.SH FILES
-.TP
-.I .git/.h5i/
-Sidecar root; all persistent metadata.
-.TP
-.I .git/.h5i/memory/<commit-oid>/
-Claude memory snapshots.
-Each directory contains memory files plus
-.I _meta.json
-(snapshot timestamp and file count).
-.TP
-.I .git/.h5i/session_log/<commit-oid>/analysis.json
-Structured session log analysis produced by
-.BR "h5i recall notes analyze" .
-.TP
-.I .git/.h5i/objects/ab/cd/<sha256>
-Token-reduction raw-output store: the full captured output, content-addressed
-and uncompressed (git-lfs style). Local only;
-.I pins
-alongside it lists digests protected from
-.BR "h5i objects gc" .
-.TP
-.I .git/.h5i/trusted_filters.json
-Content hash of a trusted project-local
-.IR .h5i/filters.toml .
-.TP
-.I .git/.h5i/pending_context.json
-Transient file written by the Claude Code hook; consumed and deleted
-at the next
-.BR "h5i capture commit" .
-.TP
-.I .git/.h5i/msg/
-Local messaging state:
-.I identity
-(stored default agent),
-.I cursors/<agent>.json
-(per-agent read state), and
-.I views/<agent>.json
-(per-agent reply numbering). Per-agent files so multiple agents in one clone
-never collide.
-.TP
-.I .h5i-ctx/
-Context workspace (created by
-.BR "h5i recall context init" ).
-.TP
-.I refs/h5i/notes
-Git ref storing AI provenance, test metrics, causal links, and integrity
-reports as JSON blobs attached to each commit.
-Inspect with:
-.B git notes \-\-ref refs/h5i/notes show <oid>
-.TP
-.I refs/h5i/memory
-Git ref storing Claude memory snapshots as a linear commit history of
-git tree objects.
-.TP
-.I refs/h5i/msg
-Git ref storing the cross-agent message log
-(\fImessages.jsonl\fR + \fIagents.json\fR roster).
-Append-only; pushed/pulled by
-.B h5i share
-and union-merged by message id on divergence.
-.TP
-.I refs/h5i/objects
-Git ref storing token-reduction manifests
-(\fImanifests.jsonl\fR): per-capture pointer + structured
-.B ToolResult
-summary. Append-only; pushed/pulled by
-.B h5i share
-and union-merged on divergence. Raw blobs stay local (see
-.IR .git/.h5i/objects/ ).
-.TP
-.I refs/h5i/objects-data
-Optional git-ref store for shareable raw blobs: a content-addressed tree
-(\fI<sha256>\fR \(-> git blob). Pushed/pulled on demand via
-.B h5i objects push
-/
-.BR "h5i objects pull" ,
-union-merged (set union) on divergence.
-.TP
-.I ~/.claude/projects/<repo>/memory/
-Claude Code's default per-project memory directory (source for snapshots).
-.TP
-.I ~/.claude/hooks/h5i-capture-prompt.sh
-Hook script printed by
-.BR "h5i hooks" .
-.
-.SH STORAGE
-Neither
-.I refs/h5i/notes
-nor
-.I refs/h5i/memory
-is included in a plain
-.BR "git push" " / " "git pull" .
-Share them with:
-.PP
-.RS 4
-.nf
-h5i share push                       # push all h5i refs to origin
-git push origin refs/h5i/notes
-git push origin refs/h5i/memory
-git push origin refs/h5i/msg
-.fi
-.RE
-.PP
-Add fetch refspecs to
-.I .git/config
-so
-.B git pull
-picks them up automatically:
-.PP
-.RS 4
-.nf
-[remote "origin"]
-    fetch = +refs/h5i/notes:refs/h5i/notes
-    fetch = +refs/h5i/memory:refs/h5i/memory
-    fetch = +refs/h5i/msg:refs/h5i/msg
-.fi
-.RE
-.
-.SH EXAMPLES
-.SS Basic AI commit
-.nf
-h5i init
-git add src/auth.rs
-h5i capture commit \-m "add rate limiting" \\
-    \-\-prompt "add per-IP rate limiting to the auth endpoint" \\
-    \-\-model claude\-sonnet\-4\-6 \\
-    \-\-agent claude\-code \\
-    \-\-audit \-\-tests
-.fi
-.SS Causal chain
-.nf
-h5i capture commit \-m "fix off-by-one in validate_token" \\
-    \-\-caused\-by a3f9c2b \\
-    \-\-prompt "fix the bug introduced by the rate limiter"
-.fi
-.SS Session analysis workflow
-.nf
-# End of session
-h5i recall notes analyze
-h5i capture memory
-h5i share push
+\fB\-\-from\fR \fI<FROM>\fR
 
-# Start of next session
-h5i recall resume
-h5i recall notes show
-h5i recall notes uncertainty \-\-file src/auth.rs
-h5i recall notes omissions
-.fi
-.SS Context workspace
-.nf
-h5i recall context init \-\-goal "build OAuth2 login system"
-h5i recall context branch oauth\-provider \-\-purpose "implement provider login path"
-h5i recall context trace \-\-kind OBSERVE "HttpClient::send has no retry logic"
-h5i recall context trace \-\-kind THINK   "exponential backoff with jitter is safest"
-h5i recall context trace \-\-kind ACT     "added retry loop in send() with 5-attempt cap"
-h5i recall context commit "implemented retry loop" \\
-    \-\-detail "capped at 5 attempts; uses tokio::time::sleep"
-h5i recall context branch experiment/sync\-retry \-\-purpose "try sync fallback"
-# ...explore...
-h5i recall context checkout oauth\-provider
-h5i recall context status
-.fi
-.SS Context versioning
-.nf
-# Snapshot is created automatically on every h5i capture commit \(em nothing extra needed.
+.TP
+\fB\-\-branch\fR \fI<BRANCH>\fR
+Git branch this ask relates to (default: current branch; pass "" to leave untagged)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITO\fR>
 
-# Load all context entries that mention it:
-h5i recall context relevant src/http_client.rs
+.TP
+<\fIBODY\fR>
 
-# See how reasoning evolved between two code commits:
-h5i recall context diff a3f8c12 9e21b04
+.SH "H5I MSG REVIEW"
+i5h REVIEW_REQUEST: ask for code/design/security review. h5i msg review --branch auth --focus src/auth.rs --risk "expiry edges" codex review token refresh
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBreview\fR [\fB\-\-from\fR] [\fB\-\-branch\fR] [\fB\-\-focus\fR] [\fB\-\-risk\fR] [\fB\-\-pr\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITO\fR> <\fIBODY\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<FROM>\fR
 
-# Continue from where a previous session left off:
-h5i recall context restore a3f8c12
+.TP
+\fB\-\-branch\fR \fI<BRANCH>\fR
+Git branch to review (default: current branch; pass "" to leave untagged)
+.TP
+\fB\-\-focus\fR \fI<FOCUS>\fR
+File/symbol/test to inspect first (repeatable)
+.TP
+\fB\-\-risk\fR \fI<RISK>\fR
+Concise risk statement
+.TP
+\fB\-\-pr\fR \fI<PR>\fR
+Related PR number (stored under links.pr)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITO\fR>
 
-# Compact old context history and reclaim space:
-h5i recall context pack
-git gc
-.fi
-.SS Team workflow
-.nf
-# Alice
-h5i capture commit \-m "add rate limiting" \-\-prompt "..." \-\-agent claude\-code
-h5i capture memory
-h5i share push
-git push origin main
+.TP
+<\fIBODY\fR>
 
-# Bob
-git pull
-h5i recall log
-h5i share memory pull
-h5i recall memory restore <alice\-commit>
-.fi
-.
+.SH "H5I MSG RISK"
+i5h RISK: flag a hazard the recipient should inspect. h5i msg risk --focus src/auth.rs --priority high all auth cache crosses requests
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrisk\fR [\fB\-\-from\fR] [\fB\-\-branch\fR] [\fB\-\-focus\fR] [\fB\-\-priority\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITO\fR> <\fIBODY\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<FROM>\fR
+
+.TP
+\fB\-\-branch\fR \fI<BRANCH>\fR
+Git branch this risk relates to (default: current branch; pass "" to leave untagged)
+.TP
+\fB\-\-focus\fR \fI<FOCUS>\fR
+
+.TP
+\fB\-\-priority\fR \fI<PRIORITY>\fR
+low | normal | high | urgent
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITO\fR>
+
+.TP
+<\fIBODY\fR>
+
+.SH "H5I MSG HANDOFF"
+i5h HANDOFF: transfer task ownership/context to another agent. h5i msg handoff --branch auth --context auth reviewer please take expiry work
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBhandoff\fR [\fB\-\-from\fR] [\fB\-\-branch\fR] [\fB\-\-context\fR] [\fB\-\-focus\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITO\fR> <\fIBODY\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<FROM>\fR
+
+.TP
+\fB\-\-branch\fR \fI<BRANCH>\fR
+Git branch being handed off (default: current branch; pass "" to leave untagged)
+.TP
+\fB\-\-context\fR \fI<CONTEXT>\fR
+h5i context branch relevant to the handoff
+.TP
+\fB\-\-focus\fR \fI<FOCUS>\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITO\fR>
+
+.TP
+<\fIBODY\fR>
+
+.SH "H5I MSG ACK"
+i5h ACK: acknowledge a numbered message (optionally with a note). h5i msg ack 1
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBack\fR [\fB\-\-from\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINUMBER\fR> [\fIBODY\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<FROM>\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINUMBER\fR>
+
+.TP
+[\fIBODY\fR]
+
+.SH "H5I MSG DONE"
+i5h DONE: report a numbered request complete. h5i msg done 1 fixed in 1a2b3c4
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdone\fR [\fB\-\-from\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINUMBER\fR> [\fIBODY\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<FROM>\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINUMBER\fR>
+
+.TP
+[\fIBODY\fR]
+
+.SH "H5I MSG DECLINE"
+i5h DECLINE: decline a numbered request. h5i msg decline 1 cannot take this now
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdecline\fR [\fB\-\-from\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINUMBER\fR> [\fIBODY\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-from\fR \fI<FROM>\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINUMBER\fR>
+
+.TP
+[\fIBODY\fR]
+
+.SH "H5I MSG INBOX"
+Show messages addressed to you that arrived since you last checked, then mark them read (advance your local cursor)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBinbox\fR [\fB\-\-as\fR] [\fB\-\-peek\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-as\fR \fI<AS_AGENT>\fR
+Whose inbox to read. Defaults to $H5I_AGENT or the stored identity
+.TP
+\fB\-\-peek\fR
+Show unread without advancing the cursor (don\*(Aqt mark as read)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I MSG HISTORY"
+Show the full message history (oldest-first within the window)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBhistory\fR [\fB\-l\fR|\fB\-\-limit\fR] [\fB\-\-with\fR] [\fB\-\-branch\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-l\fR, \fB\-\-limit\fR \fI<LIMIT>\fR [default: 30]
+Maximum number of messages to show
+.TP
+\fB\-\-with\fR \fI<WITH>\fR
+Restrict to a conversation with this agent (sender or recipient)
+.TP
+\fB\-\-branch\fR \fI<BRANCH>\fR
+Restrict to the conversation tied to this git branch (whole threads that have at least one message tagged with the branch)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I MSG REPLAY"
+Replay the conversation like a live feed \(em print each message in turn with a pause between them, so the thread unfolds as if it were happening now. Same selection as `history`; oldest-first
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBreplay\fR [\fB\-l\fR|\fB\-\-limit\fR] [\fB\-\-with\fR] [\fB\-\-branch\fR] [\fB\-i\fR|\fB\-\-interval\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-l\fR, \fB\-\-limit\fR \fI<LIMIT>\fR [default: 30]
+Maximum number of messages to replay
+.TP
+\fB\-\-with\fR \fI<WITH>\fR
+Restrict to a conversation with this agent (sender or recipient)
+.TP
+\fB\-\-branch\fR \fI<BRANCH>\fR
+Restrict to the conversation tied to this git branch (whole threads that have at least one message tagged with the branch)
+.TP
+\fB\-i\fR, \fB\-\-interval\fR \fI<INTERVAL>\fR [default: 1]
+Seconds to pause between messages (fractional allowed, e.g. 0.5)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I MSG TEAM"
+List the known agents on this repo's message roster
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBteam\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I MSG WHOAMI"
+Show or set this repo's stored default agent identity
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBwhoami\fR [\fB\-h\fR|\fB\-\-help\fR] [\fINAME\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fINAME\fR]
+If given, set the stored identity to this name
+.SH "H5I MSG HOOK"
+Turn-delivery hook: print unread messages (for use as a Stop hook), then mark them read. Silent and exit 0 when there is nothing new. Default emits a `systemMessage` JSON; `--plain` emits raw text
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBhook\fR [\fB\-\-as\fR] [\fB\-\-block\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-as\fR \fI<AS_AGENT>\fR
+Whose inbox to check. Defaults to $H5I_AGENT or the stored identity
+.TP
+\fB\-\-block\fR
+Autonomous turn mode: emit `{"decision":"block","reason":...}` so the agent keeps working to handle the message instead of stopping. Honors `stop_hook_active` to avoid infinite loops
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I MSG WAIT"
+Block until a new message arrives, print it, then exit \(em the wake primitive for autonomous delivery. Run via run_in_background (Claude Code) or in a poll loop (Codex) so an idle agent gets woken on reply. Peeks (does not consume); the woken agent runs `inbox` to consume
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBwait\fR [\fB\-\-as\fR] [\fB\-\-all\fR] [\fB\-t\fR|\fB\-\-timeout\fR] [\fB\-i\fR|\fB\-\-interval\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-as\fR \fI<AS_AGENT>\fR
+Whose inbox to wait on. Defaults to $H5I_AGENT or the stored identity
+.TP
+\fB\-\-all\fR
+Wait on the whole channel, not one inbox. Implied with no identity
+.TP
+\fB\-t\fR, \fB\-\-timeout\fR \fI<TIMEOUT>\fR [default: 120]
+Give up after this many seconds (exit 0, no output). 0 = wait forever
+.TP
+\fB\-i\fR, \fB\-\-interval\fR \fI<INTERVAL>\fR [default: 3]
+Seconds between polls
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I MSG WATCH"
+Live watcher \(em stream the conversation as it happens. Ctrl+C to stop
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBwatch\fR [\fB\-\-as\fR] [\fB\-\-all\fR] [\fB\-i\fR|\fB\-\-interval\fR] [\fB\-\-once\fR] [\fB\-\-tui\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-as\fR \fI<AS_AGENT>\fR
+Whose inbox to watch. Defaults to $H5I_AGENT or the stored identity
+.TP
+\fB\-\-all\fR
+Watch the whole channel (all messages), not just one inbox. Implied when no identity is set \(em so plain monitoring needs no identity
+.TP
+\fB\-i\fR, \fB\-\-interval\fR \fI<INTERVAL>\fR [default: 5]
+Seconds between polls
+.TP
+\fB\-\-once\fR
+Check once and exit (don\*(Aqt loop) \(em useful for testing
+.TP
+\fB\-\-tui\fR
+Open the full\-screen Agent Radio TUI instead of the line\-streaming watcher (requires a TTY; ignored with `\-\-plain` or `\-\-once`)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH SEE ALSO
-.BR git (1),
-.BR git\-notes (1),
-.BR git\-blame (1)
-.PP
-Full manual:
-.I MANUAL.md
-in the repository root.
-.br
-Demo repository:
-.I examples/dnn\-from\-scratch/
-.br
-Context workspace paper: arXiv:2508.00031
-.
-.SH AUTHORS
-Developed by Koukyosyumei and contributors.
-.br
-Source: <https://github.com/Koukyosyumei/h5i>
+Full narrative manual: \fBMANUAL.md\fR in the source tree, or the rendered \fB/manual/\fR page on the project site.

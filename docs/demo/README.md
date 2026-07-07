@@ -29,9 +29,16 @@ list, ten seconds of scale (Claude + Codex in parallel), and the closing line
 Needs `ffmpeg` on PATH and any Playwright install (a local `node_modules`, a
 global one, or an `~/.npm/_npx` cache) with its Chromium downloaded.
 
+Frames are captured as lossless PNG (no JPEG pre-compression to fuzz text) and
+supersampled: the fixed 1920x1080 stage is rendered at `--scale`x device pixels
+(default 2, so 3840x2160), so the encoder is the only lossy stage. Output is the
+native capture (true 4K) unless `--out-height` downscales it (lanczos) to a very
+crisp lower resolution.
+
 ```bash
-node render.mjs                          # -> out/h5i-demo.mp4
-node render.mjs --fps 60 --crf 16        # smoother / higher quality
+node render.mjs                          # -> out/h5i-demo.mp4 (2x supersampled, 4K)
+node render.mjs --out-height 1080        # supersampled, very crisp 1080p (smaller file)
+node render.mjs --scale 3 --crf 14       # 3x capture, higher quality
 node render.mjs --stills 40,70           # PNG frames for eyeballing a moment
 ```
 

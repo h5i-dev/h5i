@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Render an h5i demo film (a deterministic HTML timeline) to an mp4.
 //
-//   node render.mjs                          # index.html -> out/h5i-demo.mp4
+//   node render.mjs                          # -> out/h5i-demo.mp4 (2x supersampled, 4K)
+//   node render.mjs --out-height 1080        # supersampled, very crisp 1080p
+//   node render.mjs --scale 3 --crf 14       # 3x capture, higher quality
 //   node render.mjs --stills 5,30            # PNG stills at given seconds -> out/still-*.png
-//   node render.mjs --fps 30 --crf 18
 //
 // Needs: ffmpeg on PATH, and playwright (any install — a local node_modules,
 // a global one, or an ~/.npm/_npx cache) with its chromium headless shell.
@@ -54,7 +55,13 @@ const opt = (name, dflt) => {
   return i >= 0 ? args[i + 1] : dflt;
 };
 const FPS = Number(opt('fps', 30));
-const CRF = Number(opt('crf', 18));
+const CRF = Number(opt('crf', 16));
+// Supersampling: capture the fixed 1920x1080 stage at SCALEx device pixels
+// (2 -> 3840x2160) for crisp text, then optionally downscale to OUT_HEIGHT.
+const SCALE = Number(opt('scale', 2));
+// Final video height. Unset keeps the native capture (SCALE=2 -> true 4K);
+// pass e.g. --out-height 1080 for supersampled, very crisp 1080p.
+const OUT_HEIGHT = Number(opt('out-height', 0)) || 0;
 const stills = opt('stills', null);
 const PAGE = opt('page', 'index.html');
 const BASE = path.basename(PAGE, '.html');
@@ -66,9 +73,14 @@ const { chromium } = resolvePlaywright();
 const executablePath = findHeadlessShell();
 const browser = await chromium.launch({
   executablePath: executablePath ?? undefined,
-  args: ['--force-device-scale-factor=1', '--hide-scrollbars', '--font-render-hinting=none'],
+  // No `--force-device-scale-factor`: the context `deviceScaleFactor` below
+  // drives supersampling, and forcing 1 here would override it back to 1x.
+  args: ['--hide-scrollbars', '--font-render-hinting=none'],
 });
-const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+const page = await browser.newPage({
+  viewport: { width: 1920, height: 1080 },
+  deviceScaleFactor: SCALE,
+});
 await page.goto('file://' + path.join(here, PAGE) + '?render=1');
 await page.evaluate(() => document.fonts.ready);
 const TOTAL = await page.evaluate(() => window.TOTAL);
@@ -91,11 +103,20 @@ if (stills) {
 
 const nFrames = Math.ceil((TOTAL / 1000) * FPS);
 const outFile = path.join(outDir, BASE === 'index' ? 'h5i-demo.mp4' : `h5i-${BASE}.mp4`);
-console.log(`rendering ${nFrames} frames @ ${FPS}fps (${(TOTAL / 1000).toFixed(0)}s) -> ${outFile}`);
+const capH = 1080 * SCALE;
+const outH = OUT_HEIGHT || capH;
+console.log(
+  `rendering ${nFrames} frames @ ${FPS}fps (${(TOTAL / 1000).toFixed(0)}s), ` +
+  `capture ${1920 * SCALE}x${capH} -> output ${Math.round((1920 * SCALE) * (outH / capH))}x${outH} -> ${outFile}`,
+);
 
+// Downscale with lanczos only when the output height is below the capture
+// height (supersampling → crisp). No filter when shipping the native capture.
+const vf = OUT_HEIGHT && OUT_HEIGHT < capH ? ['-vf', `scale=-2:${OUT_HEIGHT}:flags=lanczos`] : [];
 const ff = spawn('ffmpeg', [
   '-y', '-f', 'image2pipe', '-framerate', String(FPS), '-i', '-',
   '-c:v', 'libx264', '-preset', 'slow', '-crf', String(CRF),
+  ...vf,
   '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outFile,
 ], { stdio: ['pipe', 'inherit', 'inherit'] });
 const ffDone = new Promise((res, rej) =>
@@ -103,7 +124,10 @@ const ffDone = new Promise((res, rej) =>
 
 const t0 = Date.now();
 for (let i = 0; i < nFrames; i++) {
-  const buf = await frame((i / FPS) * 1000, 'jpeg', 95);
+  // Lossless PNG frames: JPEG (even q95) fuzzes text edges with block/ringing
+  // artifacts that H.264 then bakes in. PNG lets the encoder be the only
+  // lossy stage — a big sharpness win for this terminal/text-heavy film.
+  const buf = await frame((i / FPS) * 1000, 'png');
   if (!ff.stdin.write(buf)) await new Promise(r => ff.stdin.once('drain', r));
   if (i % 150 === 0) {
     const rate = (i + 1) / ((Date.now() - t0) / 1000);
