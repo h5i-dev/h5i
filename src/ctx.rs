@@ -1314,23 +1314,41 @@ pub fn gcc_commit(workdir: &Path, summary: &str, contribution: &str) -> Result<(
     let log_marker = format!("\n\n---\n_[Checkpoint: {short_id} — {summary}]_\n---\n\n");
     let new_trace = format!("{existing_trace}{log_marker}");
 
-    let existing_main = ctx_read_file(&repo, "main.md").unwrap_or_default();
-    let new_main = auto_update_milestones(&append_main_note(&existing_main, &branch, summary), summary);
-
     // Clear ephemeral scratch traces on each milestone commit.
     let eph_path = ephemeral_path(&branch);
     let eph_header = format!("# Ephemeral traces — Branch: {branch}\n\n");
 
-    ctx_write_files(
-        &repo,
-        &[
-            (&commit_path, &new_commit_md),
-            (&trace_path, &new_trace),
-            (&eph_path, &eph_header),
-            ("main.md", &new_main),
-        ],
-        &format!("h5i context commit: {summary}"),
-    )
+    let mut changes: Vec<(&str, &str)> = vec![
+        (commit_path.as_str(), new_commit_md.as_str()),
+        (trace_path.as_str(), new_trace.as_str()),
+        (eph_path.as_str(), eph_header.as_str()),
+    ];
+
+    // An env's reasoning branch (`env/<agent>/<slug>`) is a sandboxed, often
+    // experimental workspace. Keep its milestones OFF the shared, project-wide
+    // `main.md` roadmap that *every* branch's `context show` reads — otherwise a
+    // transient in-box milestone leaks into the host's roadmap. The milestone is
+    // still recorded on the env's own branch `commit.md` (visible via
+    // `h5i env context`) and folds into the parent's context on `h5i env apply`.
+    // Normal branches keep contributing to the roadmap as before.
+    let new_main;
+    if !is_env_context_branch(&branch) {
+        let existing_main = ctx_read_file(&repo, "main.md").unwrap_or_default();
+        new_main =
+            auto_update_milestones(&append_main_note(&existing_main, &branch, summary), summary);
+        changes.push(("main.md", new_main.as_str()));
+    }
+
+    ctx_write_files(&repo, &changes, &format!("h5i context commit: {summary}"))
+}
+
+/// Is `branch` an env's reasoning branch (`env/<agent>/<slug>`)? These are
+/// sandboxed workspaces created by `h5i env`, so their context writes are kept
+/// out of the shared project-wide `main.md` roadmap. Conservative: requires the
+/// `env/<agent>/<slug>` shape (≥2 slashes) so a user branch merely named `env/x`
+/// is treated normally.
+fn is_env_context_branch(branch: &str) -> bool {
+    branch.starts_with("env/") && branch.matches('/').count() >= 2
 }
 
 /// BRANCH — create a new isolated reasoning workspace and switch to it.
@@ -4747,6 +4765,59 @@ mod tests {
             reconcile_change(&repo, Some(&tip_tree()), ancestor, "commit.md", &ours_append);
         assert!(merged.contains("MINE") && merged.contains("THEIRS"), "both tails kept: {merged:?}");
         assert!(merged.starts_with(ancestor), "shared base preserved: {merged:?}");
+    }
+
+    #[test]
+    fn is_env_context_branch_matches_only_the_env_agent_slug_shape() {
+        assert!(is_env_context_branch("env/human/task1"));
+        assert!(is_env_context_branch("env/claude/scope-check"));
+        // Too shallow, or not the env namespace → treated as a normal branch.
+        assert!(!is_env_context_branch("env/foo"));
+        assert!(!is_env_context_branch("feature/env/x"));
+        assert!(!is_env_context_branch("main"));
+        assert!(!is_env_context_branch("api-tokens"));
+    }
+
+    #[test]
+    fn env_context_milestones_stay_off_the_shared_roadmap() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "project goal").unwrap();
+
+        // A milestone on a NORMAL branch reaches the shared main.md roadmap.
+        gcc_commit(dir.path(), "normal milestone", "did a thing").unwrap();
+        let repo = Repository::open(dir.path()).unwrap();
+        assert!(
+            ctx_read_file(&repo, "main.md")
+                .unwrap_or_default()
+                .contains("normal milestone"),
+            "a normal branch's milestone should reach the roadmap"
+        );
+
+        // On an env reasoning branch, the milestone must NOT touch the roadmap,
+        // but must still be recorded on the env branch's own files (commit.md
+        // holds the contribution, trace.md the summary checkpoint).
+        gcc_branch(dir.path(), "env/human/task1", "sandbox work").unwrap();
+        gcc_commit(dir.path(), "SECRET in-box milestone", "transient env work").unwrap();
+
+        let repo = Repository::open(dir.path()).unwrap();
+        let main_md = ctx_read_file(&repo, "main.md").unwrap_or_default();
+        assert!(
+            !main_md.contains("SECRET in-box milestone"),
+            "env milestone summary leaked into the shared roadmap:\n{main_md}"
+        );
+        let env_commit =
+            ctx_read_file(&repo, "branches/env/human/task1/commit.md").unwrap_or_default();
+        assert!(
+            env_commit.contains("transient env work"),
+            "env milestone must still be recorded on its own branch commit.md"
+        );
+        let env_trace =
+            ctx_read_file(&repo, "branches/env/human/task1/trace.md").unwrap_or_default();
+        assert!(
+            env_trace.contains("SECRET in-box milestone"),
+            "env milestone summary must still be in its own branch trace.md"
+        );
     }
 
     #[test]
