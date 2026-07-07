@@ -709,6 +709,10 @@ enum Commands {
         shell: clap_complete::Shell,
     },
 
+    /// Generate the roff man page from the CLI definition (so it never drifts
+    /// from the actual commands); e.g. `h5i man > man/man1/h5i.1`
+    Man,
+
     /// Record provenance — commit, memory snapshot.
     /// Run `h5i capture --help` for the verb table with runnable examples.
     Capture {
@@ -5111,6 +5115,107 @@ fn maybe_version_json(argv: &[String]) {
     std::process::exit(0);
 }
 
+/// Emit a single, comprehensive roff man page for the whole CLI, derived from
+/// the clap command tree so it never drifts from the actual flags/subcommands.
+/// The root renders as the top-level page (NAME / SYNOPSIS / DESCRIPTION /
+/// OPTIONS + a SUBCOMMANDS overview); every visible subcommand is then appended
+/// as its own `.SH` section titled with the full command path, its SYNOPSIS /
+/// OPTIONS demoted to `.SS` subsections so the hierarchy reads cleanly in one
+/// file. The `.TH` version comes from `CARGO_PKG_VERSION` via `#[command(version)]`.
+fn render_man_page<W: std::io::Write>(w: &mut W) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let cmd = Cli::command();
+    let mut buf: Vec<u8> = Vec::new();
+    clap_mangen::Man::new(cmd.clone()).render(&mut buf)?;
+    append_subcommand_sections(&cmd, "h5i", &mut buf)?;
+    writeln!(buf, ".SH SEE ALSO")?;
+    writeln!(
+        buf,
+        "Full narrative manual: \\fBMANUAL.md\\fR in the source tree, or the \
+         rendered \\fB/manual/\\fR page on the project site."
+    )?;
+    // clap_mangen passes help text through verbatim, so typographic Unicode
+    // (…, —, →, curly quotes) reaches the roff raw and warns under `-Tascii`.
+    // Transliterate to ASCII / roff escapes so the page is clean everywhere.
+    w.write_all(sanitize_roff(&String::from_utf8_lossy(&buf)).as_bytes())
+}
+
+/// Transliterate typographic Unicode in generated roff to ASCII or roff escapes
+/// so the man page renders cleanly under `-Tascii` (existing `\fB`/`\-`/`\(aq`
+/// escapes pass through untouched — only non-ASCII scalars are rewritten).
+fn sanitize_roff(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '…' => out.push_str("..."),
+            '—' => out.push_str("\\(em"),
+            '–' => out.push_str("\\(en"),
+            '→' => out.push_str("->"),
+            '←' => out.push_str("<-"),
+            '↔' => out.push_str("<->"),
+            '‘' | '’' => out.push('\''),
+            '“' | '”' => out.push('"'),
+            '•' | '·' => out.push_str("\\(bu"),
+            '×' => out.push('x'),
+            '≥' => out.push_str(">="),
+            '≤' => out.push_str("<="),
+            '✔' | '✓' => out.push('+'),
+            '✗' | '✘' => out.push('x'),
+            c if c.is_ascii() => out.push(c),
+            // Anything else exotic (box-drawing, emoji, shading) is dropped to
+            // keep the page ASCII-clean; such characters are rare in help text.
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Append one `.SH` section per visible subcommand (recursively), titled with
+/// the full command path. Hidden subcommands are skipped, matching `--help`.
+fn append_subcommand_sections<W: std::io::Write>(
+    parent: &clap::Command,
+    path: &str,
+    w: &mut W,
+) -> std::io::Result<()> {
+    for sub in parent.get_subcommands() {
+        if sub.is_hide_set() {
+            continue;
+        }
+        let full = format!("{path} {}", sub.get_name());
+        writeln!(w, ".SH \"{}\"", full.to_uppercase())?;
+        if let Some(about) = sub.get_about() {
+            writeln!(w, "{about}")?;
+        }
+        // Render this subcommand's synopsis + options into a scratch buffer and
+        // demote its top-level `.SH` headings to `.SS` so they nest under the
+        // full-path `.SH` above instead of colliding as siblings.
+        let man = clap_mangen::Man::new(sub.clone());
+        let mut section = Vec::new();
+        man.render_synopsis_section(&mut section)?;
+        man.render_options_section(&mut section)?;
+        w.write_all(&demote_headings(&section))?;
+        append_subcommand_sections(sub, &full, w)?;
+    }
+    Ok(())
+}
+
+/// Demote roff section headings (`.SH`) to subsections (`.SS`) at line starts,
+/// so a rendered subcommand block nests under its full-path `.SH` heading.
+fn demote_headings(bytes: &[u8]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        match line.strip_prefix(".SH ") {
+            Some(rest) => {
+                out.push_str(".SS ");
+                out.push_str(rest);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out.into_bytes()
+}
+
 fn main() -> anyhow::Result<()> {
     init_tracing();
     let argv: Vec<String> = std::env::args().collect();
@@ -5847,6 +5952,10 @@ fn main() -> anyhow::Result<()> {
 
         Commands::Completion { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "h5i", &mut std::io::stdout());
+        }
+        Commands::Man => {
+            let mut out = std::io::stdout().lock();
+            render_man_page(&mut out)?;
         }
         Commands::Init => {
             let repo = H5iRepository::open(".")?;
