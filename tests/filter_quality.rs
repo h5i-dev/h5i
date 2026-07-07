@@ -176,6 +176,205 @@ fn gcc_rule_cuts_tokens_keeps_errors_drops_include_chain() {
     assert_token_cut(&res, 200, 0.5);
 }
 
+// ── 1+2: declarative rules for common JS/Go/JVM/TS tools ─────────────────────
+
+#[test]
+fn npm_rule_cuts_tokens_keeps_lifecycle_error_drops_install_noise() {
+    let mut raw = String::from("> storefront@2.4.0 build\n");
+    for i in 0..140 {
+        raw.push_str(&format!(
+            "npm WARN deprecated package-{i}@1.0.0: use package-next-{i}\n"
+        ));
+        raw.push_str(&format!("added {} packages in {}s\n", 10 + i, 1 + (i % 9)));
+    }
+    raw.push_str("npm ERR! code ELIFECYCLE\n");
+    raw.push_str("npm ERR! command sh -c vite build\n");
+    raw.push_str("npm ERR! Failed at the storefront@2.4.0 build script.\n");
+    raw.push_str(
+        "npm ERR! src/routes/checkout.ts:42:13 - error TS2304: Cannot find name 'cartTotal'.\n",
+    );
+
+    let res = filter(
+        &raw,
+        &cfg(OutputKind::Auto, Some(argv(&["npm", "run", "build"]))),
+    );
+    keeps(
+        &res,
+        &[
+            "npm ERR! code ELIFECYCLE",
+            "vite build",
+            "Cannot find name 'cartTotal'",
+        ],
+    );
+    drops(
+        &res,
+        &["npm WARN deprecated package-5", "added 15 packages"],
+    );
+    assert_token_cut(&res, 500, 0.12);
+}
+
+#[test]
+fn jest_rule_cuts_tokens_keeps_failed_assertion_and_totals() {
+    let mut raw = String::new();
+    for i in 0..220 {
+        raw.push_str(&format!("PASS src/components/component_{i}.test.tsx\n"));
+        raw.push_str(&format!("  ✓ renders scenario {i} ({} ms)\n", 3 + (i % 11)));
+    }
+    raw.push_str("FAIL src/cart/checkout.test.ts\n");
+    raw.push_str("  ● checkout total › applies loyalty discount before tax\n");
+    raw.push_str("    expect(received).toEqual(expected) // deep equality\n");
+    raw.push_str("    Expected: 10800\n");
+    raw.push_str("    Received: 12000\n");
+    raw.push_str("Tests:       1 failed, 220 passed, 221 total\n");
+    raw.push_str("Snapshots:   0 total\nTime:        18.42 s\nRan all test suites.\n");
+
+    let res = filter(
+        &raw,
+        &cfg(
+            OutputKind::Auto,
+            Some(argv(&["npx", "jest", "--runInBand"])),
+        ),
+    );
+    keeps(
+        &res,
+        &[
+            "FAIL src/cart/checkout.test.ts",
+            "applies loyalty discount",
+            "Expected: 10800",
+            "Received: 12000",
+            "1 failed, 220 passed",
+        ],
+    );
+    drops(
+        &res,
+        &[
+            "PASS src/components/component_5.test.tsx",
+            "✓ renders scenario 5",
+            "Ran all test suites",
+        ],
+    );
+    assert_token_cut(&res, 900, 0.10);
+}
+
+#[test]
+fn go_rule_cuts_tokens_keeps_failing_test_and_package_status() {
+    let mut raw = String::new();
+    for i in 0..180 {
+        raw.push_str(&format!("=== RUN   TestHandlerScenario{i}\n"));
+        raw.push_str(&format!(
+            "--- PASS: TestHandlerScenario{i} (0.0{}s)\n",
+            i % 9
+        ));
+    }
+    raw.push_str("ok  \texample.com/acme/api\t0.812s\n");
+    raw.push_str("=== RUN   TestCheckoutRejectsExpiredCoupon\n");
+    raw.push_str("--- FAIL: TestCheckoutRejectsExpiredCoupon (0.02s)\n");
+    raw.push_str("    checkout_test.go:87: got status 200, want 422\n");
+    raw.push_str("FAIL\nFAIL\texample.com/acme/checkout\t0.034s\n");
+
+    let res = filter(
+        &raw,
+        &cfg(OutputKind::Auto, Some(argv(&["go", "test", "./..."]))),
+    );
+    keeps(
+        &res,
+        &[
+            "--- FAIL: TestCheckoutRejectsExpiredCoupon",
+            "checkout_test.go:87",
+            "got status 200, want 422",
+            "FAIL\texample.com/acme/checkout",
+        ],
+    );
+    drops(
+        &res,
+        &[
+            "=== RUN   TestHandlerScenario5",
+            "--- PASS: TestHandlerScenario5",
+            "ok  \texample.com/acme/api",
+        ],
+    );
+    assert_token_cut(&res, 700, 0.08);
+}
+
+#[test]
+fn gradle_rule_cuts_tokens_keeps_test_failure_and_build_result() {
+    let mut raw =
+        String::from("Starting a Gradle Daemon, 1 incompatible Daemon could not be reused\n");
+    for i in 0..160 {
+        raw.push_str(&format!("> Configuring project :module{i}\n"));
+        raw.push_str(&format!("> Task :module{i}:compileJava UP-TO-DATE\n"));
+        raw.push_str(&format!(
+            "> Resolving dependencies of :module{i}:testRuntimeClasspath\n"
+        ));
+    }
+    raw.push_str("> Task :app:test FAILED\n\n");
+    raw.push_str("CheckoutServiceTest > rejectsExpiredCoupon FAILED\n");
+    raw.push_str("    org.opentest4j.AssertionFailedError: expected: <422> but was: <200>\n");
+    raw.push_str("3 tests completed, 1 failed\n\nBUILD FAILED in 12s\n");
+
+    let res = filter(
+        &raw,
+        &cfg(OutputKind::Auto, Some(argv(&["./gradlew", "test"]))),
+    );
+    keeps(
+        &res,
+        &[
+            "> Task :app:test FAILED",
+            "rejectsExpiredCoupon FAILED",
+            "expected: <422> but was: <200>",
+            "BUILD FAILED in 12s",
+        ],
+    );
+    drops(
+        &res,
+        &[
+            "> Configuring project :module5",
+            ":module5:compileJava UP-TO-DATE",
+            "> Resolving dependencies",
+        ],
+    );
+    assert_token_cut(&res, 1000, 0.08);
+}
+
+#[test]
+fn tsc_rule_cuts_tokens_keeps_type_errors_and_final_count() {
+    let mut raw = String::new();
+    for i in 0..180 {
+        raw.push_str(&format!(
+            "[10:{:02}:00 AM] Starting compilation in watch mode...\n",
+            i % 60
+        ));
+        raw.push_str("File change detected. Starting incremental compilation...\n");
+    }
+    raw.push_str(
+        "src/api/auth.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.\n",
+    );
+    raw.push_str("src/components/Button.tsx(8,3): error TS2339: Property 'onPress' does not exist on type 'Props'.\n");
+    raw.push_str("Found 2 errors in 2 files.\nWatching for file changes.\n");
+
+    let res = filter(
+        &raw,
+        &cfg(
+            OutputKind::Auto,
+            Some(argv(&["tsc", "--noEmit", "--watch"])),
+        ),
+    );
+    keeps(
+        &res,
+        &[
+            "error TS2322",
+            "Type 'string' is not assignable",
+            "error TS2339",
+            "Found 2 errors in 2 files",
+        ],
+    );
+    drops(
+        &res,
+        &["Starting compilation in watch mode", "File change detected"],
+    );
+    assert_token_cut(&res, 900, 0.10);
+}
+
 // ── 1+2: unknown command / generic with buried errors ─────────────────────────
 
 #[test]
