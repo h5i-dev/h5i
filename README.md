@@ -209,6 +209,7 @@ h5i-studio
 - [Official Website](https://h5i.dev/): project overview, [Pitch Deck](https://h5i.dev/pitch/)
 - [Tutorials](https://h5i.dev/guides/): guided workflows · [Blog](https://h5i.dev/blog/): design notes, audits, case studies
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
+- `h5i man > ~/.local/share/man/man1/h5i.1`: install the man page (generated from the CLI), then read it with `man h5i`.
 - [CONTRIBUTING.md](CONTRIBUTING.md): we welcomes contributions of any kind.
 
 ---
