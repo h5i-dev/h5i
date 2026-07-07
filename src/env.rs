@@ -74,6 +74,7 @@ const CONTAINER_INBOX_MOUNT: &str = "/.h5i/inbox";
 const ENV_INBOX_DIR: &str = "inbox";
 #[cfg(unix)] // only the unix-gated RunLock references this
 const RUN_LOCK_FILE: &str = "run.lock";
+#[cfg(unix)] // only the unix-gated RunLock references this
 const OBSERVERS_LOCK_FILE: &str = "observers.lock";
 
 /// Advisory `flock`s that coordinate concurrent work on one environment. The
