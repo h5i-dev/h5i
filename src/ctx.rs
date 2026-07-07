@@ -827,9 +827,19 @@ pub fn init(workdir: &Path, goal: &str) -> Result<(), H5iError> {
         return auto_follow(workdir);
     }
 
+    // First-ever init in this repo. The shared `main` ref still needs
+    // bootstrapping, but if this worktree is PINNED to another context branch —
+    // an env box, pinned to `env/<agent>/<slug>` at create — we MUST NOT hijack
+    // its HEAD to `main` or seed the shared roadmap with this branch's goal.
+    // Doing so (the historical bug) made every in-box goal/milestone/trace land
+    // on the host's `main` context. Keep the pin; the goal goes to this git
+    // branch's own goal file only, and the roadmap `## Goal` stays empty.
+    let pinned = is_pinned(workdir);
+    let roadmap_goal = if pinned { "" } else { goal };
+
     let main_content = format!(
         "# Project Roadmap\n\n\
-         ## Goal\n{goal}\n\n\
+         ## Goal\n{roadmap_goal}\n\n\
          ## Milestones\n- [ ] Initial setup\n\n\
          ## Active Branches\n- main (primary)\n\n\
          ## Notes\n_Add project-wide notes here._\n"
@@ -841,32 +851,30 @@ pub fn init(workdir: &Path, goal: &str) -> Result<(), H5iError> {
     );
     let trace_content = format!("# OTA Log — Branch: {MAIN_BRANCH}\n\n");
     let meta_content = "file_structure: {}\nenv_config: {}\ndependencies: []\n";
+    let commit_path = format!("branches/{MAIN_BRANCH}/commit.md");
+    let trace_path = format!("branches/{MAIN_BRANCH}/trace.md");
+    let meta_path = format!("branches/{MAIN_BRANCH}/metadata.yaml");
+    let goal_path = git_goal_path(&git_branch);
 
-    ctx_write_files(
-        &repo,
-        &[
-            ("main.md", &main_content),
-            (".current_branch", MAIN_BRANCH),
-            (
-                &format!("branches/{MAIN_BRANCH}/commit.md"),
-                &commit_content,
-            ),
-            (
-                &format!("branches/{MAIN_BRANCH}/trace.md"),
-                &trace_content,
-            ),
-            (
-                &format!("branches/{MAIN_BRANCH}/metadata.yaml"),
-                meta_content,
-            ),
-            (&git_goal_path(&git_branch), goal),
-        ],
-        "h5i context init",
-    )?;
+    let mut changes: Vec<(&str, &str)> = vec![
+        ("main.md", main_content.as_str()),
+        (commit_path.as_str(), commit_content.as_str()),
+        (trace_path.as_str(), trace_content.as_str()),
+        (meta_path.as_str(), meta_content),
+        (goal_path.as_str(), goal),
+    ];
+    // Only claim HEAD for `main` on an unpinned (host) worktree.
+    if !pinned {
+        changes.push((".current_branch", MAIN_BRANCH));
+    }
+    ctx_write_files(&repo, &changes, "h5i context init")?;
 
     // Ensure HEAD is initialized even if `.current_branch` write was a no-op
-    // (e.g. on a re-init where ctx_write_files routed it to the head file).
-    write_head(&repo, MAIN_BRANCH)?;
+    // (e.g. on a re-init where ctx_write_files routed it to the head file) —
+    // but never override a pinned worktree's selection.
+    if !pinned {
+        write_head(&repo, MAIN_BRANCH)?;
+    }
     drop(repo);
     // Eager-create the current git branch's shadow context branch (see the
     // re-init path above for rationale). No-op on `main` / when pinned.
@@ -4765,6 +4773,56 @@ mod tests {
             reconcile_change(&repo, Some(&tip_tree()), ancestor, "commit.md", &ours_append);
         assert!(merged.contains("MINE") && merged.contains("THEIRS"), "both tails kept: {merged:?}");
         assert!(merged.starts_with(ancestor), "shared base preserved: {merged:?}");
+    }
+
+    #[test]
+    fn init_on_a_pinned_env_worktree_does_not_clobber_the_pin_or_seed_the_roadmap() {
+        // Regression (I12): an env box is pinned to its own context branch and is
+        // the FIRST to run `context init` in the repo. It must bootstrap the
+        // shared `main` ref WITHOUT stealing HEAD to `main` or writing its goal
+        // into the shared roadmap — otherwise every in-box goal/milestone/trace
+        // lands on the host's `main` context and leaks out.
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        let repo = Repository::open(dir.path()).unwrap();
+        // Simulate the env box: git branch h5i/env/…, context pinned to env/….
+        repo.set_head("refs/heads/h5i/env/human/task1").unwrap();
+        pin_worktree_context(&repo, "env/human/task1").unwrap();
+        assert!(is_pinned(dir.path()));
+
+        init(dir.path(), "IN-BOX GOAL").unwrap();
+
+        // The context HEAD stays on the env branch — not hijacked to main.
+        assert_eq!(current_branch(dir.path()), "env/human/task1");
+        // The shared roadmap goal stays empty; the in-box goal did not leak.
+        let repo = Repository::open(dir.path()).unwrap();
+        let main_md = ctx_read_file(&repo, "main.md").unwrap_or_default();
+        assert!(
+            extract_section(&main_md, "Goal").trim().is_empty(),
+            "roadmap goal must stay empty: {main_md}"
+        );
+        assert!(
+            !main_md.contains("IN-BOX GOAL"),
+            "in-box goal leaked into the shared roadmap: {main_md}"
+        );
+        // The host's own branch goal file is untouched (nothing to leak into it).
+        assert!(ctx_read_file(&repo, "git-goals/main.md").is_none());
+        // The goal is recorded on the env git branch's own goal file.
+        assert_eq!(
+            git_branch_goal(dir.path(), "h5i/env/human/task1").as_deref(),
+            Some("IN-BOX GOAL")
+        );
+
+        // A normal (unpinned) host first-init is unchanged: HEAD → main, goal in
+        // the roadmap.
+        let dir2 = tempdir().unwrap();
+        git_init(dir2.path());
+        init(dir2.path(), "HOST GOAL").unwrap();
+        assert_eq!(current_branch(dir2.path()), "main");
+        let repo2 = Repository::open(dir2.path()).unwrap();
+        assert!(ctx_read_file(&repo2, "main.md")
+            .unwrap_or_default()
+            .contains("HOST GOAL"));
     }
 
     #[test]
