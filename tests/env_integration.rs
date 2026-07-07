@@ -2831,6 +2831,94 @@ fn env_shell_runs_in_box_and_passes_exit_code() {
     );
 }
 
+/// `env shell --readonly` on the workspace tier must FAIL closed: that tier has
+/// no mount namespace / Landlock to pin `$WORK` read-only, so an "observer"
+/// there could still write the worktree. Refuse rather than lie. Always-runnable
+/// (no kernel confinement needed to observe the refusal).
+#[test]
+fn env_shell_readonly_refused_on_workspace_tier() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default]\nisolation = \"workspace\"\n",
+    )
+    .unwrap();
+    r.h5i_ok(&["env", "create", "box"]);
+
+    let out = r.h5i(&["env", "shell", "box", "--readonly", "--", "true"]);
+    assert!(
+        !out.status.success(),
+        "readonly must be refused on the workspace tier:\n{}",
+        out_str(&out)
+    );
+    let text = out_str(&out);
+    assert!(
+        text.contains("kernel-enforced") && text.contains("read-only"),
+        "refusal must explain why (kernel-enforced worktree needed): {text}"
+    );
+    // Fail-closed: nothing ran, so no artifact and the env is untouched.
+    assert!(!r.work("box").join("ran.txt").exists());
+}
+
+/// End-to-end on a kernel tier: a `--readonly` observer can READ the worktree
+/// but every WRITE to `$WORK` is blocked, and the session leaves the env's
+/// status untouched (no running/idle flip, no captures). Capability-gated.
+#[test]
+fn env_shell_readonly_pins_worktree_read_only() {
+    if !process_tier_runnable() {
+        eprintln!("SKIP env_shell_readonly_pins_worktree_read_only: process tier not runnable");
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "obs", "--isolation", "process"]);
+    let status_before = r.manifest("obs")["status"].clone();
+
+    // Reads succeed: the seed file is visible read-only.
+    let read = r.h5i(&[
+        "env", "shell", "obs", "--readonly", "--", "sh", "-c", "cat lib.py",
+    ]);
+    assert!(
+        read.status.success(),
+        "an observer must be able to read $WORK:\n{}",
+        out_str(&read)
+    );
+
+    // Writes are blocked: $WORK is read-only, so the redirection fails and the
+    // file never appears.
+    let write = r.h5i(&[
+        "env",
+        "shell",
+        "obs",
+        "--readonly",
+        "--",
+        "sh",
+        "-c",
+        "echo nope > blocked.txt",
+    ]);
+    assert!(
+        !write.status.success(),
+        "a write to $WORK must fail under --readonly:\n{}",
+        out_str(&write)
+    );
+    assert!(
+        !r.work("obs").join("blocked.txt").exists(),
+        "no file may be written to the read-only worktree"
+    );
+
+    // The observer never mutated env state: status is exactly what it was.
+    assert_eq!(
+        r.manifest("obs")["status"],
+        status_before,
+        "a read-only observer must not change the env status"
+    );
+    // A normal (read-write) shell still works afterwards and CAN write.
+    r.h5i_ok(&[
+        "env", "shell", "obs", "--", "sh", "-c", "echo yes > allowed.txt",
+    ]);
+    assert!(r.work("obs").join("allowed.txt").is_file());
+}
+
 /// `env shell` on an already-local env must NOT eagerly sync the shared env
 /// roster: it operates on one named env that is already materialized, so the
 /// per-start `refs/h5i/env/meta` read + disk writes are pure overhead. A

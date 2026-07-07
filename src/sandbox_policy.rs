@@ -582,6 +582,15 @@ pub struct ResolvedPolicy {
     /// read-only rootfs never mounts host HOME, so there is no race to close there).
     #[serde(skip)]
     pub home_binds: Vec<HomeBind>,
+    /// Runtime-only: enforce the worktree (`$WORK`) as **read-only** — a
+    /// read-only observer session (`env shell --readonly`). Never serialized (it
+    /// is a per-invocation enforcement mode, not policy): a readonly session and
+    /// a read-write one resolve to the *same* pinned policy digest, they differ
+    /// only in how `$WORK` is granted. When set, `build_confined_command` grants
+    /// `$WORK` read-only (Landlock ro, not rw) so the box cannot mutate the
+    /// shared worktree.
+    #[serde(skip)]
+    pub work_readonly: bool,
 }
 
 impl ResolvedPolicy {
@@ -595,6 +604,7 @@ impl ResolvedPolicy {
             env_inbox: None,
             private_binds: Vec::new(),
             home_binds: Vec::new(),
+            work_readonly: false,
         }
     }
 
