@@ -102,10 +102,25 @@ pub fn sync_context(workdir: &Path) -> Result<Option<CodexSyncResult>, H5iError>
         processed_lines: total_lines,
     };
     if let Some(spool) = env_capture_spool() {
-        if !prompts.is_empty() || !events.is_empty() {
+        // In a box the `.git/.h5i` sidecar `record_human_prompt` targets is
+        // sealed. Route the human prompt to the box-writable pending-context
+        // file in the capture spool so the in-box `h5i capture commit` stamps it
+        // onto the note. Keeping prompts OUT of the codex-hook spool record
+        // avoids the host-side ingest double-recording them. Trace events still
+        // ride the codex-hook spool for host ingest into the context log.
+        if let Some(pending) = crate::env::inbox_pending_context_path() {
+            for prompt in &prompts {
+                let _ = crate::repository::record_human_prompt_at(
+                    &pending,
+                    prompt,
+                    Some(&session_id),
+                );
+            }
+        }
+        if !events.is_empty() {
             let record = CodexHookSpoolRecord {
                 session_id: session_id.clone(),
-                prompts,
+                prompts: Vec::new(),
                 events: events
                     .into_iter()
                     .map(|e| CodexHookTraceEvent {

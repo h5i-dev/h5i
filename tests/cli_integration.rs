@@ -1336,9 +1336,20 @@ fn codex_sync_stages_to_env_spool_when_running_in_box() {
         .collect::<Vec<_>>();
     assert_eq!(records.len(), 1, "expected one codex hook spool record");
     let raw = fs::read_to_string(records.pop().unwrap().path()).unwrap();
-    assert!(raw.contains("please inspect main"), "{raw}");
+    // Trace events still ride the codex-hook spool record...
     assert!(raw.contains("read src/main.rs"), "{raw}");
     assert!(raw.contains("edited src/main.rs"), "{raw}");
+    // ...but the human prompt no longer does: inside a box it is staged to the
+    // box-writable pending-context file so the in-box `h5i capture commit` reads
+    // it back and stamps it onto the note (the `.git/.h5i` sidecar is sealed in a
+    // box, so `record_human_prompt` can't reach it there).
+    assert!(
+        !raw.contains("please inspect main"),
+        "prompt must not double-ride the codex-hook record: {raw}"
+    );
+    let pending = fs::read_to_string(spool.join("pending_context.json"))
+        .expect("in-box prompt should be staged to the pending-context spool");
+    assert!(pending.contains("please inspect main"), "{pending}");
 }
 
 #[test]
