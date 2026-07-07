@@ -485,7 +485,14 @@ pub struct Engagement {
     /// Box env additions: base-URL override + per-run dummy token + `NO_PROXY`.
     pub box_env: Vec<(String, String)>,
     /// The runtime, so a kernel-tier caller knows which credential file to scrub
-    /// from its per-env HOME copy.
+    /// from its per-env HOME copy. Read only by `supervisor::run_supervised`,
+    /// which is gated to `linux` + `x86_64`/`aarch64`; the container tier ignores
+    /// it. On any other target that reader is `cfg`-compiled out, so the field is
+    /// legitimately unread — allow it there (the `cfg` mirrors the reader's gate).
+    #[cfg_attr(
+        not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))),
+        allow(dead_code)
+    )]
     pub runtime: AgentRuntime,
 }
 
