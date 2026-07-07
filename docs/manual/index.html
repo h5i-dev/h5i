@@ -232,6 +232,7 @@
 <a class="t3" href="#isolation-tiers">Isolation tiers</a>
 <a class="t3" href="#policy-file-h5ienvtoml">Policy file (.h5i/env.toml)</a>
 <a class="t3" href="#secrets-broker">Secrets broker</a>
+<a class="t3" href="#credential-proxy-agent-api-auth">Credential proxy (agent API auth)</a>
 <a class="t3" href="#services-and-dynamic-ports">Services and dynamic ports</a>
 <a class="t3" href="#resource-limits">Resource limits</a>
 </div>
@@ -3844,6 +3845,101 @@ audited — all <strong>fail-closed</strong> (a missing source aborts the run).<
 H5I_SECRET_GITHUB_TOKEN=ghp_xxx h5i env run build -- ./deploy.sh
 # GITHUB_TOKEN is injected into the run, redacted from the capture, audited by fingerprint.
 </code></pre>
+<p><a name="env-credential-proxy"></a></p>
+<h3 id="credential-proxy-agent-api-auth">Credential proxy (agent API auth)</h3>
+<p>When an <strong>agent-in-box</strong> profile (<code>agent-claude</code> / <code>agent-codex</code>) runs at the
+<code>supervised</code> or <code>container</code> tier, h5i can authenticate the boxed agent to its
+provider API <strong>without the long-lived token ever entering the box</strong>. A host-side
+<strong>credential-injecting proxy</strong> terminates the box→proxy hop in cleartext on host
+loopback and re-originates a fresh HTTPS request upstream, injecting the real
+credential host-side. The box is handed only a base-URL override
+(<code>ANTHROPIC_BASE_URL</code> / <code>OPENAI_BASE_URL</code> → <code>http://10.0.2.2:&lt;port&gt;</code>) and a
+per-run <strong>dummy</strong> token; the genuine credential lives only in h5i's memory. See
+<code>docs/credential-proxy-design.md</code>.</p>
+<p><strong>Why it matters.</strong> Without a host credential to broker, each env instead gets a
+one-time <strong>copy</strong> of the runtime's HOME credentials (<code>~/.claude</code> / <code>~/.codex</code>),
+seeded at first run and never re-seeded. For subscription (OAuth) login the
+refresh token <strong>rotates</strong>, so an older env's frozen copy gets orphaned once the
+host session (or a sibling env) advances the lineage. That surfaces later as an
+"API Error: Connection error" from that env while a freshly-created env works.
+Engaging the proxy removes that failure mode at the root: the injected token is
+long-lived, and the box holds no credential at all.</p>
+<p><strong>When it engages.</strong> All of the following, else the box stays on its in-box login
+(never a silent downgrade):</p>
+<ul>
+<li>Profile is <code>agent-claude</code> / <code>agent-codex</code> (any <code>agent*</code> runtime), at the
+  <code>supervised</code> or <code>container</code> tier (the box can reach the host proxy there).</li>
+<li><code>net.egress</code> is non-empty (the agent profiles egress to the provider API).</li>
+<li>A host-side credential is resolvable in <strong>h5i's own environment</strong> (below).</li>
+<li><code>H5I_CREDENTIAL_PROXY</code> is <strong>not</strong> set to <code>off</code> / <code>0</code> / <code>false</code> (the opt-out,
+  e.g. to bill a subscription logged in <em>inside</em> the box instead).</li>
+</ul>
+<p>When engaged, h5i <strong>scrubs</strong> the runtime's credential file from the per-env HOME
+copy (<code>.credentials.json</code> / <code>auth.json</code>), locks the box's egress to the proxy
+port alone, and injects the dummy, so the token is absent from the box, not
+merely inert. The proxy is SSRF-pinned to the one upstream host, DNS-pinned once
+at spawn, gated by the per-run dummy on loopback, and never logs the token or
+bodies.</p>
+<p><strong>Setup (host-side, one-time).</strong> Export the credential in the shell where you
+launch h5i (<strong>on the host, not in the box</strong>):</p>
+<pre><code class="language-bash"># Claude, subscription billing (Pro/Max): a long-lived, non-rotating token
+claude setup-token
+export CLAUDE_CODE_OAUTH_TOKEN=&lt;token&gt;
+
+# Claude, API-credit billing: a Console API key
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Codex
+export OPENAI_API_KEY=sk-...
+
+h5i env shell my-claude-env        # the already-built proxy engages automatically
+</code></pre>
+<p><strong>Precedence (Claude), if more than one is set.</strong> h5i picks in this order (it
+mirrors Claude Code's own), and the choice decides <strong>where your usage bills</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Env var (in h5i's environment)</th>
+<th>Injected as</th>
+<th>Billing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ANTHROPIC_AUTH_TOKEN</code></td>
+<td><code>Authorization: Bearer</code></td>
+<td>gateway / proxy (highest precedence)</td>
+</tr>
+<tr>
+<td><code>ANTHROPIC_API_KEY</code></td>
+<td><code>x-api-key</code></td>
+<td><strong>API credits</strong></td>
+</tr>
+<tr>
+<td><code>CLAUDE_CODE_OAUTH_TOKEN</code></td>
+<td><code>Authorization: Bearer</code></td>
+<td><strong>Claude subscription</strong> (lowest precedence)</td>
+</tr>
+</tbody>
+</table>
+<p>So if <strong>both</strong> <code>ANTHROPIC_API_KEY</code> and <code>CLAUDE_CODE_OAUTH_TOKEN</code> are set, the
+<strong>API key wins</strong> and traffic bills to API credits. To force subscription
+billing, unset the API key in h5i's launch environment:</p>
+<pre><code class="language-bash">unset ANTHROPIC_API_KEY
+export CLAUDE_CODE_OAUTH_TOKEN=&lt;setup-token&gt;
+</code></pre>
+<p>(For Codex the sole source is <code>OPENAI_API_KEY</code>.)</p>
+<p><strong>Verify it engaged.</strong></p>
+<pre><code class="language-bash"># after a run, the per-env copy's credential file is gone (scrubbed):
+ls .git/.h5i/env/&lt;agent&gt;/&lt;slug&gt;/home/.claude/.credentials.json   # → No such file
+
+# inside `env shell`, the box sees the override + dummy, not your real token:
+echo &quot;$ANTHROPIC_BASE_URL&quot;    # http://10.0.2.2:&lt;port&gt;
+echo &quot;$ANTHROPIC_AUTH_TOKEN&quot;  # h5i-proxy-xxxxxxxx (the dummy)
+</code></pre>
+<p>Engaging the proxy narrows the box's egress to the proxy port only, so the
+agent profile's secondary egress (e.g. <code>statsig.anthropic.com</code> telemetry)
+becomes unreachable. That is harmless: it is best-effort.</p>
 <p><a name="env-services-ports"></a></p>
 <h3 id="services-and-dynamic-ports">Services and dynamic ports</h3>
 <p>Long-lived processes (a dev server, a worker) are declared as <code>[service.&lt;name&gt;]</code>

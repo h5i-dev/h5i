@@ -127,6 +127,7 @@ emits `--json` is safe to consume from a script or another agent.)
   - [Isolation tiers](#isolation-tiers)
   - [Policy file (`.h5i/env.toml`)](#policy-file-h5ienvtoml)
   - [Secrets broker](#secrets-broker)
+  - [Credential proxy (agent API auth)](#credential-proxy-agent-api-auth)
   - [Services and dynamic ports](#services-and-dynamic-ports)
   - [Resource limits](#resource-limits)
 - [h5i team](#h5i-team)
@@ -3091,6 +3092,97 @@ audited — all **fail-closed** (a missing source aborts the run).
 H5I_SECRET_GITHUB_TOKEN=ghp_xxx h5i env run build -- ./deploy.sh
 # GITHUB_TOKEN is injected into the run, redacted from the capture, audited by fingerprint.
 ```
+
+<a name="env-credential-proxy"></a>
+### Credential proxy (agent API auth)
+
+When an **agent-in-box** profile (`agent-claude` / `agent-codex`) runs at the
+`supervised` or `container` tier, h5i can authenticate the boxed agent to its
+provider API **without the long-lived token ever entering the box**. A host-side
+**credential-injecting proxy** terminates the box→proxy hop in cleartext on host
+loopback and re-originates a fresh HTTPS request upstream, injecting the real
+credential host-side. The box is handed only a base-URL override
+(`ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` → `http://10.0.2.2:<port>`) and a
+per-run **dummy** token; the genuine credential lives only in h5i's memory. See
+`docs/credential-proxy-design.md`.
+
+**Why it matters.** Without a host credential to broker, each env instead gets a
+one-time **copy** of the runtime's HOME credentials (`~/.claude` / `~/.codex`),
+seeded at first run and never re-seeded. For subscription (OAuth) login the
+refresh token **rotates**, so an older env's frozen copy gets orphaned once the
+host session (or a sibling env) advances the lineage. That surfaces later as an
+"API Error: Connection error" from that env while a freshly-created env works.
+Engaging the proxy removes that failure mode at the root: the injected token is
+long-lived, and the box holds no credential at all.
+
+**When it engages.** All of the following, else the box stays on its in-box login
+(never a silent downgrade):
+
+- Profile is `agent-claude` / `agent-codex` (any `agent*` runtime), at the
+  `supervised` or `container` tier (the box can reach the host proxy there).
+- `net.egress` is non-empty (the agent profiles egress to the provider API).
+- A host-side credential is resolvable in **h5i's own environment** (below).
+- `H5I_CREDENTIAL_PROXY` is **not** set to `off` / `0` / `false` (the opt-out,
+  e.g. to bill a subscription logged in *inside* the box instead).
+
+When engaged, h5i **scrubs** the runtime's credential file from the per-env HOME
+copy (`.credentials.json` / `auth.json`), locks the box's egress to the proxy
+port alone, and injects the dummy, so the token is absent from the box, not
+merely inert. The proxy is SSRF-pinned to the one upstream host, DNS-pinned once
+at spawn, gated by the per-run dummy on loopback, and never logs the token or
+bodies.
+
+**Setup (host-side, one-time).** Export the credential in the shell where you
+launch h5i (**on the host, not in the box**):
+
+```bash
+# Claude, subscription billing (Pro/Max): a long-lived, non-rotating token
+claude setup-token
+export CLAUDE_CODE_OAUTH_TOKEN=<token>
+
+# Claude, API-credit billing: a Console API key
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Codex
+export OPENAI_API_KEY=sk-...
+
+h5i env shell my-claude-env        # the already-built proxy engages automatically
+```
+
+**Precedence (Claude), if more than one is set.** h5i picks in this order (it
+mirrors Claude Code's own), and the choice decides **where your usage bills**:
+
+| Env var (in h5i's environment) | Injected as | Billing |
+|--------------------------------|-------------|---------|
+| `ANTHROPIC_AUTH_TOKEN`         | `Authorization: Bearer` | gateway / proxy (highest precedence) |
+| `ANTHROPIC_API_KEY`            | `x-api-key` | **API credits** |
+| `CLAUDE_CODE_OAUTH_TOKEN`      | `Authorization: Bearer` | **Claude subscription** (lowest precedence) |
+
+So if **both** `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are set, the
+**API key wins** and traffic bills to API credits. To force subscription
+billing, unset the API key in h5i's launch environment:
+
+```bash
+unset ANTHROPIC_API_KEY
+export CLAUDE_CODE_OAUTH_TOKEN=<setup-token>
+```
+
+(For Codex the sole source is `OPENAI_API_KEY`.)
+
+**Verify it engaged.**
+
+```bash
+# after a run, the per-env copy's credential file is gone (scrubbed):
+ls .git/.h5i/env/<agent>/<slug>/home/.claude/.credentials.json   # → No such file
+
+# inside `env shell`, the box sees the override + dummy, not your real token:
+echo "$ANTHROPIC_BASE_URL"    # http://10.0.2.2:<port>
+echo "$ANTHROPIC_AUTH_TOKEN"  # h5i-proxy-xxxxxxxx (the dummy)
+```
+
+Engaging the proxy narrows the box's egress to the proxy port only, so the
+agent profile's secondary egress (e.g. `statsig.anthropic.com` telemetry)
+becomes unreachable. That is harmless: it is best-effort.
 
 <a name="env-services-ports"></a>
 ### Services and dynamic ports
