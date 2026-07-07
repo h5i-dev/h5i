@@ -75,19 +75,46 @@ const ENV_INBOX_DIR: &str = "inbox";
 #[cfg(unix)] // only the unix-gated RunLock references this
 const RUN_LOCK_FILE: &str = "run.lock";
 
-/// An exclusive, advisory `flock` on `<env>/run.lock` that serializes
-/// `h5i env run` for one environment. The kernel releases the lock when the
-/// holding process exits — including a crash — so there are no stale locks to
-/// clear. Concurrent runs would otherwise race on the status file and the
-/// captures list and corrupt the manifest.
+/// An advisory `flock` on `<env>/run.lock` that serializes work on one
+/// environment. The kernel releases the lock when the holding process exits —
+/// including a crash — so there are no stale locks to clear.
+///
+/// Two modes give reader/writer semantics:
+/// - [`RunLock::acquire`] takes an **exclusive** (`LOCK_EX`) lock — the default
+///   for every mutating operation (`env run`, a read-write `env shell`,
+///   `propose`, `apply`, …). A read-write session mutates the worktree, the
+///   status file, the captures list, and the manifest; those must not interleave.
+/// - [`RunLock::acquire_shared`] takes a **shared** (`LOCK_SH`) lock — a
+///   read-only observer session (`env shell --readonly`). Many shared holders
+///   coexist (N observers at once), but a shared lock still excludes an
+///   exclusive one, so an observer never reads a worktree while a read-write
+///   session is mutating it (no torn reads), and a read-write session never
+///   starts under live observers.
 #[cfg(unix)]
 struct RunLock {
     _file: std::fs::File,
 }
 
 #[cfg(unix)]
+#[derive(Clone, Copy)]
+enum LockMode {
+    Exclusive,
+    Shared,
+}
+
+#[cfg(unix)]
 impl RunLock {
     fn acquire(env_dir: &Path) -> Result<RunLock, H5iError> {
+        Self::acquire_mode(env_dir, LockMode::Exclusive)
+    }
+
+    /// Shared (reader) lock for a read-only observer session — coexists with
+    /// other shared holders, excludes an exclusive (writer) holder.
+    fn acquire_shared(env_dir: &Path) -> Result<RunLock, H5iError> {
+        Self::acquire_mode(env_dir, LockMode::Shared)
+    }
+
+    fn acquire_mode(env_dir: &Path, mode: LockMode) -> Result<RunLock, H5iError> {
         use std::os::unix::io::AsRawFd;
         let path = env_dir.join(RUN_LOCK_FILE);
         let file = std::fs::OpenOptions::new()
@@ -96,17 +123,45 @@ impl RunLock {
             .write(true)
             .open(&path)
             .map_err(|e| H5iError::with_path(e, &path))?;
-        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        let op = match mode {
+            LockMode::Exclusive => libc::LOCK_EX,
+            LockMode::Shared => libc::LOCK_SH,
+        } | libc::LOCK_NB;
+        let rc = unsafe { libc::flock(file.as_raw_fd(), op) };
         if rc != 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
-                return Err(H5iError::Metadata(
-                    "environment is busy — another `h5i env run` holds its lock".into(),
-                ));
+                let msg = match mode {
+                    // A writer was refused: either another writer, or live
+                    // read-only observers hold the shared lock.
+                    LockMode::Exclusive => "environment is busy — another `h5i env run`/`shell` \
+                         holds it (a live read-only observer session also blocks writers)",
+                    // A reader was refused: a read-write session holds the
+                    // exclusive lock. Observers may only attach when no
+                    // read-write session is live.
+                    LockMode::Shared => "environment is busy — a read-write `h5i env run`/`shell` \
+                         session is live; a `--readonly` observer can attach only when it exits",
+                };
+                return Err(H5iError::Metadata(msg.into()));
             }
             return Err(H5iError::with_path(err, &path));
         }
         Ok(RunLock { _file: file })
+    }
+}
+
+/// Removes a read-only observer session's per-session scratch root
+/// (`<env>/ro/<pid>/`) on drop — on every return path and on panic. The scratch
+/// holds the observer's ephemeral HOME copy, `/tmp`, brokered secrets, and cargo
+/// target; it is safe to remove once the confined child (whose mount namespace
+/// held the binds) has exited.
+struct SessionScratchGuard(Option<PathBuf>);
+
+impl Drop for SessionScratchGuard {
+    fn drop(&mut self) {
+        if let Some(dir) = &self.0 {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 }
 
@@ -1528,12 +1583,16 @@ fn grant_box_git(
     m: &EnvManifest,
     work: &Path,
     policy: &mut ResolvedPolicy,
+    readonly: bool,
 ) -> Result<(), H5iError> {
     match policy.claim {
         IsolationClaim::Process | IsolationClaim::Supervised => {
             for p in box_git_plumbing(repo, m)? {
                 let path = p.host.display().to_string();
-                if p.rw {
+                // A read-only observer session grants the whole in-box git
+                // surface read-only — `git log`/`status`/`diff` still work, but
+                // the box can write neither the worktree nor its refs/objects.
+                if p.rw && !readonly {
                     policy.profile.fs_write.push(path);
                 } else {
                     policy.profile.fs_read.push(path);
@@ -1675,6 +1734,10 @@ fn prepare_private_tmp(
     h5i_root: &Path,
     m: &EnvManifest,
     policy: &mut ResolvedPolicy,
+    // `Some(dir)` overrides the `/tmp` backing (a read-only observer uses a
+    // per-session `<env>/ro/<pid>/tmp` so concurrent observers don't share one
+    // scratch dir). `None` → the persistent per-env `<env>/tmp`.
+    backing_override: Option<&Path>,
 ) -> Result<(), H5iError> {
     if !matches!(
         policy.claim,
@@ -1687,7 +1750,10 @@ fn prepare_private_tmp(
     if !had_tmp {
         return Ok(());
     }
-    let backing = m.dir(h5i_root).join("tmp");
+    let backing = match backing_override {
+        Some(dir) => dir.to_path_buf(),
+        None => m.dir(h5i_root).join("tmp"),
+    };
     let _ = std::fs::remove_dir_all(&backing);
     std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
     #[cfg(unix)]
@@ -1802,6 +1868,11 @@ fn prepare_home_state(
     m: &EnvManifest,
     policy: &mut ResolvedPolicy,
     home: Option<&Path>,
+    // `Some(dir)` overrides the backing root (a read-only observer session uses
+    // a per-session ephemeral `<env>/ro/<pid>/home` so concurrent observers
+    // never race on the persistent per-env copy). `None` → the persistent
+    // `<env>/home` used by read-write runs.
+    home_root_override: Option<&Path>,
 ) -> Result<(), H5iError> {
     if !matches!(
         policy.claim,
@@ -1815,7 +1886,10 @@ fn prepare_home_state(
     let Some(home) = home else {
         return Ok(());
     };
-    let home_root = m.dir(h5i_root).join("home");
+    let home_root = match home_root_override {
+        Some(dir) => dir.to_path_buf(),
+        None => m.dir(h5i_root).join("home"),
+    };
 
     for state in runtime.state_write() {
         // Each grant is a `~/…` HOME path (`~/.claude`, `~/.claude.json`, `~/.codex`).
@@ -2522,14 +2596,15 @@ pub fn run(
     let mut policy = load_policy(h5i_root, m)?;
     // Structural grants (like the implicit `$WORK` rw): the worktree must be a
     // functional git checkout inside the box.
-    grant_box_git(repo, m, &work, &mut policy)?;
+    grant_box_git(repo, m, &work, &mut policy, false)?;
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
-    prepare_private_tmp(h5i_root, m, &mut policy)?;
+    prepare_private_tmp(h5i_root, m, &mut policy, None)?;
     prepare_home_state(
         h5i_root,
         m,
         &mut policy,
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+        None,
     )?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
     let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
@@ -2739,6 +2814,12 @@ pub fn shell(
     h5i_root: &Path,
     m: &mut EnvManifest,
     command: &[String],
+    // A read-only observer session: `$WORK` is granted read-only, the box gets a
+    // per-session ephemeral HOME/tmp/secrets so concurrent observers never race,
+    // and no env state (status / captures / manifest) is mutated. Serialized
+    // with a shared lock so N observers coexist but none overlaps a read-write
+    // session. `false` → an ordinary read-write session (unchanged).
+    readonly: bool,
 ) -> Result<i32, H5iError> {
     match m.status.as_str() {
         ST_CREATED | ST_RUNNING | ST_IDLE => {}
@@ -2754,25 +2835,103 @@ pub fn shell(
         return Err(no_workspace_err(m, "env shell"));
     }
 
+    // Reader/writer lock: an observer takes a shared lock (many coexist), a
+    // read-write session an exclusive one. A shared holder still excludes an
+    // exclusive one, so an observer never reads a worktree mid-mutation.
     #[cfg(unix)]
-    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
+    let _run_lock = if readonly {
+        RunLock::acquire_shared(&m.dir(h5i_root))?
+    } else {
+        RunLock::acquire(&m.dir(h5i_root))?
+    };
 
     let mut policy = load_policy(h5i_root, m)?;
+
+    // Fail closed: a read-only session must run on a tier that can actually pin
+    // `$WORK` read-only. The workspace tier has no mount namespace / Landlock to
+    // enforce with, and a read-only container worktree mount is a follow-up — so
+    // refuse rather than hand back an "observer" that could still write.
+    if readonly
+        && !matches!(
+            policy.claim,
+            IsolationClaim::Process | IsolationClaim::Supervised
+        )
+    {
+        return Err(H5iError::Metadata(format!(
+            "`env shell --readonly` needs a kernel-enforced worktree \
+             (isolation=process or supervised); {} resolved to '{}', which cannot pin \
+             $WORK read-only — refusing rather than granting an unenforced read-only \
+             session (fail-closed). Use a normal `env shell`, or re-create with \
+             --isolation process/supervised.",
+            m.id,
+            policy.claim.as_str()
+        )));
+    }
+    policy.work_readonly = readonly;
+
+    // A read-only observer's writable state (ephemeral HOME copy, /tmp, brokered
+    // secrets, cargo target) lives in a per-session scratch keyed by pid, so
+    // concurrent observers never collide; it is wiped when the session ends
+    // (SessionScratchGuard, on every return path). Read-write runs use the
+    // persistent per-env dirs unchanged.
+    let session_root = if readonly {
+        let root = m.dir(h5i_root).join("ro").join(std::process::id().to_string());
+        let _ = std::fs::remove_dir_all(&root); // clear any stale (pid-reuse) leftovers
+        std::fs::create_dir_all(&root).map_err(|e| H5iError::with_path(e, &root))?;
+        Some(root)
+    } else {
+        None
+    };
+    let _scratch = SessionScratchGuard(session_root.clone());
+
     // Same structural grants as `run`: an interactive boxed agent lives in
-    // this worktree and must be able to use git / h5i context inside it.
-    grant_box_git(repo, m, &work, &mut policy)?;
-    prepare_private_paths(h5i_root, m, &mut policy, &work)?;
-    prepare_private_tmp(h5i_root, m, &mut policy)?;
+    // this worktree and must be able to use git / h5i context inside it. Under
+    // --readonly the git surface is granted read-only.
+    grant_box_git(repo, m, &work, &mut policy, readonly)?;
+    // Per-env private-path binds give read-write runs writable, non-colliding
+    // build caches; an observer sees the real worktree read-only and skips them.
+    if !readonly {
+        prepare_private_paths(h5i_root, m, &mut policy, &work)?;
+    }
+    prepare_private_tmp(
+        h5i_root,
+        m,
+        &mut policy,
+        session_root.as_deref().map(|r| r.join("tmp")).as_deref(),
+    )?;
     prepare_home_state(
         h5i_root,
         m,
         &mut policy,
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+        session_root.as_deref().map(|r| r.join("home")).as_deref(),
     )?;
-    let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
+    // An observer captures nothing (it changes nothing) — no capture spool.
+    let env_capture_env = if readonly {
+        Vec::new()
+    } else {
+        prepare_env_capture_spool(h5i_root, m, &mut policy)?
+    };
     let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
-    let cargo_env = prepare_cargo_env(&work, &policy)?;
-    let secret_dir = m.dir(h5i_root).join("secrets");
+    let cargo_env = match &session_root {
+        // `$WORK` is read-only for an observer, so cargo's default target dir
+        // (`$WORK/.h5i/cargo-target`) is unwritable — point it at the scratch.
+        Some(root) => {
+            let target = root.join("cargo-target");
+            std::fs::create_dir_all(&target).map_err(|e| H5iError::with_path(e, &target))?;
+            if policy.claim >= IsolationClaim::Process {
+                policy.profile.fs_write.push(target.display().to_string());
+                vec![("CARGO_TARGET_DIR".to_string(), target.display().to_string())]
+            } else {
+                Vec::new()
+            }
+        }
+        None => prepare_cargo_env(&work, &policy)?,
+    };
+    let secret_dir = match &session_root {
+        Some(root) => root.join("secrets"),
+        None => m.dir(h5i_root).join("secrets"),
+    };
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
     let brokered = crate::secrets_broker::broker(
         &policy.profile.secret_grants,
@@ -2800,42 +2959,96 @@ pub fn shell(
         command.to_vec()
     };
 
-    set_status(
-        repo,
-        h5i_root,
-        m,
-        ST_RUNNING,
-        "status",
-        Some("running (shell)".into()),
-        None,
-    )?;
+    // A read-only observer must not touch env state: an idle/created env stays
+    // in its status, and a concurrent observer must never flip it to running and
+    // back. It records an append-only `observe` event instead (no manifest
+    // write) — auditable, CAS-safe, and harmless if it races another observer.
+    if readonly {
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "observe".into(),
+                detail: Some("read-only shell (open)".into()),
+                capture: None,
+            },
+        )?;
+    } else {
+        set_status(
+            repo,
+            h5i_root,
+            m,
+            ST_RUNNING,
+            "status",
+            Some("running (shell)".into()),
+            None,
+        )?;
+    }
     let exit_code = match sandbox::run_interactive(&policy, &work, &argv, &injected_env) {
         Ok(code) => code,
         Err(e) => {
             let _ = protected_hook_configs.finish();
+            if !readonly {
+                set_status(
+                    repo,
+                    h5i_root,
+                    m,
+                    ST_IDLE,
+                    "status",
+                    Some("idle (shell failed to start)".into()),
+                    None,
+                )?;
+            }
+            return Err(e);
+        }
+    };
+    if let Err(e) = protected_hook_configs.finish() {
+        if !readonly {
             set_status(
                 repo,
                 h5i_root,
                 m,
                 ST_IDLE,
-                "status",
-                Some("idle (shell failed to start)".into()),
+                "violation",
+                Some(e.to_string()),
                 None,
             )?;
-            return Err(e);
         }
-    };
-    if let Err(e) = protected_hook_configs.finish() {
-        set_status(
-            repo,
-            h5i_root,
-            m,
-            ST_IDLE,
-            "violation",
-            Some(e.to_string()),
-            None,
-        )?;
         return Err(e);
+    }
+
+    // A read-only observer changes nothing, so there is no observation spool to
+    // ingest and no status to transition — it closes with an append-only
+    // `observe` event carrying the exit code (secrets redacted).
+    if readonly {
+        let safe_cmd = crate::secrets::redact_text(&argv.join(" "));
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "observe".into(),
+                detail: Some(format!("read-only shell cmd=`{safe_cmd}` exit={exit_code}")),
+                capture: None,
+            },
+        )?;
+        for rec in &brokered.records {
+            append_event(
+                repo,
+                &EnvEvent {
+                    ts: now_ts(),
+                    env_id: m.id.clone(),
+                    agent: m.agent.clone(),
+                    event: "secret".into(),
+                    detail: Some(rec.detail()),
+                    capture: None,
+                },
+            )?;
+        }
+        return Ok(exit_code);
     }
 
     // Ingest the session's observation spool (supervised exec log / container
@@ -4539,14 +4752,15 @@ pub fn service_start(
         ));
     }
     let mut policy = load_policy(h5i_root, m)?;
-    grant_box_git(repo, m, &work, &mut policy)?;
+    grant_box_git(repo, m, &work, &mut policy, false)?;
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
-    prepare_private_tmp(h5i_root, m, &mut policy)?;
+    prepare_private_tmp(h5i_root, m, &mut policy, None)?;
     prepare_home_state(
         h5i_root,
         m,
         &mut policy,
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+        None,
     )?;
 
     let mut injected: Vec<(String, String)> = Vec::new();
@@ -6951,7 +7165,7 @@ mod tests {
             IsolationClaim::Process,
             Profile::builtin("default", IsolationClaim::Process),
         );
-        grant_box_git(&repo, &m, &work, &mut pol).unwrap();
+        grant_box_git(&repo, &m, &work, &mut pol, false).unwrap();
 
         let codex = root.join(".codex").display().to_string();
         let claude = root.join(".claude").display().to_string();
@@ -6975,7 +7189,7 @@ mod tests {
             IsolationClaim::Process,
             Profile::builtin("default", IsolationClaim::Process),
         );
-        grant_box_git(&repo, &m, &work, &mut pol2).unwrap();
+        grant_box_git(&repo, &m, &work, &mut pol2, false).unwrap();
         assert!(
             !pol2.profile.fs_read.contains(&claude),
             "absent dir not granted"
@@ -7005,7 +7219,7 @@ mod tests {
             IsolationClaim::Process,
             Profile::builtin("default", IsolationClaim::Process),
         );
-        grant_box_git(&repo, &m, &work, &mut pol).unwrap();
+        grant_box_git(&repo, &m, &work, &mut pol, false).unwrap();
         assert!(pol.profile.fs_write.iter().any(|p| p.ends_with("/objects")));
         assert!(pol.profile.fs_read.iter().any(|p| p == "~/.gitconfig"));
         assert!(
@@ -7028,7 +7242,7 @@ mod tests {
         );
         let (read_before, write_before) =
             (pol.profile.fs_read.clone(), pol.profile.fs_write.clone());
-        grant_box_git(&repo, &m, &work, &mut pol).unwrap();
+        grant_box_git(&repo, &m, &work, &mut pol, false).unwrap();
         assert!(!pol.box_git.is_empty());
         assert!(
             pol.box_git.iter().any(|b| b.rw && b.host == work),
@@ -7061,7 +7275,7 @@ mod tests {
             Profile::builtin("default", IsolationClaim::Workspace),
         );
         let read_before = pol.profile.fs_read.clone();
-        grant_box_git(&repo, &m, &work, &mut pol).unwrap();
+        grant_box_git(&repo, &m, &work, &mut pol, false).unwrap();
         assert!(pol.box_git.is_empty());
         assert_eq!(pol.profile.fs_read, read_before);
     }
@@ -7106,7 +7320,7 @@ mod tests {
         );
         assert!(pol.profile.fs_write.iter().any(|w| w == "/tmp"));
 
-        prepare_private_tmp(h5i_root, &m, &mut pol).unwrap();
+        prepare_private_tmp(h5i_root, &m, &mut pol, None).unwrap();
 
         let backing = m.dir(h5i_root).join("tmp");
         assert!(backing.is_dir(), "{backing:?}");
@@ -7127,6 +7341,122 @@ mod tests {
             .find(|b| b.target.as_path() == Path::new("/tmp"))
             .unwrap();
         assert_eq!(tmp_bind.backing, backing);
+    }
+
+    // ─── read-only observer (`env shell --readonly`) ────────────────────────
+
+    /// The reader/writer lock: many shared (observer) holders coexist, but a
+    /// shared holder excludes an exclusive (read-write) one and vice versa.
+    #[cfg(unix)]
+    #[test]
+    fn run_lock_shared_readers_coexist_but_exclude_a_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let env_dir = dir.path();
+
+        // Two observers hold the shared lock at once.
+        let r1 = RunLock::acquire_shared(env_dir).unwrap();
+        let r2 = RunLock::acquire_shared(env_dir).unwrap();
+
+        // A read-write session cannot start while observers are live.
+        let w = RunLock::acquire(env_dir);
+        assert!(w.is_err(), "exclusive lock must be refused under shared holders");
+
+        // Releasing all readers lets a writer in; the writer then excludes a
+        // would-be observer.
+        drop(r1);
+        drop(r2);
+        let w = RunLock::acquire(env_dir).unwrap();
+        assert!(
+            RunLock::acquire_shared(env_dir).is_err(),
+            "an observer must be refused while a read-write session is live"
+        );
+        drop(w);
+        // Once the writer exits, an observer can attach again.
+        RunLock::acquire_shared(env_dir).unwrap();
+    }
+
+    /// A read-only observer's HOME redirect lands in the caller-supplied
+    /// per-session root, not the persistent per-env `<env>/home` — so concurrent
+    /// observers never share (and race on) one credential copy.
+    #[cfg(unix)]
+    #[test]
+    fn prepare_home_state_session_override_uses_session_root() {
+        use crate::sandbox::{AgentRuntime, Profile};
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let home = fake_claude_home(h5i_root);
+        let m = canonical_manifest("claude", "obs");
+        std::fs::create_dir_all(m.dir(h5i_root)).unwrap();
+        let session_home = m.dir(h5i_root).join("ro/4242/home");
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude),
+        );
+
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home), Some(&session_home)).unwrap();
+
+        // Backing copies were seeded under the SESSION root, not <env>/home.
+        assert!(session_home.join(".claude/.credentials.json").exists());
+        assert!(!m.dir(h5i_root).join("home").exists());
+        // Every home bind's backing is under the session root.
+        assert!(!pol.home_binds.is_empty());
+        for b in &pol.home_binds {
+            assert!(
+                b.backing.starts_with(&session_home),
+                "backing {:?} must be under the per-session root",
+                b.backing
+            );
+        }
+    }
+
+    /// Under `--readonly`, the in-box git surface is granted read-only: the
+    /// worktree-writable git dirs a read-write session would get (the admin
+    /// `worktrees/<wt>` dir, `objects`, the env branch) are all read grants, so
+    /// the box cannot commit or rewrite refs.
+    #[cfg(unix)]
+    #[test]
+    fn grant_box_git_readonly_grants_no_writable_git_paths() {
+        use crate::sandbox::Profile;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo");
+        let repo = git2::Repository::init(&root).unwrap();
+        let git_dir = repo.commondir().to_path_buf();
+        let m = canonical_manifest("claude", "fix");
+        let work = root.join(".git/.h5i/env/claude/fix/work");
+        std::fs::create_dir_all(&work).unwrap();
+
+        let git_writes = |pol: &ResolvedPolicy| -> Vec<String> {
+            pol.profile
+                .fs_write
+                .iter()
+                .filter(|w| Path::new(w).starts_with(&git_dir))
+                .cloned()
+                .collect()
+        };
+
+        // Control: a read-write session gets writable git paths (objects, its
+        // env ref ns, the worktree admin dir).
+        let mut rw = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+        grant_box_git(&repo, &m, &work, &mut rw, false).unwrap();
+        assert!(
+            !git_writes(&rw).is_empty(),
+            "a read-write session must get writable git paths (control)"
+        );
+
+        // Observer: every git-surface grant is read-only.
+        let mut ro = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+        grant_box_git(&repo, &m, &work, &mut ro, true).unwrap();
+        assert!(
+            git_writes(&ro).is_empty(),
+            "a read-only observer must get NO writable git paths: {:?}",
+            git_writes(&ro)
+        );
     }
 
     // ─── per-env credential/session isolation (#1) ──────────────────────────
@@ -7160,7 +7490,7 @@ mod tests {
             Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude),
         );
 
-        prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home), None).unwrap();
 
         // Both state paths redirected to per-env backing copies under <env>/home.
         assert_eq!(pol.home_binds.len(), 2, "{:?}", pol.home_binds);
@@ -7224,7 +7554,7 @@ mod tests {
             Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude),
         );
 
-        prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home), None).unwrap();
 
         let backing = m.dir(h5i_root).join("home/.claude");
         // Credentials + settings seeded.
@@ -7257,7 +7587,7 @@ mod tests {
             Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude),
         );
 
-        prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home), None).unwrap();
 
         assert_eq!(
             std::fs::read_to_string(&backing).unwrap(),
@@ -7282,7 +7612,7 @@ mod tests {
             Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude),
         );
 
-        prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home), None).unwrap();
 
         assert_eq!(
             pol.home_binds.len(),
@@ -7309,7 +7639,7 @@ mod tests {
         );
         let before = pol.profile.fs_write.clone();
 
-        prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home), None).unwrap();
 
         assert!(pol.home_binds.is_empty());
         assert_eq!(
@@ -7333,7 +7663,7 @@ mod tests {
             Profile::builtin_agent(IsolationClaim::Workspace, AgentRuntime::Claude),
         );
 
-        prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home), None).unwrap();
 
         assert!(pol.home_binds.is_empty());
     }

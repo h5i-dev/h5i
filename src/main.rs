@@ -1892,6 +1892,13 @@ enum EnvCommands {
     Shell {
         /// Environment name (slug, `agent/slug`, or full `env/agent/slug`)
         name: String,
+        /// Attach as a READ-ONLY observer: `$WORK` is pinned read-only, the box
+        /// gets an ephemeral per-session HOME/tmp, and no env state (status,
+        /// captures, manifest) is touched. Multiple `--readonly` sessions can run
+        /// on one env at once (they take a shared lock); they still exclude a
+        /// live read-write session. Requires isolation=process or supervised.
+        #[arg(long)]
+        readonly: bool,
         /// Command to run inside the box (after `--`); default: an interactive shell.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
@@ -11081,7 +11088,11 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Shell { name, command } => {
+                EnvCommands::Shell {
+                    name,
+                    readonly,
+                    command,
+                } => {
                     // Lazy materialize: the eager shared-roster sync is skipped
                     // for `shell` (above). The common case is a local env that
                     // `find` resolves straight away; only on a miss do we pay the
@@ -11107,11 +11118,16 @@ fn main() -> anyhow::Result<()> {
                     // `env::shell` builds the argv (host bashrc is replaced with a
                     // generated plain rc by default — see `default_shell_argv`).
                     eprintln!(
-                        "{} entering {} (isolation: {}, profile: {}) — confined session; exit to return",
+                        "{} entering {} (isolation: {}, profile: {}{}) — confined session; exit to return",
                         LOOKING,
                         style(&m.id).magenta(),
                         style(&m.isolation_claim).cyan(),
-                        style(&m.profile).cyan()
+                        style(&m.profile).cyan(),
+                        if readonly {
+                            style(", read-only observer").yellow().to_string()
+                        } else {
+                            String::new()
+                        }
                     );
                     if !h5i_core::sandbox::is_agent_profile(&m.profile) {
                         eprintln!(
@@ -11119,7 +11135,7 @@ fn main() -> anyhow::Result<()> {
                              here (envs default to --profile agent where the host supports it)"
                         );
                     }
-                    let code = h5i_core::env::shell(git, &h5i_root, &mut m, &command)?;
+                    let code = h5i_core::env::shell(git, &h5i_root, &mut m, &command, readonly)?;
                     match code {
                         0 => {}
                         c => std::process::exit(c),

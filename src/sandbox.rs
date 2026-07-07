@@ -1477,7 +1477,15 @@ pub(crate) fn build_confined_command(
     // this host are skipped — skipping a *grant* narrows the sandbox, which is
     // the fail-closed direction.
     let abi = landlock_abi_for(caps.landlock_abi.unwrap_or(1));
+    // A read-only observer session (`env shell --readonly`) grants `$WORK`
+    // read-only instead of read-write, so the box cannot mutate the shared
+    // worktree. The caller (`env::shell`) has already stripped every writable
+    // grant that would reach the worktree (box-git plumbing is granted ro,
+    // per-env private-path binds are skipped), so `$WORK` is the only entry that
+    // moves from the rw set to the ro set here.
+    let ro_work = policy.work_readonly;
     let rw_paths: Vec<PathBuf> = std::iter::once(work.clone())
+        .filter(|_| !ro_work)
         .chain(p.fs_write.iter().filter(|s| s.as_str() != "$WORK").map(|s| PathBuf::from(expand_tilde(s))))
         .filter(|p| p.exists())
         .collect();
@@ -1485,6 +1493,7 @@ pub(crate) fn build_confined_command(
         .fs_read
         .iter()
         .map(|s| PathBuf::from(expand_tilde(s)))
+        .chain(std::iter::once(work.clone()).filter(|_| ro_work))
         .filter(|p| p.exists())
         .collect();
 
