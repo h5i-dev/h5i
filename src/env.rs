@@ -74,22 +74,39 @@ const CONTAINER_INBOX_MOUNT: &str = "/.h5i/inbox";
 const ENV_INBOX_DIR: &str = "inbox";
 #[cfg(unix)] // only the unix-gated RunLock references this
 const RUN_LOCK_FILE: &str = "run.lock";
+const OBSERVERS_LOCK_FILE: &str = "observers.lock";
 
-/// An advisory `flock` on `<env>/run.lock` that serializes work on one
-/// environment. The kernel releases the lock when the holding process exits —
-/// including a crash — so there are no stale locks to clear.
+/// Advisory `flock`s that coordinate concurrent work on one environment. The
+/// kernel releases a lock when the holding process exits — including on a crash
+/// — so there are never stale locks to clear.
 ///
-/// Two modes give reader/writer semantics:
-/// - [`RunLock::acquire`] takes an **exclusive** (`LOCK_EX`) lock — the default
-///   for every mutating operation (`env run`, a read-write `env shell`,
-///   `propose`, `apply`, …). A read-write session mutates the worktree, the
-///   status file, the captures list, and the manifest; those must not interleave.
-/// - [`RunLock::acquire_shared`] takes a **shared** (`LOCK_SH`) lock — a
-///   read-only observer session (`env shell --readonly`). Many shared holders
-///   coexist (N observers at once), but a shared lock still excludes an
-///   exclusive one, so an observer never reads a worktree while a read-write
-///   session is mutating it (no torn reads), and a read-write session never
-///   starts under live observers.
+/// Two *independent* lock files implement the model "one read-write session
+/// **plus** N read-only observers, and a worktree teardown that first drains the
+/// observers":
+///
+/// - **`run.lock` — writer serialization.** [`RunLock::acquire`] takes an
+///   exclusive (`LOCK_EX`) lock. Every mutating session/op holds it: `env run`,
+///   a read-write `env shell`, `propose`, `apply`, `rebase`, `abort`, team sync.
+///   A read-write session mutates the worktree, status file, captures list, and
+///   manifest, which must never interleave — so at most one writer runs at once.
+///   Observers do **not** take this lock, so a writer and observers coexist.
+///
+/// - **`observers.lock` — observer presence gate.** A read-only observer session
+///   (`env shell --readonly`) holds a shared (`LOCK_SH`) lock for its whole life
+///   ([`RunLock::acquire_observer`]); many coexist. It is *not* coupled to
+///   `run.lock`, so an observer may attach while a read-write session is live.
+///   The observer may then see torn reads — expected when watching work in
+///   progress; write-isolation is enforced by the read-only Landlock/mount on
+///   `$WORK`, never by this lock. The only thing that excludes an observer is a
+///   **teardown**: an op that *removes* the worktree (`gc`, `rm`) first takes an
+///   exclusive lock here via [`RunLock::acquire_teardown`], so the directory an
+///   observer has mounted can never vanish underneath it.
+///
+/// A teardown op takes both locks, always in the order `run.lock` then
+/// `observers.lock`: the exclusive `run.lock` still serializes it against other
+/// writers, and the exclusive `observers.lock` drains observers. All locks are
+/// non-blocking (`LOCK_NB`): a contended acquire refuses immediately with a
+/// clear "busy" message rather than waiting, so no acquire order can deadlock.
 #[cfg(unix)]
 struct RunLock {
     _file: std::fs::File,
@@ -102,21 +119,59 @@ enum LockMode {
     Shared,
 }
 
+/// Which role is taking the lock — selects the "busy" message on contention.
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum LockRole {
+    /// Exclusive `run.lock` for a mutating session/op (`run`, read-write `shell`,
+    /// `propose`, `apply`, `rebase`, `abort`, …).
+    Writer,
+    /// Shared `observers.lock` for a read-only observer session.
+    Observer,
+    /// Exclusive `observers.lock` for a worktree teardown (`gc`/`rm`).
+    Teardown,
+}
+
 #[cfg(unix)]
 impl RunLock {
+    /// Exclusive writer lock on `run.lock` — serializes mutating sessions/ops
+    /// against each other. Does **not** exclude read-only observers.
     fn acquire(env_dir: &Path) -> Result<RunLock, H5iError> {
-        Self::acquire_mode(env_dir, LockMode::Exclusive)
+        Self::flock(env_dir, RUN_LOCK_FILE, LockMode::Exclusive, LockRole::Writer)
     }
 
-    /// Shared (reader) lock for a read-only observer session — coexists with
-    /// other shared holders, excludes an exclusive (writer) holder.
-    fn acquire_shared(env_dir: &Path) -> Result<RunLock, H5iError> {
-        Self::acquire_mode(env_dir, LockMode::Shared)
+    /// Shared observer-presence lock on `observers.lock` — coexists with other
+    /// observers *and* with a live read-write session; excluded only by a
+    /// teardown that is about to remove the worktree.
+    fn acquire_observer(env_dir: &Path) -> Result<RunLock, H5iError> {
+        Self::flock(
+            env_dir,
+            OBSERVERS_LOCK_FILE,
+            LockMode::Shared,
+            LockRole::Observer,
+        )
     }
 
-    fn acquire_mode(env_dir: &Path, mode: LockMode) -> Result<RunLock, H5iError> {
+    /// Exclusive teardown lock on `observers.lock` — held by an op that removes
+    /// the worktree (`gc`/`rm`) to drain live observers first. Refused (non-
+    /// blocking) while any observer is attached.
+    fn acquire_teardown(env_dir: &Path) -> Result<RunLock, H5iError> {
+        Self::flock(
+            env_dir,
+            OBSERVERS_LOCK_FILE,
+            LockMode::Exclusive,
+            LockRole::Teardown,
+        )
+    }
+
+    fn flock(
+        env_dir: &Path,
+        lock_file: &str,
+        mode: LockMode,
+        role: LockRole,
+    ) -> Result<RunLock, H5iError> {
         use std::os::unix::io::AsRawFd;
-        let path = env_dir.join(RUN_LOCK_FILE);
+        let path = env_dir.join(lock_file);
         let file = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -131,16 +186,18 @@ impl RunLock {
         if rc != 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
-                let msg = match mode {
-                    // A writer was refused: either another writer, or live
-                    // read-only observers hold the shared lock.
-                    LockMode::Exclusive => "environment is busy — another `h5i env run`/`shell` \
-                         holds it (a live read-only observer session also blocks writers)",
-                    // A reader was refused: a read-write session holds the
-                    // exclusive lock. Observers may only attach when no
-                    // read-write session is live.
-                    LockMode::Shared => "environment is busy — a read-write `h5i env run`/`shell` \
-                         session is live; a `--readonly` observer can attach only when it exits",
+                let msg = match role {
+                    // Another writer (or a teardown's `run.lock` hold) is live.
+                    // Observers never take `run.lock`, so they can't cause this.
+                    LockRole::Writer => "environment is busy — another `h5i env run`/`shell` \
+                         or lifecycle op (propose/apply/rebase/abort) holds it",
+                    // A teardown holds `observers.lock` exclusively.
+                    LockRole::Observer => "environment is being torn down (gc/rm) — a \
+                         `--readonly` observer can attach only once that completes",
+                    // Live read-only observers hold `observers.lock` shared.
+                    LockRole::Teardown => "environment is busy — it has live `--readonly` \
+                         observer session(s); this op removes the worktree and can proceed only \
+                         once every observer exits",
                 };
                 return Err(H5iError::Metadata(msg.into()));
             }
@@ -2835,12 +2892,16 @@ pub fn shell(
         return Err(no_workspace_err(m, "env shell"));
     }
 
-    // Reader/writer lock: an observer takes a shared lock (many coexist), a
-    // read-write session an exclusive one. A shared holder still excludes an
-    // exclusive one, so an observer never reads a worktree mid-mutation.
+    // An observer takes the shared observer-presence lock (many coexist, and it
+    // does not exclude a live read-write session); a read-write session takes
+    // the exclusive writer lock (`run.lock`, serialized against other writers).
+    // So one read-write shell and N observers coexist. An observer may see torn
+    // reads of a worktree a writer is mutating — expected when watching work in
+    // progress; write-isolation is enforced by the read-only $WORK mount, not
+    // this lock. Only a worktree teardown (gc/rm) drains observers.
     #[cfg(unix)]
     let _run_lock = if readonly {
-        RunLock::acquire_shared(&m.dir(h5i_root))?
+        RunLock::acquire_observer(&m.dir(h5i_root))?
     } else {
         RunLock::acquire(&m.dir(h5i_root))?
     };
@@ -6381,6 +6442,17 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
         if !m.work_dir(h5i_root).exists() {
             continue;
         }
+        // Drain read-only observers before removing this env's worktree: an
+        // observer has it mounted (a `--readonly` shell that attached while the
+        // env was still live can outlast the apply/abort that finalized it), so
+        // the prune must not yank the directory out from under it. Non-blocking:
+        // if observers are attached we skip this env and reclaim it on a later
+        // sweep, exactly as we do on a failed prune.
+        #[cfg(unix)]
+        let _teardown = match RunLock::acquire_teardown(&m.dir(h5i_root)) {
+            Ok(g) => g,
+            Err(_) => continue,
+        };
         // A failed prune leaves this env for a later sweep rather than aborting
         // the whole gc; skip it and keep going.
         if prune_workspace(repo, h5i_root, &m).is_err() {
@@ -6433,6 +6505,19 @@ pub fn rm(
             m.id, m.status, m.slug
         )));
     }
+
+    // Serialize against a concurrent read-write session and drain read-only
+    // observers before destroying the worktree + branches: a writer may be
+    // mid-run and an observer has the worktree mounted. Acquire `run.lock`
+    // first, then the observer teardown lock (the documented order). Both are
+    // non-blocking — rm refuses "busy" rather than yanking the worktree from
+    // under a live session (even `--force`, which only overrides the *status*
+    // guard above, never live sessions). The locks are held until rm returns,
+    // so removing the env dir (which holds the lock files) at the end is safe.
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
+    #[cfg(unix)]
+    let _teardown = RunLock::acquire_teardown(&m.dir(h5i_root))?;
 
     // 1. Reclaim the workspace. Must precede the branch delete: git refuses to
     //    delete a branch still checked out in a registered worktree.
@@ -7345,34 +7430,55 @@ mod tests {
 
     // ─── read-only observer (`env shell --readonly`) ────────────────────────
 
-    /// The reader/writer lock: many shared (observer) holders coexist, but a
-    /// shared holder excludes an exclusive (read-write) one and vice versa.
+    /// The two-lock model: one read-write session **plus** N observers coexist
+    /// (independent lock files), two writers still exclude each other, and a
+    /// worktree teardown (gc/rm) waits for every observer to drain.
     #[cfg(unix)]
     #[test]
-    fn run_lock_shared_readers_coexist_but_exclude_a_writer() {
+    fn locks_allow_one_writer_plus_many_observers_and_teardown_drains_observers() {
         let dir = tempfile::tempdir().unwrap();
         let env_dir = dir.path();
 
-        // Two observers hold the shared lock at once.
-        let r1 = RunLock::acquire_shared(env_dir).unwrap();
-        let r2 = RunLock::acquire_shared(env_dir).unwrap();
+        // A read-write session and two observers all hold their locks at once —
+        // the writer (run.lock) and observers (observers.lock) do not exclude
+        // each other.
+        let w = RunLock::acquire(env_dir).unwrap();
+        let r1 = RunLock::acquire_observer(env_dir).unwrap();
+        let r2 = RunLock::acquire_observer(env_dir).unwrap();
 
-        // A read-write session cannot start while observers are live.
-        let w = RunLock::acquire(env_dir);
-        assert!(w.is_err(), "exclusive lock must be refused under shared holders");
+        // A second writer is still refused: run.lock serializes writers.
+        assert!(
+            RunLock::acquire(env_dir).is_err(),
+            "a second read-write session must be refused while one holds run.lock"
+        );
+        // A teardown is refused while observers are live: it must not prune the
+        // worktree out from under them.
+        assert!(
+            RunLock::acquire_teardown(env_dir).is_err(),
+            "a teardown must be refused while observers hold observers.lock"
+        );
 
-        // Releasing all readers lets a writer in; the writer then excludes a
-        // would-be observer.
+        // The live writer does not block a teardown's observers.lock; only the
+        // observers do. Drop the writer — a teardown is still refused.
+        drop(w);
+        assert!(
+            RunLock::acquire_teardown(env_dir).is_err(),
+            "observers alone must still block a teardown after the writer exits"
+        );
+
+        // Drain the observers → a teardown (and a fresh writer) can proceed.
         drop(r1);
         drop(r2);
-        let w = RunLock::acquire(env_dir).unwrap();
+        let td = RunLock::acquire_teardown(env_dir).unwrap();
+        // While a teardown holds observers.lock exclusively, a new observer is
+        // refused (the worktree is being removed).
         assert!(
-            RunLock::acquire_shared(env_dir).is_err(),
-            "an observer must be refused while a read-write session is live"
+            RunLock::acquire_observer(env_dir).is_err(),
+            "an observer must be refused while a teardown is removing the worktree"
         );
-        drop(w);
-        // Once the writer exits, an observer can attach again.
-        RunLock::acquire_shared(env_dir).unwrap();
+        drop(td);
+        // Once the teardown exits, an observer can attach again.
+        RunLock::acquire_observer(env_dir).unwrap();
     }
 
     /// A read-only observer's HOME redirect lands in the caller-supplied
