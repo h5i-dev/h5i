@@ -640,7 +640,7 @@ fn objects_severity_label(sev: &h5i_core::structured::Severity) -> String {
 }
 
 #[derive(Parser)]
-#[command(name = "h5i", about = "Advanced Git for the AI Era", version)]
+#[command(name = "h5i", about = "Auditable workspaces for AI coding agents", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
