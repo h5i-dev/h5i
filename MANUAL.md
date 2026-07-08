@@ -3313,7 +3313,7 @@ default to the **current team** when you omit it — set it with `h5i team
 use <name>` (or let `create` set it). `add-env`/`verify` keep `<team>` required
 (they take a second positional). The flat CLI stays canonical, so this never
 changes scripting/cron/agent behavior (always pass `<team>` there). For fast
-typing, generate shell completion: `h5i completion <bash|zsh|fish|powershell> >
+typing, generate shell completion: `h5i completion <bash|elvish|fish|powershell|zsh> >
 …` (e.g. `h5i completion bash | sudo tee /etc/bash_completion.d/h5i`).
 
 **Dispatching the task to the whole ensemble.** `h5i team dispatch` sends the

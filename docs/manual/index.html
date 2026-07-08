@@ -4125,7 +4125,7 @@ default to the <strong>current team</strong> when you omit it — set it with <c
 use &lt;name&gt;</code> (or let <code>create</code> set it). <code>add-env</code>/<code>verify</code> keep <code>&lt;team&gt;</code> required
 (they take a second positional). The flat CLI stays canonical, so this never
 changes scripting/cron/agent behavior (always pass <code>&lt;team&gt;</code> there). For fast
-typing, generate shell completion: <code>h5i completion &lt;bash|zsh|fish|powershell&gt; &gt;
+typing, generate shell completion: <code>h5i completion &lt;bash|elvish|fish|powershell|zsh&gt; &gt;
 …</code> (e.g. <code>h5i completion bash | sudo tee /etc/bash_completion.d/h5i</code>).</p>
 <p><strong>Dispatching the task to the whole ensemble.</strong> <code>h5i team dispatch</code> sends the
 task to every roster agent at once (you never paste the prompt per env). It is a
