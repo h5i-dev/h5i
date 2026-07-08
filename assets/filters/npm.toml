@@ -43,3 +43,20 @@ audited 50 packages in 1s
 found 0 vulnerabilities
 """
 expected = "npm: ok"
+
+[[tests.npm]]
+name = "dependency resolution failure keeps npm ERR details"
+input = """
+npm WARN using --force Recommended protections disabled.
+npm notice New major version of npm available! 10.8.2 -> 11.0.0
+npm ERR! code ERESOLVE
+npm ERR! ERESOLVE unable to resolve dependency tree
+npm ERR! While resolving: demo@1.0.0
+npm ERR! Found: react@18.2.0
+"""
+expected = """
+npm ERR! code ERESOLVE
+npm ERR! ERESOLVE unable to resolve dependency tree
+npm ERR! While resolving: demo@1.0.0
+npm ERR! Found: react@18.2.0
+"""

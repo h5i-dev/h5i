@@ -24,3 +24,17 @@ src/a.py:10:80: E501 line too long (88 > 79 characters)
 name = "clean run collapses to message"
 input = ""
 expected = "flake8: clean"
+
+[[tests.flake8]]
+name = "syntax error keeps filename and code while dropping blanks"
+input = """
+
+src/bad.py:3:7: E999 SyntaxError: invalid syntax
+
+src/bad.py:4:1: F821 undefined name 'result'
+
+"""
+expected = """
+src/bad.py:3:7: E999 SyntaxError: invalid syntax
+src/bad.py:4:1: F821 undefined name 'result'
+"""
