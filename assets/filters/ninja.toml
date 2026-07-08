@@ -1,0 +1,59 @@
+[filters.ninja]
+description = "Compact Ninja output — strip routine build progress, keep failed targets and compiler diagnostics"
+match_command = "^ninja\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^\\[\\d+/\\d+\\] (Building|Linking|Generating|Compiling|Scanning|Copying|Installing|Running|Creating|Updating)\\b",
+]
+truncate_lines_at = 240
+max_lines = 120
+on_empty = "ninja: ok"
+
+[[tests.ninja]]
+name = "successful build collapses progress noise"
+input = """
+[1/5] Building C object src/foo.o
+[2/5] Building CXX object src/bar.o
+[3/5] Linking CXX static library libapp.a
+[4/5] Building CXX object src/main.o
+[5/5] Linking CXX executable app
+"""
+expected = "ninja: ok"
+
+[[tests.ninja]]
+name = "keeps failed target and compiler diagnostics"
+input = """
+[1/4] Building CXX object src/ok.o
+[2/4] Building CXX object src/bad.o
+FAILED: src/bad.o
+/usr/bin/c++ -c ../src/bad.cc -o src/bad.o
+../src/bad.cc:10:5: error: use of undeclared identifier 'value'
+    value += 1;
+    ^
+ninja: build stopped: subcommand failed.
+"""
+expected = """FAILED: src/bad.o
+/usr/bin/c++ -c ../src/bad.cc -o src/bad.o
+../src/bad.cc:10:5: error: use of undeclared identifier 'value'
+    value += 1;
+    ^
+ninja: build stopped: subcommand failed."""
+
+[[tests.ninja]]
+name = "keeps compiler diagnostics and stopped summary"
+input = """
+[1/3] Building C object src/a.o
+[2/3] Building CXX object src/bad.o
+src/bad.cc:4:1: warning: control reaches end of non-void function
+ninja: build stopped: subcommand failed.
+"""
+expected = """src/bad.cc:4:1: warning: control reaches end of non-void function
+ninja: build stopped: subcommand failed."""
+
+[[tests.ninja]]
+name = "empty run collapses to ok message"
+input = """
+
+"""
+expected = "ninja: ok"
