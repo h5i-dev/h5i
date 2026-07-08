@@ -58,6 +58,15 @@ impl SupervisorCaps {
 /// cannot positively confirm is reported `ok = false` (the tier then refuses).
 #[cfg(target_os = "linux")]
 pub fn probe() -> SupervisorCaps {
+    // Process-local only: repeated policy resolution/preflight in one h5i
+    // invocation should not redo the functional probes, but the next command
+    // still re-checks the host before claiming supervised containment.
+    static SUPERVISOR_CAPS: std::sync::OnceLock<SupervisorCaps> = std::sync::OnceLock::new();
+    SUPERVISOR_CAPS.get_or_init(probe_uncached).clone()
+}
+
+#[cfg(target_os = "linux")]
+fn probe_uncached() -> SupervisorCaps {
     // Supervised readiness reads only the kernel bits (userns/Landlock/seccomp),
     // never the container runtime — use the kernel-only probe so resolving a
     // supervised claim doesn't shell out to `podman info`.
