@@ -721,7 +721,7 @@ Show commit history with full AI provenance inline. Canonical form of the legacy
 
 | Option | Description |
 |--------|-------------|
-| `--limit <n>` | Number of commits to show (default: all) |
+| `--limit <n>` | Number of commits to show (default: 10; `0` = all) |
 | `--ancestry <file>:<line>` | Trace every commit that touched a specific line, annotated with its prompt |
 
 **Example — recent commits**
