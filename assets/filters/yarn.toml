@@ -39,3 +39,19 @@ success Already up-to-date.
 Done in 0.5s
 """
 expected = "yarn: ok"
+
+[[tests.yarn]]
+name = "engine mismatch keeps package error"
+input = """
+yarn install v1.22.19
+[1/4] Resolving packages...
+[2/4] Fetching packages...
+warning package-a@1.0.0: The engine "node" appears to be invalid.
+error package-b@2.0.0: The engine "node" is incompatible with this module. Expected version ">=20". Got "18.19.0"
+error Found incompatible module.
+Done in 1.23s
+"""
+expected = """
+error package-b@2.0.0: The engine "node" is incompatible with this module. Expected version ">=20". Got "18.19.0"
+error Found incompatible module.
+"""

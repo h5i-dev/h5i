@@ -42,3 +42,24 @@ PASS src/b.test.ts
 Tests:       13 passed, 13 total
 """
 expected = "Tests:       13 passed, 13 total"
+
+[[tests.jest]]
+name = "setup failure keeps suite error and summary"
+input = """
+PASS src/ok.test.ts
+FAIL src/config.test.ts
+  ● Test suite failed to run
+    Cannot find module './missing-config' from 'src/config.test.ts'
+    > 1 | import './missing-config'
+A worker process has failed to exit gracefully
+Test Suites: 1 failed, 1 passed, 2 total
+Tests:       3 passed, 3 total
+"""
+expected = """
+FAIL src/config.test.ts
+  ● Test suite failed to run
+    Cannot find module './missing-config' from 'src/config.test.ts'
+    > 1 | import './missing-config'
+Test Suites: 1 failed, 1 passed, 2 total
+Tests:       3 passed, 3 total
+"""

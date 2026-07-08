@@ -38,3 +38,23 @@ expected = """
 ERROR: Could not find a version that satisfies the requirement nope
 ERROR: No matching distribution found for nope
 """
+
+[[tests.pip]]
+name = "build failure keeps subprocess error details"
+input = """
+Collecting broken-package
+  Using cached broken-package-1.0.0.tar.gz (12 kB)
+  Preparing metadata (pyproject.toml) ... done
+Building wheels for collected packages: broken-package
+  Building wheel for broken-package (pyproject.toml) ... error
+  error: subprocess-exited-with-error
+  × Building wheel for broken-package did not run successfully.
+  │ exit code: 1
+ERROR: Failed building wheel for broken-package
+"""
+expected = """
+  error: subprocess-exited-with-error
+  × Building wheel for broken-package did not run successfully.
+  │ exit code: 1
+ERROR: Failed building wheel for broken-package
+"""

@@ -45,3 +45,21 @@ PASS
 ok  \texample/m\t0.012s
 """
 expected = "go: ok"
+
+[[tests.go]]
+name = "compile error keeps package and source diagnostics"
+input = """
+go: downloading golang.org/x/text v0.14.0
+# example.com/app/cmd
+cmd/main.go:12:9: undefined: missingSymbol
+cmd/main.go:13:2: declared and not used: value
+FAIL\texample.com/app/cmd [build failed]
+FAIL
+"""
+expected = """
+# example.com/app/cmd
+cmd/main.go:12:9: undefined: missingSymbol
+cmd/main.go:13:2: declared and not used: value
+FAIL\texample.com/app/cmd [build failed]
+FAIL
+"""
