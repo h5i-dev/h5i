@@ -1,0 +1,54 @@
+[filters.clang]
+description = "Compact clang/clang++ compiler output — strip include notes, keep errors and warnings"
+match_command = "^clang(\\+\\+)?\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^\\s+\\|\\s*$",
+  "^In file included from",
+  "^\\s+from\\s",
+  "^\\d+ warnings? generated",
+  "^\\d+ errors? generated",
+]
+max_lines = 50
+on_empty = "clang: ok"
+
+[[tests.clang]]
+name = "strips include chain, keeps errors and warnings"
+input = """
+In file included from /usr/include/stdio.h:42:
+                 from main.c:1:
+main.c:10:5: error: use of undeclared identifier 'foo'
+    foo();
+    ^
+main.c:15:12: warning: unused variable 'x' [-Wunused-variable]
+    int x = 42;
+        ^
+2 warnings generated.
+1 error generated.
+"""
+expected = "main.c:10:5: error: use of undeclared identifier 'foo'\n    foo();\n    ^\nmain.c:15:12: warning: unused variable 'x' [-Wunused-variable]\n    int x = 42;\n        ^"
+
+[[tests.clang]]
+name = "clean compilation"
+input = """
+"""
+expected = "clang: ok"
+
+[[tests.clang]]
+name = "linker error kept"
+input = """
+/usr/bin/ld: /tmp/main.o: undefined reference to 'missing_func'
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+"""
+expected = "/usr/bin/ld: /tmp/main.o: undefined reference to 'missing_func'\nclang: error: linker command failed with exit code 1 (use -v to see invocation)"
+
+[[tests.clang]]
+name = "clang++ command uses same rule"
+input = """
+hello.cc:3:10: fatal error: 'missing.hpp' file not found
+#include <missing.hpp>
+         ^~~~~~~~~~~~~
+1 error generated.
+"""
+expected = "hello.cc:3:10: fatal error: 'missing.hpp' file not found\n#include <missing.hpp>\n         ^~~~~~~~~~~~~"
