@@ -331,6 +331,36 @@ fn reply_without_a_view_fails_clearly() {
 }
 
 #[test]
+fn send_and_ask_reject_empty_or_whitespace_body() {
+    fn assert_rejected(clone: &Clone, args: &[&str]) {
+        let out = clone.h5i(args);
+        assert!(
+            !out.status.success(),
+            "h5i {} unexpectedly succeeded",
+            args.join(" ")
+        );
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("message body must not be empty"),
+            "unexpected stderr for h5i {}: {err}",
+            args.join(" ")
+        );
+    }
+
+    let (_root, a, _b) = two_clones();
+
+    assert_rejected(&a, &["msg", "send", "--from", "alice", "bob", ""]);
+    assert_rejected(&a, &["msg", "send", "--from", "alice", "bob", "   "]);
+    assert_rejected(&a, &["msg", "ask", "--from", "alice", "bob", ""]);
+    assert_rejected(&a, &["msg", "ask", "--from", "alice", "bob", "   "]);
+
+    a.h5i_ok(&["msg", "send", "--from", "alice", "bob", "hi"]);
+    let log = a.msg_log();
+    assert_eq!(log.lines().count(), 1, "rejected sends were recorded: {log}");
+    assert!(log.contains(r#""body":"hi""#), "valid send missing: {log}");
+}
+
+#[test]
 fn tag_survives_the_round_trip() {
     let (_root, a, _b) = two_clones();
     a.h5i_ok(&["msg", "send", "--from", "lead", "--tag", "risk", "dev", "token cache is stale"]);
@@ -435,6 +465,35 @@ fn ack_done_decline_are_typed_threaded_replies() {
         .to_string();
     assert!(log.contains(&format!(r#""reply_to":"{ask_id}""#)), "no reply_to: {log}");
     assert!(log.contains(&format!(r#""thread_id":"{ask_id}""#)), "no thread_id: {log}");
+}
+
+#[test]
+fn ack_done_decline_allow_empty_reply_text() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "as", "codex"]);
+    a.h5i_ok(&["msg", "ask", "--from", "claude", "codex", "please ack"]);
+    a.h5i_ok(&["msg", "ask", "--from", "claude", "codex", "please finish"]);
+    a.h5i_ok(&["msg", "ask", "--from", "claude", "codex", "please decline"]);
+
+    a.h5i_ok(&["msg", "inbox", "--as", "codex"]);
+    a.h5i_ok(&["msg", "ack", "1"]);
+    a.h5i_ok(&["msg", "done", "2"]);
+    a.h5i_ok(&["msg", "decline", "3"]);
+
+    let msgs: Vec<serde_json::Value> = a
+        .msg_log()
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("valid jsonl"))
+        .collect();
+    for kind in ["ACK", "DONE", "DECLINE"] {
+        let reply = msgs
+            .iter()
+            .find(|m| m["kind"] == kind)
+            .unwrap_or_else(|| panic!("missing {kind} reply in {msgs:?}"));
+        assert_eq!(reply["body"], "");
+        assert!(reply["reply_to"].is_string(), "{kind} missing reply_to");
+        assert!(reply["thread_id"].is_string(), "{kind} missing thread_id");
+    }
 }
 
 #[test]

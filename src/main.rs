@@ -619,6 +619,14 @@ fn send_reply(
     Ok(())
 }
 
+fn non_empty_free_text_body(parts: &[String]) -> anyhow::Result<String> {
+    let body = parts.join(" ");
+    if body.trim().is_empty() {
+        anyhow::bail!("message body must not be empty");
+    }
+    Ok(body)
+}
+
 /// Truncate a string to at most `max_chars` characters, appending `…` if cut.
 fn truncate(s: &str, max_chars: usize) -> String {
     let mut chars = s.chars();
@@ -5349,13 +5357,13 @@ fn main() -> anyhow::Result<()> {
                     branch,
                 }) => {
                     let me = msg::resolve_identity(&h5i_root, from.as_deref())?;
+                    let body = non_empty_free_text_body(&body)?;
                     let opts = msg::SendOpts {
                         tag,
                         branch,
                         ..Default::default()
                     };
-                    let sent =
-                        msg::send_msg(git, &h5i_root, &me, &to, &body.join(" "), opts)?;
+                    let sent = msg::send_msg(git, &h5i_root, &me, &to, &body, opts)?;
                     // Mirror to a confined recipient's per-env read-only inbox so a
                     // boxed team agent receives it (team id unknown here → match on
                     // the recipient agent). No-op if the recipient isn't boxed.
@@ -5370,19 +5378,13 @@ fn main() -> anyhow::Result<()> {
                     branch,
                 }) => {
                     let me = msg::resolve_identity(&h5i_root, from.as_deref())?;
+                    let body = non_empty_free_text_body(&body)?;
                     let opts = msg::SendOpts {
                         kind: Some("ASK".into()),
                         branch,
                         ..Default::default()
                     };
-                    report_sent(&msg::send_msg(
-                        git,
-                        &h5i_root,
-                        &me,
-                        &to,
-                        &body.join(" "),
-                        opts,
-                    )?);
+                    report_sent(&msg::send_msg(git, &h5i_root, &me, &to, &body, opts)?);
                 }
 
                 Some(MsgCommands::Review {
