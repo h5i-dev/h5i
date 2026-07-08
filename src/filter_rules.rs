@@ -700,6 +700,8 @@ mod tests {
             (&["gradlew", "build"], "gradle"),
             (&["./gradlew", "build"], "gradle"),
             (&["gcc", "-O2", "main.c"], "gcc"),
+            (&["clang", "-Wall", "main.c"], "clang"),
+            (&["clang++", "main.cc"], "clang"),
             (&["make", "all"], "make"),
             // Narrowed ecosystem rules: noisy subcommands route…
             (&["npm", "run", "build"], "npm"),
@@ -758,7 +760,7 @@ mod tests {
         sorted.sort();
         assert_eq!(names, sorted, "filters must be globally name-sorted");
 
-        for sample in ["gradle build", "gcc main.c", "make all", "terraform plan", "docker build ."] {
+        for sample in ["gradle build", "gcc main.c", "clang main.c", "clang++ main.cc", "make all", "terraform plan", "docker build ."] {
             let n = reg.filters.iter().filter(|f| f.match_regex.is_match(sample)).count();
             assert!(n <= 1, "command {sample:?} matched {n} rules (ambiguous routing)");
         }
