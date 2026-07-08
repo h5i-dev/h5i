@@ -480,8 +480,10 @@ fn recall_log_limit_caps_entries() {
         "larger limit should include older commits: {all}"
     );
     assert!(
-        !zero.contains("limited commit"),
-        "limit 0 should not render commit entries: {zero}"
+        zero.contains("limited commit 2")
+            && zero.contains("limited commit 1")
+            && zero.contains("limited commit 0"),
+        "limit 0 should include all commits: {zero}"
     );
 }
 

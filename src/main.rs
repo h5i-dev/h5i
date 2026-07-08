@@ -826,7 +826,7 @@ enum Commands {
     /// Display the enriched 5D commit history
     #[command(hide = true)]
     Log {
-        /// Number of recent commits to display
+        /// Number of recent commits to display (0 = all)
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
 
@@ -6441,7 +6441,8 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             } else {
-                repo.print_log(limit)?;
+                let log_limit = if limit == 0 { usize::MAX } else { limit };
+                repo.print_log(log_limit)?;
             }
         }
 
