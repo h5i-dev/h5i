@@ -3259,7 +3259,15 @@ pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
     let app = build_router(state);
 
     let addr = format!("127.0.0.1:{}", port);
-    let listener = TcpListener::bind(&addr).await?;
+    let listener = match TcpListener::bind(&addr).await {
+        Ok(listener) => listener,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            anyhow::bail!(
+                "port {port} is already in use — pick another with `h5i serve --port <N>`"
+            );
+        }
+        Err(e) => return Err(e.into()),
+    };
     println!("  h5i UI →  http://{}", addr);
     axum::serve(listener, app).await?;
     Ok(())
@@ -3311,4 +3319,37 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/prompt-score", get(api_prompt_score))
         .route("/api/radio", get(api_radio))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // #277: binding an already-used port must produce a friendly, actionable
+    // error that names the port and points at `--port`, rather than a raw OS
+    // "Address already in use (os error 98)".
+    #[tokio::test]
+    async fn serve_reports_friendly_error_when_port_in_use() {
+        // Occupy an OS-assigned port and keep the listener alive across the call.
+        let occupied = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = occupied.local_addr().unwrap().port();
+
+        let err = serve(std::path::PathBuf::from("."), port)
+            .await
+            .expect_err("binding an already-used port must fail");
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains("already in use"),
+            "expected an 'already in use' message, got: {msg}"
+        );
+        assert!(
+            msg.contains(&port.to_string()),
+            "expected the port number in the message, got: {msg}"
+        );
+        assert!(
+            msg.contains("--port"),
+            "expected a `--port` hint, got: {msg}"
+        );
+    }
 }
