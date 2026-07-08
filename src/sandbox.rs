@@ -1468,8 +1468,10 @@ pub(crate) fn build_confined_command(
         .map_err(|e| H5iError::with_path(e, work))?;
 
     // Re-probe at run time (the host may have changed since `env create`) and
-    // fail closed before spawning anything.
-    let caps = probe_host();
+    // fail closed before spawning anything. This path is only used by the kernel
+    // tiers, so avoid the full container-aware probe (`podman info`) on the hot
+    // path.
+    let caps = probe_host_for(policy.claim);
     resolve(p, &caps)?;
 
     // ── Landlock ruleset (built pre-fork; restricted in the child) ──
