@@ -198,7 +198,7 @@ h5i-studio
 
 | Failure mode | What happens | h5i's answer |
 |---|---|---|
-| **Environment conflict** | agents overwrite/destory each other's files | a confined worktree per agent |
+| **Environment conflict** | agents overwrite/destroy each other's files | a confined worktree per agent |
 | **Token explosion** | every agent re-reads the repo and runs tools | compressed tool logs |
 | **Review overload** | humans can't inspect every prompt or command | reviewer-ready PR |
 
@@ -210,7 +210,7 @@ h5i-studio
 - [Tutorials](https://h5i.dev/guides/): guided workflows · [Blog](https://h5i.dev/blog/): design notes, audits, case studies
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
 - `h5i man > ~/.local/share/man/man1/h5i.1`: install the man page (generated from the CLI), then read it with `man h5i`.
-- [CONTRIBUTING.md](CONTRIBUTING.md): we welcomes contributions of any kind.
+- [CONTRIBUTING.md](CONTRIBUTING.md): we welcome contributions of any kind.
 
 ---
 
