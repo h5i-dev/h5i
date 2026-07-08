@@ -2892,7 +2892,7 @@ another reviews and applies). See `docs/environments-design.md` and the live
 | `h5i env ports <name> [--json]` | The per-env **injected** port map: each running service with a declared port and the free host port h5i allocated and injected as `PORT` / `H5I_ENV_PORT_<NAME>`. v1 is injection only — there is **no host→box forwarder**, so a port is reachable only if the service binds the injected value (the URL is shown as conditional, not a guarantee). |
 | `h5i env log <name>` | The event log (`created`/`exec`/`service`/`proposed`/`applied`/`aborted`/`gc`/`violation`/`secret`). |
 | `h5i env diff <name> [--stat]` | Diff the env's work against its pinned base. |
-| `h5i env inspect <name> --capture <id>` | Render one evidence capture (structured findings, exit code, policy digest, redactions). |
+| `h5i env inspect <name> --capture <id> [--json]` | Render one evidence capture (structured findings, exit code, policy digest, redactions). `--json` emits the stored capture manifest for tooling instead of the human view. |
 | `h5i env compare <names…> [--json]` | The "arena": rank N envs side by side (changes + latest run results). Best on envs sharing one base. |
 | `h5i env rebase <name>` | Re-pin the base onto the parent branch's advanced tip (3-way; refuses on conflict). |
 | `h5i env propose <name>` | Mediated commit (path-allowlist enforced: rejects nested `.git`, symlink escapes, `..`) + review brief. Never writes the parent. |

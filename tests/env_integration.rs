@@ -3710,6 +3710,46 @@ fn inspect_renders_all_capture_fields() {
     );
 }
 
+/// `inspect --json` emits the same stored manifest that backs the human view,
+/// after applying the same env ownership check. Tooling can consume it without
+/// scraping the pretty renderer, while cross-env evidence remains refused.
+#[test]
+fn inspect_json_renders_the_capture_manifest() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "json"]);
+    r.h5i_ok(&["env", "create", "other"]);
+    r.h5i_ok(&["env", "run", "json", "--", "sh", "-c", "echo json-body"]);
+
+    let env_m = r.manifest("json");
+    let cap = env_m["captures"][0].as_str().unwrap().to_string();
+    let digest = env_m["policy_digest"].as_str().unwrap();
+
+    let out = r.h5i_ok(&["env", "inspect", "json", "--capture", &cap, "--json"]);
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("inspect --json is valid JSON");
+
+    assert_eq!(v["id"].as_str(), Some(cap.as_str()), "{v:#}");
+    assert_eq!(v["env_id"].as_str(), Some("env/tester/json"), "{v:#}");
+    assert_eq!(v["exit_code"].as_i64(), Some(0), "{v:#}");
+    assert_eq!(v["policy_digest"].as_str(), Some(digest), "{v:#}");
+    assert!(
+        v["raw_oid"]
+            .as_str()
+            .is_some_and(|oid| oid.starts_with("sha256:")),
+        "{v:#}"
+    );
+    assert!(
+        v["summary"]
+            .as_str()
+            .is_some_and(|summary| summary.contains("json-body")),
+        "{v:#}"
+    );
+
+    let out = r.h5i(&["env", "inspect", "other", "--capture", &cap, "--json"]);
+    assert!(!out.status.success(), "cross-env JSON inspect must be refused");
+    assert!(out_str(&out).contains("not evidence for"), "{}", out_str(&out));
+}
+
 /// A capture handle that resolves to nothing, and one too short to be a prefix,
 /// both fail loudly with an actionable message rather than rendering an empty or
 /// wrong capture.

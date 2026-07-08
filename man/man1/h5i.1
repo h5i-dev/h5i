@@ -545,13 +545,16 @@ Inspect one of an environment's evidence captures (structured findings, exit cod
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBinspect\fR <\fB\-\-capture\fR> [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBinspect\fR <\fB\-\-capture\fR> [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-\-capture\fR \fI<CAPTURE>\fR
 Capture id (from `h5i env status`/`log`)
+.TP
+\fB\-\-json\fR
+Emit the stored capture manifest as JSON instead of the human view
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
