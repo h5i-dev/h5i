@@ -1832,23 +1832,29 @@ fn prepare_private_tmp(
 
 /// Top-level entries pruned from the per-env HOME seed ([`seed_home_copy`]).
 /// These are large, non-credential session/history/cache trees a fresh isolated
-/// box does not need — chiefly `~/.claude/projects/`, which holds the host's
-/// entire conversation-transcript history (hundreds of MB) and dominates the
-/// first `env shell` start. Skipping them copies **less** host data into the box
-/// (strictly more private) while the copy-in/persist isolation invariant is
-/// untouched: the box still gets its own writable copy of credentials/settings,
-/// the real HOME is still only ever read. The default is *copy* — only these
-/// known-bloat names are pruned — so any new credential file the runtime adds is
-/// seeded automatically rather than silently dropped. Matched by exact name at
-/// the seed root only (names distinct enough that applying the same set to
-/// `~/.codex` prunes nothing there).
+/// box does not need — e.g. Claude/Codex transcript stores, logs, and temporary
+/// plugin caches. Skipping them copies **less** host data into the box (strictly
+/// more private) while the copy-in/persist isolation invariant is untouched: the
+/// box still gets its own writable copy of credentials/settings, the real HOME
+/// is still only ever read. The default is *copy* — only these known-bloat names
+/// are pruned — so any new credential file the runtime adds is seeded
+/// automatically rather than silently dropped. Matched by exact name at the seed
+/// root only.
 const HOME_SEED_SKIP: &[&str] = &[
     "projects",        // Claude Code conversation transcripts (the bulk of the size)
     "todos",           // per-session todo lists
     "statsig",         // feature-flag / gate cache
     "shell-snapshots", // captured shell-env snapshots
+    "shell_snapshots", // Codex captured shell-env snapshots
     "file-history",    // edit-history backups
     "history.jsonl",   // REPL command history
+    "sessions",        // Codex conversation transcripts
+    "log",             // Codex host logs
+    "logs_2.sqlite",   // Codex host log database
+    "logs_2.sqlite-shm",
+    "logs_2.sqlite-wal",
+    ".tmp", // Codex plugin/app temp cache
+    "tmp",  // Codex temp cache
 ];
 
 /// Seed a per-env HOME copy from the real HOME, pruning the known-large,
@@ -7582,6 +7588,17 @@ mod tests {
         home
     }
 
+    /// Build a fake host HOME with the Codex runtime's state: a `.codex` dir
+    /// with auth/config plus large transcript/log/temp caches.
+    #[cfg(unix)]
+    fn fake_codex_home(root: &Path) -> PathBuf {
+        let home = root.join("home");
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::fs::write(home.join(".codex/auth.json"), "{\"token\":\"real-secret\"}").unwrap();
+        std::fs::write(home.join(".codex/config.toml"), "model = \"gpt-5\"\n").unwrap();
+        home
+    }
+
     #[cfg(unix)]
     #[test]
     fn prepare_home_state_redirects_agent_creds_to_per_env_copy() {
@@ -7674,6 +7691,66 @@ mod tests {
         );
         // The real HOME still has its transcripts (only ever read, never touched).
         assert!(home.join(".claude/projects/some-proj/session.jsonl").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_home_state_seed_prunes_codex_bloat_keeps_credentials() {
+        use crate::sandbox::{AgentRuntime, Profile};
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let home = fake_codex_home(h5i_root);
+        for path in [
+            ".codex/sessions/2026/07/session.jsonl",
+            ".codex/log/run.log",
+            ".codex/shell_snapshots/snap.sh",
+            ".codex/.tmp/plugins/cache.bin",
+            ".codex/tmp/arg0/file",
+        ] {
+            let path = home.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "cache").unwrap();
+        }
+        for path in [
+            ".codex/history.jsonl",
+            ".codex/logs_2.sqlite",
+            ".codex/logs_2.sqlite-shm",
+            ".codex/logs_2.sqlite-wal",
+        ] {
+            std::fs::write(home.join(path), "cache").unwrap();
+        }
+        std::fs::create_dir_all(home.join(".codex/rules")).unwrap();
+        std::fs::write(home.join(".codex/rules/default.rules"), "rules").unwrap();
+        let m = canonical_manifest("codex", "auth");
+        std::fs::create_dir_all(m.dir(h5i_root)).unwrap();
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Codex),
+        );
+
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home), None).unwrap();
+
+        let backing = m.dir(h5i_root).join("home/.codex");
+        assert!(backing.join("auth.json").exists());
+        assert!(backing.join("config.toml").exists());
+        assert!(backing.join("rules/default.rules").exists());
+        for pruned in [
+            "sessions",
+            "log",
+            "shell_snapshots",
+            ".tmp",
+            "tmp",
+            "history.jsonl",
+            "logs_2.sqlite",
+            "logs_2.sqlite-shm",
+            "logs_2.sqlite-wal",
+        ] {
+            assert!(
+                !backing.join(pruned).exists(),
+                "Codex HOME seed should prune {pruned}"
+            );
+        }
+        assert!(home.join(".codex/sessions/2026/07/session.jsonl").exists());
     }
 
     #[cfg(unix)]

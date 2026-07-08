@@ -150,6 +150,15 @@ fn candidate_bases() -> Vec<PathBuf> {
 /// removed). The first base that passes is the one used at run time.
 #[cfg(target_os = "linux")]
 pub fn probe() -> CgroupCaps {
+    // Process-local only: supervised preflight and run setup may ask the same
+    // question in one h5i invocation, while each new command still re-probes.
+    // Per-run cgroup creation remains a real operation after this admission.
+    static CGROUP_CAPS: std::sync::OnceLock<CgroupCaps> = std::sync::OnceLock::new();
+    CGROUP_CAPS.get_or_init(probe_uncached).clone()
+}
+
+#[cfg(target_os = "linux")]
+fn probe_uncached() -> CgroupCaps {
     let mut caps = CgroupCaps::default();
     if std::fs::metadata(format!("{CG_ROOT}/cgroup.controllers")).is_err() {
         caps.detail = Some("no cgroup2 hierarchy mounted".into());
