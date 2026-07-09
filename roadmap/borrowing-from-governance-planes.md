@@ -3,8 +3,7 @@
 > Working notes: ideas mined from `../cordum` (Cordum, a Go **Agent Control
 > Plane**) and `../agent-governance-toolkit` (Microsoft **AGT**, a polyglot
 > **runtime governance layer**) for h5i's provenance, messaging, and `env`
-> surfaces. Companion to [`borrowing-from-coasts.md`](borrowing-from-coasts.md)
-> and [`comparison.md`](comparison.md).
+> surfaces. Companion to [`comparison-sandbox.md`](comparison-sandbox.md).
 
 ## TL;DR positioning
 
@@ -35,7 +34,7 @@ needs NATS, Redis, an always-on PDP service, SSO/SAML, or a trust-score database
 it costs h5i a column it uniquely owns (local, no daemon/root) and is rejected or
 re-homed onto git.
 
-**What h5i uniquely owns and must not trade away** (from `comparison.md`):
+**What h5i uniquely owns and must not trade away** (from `comparison-sandbox.md`):
 content-addressed provenance, a reasoning/context branch bound to code, and
 local-first operation with no daemon and no root. Each idea below is checked
 against those.
