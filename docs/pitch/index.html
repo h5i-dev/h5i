@@ -965,13 +965,41 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 7 — Token reduction (h5i capture run)
+     SLIDE 7 — Audit (h5i audit review)
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:20px;">
+  <div style="width:100%;max-width:1040px;">
+    <div class="section-tag">Audit</div>
+    <h2>Triage the riskiest AI changes<br><span class="red">before they merge</span>.</h2>
+    <p class="lede" style="max-width:880px;">Receipts make triage automatic: <code>h5i audit review</code> ranks commits by uncertainty, blind edits, churn, and scope, so review starts with the ones that need it most.</p>
+
+    <div class="terminal" style="margin-top:16px;">
+      <div class="terminal-bar">
+        <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+        <span class="terminal-path">h5i audit review</span>
+      </div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit review --limit 200</span>
+<span class="t-out">Suggested Review Points — 2 of 200 commits flagged</span>
+
+  <span class="t-bold">#1</span> <span class="t-out">a3f1c0d</span>  score <span class="t-red">0.94</span>  <span class="t-red">█████████▍</span>
+     <span class="t-bold">auth: refresh token rotation</span>
+     <span class="t-red">▸</span> <span class="t-cmt">security-sensitive · API token leakage · no tests</span>
+
+  <span class="t-bold">#2</span> <span class="t-out">92c80f4</span>  score <span class="t-warn">0.71</span>  <span class="t-warn">███████</span>
+     <span class="t-bold">db: migration for sessions table</span>
+     <span class="t-warn">▸</span> <span class="t-cmt">large diff · broad scope · low prompt certainty</span></pre></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SLIDE 8 — Token reduction (h5i capture run)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:20px;">
   <div style="width:100%;max-width:1080px;">
     <div class="section-tag">Token reduction</div>
-    <h2>Tool output is filtered before it<br>hits the <span class="red">context window</span>.</h2>
-    <p class="lede" style="max-width:900px;">And the receipt never bloats the context: <code>h5i capture run</code> keeps every command's raw output out-of-band and hands the agent a compact, structured summary. Nothing is lost, only the noise.</p>
+    <h2>Tool output is trimmed before it<br>burns through the <span class="red">context window</span>.</h2>
+    <p class="lede" style="max-width:900px;">The receipt never bloats the context: <code>h5i capture run</code> keeps every command's raw output out-of-band and hands the agent a compact, structured summary. Nothing is lost, only the noise.</p>
 
     <div style="margin-top:18px;display:flex;align-items:center;gap:16px;">
       <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;">
@@ -1015,7 +1043,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 8 — h5i team (the convergence)
+     SLIDE 9 — h5i team (the convergence)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:20px;">
   <div style="width:100%;max-width:1080px;">
@@ -1024,34 +1052,6 @@
     <p class="lede" style="max-width:900px;">One task fans out to sealed agents. They peer-review, a neutral verifier replays and tests every candidate, and only the winner merges.</p>
 
     <img class="team-svg" src="/_static/hero-team.svg" width="1280" height="420" loading="lazy" alt="h5i team: one task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo.">
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 9 — Audit (h5i audit review)
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:20px;">
-  <div style="width:100%;max-width:1040px;">
-    <div class="section-tag">Audit</div>
-    <h2>Triage the riskiest AI changes<br><span class="red">before they merge</span>.</h2>
-    <p class="lede" style="max-width:880px;">Receipts make triage automatic: <code>h5i audit review</code> ranks commits by uncertainty, blind edits, churn, and scope, so review starts with the ones that need it most.</p>
-
-    <div class="terminal" style="margin-top:16px;">
-      <div class="terminal-bar">
-        <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-        <span class="terminal-path">h5i audit review</span>
-      </div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit review --limit 200</span>
-<span class="t-out">Suggested Review Points — 2 of 200 commits flagged</span>
-
-  <span class="t-bold">#1</span> <span class="t-out">a3f1c0d</span>  score <span class="t-red">0.94</span>  <span class="t-red">█████████▍</span>
-     <span class="t-bold">auth: refresh token rotation</span>
-     <span class="t-red">▸</span> <span class="t-cmt">security-sensitive · API token leakage · no tests</span>
-
-  <span class="t-bold">#2</span> <span class="t-out">92c80f4</span>  score <span class="t-warn">0.71</span>  <span class="t-warn">███████</span>
-     <span class="t-bold">db: migration for sessions table</span>
-     <span class="t-warn">▸</span> <span class="t-cmt">large diff · broad scope · low prompt certainty</span></pre></div>
-    </div>
   </div>
 </div>
 
@@ -1141,7 +1141,7 @@
       <div class="feat-card">
         <span class="feat-cmd" style="display:block;font-size:1.25rem;color:var(--green);">Built already</span>
         <ul style="margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;">
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>430+ GitHub stars.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>450+ GitHub stars.</li>
           <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>#1 worktree manager by GitHub stars.</li>
           <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>Dogfooded with real agent-team workflows.</li>
         </ul>
