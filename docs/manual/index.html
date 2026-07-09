@@ -3604,8 +3604,8 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 <td>Diff the env's work against its pinned base.</td>
 </tr>
 <tr>
-<td><code>h5i env inspect &lt;name&gt; --capture &lt;id&gt;</code></td>
-<td>Render one evidence capture (structured findings, exit code, policy digest, redactions).</td>
+<td><code>h5i env inspect &lt;name&gt; --capture &lt;id&gt; [--json]</code></td>
+<td>Render one evidence capture (structured findings, exit code, policy digest, redactions). <code>--json</code> emits the stored capture manifest for tooling instead of the human view.</td>
 </tr>
 <tr>
 <td><code>h5i env compare &lt;names…&gt; [--json]</code></td>

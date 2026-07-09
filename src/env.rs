@@ -5398,7 +5398,11 @@ fn stamp_apply_provenance(
 /// (or text summary), exit code, policy digest, and any redactions. The
 /// capture must belong to this env — a capture id from another env is refused
 /// so `inspect` can't be used to read unrelated evidence.
-pub fn inspect(repo: &Repository, m: &EnvManifest, capture_id: &str) -> Result<String, H5iError> {
+pub fn inspect_manifest(
+    repo: &Repository,
+    m: &EnvManifest,
+    capture_id: &str,
+) -> Result<objects::Manifest, H5iError> {
     let manifest = objects::resolve_manifest(repo, capture_id)?;
     if manifest.env_id.as_deref() != Some(m.id.as_str()) {
         return Err(H5iError::Metadata(format!(
@@ -5408,6 +5412,15 @@ pub fn inspect(repo: &Repository, m: &EnvManifest, capture_id: &str) -> Result<S
             manifest.env_id.as_deref().unwrap_or("<none>")
         )));
     }
+    Ok(manifest)
+}
+
+/// Render one of an environment's evidence captures: its structured findings
+/// (or text summary), exit code, policy digest, and any redactions. The
+/// capture must belong to this env — a capture id from another env is refused
+/// so `inspect` can't be used to read unrelated evidence.
+pub fn inspect(repo: &Repository, m: &EnvManifest, capture_id: &str) -> Result<String, H5iError> {
+    let manifest = inspect_manifest(repo, m, capture_id)?;
     let mut out = String::new();
     out.push_str(&format!("── Capture {} ({}) ──\n", manifest.id, m.id));
     if let Some(cmd) = &manifest.cmd {

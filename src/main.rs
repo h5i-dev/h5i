@@ -2016,6 +2016,9 @@ enum EnvCommands {
         /// Capture id (from `h5i env status`/`log`)
         #[arg(long)]
         capture: String,
+        /// Emit the stored capture manifest as JSON instead of the human view
+        #[arg(long)]
+        json: bool,
     },
 
     /// Compare environments side by side — changes + latest run results (the
@@ -11543,9 +11546,18 @@ fn main() -> anyhow::Result<()> {
                     print!("{}", h5i_core::env::diff(git, &h5i_root, &m, stat)?);
                 }
 
-                EnvCommands::Inspect { name, capture } => {
+                EnvCommands::Inspect {
+                    name,
+                    capture,
+                    json,
+                } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
-                    print!("{}", h5i_core::env::inspect(git, &m, &capture)?);
+                    if json {
+                        let manifest = h5i_core::env::inspect_manifest(git, &m, &capture)?;
+                        println!("{}", serde_json::to_string_pretty(&manifest)?);
+                    } else {
+                        print!("{}", h5i_core::env::inspect(git, &m, &capture)?);
+                    }
                 }
 
                 EnvCommands::Compare { names, json } => {
