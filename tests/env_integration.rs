@@ -4494,6 +4494,35 @@ fn status_json_still_emits_the_manifest() {
     assert_eq!(v["status"], "created");
 }
 
+#[test]
+fn log_json_emits_env_event_records() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "jlog"]);
+    r.h5i_ok(&["env", "run", "jlog", "--", "sh", "-c", "echo ok"]);
+
+    let out = r.h5i_ok(&["env", "log", "jlog", "--json"]);
+    let events: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("env log --json must be valid JSON");
+    let arr = events.as_array().expect("event log is a JSON array");
+    assert!(
+        arr.iter().all(|event| event["env_id"] == "env/tester/jlog"),
+        "all events are scoped to the requested env: {events}"
+    );
+    assert!(
+        arr.iter().any(|event| event["event"] == "created"),
+        "created event is present: {events}"
+    );
+    assert!(
+        arr.iter()
+            .any(|event| event["event"] == "exec" && event["capture"].is_string()),
+        "exec event includes capture evidence: {events}"
+    );
+
+    let text = out_str(&r.h5i_ok(&["env", "log", "jlog"]));
+    assert!(text.contains("created"), "{text}");
+    assert!(text.contains("exec"), "{text}");
+}
+
 // ─── 14. shareable environments across clones (the multi-agent review loop) ──
 
 /// A clone addressed through the h5i binary under a fixed agent identity.

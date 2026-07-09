@@ -3627,8 +3627,8 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 <td>The per-env <strong>injected</strong> port map: each running service with a declared port and the free host port h5i allocated and injected as <code>PORT</code> / <code>H5I_ENV_PORT_&lt;NAME&gt;</code>. v1 is injection only — there is <strong>no host→box forwarder</strong>, so a port is reachable only if the service binds the injected value (the URL is shown as conditional, not a guarantee).</td>
 </tr>
 <tr>
-<td><code>h5i env log &lt;name&gt;</code></td>
-<td>The event log (<code>created</code>/<code>exec</code>/<code>service</code>/<code>proposed</code>/<code>applied</code>/<code>aborted</code>/<code>gc</code>/<code>violation</code>/<code>secret</code>).</td>
+<td><code>h5i env log &lt;name&gt; [--json]</code></td>
+<td>The event log (<code>created</code>/<code>exec</code>/<code>service</code>/<code>proposed</code>/<code>applied</code>/<code>aborted</code>/<code>gc</code>/<code>violation</code>/<code>secret</code>). <code>--json</code> emits the event records for tooling.</td>
 </tr>
 <tr>
 <td><code>h5i env diff &lt;name&gt; [--stat] [--json]</code></td>

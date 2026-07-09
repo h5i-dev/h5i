@@ -156,7 +156,12 @@ pub enum EnvCommands {
     Rebase { name: String },
 
     /// Show the event log (refs/h5i/env) for one environment
-    Log { name: String },
+    Log {
+        name: String,
+        /// Emit the event records as JSON instead of the human view
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Show the environment's reasoning/context branch
     /// (`refs/h5i/context/env/<agent>/<slug>`) — a convenience alias for
@@ -807,18 +812,23 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     println!("{} {}", SUCCESS, msg_out);
                 }
 
-                EnvCommands::Log { name } => {
+                EnvCommands::Log { name, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
-                    for e in h5i_core::env::read_events(git, Some(&m.id)) {
-                        println!(
-                            "{}  {:<9} {}{}",
-                            e.ts,
-                            e.event,
-                            e.detail.unwrap_or_default(),
-                            e.capture
-                                .map(|c| format!("  [capture {c}]"))
-                                .unwrap_or_default()
-                        );
+                    let events = h5i_core::env::read_events(git, Some(&m.id));
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&events)?);
+                    } else {
+                        for e in events {
+                            println!(
+                                "{}  {:<9} {}{}",
+                                e.ts,
+                                e.event,
+                                e.detail.unwrap_or_default(),
+                                e.capture
+                                    .map(|c| format!("  [capture {c}]"))
+                                    .unwrap_or_default()
+                            );
+                        }
                     }
                 }
 
