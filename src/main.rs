@@ -2007,6 +2007,9 @@ enum EnvCommands {
         /// Show a diffstat instead of the full patch
         #[arg(long)]
         stat: bool,
+        /// Output a machine-readable diffstat
+        #[arg(long)]
+        json: bool,
     },
 
     /// Inspect one of an environment's evidence captures (structured findings,
@@ -11541,9 +11544,14 @@ fn main() -> anyhow::Result<()> {
                     ctx::print_context_depth(&snapshot, effective_depth);
                 }
 
-                EnvCommands::Diff { name, stat } => {
+                EnvCommands::Diff { name, stat, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
-                    print!("{}", h5i_core::env::diff(git, &h5i_root, &m, stat)?);
+                    if json {
+                        let report = h5i_core::env::diffstat_report(git, &h5i_root, &m)?;
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        print!("{}", h5i_core::env::diff(git, &h5i_root, &m, stat)?);
+                    }
                 }
 
                 EnvCommands::Inspect {

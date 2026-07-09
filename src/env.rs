@@ -4173,6 +4173,87 @@ pub fn diff(
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DiffStatFile {
+    pub path: String,
+    pub insertions: usize,
+    pub deletions: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiffStatReport {
+    pub files: Vec<DiffStatFile>,
+    pub files_changed: usize,
+    pub insertions: usize,
+    pub deletions: usize,
+}
+
+/// Structured diffstat for the env's changes against its pinned base.
+pub fn diffstat_report(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+) -> Result<DiffStatReport, H5iError> {
+    let render = |diff: git2::Diff| -> Result<DiffStatReport, H5iError> {
+        let stats = diff.stats()?;
+        let mut files = Vec::new();
+        let delta_count = diff.deltas().len();
+        for idx in 0..delta_count {
+            let Some(delta) = diff.get_delta(idx) else {
+                continue;
+            };
+            let (_, insertions, deletions) = git2::Patch::from_diff(&diff, idx)?
+                .map(|patch| patch.line_stats())
+                .transpose()?
+                .unwrap_or((0, 0, 0));
+            let path = if matches!(delta.status(), git2::Delta::Deleted) {
+                delta.old_file().path().or_else(|| delta.new_file().path())
+            } else {
+                delta.new_file().path().or_else(|| delta.old_file().path())
+            }
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+            files.push(DiffStatFile {
+                path,
+                insertions,
+                deletions,
+            });
+        }
+        Ok(DiffStatReport {
+            files,
+            files_changed: stats.files_changed(),
+            insertions: stats.insertions(),
+            deletions: stats.deletions(),
+        })
+    };
+
+    let work = m.work_dir(h5i_root);
+    if work.is_dir() {
+        let wt_repo = Repository::open(&work)?;
+        let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
+        let mut opts = git2::DiffOptions::new();
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .show_untracked_content(true);
+        let diff = wt_repo.diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))?;
+        render(diff)
+    } else {
+        let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
+        let tip_tree = repo
+            .find_reference(&m.branch)
+            .map_err(|_| {
+                H5iError::Metadata(format!(
+                    "{}: env code branch '{}' is not present locally — `h5i pull` it first",
+                    m.id, m.branch
+                ))
+            })?
+            .peel_to_tree()?;
+        let mut opts = git2::DiffOptions::new();
+        let diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut opts))?;
+        render(diff)
+    }
+}
+
 // ─── base drift (§9) ────────────────────────────────────────────────────────
 
 /// How an env's pinned base relates to its parent branch's current tip.
