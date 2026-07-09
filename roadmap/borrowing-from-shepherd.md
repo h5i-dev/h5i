@@ -4,8 +4,8 @@
 > [Shepherd](https://shepherd-agents.ai/) project,
 > [arXiv:2605.10913](https://arxiv.org/abs/2605.10913)) for `h5i env` and the
 > provenance store. See [`environments-design.md`](environments-design.md) for the
-> current env design, [`borrowing-from-coasts.md`](borrowing-from-coasts.md) for
-> the sibling idea-mine, and `sandbox-production-roadmap` (memory) for the shipped
+> current env design, [`comparison-sandbox.md`](comparison-sandbox.md) for
+> the landscape comparison and sibling idea-mine, and `sandbox-production-roadmap` (memory) for the shipped
 > and remaining sandbox roadmap.
 
 ## TL;DR
