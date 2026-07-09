@@ -20,9 +20,15 @@
   </url>
   <url>
     <loc>https://h5i.dev/pitch/</loc>
-    <lastmod>2026-06-02</lastmod>
+    <lastmod>2026-07-09</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://h5i.dev/pitch/pdf/</loc>
+    <lastmod>2026-07-09</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
   </url>
   <url>
     <loc>https://h5i.dev/workflows/</loc>

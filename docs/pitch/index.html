@@ -11,6 +11,13 @@
 <meta name="color-scheme" content="dark">
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
 <link rel="canonical" href="https://h5i.dev/pitch/">
+<script>
+  // Smartphones get the PDF version: the deck's fixed 16:9 slides fight a
+  // phone viewport. `?deck` opts back into the interactive deck.
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (isMobile && !new URLSearchParams(location.search).has('deck'))
+    location.replace('pdf/');
+</script>
 <link rel="icon" type="image/png" href="/_static/logo.png">
 <link rel="apple-touch-icon" href="/_static/logo.png">
 
@@ -403,10 +410,13 @@
   ::-webkit-scrollbar-track { background: var(--bg); }
   ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
 
-  /* ── Export button ────────────────────────────────────────── */
-  .export-btn {
+  /* ── Export buttons ───────────────────────────────────────── */
+  .export-group {
     position: fixed; bottom: 24px; right: 28px; z-index: 200;
-    display: flex; align-items: center; gap: 0.45rem;
+    display: flex; gap: 10px;
+  }
+  .export-btn {
+    display: flex; align-items: center; gap: 0.45rem; text-decoration: none;
     font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.06em;
     color: var(--text-dim); border: 1px solid var(--border-hi);
     background: rgba(8,8,11,0.9); backdrop-filter: blur(8px);
@@ -420,7 +430,7 @@
     @page { size: 1280px 720px; margin: 0; }
     * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     body { overflow: visible; height: auto; background: var(--bg); }
-    .bg-grid, .nav-arrow, .dots, .slide-num, .export-btn { display: none !important; }
+    .bg-grid, .nav-arrow, .dots, .slide-num, .export-group { display: none !important; }
     .deck { position: static; height: auto; }
     .slide {
       position: relative !important;
@@ -760,7 +770,8 @@
     .nav-arrow.prev { left: 8px; }
     .nav-arrow.next { right: 8px; }
     .slide-num { top: 14px; right: 14px; }
-    .export-btn { bottom: 14px; right: 14px; padding: 0.4rem 0.85rem; font-size: 0.7rem; }
+    .export-group { bottom: 14px; right: 14px; gap: 8px; }
+    .export-btn { padding: 0.4rem 0.85rem; font-size: 0.7rem; }
     .dots { bottom: 16px; }
   }
 </style>
@@ -773,7 +784,10 @@
 
 <div class="bg-grid"></div>
 
-<button class="export-btn" onclick="window.print()">⬇ Export PDF</button>
+<div class="export-group">
+  <a class="export-btn" href="pdf/">PDF version</a>
+  <button class="export-btn" onclick="window.print()">⬇ Export PDF</button>
+</div>
 <button class="nav-arrow prev" onclick="changeSlide(-1)">‹</button>
 <button class="nav-arrow next" onclick="changeSlide(1)">›</button>
 <div class="slide-num"><span id="cur">1</span> / <span id="tot"></span></div>

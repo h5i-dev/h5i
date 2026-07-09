@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>h5i Pitch Deck (PDF): Auditable Workspaces for AI Coding Agents</title>
+<meta name="description" content="The h5i pitch deck as a PDF: auditable workspaces for AI coding agents. Thirteen slides covering sandboxed worktrees, provenance capture, audit triage, and agent teams. View it inline or download it.">
+<meta name="author" content="h5i-dev">
+<meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://h5i.dev/pitch/pdf/">
+<link rel="icon" type="image/png" href="/_static/logo.png">
+<link rel="apple-touch-icon" href="/_static/logo.png">
+
+<!-- Open Graph -->
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="h5i">
+<meta property="og:title" content="h5i Pitch Deck (PDF): Auditable Workspaces for AI Coding Agents">
+<meta property="og:description" content="The h5i pitch deck as a PDF. View it inline or download it.">
+<meta property="og:url" content="https://h5i.dev/pitch/pdf/">
+<meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #08080B;
+    --bg-card: #101014;
+    --border: rgba(255,255,255,0.09);
+    --border-hi: rgba(255,255,255,0.18);
+    --ink: #F2F0EB;
+    --text: #C9C7C1;
+    --text-dim: #8A8884;
+    --red: #D21C1C;
+    --red-text: #FF5C4D;
+    --sans: 'Space Grotesk', system-ui, sans-serif;
+    --mono: 'Space Mono', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--sans);
+    display: flex; flex-direction: column;
+  }
+  header {
+    flex: none; display: flex; align-items: center; gap: 14px;
+    padding: 12px 20px; border-bottom: 1px solid var(--border);
+  }
+  header img { width: 26px; height: 26px; }
+  header h1 {
+    font-size: 0.95rem; font-weight: 500; color: var(--ink);
+    letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  header h1 .dim { color: var(--text-dim); font-weight: 400; }
+  .actions { display: flex; gap: 10px; }
+  header .actions { margin-left: auto; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 0.45rem;
+    font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em;
+    color: var(--text-dim); text-decoration: none;
+    border: 1px solid var(--border-hi); border-radius: 6px;
+    padding: 0.45rem 0.95rem; transition: color 0.18s, border-color 0.18s;
+    white-space: nowrap;
+  }
+  .btn:hover { color: var(--ink); border-color: var(--ink); }
+  .btn.primary { color: #fff; background: var(--red); border-color: var(--red); }
+  .btn.primary:hover { background: #E23A2E; border-color: #E23A2E; }
+  main { flex: 1; min-height: 0; }
+  main object { display: block; width: 100%; height: 100%; border: 0; }
+  .fallback {
+    height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px;
+    text-align: center; padding: 32px;
+  }
+  .fallback p { color: var(--text-dim); max-width: 46ch; line-height: 1.6; }
+  @media (max-width: 640px) {
+    header { padding: 10px 14px; }
+    header h1 .dim { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <img src="/_static/logo.png" alt="h5i logo">
+  <h1>h5i Pitch Deck <span class="dim">· PDF version</span></h1>
+  <nav class="actions">
+    <a class="btn" href="../?deck">Interactive deck</a>
+    <a class="btn primary" href="../h5i-pitch-deck.pdf" download="h5i-pitch-deck.pdf">⬇ Download</a>
+  </nav>
+</header>
+
+<main>
+  <object data="../h5i-pitch-deck.pdf#view=FitH" type="application/pdf"
+          aria-label="h5i pitch deck PDF, 13 slides">
+    <div class="fallback">
+      <p>Your browser does not display PDFs inline. Download the deck instead,
+         or open the interactive version.</p>
+      <div class="actions">
+        <a class="btn primary" href="../h5i-pitch-deck.pdf" download="h5i-pitch-deck.pdf">⬇ Download the PDF</a>
+        <a class="btn" href="../?deck">Interactive deck</a>
+      </div>
+    </div>
+  </object>
+</main>
+
+</body>
+</html>
