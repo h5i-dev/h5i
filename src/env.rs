@@ -3882,6 +3882,11 @@ fn ingest_shell_spool(
         let _ = std::fs::remove_file(&path);
     }
 
+    // Captures ingested above only live in this mutable manifest until the
+    // caller's final status write. Team submission ingest reloads the env
+    // manifest, so persist first or the submission misses same-spool evidence.
+    save_manifest(h5i_root, m)?;
+
     // Drain the in-box team outbound spool (submissions + peer reviews); the
     // same path runs on demand via `h5i team sync` (see `ingest_team_outbound`).
     count += ingest_team_outbound(repo, h5i_root, m)?;
@@ -7060,6 +7065,73 @@ mod tests {
         let request: TeamSubmitSpool = serde_json::from_slice(&raw).unwrap();
         assert_eq!(request.commit.as_deref(), Some("HEAD"));
         assert_eq!(request.summary.as_deref(), Some("ready"));
+    }
+
+    #[test]
+    fn shell_ingest_links_captured_tests_to_team_submission() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let base = commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let mut m = canonical_manifest("codex", "fix");
+        m.base_commit = base.to_string();
+        m.base_tree = repo.find_commit(base).unwrap().tree_id().to_string();
+        repo.reference(&m.branch, base, true, "env").unwrap();
+        save_manifest(h5i_root, &m).unwrap();
+
+        let work_path = m.work_dir(h5i_root);
+        std::fs::create_dir_all(work_path.parent().unwrap()).unwrap();
+        {
+            let branch_ref = repo.find_reference(&m.branch).unwrap();
+            let mut wt_opts = git2::WorktreeAddOptions::new();
+            wt_opts.reference(Some(&branch_ref));
+            repo.worktree(&m.worktree_name(), &work_path, Some(&wt_opts))
+                .unwrap();
+        }
+        std::fs::write(work_path.join("feature.txt"), "ok\n").unwrap();
+
+        crate::team::create(&repo, "run-tests", "run-tests", "HEAD", 1, "human").unwrap();
+        crate::team::add_env(
+            &repo,
+            h5i_root,
+            "run-tests",
+            &m.id,
+            "codex-fix",
+            None,
+            None,
+            "human",
+        )
+        .unwrap();
+
+        let spool = m.dir(h5i_root).join("spool");
+        let cap_meta = InboxCaptureMeta {
+            cmd: "python3 -m pytest".into(),
+            cwd: Some(work_path.display().to_string()),
+            exit_code: Some(0),
+            files: Vec::new(),
+            cmd_argv: vec!["python3".into(), "-m".into(), "pytest".into()],
+        };
+        write_inbox_capture_spool(&spool, &cap_meta, b"5 passed in 0.01s\n").unwrap();
+        write_team_submit_spool(
+            &spool,
+            &TeamSubmitSpool {
+                commit: None,
+                summary: Some("ready".into()),
+            },
+        )
+        .unwrap();
+
+        ingest_shell_spool(&repo, h5i_root, &mut m).unwrap();
+
+        let run = crate::team::status(&repo, "run-tests").unwrap().run;
+        let sub = run.submissions.first().expect("team submission recorded");
+        assert_eq!(
+            sub.capture_ids.len(),
+            1,
+            "submission must carry the captured test evidence"
+        );
+        let saved = find(h5i_root, &m.id).unwrap();
+        assert_eq!(saved.captures, sub.capture_ids);
     }
 
     #[test]
