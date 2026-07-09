@@ -433,9 +433,6 @@
       break-after: page;
       overflow: hidden;
     }
-    /* The embedded dashboard is the tallest element on the deck; pin it to a
-       size that fits one 720px page in the PDF (screen uses a lighter zoom). */
-    .sandbox-embed { zoom: 0.75 !important; }
   }
   /* ── Accessibility ───────────────────────────────────────── */
   a:focus-visible, button:focus-visible, summary:focus-visible {
@@ -641,110 +638,61 @@
   .cite { display: inline-block; margin-top: 8px; font-family: var(--mono); font-size: 0.72rem; color: var(--text-faint); text-decoration: underline; text-decoration-color: var(--border-hi); text-underline-offset: 3px; transition: color 0.18s, text-decoration-color 0.18s; }
   .cite:hover { color: var(--red-text); text-decoration-color: var(--red-text); }
 
-  /* ── Embedded h5i serve dashboard (sandbox tab) — ported from docs/index.html,
-       scoped under .ee so its palette stays self-contained on this dark deck. */
-  .ensemble-embed {
-    --bp-bg: #0a0c10; --bp-surface: #12161c; --bp-surface-2: #1a1f26;
-    --bp-elev: #232931; --bp-border: #2a3138; --bp-border-strong: #3a424b;
-    --bp-text: #f6f7f9; --bp-text-muted: #abb3bf; --bp-text-dim: #6b7785;
-    --h5-accent: #42e2d0; --h5-accent-hi: #7cefe0;
-    --h5-accent-bg: rgba(66,226,208,0.14); --h5-accent-glow: rgba(66,226,208,0.32);
-    --h5-pass: #5ee2a0; --h5-fail: #ff6b6b; --h5-run: #f0a050; --h5-model: #b48bd9;
-    --fd: var(--sans); --fm: var(--mono);
-    margin: 0 auto; max-width: 980px; width: 100%;
-    border: 1px solid #20262e; border-radius: 12px; overflow: hidden;
-    box-shadow: 0 40px 90px rgba(0,0,0,0.55); text-align: left; color: var(--bp-text);
+  /* ── Sealed sandbox (slide 5) — one brick-walled box around a claude-like
+       agent terminal; the two denials sit ON the wall as blocked cards. ── */
+  .sb-stage { position: relative; width: 640px; margin: 22px auto 0; }
+  .sb-box {
+    position: relative; border-radius: 20px;
+    border: 2px solid rgba(224,36,27,0.5); background: rgba(224,36,27,0.03);
+    padding: 30px;
   }
-  .ee-bar { display: flex; align-items: center; gap: 11px; padding: 9px 14px; background: #0d1117; border-bottom: 1px solid var(--bp-border); }
-  .ee-dots { display: flex; gap: 7px; }
-  .ee-dot { width: 11px; height: 11px; border-radius: 50%; background: #2a3138; }
-  .ee-dot.r { background: #e06c75; } .ee-dot.y { background: #e5c07b; } .ee-dot.g { background: #98c379; }
-  .ee-addr { font-family: var(--fm); font-size: 0.72rem; color: var(--bp-text-dim); }
-  .ee-addr b { color: var(--bp-text-muted); font-weight: 400; }
-  .ee-tabs { margin-left: auto; display: flex; gap: 2px; }
-  .ee-tab { font-family: var(--fm); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--bp-text-dim); padding: 4px 9px; border-radius: 5px; }
-  .ee-tab.active { color: #04201d; background: var(--h5-accent); font-weight: 700; }
-  .ee-body { padding: 18px 22px 24px; background: radial-gradient(120% 80% at 50% -10%, rgba(66,226,208,0.05), transparent 60%), var(--bp-bg); }
+  /* brick-wall frame ring: an SVG brick tile masked to a 15px border band */
+  .sb-box::before {
+    content: ''; position: absolute; inset: 0; border-radius: 18px; pointer-events: none;
+    background: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='26'%20height='22'%3E%3Crect%20width='26'%20height='22'%20fill='rgb(22,10,10)'/%3E%3Cg%20fill='rgb(122,30,26)'%3E%3Crect%20width='24'%20height='9'%20rx='1'/%3E%3Crect%20x='13'%20y='11'%20width='24'%20height='9'%20rx='1'/%3E%3Crect%20x='-13'%20y='11'%20width='24'%20height='9'%20rx='1'/%3E%3C/g%3E%3Cg%20fill='rgb(164,48,42)'%3E%3Crect%20width='24'%20height='2'/%3E%3Crect%20x='13'%20y='11'%20width='24'%20height='2'/%3E%3Crect%20x='-13'%20y='11'%20width='24'%20height='2'/%3E%3C/g%3E%3C/svg%3E");
+    background-size: 26px 22px; padding: 15px;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+  .sb-label {
+    position: absolute; top: -13px; left: 24px; padding: 2px 12px; background: var(--bg);
+    font-family: var(--mono); font-size: 0.78rem; color: var(--red-text);
+    letter-spacing: 0.08em; z-index: 2;
+  }
+  .sb-box .terminal {
+    position: relative; z-index: 1; box-shadow: none;
+    font-size: 0.95rem; line-height: 1.6;
+  }
+  .sb-block {
+    position: absolute; z-index: 4; width: 330px;
+    display: flex; flex-direction: column; gap: 3px;
+    background: rgba(38,10,10,0.97); border: 1.5px solid var(--danger);
+    border-radius: 12px; padding: 10px 16px; font-family: var(--mono);
+    box-shadow: 0 18px 50px rgba(0,0,0,0.6), 0 0 26px rgba(224,36,27,0.18);
+  }
+  .sb-block.fs  { left: -290px; top: 38%; }
+  .sb-block.net { right: -290px; top: 62%; }
+  .sb-block .bl { font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--danger); white-space: nowrap; }
+  .sb-block .bt { font-size: 0.88rem; color: #ffd9d4; }
+  .sb-block .bt b { color: #fff; font-weight: 700; }
+  .sb-payoff { margin-top: 22px; text-align: center; font-size: 1.28rem; color: var(--text-dim); }
+  .sb-payoff b { color: var(--ink); font-weight: 700; }
 
-  .ee-tag { display: inline-flex; align-items: center; font-family: var(--fm); font-size: 10px; padding: 1px 7px; border-radius: 3px; background: var(--bp-elev); color: var(--bp-text-muted); white-space: nowrap; }
-  .ee-tag.round { border-radius: 10px; }
-  .ee-tag.ok { background: rgba(94,226,160,0.14); color: var(--h5-pass); }
-  .ee-tag.pri { background: var(--h5-accent-bg); color: var(--h5-accent-hi); }
-  .ee-code { font-family: var(--fm); font-size: 10px; color: var(--h5-accent-hi); background: var(--bp-elev); border-radius: 3px; padding: 1px 5px; }
-
-  .ee .sbx-shell { display: flex; flex-direction: column; }
-  .ee .sbx-strip { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 14px; background: var(--bp-surface); border: 1px solid var(--bp-border); border-radius: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-  .ee .sbx-strip-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-  .ee .sbx-strip-label { font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); margin-right: 4px; }
-  .ee .sbx-strip-vitals { display: flex; align-items: center; gap: 18px; }
-  .ee .sbx-vital { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
-  .ee .sbx-vital-num { font-family: var(--fm); font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--bp-text); }
-  .ee .sbx-vital-label { font-family: var(--fm); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--bp-text-dim); }
-
-  .ee .sbx-body { display: grid; grid-template-columns: minmax(300px, 38%) 1fr; gap: 14px; }
-  .ee .sbx-fleet { display: flex; flex-direction: column; border: 1px solid var(--bp-border); border-radius: 8px; overflow: hidden; }
-  .ee .sbx-fleet-header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-family: var(--fd); font-weight: 600; font-size: 13px; color: var(--bp-text); border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
-  .ee .sbx-filters { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 10px; border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
-  .ee .sbx-chip { font-family: var(--fm); font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--bp-border); background: transparent; color: var(--bp-text-muted); }
-  .ee .sbx-chip.active { background: var(--h5-accent-hi); border-color: var(--h5-accent-hi); color: #0b0e12; font-weight: 600; }
-  .ee .sbx-fleet-body { flex: 1; overflow: auto; }
-  .ee .sbx-fleet-table { width: 100%; min-width: 380px; border-collapse: collapse; }
-  .ee .sbx-fleet-table th { text-align: left; font-family: var(--fm); font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--bp-text-dim); padding: 6px 10px; border-bottom: 1px solid var(--bp-border); }
-  .ee .sbx-fleet-table td { padding: 8px 10px; border-bottom: 1px solid var(--bp-border); vertical-align: middle; }
-  .ee .sbx-fleet-table tbody tr:last-child td { border-bottom: none; }
-  .ee .sbx-fleet-table tr.selected td { background: var(--bp-surface-2); }
-  .ee .sbx-env-id { font-family: var(--fd); font-weight: 600; font-size: 13px; color: var(--bp-text); white-space: nowrap; }
-  .ee .sbx-env-sub { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); }
-  .ee .sbx-drift { color: var(--h5-run); }
-  .ee .sbx-status { font-size: 12px; color: var(--bp-text-muted); font-family: var(--fm); }
-
-  .ee .sbx-pressure { display: inline-flex; align-items: center; gap: 6px; font-family: var(--fm); font-size: 12px; }
-  .ee .sbx-pressure.clean { color: var(--h5-pass); font-size: 11px; }
-  .ee .sbx-pressure-score { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 18px; }
-  .ee .sbx-pressure.warning .sbx-pressure-score { color: var(--h5-run); }
-  .ee .sbx-pressure-bar { width: 56px; height: 6px; border-radius: 3px; background: var(--bp-surface-2); overflow: hidden; }
-  .ee .sbx-pressure-fill { display: block; height: 100%; background: var(--bp-text-dim); }
-  .ee .sbx-pressure.warning .sbx-pressure-fill { background: var(--h5-run); }
-
-  .ee .sbx-detail { display: flex; flex-direction: column; border: 1px solid var(--bp-border); border-radius: 8px; overflow: hidden; }
-  .ee .sbx-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
-  .ee .sbx-detail-title { font-family: var(--fd); font-size: 15px; font-weight: 600; color: var(--bp-text); margin-right: 10px; }
-  .ee .sbx-detail-digest { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); margin-left: 8px; }
-  .ee .sbx-detail-body { padding: 13px 14px; display: flex; flex-direction: column; gap: 14px; }
-  .ee .sbx-findings { display: flex; flex-direction: column; gap: 6px; }
-  .ee .sbx-finding { display: flex; align-items: baseline; gap: 8px; padding: 7px 10px; border-radius: 4px; font-size: 12px; background: var(--bp-surface); border-left: 3px solid var(--bp-border); }
-  .ee .sbx-finding.warning { border-left-color: var(--h5-run); }
-  .ee .sbx-finding-title { font-family: var(--fd); font-weight: 600; white-space: nowrap; color: var(--bp-text); }
-  .ee .sbx-finding-detail { color: var(--bp-text-muted); flex: 1; }
-  .ee .sbx-lane-chip { font-family: var(--fm); font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 3px; color: #0b0e12; }
-  .ee .lane-net { background: #f0a050; }
-
-  .ee .sbx-timeline { border: 1px solid var(--bp-border); border-radius: 6px; overflow: hidden; }
-  .ee .sbx-timeline-head { padding: 6px 10px; font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); background: var(--bp-surface); border-bottom: 1px solid var(--bp-border); }
-  .ee .sbx-lane-grid { display: flex; flex-direction: column; }
-  .ee .sbx-lane-row { display: grid; grid-template-columns: minmax(200px, 1.4fr) repeat(3, 1fr); border-bottom: 1px solid var(--bp-border); }
-  .ee .sbx-lane-row:last-child { border-bottom: none; }
-  .ee .sbx-lane-policy { background: var(--bp-surface); }
-  .ee .sbx-run-cell { padding: 6px 10px; border-right: 1px solid var(--bp-border); min-width: 0; }
-  .ee .sbx-run-policy { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); display: flex; align-items: center; }
-  .ee .sbx-run-cmd { font-family: var(--fm); font-size: 12px; color: var(--bp-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ee .sbx-run-meta { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); }
-  .ee .sbx-lane-cell { padding: 6px 8px; border-right: 1px solid var(--bp-border); display: flex; flex-direction: column; gap: 2px; align-items: flex-start; justify-content: center; min-width: 0; }
-  .ee .sbx-lane-cell:last-child { border-right: none; }
-  .ee .sbx-lane-name { font-family: var(--fm); font-size: 10px; font-weight: 700; color: var(--bp-text-dim); }
-  .ee .sbx-lane-allow { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-  .ee .sbx-verdict { font-family: var(--fm); font-size: 11px; white-space: nowrap; }
-  .ee .sbx-verdict.none { color: var(--bp-border-strong); }
-  .ee .sbx-verdict.ok { color: var(--h5-pass); }
-  .ee .sbx-verdict.warning { color: var(--h5-run); font-weight: 600; }
-
-  .ee .sbx-policy { border: 1px solid var(--bp-border); border-radius: 6px; overflow: hidden; }
-  .ee .sbx-policy-head { padding: 6px 10px; font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); background: var(--bp-surface); border-bottom: 1px solid var(--bp-border); }
-  .ee .sbx-policy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1px; background: var(--bp-border); }
-  .ee .sbx-policy-row { display: flex; gap: 8px; padding: 5px 10px; background: var(--bp-bg); font-size: 12px; }
-  .ee .sbx-policy-key { color: var(--bp-text-dim); min-width: 66px; font-family: var(--fm); }
-  .ee .sbx-policy-val { color: var(--bp-text); font-family: var(--fm); word-break: break-word; flex: 1; }
-  @media screen and (max-width: 720px) { .ee .sbx-body { grid-template-columns: 1fr; } }
+  /* ── The receipt (slide 6): recall terminal + evidence checklist ── */
+  .rc-cols { display: flex; gap: 34px; width: 100%; align-items: center; margin-top: 18px; }
+  .rc-cols .terminal { flex: 1; min-width: 0; }
+  .rc-list { width: 300px; flex: none; display: flex; flex-direction: column; gap: 15px; }
+  .rc-ck { display: flex; align-items: center; gap: 14px; font-size: 1.12rem; color: var(--text); }
+  .rc-ck .box {
+    width: 30px; height: 30px; flex: none; border-radius: 8px;
+    border: 1px solid rgba(98,201,140,0.55); background: rgba(98,201,140,0.09);
+    color: var(--green); display: flex; align-items: center; justify-content: center;
+    font-size: 15px;
+  }
+  .rc-sub { margin-top: 22px; text-align: center; font-size: 1.18rem; color: var(--text-dim); }
+  .rc-sub b { color: var(--ink); font-weight: 500; }
 
   /* Team SVG slide */
   .team-svg { width: 100%; max-width: 1040px; height: auto; display: block; margin: 6px auto 0; border: 1px solid var(--border); border-radius: 12px; }
@@ -781,14 +729,22 @@
     .terminal { font-size: 0.8rem; }
 
     /* Collapse every multi-column grid to a single column */
-    .g2, .g3, .g4, .lanes,
-    .ee .sbx-body { grid-template-columns: 1fr !important; }
+    .g2, .g3, .g4, .lanes { grid-template-columns: 1fr !important; }
     /* …including the two inline-styled card rows (inline beats a class rule) */
     .slide [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
 
     /* Horizontal card / pipeline rows stack vertically */
-    .oflow, .pipe { flex-direction: column; }
+    .oflow, .pipe, .rc-cols { flex-direction: column; }
     .pipe-step:not(:last-child)::after { display: none; }
+    .rc-list { width: 100%; }
+
+    /* Sandbox stage: box full-width, blocked cards stack below the wall */
+    .sb-stage { width: 100%; }
+    .sb-box { padding: 26px 20px; }
+    .sb-box .terminal { font-size: 0.78rem; }
+    .sb-block, .sb-block.fs, .sb-block.net {
+      position: static; width: 100%; margin-top: 10px;
+    }
 
     /* Fixed label-column widths force horizontal overflow on a phone */
     .ref-layer .ref-name, .ref-git .ref-name,
@@ -798,11 +754,6 @@
 
     /* Shrink the hero wash so it doesn't dominate a tall phone slide */
     .hero-glow { width: 130vw; height: 130vw; max-width: none; max-height: none; }
-
-    /* Dense product-UI embeds keep their shape but scroll horizontally,
-       rather than misaligning a control-room grid into one column */
-    .sandbox-embed, .ensemble-embed { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .sbx-fleet-table { min-width: 0; }
 
     /* Slimmer fixed chrome so it doesn't crowd the narrow viewport */
     .nav-arrow { width: 38px; height: 38px; font-size: 19px; }
@@ -940,189 +891,76 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 5 — Prompt versioning & persistent context
+     SLIDE 5 — The sandbox (sealed workspace, walls, blocked calls)
 ══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:22px;">
-  <div style="width:100%;max-width:1080px;">
-    <div class="section-tag">Prompts &amp; memory</div>
-    <h2>Every prompt and every context,<br><span class="red">versioned in Git</span>.</h2>
-    <p class="lede" style="max-width:860px;">h5i attaches the human prompt and the model to each commit, and carries the agent's reasoning across sessions. Recall either straight from the repo.</p>
+<div class="slide" style="gap:16px;">
+  <div style="width:100%;max-width:1120px;">
+    <div class="section-tag">The sandbox</div>
+    <h2>A <span class="red">sealed workspace</span> per agent.</h2>
+    <p class="lede" style="max-width:960px;">Turn agent permission prompts off: the box is the permission. Writes stay in <code>$WORK</code>, network egress is allowlisted, and every denial is logged as evidence.</p>
 
-    <div class="g2" style="margin-top:20px;align-items:start;">
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        <span class="pill green">prompts</span>
+    <div class="sb-stage" role="img" aria-label="Diagram: a brick wall seals an agent running with permissions off. The fs wall blocks reading ~/.ssh/id_rsa, the net wall blocks connecting to internal-billing.corp, and the task still finishes inside the box.">
+      <div class="sb-box">
+        <div class="sb-label">🛡️ env/worker · sealed</div>
         <div class="terminal">
           <div class="terminal-bar">
             <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="terminal-path">prompt provenance</span>
+            <span class="terminal-path">agent in the box · permissions off</span>
           </div>
-          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --limit 2</span>
-<span class="t-bold">commit 6dce2176</span>  <span class="t-cmt"># recast the product slide</span>
-<span class="t-out">Agent:</span>  <span class="t-ai">claude-code (claude-opus-4-8)</span>
-<span class="t-out">Prompt:</span> <span class="t-out">"restructure slide 4 so each item</span>
-<span class="t-out">         answers one of the five pains…"</span>
+          <div class="terminal-body"><pre><span class="t-prompt">h5i:worker$</span> <span class="t-cmd">claude --dangerously-skip-permissions</span>
+<span style="color:#ff7a59;font-size:1.15em;">✻</span> <span class="t-bold">Claude Code</span> <span class="t-cmt">· permissions off</span>
 
-<span class="t-bold">commit 19c32d6f</span>  <span class="t-cmt"># drop the kicker line</span>
-<span class="t-out">Agent:</span>  <span class="t-ai">claude-code (claude-opus-4-8)</span>
-<span class="t-out">Prompt:</span> <span class="t-out">"remove 'every agent needs an</span>
-<span class="t-out">         auditable workspace'…"</span></pre></div>
+<span class="t-ai">●</span> <span class="t-bold">Bash</span><span class="t-out">(cat ~/.ssh/id_rsa)</span>
+  <span class="t-red">⛔ blocked: outside fs.read</span>
+<span class="t-ai">●</span> <span class="t-bold">Bash</span><span class="t-out">(curl https://internal-billing.corp/api)</span>
+  <span class="t-red">⛔ 403: not on the net.egress allowlist</span>
+<span class="t-ai">●</span> <span class="t-bold">Edit</span><span class="t-out">(sync/worker.py)</span> <span class="t-pass">✓</span>
+<span class="t-cmt">task finished inside $WORK · every command captured</span></pre></div>
         </div>
       </div>
-
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        <span class="pill green">context</span>
-        <div class="terminal">
-          <div class="terminal-bar">
-            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="terminal-path">persistent context</span>
-          </div>
-          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context show</span>
-<span class="t-cmt">── Context (depth=2) ──────────────────</span>
-  <span class="t-out">Goal:</span> <span class="t-bold">redesign the pitch into feature slides</span>
-  <span class="t-out">Recent Trace:</span>
-    <span class="t-ai">THINK</span>    reuse the sandbox tab for env
-    <span class="t-pass">ACT</span>      edited docs/pitch/index.html
-    <span class="t-out">OBSERVE</span>  read docs/index.html
-  <span class="t-out">Open TODOs:</span>
-    <span class="t-warn">□</span> port the sandbox CSS under .ee</pre></div>
-        </div>
-      </div>
+      <div class="sb-block fs"><span class="bl">✋ fs wall · blocked</span><span class="bt"><b>~/.ssh/id_rsa</b> · outside fs.read</span></div>
+      <div class="sb-block net"><span class="bl">✋ net wall · blocked</span><span class="bt"><b>internal-billing.corp</b> · not on net.egress</span></div>
     </div>
+
+    <p class="sb-payoff">The agent <b>still finishes the task</b>. Only the <span class="green">reviewed diff</span> is merged.</p>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 6 — h5i env (the supervised sandbox)
+     SLIDE 6 — The receipt (prompt, context, tests, denials, diff)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:18px;">
-  <div style="width:100%;max-width:1040px;">
-    <div class="section-tag">The sandbox</div>
-    <h2><span class="red">Supervised sandbox</span> for agents.</h2>
-    <p class="lede" style="max-width:880px;">A sandboxed worktree per agent: tiered isolation and a network egress allowlist.</p>
+  <div style="width:100%;max-width:1080px;">
+    <div class="section-tag">The receipt</div>
+    <h2>Every diff gets a <span class="red">receipt</span>.</h2>
+    <p class="lede" style="max-width:940px;">The prompt, the reasoning, the commands, the tests, the denials: attached to the commit, versioned in Git, recallable from any clone. No SaaS.</p>
 
-    <div class="ensemble-embed ee sandbox-embed" style="margin-top:12px;zoom:0.82;" role="group" aria-label="A static preview of the h5i serve dashboard's Sandbox tab: an environment fleet, per-run flight recorder, and the enforced policy.">
-      <div class="ee-bar">
-        <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
-        <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span>
-        <div class="ee-tabs">
-          <span class="ee-tab">Ensemble</span>
-          <span class="ee-tab active">Sandbox</span>
-          <span class="ee-tab">Context</span>
+    <div class="rc-cols">
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">a week later · any clone</span>
         </div>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --limit 1</span>
+<span class="t-bold">commit 4f2c9e1</span>  <span class="t-out">fix: clamp retry jitter</span>
+  <span class="t-out">agent</span>    <span class="t-ai">claude-code · claude-opus-4-8</span>
+  <span class="t-out">prompt</span>   <span class="t-cmt">"Fix the flaky retry test in tests/test_worker.py"</span>
+  <span class="t-out">context</span>  <span class="t-out">goal + reasoning trace, restorable per commit</span>
+  <span class="t-out">tests</span>    <span class="t-pass">241 passed</span> <span class="t-out">· coverage +1</span>
+  <span class="t-out">denials</span>  <span class="t-red">2 blocked</span> <span class="t-out">· logged as evidence</span>
+  <span class="t-out">tokens</span>   <span class="t-pass">−94%</span> <span class="t-out">(412 → 9 lines, raw recoverable)</span></pre></div>
       </div>
-      <div class="ee-body">
-        <div class="sbx-shell">
-          <div class="sbx-strip">
-            <div class="sbx-strip-group">
-              <span class="sbx-strip-label">host</span>
-              <span class="ee-tag ok">workspace ✓</span>
-              <span class="ee-tag ok">process ✓</span>
-              <span class="ee-tag ok">supervised ✓</span>
-              <span class="ee-tag ok">container ✓</span>
-              <span class="ee-tag ok">cgroups ✓</span>
-            </div>
-            <div class="sbx-strip-vitals">
-              <span class="sbx-vital"><span class="sbx-vital-num">3</span><span class="sbx-vital-label">active</span></span>
-              <span class="sbx-vital"><span class="sbx-vital-num" style="color:var(--h5-accent-hi)">1</span><span class="sbx-vital-label">proposed</span></span>
-              <span class="sbx-vital"><span class="sbx-vital-num" style="color:var(--h5-fail)">1</span><span class="sbx-vital-label">boundary trips</span></span>
-              <span class="sbx-vital"><span class="sbx-vital-num">12</span><span class="sbx-vital-label">captures</span></span>
-            </div>
-          </div>
-          <div class="sbx-body">
-            <div class="sbx-fleet">
-              <div class="sbx-fleet-header"><span>Environments</span><span class="ee-tag round">3</span></div>
-              <div class="sbx-filters">
-                <span class="sbx-chip active">all</span>
-                <span class="sbx-chip">running</span>
-                <span class="sbx-chip">proposed</span>
-                <span class="sbx-chip">pressure</span>
-                <span class="sbx-chip">container</span>
-              </div>
-              <div class="sbx-fleet-body">
-                <table class="sbx-fleet-table">
-                  <thead><tr><th>Env</th><th>Isolation</th><th>Status</th><th>Pressure</th></tr></thead>
-                  <tbody>
-                    <tr class="selected">
-                      <td><div class="sbx-env-id">codex-1/<br>fix-auth</div><div class="sbx-env-sub">5 caps</div></td>
-                      <td><span class="ee-tag ok">container</span></td>
-                      <td><span class="sbx-status">proposed</span></td>
-                      <td><span class="sbx-pressure warning"><span class="sbx-pressure-score">38</span><span class="sbx-pressure-bar"><span class="sbx-pressure-fill" style="width:38%"></span></span></span></td>
-                    </tr>
-                    <tr>
-                      <td><div class="sbx-env-id">claude-1/<br>fix-auth</div><div class="sbx-env-sub">4 caps</div></td>
-                      <td><span class="ee-tag ok">container</span></td>
-                      <td><span class="sbx-status">idle</span></td>
-                      <td><span class="sbx-pressure clean">clean</span></td>
-                    </tr>
-                    <tr>
-                      <td><div class="sbx-env-id">claude-2/<br>fix-auth</div><div class="sbx-env-sub">3 caps<span class="sbx-drift"><br>behind 2</span></div></td>
-                      <td><span class="ee-tag pri">process</span></td>
-                      <td><span class="sbx-status">idle</span></td>
-                      <td><span class="sbx-pressure clean">clean</span></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div class="sbx-detail">
-              <div class="sbx-detail-head">
-                <div><span class="sbx-detail-title">codex-1/fix-auth</span><span class="ee-tag ok">container</span><span class="sbx-detail-digest">a3f1c0d8e7b4</span></div>
-                <span class="sbx-pressure warning"><span class="sbx-pressure-score">38</span><span class="sbx-pressure-bar"><span class="sbx-pressure-fill" style="width:38%"></span></span></span>
-              </div>
-              <div class="sbx-detail-body">
-                <div class="sbx-findings">
-                  <div class="sbx-finding warning">
-                    <span class="sbx-lane-chip lane-net">NET</span>
-                    <span class="sbx-finding-title">egress denied</span>
-                    <span class="sbx-finding-detail">CONNECT pypi.org:443 blocked: not in the net.egress allowlist (fail-closed)</span>
-                    <code class="ee-code">cap-7f3a</code>
-                  </div>
-                </div>
-
-                <div class="sbx-timeline">
-                  <div class="sbx-timeline-head">Flight recorder · 2 runs</div>
-                  <div class="sbx-lane-grid">
-                    <div class="sbx-lane-row sbx-lane-policy">
-                      <div class="sbx-run-cell sbx-run-policy">policy allows →</div>
-                      <div class="sbx-lane-cell"><div class="sbx-lane-name">FS</div><div class="sbx-lane-allow">$WORK rw</div></div>
-                      <div class="sbx-lane-cell"><div class="sbx-lane-name">NET</div><div class="sbx-lane-allow">allow 2</div></div>
-                      <div class="sbx-lane-cell"><div class="sbx-lane-name">PROC</div><div class="sbx-lane-allow">any tool</div></div>
-                    </div>
-                    <div class="sbx-lane-row">
-                      <div class="sbx-run-cell"><div class="sbx-run-cmd">cargo test --workspace</div><div class="sbx-run-meta">exit 0 · 14:32:01</div></div>
-                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
-                      <div class="sbx-lane-cell"><span class="sbx-verdict ok">✓</span></div>
-                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
-                    </div>
-                    <div class="sbx-lane-row">
-                      <div class="sbx-run-cell"><div class="sbx-run-cmd">pip install requests</div><div class="sbx-run-meta">exit 1 · 14:33:18</div></div>
-                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
-                      <div class="sbx-lane-cell"><span class="sbx-verdict warning">⚠ pressure</span></div>
-                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="sbx-policy">
-                  <div class="sbx-policy-head">Enforced policy · what was actually allowed</div>
-                  <div class="sbx-policy-grid">
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">isolation</span><span class="sbx-policy-val">container</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">net.mode</span><span class="sbx-policy-val">deny</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">net.egress</span><span class="sbx-policy-val">github.com, crates.io</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">fs.write</span><span class="sbx-policy-val">$WORK</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">tools</span><span class="sbx-policy-val">(unrestricted)</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">env.pass</span><span class="sbx-policy-val">CARGO_HOME, PATH</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">wall</span><span class="sbx-policy-val">900s</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">mem</span><span class="sbx-policy-val">2G</span></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+      <div class="rc-list">
+        <div class="rc-ck"><span class="box">✓</span>Prompt</div>
+        <div class="rc-ck"><span class="box">✓</span>Reasoning context</div>
+        <div class="rc-ck"><span class="box">✓</span>Commands</div>
+        <div class="rc-ck"><span class="box">✓</span>Test output</div>
+        <div class="rc-ck"><span class="box">✓</span>Denied actions</div>
+        <div class="rc-ck"><span class="box">✓</span>Final diff</div>
       </div>
     </div>
+
+    <p class="rc-sub">A week later, you can still answer: <b>why did this diff happen, and was it built safely?</b></p>
   </div>
 </div>
 
@@ -1133,7 +971,7 @@
   <div style="width:100%;max-width:1080px;">
     <div class="section-tag">Token reduction</div>
     <h2>Tool output is filtered before it<br>hits the <span class="red">context window</span>.</h2>
-    <p class="lede" style="max-width:900px;"><code>h5i capture run</code> keeps every command's raw output out-of-band and hands the agent a compact, structured summary. Nothing is lost, only the noise.</p>
+    <p class="lede" style="max-width:900px;">And the receipt never bloats the context: <code>h5i capture run</code> keeps every command's raw output out-of-band and hands the agent a compact, structured summary. Nothing is lost, only the noise.</p>
 
     <div style="margin-top:18px;display:flex;align-items:center;gap:16px;">
       <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;">
@@ -1196,7 +1034,7 @@
   <div style="width:100%;max-width:1040px;">
     <div class="section-tag">Audit</div>
     <h2>Triage the riskiest AI changes<br><span class="red">before they merge</span>.</h2>
-    <p class="lede" style="max-width:880px;"><code>h5i audit review</code> ranks commits by uncertainty, blind edits, churn, and scope, so review starts with the ones that need it most.</p>
+    <p class="lede" style="max-width:880px;">Receipts make triage automatic: <code>h5i audit review</code> ranks commits by uncertainty, blind edits, churn, and scope, so review starts with the ones that need it most.</p>
 
     <div class="terminal" style="margin-top:16px;">
       <div class="terminal-bar">
@@ -1318,7 +1156,7 @@
       </div>
     </div>
 
-    <p class="lede" style="margin:22px auto 0;text-align:center;max-width:860px;">AI agents are becoming software labor. <span class="green">h5i is the auditable workspaces for AI agent teams.</span></p>
+    <p class="lede" style="margin:22px auto 0;text-align:center;max-width:860px;font-size:1.5rem;">Git tracks the <strong style="color:var(--ink);">diff</strong>. <span class="red" style="font-weight:700;">h5i tracks the run.</span></p>
 
     <div class="cta-links" style="justify-content:center;margin-top:16px;">
       <a class="btn btn-primary" href="https://h5i.dev">h5i.dev</a>
