@@ -95,7 +95,77 @@ compose with h5i more than they compete.
 
 ---
 
-## 2. TL;DR positioning
+## 2. What is being sandboxed? (the load-bearing axis)
+
+The mechanism grouping above (OS-primitive, container, microVM) is the *how*.
+The more important question for positioning is the *what*: **what runs inside
+the box?** The field splits into two purposes that barely compete, and h5i is
+squarely on one side.
+
+**A. Code-execution sandboxes (run the artifact).** The agent is trusted and
+runs *outside* the box; the box executes the *code the agent generated* or a
+tool call. The threat model is "untrusted code, trusted orchestrator." The
+interaction model is a programmatic SDK called mid-turn (`sandbox.run(code)`),
+usually ephemeral and high-fan-out. The virtues that matter are cold-start
+latency, density, strong untrusted-code isolation, and pause/resume, which is
+exactly why these tools obsess over millisecond fork times and microVM
+boundaries.
+
+> E2B, zeroboot, secure-exec, tensorlake, CubeSandbox, sandboxd (runs the
+> generated app), boxlite and SmolVM when driven as an API "disposable
+> computer," branchfs (a filesystem for the generated changes).
+
+**B. Agent-in-the-box sandboxes (run the agent).** The *agent process itself*
+(a coding CLI like Claude Code or Codex) runs *inside* the box, so every file
+edit, shell command, and subprocess it spawns is contained by construction. The
+threat model is "a fallible or prompt-injectable agent working on a real repo,"
+not malicious bytes. The interaction model is: launch a session in the box,
+work in a persistent worktree, review after. The virtues that matter are
+auditability, a review loop, credential and worktree provisioning, and
+staying-in-the-box ergonomics.
+
+> **h5i env** (agent-in-box profile), container-use, coasts, moltis, and
+> SmolVM/boxlite's coding-agent presets (`smolvm claude start`, SkillBox).
+
+**A middle band C. Cooperative per-command confinement.** The agent runs on the
+host, but each *command it issues* is wrapped and gated per call. This is
+Claude Code `/sandbox`, Codex's per-exec sandbox, and fence. It is agent-in-box
+in spirit (it contains the agent's actions) without moving the agent process
+into the box. h5i spans B and C: `env shell` puts the whole agent in the box,
+while the wrap-bash hook and tee-shim observe per-command.
+
+**Why this axis is the real differentiator, not a taxonomy footnote:**
+
+1. **It re-scopes the competition.** E2B, zeroboot, secure-exec, and tensorlake
+   are not h5i's rivals; they are substrates an agent *inside* h5i could call as
+   a tool to run generated code. h5i's true peers on purpose are container-use,
+   Claude Code, Codex, coasts, moltis, and Sculptor. The comparison matrix in
+   the next section mixes both purposes on purpose (to show the full field), but
+   the "who does h5i actually displace" answer is class B/C only.
+2. **It explains why the provenance moat exists at all.** You can only capture
+   prompts, a reasoning/context branch, cross-agent messages, and a
+   session-level review loop *if the agent is what is in the box*. A
+   code-execution sandbox has nothing to audit but the code's stdout. h5i's
+   entire differentiator set is inseparable from the agent-in-box purpose, which
+   is why no class-A tool competes on it.
+3. **It reframes h5i's "gaps."** The no-microVM and no-snapshot/fast-fork gaps
+   in §6 are largely *class-A virtues*: untrusted-code isolation and ms-fork
+   density serve "run this generated snippet safely," not "contain the coding
+   agent auditably." They are mostly cross-purpose, not h5i falling behind on
+   its own axis. The honest exception is the **arena** (N candidate envs), where
+   cheap fork genuinely would help, so that one class-A virtue does bleed into
+   class B and is worth borrowing there specifically.
+4. **The two purposes compose.** The clean end state is an agent running
+   in-box under h5i (class B) that reaches for a class-A code-execution sandbox
+   (E2B, a future h5i `microvm` tier) when it needs to run *untrusted generated
+   code* at arm's length. h5i governs and audits; the class-A box provides the
+   hardware boundary for the risky snippet. Positioning them as rivals is a
+   category error; the microVM borrow in §10 is really "give class B an on-demand
+   class-A escape hatch."
+
+---
+
+## 3. TL;DR positioning
 
 The landscape has three concerns, and **`h5i env` is still the only entry that
 spans all three at once**: a *git-worktree agent environment with a review
@@ -146,7 +216,7 @@ reach the VM band by design. Its edge is orthogonal to that band.
 
 ---
 
-## 3. Comparison matrix
+## 4. Comparison matrix
 
 Columns chosen where projects genuinely differ. "n/a" means the concept does
 not apply to that project's shape.
@@ -172,7 +242,7 @@ crowd beats it on **isolation ceiling** and **snapshot/pause-resume**.
 
 ---
 
-## 4. Where h5i env is genuinely distinctive
+## 5. Where h5i env is genuinely distinctive
 
 1. **Provenance depth plus shareability, and it is the market whitespace.**
    Every run is a structured, token-reduced capture with a raw blob, the
@@ -210,7 +280,13 @@ crowd beats it on **isolation ceiling** and **snapshot/pause-resume**.
 
 ---
 
-## 5. Where h5i env is behind (honest gaps)
+## 6. Where h5i env is behind (honest gaps)
+
+Read gaps 1 and 2 through the lens of §2: they are largely *class-A*
+(code-execution) virtues, not places h5i trails on its own agent-in-box axis.
+They matter to h5i mainly where the two purposes meet (the arena, and an
+on-demand hardware boundary for untrusted generated code), which is how the
+borrow list frames them.
 
 1. **No microVM tier.** For genuinely hostile code, E2B / firecracker / boxlite
    / SmolVM / CubeSandbox / zeroboot / Kata-via-OpenSandbox give a hardware or
@@ -240,7 +316,7 @@ crowd beats it on **isolation ceiling** and **snapshot/pause-resume**.
 
 ---
 
-## 6. Security posture: an honest read (untrusted-code threat model)
+## 7. Security posture: an honest read (untrusted-code threat model)
 
 *The single question that decides everything: does the sandbox share the host
 kernel?* Every reference tool sorts on this.
@@ -291,7 +367,7 @@ as OpenSandbox shells out to Kata), not further patching `process`.
 
 ---
 
-## 7. What the whole field converged on (read these as signals)
+## 8. What the whole field converged on (read these as signals)
 
 Five patterns showed up independently across many projects. Convergence is
 evidence they are right.
@@ -328,7 +404,7 @@ evidence they are right.
 
 ---
 
-## 8. End-user pain points (what "truly useful" has to answer)
+## 9. End-user pain points (what "truly useful" has to answer)
 
 From issue trackers, HN, and vendor postmortems. These decide adoption, and
 several map directly onto things h5i already does.
@@ -377,7 +453,7 @@ several map directly onto things h5i already does.
 
 ---
 
-## 9. Ideas worth borrowing (prioritized, with shipped status)
+## 10. Ideas worth borrowing (prioritized, with shipped status)
 
 Everything from the old `borrowing-from-coasts.md` fleet/services/ports/secrets
 track has **shipped v1**: `env list --json`, `env doctor`, `env secrets` (broker
@@ -478,7 +554,7 @@ layer is done; the items below are the *new* frontier from this wider survey.
 
 ---
 
-## 10. Bottom line and differentiation strategy
+## 11. Bottom line and differentiation strategy
 
 `h5i env` is best-in-class on **git-native provenance, the review loop,
 cross-agent messaging, and fail-closed rigor**; competitive on **rootless
@@ -487,12 +563,16 @@ parity-to-behind on **egress L7 depth**, with honest gaps at the **isolation
 ceiling** (no VM tier), **ephemeral-scale lifecycle** (no snapshot/pause-resume),
 and **cross-platform confinement** (Linux only).
 
-The market taught three things. First, isolation is a crowded, well-served
-frontier where two first-party harnesses and a dozen microVM tools already
-compete, so h5i should *reach parity by shelling out* (microVM tier, MITM
-egress, host-canonicalization) rather than try to out-isolate them. Second,
-**provenance and the review loop are the real whitespace**, thinly served by
-shepherd and tensorlake alone, and that is h5i's core. Third, the loudest
+The market taught four things. First (§2), h5i is an **agent-in-the-box** tool,
+so most of the microVM/snapshot field is a *different purpose* (run generated
+code, not the agent) and composes with h5i rather than competing; positioning
+against E2B or zeroboot on isolation strength is a category error. Second,
+isolation *within h5i's own class* is a crowded, well-served frontier where two
+first-party harnesses already compete, so h5i should *reach parity by shelling
+out* (microVM escape hatch, MITM egress, host-canonicalization) rather than try
+to out-isolate them. Third, **provenance and the review loop are the real
+whitespace**, thinly served by shepherd and tensorlake alone, and they only
+exist *because* h5i runs the agent, not the artifact. Fourth, the loudest
 end-user pain, worktrees that don't actually work, is a gap h5i has **already
 closed** (per-env HOME isolation, `private_paths`, services, ports, config
 lockdown) and under-markets.
