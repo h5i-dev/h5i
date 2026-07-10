@@ -203,13 +203,19 @@ Create an isolated environment: code branch + git worktree under .git/.h5i/env/,
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-pr\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-\-from\fR \fI<FROM>\fR
 Base revision (default: HEAD). Pinned immutably
+.TP
+\fB\-\-pr\fR \fI<NUMBER|URL>\fR
+Base the env on a GitHub pull request (number, #number, or URL): fetches refs/pull/<n>/head from the remote, pins it as the immutable base, and points the env\*(Aqs parent branch at a local `pr/<n>` tracking branch \(em so propose/apply review the PR head, and apply prints the push\-back command. Needs only `git`; `gh` (optional) enriches the push\-back hint with the PR\*(Aqs head branch name
+.TP
+\fB\-\-remote\fR \fI<REMOTE>\fR [default: origin]
+Remote to fetch the PR head from (with \-\-pr)
 .TP
 \fB\-\-profile\fR \fI<PROFILE>\fR
 Policy profile from .h5i/env.toml. Built\-ins need no file: `agent` (agent\-in\-box, scoped to $H5I_AGENT\*(Aqs runtime), `agent\-claude` / `agent\-codex` (pin one runtime: only that agent\*(Aqs HOME state + API egress), and `default` (fail\-closed build/test confinement). Unset auto\-picks the creating runtime\*(Aqs agent profile when this host can enforce it, else `default`
@@ -267,6 +273,24 @@ Environment name (slug, `agent/slug`, or full `env/agent/slug`)
 .TP
 [\fICOMMAND\fR]
 Command to run inside the box (after `\-\-`); default: an interactive shell
+.SH "H5I ENV ALLOW"
+Manage the persistent user-level egress allowlist: extra hosts merged into every container-tier env whose profile already sets net.egress (a deny-all profile is never widened). Stored host-side under ~/.config/h5i/, outside every box-granted path; takes effect at the next `env run`/`env shell`. With no rule, lists the current entries
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBallow\fR [\fB\-\-remove\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIRULE\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-remove\fR
+Remove the rule instead of adding it
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIRULE\fR]
+Host rule: exact `api.example.com`, wildcard `.example.com` / `*.example.com`, optionally with a `:port` suffix
 .SH "H5I ENV PROBE"
 Probe what isolation this host can actually provide (Landlock, user namespaces, seccomp) and which claims are satisfiable
 .ie \n(.g .ds Aq \(aq
