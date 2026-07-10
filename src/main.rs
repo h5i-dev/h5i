@@ -2155,6 +2155,10 @@ enum TeamCommands {
         /// Read the task from a file
         #[arg(long = "task-file", conflicts_with = "task")]
         task_file: Option<std::path::PathBuf>,
+        /// TOML manifest parameterizing the run (task/rounds/verify/gate +
+        /// optional agent enrollment). Flags below override manifest values.
+        #[arg(long)]
+        manifest: Option<std::path::PathBuf>,
         /// Maximum review→revise cycles (early exit on full approval)
         #[arg(long, default_value_t = 1)]
         rounds: u32,
@@ -10198,6 +10202,7 @@ fn main() -> anyhow::Result<()> {
                     team,
                     task,
                     task_file,
+                    manifest,
                     rounds,
                     verify_cmd,
                     isolation,
@@ -10208,15 +10213,110 @@ fn main() -> anyhow::Result<()> {
                     timeout,
                     json,
                 } => {
-                    use h5i_core::orchestra::{self, patterns};
+                    use h5i_core::orchestra::{self, manifest::TeamManifest, patterns};
                     let run_id = h5i_core::team::resolve_run(&h5i_root, team)?;
-                    let task_text = match (task, task_file) {
-                        (Some(t), _) => t,
-                        (None, Some(f)) => std::fs::read_to_string(&f).map_err(|e| {
-                            anyhow::anyhow!("failed to read task file {}: {e}", f.display())
-                        })?,
-                        (None, None) => anyhow::bail!("pass the task via --task or --task-file"),
+
+                    // A manifest supplies parameters (never control flow);
+                    // explicit flags override it. `clap`'s defaults are used
+                    // as the override signal for the numeric/bool ones.
+                    let manifest_data = match &manifest {
+                        Some(path) => {
+                            let src = std::fs::read_to_string(path).map_err(|e| {
+                                anyhow::anyhow!(
+                                    "failed to read manifest {}: {e}",
+                                    path.display()
+                                )
+                            })?;
+                            Some(TeamManifest::parse(&src)?)
+                        }
+                        None => None,
                     };
+                    let base_dir = manifest
+                        .as_ref()
+                        .and_then(|p| p.parent())
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+                    let flag_task = match (task, task_file) {
+                        (Some(t), _) => Some(t),
+                        (None, Some(f)) => Some(std::fs::read_to_string(&f).map_err(|e| {
+                            anyhow::anyhow!("failed to read task file {}: {e}", f.display())
+                        })?),
+                        (None, None) => None,
+                    };
+                    let task_text = match &manifest_data {
+                        Some(m) => m.resolve_task(&base_dir, flag_task)?,
+                        None => flag_task
+                            .ok_or_else(|| anyhow::anyhow!("pass the task via --task, --task-file, or --manifest"))?,
+                    };
+                    // Merge parameters: flag if non-default, else manifest, else default.
+                    let rounds = if rounds != 1 {
+                        rounds
+                    } else {
+                        manifest_data.as_ref().map(|m| m.rounds).unwrap_or(1)
+                    };
+                    let verify_cmd = verify_cmd
+                        .or_else(|| manifest_data.as_ref().and_then(|m| m.verify_cmd.clone()));
+                    let isolation = isolation
+                        .or_else(|| manifest_data.as_ref().and_then(|m| m.isolation.clone()));
+                    let apply = apply || manifest_data.as_ref().map(|m| m.apply).unwrap_or(false);
+                    let gate = gate || manifest_data.as_ref().map(|m| m.gate).unwrap_or(false);
+
+                    // Optional roster enrollment from the manifest, when the
+                    // team has none yet (idempotent: skip already-present ids).
+                    if let Some(m) = &manifest_data {
+                        if !m.agents.is_empty() {
+                            let existing = h5i_core::team::status(git, &run_id)?.run;
+                            let workdir = git.workdir().ok_or_else(|| {
+                                anyhow::anyhow!("team run requires a non-bare repository")
+                            })?;
+                            let env_agent = msg::resolve_identity(&h5i_root, None)
+                                .unwrap_or_else(|_| "human".into());
+                            for a in &m.agents {
+                                if existing.agents.iter().any(|e| e.agent_id == a.name) {
+                                    continue;
+                                }
+                                let env_id = match &a.env {
+                                    Some(id) => h5i_core::env::find(&h5i_root, id)?.id,
+                                    None => {
+                                        let owner = a
+                                            .runtime
+                                            .clone()
+                                            .unwrap_or_else(|| env_agent.clone());
+                                        let slug = format!("{run_id}-{}", a.name);
+                                        h5i_core::env::create(
+                                            git,
+                                            &h5i_root,
+                                            workdir,
+                                            &owner,
+                                            &slug,
+                                            h5i_core::env::CreateOpts {
+                                                profile: a.profile.clone(),
+                                                ..Default::default()
+                                            },
+                                        )?
+                                        .id
+                                    }
+                                };
+                                h5i_core::team::add_env(
+                                    git,
+                                    &h5i_root,
+                                    &run_id,
+                                    &env_id,
+                                    &a.name,
+                                    a.runtime.clone(),
+                                    a.model.clone(),
+                                    &actor,
+                                )?;
+                                eprintln!(
+                                    "{} enrolled {} → {}",
+                                    STEP,
+                                    style(&a.name).green().bold(),
+                                    env_id
+                                );
+                            }
+                        }
+                    }
                     let launcher: std::sync::Arc<dyn orchestra::RuntimeLauncher> =
                         if launch_resident {
                             std::sync::Arc::new(orchestra::LaunchResident)
@@ -10249,6 +10349,15 @@ fn main() -> anyhow::Result<()> {
                             STEP,
                             agents.len()
                         );
+                        // Fail the predictable ways now, not at minute 30.
+                        let mut preflight = c.preflight();
+                        if !launch_resident {
+                            preflight = preflight.require_live(&agents);
+                        }
+                        if apply || gate {
+                            preflight = preflight.require_clean_worktree();
+                        }
+                        preflight.run().await?;
                         let mut ensemble =
                             patterns::ensemble(&c, &task_text).agents(agents).rounds(rounds);
                         if let Some(cmd) = &verify_cmd {

@@ -48,6 +48,11 @@ struct State {
     /// Keys this process has replayed or recorded — what `patched` uses to
     /// tell "resuming an older run" from "executing fresh".
     consumed: std::collections::BTreeSet<String>,
+    /// Labels with an allocated-but-unfinished key. Concurrent steps under one
+    /// label get nondeterministic sequence numbers — which silently corrupts
+    /// replay pairing on resume — so allocation under an in-flight label fails
+    /// closed instead.
+    in_flight: BTreeMap<String, String>,
 }
 
 impl Journal {
@@ -77,6 +82,7 @@ impl Journal {
                 seq: BTreeMap::new(),
                 replay,
                 consumed: Default::default(),
+                in_flight: BTreeMap::new(),
             }),
         }
     }
@@ -87,11 +93,35 @@ impl Journal {
     }
 
     /// Allocate the next step key for `label` (`label#1`, `label#2`, …).
-    pub(crate) fn next_key(&self, label: &str) -> String {
+    /// Fails closed while another allocation of the same label is in flight:
+    /// concurrent same-label steps would take nondeterministic sequence
+    /// numbers, so a resume could pair the wrong recorded results. Sequential
+    /// re-use of one label (loops that await each step) never trips this; for
+    /// parallel loops, give each branch its own label (`Conductor::scope`).
+    /// For agent turns the collision also means two concurrent turns were
+    /// aimed at one agent — which the one-session-per-agent model forbids
+    /// anyway (run same-agent turns sequentially, as `map_reduce` does).
+    pub(crate) fn next_key(&self, label: &str) -> Result<String, H5iError> {
         let mut st = self.state.lock().expect("journal lock");
+        if let Some(pending) = st.in_flight.get(label) {
+            return Err(H5iError::Metadata(format!(
+                "orchestra: concurrent steps under one label '{label}' (step '{pending}' is \
+                 still in flight) — parallel steps need distinct labels: use \
+                 Conductor::scope for step loops, and run same-agent turns sequentially"
+            )));
+        }
         let seq = st.seq.entry(label.to_string()).or_insert(0);
         *seq += 1;
-        format!("{label}#{seq}")
+        let key = format!("{label}#{seq}");
+        st.in_flight.insert(label.to_string(), key.clone());
+        Ok(key)
+    }
+
+    /// Mark `label`'s in-flight allocation finished (recorded, replayed, or
+    /// failed — a failed step must not wedge its label for in-process retries).
+    pub(crate) fn finish(&self, label: &str) {
+        let mut st = self.state.lock().expect("journal lock");
+        st.in_flight.remove(label);
     }
 
     /// Replay the recorded result for `key` as `T`, if one exists. A recorded
@@ -129,13 +159,15 @@ impl Journal {
         st.replay.keys().any(|k| !st.consumed.contains(k))
     }
 
-    /// Record a completed step's result. Executes-once semantics come from the
-    /// caller consulting `replay_as` first; this only appends.
+    /// Record a completed step's result (+ wall-clock cost, part of the
+    /// evidence trail). Executes-once semantics come from the caller
+    /// consulting `replay_as` first; this only appends.
     pub(crate) fn record<T: Serialize>(
         &self,
         key: &str,
         label: &str,
         value: &T,
+        duration_ms: u64,
     ) -> Result<(), H5iError> {
         let result = serde_json::to_value(value)?;
         let rendered = serde_json::to_string(&result)?;
@@ -156,7 +188,12 @@ impl Journal {
             None,
             None,
             format!("{STEP_EVENT_KIND}:{}:{key}", self.run_id),
-            serde_json::json!({ "key": key, "label": label, "result": result }),
+            serde_json::json!({
+                "key": key,
+                "label": label,
+                "result": result,
+                "duration_ms": duration_ms,
+            }),
         );
         team::append_event(&repo, &ev)?;
         let mut st = self.state.lock().expect("journal lock");

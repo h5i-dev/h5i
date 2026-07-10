@@ -35,7 +35,13 @@ pub fn render_trace(run_id: &str, events: &[TeamEvent]) -> String {
                     .get("result")
                     .map(|r| r.to_string().len())
                     .unwrap_or(0);
-                format!("◆ step {key} ({size}B result)")
+                let cost = ev
+                    .payload
+                    .get("duration_ms")
+                    .and_then(|v| v.as_u64())
+                    .map(|ms| format!(", {:.1}s", ms as f64 / 1000.0))
+                    .unwrap_or_default();
+                format!("◆ step {key} ({size}B result{cost})")
             }
             "orch_note" => format!("✎ note: {}", payload_str(ev, "text").unwrap_or("")),
             "orch_gate_asked" => format!(

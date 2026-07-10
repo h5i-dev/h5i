@@ -111,11 +111,16 @@ fn fabricate_env(repo: &Repository, h5i_root: &Path, agent: &str, slug: &str) ->
 /// Review turn it posts `review_body`; on an Ask turn it pops the next queued
 /// reply (via the in-box spool when `ask_via_spool`, else recorded directly).
 /// Counts every turn so resume tests can assert zero re-execution.
+type AskFn = dyn Fn(&TurnContext, &crate::team::TeamRun) -> String + Send + Sync;
+
 struct Script {
     turns: AtomicUsize,
     review_body: Mutex<String>,
     ask_replies: Mutex<Vec<String>>,
     ask_via_spool: bool,
+    /// When set, computes the ask reply from the live run state (for judges
+    /// that must cite real ids). Takes precedence over `ask_replies`.
+    ask_fn: Option<Box<AskFn>>,
 }
 
 fn scripted(review_body: &str) -> Arc<Script> {
@@ -124,6 +129,7 @@ fn scripted(review_body: &str) -> Arc<Script> {
         review_body: Mutex::new(review_body.into()),
         ask_replies: Mutex::new(Vec::new()),
         ask_via_spool: false,
+        ask_fn: None,
     })
 }
 
@@ -166,7 +172,10 @@ impl Script {
                     )?;
                 }
                 TurnKind::Ask => {
-                    let body = {
+                    let body = if let Some(f) = &script.ask_fn {
+                        let run = team::status(&repo, &turn.run_id)?.run;
+                        f(turn, &run)
+                    } else {
                         let mut q = script.ask_replies.lock().unwrap();
                         if q.is_empty() {
                             "{}".to_string()
@@ -488,6 +497,15 @@ async fn trace_renders_steps_and_phases() {
     assert!(dot.starts_with("digraph"));
     assert!(dot.contains("label=\"fetch\""), "missing lane cluster:\n{dot}");
     assert!(dot.contains("\"fetch#1\""));
+
+    // Item 6: every journaled step records its wall-clock cost, rendered in
+    // the trace as evidence of whether orchestration paid for itself.
+    let step_ev = events.iter().find(|e| e.kind == "orch_step").unwrap();
+    assert!(
+        step_ev.payload.get("duration_ms").and_then(|v| v.as_u64()).is_some(),
+        "step must carry duration_ms"
+    );
+    assert!(text.contains("s)"), "trace must render the step's duration:\n{text}");
 }
 
 #[tokio::test]
@@ -502,6 +520,7 @@ async fn ask_via_spool_ingests_and_parses() {
         review_body: Mutex::new(String::new()),
         ask_replies: Mutex::new(vec!["{\"score\": 8, \"verdict\": \"solid\"}".into()]),
         ask_via_spool: true,
+        ask_fn: None,
     });
     let c = conductor(dir.path(), "ask-spool", Script::launcher(&script));
     let a = c.agent("claude").env("env/claude/ask").hire().await.unwrap();
@@ -532,6 +551,7 @@ async fn ask_reasks_on_unparseable_reply() {
             "```json\n{\"n\": 42}\n```".into(),
         ]),
         ask_via_spool: false,
+        ask_fn: None,
     });
     let c = conductor(dir.path(), "ask-retry", Script::launcher(&script));
     let a = c.agent("codex").env("env/codex/ask2").hire().await.unwrap();
@@ -677,6 +697,7 @@ async fn pattern_debate_argues_and_concludes() {
             "{\"winner\": \"codex\", \"rationale\": \"portability won\"}".into(),
         ]),
         ask_via_spool: false,
+        ask_fn: None,
     });
     let c = conductor(dir.path(), "debate", Script::launcher(&script));
     let pro = c.agent("claude").env("env/claude/d").hire().await.unwrap();
@@ -721,4 +742,242 @@ async fn roster_binds_enrolled_seats_for_a_driver() {
     let a = agents.iter().find(|a| a.id() == "claude").unwrap();
     let artifact = a.work("do the thing").await.unwrap();
     assert_eq!(artifact.owner_agent, "claude");
+}
+
+#[tokio::test]
+async fn concurrent_same_label_steps_fail_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    init_repo(dir.path());
+    let c = conductor(dir.path(), "guard", Arc::new(Attach));
+
+    // Two overlapping steps under one label: the second allocation must fail
+    // loudly (nondeterministic seq numbers would corrupt replay pairing).
+    let slow = c.step("dup", || {
+        std::thread::sleep(Duration::from_millis(300));
+        Ok(1u32)
+    });
+    let fast = async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        c.step("dup", || Ok(2u32)).await
+    };
+    let (a, b) = tokio::join!(slow, fast);
+    assert!(a.is_ok());
+    let err = b.unwrap_err().to_string();
+    assert!(err.contains("concurrent steps under one label"), "{err}");
+
+    // A failed allocation must not wedge the label: sequential reuse works.
+    let v: u32 = c.step("dup", || Ok(3)).await.unwrap();
+    assert_eq!(v, 3);
+
+    // Scoped parallel loops are the sanctioned shape.
+    let (x, y) = tokio::join!(
+        c.scope("item/1").step("fetch", || Ok(10u32)),
+        c.scope("item/2").step("fetch", || Ok(20u32)),
+    );
+    assert_eq!((x.unwrap(), y.unwrap()), (10, 20));
+
+    // Scoped keys replay stably on resume.
+    let c2 = conductor(dir.path(), "guard", Arc::new(Attach));
+    let r: u32 = c2
+        .scope("item/1")
+        .step("fetch", || Err(H5iError::Metadata("re-executed".into())))
+        .await
+        .unwrap();
+    assert_eq!(r, 10);
+}
+
+#[tokio::test]
+async fn expect_independent_validates_at_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "claude", "ei");
+    fabricate_env(&repo, &h5i_root, "codex", "ei");
+    fabricate_env(&repo, &h5i_root, "mira", "ei");
+
+    let script = scripted("APPROVE");
+    let c = conductor(dir.path(), "indep", Script::launcher(&script));
+    let a = c.agent("claude").env("env/claude/ei").hire().await.unwrap();
+    let b = c.agent("codex").env("env/codex/ei").hire().await.unwrap();
+    let m = c.agent("mira").env("env/mira/ei").hire().await.unwrap();
+
+    // Pre-freeze first attempts are independent by construction.
+    let pa = a.work("part A").expect_independent().await.unwrap();
+    let pb = b.work("part B").expect_independent().await.unwrap();
+    c.freeze().await.unwrap();
+
+    // Contradictory combination is refused up front.
+    let err = m
+        .work("merge")
+        .with_materials([&pa])
+        .expect_independent()
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("contradicts"), "{err}");
+
+    // A genuinely influenced turn fails the expectation at runtime: deliver
+    // material to mira, then demand independence from its next artifact.
+    let merged_err = {
+        // materials via a normal (unguarded) request first, to influence mira
+        let _ = m.work("merge for real").with_materials([&pa, &pb]).await.unwrap();
+        // mira is now a discussion recipient this round; a further "expected
+        // independent" turn must fail the stamp check.
+        m.work("another attempt").expect_independent().await.unwrap_err().to_string()
+    };
+    assert!(merged_err.contains("expected independent"), "{merged_err}");
+}
+
+#[tokio::test]
+async fn preflight_reports_dead_sessions_and_weak_isolation() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "claude", "pf");
+    fabricate_env(&repo, &h5i_root, "codex", "pf");
+
+    let script = scripted("APPROVE");
+    let c = conductor(dir.path(), "pf", Script::launcher(&script));
+    let a = c.agent("claude").env("env/claude/pf").hire().await.unwrap();
+    let b = c.agent("codex").env("env/codex/pf").hire().await.unwrap();
+
+    // Nothing holds the env writer locks and the fabricated claims are
+    // workspace: both configured checks must fail, together, in one report.
+    let err = c
+        .preflight()
+        .require_live([&a, &b])
+        .require_isolation("process")
+        .run()
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no live session for 'claude'"), "{err}");
+    assert!(err.contains("no live session for 'codex'"), "{err}");
+    assert!(err.contains("below the required 'process'"), "{err}");
+
+    // Hold one env's writer lock (a stand-in for a resident session): that
+    // agent passes, the other still fails.
+    let lock_path = env::find(&h5i_root, "env/claude/pf")
+        .unwrap()
+        .dir(&h5i_root)
+        .join("run.lock");
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .unwrap();
+    unsafe {
+        use std::os::unix::io::AsRawFd;
+        assert_eq!(libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX), 0);
+    }
+    let err = c
+        .preflight()
+        .require_live([&a, &b])
+        .run()
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(!err.contains("'claude'"), "claude session is live: {err}");
+    assert!(err.contains("no live session for 'codex'"), "{err}");
+
+    // Clean-worktree check: dirty the tree, expect the failure named.
+    std::fs::write(dir.path().join("scratch.txt"), "dirty\n").unwrap();
+    let err = c
+        .preflight()
+        .require_clean_worktree()
+        .run()
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("not clean"), "{err}");
+    std::fs::remove_file(dir.path().join("scratch.txt")).unwrap();
+    c.preflight().require_clean_worktree().run().await.unwrap();
+}
+
+#[tokio::test]
+async fn judge_panel_scores_over_evidence_and_validates_citations() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "claude", "jp");
+    fabricate_env(&repo, &h5i_root, "codex", "jp");
+    fabricate_env(&repo, &h5i_root, "mira", "jp");
+    fabricate_env(&repo, &h5i_root, "theo", "jp");
+
+    // Two judges vote; each cites the candidate ids from live run state. The
+    // first turn per judge deliberately cites a bogus id to exercise the
+    // re-ask, then a valid ballot on the retry.
+    let attempts = std::sync::Arc::new(AtomicUsize::new(0));
+    let attempts_cl = attempts.clone();
+    let script = Arc::new(Script {
+        turns: AtomicUsize::new(0),
+        review_body: Mutex::new(String::new()),
+        ask_replies: Mutex::new(Vec::new()),
+        ask_via_spool: false,
+        ask_fn: Some(Box::new(move |_turn, run| {
+            let subs: Vec<&crate::team::TeamArtifact> = run.submissions.iter().collect();
+            let first = subs.first().map(|s| s.id.clone()).unwrap_or_default();
+            let attempt = attempts_cl.fetch_add(1, Ordering::SeqCst);
+            // Each judge's first ask cites a hallucinated id → must re-ask.
+            if attempt.is_multiple_of(2) {
+                return serde_json::json!({
+                    "ballots": [{"artifact_id": first, "score": 9,
+                                 "rationale": "cites nothing real",
+                                 "cited_ids": ["bogus-id-123"]}]
+                })
+                .to_string();
+            }
+            // Valid ballot: score every candidate, prefer the first.
+            let ballots: Vec<_> = subs
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    serde_json::json!({
+                        "artifact_id": s.id,
+                        "score": if i == 0 { 9 } else { 5 },
+                        "rationale": format!("grounded in {}", s.id),
+                        "cited_ids": [s.id],
+                    })
+                })
+                .collect();
+            serde_json::json!({ "ballots": ballots }).to_string()
+        })),
+    });
+
+    let c = conductor(dir.path(), "panel", Script::launcher(&script));
+    let a = c.agent("claude").env("env/claude/jp").hire().await.unwrap();
+    let b = c.agent("codex").env("env/codex/jp").hire().await.unwrap();
+    let j1 = c.agent("mira").env("env/mira/jp").hire().await.unwrap();
+    let j2 = c.agent("theo").env("env/theo/jp").hire().await.unwrap();
+
+    let (pa, _pb) = tokio::try_join!(a.work("attempt A"), b.work("attempt B")).unwrap();
+    c.freeze().await.unwrap();
+
+    let outcome = super::patterns::judge_panel(&c, "pick the cleanest solution")
+        .judges([j1, j2])
+        .run()
+        .await
+        .unwrap();
+
+    // Each judge re-asked once (bogus citation) then produced a valid ballot.
+    assert_eq!(outcome.ballots.len(), 2);
+    for (_judge, ballots) in &outcome.ballots {
+        assert_eq!(ballots.len(), 2, "each judge scores both candidates");
+        for ballot in ballots {
+            for cited in &ballot.cited_ids {
+                assert!(
+                    !cited.starts_with("bogus"),
+                    "validated ballots must not carry hallucinated citations"
+                );
+            }
+        }
+    }
+    // First submission got the 9s → it wins the panel, and the verdict is
+    // recorded on the event log (advisory: not auto-applicable).
+    assert_eq!(outcome.verdict.selected_submission.as_deref(), Some(pa.id.as_str()));
+    assert!(!outcome.verdict.can_auto_apply);
+    let recorded = c.status().await.unwrap().run.verdict.unwrap();
+    assert_eq!(recorded.selected_submission, Some(pa.id));
 }

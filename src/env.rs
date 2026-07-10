@@ -122,6 +122,39 @@ enum LockMode {
     Shared,
 }
 
+/// Non-blocking probe: is a writer session (interactive shell, `run`, or a
+/// mutating op) currently holding this env's `run.lock`? pub(crate): the
+/// orchestra preflight uses it as its resident-session liveness heuristic.
+/// A brief host op also holds the lock, so callers should sample more than
+/// once before concluding either way — this is a heuristic, not a guarantee.
+#[cfg(unix)]
+pub(crate) fn writer_session_live(env_dir: &Path) -> bool {
+    use std::os::unix::io::AsRawFd;
+    let path = env_dir.join(RUN_LOCK_FILE);
+    let file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+    {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if rc == 0 {
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+        false
+    } else {
+        true
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn writer_session_live(_env_dir: &Path) -> bool {
+    false
+}
+
 /// Which role is taking the lock — selects the "busy" message on contention.
 #[cfg(unix)]
 #[derive(Clone, Copy)]

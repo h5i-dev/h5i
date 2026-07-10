@@ -109,7 +109,7 @@ impl Ensemble {
         let mut latest: BTreeMap<String, TeamArtifact> = BTreeMap::new();
         let attempts = agents.iter().map(|a| {
             let (a, task) = (a.clone(), task.clone());
-            tokio::spawn(async move { a.work(task).await })
+            tokio::spawn(async move { a.work(task).expect_independent().await })
         });
         for (agent, handle) in agents.iter().zip(attempts.collect::<Vec<_>>()) {
             let artifact = join_flat(handle).await?;
@@ -414,7 +414,7 @@ impl Arena {
             .iter()
             .map(|a| {
                 let (a, task) = (a.clone(), task.clone());
-                tokio::spawn(async move { a.work(task).await })
+                tokio::spawn(async move { a.work(task).expect_independent().await })
             })
             .collect();
         let mut artifacts = Vec::new();
@@ -532,6 +532,237 @@ impl MapReduce {
             }
         };
         Ok(MapReduceOutcome { parts, merged })
+    }
+}
+
+// ── judge_panel ───────────────────────────────────────────────────────────────
+
+/// One judge's scored ballot for a candidate. The judge must ground its call
+/// in the run's recorded evidence: `cited_ids` are artifact / verification /
+/// review ids that the panel validates against actual run state (a hallucinated
+/// citation triggers a re-ask). This is the differentiator — LLM *judgment over
+/// recorded evidence*, not vibes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Ballot {
+    /// Candidate artifact id this ballot scores.
+    pub artifact_id: String,
+    /// 0–10.
+    pub score: u32,
+    pub rationale: String,
+    /// Evidence ids the rationale is grounded in (artifact/verification/review).
+    #[serde(default)]
+    pub cited_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct JudgeCard {
+    ballots: Vec<Ballot>,
+}
+
+pub struct JudgePanelOutcome {
+    /// Every validated ballot, by judge id.
+    pub ballots: Vec<(String, Vec<Ballot>)>,
+    /// The recorded verdict (highest mean score; ties broken by smallest diff).
+    pub verdict: TeamVerdict,
+}
+
+/// A panel of judge agents scores the sealed candidates over the run's
+/// recorded evidence, citations are validated against real ids (bounded
+/// re-ask on a hallucinated citation), and the mean-score winner is recorded
+/// as the verdict. Judges are read-only seats — they never submit.
+pub fn judge_panel(c: &Conductor, rubric: impl Into<String>) -> JudgePanel {
+    JudgePanel {
+        c: c.clone(),
+        rubric: rubric.into(),
+        judges: Vec::new(),
+    }
+}
+
+pub struct JudgePanel {
+    c: Conductor,
+    rubric: String,
+    judges: Vec<Agent>,
+}
+
+impl JudgePanel {
+    pub fn judges(mut self, judges: impl IntoIterator<Item = Agent>) -> Self {
+        self.judges.extend(judges);
+        self
+    }
+
+    pub async fn run(self) -> Result<JudgePanelOutcome, H5iError> {
+        let JudgePanel { c, rubric, judges } = self;
+        if judges.is_empty() {
+            return Err(H5iError::Metadata(
+                "orchestra judge_panel needs at least one judge".into(),
+            ));
+        }
+        let status = c.status().await?;
+        let candidates: Vec<&TeamArtifact> = status.run.submissions.iter().collect();
+        if candidates.is_empty() {
+            return Err(H5iError::Metadata(
+                "orchestra judge_panel: no submissions to judge (freeze/collect first)".into(),
+            ));
+        }
+
+        // The evidence menu the judges must cite from: submission ids +
+        // verification ids + review ids actually present in the run.
+        let valid_ids: std::collections::BTreeSet<String> = status
+            .run
+            .submissions
+            .iter()
+            .map(|s| s.id.clone())
+            .chain(status.run.verifications.iter().map(|v| v.id.clone()))
+            .collect();
+        let candidate_ids: Vec<String> = candidates.iter().map(|s| s.id.clone()).collect();
+        let evidence = render_evidence(&status.run);
+
+        let mut ballots: Vec<(String, Vec<Ballot>)> = Vec::new();
+        for judge in &judges {
+            let prompt = format!(
+                "You are a neutral judge on a review panel. Rubric: {rubric}\n\n\
+                 Score EACH candidate 0-10, grounding every rationale in the recorded \
+                 evidence below (cite the exact ids you used). Do not run the code; judge \
+                 from the evidence.\n\nCandidates: {}\n\nEvidence:\n{evidence}\n\n\
+                 Reply as JSON: {{\"ballots\": [{{\"artifact_id\": \"<id>\", \"score\": \
+                 <0-10>, \"rationale\": \"<why, citing ids>\", \"cited_ids\": [\"<id>\", …]}}]}}.",
+                candidate_ids.join(", ")
+            );
+            // The judge is a read-only seat: it must not have a submission this
+            // round. `ask` never submits, so this holds by construction.
+            let card = ask_with_valid_citations(judge, &prompt, &valid_ids, &candidate_ids).await?;
+            ballots.push((judge.id().to_string(), card.ballots));
+        }
+
+        // Aggregate: mean score per candidate; ties → smallest diff.
+        let mut best: Option<(String, f64)> = None;
+        for cand in &candidates {
+            let scores: Vec<u32> = ballots
+                .iter()
+                .flat_map(|(_, bs)| bs.iter())
+                .filter(|b| b.artifact_id == cand.id)
+                .map(|b| b.score.min(10))
+                .collect();
+            if scores.is_empty() {
+                continue;
+            }
+            let mean = scores.iter().sum::<u32>() as f64 / scores.len() as f64;
+            let better = match &best {
+                None => true,
+                Some((cur_id, cur_mean)) => {
+                    mean > *cur_mean + f64::EPSILON
+                        || ((mean - *cur_mean).abs() <= f64::EPSILON
+                            && smaller_diff(cand, cur_id, &candidates))
+                }
+            };
+            if better {
+                best = Some((cand.id.clone(), mean));
+            }
+        }
+
+        let verdict = match best {
+            Some((id, mean)) => TeamVerdict {
+                selected_submission: Some(id.clone()),
+                method: format!("panel:mean-score({} judges)", judges.len()),
+                decided_by: "judge-panel".into(),
+                // A judge panel is advisory over evidence, not a neutral
+                // re-execution — apply stays a human/explicit decision.
+                can_auto_apply: false,
+                reasons: vec![format!("{id} won the panel with mean score {mean:.1}/10")],
+            },
+            None => TeamVerdict {
+                selected_submission: None,
+                method: format!("panel:mean-score({} judges)", judges.len()),
+                decided_by: "judge-panel".into(),
+                can_auto_apply: false,
+                reasons: vec!["no candidate received a ballot".into()],
+            },
+        };
+        c.record_verdict(&verdict).await?;
+        Ok(JudgePanelOutcome { ballots, verdict })
+    }
+}
+
+/// Ask a judge for a card, re-asking (bounded) if it cites ids not in the run
+/// or scores an artifact that isn't a candidate — this is what makes the
+/// panel evidence-grounded rather than free-associating.
+async fn ask_with_valid_citations(
+    judge: &Agent,
+    base_prompt: &str,
+    valid_ids: &std::collections::BTreeSet<String>,
+    candidate_ids: &[String],
+    ) -> Result<JudgeCard, H5iError> {
+    let mut prompt = base_prompt.to_string();
+    for attempt in 0..3 {
+        let card: JudgeCard = judge.ask(&prompt).await?;
+        let mut problems: Vec<String> = Vec::new();
+        for b in &card.ballots {
+            if !candidate_ids.contains(&b.artifact_id) {
+                problems.push(format!("scored non-candidate '{}'", b.artifact_id));
+            }
+            for cited in &b.cited_ids {
+                if !valid_ids.contains(cited) {
+                    problems.push(format!("cited unknown evidence id '{cited}'"));
+                }
+            }
+        }
+        if problems.is_empty() {
+            return Ok(card);
+        }
+        if attempt == 2 {
+            return Err(H5iError::Metadata(format!(
+                "orchestra judge_panel: judge '{}' kept citing invalid evidence: {}",
+                judge.id(),
+                problems.join("; ")
+            )));
+        }
+        prompt = format!(
+            "{base_prompt}\n\nYour previous reply had problems: {}. Score ONLY the listed \
+             candidates and cite ONLY ids that appear in the evidence.",
+            problems.join("; ")
+        );
+    }
+    unreachable!()
+}
+
+fn render_evidence(run: &crate::team::TeamRun) -> String {
+    let mut s = String::new();
+    s.push_str("Submissions:\n");
+    for sub in &run.submissions {
+        s.push_str(&format!(
+            "- {} by {} (round {}, +{}/-{} over {} files, independent={})\n",
+            sub.id,
+            sub.owner_agent,
+            sub.round,
+            sub.insertions,
+            sub.deletions,
+            sub.files_changed,
+            sub.independent
+        ));
+    }
+    if !run.verifications.is_empty() {
+        s.push_str("Verifications:\n");
+        for v in &run.verifications {
+            s.push_str(&format!(
+                "- {} for {} (applies_cleanly={}, tests_passed={}, cmd `{}`)\n",
+                v.id,
+                v.submission_id,
+                v.applies_cleanly,
+                v.tests_passed,
+                v.command.join(" ")
+            ));
+        }
+    }
+    s
+}
+
+fn smaller_diff(cand: &TeamArtifact, other_id: &str, all: &[&TeamArtifact]) -> bool {
+    match all.iter().find(|a| a.id == other_id) {
+        Some(other) => {
+            (cand.files_changed, cand.insertions, &cand.id)
+                < (other.files_changed, other.insertions, &other.id)
+        }
+        None => false,
     }
 }
 

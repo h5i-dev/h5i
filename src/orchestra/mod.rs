@@ -37,6 +37,7 @@
 
 mod journal;
 mod judge;
+pub mod manifest;
 pub mod patterns;
 pub mod trace;
 
@@ -153,7 +154,14 @@ impl RuntimeLauncher for LaunchResident {
                 )))
             }
         };
-        let cmd = format!("h5i env shell {} -- {runtime_argv}", turn.env_id);
+        // `$H5I` overrides the binary, mirroring the scripts' convention —
+        // needed when driving a dev build that isn't first on PATH.
+        let h5i = std::env::var("H5I").unwrap_or_else(|_| "h5i".into());
+        let cmd = format!(
+            "{} env shell {} -- {runtime_argv}",
+            shell_quote(&h5i),
+            turn.env_id
+        );
         let spawned = Command::new("tmux")
             .args(["new-session", "-d", "-s", &session, &cmd])
             .status()
@@ -278,6 +286,17 @@ impl Conductor {
         F: FnOnce() -> Result<T, H5iError> + Send + 'static,
     {
         journaled(self.core.clone(), label.to_string(), move |_core| f()).await
+    }
+
+    /// A label namespace for steps in parallel loops: steps under distinct
+    /// scopes can run concurrently without label collisions (which the
+    /// journal otherwise fails closed on). `c.scope(format!("item/{i}"))
+    /// .step("fetch", …)` journals as `item/<i>/fetch#1`.
+    pub fn scope(&self, prefix: impl Into<String>) -> Scope {
+        Scope {
+            core: self.core.clone(),
+            prefix: prefix.into(),
+        }
     }
 
     /// Migration marker for resuming an in-flight run with a changed score.
@@ -437,6 +456,17 @@ impl Conductor {
         .await
     }
 
+    /// Record a verdict decided out-of-band (e.g. by `patterns::judge_panel`)
+    /// on the run's event log, through the same path as `judge`/`team finalize`.
+    pub async fn record_verdict(&self, verdict: &TeamVerdict) -> Result<(), H5iError> {
+        let core = self.core.clone();
+        let verdict = verdict.clone();
+        run_blocking(move || {
+            team::record_verdict(&core.repo()?, &core.run_id, &verdict, &core.actor)
+        })
+        .await
+    }
+
     /// Apply an artifact onto the current branch, gated on an auto-applicable
     /// verdict selecting it — mediated, exactly like `h5i team apply`.
     pub async fn apply(&self, artifact: &TeamArtifact) -> Result<TeamApplyResult, H5iError> {
@@ -577,6 +607,178 @@ impl ConductorBuilder {
                 turn_timeout: self.turn_timeout,
             }),
         })
+    }
+}
+
+// ── Preflight ─────────────────────────────────────────────────────────────────
+
+/// Up-front checks that turn the worst runtime failure modes (dispatching
+/// into a dead session and timing out; verdicts on weaker isolation than
+/// intended; apply refused at the very end for a dirty tree) into one
+/// predictable first error. Read-only, not journaled. All configured checks
+/// run; failures are reported together.
+pub struct Preflight {
+    core: Arc<Core>,
+    live: Vec<(String, String)>,
+    min_isolation: Option<String>,
+    clean_worktree: bool,
+}
+
+impl Conductor {
+    pub fn preflight(&self) -> Preflight {
+        Preflight {
+            core: self.core.clone(),
+            live: Vec::new(),
+            min_isolation: None,
+            clean_worktree: false,
+        }
+    }
+}
+
+impl Preflight {
+    /// Require a live resident session per agent. Heuristic: an interactive
+    /// session holds its env's writer lock, so the lock being free across
+    /// several samples means nothing is attached.
+    pub fn require_live<'a>(mut self, agents: impl IntoIterator<Item = &'a Agent>) -> Self {
+        self.live.extend(
+            agents
+                .into_iter()
+                .map(|a| (a.name.clone(), a.env_id.clone())),
+        );
+        self
+    }
+
+    /// Require every roster env to claim at least this isolation tier
+    /// (`workspace` < `process` < `supervised` < `container`).
+    pub fn require_isolation(mut self, tier: impl Into<String>) -> Self {
+        self.min_isolation = Some(tier.into());
+        self
+    }
+
+    /// Require a clean host working tree (what `apply` will demand at the
+    /// very end — fail now instead).
+    pub fn require_clean_worktree(mut self) -> Self {
+        self.clean_worktree = true;
+        self
+    }
+
+    pub async fn run(self) -> Result<(), H5iError> {
+        let Preflight {
+            core,
+            live,
+            min_isolation,
+            clean_worktree,
+        } = self;
+        run_blocking(move || {
+            let mut failures: Vec<String> = Vec::new();
+
+            for (agent, env_id) in &live {
+                match env::find(&core.h5i_root, env_id) {
+                    Ok(m) => {
+                        let dir = m.dir(&core.h5i_root);
+                        // Sample twice with a gap: a brief host op can hold the
+                        // lock for one sample; a resident session holds it for
+                        // both. Dead = free on every sample.
+                        let mut held = env::writer_session_live(&dir);
+                        if !held {
+                            std::thread::sleep(Duration::from_millis(250));
+                            held = env::writer_session_live(&dir);
+                        }
+                        if !held {
+                            failures.push(format!(
+                                "no live session for '{agent}' ({env_id}) — bring one up \
+                                 (team-launch.sh / LaunchResident) or dispatch will wait \
+                                 out the full turn timeout"
+                            ));
+                        }
+                    }
+                    Err(_) => failures.push(format!(
+                        "agent '{agent}': env {env_id} is not materialized on this clone"
+                    )),
+                }
+            }
+
+            if let Some(min) = &min_isolation {
+                let rank = |t: &str| match t {
+                    "workspace" => Some(0),
+                    "process" => Some(1),
+                    "supervised" => Some(2),
+                    "container" => Some(3),
+                    _ => None,
+                };
+                match rank(min) {
+                    None => failures.push(format!("unknown isolation tier '{min}'")),
+                    Some(need) => {
+                        let run = team::status(&core.repo()?, &core.run_id)?.run;
+                        for a in &run.agents {
+                            match rank(&a.isolation_claim) {
+                                Some(got) if got >= need => {}
+                                _ => failures.push(format!(
+                                    "agent '{}' env claims isolation '{}' — below the \
+                                     required '{min}'",
+                                    a.agent_id, a.isolation_claim
+                                )),
+                            }
+                        }
+                    }
+                }
+            }
+
+            if clean_worktree {
+                let repo = core.repo()?;
+                let mut opts = git2::StatusOptions::new();
+                opts.include_untracked(true).recurse_untracked_dirs(true);
+                if !repo.statuses(Some(&mut opts))?.is_empty() {
+                    failures.push(
+                        "host working tree is not clean — apply will refuse; commit or \
+                         stash first"
+                            .into(),
+                    );
+                }
+            }
+
+            if failures.is_empty() {
+                Ok(())
+            } else {
+                Err(H5iError::Metadata(format!(
+                    "orchestra preflight failed:\n  - {}",
+                    failures.join("\n  - ")
+                )))
+            }
+        })
+        .await
+    }
+}
+
+/// A step-label namespace (see [`Conductor::scope`]). Scopes nest.
+pub struct Scope {
+    core: Arc<Core>,
+    prefix: String,
+}
+
+impl Scope {
+    pub fn scope(&self, sub: impl Into<String>) -> Scope {
+        Scope {
+            core: self.core.clone(),
+            prefix: format!("{}/{}", self.prefix, sub.into()),
+        }
+    }
+
+    /// A journaled step under this scope's label namespace. Takes `self` by
+    /// value so a scope can be built and used inline
+    /// (`c.scope(format!("item/{i}")).step("fetch", …)`) without a borrow
+    /// outliving the temporary.
+    pub async fn step<T, F>(self, label: &str, f: F) -> Result<T, H5iError>
+    where
+        T: Serialize + DeserializeOwned + Send + 'static,
+        F: FnOnce() -> Result<T, H5iError> + Send + 'static,
+    {
+        journaled(
+            self.core.clone(),
+            format!("{}/{label}", self.prefix),
+            move |_core| f(),
+        )
+        .await
     }
 }
 
@@ -751,6 +953,7 @@ impl Agent {
             agent: self.clone(),
             task: task.into(),
             materials: Vec::new(),
+            expect_independent: false,
         }
     }
 
@@ -907,6 +1110,7 @@ pub struct WorkRequest {
     agent: Agent,
     task: String,
     materials: Vec<TeamArtifact>,
+    expect_independent: bool,
 }
 
 impl WorkRequest {
@@ -918,12 +1122,31 @@ impl WorkRequest {
         self
     }
 
+    /// Fail unless the submitted artifact comes back stamped `independent`.
+    /// Independence is decided server-side at submit time (from same-round
+    /// discussion delivery), so this is a runtime validation, not a static
+    /// type — it protects arena/ensemble first attempts from accidentally
+    /// counting a contaminated candidate as independent. The turn itself is
+    /// journaled either way; the check re-fires deterministically on resume.
+    pub fn expect_independent(mut self) -> Self {
+        self.expect_independent = true;
+        self
+    }
+
     async fn execute(self) -> Result<TeamArtifact, H5iError> {
         let WorkRequest {
             agent,
             task,
             materials,
+            expect_independent,
         } = self;
+        if expect_independent && !materials.is_empty() {
+            return Err(H5iError::Metadata(
+                "orchestra: expect_independent() contradicts with_materials() — material-fed \
+                 work is influenced by construction"
+                    .into(),
+            ));
+        }
         let name = agent.name.clone();
         let env_id = agent.env_id.clone();
         journaled(agent.core.clone(), format!("work/{name}"), move |core| {
@@ -997,6 +1220,18 @@ impl WorkRequest {
             })
         })
         .await
+        .and_then(|artifact: TeamArtifact| {
+            if expect_independent && !artifact.independent {
+                return Err(H5iError::Metadata(format!(
+                    "orchestra: artifact {} was expected independent but is stamped \
+                     influenced (by artifacts: {}) — something delivered cross-agent \
+                     material to this agent in the current round",
+                    artifact.id,
+                    artifact.influence_artifact_ids.join(", ")
+                )));
+            }
+            Ok(artifact)
+        })
     }
 }
 
@@ -1029,17 +1264,25 @@ where
     T: Serialize + DeserializeOwned + Send + 'static,
     F: FnOnce(&Core) -> Result<T, H5iError> + Send + 'static,
 {
-    let key = core.journal.next_key(&label);
+    let key = core.journal.next_key(&label)?;
     if let Some(replayed) = core.journal.replay_as::<T>(&key) {
         tracing::debug!(step = %key, "orchestra: replaying journaled step");
+        core.journal.finish(&label);
         return replayed;
     }
-    run_blocking(move || {
+    let outer = core.clone();
+    let outer_label = label.clone();
+    let result = run_blocking(move || {
+        let started = Instant::now();
         let value = f(&core)?;
-        core.journal.record(&key, &label, &value)?;
+        let duration_ms = started.elapsed().as_millis() as u64;
+        core.journal.record(&key, &label, &value, duration_ms)?;
         Ok(value)
     })
-    .await
+    .await;
+    // Always release the label — a failed step must stay retryable in-process.
+    outer.journal.finish(&outer_label);
+    result
 }
 
 fn turn_context(
