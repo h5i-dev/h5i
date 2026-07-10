@@ -777,6 +777,72 @@ Print the standing bootstrap prompt for a boxed team agent
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.SH "H5I TEAM RUN"
+Drive a full hands-off team cycle over the orchestra eDSL: dispatch -> independent attempts -> freeze -> mutual review -> revise -> neutral verify -> verdict (-> gated apply). Replaces scripts/team-run.sh; unlike the script it is journal-backed \(em re-running it resumes the cycle instead of starting over
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrun\fR [\fB\-\-task\fR] [\fB\-\-task\-file\fR] [\fB\-\-rounds\fR] [\fB\-\-verify\-cmd\fR] [\fB\-\-isolation\fR] [\fB\-\-apply\fR] [\fB\-\-gate\fR] [\fB\-\-launch\-resident\fR] [\fB\-\-poll\fR] [\fB\-\-timeout\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-task\fR \fI<TASK>\fR
+Task text to dispatch
+.TP
+\fB\-\-task\-file\fR \fI<TASK_FILE>\fR
+Read the task from a file
+.TP
+\fB\-\-rounds\fR \fI<ROUNDS>\fR [default: 1]
+Maximum review->revise cycles (early exit on full approval)
+.TP
+\fB\-\-verify\-cmd\fR \fI<VERIFY_CMD>\fR
+Neutral verifier command, e.g. \-\-verify\-cmd "cargo test \-q"
+.TP
+\fB\-\-isolation\fR \fI<ISOLATION>\fR
+Isolation tier for the verifier (workspace|process|container|...)
+.TP
+\fB\-\-apply\fR
+Apply the winner after an auto\-applicable verdict
+.TP
+\fB\-\-gate\fR
+Ask a durable gate question before applying (implies apply on approval; the reply may arrive after this process exits \(em re\-run to resume at the gate)
+.TP
+\fB\-\-launch\-resident\fR
+Spawn resident agent sessions in tmux (default: attach to already\-running sessions, e.g. from team\-launch.sh)
+.TP
+\fB\-\-poll\fR \fI<POLL>\fR [default: 15]
+Poll interval while waiting on turns, seconds
+.TP
+\fB\-\-timeout\fR \fI<TIMEOUT>\fR [default: 1800]
+Per\-turn wait budget, seconds
+.TP
+\fB\-\-json\fR
+Emit the outcome as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (default: the current team)
+.SH "H5I TEAM TRACE"
+Render the recorded orchestration trace (journaled steps + phases)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBtrace\fR [\fB\-\-dot\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-dot\fR
+Emit Graphviz dot instead of text
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEAM\fR]
+Team id (default: the current team)
 .SH "H5I TEAM USE"
 Show or set the current team (omit NAME to show; --clear to unset)
 .ie \n(.g .ds Aq \(aq
@@ -1302,6 +1368,30 @@ Emit JSON
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.SH "H5I TEAM AGENT REPLY"
+Reply with data (text/JSON) to the host \(em the return channel of an orchestra `ask` turn; boxed envs stage for host ingest
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBreply\fR [\fB\-\-file\fR] [\fB\-\-team\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEXT\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-file\fR \fI<FILE>\fR
+Read the reply body from a file
+.TP
+\fB\-\-team\fR \fI<TEAM>\fR
+Team id (host\-side only; default: the current team)
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fITEXT\fR]
+Reply body (or use \-\-file)
 .SH "H5I RESOLVE"
 Resolve branch conflicts using CRDT-based semantic merging
 .ie \n(.g .ds Aq \(aq

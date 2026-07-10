@@ -4216,34 +4216,37 @@ h5i-team-launch fix-auth --task task.md
 H5I=/path/to/h5i h5i-team-launch fix-auth
 </code></pre>
 <h3 id="automated-peer-review-cycle">Automated peer-review cycle</h3>
-<p>Three scripts compose into a hands-off run. Install the team Stop hook once so
-boxes stay alive between turns instead of exiting after each submit:</p>
+<p>The full cycle is driven natively by <strong><code>h5i team run</code></strong> (built on the orchestra
+eDSL, <code>roadmap/orchestra-design.md</code>). Install the team Stop hook once so boxes
+stay alive between turns instead of exiting after each submit:</p>
 <pre><code class="language-bash">h5i hook setup --write --team
+h5i team auto-create fix-auth                  # or team create + add-env
+scripts/team-launch.sh fix-auth                # bring up the resident sessions
+h5i team run fix-auth --task-file task.md --verify-cmd &quot;cargo test&quot; --gate
+# → dispatch → independent attempts → freeze → mutual review → revise →
+#   neutral verify → verdict → durable approval gate → apply, hands-off
 </code></pre>
+<p><code>h5i team run</code> dispatches the task per agent, waits on each submission, seals
+the round, runs approval-aware mutual review/revise cycles (<code>--rounds N</code>),
+verifies every candidate in the neutral sandbox (<code>--verify-cmd</code>, <code>--isolation</code>),
+records the verdict, and applies either automatically (<code>--apply</code>) or behind a
+<strong>durable gate</strong> (<code>--gate</code>: the question lands in your <code>h5i msg</code> inbox; reply
+<code>APPROVE</code>/<code>DECLINE</code>). Every phase is journaled on the run's event log, so if
+the driver is interrupted — or you exit at the gate — <strong>re-running the same
+command resumes the cycle</strong> instead of starting over, and <code>h5i team trace</code>
+renders what happened. <code>--launch-resident</code> spawns the agent sessions itself in
+tmux; the default attaches to sessions already brought up by <code>team-launch.sh</code>.</p>
 <ul>
 <li><strong><code>scripts/team-launch.sh &lt;team&gt; [--task F]</code></strong> — bring up one box per agent
-  (above). Each agent implements and runs <code>h5i team agent submit</code>.</li>
-<li><strong><code>scripts/team-review.sh &lt;team&gt;</code></strong> — open the review round: <code>freeze</code>, grant
-  <strong>mutual</strong> review access (each grant fans a request into the reviewer's inbox),
-  and send every agent a review-and-revise prompt. A running box picks it up via
-  the team Stop hook; <code>--relaunch</code> re-opens any box that already exited. Each
-  boxed reviewer reads its target read-only with <code>h5i team artifact show &lt;id&gt;
-  --diff</code> (the inbox carries the artifact ids), reviews statically, then
-  re-submits — which marks it done for the round. A review written with <code>h5i team
-  review submit</code> is also <strong>delivered to the reviewed agent's inbox</strong> (post-freeze)
-  and recorded as a discussion, so the target sees the critique of its own work
-  and its next revision is stamped non-independent.</li>
-<li><strong><code>scripts/team-run.sh &lt;team&gt; [--task F] [--verify-cmd "&lt;cmd&gt;"] [--apply]</code></strong> —
-  the full driver. It launches, then <strong>polls with <code>h5i team sync</code></strong> to advance
-  each phase: wait until all submitted → freeze → grant review → wait until all
-  revised → <code>verify</code> each candidate → <code>finalize</code> (the neutral verdict) →
-  optionally <code>apply</code>. <code>finalize</code>/<code>apply</code> fan a <code>TEAM_DONE</code> signal that releases
-  the boxes.</li>
+  (above); still the way to get GUI terminal windows per agent.</li>
+<li>Reviews delivered with <code>h5i team review submit</code> land in the reviewed agent's
+  inbox (post-freeze) and are recorded as discussion, so the target sees the
+  critique and its next revision is stamped non-independent.</li>
+<li><strong>Deprecated:</strong> <code>scripts/team-run.sh</code> (use <code>h5i team run</code>) and
+  <code>scripts/team-review.sh</code> (use <code>h5i team auto-peer-review</code>, or just let
+  <code>h5i team run</code> drive the round). Both still work but print a deprecation
+  notice.</li>
 </ul>
-<pre><code class="language-bash">h5i hook setup --write --team
-scripts/team-run.sh fix-auth --task task.md --verify-cmd &quot;cargo test&quot; --apply
-# → individual implementation → peer review → improvement → neutral verdict, hands-off
-</code></pre>
 <p><code>team sync</code> is the keystone: it ingests each box's staged submissions/reviews on
 demand, so the host sees them while the boxes stay alive waiting (the at-exit
 ingest alone would deadlock with the wait-hook).</p>
