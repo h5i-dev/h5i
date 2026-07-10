@@ -89,7 +89,7 @@ redaction count in the manifest the way captures already record
 `redactions`. Content-hash the staged state so re-seeding is cheap and
 tamper-evident.
 
-### 3. Shadow-git snapshots and per-turn undo
+### 3. Shadow-git snapshots: per-run tree checkpoints as evidence
 
 `pkg/snapshot` keeps a **separate shadow git repo per worktree** (plumbing
 only: `write-tree`/`read-tree`) and checkpoints workspace state per agent
@@ -98,13 +98,32 @@ restore the workspace to the checkpoint before the last turn, without
 touching the real repo's history or index. Respects `.gitignore`, skips huge
 files, GCs after 7 days.
 
-`h5i` today: the env branch records *commits* and CRDT deltas record file
-edits, but there is no cheap "workspace tree as of run N" object, so undo is
-all-or-nothing (`abort`). **Borrow:** a `write-tree` checkpoint into the
-env's own object store at the start and end of every `env run`/`shell`
-session (we already hold `run.lock` there), giving `env diff <name>
---run <n>` and an `env undo` that rolls the worktree back one session. This
-is the cheap git-native 80% of Shepherd's reversible effect log
+One calibration first: docker-agent needs the *undo* half of this more than
+we do. Its runs execute in the user's real working directory by default
+(worktrees are opt-in), so per-turn undo is its only safety net. `h5i`
+always has the worktree boundary, and "this env is bad" is already covered
+by `abort`/`rm`.
+
+What the worktree boundary does *not* give us is the **checkpoint as an
+evidence primitive**. Git only records the commits the agent chose to make,
+and agents routinely work long stretches without committing, so there is no
+"workspace tree as of run N" object today. That leaves two gaps:
+
+- **Attribution:** "which run introduced this change?" is exactly the kind
+  of audit query `h5i` exists to answer, and right now it is unanswerable
+  between agent commits. A checkpoint per session makes `env diff <name>
+  --run <n>` possible.
+- **Recovery of a good env's tail:** when run 5 wrecks a worktree that was
+  healthy after run 4, today's options are hand-fixing or deleting the env
+  and re-burning tokens to redo runs 1 through 4; the pre-run-5 state was
+  never in any ref.
+
+**Borrow:** a `write-tree` checkpoint into the env's own object store at the
+start and end of every `env run`/`shell` session (we already hold `run.lock`
+there), surfaced as `env diff --run <n>`. An `env undo` verb falls out as a
+cheap byproduct, but it is not the headline: it earns its keep only for
+long-lived envs with poor agent commit discipline. The checkpoint stream is
+also the cheap git-native 80% of Shepherd's reversible effect log
 (borrowing-from-shepherd #1) and could ship long before that design doc.
 
 ## Borrow: architecture
@@ -251,9 +270,9 @@ the existing refs and manifests, the board is a client. This turns the
 - **Do first (small, clearly worth it):** #1 (explained egress + `env allow`
   + denied-host findings), #7 (`on_create` hook, `--pr`, unproposed-commit
   guard on `rm`), and the `h5i doctor` spark from #9.
-- **Do next (medium, high leverage):** #3 (per-session shadow snapshots +
-  `env undo`), #2 (redact the HOME copy-in seed), #6 (approval-decision
-  events).
+- **Do next (medium, high leverage):** #3 (per-run tree checkpoints and
+  `env diff --run <n>`; undo only as a byproduct), #2 (redact the HOME
+  copy-in seed), #6 (approval-decision events).
 - **Design doc (the strategic one):** #4 + #8 together: the per-env control
   plane and the board are one feature, and they are the answer to "what does
   `h5i` look like when five agents work in parallel," which today is our
