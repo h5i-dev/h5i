@@ -11368,6 +11368,28 @@ fn main() -> anyhow::Result<()> {
                                 .map(Ok)
                                 .unwrap_or_else(|| h5i_core::team::resolve_run(&h5i_root, None))?;
                             let agent = msg::resolve_identity(&h5i_root, None)?;
+                            // Auto-commit the worktree before submitting, mirroring
+                            // the in-box (process+/container) path — otherwise a
+                            // workspace-tier agent that made changes but didn't
+                            // `git commit` would submit a no-op (branch tip == base)
+                            // and lose its work. Only when boxed (H5I_TEAM set) and
+                            // no explicit commit was pinned, so a human running
+                            // `team agent submit` from the main repo is untouched.
+                            let boxed = std::env::var_os(h5i_core::env::H5I_TEAM_VAR).is_some();
+                            if boxed && commit.is_none() {
+                                match h5i_core::env::commit_box_worktree() {
+                                    Ok(Some(oid)) => eprintln!(
+                                        "{} snapshotted worktree at {}",
+                                        style("▢").cyan().dim(),
+                                        &oid.to_string()[..12]
+                                    ),
+                                    Ok(None) => {}
+                                    Err(e) => eprintln!(
+                                        "warning: worktree snapshot failed (submit will use \
+                                         the branch tip — commit your work if this persists): {e}"
+                                    ),
+                                }
+                            }
                             let artifact = h5i_core::team::submit(
                                 git,
                                 &h5i_root,

@@ -90,6 +90,8 @@ pub struct TurnContext {
     pub work_dir: Option<PathBuf>,
     /// The roster runtime adapter (`claude`, `codex`, …), when recorded.
     pub runtime: Option<String>,
+    /// The roster model override (`--model`), when recorded.
+    pub model: Option<String>,
 }
 
 /// Session bring-up strategy (design doc §5.1). `Attach` is the default: the
@@ -131,13 +133,20 @@ impl RuntimeLauncher for LaunchResident {
         if alive {
             return Ok(());
         }
+        // A roster model override (`--model`) — keeps a trivial run on a fast
+        // model instead of the session default.
+        let model_flag = turn
+            .model
+            .as_deref()
+            .map(|m| format!(" --model {}", shell_quote(m)))
+            .unwrap_or_default();
         let runtime_argv = match turn.runtime.as_deref() {
             Some("claude") => format!(
-                "claude --dangerously-skip-permissions {}",
+                "claude --dangerously-skip-permissions{model_flag} {}",
                 shell_quote(team::AGENT_BOOTSTRAP)
             ),
             Some("codex") => format!(
-                "codex --sandbox danger-full-access {}",
+                "codex --sandbox danger-full-access{model_flag} {}",
                 shell_quote(team::AGENT_BOOTSTRAP)
             ),
             Some(other) => {
@@ -1296,7 +1305,7 @@ fn turn_context(
         .ok()
         .map(|m| m.work_dir(&core.h5i_root))
         .filter(|p| p.exists());
-    let runtime = core
+    let seat = core
         .repo()
         .ok()
         .and_then(|repo| team::status(&repo, &core.run_id).ok())
@@ -1305,8 +1314,9 @@ fn turn_context(
                 .agents
                 .iter()
                 .find(|a| a.agent_id == agent_id)
-                .and_then(|a| a.runtime.clone())
+                .map(|a| (a.runtime.clone(), a.model.clone()))
         });
+    let (runtime, model) = seat.unwrap_or((None, None));
     TurnContext {
         run_id: core.run_id.clone(),
         agent_id: agent_id.to_string(),
@@ -1317,6 +1327,7 @@ fn turn_context(
         h5i_root: core.h5i_root.clone(),
         work_dir,
         runtime,
+        model,
     }
 }
 
