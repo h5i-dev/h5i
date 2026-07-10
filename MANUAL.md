@@ -76,6 +76,7 @@ emits `--json` is safe to consume from a script or another agent.)
 - [Core commands](#core-commands)
   - [h5i init](#h5i-init)
   - [h5i resolve](#h5i-resolve)
+  - [h5i doctor](#h5i-doctor)
 - [h5i capture](#h5i-capture)
   - [h5i capture commit](#h5i-capture-commit)
   - [h5i capture memory](#h5i-capture-memory)
@@ -291,6 +292,38 @@ status 1; otherwise it exits 0.
 > reading from a per-commit `crdt_states` field. That dependency has been
 > removed; `resolve` now behaves like a deterministic, git-native 3-way
 > merge.
+
+---
+
+### h5i doctor
+
+```
+h5i doctor [--repair] [--export <DIR>] [--json]
+```
+
+Validate and repair h5i's sidecar storage and refs. Run it when the sidecar
+looks damaged or after recovering a repository — for example if `.git/.h5i/` is
+missing directories, or refs under `refs/h5i/*` were lost by an aggressive
+prune. By default it only reports; nothing is changed unless you pass `--repair`.
+
+- `--repair` — create missing sidecar directories and schema metadata. Existing
+  data is left untouched; this only fills in what is absent.
+- `--export <DIR>` — write a recovery copy of `.git/.h5i` plus a refs manifest
+  into `<DIR>`, so the sidecar state can be archived or moved.
+- `--json` — emit the raw report instead of the pretty view, for tooling.
+
+The command exits non-zero when the sidecar is unhealthy, so it is safe to gate
+scripts on it.
+
+```bash
+h5i doctor                     # report only
+h5i doctor --repair            # fix missing dirs and schema metadata
+h5i doctor --export /tmp/h5i-backup
+```
+
+> **Note:** This is the top-level command for the whole sidecar. The per-env
+> health check is separate — see [`h5i env doctor`](#h5i-env) for enforcement
+> readiness and structural health of a single environment.
 
 ---
 

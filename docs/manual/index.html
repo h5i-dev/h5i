@@ -165,6 +165,7 @@
 <div class="t3group">
 <a class="t3" href="#h5i-init">h5i init</a>
 <a class="t3" href="#h5i-resolve">h5i resolve</a>
+<a class="t3" href="#h5i-doctor">h5i doctor</a>
 </div>
 <a class="t2" href="#h5i-capture">h5i capture</a>
 <div class="t3group">
@@ -595,6 +596,32 @@ status 1; otherwise it exits 0.</p>
 reading from a per-commit <code>crdt_states</code> field. That dependency has been
 removed; <code>resolve</code> now behaves like a deterministic, git-native 3-way
 merge.</p>
+</blockquote>
+<hr />
+<h3 id="h5i-doctor">h5i doctor</h3>
+<pre><code>h5i doctor [--repair] [--export &lt;DIR&gt;] [--json]
+</code></pre>
+<p>Validate and repair h5i's sidecar storage and refs. Run it when the sidecar
+looks damaged or after recovering a repository — for example if <code>.git/.h5i/</code> is
+missing directories, or refs under <code>refs/h5i/*</code> were lost by an aggressive
+prune. By default it only reports; nothing is changed unless you pass <code>--repair</code>.</p>
+<ul>
+<li><code>--repair</code> — create missing sidecar directories and schema metadata. Existing
+  data is left untouched; this only fills in what is absent.</li>
+<li><code>--export &lt;DIR&gt;</code> — write a recovery copy of <code>.git/.h5i</code> plus a refs manifest
+  into <code>&lt;DIR&gt;</code>, so the sidecar state can be archived or moved.</li>
+<li><code>--json</code> — emit the raw report instead of the pretty view, for tooling.</li>
+</ul>
+<p>The command exits non-zero when the sidecar is unhealthy, so it is safe to gate
+scripts on it.</p>
+<pre><code class="language-bash">h5i doctor                     # report only
+h5i doctor --repair            # fix missing dirs and schema metadata
+h5i doctor --export /tmp/h5i-backup
+</code></pre>
+<blockquote>
+<p><strong>Note:</strong> This is the top-level command for the whole sidecar. The per-env
+health check is separate — see <a href="#h5i-env"><code>h5i env doctor</code></a> for enforcement
+readiness and structural health of a single environment.</p>
 </blockquote>
 <hr />
 <h2 id="h5i-capture">h5i capture</h2>
