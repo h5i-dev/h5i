@@ -38,6 +38,7 @@
 mod journal;
 mod judge;
 pub mod patterns;
+pub mod trace;
 
 pub use judge::{policy, VerdictPolicy};
 
@@ -68,6 +69,8 @@ pub enum TurnKind {
     Review { target: String },
     /// Address a received review, then re-submit.
     Revise,
+    /// Answer with data (JSON) via `h5i team agent reply` — no submission.
+    Ask,
 }
 
 /// Everything a launcher needs to bring up / drive one agent turn. The
@@ -84,14 +87,16 @@ pub struct TurnContext {
     pub h5i_root: PathBuf,
     /// The env's worktree, when materialized on this clone.
     pub work_dir: Option<PathBuf>,
+    /// The roster runtime adapter (`claude`, `codex`, …), when recorded.
+    pub runtime: Option<String>,
 }
 
 /// Session bring-up strategy (design doc §5.1). `Attach` is the default: the
 /// resident interactive session (Stop-hook held, `team-launch.sh`-style) picks
-/// the turn out of its inbox; the launcher does nothing. The other planned
-/// strategy is launch-resident (the score spawns that same warm session itself
-/// at hire time, M4); a headless per-turn `claude -p` spawn is rejected — cold
-/// boots and stateless turns defeat the resident-session execution model.
+/// the turn out of its inbox; the launcher does nothing. [`LaunchResident`]
+/// spawns that same warm session itself (tmux). A headless per-turn
+/// `claude -p` spawn is rejected — cold boots and stateless turns defeat the
+/// resident-session execution model.
 pub trait RuntimeLauncher: Send + Sync {
     fn on_turn(&self, turn: &TurnContext) -> Result<(), H5iError>;
 }
@@ -103,6 +108,74 @@ impl RuntimeLauncher for Attach {
     fn on_turn(&self, _turn: &TurnContext) -> Result<(), H5iError> {
         Ok(())
     }
+}
+
+/// Launch-resident (design doc §5.1): the score brings up the same warm
+/// interactive session a human would — `h5i env shell <env> -- <runtime> …`
+/// in a detached tmux session, created once per agent and reused for every
+/// turn (the Stop hook keeps it parked on the inbox between turns). Requires
+/// `tmux` and a roster runtime with a known adapter; fails closed otherwise.
+/// This internalizes `scripts/team-launch.sh`'s tmux mode.
+pub struct LaunchResident;
+
+impl RuntimeLauncher for LaunchResident {
+    fn on_turn(&self, turn: &TurnContext) -> Result<(), H5iError> {
+        use std::process::Command;
+        let session = format!("h5i-orch-{}-{}", turn.run_id, turn.agent_id);
+        let alive = Command::new("tmux")
+            .args(["has-session", "-t", &session])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if alive {
+            return Ok(());
+        }
+        let runtime_argv = match turn.runtime.as_deref() {
+            Some("claude") => format!(
+                "claude --dangerously-skip-permissions {}",
+                shell_quote(team::AGENT_BOOTSTRAP)
+            ),
+            Some("codex") => format!(
+                "codex --sandbox danger-full-access {}",
+                shell_quote(team::AGENT_BOOTSTRAP)
+            ),
+            Some(other) => {
+                return Err(H5iError::Metadata(format!(
+                    "orchestra LaunchResident has no adapter for runtime '{other}' — \
+                     bring the session up yourself (team-launch.sh) and use Attach"
+                )))
+            }
+            None => {
+                return Err(H5iError::Metadata(format!(
+                    "orchestra LaunchResident: agent '{}' has no roster runtime — \
+                     hire it with .runtime(\"claude\"|\"codex\")",
+                    turn.agent_id
+                )))
+            }
+        };
+        let cmd = format!("h5i env shell {} -- {runtime_argv}", turn.env_id);
+        let spawned = Command::new("tmux")
+            .args(["new-session", "-d", "-s", &session, &cmd])
+            .status()
+            .map_err(|e| {
+                H5iError::Metadata(format!(
+                    "orchestra LaunchResident requires tmux (spawn failed: {e}) — \
+                     install tmux or bring sessions up yourself and use Attach"
+                ))
+            })?;
+        if !spawned.success() {
+            return Err(H5iError::Metadata(format!(
+                "orchestra LaunchResident: tmux new-session failed for '{session}'"
+            )));
+        }
+        tracing::info!(session = %session, agent = %turn.agent_id, "orchestra: resident session launched");
+        Ok(())
+    }
+}
+
+/// POSIX single-quote escaping for one argv word.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Wrap a closure as a launcher — for tests and for embedding scenarios where
@@ -207,10 +280,41 @@ impl Conductor {
         journaled(self.core.clone(), label.to_string(), move |_core| f()).await
     }
 
+    /// Migration marker for resuming an in-flight run with a changed score.
+    /// Per-label step keys already make *additive* changes safe (a new label
+    /// never shifts existing keys); `patched` covers the remaining case —
+    /// changing what an existing code path does — by keeping both branches
+    /// selectable and the choice consistent: it returns `false` (take the old
+    /// path) when this process is still replaying steps journaled before the
+    /// marker existed, `true` (take the new path) on fresh execution, and the
+    /// recorded value on every later resume.
+    ///
+    /// ```ignore
+    /// if c.patched("verify-in-container").await? {
+    ///     c.verify(&art, cmd, Some("container")).await?
+    /// } else {
+    ///     c.verify(&art, cmd, None).await?
+    /// };
+    /// ```
+    pub async fn patched(&self, change_id: &str) -> Result<bool, H5iError> {
+        let core = self.core.clone();
+        let label = format!("patched/{change_id}");
+        journaled(core.clone(), label, move |c| {
+            Ok(!c.journal.has_unconsumed())
+        })
+        .await
+    }
+
     /// Read the folded run state (not journaled — reads are free to repeat).
     pub async fn status(&self) -> Result<TeamStatus, H5iError> {
         let core = self.core.clone();
         run_blocking(move || team::status(&core.repo()?, &core.run_id)).await
+    }
+
+    /// Rank the roster side by side (the arena view; not journaled).
+    pub async fn compare(&self) -> Result<Vec<team::TeamCompareRow>, H5iError> {
+        let core = self.core.clone();
+        run_blocking(move || team::compare(&core.repo()?, &core.h5i_root, &core.run_id)).await
     }
 
     /// Append a human-readable note to the run's event log (audit trail, not
@@ -235,21 +339,23 @@ impl Conductor {
         .await
     }
 
-    /// Seal the open round (`team freeze`). Idempotent under resume: a run
-    /// already sealed (a crash between the freeze and its journal record)
-    /// folds to the current state instead of erroring.
+    /// Seal the open round (`team freeze`). Two eDSL-specific deviations from
+    /// the CLI: missing roster submissions are allowed (the score awaits each
+    /// `work()` explicitly, so participation is what the code awaited — and
+    /// integrator/moderator seats legitimately sit out the first round), and
+    /// it is idempotent under resume (a crash between the freeze and its
+    /// journal record folds to the sealed state instead of erroring).
     pub async fn freeze(&self) -> Result<TeamRun, H5iError> {
         journaled(self.core.clone(), "freeze".into(), move |core| {
             let repo = core.repo()?;
-            match team::freeze(&repo, &core.run_id, false, &core.actor) {
+            match team::freeze(&repo, &core.run_id, true, &core.actor) {
                 Ok(run) => Ok(run),
-                Err(_) => {
+                Err(e) => {
                     let run = team::status(&repo, &core.run_id)?.run;
                     if run.phase == team::PHASE_SEALED_SUBMIT {
                         Ok(run)
                     } else {
-                        // Surface the real error (missing submissions, …).
-                        team::freeze(&repo, &core.run_id, false, &core.actor)
+                        Err(e)
                     }
                 }
             }
@@ -612,35 +718,64 @@ impl Agent {
         &self.env_id
     }
 
-    /// Dispatch one work turn and resolve to the frozen submission. Journaled
-    /// as `work/<agent>` — a resumed score returns the recorded artifact.
-    pub async fn work(&self, task: impl Into<String>) -> Result<TeamArtifact, H5iError> {
-        let task = task.into();
+    /// Build one work turn; `.await` it directly, or chain
+    /// [`WorkRequest::with_materials`] first. Journaled as `work/<agent>` — a
+    /// resumed score returns the recorded artifact.
+    pub fn work(&self, task: impl Into<String>) -> WorkRequest {
+        WorkRequest {
+            agent: self.clone(),
+            task: task.into(),
+            materials: Vec::new(),
+        }
+    }
+
+    /// Ask the agent for data instead of code: the reply must be a JSON value
+    /// deserializing as `T` (sent from the box via `h5i team agent reply`).
+    /// An unparseable reply is re-asked with the parse error, up to three
+    /// attempts. Journaled as `ask/<agent>`.
+    pub async fn ask<T>(&self, prompt: impl Into<String>) -> Result<T, H5iError>
+    where
+        T: Serialize + DeserializeOwned + Send + 'static,
+    {
+        let prompt = prompt.into();
         let name = self.name.clone();
         let env_id = self.env_id.clone();
-        journaled(self.core.clone(), format!("work/{name}"), move |core| {
+        journaled(self.core.clone(), format!("ask/{name}"), move |core| {
             let repo = core.repo()?;
-            let run = team::status(&repo, &core.run_id)?.run;
-            let prev = latest_submission_id(&run, &name);
-            let instruction = format!(
-                "{task}\n\n(h5i orchestra: you are '{name}' in team run '{run_id}'. Work in \
-                 this environment; when your candidate is ready, run `h5i team agent submit`.)",
-                run_id = core.run_id,
-            );
-            dispatch_turn(core, &name, &env_id, TurnKind::Work, &instruction)?;
-            wait_until(
-                core,
-                &format!("a submission from '{name}'"),
-                |repo| {
-                    let run = team::status(repo, &core.run_id)?.run;
-                    Ok(match latest_submission_id(&run, &name) {
-                        Some(id) if Some(&id) != prev.as_ref() => {
-                            run.submissions.iter().find(|s| s.id == id).cloned()
-                        }
-                        _ => None,
-                    })
-                },
-            )
+            let mut last_err = String::new();
+            for attempt in 0..3 {
+                let (before, _) = agent_reply_events(&repo, &core.run_id, &name)?;
+                let instruction = if attempt == 0 {
+                    format!(
+                        "{prompt}\n\n(h5i orchestra data request: reply with ONLY a JSON value \
+                         — no prose around it — via `h5i team agent reply '<json>'`. Do not \
+                         submit code for this request.)"
+                    )
+                } else {
+                    format!(
+                        "Your previous reply could not be parsed as the expected JSON shape \
+                         ({last_err}).\n\n{prompt}\n\n(Reply again with ONLY the JSON value, \
+                         via `h5i team agent reply '<json>'`.)"
+                    )
+                };
+                dispatch_turn(core, &name, &env_id, TurnKind::Ask, &instruction)?;
+                let body = wait_until(
+                    core,
+                    &format!("a data reply from '{name}'"),
+                    |repo| {
+                        let (count, newest) = agent_reply_events(repo, &core.run_id, &name)?;
+                        Ok(if count > before { newest } else { None })
+                    },
+                )?;
+                match parse_json_reply::<T>(&body) {
+                    Ok(value) => return Ok(value),
+                    Err(e) => last_err = e,
+                }
+            }
+            Err(H5iError::Metadata(format!(
+                "orchestra: agent '{name}' did not produce a parseable JSON reply in 3 \
+                 attempts (last error: {last_err})"
+            )))
         })
         .await
     }
@@ -737,6 +872,118 @@ impl Agent {
     }
 }
 
+/// One pending work turn. Await it directly, or attach materials first:
+/// `integrator.work(task).with_materials(&parts).await` grants the worker
+/// visibility of the parts and stamps the resulting artifact
+/// `independent=false` with influence edges to every input (design doc §4.3).
+/// Materials ride the `discuss` channel, which is sealed-phase-only by the
+/// independence invariant — so material-fed work happens after `freeze`.
+pub struct WorkRequest {
+    agent: Agent,
+    task: String,
+    materials: Vec<TeamArtifact>,
+}
+
+impl WorkRequest {
+    pub fn with_materials<'a>(
+        mut self,
+        materials: impl IntoIterator<Item = &'a TeamArtifact>,
+    ) -> Self {
+        self.materials.extend(materials.into_iter().cloned());
+        self
+    }
+
+    async fn execute(self) -> Result<TeamArtifact, H5iError> {
+        let WorkRequest {
+            agent,
+            task,
+            materials,
+        } = self;
+        let name = agent.name.clone();
+        let env_id = agent.env_id.clone();
+        journaled(agent.core.clone(), format!("work/{name}"), move |core| {
+            let repo = core.repo()?;
+            let run = team::status(&repo, &core.run_id)?.run;
+            let prev = latest_submission_id(&run, &name);
+            let mut instruction = format!(
+                "{task}\n\n(h5i orchestra: you are '{name}' in team run '{run_id}'. Work in \
+                 this environment; when your candidate is ready, run `h5i team agent submit`.)",
+                run_id = core.run_id,
+            );
+            if !materials.is_empty() {
+                let ids: Vec<String> = materials.iter().map(|m| m.id.clone()).collect();
+                // Audit the scoped visibility (the review-grant analog), then
+                // deliver through `discuss` so the resulting submission is
+                // honestly stamped non-independent with influence edges.
+                let ev = team::event(
+                    &core.run_id,
+                    &core.actor,
+                    "materials_granted",
+                    run.current_round,
+                    None,
+                    None,
+                    format!(
+                        "materials_granted:{}:{name}:{}:{}",
+                        core.run_id,
+                        ids.join(","),
+                        run.current_round
+                    ),
+                    serde_json::json!({
+                        "worker": name,
+                        "artifact_ids": ids,
+                        "artifact_kinds": ["diff", "summary"],
+                    }),
+                );
+                team::append_event(&repo, &ev)?;
+                // One discuss per material, sent as its owner (discuss requires
+                // a roster sender — and "owner shares their artifact" is the
+                // honest influence edge).
+                for material in &materials {
+                    team::discuss(
+                        &repo,
+                        &core.h5i_root,
+                        &core.run_id,
+                        &material.owner_agent,
+                        vec![name.clone()],
+                        format!(
+                            "Material for your next task: artifact {} (from {}). Read it \
+                             with `h5i team artifact show {} --diff`.",
+                            material.id, material.owner_agent, material.id
+                        ),
+                        vec![material.id.clone()],
+                        &core.actor,
+                    )?;
+                }
+                instruction.push_str(&format!(
+                    "\n\nMaterials granted (apply/merge as instructed): {}. View each with \
+                     `h5i team artifact show <id> --diff`.",
+                    ids.join(", ")
+                ));
+            }
+            dispatch_turn(core, &name, &env_id, TurnKind::Work, &instruction)?;
+            wait_until(core, &format!("a submission from '{name}'"), |repo| {
+                let run = team::status(repo, &core.run_id)?.run;
+                Ok(match latest_submission_id(&run, &name) {
+                    Some(id) if Some(&id) != prev.as_ref() => {
+                        run.submissions.iter().find(|s| s.id == id).cloned()
+                    }
+                    _ => None,
+                })
+            })
+        })
+        .await
+    }
+}
+
+impl std::future::IntoFuture for WorkRequest {
+    type Output = Result<TeamArtifact, H5iError>;
+    type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.execute())
+    }
+}
+
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 async fn run_blocking<T, F>(f: F) -> Result<T, H5iError>
@@ -781,6 +1028,17 @@ fn turn_context(
         .ok()
         .map(|m| m.work_dir(&core.h5i_root))
         .filter(|p| p.exists());
+    let runtime = core
+        .repo()
+        .ok()
+        .and_then(|repo| team::status(&repo, &core.run_id).ok())
+        .and_then(|s| {
+            s.run
+                .agents
+                .iter()
+                .find(|a| a.agent_id == agent_id)
+                .and_then(|a| a.runtime.clone())
+        });
     TurnContext {
         run_id: core.run_id.clone(),
         agent_id: agent_id.to_string(),
@@ -790,6 +1048,7 @@ fn turn_context(
         repo_workdir: core.repo_workdir.clone(),
         h5i_root: core.h5i_root.clone(),
         work_dir,
+        runtime,
     }
 }
 
@@ -827,9 +1086,10 @@ fn dispatch_turn(
 }
 
 /// Poll the event log until `probe` yields, draining box-side spools each
-/// round so submissions staged inside sealed envs land as events. Polling is
-/// the M1 mechanism; a `notify`-based ref watch replaces it later (design doc
-/// §5.1 step 4).
+/// round so submissions staged inside sealed envs land as events. Interval
+/// polling matches every existing wait surface in h5i (`msg wait`, the team
+/// hooks); dispatch latency comes from the resident session, not this poll,
+/// and a file-watch would add a dependency the repo does not carry.
 fn wait_until<T>(
     core: &Core,
     what: &str,
@@ -895,19 +1155,205 @@ fn review_events(
     Ok((count, newest))
 }
 
-/// The documented approval convention for `TeamReview` bodies: a review whose
-/// first token is `APPROVE`/`APPROVED`/`LGTM` (case-insensitive) approves the
-/// submission; anything else requests changes.
-pub fn approves(review: &TeamReview) -> bool {
+/// Count `agent_reply` events by agent and return the newest body, one pass.
+fn agent_reply_events(
+    repo: &Repository,
+    run_id: &str,
+    agent_id: &str,
+) -> Result<(usize, Option<String>), H5iError> {
+    let events = team::read_events(repo, run_id)?;
+    let mut count = 0usize;
+    let mut newest = None;
+    for ev in events.iter().filter(|e| e.kind == "agent_reply") {
+        if ev.payload.get("agent_id").and_then(|v| v.as_str()) == Some(agent_id) {
+            count += 1;
+            newest = ev
+                .payload
+                .get("body")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+        }
+    }
+    Ok((count, newest))
+}
+
+/// Parse an agent's data reply as `T`: whole-body JSON first, then a fenced or
+/// embedded JSON value, then (for string-shaped `T`) the raw body itself.
+fn parse_json_reply<T: DeserializeOwned>(body: &str) -> Result<T, String> {
+    let trimmed = body.trim();
+    if let Ok(v) = serde_json::from_str::<T>(trimmed) {
+        return Ok(v);
+    }
+    // ```json … ``` fences.
+    let unfenced = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .and_then(|s| s.strip_suffix("```"))
+        .map(str::trim);
+    if let Some(inner) = unfenced {
+        if let Ok(v) = serde_json::from_str::<T>(inner) {
+            return Ok(v);
+        }
+    }
+    // First embedded object/array.
+    for (open, close) in [('{', '}'), ('[', ']')] {
+        if let (Some(start), Some(end)) = (trimmed.find(open), trimmed.rfind(close)) {
+            if start < end {
+                if let Ok(v) = serde_json::from_str::<T>(&trimmed[start..=end]) {
+                    return Ok(v);
+                }
+            }
+        }
+    }
+    // A bare unquoted string for `T = String`-shaped types.
+    if let Ok(v) = serde_json::from_value::<T>(serde_json::Value::String(trimmed.to_string())) {
+        return Ok(v);
+    }
+    Err(serde_json::from_str::<T>(trimmed)
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "unparseable reply".into()))
+}
+
+/// The documented approval convention for review bodies and gate replies: a
+/// body whose first token is `APPROVE`/`APPROVED`/`LGTM`/`YES` (case-
+/// insensitive) approves; anything else requests changes / declines.
+fn first_token_approves(body: &str) -> bool {
     matches!(
-        review
-            .body
-            .split_whitespace()
+        body.split_whitespace()
             .next()
             .map(|t| t.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_ascii_uppercase())
             .as_deref(),
-        Some("APPROVE") | Some("APPROVED") | Some("LGTM")
+        Some("APPROVE") | Some("APPROVED") | Some("LGTM") | Some("YES")
     )
+}
+
+/// Approval convention applied to a `TeamReview` (see [`first_token_approves`]).
+pub fn approves(review: &TeamReview) -> bool {
+    first_token_approves(&review.body)
+}
+
+// ── Gate: durable human-in-the-loop ───────────────────────────────────────────
+
+/// A human's reply to a [`Conductor::gate`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateAnswer {
+    pub from: String,
+    pub body: String,
+}
+
+impl GateAnswer {
+    /// Approval convention: first token `APPROVE`/`APPROVED`/`LGTM`/`YES`.
+    pub fn approved(&self) -> bool {
+        first_token_approves(&self.body)
+    }
+}
+
+/// A pending durable question to a human (design doc §4.3). Two journaled
+/// steps: the ask (records the sent message id, so a resume never re-asks) and
+/// the wait (records the reply). A score that times out waiting can simply
+/// exit; re-running it resumes the wait on the already-delivered question. The
+/// human answers with `h5i msg reply <n> APPROVE …` (or any text).
+pub struct Gate {
+    core: Arc<Core>,
+    question: String,
+    to: Option<String>,
+}
+
+impl Conductor {
+    /// Ask a human a durable question. Default recipient is the score's actor
+    /// identity (the question lands in their `h5i msg` inbox); override with
+    /// [`Gate::to`].
+    pub fn gate(&self, question: impl Into<String>) -> Gate {
+        Gate {
+            core: self.core.clone(),
+            question: question.into(),
+            to: None,
+        }
+    }
+}
+
+impl Gate {
+    /// Address the question to a specific agent/human identity.
+    pub fn to(mut self, recipient: impl Into<String>) -> Self {
+        self.to = Some(recipient.into());
+        self
+    }
+
+    /// Resolve to `true` when the reply approves (see [`GateAnswer::approved`]).
+    pub async fn approve(self) -> Result<bool, H5iError> {
+        Ok(self.answer().await?.approved())
+    }
+
+    /// Resolve to the full reply.
+    pub async fn answer(self) -> Result<GateAnswer, H5iError> {
+        let Gate { core, question, to } = self;
+        let recipient = to.unwrap_or_else(|| core.actor.clone());
+
+        // Step 1 — deliver the question once. The journaled result is the sent
+        // message id; a resume replays it and never re-asks.
+        let ask_core = core.clone();
+        let (ask_q, ask_to) = (question.clone(), recipient.clone());
+        let msg_id: String = journaled(core.clone(), "gate_ask".into(), move |c| {
+            let repo = c.repo()?;
+            let body = format!(
+                "[gate] {ask_q}\n\n(h5i orchestra run '{run}': a score is paused on your \
+                 answer — reply with `h5i msg reply <n> APPROVE` or `DECLINE <reason>`; \
+                 re-running the score resumes from this gate.)",
+                run = c.run_id,
+            );
+            let message = msg::send_msg(
+                &repo,
+                &c.h5i_root,
+                &c.actor,
+                &ask_to,
+                &body,
+                msg::SendOpts {
+                    kind: Some("ASK".into()),
+                    priority: Some("high".into()),
+                    links: Some(serde_json::json!({
+                        "team": c.run_id,
+                        "gate": true,
+                    })),
+                    ..Default::default()
+                },
+            )?;
+            let ev = team::event(
+                &c.run_id,
+                &c.actor,
+                "orch_gate_asked",
+                0,
+                None,
+                None,
+                format!("orch_gate_asked:{}:{}", c.run_id, message.id),
+                serde_json::json!({ "to": ask_to, "question": ask_q, "message_id": message.id }),
+            );
+            team::append_event(&repo, &ev)?;
+            Ok(message.id)
+        })
+        .await?;
+
+        // Step 2 — wait for the reply. The label embeds the message id, so the
+        // ask/wait pairing is stable under any concurrency or resume order.
+        let wait_label = format!("gate_wait/{msg_id}");
+        journaled(ask_core, wait_label, move |c| {
+            wait_until(
+                c,
+                &format!("a reply to gate message {msg_id} (from {recipient})"),
+                |repo| {
+                    let reply = msg::read_messages(repo)
+                        .into_iter()
+                        .filter(|m| m.reply_to.as_deref() == Some(msg_id.as_str()))
+                        .max_by(|a, b| (a.ts.as_str(), a.id.as_str()).cmp(&(b.ts.as_str(), b.id.as_str())));
+                    Ok(reply.map(|m| GateAnswer {
+                        from: m.from,
+                        body: m.body,
+                    }))
+                },
+            )
+        })
+        .await
+    }
 }
 
 #[cfg(test)]

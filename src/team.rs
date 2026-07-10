@@ -1752,6 +1752,35 @@ pub fn verify(
     Ok(verification)
 }
 
+/// Record a boxed agent's data reply (`h5i team agent reply`, spool-ingested)
+/// as an `agent_reply` event. This is the return channel of an orchestra `ask`
+/// turn: data addressed to the host, not a submission and not a review — it
+/// stamps no influence edges (the asker is the host, not a peer).
+pub fn record_agent_reply(
+    repo: &Repository,
+    run_id: &str,
+    agent_id: &str,
+    body: String,
+) -> Result<(), H5iError> {
+    validate_agent_id(agent_id)?;
+    let current = status(repo, run_id)?.run;
+    let ev = event(
+        run_id,
+        agent_id,
+        "agent_reply",
+        current.current_round,
+        None,
+        None,
+        format!(
+            "agent_reply:{run_id}:{agent_id}:{}:{}",
+            current.current_round,
+            now(),
+        ),
+        serde_json::json!({ "agent_id": agent_id, "body": body }),
+    );
+    append_event(repo, &ev)
+}
+
 /// The built-in verdict rule, extracted from `finalize` so programmatic judges
 /// (`orchestra::policy::tests_then_smallest_diff`) and the CLI share one
 /// implementation: keep candidates whose latest verification both applies

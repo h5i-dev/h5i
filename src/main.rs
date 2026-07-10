@@ -2141,6 +2141,14 @@ enum TeamCommands {
     },
     /// Print the standing bootstrap prompt for a boxed team agent
     Bootstrap,
+    /// Render the recorded orchestration trace (journaled steps + phases)
+    Trace {
+        /// Team id (default: the current team)
+        team: Option<String>,
+        /// Emit Graphviz dot instead of text
+        #[arg(long)]
+        dot: bool,
+    },
     /// Show or set the current team (omit NAME to show; --clear to unset)
     Use {
         /// Team id to make current; omit to print the current team
@@ -2479,6 +2487,21 @@ enum TeamAgentCommands {
         /// Summary text file
         #[arg(long = "summary-file")]
         summary_file: Option<std::path::PathBuf>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reply with data (text/JSON) to the host — the return channel of an
+    /// orchestra `ask` turn; boxed envs stage for host ingest
+    Reply {
+        /// Reply body (or use --file)
+        text: Option<String>,
+        /// Read the reply body from a file
+        #[arg(long, conflicts_with = "text")]
+        file: Option<std::path::PathBuf>,
+        /// Team id (host-side only; default: the current team)
+        #[arg(long)]
+        team: Option<String>,
         /// Emit JSON
         #[arg(long)]
         json: bool,
@@ -10126,6 +10149,15 @@ fn main() -> anyhow::Result<()> {
                 TeamCommands::Bootstrap => {
                     println!("{}", h5i_core::team::AGENT_BOOTSTRAP);
                 }
+                TeamCommands::Trace { team, dot } => {
+                    let run = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let events = h5i_core::team::read_events(git, &run)?;
+                    if dot {
+                        print!("{}", h5i_core::orchestra::trace::render_trace_dot(&run, &events));
+                    } else {
+                        print!("{}", h5i_core::orchestra::trace::render_trace(&run, &events));
+                    }
+                }
                 TeamCommands::Use { name, clear } => {
                     if clear {
                         h5i_core::team::clear_current(&h5i_root)?;
@@ -11067,6 +11099,68 @@ fn main() -> anyhow::Result<()> {
                                     artifact.owner_agent,
                                     &artifact.commit_oid[..12.min(artifact.commit_oid.len())]
                                 );
+                            }
+                        }
+                    }
+                    TeamAgentCommands::Reply { text, file, team, json } => {
+                        let body = match (text, file) {
+                            (Some(t), _) => t,
+                            (None, Some(path)) => {
+                                std::fs::read_to_string(&path).map_err(|e| {
+                                    anyhow::anyhow!(
+                                        "failed to read reply file {}: {e}",
+                                        path.display()
+                                    )
+                                })?
+                            }
+                            (None, None) => {
+                                anyhow::bail!("team agent reply needs a body (text or --file)")
+                            }
+                        };
+                        let in_env_spool =
+                            std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR)
+                                .map(PathBuf::from);
+                        let in_box = in_env_spool.is_some()
+                            && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
+                            && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
+                        if let (true, Some(spool)) = (in_box, in_env_spool) {
+                            let request = h5i_core::env::TeamReplySpool { body };
+                            let staged =
+                                h5i_core::env::write_team_reply_spool(&spool, &request)?;
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "staged": staged,
+                                        "host_ingest": "env-shell-exit"
+                                    }))?
+                                );
+                            } else {
+                                println!(
+                                    "{} team reply staged for host ingest ({})",
+                                    style("▢").cyan().dim(),
+                                    staged
+                                );
+                            }
+                        } else {
+                            let team = std::env::var(h5i_core::env::H5I_TEAM_VAR)
+                                .ok()
+                                .filter(|s| !s.trim().is_empty())
+                                .map(Ok)
+                                .unwrap_or_else(|| {
+                                    h5i_core::team::resolve_run(&h5i_root, team)
+                                })?;
+                            let agent = msg::resolve_identity(&h5i_root, None)?;
+                            h5i_core::team::record_agent_reply(git, &team, &agent, body)?;
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "recorded": true, "team": team, "agent": agent
+                                    }))?
+                                );
+                            } else {
+                                println!("{} reply recorded for {agent} on {team}", SUCCESS);
                             }
                         }
                     }

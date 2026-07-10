@@ -1,12 +1,18 @@
 //! Prebuilt orchestrations, implemented in the public eDSL — readable,
-//! forkable, no privileged API. `ensemble` reproduces the classic `h5i team`
-//! flow (N independent workers, mutual peer review, revise, verify, verdict);
-//! `arena`, `pipeline`, `map_reduce`, `debate`, and `integrate` follow in M4
-//! (design doc §4.4, §9).
+//! forkable, no privileged API (design doc §4.4). `ensemble` reproduces the
+//! classic `h5i team` flow; `integrate` is the multi-implementer merge seat;
+//! `pipeline` chains role-specialized stages; `arena` ranks independent
+//! attempts; `map_reduce` fans a work list out and merges; `debate` argues a
+//! question through `ask` turns.
+//!
+//! Roster note: every agent a pattern uses must be hired before the round is
+//! sealed (`add_env` is open-round-only) — hire integrators/moderators up
+//! front, alongside the workers.
 
 use super::{approves, Agent, Conductor, VerdictPolicy};
 use crate::error::H5iError;
-use crate::team::{TeamArtifact, TeamReview, TeamVerdict};
+use crate::team::{TeamArtifact, TeamCompareRow, TeamReview, TeamVerdict, TeamVerification};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// The classic ensemble: every agent attempts `task` independently, the round
@@ -208,5 +214,431 @@ async fn join_flat<T>(
 ) -> Result<T, H5iError> {
     handle
         .await
-        .map_err(|e| H5iError::Internal(format!("orchestra ensemble task panicked: {e}")))?
+        .map_err(|e| H5iError::Internal(format!("orchestra pattern task panicked: {e}")))?
+}
+
+// ── integrate ─────────────────────────────────────────────────────────────────
+
+/// The multi-implementer merge seat (design doc §4.3/§4.4): seal the round,
+/// then one integrator fuses the given parts in its own env — granted their
+/// diffs as materials, honestly stamped non-independent — and optionally the
+/// merged artifact is neutrally verified.
+pub fn integrate(c: &Conductor, task: impl Into<String>) -> Integrate {
+    Integrate {
+        c: c.clone(),
+        task: task.into(),
+        parts: Vec::new(),
+        integrator: None,
+        verify_cmd: None,
+        isolation: None,
+    }
+}
+
+pub struct Integrate {
+    c: Conductor,
+    task: String,
+    parts: Vec<TeamArtifact>,
+    integrator: Option<Agent>,
+    verify_cmd: Option<Vec<String>>,
+    isolation: Option<String>,
+}
+
+pub struct IntegrateOutcome {
+    pub merged: TeamArtifact,
+    pub verification: Option<TeamVerification>,
+}
+
+impl Integrate {
+    pub fn parts<'a>(mut self, parts: impl IntoIterator<Item = &'a TeamArtifact>) -> Self {
+        self.parts.extend(parts.into_iter().cloned());
+        self
+    }
+
+    pub fn integrator(mut self, agent: Agent) -> Self {
+        self.integrator = Some(agent);
+        self
+    }
+
+    pub fn verify<I, S>(mut self, command: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.verify_cmd = Some(command.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub fn isolation(mut self, tier: impl Into<String>) -> Self {
+        self.isolation = Some(tier.into());
+        self
+    }
+
+    pub async fn run(self) -> Result<IntegrateOutcome, H5iError> {
+        let integrator = self.integrator.ok_or_else(|| {
+            H5iError::Metadata("orchestra integrate needs an integrator agent".into())
+        })?;
+        if self.parts.is_empty() {
+            return Err(H5iError::Metadata(
+                "orchestra integrate needs at least one part".into(),
+            ));
+        }
+        // Materials ride the discuss channel, which is sealed-phase-only.
+        self.c.freeze().await?;
+        let merged = integrator
+            .work(format!(
+                "{task}\n\nMerge the granted teammate artifacts into one coherent candidate: \
+                 apply their patches in this worktree, resolve conflicts (prefer a mechanical \
+                 `git merge`/`git apply` first; use judgment only where the changes genuinely \
+                 collide), and make the result build.",
+                task = self.task
+            ))
+            .with_materials(self.parts.iter())
+            .await?;
+        let verification = match &self.verify_cmd {
+            Some(cmd) => Some(
+                self.c
+                    .verify(&merged, cmd.iter().cloned(), self.isolation.as_deref())
+                    .await?,
+            ),
+            None => None,
+        };
+        Ok(IntegrateOutcome {
+            merged,
+            verification,
+        })
+    }
+}
+
+// ── pipeline ──────────────────────────────────────────────────────────────────
+
+/// Role-specialized stages in sequence (architect → implementer → reviewer …):
+/// stage 1 works independently; the round is sealed; every later stage gets
+/// the previous stage's artifact as material. Returns one artifact per stage,
+/// in order.
+pub async fn pipeline(
+    c: &Conductor,
+    stages: Vec<(Agent, String)>,
+) -> Result<Vec<TeamArtifact>, H5iError> {
+    if stages.is_empty() {
+        return Err(H5iError::Metadata(
+            "orchestra pipeline needs at least one stage".into(),
+        ));
+    }
+    let mut artifacts: Vec<TeamArtifact> = Vec::new();
+    for (i, (agent, task)) in stages.into_iter().enumerate() {
+        let artifact = if i == 0 {
+            let first = agent.work(task).await?;
+            c.freeze().await?;
+            first
+        } else {
+            let prev = artifacts.last().expect("stage > 0 has a predecessor");
+            agent.work(task).with_materials([prev]).await?
+        };
+        artifacts.push(artifact);
+    }
+    Ok(artifacts)
+}
+
+// ── arena ─────────────────────────────────────────────────────────────────────
+
+/// Independent attempts, ranked: N agents try the same task with no cross-
+/// influence, the round seals, every candidate is (optionally) neutrally
+/// verified with one command, a policy decides, and the roster comparison
+/// rows come back alongside the verdict.
+pub fn arena(c: &Conductor, task: impl Into<String>) -> Arena {
+    Arena {
+        c: c.clone(),
+        task: task.into(),
+        agents: Vec::new(),
+        verify_cmd: None,
+        isolation: None,
+        policy: None,
+    }
+}
+
+pub struct Arena {
+    c: Conductor,
+    task: String,
+    agents: Vec<Agent>,
+    verify_cmd: Option<Vec<String>>,
+    isolation: Option<String>,
+    policy: Option<Box<dyn VerdictPolicy>>,
+}
+
+pub struct ArenaOutcome {
+    pub artifacts: Vec<TeamArtifact>,
+    pub rows: Vec<TeamCompareRow>,
+    pub verdict: Option<TeamVerdict>,
+}
+
+impl Arena {
+    pub fn agents(mut self, agents: impl IntoIterator<Item = Agent>) -> Self {
+        self.agents.extend(agents);
+        self
+    }
+
+    pub fn verify<I, S>(mut self, command: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.verify_cmd = Some(command.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub fn isolation(mut self, tier: impl Into<String>) -> Self {
+        self.isolation = Some(tier.into());
+        self
+    }
+
+    pub fn judge<P: VerdictPolicy + 'static>(mut self, policy: P) -> Self {
+        self.policy = Some(Box::new(policy));
+        self
+    }
+
+    pub async fn run(self) -> Result<ArenaOutcome, H5iError> {
+        let Arena {
+            c,
+            task,
+            agents,
+            verify_cmd,
+            isolation,
+            policy,
+        } = self;
+        if agents.len() < 2 {
+            return Err(H5iError::Metadata(
+                "orchestra arena needs at least two agents".into(),
+            ));
+        }
+        let handles: Vec<_> = agents
+            .iter()
+            .map(|a| {
+                let (a, task) = (a.clone(), task.clone());
+                tokio::spawn(async move { a.work(task).await })
+            })
+            .collect();
+        let mut artifacts = Vec::new();
+        for handle in handles {
+            artifacts.push(join_flat(handle).await?);
+        }
+        c.freeze().await?;
+        if let Some(cmd) = &verify_cmd {
+            for artifact in &artifacts {
+                c.verify(artifact, cmd.iter().cloned(), isolation.as_deref())
+                    .await?;
+            }
+        }
+        let verdict = match (policy, &verify_cmd) {
+            (Some(p), _) => Some(c.judge(p).await?),
+            (None, Some(_)) => Some(c.judge(super::policy::tests_then_smallest_diff()).await?),
+            (None, None) => None,
+        };
+        let rows = c.compare().await?;
+        Ok(ArenaOutcome {
+            artifacts,
+            rows,
+            verdict,
+        })
+    }
+}
+
+// ── map_reduce ────────────────────────────────────────────────────────────────
+
+/// Fan a work list out and merge: each `(agent, task)` assignment runs as its
+/// own work turn (assignments to the *same* agent run sequentially — one
+/// resident session, and one journal label, per agent), then the round seals
+/// and the reducer fuses every part with materials. The reduce seat is
+/// exactly the conflict-resolution seat (design doc §9 M4).
+pub fn map_reduce(c: &Conductor) -> MapReduce {
+    MapReduce {
+        c: c.clone(),
+        assignments: Vec::new(),
+        reducer: None,
+    }
+}
+
+pub struct MapReduce {
+    c: Conductor,
+    assignments: Vec<(Agent, String)>,
+    reducer: Option<(Agent, String)>,
+}
+
+pub struct MapReduceOutcome {
+    pub parts: Vec<TeamArtifact>,
+    pub merged: Option<TeamArtifact>,
+}
+
+impl MapReduce {
+    pub fn map(mut self, agent: Agent, task: impl Into<String>) -> Self {
+        self.assignments.push((agent, task.into()));
+        self
+    }
+
+    pub fn reduce(mut self, integrator: Agent, task: impl Into<String>) -> Self {
+        self.reducer = Some((integrator, task.into()));
+        self
+    }
+
+    pub async fn run(self) -> Result<MapReduceOutcome, H5iError> {
+        let MapReduce {
+            c,
+            assignments,
+            reducer,
+        } = self;
+        if assignments.is_empty() {
+            return Err(H5iError::Metadata(
+                "orchestra map_reduce needs at least one assignment".into(),
+            ));
+        }
+        // Group by agent: cross-agent parallel, same-agent sequential (the
+        // journal's per-label discipline and the one-session-per-agent model
+        // both require it).
+        let mut by_agent: BTreeMap<String, (Agent, Vec<String>)> = BTreeMap::new();
+        for (agent, task) in assignments {
+            by_agent
+                .entry(agent.id().to_string())
+                .or_insert_with(|| (agent.clone(), Vec::new()))
+                .1
+                .push(task);
+        }
+        let handles: Vec<_> = by_agent
+            .into_values()
+            .map(|(agent, tasks)| {
+                tokio::spawn(async move {
+                    let mut parts = Vec::new();
+                    for task in tasks {
+                        parts.push(agent.work(task).await?);
+                    }
+                    Ok::<_, H5iError>(parts)
+                })
+            })
+            .collect();
+        let mut parts = Vec::new();
+        for handle in handles {
+            parts.extend(join_flat(handle).await?);
+        }
+        let merged = match reducer {
+            Some((integrator, task)) => Some(
+                integrate(&c, task)
+                    .parts(parts.iter())
+                    .integrator(integrator)
+                    .run()
+                    .await?
+                    .merged,
+            ),
+            None => {
+                c.freeze().await?;
+                None
+            }
+        };
+        Ok(MapReduceOutcome { parts, merged })
+    }
+}
+
+// ── debate ────────────────────────────────────────────────────────────────────
+
+/// The moderator's structured conclusion of a debate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebateConclusion {
+    /// The prevailing side's agent id.
+    pub winner: String,
+    pub rationale: String,
+}
+
+pub struct DebateOutcome {
+    /// `(agent_id, argument)` in speaking order.
+    pub transcript: Vec<(String, String)>,
+    pub conclusion: Option<DebateConclusion>,
+}
+
+/// Argue a question through data turns: each side speaks in alternating
+/// order for `rounds` rounds (seeing the transcript so far), then an optional
+/// moderator concludes. Pure `ask` — no artifacts, no freeze.
+pub fn debate(c: &Conductor, question: impl Into<String>) -> Debate {
+    Debate {
+        _c: c.clone(),
+        question: question.into(),
+        sides: Vec::new(),
+        moderator: None,
+        rounds: 1,
+    }
+}
+
+pub struct Debate {
+    _c: Conductor,
+    question: String,
+    sides: Vec<Agent>,
+    moderator: Option<Agent>,
+    rounds: u32,
+}
+
+impl Debate {
+    pub fn sides(mut self, sides: impl IntoIterator<Item = Agent>) -> Self {
+        self.sides.extend(sides);
+        self
+    }
+
+    pub fn moderator(mut self, agent: Agent) -> Self {
+        self.moderator = Some(agent);
+        self
+    }
+
+    pub fn rounds(mut self, n: u32) -> Self {
+        self.rounds = n.max(1);
+        self
+    }
+
+    pub async fn run(self) -> Result<DebateOutcome, H5iError> {
+        if self.sides.len() < 2 {
+            return Err(H5iError::Metadata(
+                "orchestra debate needs at least two sides".into(),
+            ));
+        }
+        let mut transcript: Vec<(String, String)> = Vec::new();
+        for round in 1..=self.rounds {
+            for side in &self.sides {
+                let context = if transcript.is_empty() {
+                    String::from("You open the debate.")
+                } else {
+                    let mut s = String::from("Transcript so far:\n");
+                    for (who, what) in &transcript {
+                        s.push_str(&format!("- {who}: {what}\n"));
+                    }
+                    s
+                };
+                let argument: String = side
+                    .ask(format!(
+                        "Debate (round {round}/{rounds}): {question}\n\n{context}\n\nMake your \
+                         strongest argument for your side, as a single JSON string.",
+                        rounds = self.rounds,
+                        question = self.question,
+                    ))
+                    .await?;
+                transcript.push((side.id().to_string(), argument));
+            }
+        }
+        let conclusion = match &self.moderator {
+            Some(moderator) => {
+                let mut s = String::new();
+                for (who, what) in &transcript {
+                    s.push_str(&format!("- {who}: {what}\n"));
+                }
+                Some(
+                    moderator
+                        .ask::<DebateConclusion>(format!(
+                            "You moderate this debate: {question}\n\nTranscript:\n{s}\nDecide \
+                             which side prevailed. Reply as JSON: {{\"winner\": \
+                             \"<agent-id>\", \"rationale\": \"<why>\"}}.",
+                            question = self.question,
+                        ))
+                        .await?,
+                )
+            }
+            None => None,
+        };
+        Ok(DebateOutcome {
+            transcript,
+            conclusion,
+        })
+    }
 }

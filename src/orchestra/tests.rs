@@ -107,28 +107,41 @@ fn fabricate_env(repo: &Repository, h5i_root: &Path, agent: &str, slug: &str) ->
 }
 
 /// Scripted stand-in for resident agent sessions: on a Work/Revise turn it
-/// commits a file onto the agent's env branch and submits; on a Review turn it
-/// posts `review_body`. Counts every turn so resume tests can assert zero
-/// re-execution.
+/// commits a per-turn file onto the agent's env branch and submits; on a
+/// Review turn it posts `review_body`; on an Ask turn it pops the next queued
+/// reply (via the in-box spool when `ask_via_spool`, else recorded directly).
+/// Counts every turn so resume tests can assert zero re-execution.
 struct Script {
     turns: AtomicUsize,
     review_body: Mutex<String>,
+    ask_replies: Mutex<Vec<String>>,
+    ask_via_spool: bool,
+}
+
+fn scripted(review_body: &str) -> Arc<Script> {
+    Arc::new(Script {
+        turns: AtomicUsize::new(0),
+        review_body: Mutex::new(review_body.into()),
+        ask_replies: Mutex::new(Vec::new()),
+        ask_via_spool: false,
+    })
 }
 
 impl Script {
     fn launcher(script: &Arc<Self>) -> Arc<dyn RuntimeLauncher> {
         let script = script.clone();
         Arc::new(FnLauncher(move |turn: &TurnContext| {
-            script.turns.fetch_add(1, Ordering::SeqCst);
+            let n = script.turns.fetch_add(1, Ordering::SeqCst);
             let repo = Repository::open(&turn.repo_workdir)?;
             let branch = format!("refs/heads/h5i/{}", turn.env_id);
             match &turn.kind {
-                TurnKind::Work => {
+                TurnKind::Work | TurnKind::Revise => {
+                    let stage = if turn.kind == TurnKind::Work { "work" } else { "revised" };
                     commit_on_branch(
                         &repo,
                         &branch,
-                        &format!("{}.txt", turn.agent_id),
-                        "work\n",
+                        &format!("{}-{stage}-{n}.txt", turn.agent_id),
+                        "content\n",
                     )?;
                     team::submit(
                         &repo,
@@ -136,7 +149,7 @@ impl Script {
                         &turn.run_id,
                         &turn.agent_id,
                         None,
-                        Some("first attempt".into()),
+                        Some(stage.into()),
                         &turn.agent_id,
                     )?;
                 }
@@ -152,22 +165,27 @@ impl Script {
                         &turn.agent_id,
                     )?;
                 }
-                TurnKind::Revise => {
-                    commit_on_branch(
-                        &repo,
-                        &branch,
-                        &format!("{}-revised.txt", turn.agent_id),
-                        "revised\n",
-                    )?;
-                    team::submit(
-                        &repo,
-                        &turn.h5i_root,
-                        &turn.run_id,
-                        &turn.agent_id,
-                        None,
-                        Some("revised".into()),
-                        &turn.agent_id,
-                    )?;
+                TurnKind::Ask => {
+                    let body = {
+                        let mut q = script.ask_replies.lock().unwrap();
+                        if q.is_empty() {
+                            "{}".to_string()
+                        } else {
+                            q.remove(0)
+                        }
+                    };
+                    if script.ask_via_spool {
+                        // The real box path: stage the reply in the env spool;
+                        // the wait loop's sync_outbound ingests it host-side.
+                        let m = env::find(&turn.h5i_root, &turn.env_id)?;
+                        let spool = m.dir(&turn.h5i_root).join("spool");
+                        env::write_team_reply_spool(
+                            &spool,
+                            &env::TeamReplySpool { body },
+                        )?;
+                    } else {
+                        team::record_agent_reply(&repo, &turn.run_id, &turn.agent_id, body)?;
+                    }
                 }
             }
             Ok(())
@@ -265,10 +283,7 @@ async fn work_review_revise_and_resume_without_reexecution() {
     fabricate_env(&repo, &h5i_root, "claude", "fix");
     fabricate_env(&repo, &h5i_root, "codex", "fix");
 
-    let script = Arc::new(Script {
-        turns: AtomicUsize::new(0),
-        review_body: Mutex::new("Needs work: rename the helper before this can land.".into()),
-    });
+    let script = scripted("Needs work: rename the helper before this can land.");
 
     // The score, as a reusable closure over any conductor bound to the run.
     async fn score(c: &Conductor) -> (TeamArtifact, TeamArtifact, TeamReview, TeamArtifact) {
@@ -321,10 +336,7 @@ async fn ensemble_verdict_and_mediated_apply() {
     fabricate_env(&repo, &h5i_root, "claude", "ens");
     fabricate_env(&repo, &h5i_root, "codex", "ens");
 
-    let script = Arc::new(Script {
-        turns: AtomicUsize::new(0),
-        review_body: Mutex::new("APPROVE — clean and minimal.".into()),
-    });
+    let script = scripted("APPROVE — clean and minimal.");
     let c = conductor(dir.path(), "ens", Script::launcher(&script));
     let a = c
         .agent("claude")
@@ -359,13 +371,327 @@ async fn ensemble_verdict_and_mediated_apply() {
     assert_eq!(applied.submission_id, winner_id);
     let head = repo.head().unwrap().peel_to_commit().unwrap();
     assert_eq!(head.id().to_string(), applied.target_commit_oid);
-    assert!(head
-        .tree()
-        .unwrap()
-        .get_name(&format!("{}.txt", winner.owner_agent))
-        .is_some());
+    let prefix = format!("{}-work-", winner.owner_agent);
+    assert!(
+        head.tree()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e.name().map(String::from))
+            .any(|n| n.starts_with(&prefix)),
+        "applied tree must contain the winner's work file"
+    );
 
     // Applying a non-selected artifact without force stays refused.
     let loser = outcome.artifacts.iter().find(|s| s.id != winner_id).unwrap();
     assert!(c.apply(loser).await.is_err());
+}
+
+#[tokio::test]
+async fn gate_delivers_once_and_resumes_from_journal() {
+    let dir = tempfile::tempdir().unwrap();
+    init_repo(dir.path());
+    let repo_path = dir.path().to_path_buf();
+
+    // A background "human": polls the msg store for the gate ASK, replies once.
+    let responder = std::thread::spawn(move || {
+        for _ in 0..400 {
+            let repo = Repository::open(&repo_path).unwrap();
+            let asks: Vec<_> = msg::read_messages(&repo)
+                .into_iter()
+                .filter(|m| m.body.starts_with("[gate]"))
+                .collect();
+            if let Some(ask) = asks.first() {
+                msg::send_msg(
+                    &repo,
+                    &repo.commondir().join(".h5i"),
+                    "human",
+                    &ask.from,
+                    "APPROVE ship it",
+                    msg::SendOpts {
+                        reply_to: Some(ask.id.clone()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("gate ASK never appeared");
+    });
+
+    let c1 = conductor(dir.path(), "gated", Arc::new(Attach));
+    let approved = c1.gate("apply the winner?").approve().await.unwrap();
+    assert!(approved);
+    responder.join().unwrap();
+
+    let count_gate_asks = |repo: &Repository| {
+        msg::read_messages(repo)
+            .into_iter()
+            .filter(|m| m.body.starts_with("[gate]"))
+            .count()
+    };
+    let repo = Repository::open(dir.path()).unwrap();
+    assert_eq!(count_gate_asks(&repo), 1);
+
+    // Resume: the gate replays ask + answer from the journal — no new ASK is
+    // sent and no responder is needed.
+    let c2 = conductor(dir.path(), "gated", Arc::new(Attach));
+    let answer = c2.gate("apply the winner?").answer().await.unwrap();
+    assert!(answer.approved());
+    assert_eq!(answer.from, "human");
+    assert_eq!(count_gate_asks(&repo), 1, "resume must not re-ask");
+}
+
+#[tokio::test]
+async fn patched_keeps_migration_branches_consistent() {
+    let dir = tempfile::tempdir().unwrap();
+    init_repo(dir.path());
+
+    // v1 of the score journals two steps and no marker.
+    let c1 = conductor(dir.path(), "patch", Arc::new(Attach));
+    let _: u32 = c1.step("a", || Ok(1)).await.unwrap();
+    let _: u32 = c1.step("b", || Ok(2)).await.unwrap();
+
+    // v2 inserts patched() checks. Mid-replay of the v1 journal the first
+    // marker must pick the OLD path (false: step "b" is still un-replayed);
+    // once the old journal is exhausted the second marker picks the new path.
+    let c2 = conductor(dir.path(), "patch", Arc::new(Attach));
+    let _: u32 = c2.step("a", || Ok(0)).await.unwrap();
+    assert!(!c2.patched("mid-run-change").await.unwrap());
+    let _: u32 = c2.step("b", || Ok(0)).await.unwrap();
+    assert!(c2.patched("post-journal-change").await.unwrap());
+
+    // Every later resume replays the recorded choices verbatim.
+    let c3 = conductor(dir.path(), "patch", Arc::new(Attach));
+    let _: u32 = c3.step("a", || Ok(0)).await.unwrap();
+    assert!(!c3.patched("mid-run-change").await.unwrap());
+    let _: u32 = c3.step("b", || Ok(0)).await.unwrap();
+    assert!(c3.patched("post-journal-change").await.unwrap());
+}
+
+#[tokio::test]
+async fn trace_renders_steps_and_phases() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let c = conductor(dir.path(), "traced", Arc::new(Attach));
+    let _: u32 = c.step("fetch", || Ok(7)).await.unwrap();
+    c.note("halfway").await.unwrap();
+
+    let events = team::read_events(&repo, "traced").unwrap();
+    let text = super::trace::render_trace("traced", &events);
+    assert!(text.contains("step fetch#1"), "missing step line:\n{text}");
+    assert!(text.contains("note: halfway"), "missing note line:\n{text}");
+    assert!(text.contains("run created"), "missing created line:\n{text}");
+
+    let dot = super::trace::render_trace_dot("traced", &events);
+    assert!(dot.starts_with("digraph"));
+    assert!(dot.contains("label=\"fetch\""), "missing lane cluster:\n{dot}");
+    assert!(dot.contains("\"fetch#1\""));
+}
+
+#[tokio::test]
+async fn ask_via_spool_ingests_and_parses() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "claude", "ask");
+
+    let script = Arc::new(Script {
+        turns: AtomicUsize::new(0),
+        review_body: Mutex::new(String::new()),
+        ask_replies: Mutex::new(vec!["{\"score\": 8, \"verdict\": \"solid\"}".into()]),
+        ask_via_spool: true,
+    });
+    let c = conductor(dir.path(), "ask-spool", Script::launcher(&script));
+    let a = c.agent("claude").env("env/claude/ask").hire().await.unwrap();
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Card {
+        score: u32,
+        verdict: String,
+    }
+    let card: Card = a.ask("Rate the design 0-10.").await.unwrap();
+    assert_eq!(card.score, 8);
+    assert_eq!(card.verdict, "solid");
+    assert_eq!(script.turns.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn ask_reasks_on_unparseable_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "codex", "ask2");
+
+    let script = Arc::new(Script {
+        turns: AtomicUsize::new(0),
+        review_body: Mutex::new(String::new()),
+        ask_replies: Mutex::new(vec![
+            "sorry, here you go: nothing useful".into(),
+            "```json\n{\"n\": 42}\n```".into(),
+        ]),
+        ask_via_spool: false,
+    });
+    let c = conductor(dir.path(), "ask-retry", Script::launcher(&script));
+    let a = c.agent("codex").env("env/codex/ask2").hire().await.unwrap();
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct N {
+        n: u32,
+    }
+    let v: N = a.ask("Answer with {\"n\": <int>}.").await.unwrap();
+    assert_eq!(v.n, 42);
+    assert_eq!(script.turns.load(Ordering::SeqCst), 2, "one re-ask");
+}
+
+#[tokio::test]
+async fn with_materials_stamps_influence_edges() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "claude", "m");
+    fabricate_env(&repo, &h5i_root, "codex", "m");
+    fabricate_env(&repo, &h5i_root, "mira", "m");
+
+    let script = scripted("APPROVE");
+    let c = conductor(dir.path(), "mats", Script::launcher(&script));
+    let a = c.agent("claude").env("env/claude/m").hire().await.unwrap();
+    let b = c.agent("codex").env("env/codex/m").hire().await.unwrap();
+    let integrator = c.agent("mira").env("env/mira/m").hire().await.unwrap();
+
+    let (pa, pb) = tokio::try_join!(a.work("part A"), b.work("part B")).unwrap();
+    assert!(pa.independent && pb.independent);
+    c.freeze().await.unwrap();
+
+    let merged = integrator
+        .work("merge the parts")
+        .with_materials([&pa, &pb])
+        .await
+        .unwrap();
+    assert!(!merged.independent, "material-fed work must not claim independence");
+    assert!(merged.influence_artifact_ids.contains(&pa.id));
+    assert!(merged.influence_artifact_ids.contains(&pb.id));
+
+    // The scoped-visibility audit event is recorded.
+    let events = team::read_events(&repo, "mats").unwrap();
+    assert!(events.iter().any(|e| e.kind == "materials_granted"));
+}
+
+#[tokio::test]
+async fn pattern_pipeline_chains_materials() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "claude", "p");
+    fabricate_env(&repo, &h5i_root, "codex", "p");
+
+    let script = scripted("APPROVE");
+    let c = conductor(dir.path(), "pipe", Script::launcher(&script));
+    let architect = c.agent("claude").env("env/claude/p").hire().await.unwrap();
+    let implementer = c.agent("codex").env("env/codex/p").hire().await.unwrap();
+
+    let artifacts = super::patterns::pipeline(
+        &c,
+        vec![
+            (architect, "design the module".to_string()),
+            (implementer, "implement the design".to_string()),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(artifacts.len(), 2);
+    assert!(artifacts[0].independent);
+    assert!(!artifacts[1].independent, "stage 2 is influenced by stage 1");
+    assert!(artifacts[1].influence_artifact_ids.contains(&artifacts[0].id));
+}
+
+#[tokio::test]
+async fn pattern_arena_ranks_and_judges() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "claude", "ar");
+    fabricate_env(&repo, &h5i_root, "codex", "ar");
+
+    let script = scripted("APPROVE");
+    let c = conductor(dir.path(), "arena", Script::launcher(&script));
+    let a = c.agent("claude").env("env/claude/ar").hire().await.unwrap();
+    let b = c.agent("codex").env("env/codex/ar").hire().await.unwrap();
+
+    let outcome = super::patterns::arena(&c, "solve it")
+        .agents([a, b])
+        .judge(smallest_diff_policy())
+        .run()
+        .await
+        .unwrap();
+    assert_eq!(outcome.artifacts.len(), 2);
+    assert_eq!(outcome.rows.len(), 2);
+    assert!(outcome.verdict.unwrap().selected_submission.is_some());
+}
+
+#[tokio::test]
+async fn pattern_map_reduce_merges_via_integrator() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "claude", "mr");
+    fabricate_env(&repo, &h5i_root, "codex", "mr");
+    fabricate_env(&repo, &h5i_root, "mira", "mr");
+
+    let script = scripted("APPROVE");
+    let c = conductor(dir.path(), "mapred", Script::launcher(&script));
+    let a = c.agent("claude").env("env/claude/mr").hire().await.unwrap();
+    let b = c.agent("codex").env("env/codex/mr").hire().await.unwrap();
+    let m = c.agent("mira").env("env/mira/mr").hire().await.unwrap();
+
+    let outcome = super::patterns::map_reduce(&c)
+        .map(a.clone(), "item 1")
+        .map(b, "item 2")
+        .map(a, "item 3") // same agent twice: must run sequentially, not race
+        .reduce(m, "merge all items")
+        .run()
+        .await
+        .unwrap();
+    assert_eq!(outcome.parts.len(), 3);
+    let merged = outcome.merged.unwrap();
+    assert!(!merged.independent);
+    assert_eq!(merged.influence_artifact_ids.len(), 3);
+}
+
+#[tokio::test]
+async fn pattern_debate_argues_and_concludes() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "claude", "d");
+    fabricate_env(&repo, &h5i_root, "codex", "d");
+    fabricate_env(&repo, &h5i_root, "mira", "d");
+
+    let script = Arc::new(Script {
+        turns: AtomicUsize::new(0),
+        review_body: Mutex::new(String::new()),
+        ask_replies: Mutex::new(vec![
+            "\"tabs are configurable\"".into(),
+            "\"spaces render identically everywhere\"".into(),
+            "{\"winner\": \"codex\", \"rationale\": \"portability won\"}".into(),
+        ]),
+        ask_via_spool: false,
+    });
+    let c = conductor(dir.path(), "debate", Script::launcher(&script));
+    let pro = c.agent("claude").env("env/claude/d").hire().await.unwrap();
+    let con = c.agent("codex").env("env/codex/d").hire().await.unwrap();
+    let moderator = c.agent("mira").env("env/mira/d").hire().await.unwrap();
+
+    let outcome = super::patterns::debate(&c, "tabs or spaces?")
+        .sides([pro, con])
+        .moderator(moderator)
+        .rounds(1)
+        .run()
+        .await
+        .unwrap();
+    assert_eq!(outcome.transcript.len(), 2);
+    assert_eq!(outcome.transcript[0].1, "tabs are configurable");
+    let conclusion = outcome.conclusion.unwrap();
+    assert_eq!(conclusion.winner, "codex");
 }

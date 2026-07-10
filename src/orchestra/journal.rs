@@ -45,6 +45,9 @@ struct State {
     seq: BTreeMap<String, u32>,
     /// Recorded results from prior invocations of this run, keyed by step key.
     replay: BTreeMap<String, serde_json::Value>,
+    /// Keys this process has replayed or recorded — what `patched` uses to
+    /// tell "resuming an older run" from "executing fresh".
+    consumed: std::collections::BTreeSet<String>,
 }
 
 impl Journal {
@@ -73,6 +76,7 @@ impl Journal {
             state: Mutex::new(State {
                 seq: BTreeMap::new(),
                 replay,
+                consumed: Default::default(),
             }),
         }
     }
@@ -98,16 +102,31 @@ impl Journal {
         key: &str,
     ) -> Option<Result<T, H5iError>> {
         let value = {
-            let st = self.state.lock().expect("journal lock");
-            st.replay.get(key).cloned()
+            let mut st = self.state.lock().expect("journal lock");
+            let v = st.replay.get(key).cloned();
+            if v.is_some() {
+                st.consumed.insert(key.to_string());
+            }
+            v
         }?;
-        Some(serde_json::from_value(value).map_err(|e| {
+        let run_id = self.run_id.clone();
+        Some(serde_json::from_value(value).map_err(move |e| {
             H5iError::Metadata(format!(
                 "orchestra resume divergence: journaled step '{key}' no longer matches the \
                  score's expected result type ({e}) — the score changed shape mid-run; \
-                 finish the run with the original score or start a new run"
+                 inspect the recorded steps with `h5i team trace {run_id}`, then finish the \
+                 run with the original score or start a new run"
             ))
         }))
+    }
+
+    /// True while previously journaled steps remain un-replayed — i.e. this
+    /// process is resuming a run whose journal was written before the current
+    /// point in the score. `Conductor::patched` uses this to keep migration
+    /// branches consistent.
+    pub(crate) fn has_unconsumed(&self) -> bool {
+        let st = self.state.lock().expect("journal lock");
+        st.replay.keys().any(|k| !st.consumed.contains(k))
     }
 
     /// Record a completed step's result. Executes-once semantics come from the
@@ -142,6 +161,7 @@ impl Journal {
         team::append_event(&repo, &ev)?;
         let mut st = self.state.lock().expect("journal lock");
         st.replay.insert(key.to_string(), result);
+        st.consumed.insert(key.to_string());
         Ok(())
     }
 
