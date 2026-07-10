@@ -2274,6 +2274,8 @@ mod tests {
             captures: vec![],
             service_digest: None,
             persona_digest: None,
+            pr: None,
+            pr_head_ref: None,
         };
         write_env(h5i_root, &m);
         m

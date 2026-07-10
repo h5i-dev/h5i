@@ -1864,6 +1864,17 @@ enum EnvCommands {
         /// Base revision (default: HEAD). Pinned immutably.
         #[arg(long)]
         from: Option<String>,
+        /// Base the env on a GitHub pull request (number, #number, or URL):
+        /// fetches refs/pull/<n>/head from the remote, pins it as the immutable
+        /// base, and points the env's parent branch at a local `pr/<n>`
+        /// tracking branch — so propose/apply review the PR head, and apply
+        /// prints the push-back command. Needs only `git`; `gh` (optional)
+        /// enriches the push-back hint with the PR's head branch name.
+        #[arg(long, conflicts_with = "from", value_name = "NUMBER|URL")]
+        pr: Option<String>,
+        /// Remote to fetch the PR head from (with --pr).
+        #[arg(long, default_value = "origin")]
+        remote: String,
         /// Policy profile from .h5i/env.toml. Built-ins need no file: `agent`
         /// (agent-in-box, scoped to $H5I_AGENT's runtime), `agent-claude` /
         /// `agent-codex` (pin one runtime: only that agent's HOME state + API
@@ -10041,11 +10052,9 @@ fn main() -> anyhow::Result<()> {
                     let mut created = Vec::new();
                     for member in &roster {
                         let opts = h5i_core::env::CreateOpts {
-                            from: None,
                             profile: Some(member.profile.to_string()),
-                            isolation: None,
-                            backend: "auto".into(),
                             audit_capture: h5i_core::sandbox::AuditCapture::parse("signal")?,
+                            ..Default::default()
                         };
                         let m = h5i_core::env::create(
                             git, &h5i_root, workdir, &env_agent, &member.env_slug, opts,
@@ -11099,6 +11108,8 @@ fn main() -> anyhow::Result<()> {
                 EnvCommands::Create {
                     name,
                     from,
+                    pr,
+                    remote,
                     profile,
                     isolation,
                     backend,
@@ -11116,12 +11127,22 @@ fn main() -> anyhow::Result<()> {
                     // surface the container tier when the host lacks Podman.
                     let auto_picked = matches!(isolation, None | Some(IsolationRequest::Auto));
                     let profile_auto = profile.is_none();
+                    // A PR base is resolved host-side BEFORE create: fetch the PR
+                    // head, pin the local pr/<n> tracking branch, then create pins
+                    // the immutable base from it like any other rev.
+                    let pr_base = match &pr {
+                        Some(spec) => Some(h5i_core::pr::resolve_pr_base(&workdir, spec, &remote)?),
+                        None => None,
+                    };
                     let opts = h5i_core::env::CreateOpts {
-                        from,
+                        from: pr_base.as_ref().map(|b| b.oid.clone()).or(from),
                         profile,
                         isolation,
                         backend,
                         audit_capture: h5i_core::sandbox::AuditCapture::parse(&audit)?,
+                        parent_branch: pr_base.as_ref().map(|b| b.local_branch.clone()),
+                        pr: pr_base.as_ref().map(|b| b.number),
+                        pr_head_ref: pr_base.as_ref().and_then(|b| b.head_ref.clone()),
                     };
                     let m = h5i_core::env::create(git, &h5i_root, &workdir, &agent, &name, opts)?;
                     println!(
@@ -11131,6 +11152,18 @@ fn main() -> anyhow::Result<()> {
                         style(&m.isolation_claim).cyan(),
                         m.profile
                     );
+                    if let Some(b) = &pr_base {
+                        println!(
+                            "   pr       #{} head {} pinned to local branch {}{}",
+                            b.number,
+                            &b.oid[..12.min(b.oid.len())],
+                            style(&b.local_branch).cyan(),
+                            match b.cross_repo {
+                                Some(true) => "  (cross-repo PR — push-back needs the fork remote)",
+                                _ => "",
+                            }
+                        );
+                    }
                     if profile_auto && m.profile == "default" {
                         println!(
                             "   {}      this host cannot enforce the built-in 'agent' profile (its \
@@ -11634,6 +11667,20 @@ fn main() -> anyhow::Result<()> {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
                     let msg_out = h5i_core::env::apply(git, &h5i_root, &workdir, &mut m, patch)?;
                     println!("{} {}", SUCCESS, msg_out);
+                    // A PR env applied onto its local pr/<n> branch: tell the
+                    // reviewer exactly how to send the result back to the PR.
+                    if let Some(n) = m.pr {
+                        match (&m.pr_head_ref, m.parent_branch.as_str()) {
+                            (Some(head), local) => println!(
+                                "   push back to PR #{n}:  git push origin {local}:{head}"
+                            ),
+                            (None, local) => println!(
+                                "   push back to PR #{n}:  git push origin {local}:<pr-head-branch> \
+                                 (see `gh pr view {n} --json headRefName`; a fork PR needs the fork \
+                                 remote instead of origin)"
+                            ),
+                        }
+                    }
                 }
 
                 EnvCommands::Abort { name } => {

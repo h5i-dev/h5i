@@ -658,6 +658,8 @@ mod tests {
             captures: vec!["cap0".into()],
             service_digest: None,
             persona_digest: None,
+            pr: None,
+            pr_head_ref: None,
         }
     }
 

@@ -617,6 +617,7 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "name": { "type": "string", "description": "Env name (lowercase slug, e.g. \"fix-auth\")." },
                     "from": { "type": "string", "description": "Base revision (default HEAD); pinned immutably." },
+                    "pr": { "type": "string", "description": "Base the env on a GitHub pull request (number or URL): fetches refs/pull/<n>/head from origin, pins it as the immutable base, and targets a local pr/<n> tracking branch. Mutually exclusive with `from`." },
                     "profile": { "type": "string", "description": "Policy profile from .h5i/env.toml. Built-ins: \"agent\" (agent-in-box, scoped to the creating runtime), \"agent-claude\"/\"agent-codex\" (pin one runtime: only that agent's HOME state + API egress), \"default\" (fail-closed build/test). Unset auto-picks the creating runtime's agent profile when the host can enforce it, else \"default\"." },
                     "isolation": {
                         "type": "string",
@@ -1454,8 +1455,17 @@ fn tool_env_create(params: &Value, workdir: &Path) -> Result<Value> {
             crate::sandbox::IsolationClaim::parse(s)?,
         )),
     };
+    // Optional PR base (mirrors `env create --pr`): resolved host-side first,
+    // then pinned like any other rev.
+    let pr_base = match params.get("pr").and_then(Value::as_str) {
+        Some(spec) => Some(crate::pr::resolve_pr_base(workdir, spec, "origin")?),
+        None => None,
+    };
     let opts = crate::env::CreateOpts {
-        from: params.get("from").and_then(Value::as_str).map(str::to_owned),
+        from: pr_base
+            .as_ref()
+            .map(|b| b.oid.clone())
+            .or_else(|| params.get("from").and_then(Value::as_str).map(str::to_owned)),
         profile: params.get("profile").and_then(Value::as_str).map(str::to_owned),
         isolation,
         backend: "auto".into(),
@@ -1465,6 +1475,9 @@ fn tool_env_create(params: &Value, workdir: &Path) -> Result<Value> {
             .map(crate::sandbox::AuditCapture::parse)
             .transpose()?
             .unwrap_or_default(),
+        parent_branch: pr_base.as_ref().map(|b| b.local_branch.clone()),
+        pr: pr_base.as_ref().map(|b| b.number),
+        pr_head_ref: pr_base.as_ref().and_then(|b| b.head_ref.clone()),
     };
     let m = crate::env::create(repo.git(), &repo.h5i_root, workdir, &agent, &name, opts)?;
     Ok(json_content(serde_json::to_value(&m)?))

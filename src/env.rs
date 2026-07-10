@@ -282,6 +282,15 @@ pub struct EnvManifest {
     /// worktree (git-excluded, so it never enters the agent's diff/commit).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona_digest: Option<String>,
+    /// GitHub PR number this env tracks (`env create --pr`): the base is the
+    /// PR's head, `parent_branch` its local `pr/<n>` tracking branch, and
+    /// apply prints a push-back hint. Absent for ordinary envs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<u64>,
+    /// The PR's head branch name on its source repo (via `gh`, best-effort) —
+    /// the target of the push-back hint after apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_head_ref: Option<String>,
 }
 
 impl EnvManifest {
@@ -1216,6 +1225,17 @@ pub struct CreateOpts {
     pub backend: String,
     /// Command evidence policy for wrapped in-env commands.
     pub audit_capture: sandbox::AuditCapture,
+    /// Override the parent branch (short name) the env proposes/applies back
+    /// onto. `None` derives it from the current HEAD. `--pr` sets it to the
+    /// PR's local tracking branch — the review target is the PR, not whatever
+    /// branch the operator happened to have checked out.
+    pub parent_branch: Option<String>,
+    /// GitHub PR number this env tracks (`env create --pr`), recorded in the
+    /// manifest for review/push-back hints. The base itself is pinned via
+    /// `from` like any other revision.
+    pub pr: Option<u64>,
+    /// The PR's head branch name on its source repo (via `gh`, best-effort).
+    pub pr_head_ref: Option<String>,
 }
 
 impl Default for CreateOpts {
@@ -1226,6 +1246,9 @@ impl Default for CreateOpts {
             isolation: None,
             backend: "auto".into(),
             audit_capture: sandbox::AuditCapture::Signal,
+            parent_branch: None,
+            pr: None,
+            pr_head_ref: None,
         }
     }
 }
@@ -1329,11 +1352,12 @@ pub fn create(
         .and_then(|o| o.peel_to_commit())
         .map_err(|e| H5iError::Metadata(format!("cannot resolve base revision '{rev}': {e}")))?;
     let base_tree = base_commit.tree()?.id();
-    let parent_branch = repo
-        .head()
-        .ok()
-        .and_then(|h| h.shorthand().map(str::to_owned))
-        .unwrap_or_else(|| base_commit.id().to_string());
+    let parent_branch = opts.parent_branch.clone().unwrap_or_else(|| {
+        repo.head()
+            .ok()
+            .and_then(|h| h.shorthand().map(str::to_owned))
+            .unwrap_or_else(|| base_commit.id().to_string())
+    });
 
     // Code branch + native git worktree (§4). The worktree lives under
     // `.git/.h5i/env/<agent>/<slug>/work`, invisible to the main working tree.
@@ -1403,6 +1427,8 @@ pub fn create(
         captures: Vec::new(),
         service_digest,
         persona_digest,
+        pr: opts.pr,
+        pr_head_ref: opts.pr_head_ref.clone(),
     };
 
     let policy_toml = policy.to_toml()?;
@@ -7193,6 +7219,8 @@ mod tests {
             captures: vec![],
             service_digest: None,
             persona_digest: None,
+            pr: None,
+            pr_head_ref: None,
         }
     }
 
@@ -8384,6 +8412,8 @@ mod tests {
             captures: vec!["cap1".into()],
             service_digest: None,
             persona_digest: None,
+            pr: None,
+            pr_head_ref: None,
         };
         let text = serde_json::to_string_pretty(&m).unwrap();
         let back: EnvManifest = serde_json::from_str(&text).unwrap();
@@ -8496,6 +8526,8 @@ mod tests {
                 captures: Vec::new(),
                 service_digest: None,
                 persona_digest: None,
+                pr: None,
+                pr_head_ref: None,
             };
             save_manifest(h5i_root, &m).unwrap();
         }

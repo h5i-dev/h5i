@@ -60,7 +60,10 @@ h5i msg inbox | history | team | watch [--all]
 h5i msg hook [--block]                   # Stop-hook turn delivery
 
 # Isolated agent environments (worktree + sandbox + provenance)
-h5i env create <name> [--from REV] [--profile P] [--isolation workspace|process|...]
+h5i env create <name> [--from REV | --pr N|URL] [--profile P] [--isolation workspace|process|...]
+                                         # --pr fetches refs/pull/<n>/head, pins it as the base,
+                                         # and reviews onto a local pr/<n> branch (apply prints
+                                         # the push-back command; gh optional)
                                          # --profile unset auto-picks the creating runtime's agent-in-box
                                          # profile (`agent-claude`/`agent-codex`: only that runtime's HOME
                                          # state + API egress) where the host can enforce it, else
