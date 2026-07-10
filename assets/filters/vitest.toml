@@ -39,3 +39,8 @@ input = """
       Tests  5 passed (5)
 """
 expected = "      Tests  5 passed (5)"
+
+[[tests.vitest]]
+name = "clean run collapses to message"
+input = ""
+expected = "vitest: ok"

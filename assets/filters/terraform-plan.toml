@@ -33,3 +33,8 @@ expected = "Terraform will perform the following actions:\n  # aws_instance.web 
 name = "strips noise, preserves non-blank content"
 input = "Refreshing state... [id=vpc-abc]\nNo changes. Your infrastructure matches the configuration."
 expected = "No changes. Your infrastructure matches the configuration."
+
+[[tests.terraform-plan]]
+name = "clean run collapses to message"
+input = ""
+expected = "terraform plan: no changes detected"

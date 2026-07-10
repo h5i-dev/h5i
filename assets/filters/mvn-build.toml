@@ -42,3 +42,8 @@ input = """
 [INFO] Finished at: 2024-01-15T10:30:00Z
 """
 expected = "[INFO] BUILD SUCCESS\n[INFO] Total time: 4.123 s\n[INFO] Finished at: 2024-01-15T10:30:00Z"
+
+[[tests.mvn-build]]
+name = "clean run collapses to message"
+input = ""
+expected = "mvn: ok"

@@ -42,3 +42,8 @@ input = """
 error TS5023: Unknown compiler option '--bad'.
 """
 expected = "error TS5023: Unknown compiler option '--bad'."
+
+[[tests.tsc]]
+name = "clean run collapses to message"
+input = ""
+expected = "tsc: ok"
