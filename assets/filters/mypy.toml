@@ -26,3 +26,8 @@ Found 2 errors in 2 files (checked 9 source files)
 name = "keeps success line"
 input = "Success: no issues found in 5 source files"
 expected = "Success: no issues found in 5 source files"
+
+[[tests.mypy]]
+name = "clean run collapses to message"
+input = ""
+expected = "mypy: ok"

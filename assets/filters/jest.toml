@@ -63,3 +63,8 @@ FAIL src/config.test.ts
 Test Suites: 1 failed, 1 passed, 2 total
 Tests:       3 passed, 3 total
 """
+
+[[tests.jest]]
+name = "clean run collapses to message"
+input = ""
+expected = "jest: ok"

@@ -39,3 +39,8 @@ input = """
 error: invalid value '--bad' for '--select'
 """
 expected = "error: invalid value '--bad' for '--select'"
+
+[[tests.ruff]]
+name = "clean run collapses to message"
+input = ""
+expected = "ruff: clean"

@@ -58,3 +58,8 @@ expected = """
   │ exit code: 1
 ERROR: Failed building wheel for broken-package
 """
+
+[[tests.pip]]
+name = "clean run collapses to message"
+input = ""
+expected = "pip: ok"
