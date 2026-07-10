@@ -196,6 +196,8 @@ fn synthetic_env_manifest(
         captures: Vec::new(),
         service_digest: None,
         persona_digest: None,
+        pr: None,
+        pr_head_ref: None,
     }
 }
 
@@ -322,6 +324,111 @@ fn create_pins_an_explicit_base_revision() {
     assert_eq!(m["base_commit"].as_str().unwrap(), first);
     // The worktree reflects the OLD base — later.txt is absent.
     assert!(!r.work("old-base").join("later.txt").exists());
+}
+
+#[test]
+fn env_allow_add_list_remove_and_in_box_refusal() {
+    let r = Repo::new();
+    // Redirect the user config dir so the test never touches the real
+    // ~/.config/h5i (the allowlist is per-user host state, not repo state).
+    let cfg = TempDir::new().expect("tempdir");
+    let run = |args: &[&str], in_box: bool| -> Output {
+        let mut c = Command::new(H5I);
+        c.args(args)
+            .env("H5I_AGENT", "tester")
+            .env("H5I_DEFAULT_ISOLATION", "workspace")
+            .env("XDG_CONFIG_HOME", cfg.path())
+            .current_dir(&r.dir);
+        if in_box {
+            c.env("H5I_ENV_ID", "env/tester/boxed");
+        }
+        c.output().expect("failed to run h5i")
+    };
+
+    let out = run(&["env", "allow", "PyPI.org"], false);
+    assert!(out.status.success(), "{}", out_str(&out));
+    let file = cfg.path().join("h5i").join("egress-allow");
+    let text = std::fs::read_to_string(&file).expect("allowlist written");
+    assert!(text.contains("pypi.org"), "normalized lowercase rule:\n{text}");
+
+    // Duplicate add is a friendly no-op (one line stays one line).
+    run(&["env", "allow", "pypi.org"], false);
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(text.matches("pypi.org").count(), 1, "{text}");
+
+    // Bare `env allow` lists the rules.
+    let out = run(&["env", "allow"], false);
+    assert!(out.status.success());
+    assert!(out_str(&out).contains("pypi.org"));
+
+    // Strict intake: a URL is not a host rule.
+    let out = run(&["env", "allow", "https://evil.example/x"], false);
+    assert!(!out.status.success(), "URL must be rejected");
+
+    // In-box mutation is refused — a confined agent must not widen its own
+    // network grants (the file also isn't box-writable; this is the belt).
+    let out = run(&["env", "allow", "evil.example"], true);
+    assert!(!out.status.success(), "in-box env allow must refuse");
+    assert!(
+        out_str(&out).contains("inside an env box"),
+        "{}",
+        out_str(&out)
+    );
+
+    let out = run(&["env", "allow", "pypi.org", "--remove"], false);
+    assert!(out.status.success());
+    assert!(!std::fs::read_to_string(&file).unwrap().contains("pypi.org"));
+}
+
+#[test]
+fn env_create_pr_pins_pr_head_as_base() {
+    let r = Repo::new();
+    // A "GitHub-like" remote: a bare repo exposing a PR head at refs/pull/7/head.
+    let remote_dir = r.dir.parent().unwrap().join("remote.git");
+    run_ok(Command::new("git").args(["init", "--bare"]).arg(&remote_dir));
+    git(&r.dir, &["remote", "add", "origin", remote_dir.to_str().unwrap()]);
+    git(&r.dir, &["push", "origin", "main"]);
+    git(&r.dir, &["checkout", "-b", "feature"]);
+    std::fs::write(r.dir.join("pr.txt"), "pr change\n").unwrap();
+    git(&r.dir, &["add", "pr.txt"]);
+    git(&r.dir, &["commit", "-m", "pr commit"]);
+    let pr_head = out_str(&git(&r.dir, &["rev-parse", "HEAD"]))
+        .trim()
+        .to_string();
+    git(&r.dir, &["push", "origin", "HEAD:refs/pull/7/head"]);
+    git(&r.dir, &["checkout", "main"]);
+    git(&r.dir, &["branch", "-D", "feature"]);
+
+    r.h5i_ok(&["env", "create", "review-pr", "--pr", "7"]);
+    let m = r.manifest("review-pr");
+    // The immutable base IS the PR head, and the review target is its local
+    // tracking branch — not whatever branch happened to be checked out.
+    assert_eq!(m["base_commit"].as_str().unwrap(), pr_head);
+    assert_eq!(m["parent_branch"].as_str().unwrap(), "pr/7");
+    assert_eq!(m["pr"].as_u64().unwrap(), 7);
+    let tip = out_str(&git(&r.dir, &["rev-parse", "refs/heads/pr/7"]))
+        .trim()
+        .to_string();
+    assert_eq!(tip, pr_head);
+    assert!(r.work("review-pr").join("pr.txt").exists());
+    // The throwaway incoming ref was dropped (the branch keeps the commit).
+    let gone = Command::new("git")
+        .args(["rev-parse", "--verify", "refs/h5i/_incoming/pr-7"])
+        .current_dir(&r.dir)
+        .output()
+        .unwrap();
+    assert!(!gone.status.success(), "temp incoming ref must be deleted");
+
+    // Fail closed on collision: a local pr/7 moved elsewhere is never
+    // force-updated by a later --pr create.
+    git(&r.dir, &["branch", "-f", "pr/7", "main"]);
+    let out = r.h5i(&["env", "create", "review-pr-2", "--pr", "7"]);
+    assert!(!out.status.success(), "colliding pr/7 must refuse");
+    assert!(out_str(&out).contains("already exists"), "{}", out_str(&out));
+
+    // --pr and --from are mutually exclusive.
+    let out = r.h5i(&["env", "create", "review-pr-3", "--pr", "7", "--from", "HEAD"]);
+    assert!(!out.status.success());
 }
 
 // ─── 2. run: capture-wrapped, evidence-tagged, exit-code transparent ────────

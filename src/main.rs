@@ -1864,6 +1864,17 @@ enum EnvCommands {
         /// Base revision (default: HEAD). Pinned immutably.
         #[arg(long)]
         from: Option<String>,
+        /// Base the env on a GitHub pull request (number, #number, or URL):
+        /// fetches refs/pull/<n>/head from the remote, pins it as the immutable
+        /// base, and points the env's parent branch at a local `pr/<n>`
+        /// tracking branch — so propose/apply review the PR head, and apply
+        /// prints the push-back command. Needs only `git`; `gh` (optional)
+        /// enriches the push-back hint with the PR's head branch name.
+        #[arg(long, conflicts_with = "from", value_name = "NUMBER|URL")]
+        pr: Option<String>,
+        /// Remote to fetch the PR head from (with --pr).
+        #[arg(long, default_value = "origin")]
+        remote: String,
         /// Policy profile from .h5i/env.toml. Built-ins need no file: `agent`
         /// (agent-in-box, scoped to $H5I_AGENT's runtime), `agent-claude` /
         /// `agent-codex` (pin one runtime: only that agent's HOME state + API
@@ -1914,6 +1925,20 @@ enum EnvCommands {
         /// Command to run inside the box (after `--`); default: an interactive shell.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
+    },
+
+    /// Manage the persistent user-level egress allowlist: extra hosts merged
+    /// into every container-tier env whose profile already sets net.egress
+    /// (a deny-all profile is never widened). Stored host-side under
+    /// ~/.config/h5i/, outside every box-granted path; takes effect at the
+    /// next `env run`/`env shell`. With no rule, lists the current entries.
+    Allow {
+        /// Host rule: exact `api.example.com`, wildcard `.example.com` /
+        /// `*.example.com`, optionally with a `:port` suffix.
+        rule: Option<String>,
+        /// Remove the rule instead of adding it.
+        #[arg(long)]
+        remove: bool,
     },
 
     /// Probe what isolation this host can actually provide (Landlock, user
@@ -10027,11 +10052,9 @@ fn main() -> anyhow::Result<()> {
                     let mut created = Vec::new();
                     for member in &roster {
                         let opts = h5i_core::env::CreateOpts {
-                            from: None,
                             profile: Some(member.profile.to_string()),
-                            isolation: None,
-                            backend: "auto".into(),
                             audit_capture: h5i_core::sandbox::AuditCapture::parse("signal")?,
+                            ..Default::default()
                         };
                         let m = h5i_core::env::create(
                             git, &h5i_root, workdir, &env_agent, &member.env_slug, opts,
@@ -11085,6 +11108,8 @@ fn main() -> anyhow::Result<()> {
                 EnvCommands::Create {
                     name,
                     from,
+                    pr,
+                    remote,
                     profile,
                     isolation,
                     backend,
@@ -11102,12 +11127,22 @@ fn main() -> anyhow::Result<()> {
                     // surface the container tier when the host lacks Podman.
                     let auto_picked = matches!(isolation, None | Some(IsolationRequest::Auto));
                     let profile_auto = profile.is_none();
+                    // A PR base is resolved host-side BEFORE create: fetch the PR
+                    // head, pin the local pr/<n> tracking branch, then create pins
+                    // the immutable base from it like any other rev.
+                    let pr_base = match &pr {
+                        Some(spec) => Some(h5i_core::pr::resolve_pr_base(&workdir, spec, &remote)?),
+                        None => None,
+                    };
                     let opts = h5i_core::env::CreateOpts {
-                        from,
+                        from: pr_base.as_ref().map(|b| b.oid.clone()).or(from),
                         profile,
                         isolation,
                         backend,
                         audit_capture: h5i_core::sandbox::AuditCapture::parse(&audit)?,
+                        parent_branch: pr_base.as_ref().map(|b| b.local_branch.clone()),
+                        pr: pr_base.as_ref().map(|b| b.number),
+                        pr_head_ref: pr_base.as_ref().and_then(|b| b.head_ref.clone()),
                     };
                     let m = h5i_core::env::create(git, &h5i_root, &workdir, &agent, &name, opts)?;
                     println!(
@@ -11117,6 +11152,18 @@ fn main() -> anyhow::Result<()> {
                         style(&m.isolation_claim).cyan(),
                         m.profile
                     );
+                    if let Some(b) = &pr_base {
+                        println!(
+                            "   pr       #{} head {} pinned to local branch {}{}",
+                            b.number,
+                            &b.oid[..12.min(b.oid.len())],
+                            style(&b.local_branch).cyan(),
+                            match b.cross_repo {
+                                Some(true) => "  (cross-repo PR — push-back needs the fork remote)",
+                                _ => "",
+                            }
+                        );
+                    }
                     if profile_auto && m.profile == "default" {
                         println!(
                             "   {}      this host cannot enforce the built-in 'agent' profile (its \
@@ -11257,6 +11304,47 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
+                EnvCommands::Allow { rule, remove } => match rule {
+                    None => {
+                        let rules = h5i_core::env::user_allow_list();
+                        match h5i_core::env::user_allow_path() {
+                            Some(path) => println!("── user egress allowlist ({}) ──", path.display()),
+                            None => println!("── user egress allowlist ──"),
+                        }
+                        if rules.is_empty() {
+                            println!("  (empty — add one with `h5i env allow <host>`)");
+                        }
+                        for r in &rules {
+                            println!("  {r}");
+                        }
+                        println!(
+                            "  applies to container-tier envs whose profile sets net.egress; \
+                             takes effect at the next env run/shell"
+                        );
+                    }
+                    Some(raw) => {
+                        if remove {
+                            let (removed, path) = h5i_core::env::user_allow_remove(&raw)?;
+                            if removed {
+                                println!("✔  removed '{}' from {}", raw.trim(), path.display());
+                            } else {
+                                println!("   '{}' was not in {}", raw.trim(), path.display());
+                            }
+                        } else {
+                            let (added, path) = h5i_core::env::user_allow_add(&raw)?;
+                            if added {
+                                println!("✔  allowed '{}' ({})", raw.trim(), path.display());
+                                println!(
+                                    "   merged into container-tier envs whose profile sets \
+                                     net.egress, from the next env run/shell on"
+                                );
+                            } else {
+                                println!("   '{}' already allowed ({})", raw.trim(), path.display());
+                            }
+                        }
+                    }
+                },
+
                 EnvCommands::Probe => {
                     let caps = h5i_core::sandbox::probe_host();
                     println!("── Host isolation capabilities ──");
@@ -11383,6 +11471,11 @@ fn main() -> anyhow::Result<()> {
                                 if let serde_json::Value::Object(ref mut map) = v {
                                     let d = h5i_core::env::drift(git, m);
                                     map.insert("drift".into(), serde_json::to_value(&d).unwrap_or(serde_json::Value::Null));
+                                    // Live sessions (the pid registry) — runtime
+                                    // state, so injected like drift rather than
+                                    // stored in the manifest.
+                                    let live = h5i_core::env::live_sessions(&m.dir(&h5i_root));
+                                    map.insert("live".into(), serde_json::to_value(&live).unwrap_or(serde_json::Value::Null));
                                 }
                                 v
                             })
@@ -11395,14 +11488,27 @@ fn main() -> anyhow::Result<()> {
                         for m in envs {
                             let d = h5i_core::env::drift(git, &m);
                             let drift_mark = if d.is_current() { "" } else { " ⚠drift" };
+                            let live = h5i_core::env::live_sessions(&m.dir(&h5i_root));
+                            let live_mark = match live
+                                .iter()
+                                .find(|s| h5i_core::env::live_is_writer(&s.kind))
+                            {
+                                Some(s) => format!(" ●{} pid {}", s.kind, s.pid),
+                                None if m.status == "running" => " ⚠stale".to_string(),
+                                None if !live.is_empty() => {
+                                    format!(" ◦{} observer(s)", live.len())
+                                }
+                                None => String::new(),
+                            };
                             println!(
-                                "{:<28} {:<9} isolation={:<10} base={} captures={}{}",
+                                "{:<28} {:<9} isolation={:<10} base={} captures={}{}{}",
                                 style(&m.id).magenta(),
                                 m.status,
                                 m.isolation_claim,
                                 &m.base_commit[..12],
                                 m.captures.len(),
-                                style(drift_mark).yellow()
+                                style(drift_mark).yellow(),
+                                style(&live_mark).green()
                             );
                         }
                     }
@@ -11579,6 +11685,20 @@ fn main() -> anyhow::Result<()> {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
                     let msg_out = h5i_core::env::apply(git, &h5i_root, &workdir, &mut m, patch)?;
                     println!("{} {}", SUCCESS, msg_out);
+                    // A PR env applied onto its local pr/<n> branch: tell the
+                    // reviewer exactly how to send the result back to the PR.
+                    if let Some(n) = m.pr {
+                        match (&m.pr_head_ref, m.parent_branch.as_str()) {
+                            (Some(head), local) => println!(
+                                "   push back to PR #{n}:  git push origin {local}:{head}"
+                            ),
+                            (None, local) => println!(
+                                "   push back to PR #{n}:  git push origin {local}:<pr-head-branch> \
+                                 (see `gh pr view {n} --json headRefName`; a fork PR needs the fork \
+                                 remote instead of origin)"
+                            ),
+                        }
+                    }
                 }
 
                 EnvCommands::Abort { name } => {

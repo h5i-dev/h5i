@@ -316,6 +316,13 @@ export interface EnvEventView {
   capture?: string | null;
 }
 
+export interface LiveSession {
+  pid: number;
+  kind: "run" | "shell" | "observe" | string;
+  started_at: string;
+  command?: string | null;
+}
+
 export interface EnvFleetItem {
   id: string;
   agent: string;
@@ -334,6 +341,12 @@ export interface EnvFleetItem {
   drift_summary: string;
   last_event?: EnvEventView | null;
   risk: EnvRisk;
+  live: LiveSession[];
+  stale_running: boolean;
+  pr?: number | null;
+  files_changed: number;
+  insertions: number;
+  deletions: number;
 }
 
 export interface EgressHost {

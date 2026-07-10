@@ -3552,8 +3552,8 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 </thead>
 <tbody>
 <tr>
-<td><code>h5i env create &lt;name&gt; [--from REV] [--profile P] [--isolation TIER] [--audit signal\|all]</code></td>
-<td>Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. With no <code>--isolation</code> (or <code>--isolation auto</code>) it <strong>auto-picks the strongest tier the host can run</strong>; an explicit tier fails closed if the host can't satisfy it. <code>--audit all</code> pins <code>[audit] capture = "all"</code> in the resolved policy so wrapped in-env commands are recorded even when they succeed with small output.</td>
+<td><code>h5i env create &lt;name&gt; [--from REV \| --pr N\|URL [--remote R]] [--profile P] [--isolation TIER] [--audit signal\|all]</code></td>
+<td>Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. With no <code>--isolation</code> (or <code>--isolation auto</code>) it <strong>auto-picks the strongest tier the host can run</strong>; an explicit tier fails closed if the host can't satisfy it. <code>--audit all</code> pins <code>[audit] capture = "all"</code> in the resolved policy so wrapped in-env commands are recorded even when they succeed with small output. <code>--pr</code> bases the env on a <strong>GitHub pull request</strong>: the PR head (<code>refs/pull/&lt;n&gt;/head</code>) is fetched from the remote (default <code>origin</code>), pinned as the immutable base, and tracked by a local <code>pr/&lt;n&gt;</code> branch that becomes the env's parent — so <code>propose</code>/<code>apply</code>/<code>rebase</code> review the PR, and <code>apply</code> prints the exact push-back command (<code>git push origin pr/&lt;n&gt;:&lt;head-branch&gt;</code>). Needs only <code>git</code>; <code>gh</code>, when installed, enriches the hint with the PR's head branch name and fork-ness. A pre-existing <code>pr/&lt;n&gt;</code> branch pointing elsewhere is refused, never force-moved.</td>
 </tr>
 <tr>
 <td><code>h5i env run &lt;name&gt; -- &lt;cmd&gt; [args…]</code></td>
@@ -3572,12 +3572,16 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 <td><strong>Machine-readable</strong> enforcement report — the structured form of <code>probe</code>, so a product adapts to the host without scraping text. Reports <code>os</code>, <code>landlock_abi</code>, <code>userns</code>, <code>seccomp</code>, <code>container_runtime</code>, <code>egress_enforced</code> (only the container tier enforces a domain <strong>allowlist</strong>), <code>resource_limits</code>, <code>strongest_tier</code>, and per-claim <code>satisfiable</code> + (kernel tiers) functional <code>runnable</code>.</td>
 </tr>
 <tr>
+<td><code>h5i env allow [&lt;host&gt;] [--remove]</code></td>
+<td>Manage the persistent <strong>user-level egress allowlist</strong> (<code>~/.config/h5i/egress-allow</code>): extra hosts merged into every container-tier env whose profile already sets <code>net.egress</code> — a deny-all profile is <strong>never</strong> widened from outside the digested policy, and the pinned <code>policy_digest</code> is untouched (the extras are runtime state, recorded per-run in the capture manifest's egress tally). Rules: exact <code>api.example.com</code>, wildcard <code>.example.com</code>/<code>*.example.com</code>, optional <code>:port</code>. Host-side only: the file lives outside every box-granted path and the command <strong>refuses inside an env box</strong>, so a confined agent can't widen its own network grants. Sessions print the effective allowlist at start (<code>⦿ egress …</code>) and denied hosts become <code>egress-denied</code> findings — <code>h5i recall search &lt;host&gt;</code> answers "what did the box try to reach?", and each finding suggests the one-line fix. No <code>&lt;host&gt;</code> lists the current rules.</td>
+</tr>
+<tr>
 <td><code>h5i env list [--json]</code></td>
-<td>List environments on this clone (the fleet view). <code>--json</code> emits an array of manifests, each enriched with base <code>drift</code>.</td>
+<td>List environments on this clone (the fleet view), each with a <strong>live marker</strong> from the pid registry (<code>●shell pid N</code> for a live writer session, <code>◦N observer(s)</code>, or <code>⚠stale</code> when the durable status says <code>running</code> but no live session holds the env — a crash leftover). <code>--json</code> emits an array of manifests, each enriched with base <code>drift</code> and the <code>live</code> session array.</td>
 </tr>
 <tr>
 <td><code>h5i env status &lt;name&gt; [--json]</code></td>
-<td>Lifecycle state + enforced policy + evidence + base drift. <code>--json</code> emits the raw manifest.</td>
+<td>Lifecycle state + <strong>live sessions</strong> (pid-verified: kind, pid, start, redacted command; flags a stale <code>running</code>) + enforced policy (incl. the egress allowlist) + evidence + base drift. <code>--json</code> emits the raw manifest.</td>
 </tr>
 <tr>
 <td><code>h5i env doctor &lt;name&gt; [--json]</code></td>
@@ -4319,6 +4323,10 @@ h5i serve --port 8080
 <tr>
 <td><strong>Sessions</strong></td>
 <td>Per-commit session data: exploration footprint, uncertainty heatmap, omissions, churn</td>
+</tr>
+<tr>
+<td><strong>Board</strong></td>
+<td>Environments as <strong>cards flowing through lifecycle columns</strong> (Created / Working / Proposed / Applied / Aborted) — the parallel-agents view. Each card shows the pid-verified <strong>live session</strong> (<code>● shell pid N</code>, observers, or a <code>stale</code> flag when a <code>running</code> status has no live writer), the PR it tracks, base drift, the boundary-pressure score, a diffstat vs the pinned base, capture count, and the parent branch it proposes onto. Read-only like every serve surface: instead of mutating buttons, every card offers its <strong>next CLI command one click from the clipboard</strong> (<code>env shell</code> → <code>env propose</code> → <code>env apply</code> → <code>env gc</code>). Polls <code>GET /api/envs</code>.</td>
 </tr>
 <tr>
 <td><strong>Sandbox</strong></td>

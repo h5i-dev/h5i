@@ -1645,6 +1645,17 @@ pub struct EnvFleetItem {
     pub last_event: Option<EnvEventView>,
     /// Boundary-pressure roll-up from the deterministic classifier.
     pub risk: crate::risk::EnvRisk,
+    /// Live sessions from the pid registry (run/shell/observe), PID-verified.
+    pub live: Vec<crate::env::LiveSession>,
+    /// True when the durable status says `running` but no live writer session
+    /// holds the env — a crash leftover the UI should flag, not trust.
+    pub stale_running: bool,
+    /// GitHub PR number the env tracks (`env create --pr`), when any.
+    pub pr: Option<u64>,
+    /// Worktree-vs-base diffstat (branch tip for pulled/gc'd envs).
+    pub files_changed: usize,
+    pub insertions: usize,
+    pub deletions: usize,
 }
 
 #[derive(Serialize)]
@@ -1700,6 +1711,11 @@ fn build_fleet_item(
     let drift = crate::env::drift(git, m);
     let policy = crate::env::load_policy(h5i_root, m).ok().map(|rp| rp.profile);
     let risk = crate::risk::classify_env(m, policy.as_ref(), events, captures);
+    let live = crate::env::live_sessions(&m.dir(h5i_root));
+    let stale_running =
+        m.status == "running" && !live.iter().any(|s| crate::env::live_is_writer(&s.kind));
+    let (files_changed, insertions, deletions) =
+        crate::env::diffstat_numbers(git, h5i_root, m).unwrap_or((0, 0, 0));
     EnvFleetItem {
         id: m.id.clone(),
         agent: m.agent.clone(),
@@ -1718,6 +1734,12 @@ fn build_fleet_item(
         drift_summary: drift.summary(),
         last_event: events.last().map(EnvEventView::from),
         risk,
+        live,
+        stale_running,
+        pr: m.pr,
+        files_changed,
+        insertions,
+        deletions,
     }
 }
 

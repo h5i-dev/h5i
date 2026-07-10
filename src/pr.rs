@@ -2693,6 +2693,164 @@ pub fn post_comment(workdir: &Path, number: Option<u64>, body: &str) -> Result<(
     Ok(())
 }
 
+// ─── PR-based env bases (`h5i env create --pr`) ──────────────────────────────
+
+/// A GitHub pull request resolved into a locally-pinned base for
+/// `h5i env create --pr`: the PR head is fetched (GitHub exposes it at
+/// `refs/pull/<n>/head`) and pinned to a local tracking branch, so the rest of
+/// the env lifecycle (immutable base, propose/apply onto the parent branch,
+/// rebase) works on plain local refs with no further network.
+pub struct PrBase {
+    pub number: u64,
+    /// PR head commit (full hex), fetched and present locally.
+    pub oid: String,
+    /// Local tracking branch (short name, `pr/<n>`) pinned at `oid`.
+    pub local_branch: String,
+    /// The PR's head branch name on its source repo (via `gh`; best-effort —
+    /// `None` when `gh` is absent or the remote isn't a GitHub repo).
+    pub head_ref: Option<String>,
+    /// True when the PR comes from a fork (via `gh`; best-effort).
+    pub cross_repo: Option<bool>,
+    /// Remote the head was fetched from.
+    pub remote: String,
+}
+
+/// Accept `123`, `#123`, or a GitHub PR URL
+/// (`https://github.com/<owner>/<repo>/pull/123[/files…]`).
+pub fn parse_pr_spec(spec: &str) -> Result<u64> {
+    let s = spec.trim().trim_start_matches('#');
+    if let Ok(n) = s.parse::<u64>() {
+        if n > 0 {
+            return Ok(n);
+        }
+    }
+    let segs: Vec<&str> = s.split('/').collect();
+    for i in 0..segs.len().saturating_sub(1) {
+        if segs[i] == "pull" {
+            let digits: String = segs[i + 1]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if let Ok(n) = digits.parse::<u64>() {
+                if n > 0 {
+                    return Ok(n);
+                }
+            }
+        }
+    }
+    Err(anyhow!(
+        "cannot parse PR spec '{spec}' — pass a PR number or a GitHub PR URL \
+         (https://github.com/<owner>/<repo>/pull/<n>)"
+    ))
+}
+
+/// Fetch PR `spec`'s head from `remote` and pin it to a local `pr/<n>` branch,
+/// fail-closed on collision: an existing `pr/<n>` pointing elsewhere is
+/// refused, never force-moved (it may carry local work). Requires only `git`;
+/// `gh` (when present) enriches the result with the PR's head branch name and
+/// fork-ness for later push-back hints, and its absence is never an error.
+pub fn resolve_pr_base(workdir: &Path, spec: &str, remote: &str) -> Result<PrBase> {
+    let number = parse_pr_spec(spec)?;
+    // Fetch into a throwaway incoming ref (same pattern as h5i's ref sync),
+    // then pin a branch and drop the temp ref — the branch keeps the commit.
+    let tmp_ref = format!("refs/h5i/_incoming/pr-{number}");
+    let refspec = format!("+refs/pull/{number}/head:{tmp_ref}");
+    let out = Command::new("git")
+        .args(["fetch", "--no-write-fetch-head", remote, &refspec])
+        .current_dir(workdir)
+        .output()
+        .context("failed to invoke git fetch")?;
+    if !out.status.success() {
+        return Err(anyhow!(
+            "cannot fetch PR #{number} from '{remote}': {}\n(GitHub exposes PR heads at \
+             refs/pull/<n>/head — check the remote name and PR number)",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let oid = git_capture(workdir, &["rev-parse", &tmp_ref])?.trim().to_string();
+
+    let local_branch = format!("pr/{number}");
+    let existing = git_capture(
+        workdir,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{local_branch}"),
+        ],
+    )
+    .ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty());
+    match existing {
+        None => {
+            git_capture(workdir, &["branch", &local_branch, &oid])?;
+        }
+        Some(tip) if tip == oid => {}
+        Some(tip) => {
+            return Err(anyhow!(
+                "local branch '{local_branch}' already exists at {} but PR #{number}'s head is \
+                 {} — move or delete it (`git branch -D {local_branch}`) and retry",
+                &tip[..12.min(tip.len())],
+                &oid[..12.min(oid.len())]
+            ))
+        }
+    }
+    let _ = Command::new("git")
+        .args(["update-ref", "-d", &tmp_ref])
+        .current_dir(workdir)
+        .status();
+
+    // Best-effort `gh` enrichment — never fatal (plain-git users and mirrors
+    // of GitHub repos still get a fully working env).
+    let (head_ref, cross_repo) = match gh_capture(
+        workdir,
+        &[
+            "pr",
+            "view",
+            &number.to_string(),
+            "--json",
+            "headRefName,isCrossRepository",
+        ],
+    ) {
+        Ok(json) => match serde_json::from_str::<serde_json::Value>(&json) {
+            Ok(v) => (
+                v.get("headRefName")
+                    .and_then(|x| x.as_str())
+                    .map(str::to_owned),
+                v.get("isCrossRepository").and_then(|x| x.as_bool()),
+            ),
+            Err(_) => (None, None),
+        },
+        Err(_) => (None, None),
+    };
+
+    Ok(PrBase {
+        number,
+        oid,
+        local_branch,
+        head_ref,
+        cross_repo,
+        remote: remote.to_string(),
+    })
+}
+
+fn git_capture(workdir: &Path, args: &[&str]) -> Result<String> {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(workdir)
+        .output()
+        .with_context(|| format!("failed to invoke git {args:?}"))?;
+    if !out.status.success() {
+        return Err(anyhow!(
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 fn require_gh() -> Result<()> {
     let status = Command::new("gh")
         .arg("--version")
@@ -2755,6 +2913,25 @@ fn gh_with_stdin(workdir: &Path, args: &[&str], body: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::ctx::{TraceDag, TraceNode};
+
+    // ── parse_pr_spec ─────────────────────────────────────────────────────
+
+    #[test]
+    fn pr_spec_parses_numbers_and_urls() {
+        assert_eq!(parse_pr_spec("123").unwrap(), 123);
+        assert_eq!(parse_pr_spec(" #7 ").unwrap(), 7);
+        assert_eq!(
+            parse_pr_spec("https://github.com/owner/repo/pull/42").unwrap(),
+            42
+        );
+        assert_eq!(
+            parse_pr_spec("https://github.com/owner/repo/pull/42/files").unwrap(),
+            42
+        );
+        for bad in ["", "0", "abc", "https://github.com/o/r/issues/5", "pull/"] {
+            assert!(parse_pr_spec(bad).is_err(), "accepted {bad:?}");
+        }
+    }
 
     // ── parse_secret_detail ───────────────────────────────────────────────
 

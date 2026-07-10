@@ -56,6 +56,8 @@ const MANIFEST_FILE: &str = "manifest.json";
 const POLICY_RESOLVED_FILE: &str = "policy.resolved.toml";
 const STATUS_FILE: &str = "status";
 const WORK_DIR: &str = "work";
+/// Per-env live-session registry dir (`live/<pid>.json`) — see [`LiveSession`].
+const LIVE_DIR: &str = "live";
 /// Worktree-root file the persona sources are baked into at create; loaded by
 /// the agent via `@PERSONA.md` (Claude) or a read instruction (Codex).
 const PERSONA_FILE: &str = "PERSONA.md";
@@ -282,6 +284,15 @@ pub struct EnvManifest {
     /// worktree (git-excluded, so it never enters the agent's diff/commit).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona_digest: Option<String>,
+    /// GitHub PR number this env tracks (`env create --pr`): the base is the
+    /// PR's head, `parent_branch` its local `pr/<n>` tracking branch, and
+    /// apply prints a push-back hint. Absent for ordinary envs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<u64>,
+    /// The PR's head branch name on its source repo (via `gh`, best-effort) —
+    /// the target of the push-back hint after apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_head_ref: Option<String>,
 }
 
 impl EnvManifest {
@@ -1216,6 +1227,17 @@ pub struct CreateOpts {
     pub backend: String,
     /// Command evidence policy for wrapped in-env commands.
     pub audit_capture: sandbox::AuditCapture,
+    /// Override the parent branch (short name) the env proposes/applies back
+    /// onto. `None` derives it from the current HEAD. `--pr` sets it to the
+    /// PR's local tracking branch — the review target is the PR, not whatever
+    /// branch the operator happened to have checked out.
+    pub parent_branch: Option<String>,
+    /// GitHub PR number this env tracks (`env create --pr`), recorded in the
+    /// manifest for review/push-back hints. The base itself is pinned via
+    /// `from` like any other revision.
+    pub pr: Option<u64>,
+    /// The PR's head branch name on its source repo (via `gh`, best-effort).
+    pub pr_head_ref: Option<String>,
 }
 
 impl Default for CreateOpts {
@@ -1226,6 +1248,9 @@ impl Default for CreateOpts {
             isolation: None,
             backend: "auto".into(),
             audit_capture: sandbox::AuditCapture::Signal,
+            parent_branch: None,
+            pr: None,
+            pr_head_ref: None,
         }
     }
 }
@@ -1329,11 +1354,12 @@ pub fn create(
         .and_then(|o| o.peel_to_commit())
         .map_err(|e| H5iError::Metadata(format!("cannot resolve base revision '{rev}': {e}")))?;
     let base_tree = base_commit.tree()?.id();
-    let parent_branch = repo
-        .head()
-        .ok()
-        .and_then(|h| h.shorthand().map(str::to_owned))
-        .unwrap_or_else(|| base_commit.id().to_string());
+    let parent_branch = opts.parent_branch.clone().unwrap_or_else(|| {
+        repo.head()
+            .ok()
+            .and_then(|h| h.shorthand().map(str::to_owned))
+            .unwrap_or_else(|| base_commit.id().to_string())
+    });
 
     // Code branch + native git worktree (§4). The worktree lives under
     // `.git/.h5i/env/<agent>/<slug>/work`, invisible to the main working tree.
@@ -1403,6 +1429,8 @@ pub fn create(
         captures: Vec::new(),
         service_digest,
         persona_digest,
+        pr: opts.pr,
+        pr_head_ref: opts.pr_head_ref.clone(),
     };
 
     let policy_toml = policy.to_toml()?;
@@ -2627,6 +2655,235 @@ fn remove_path_any(path: &Path) -> Result<(), H5iError> {
     }
 }
 
+// ─── user egress allowlist (`h5i env allow`) ─────────────────────────────────
+
+/// Path of the persistent, **host-side** user egress allowlist: one rule per
+/// line (`api.example.com`, `.example.com`, `host:443`; `#` comments). Lives
+/// under the user config dir — `$XDG_CONFIG_HOME/h5i/egress-allow`, defaulting
+/// to `~/.config/h5i/egress-allow` — deliberately OUTSIDE the repo, `$WORK`,
+/// and every box-granted path: an in-box agent must never be able to widen its
+/// own allowlist (the kernel-tier grants don't include `~/.config/h5i`, and
+/// the container's read-only rootfs never mounts host HOME).
+pub fn user_allow_path() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    Some(base.join("h5i").join("egress-allow"))
+}
+
+/// Read + normalize the user allowlist. A missing/unreadable file is simply
+/// empty (fail-closed toward "no extra grants"); an invalid line is skipped
+/// with a warning rather than failing the session that read it.
+pub fn user_allow_list() -> Vec<String> {
+    user_allow_list_at(user_allow_path().as_deref())
+}
+
+fn user_allow_list_at(path: Option<&Path>) -> Vec<String> {
+    let Some(path) = path else {
+        return Vec::new();
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        match validate_egress_rule(line) {
+            Ok(rule) => {
+                if !out.contains(&rule) {
+                    out.push(rule);
+                }
+            }
+            Err(e) => eprintln!(
+                "warning: ignoring invalid egress rule in {}: {e}",
+                path.display()
+            ),
+        }
+    }
+    out
+}
+
+/// Validate + normalize (lowercase) one user egress rule. Accepted forms are
+/// exactly what the proxy's `AllowList` understands: `host`, `.host` /
+/// `*.host` (subdomain wildcard), each with an optional numeric `:port`
+/// suffix. Everything else — URLs, paths, whitespace, IPv6 literals — is
+/// rejected: this feeds a network policy, so intake is strict even where the
+/// enforcing parser is lenient.
+pub fn validate_egress_rule(raw: &str) -> Result<String, H5iError> {
+    let rule = raw.trim().to_ascii_lowercase();
+    let bad =
+        |why: &str| Err(H5iError::Metadata(format!("invalid egress rule '{raw}': {why}")));
+    if rule.is_empty() {
+        return bad("empty rule");
+    }
+    if rule.len() > 260 {
+        return bad("rule too long");
+    }
+    if rule.contains("://") || rule.contains('/') {
+        return bad("must be a bare host[:port], not a URL or path");
+    }
+    if rule.chars().any(|c| c.is_whitespace() || c == ',') {
+        return bad("whitespace and commas are not allowed");
+    }
+    let (host_part, port) = match rule.rsplit_once(':') {
+        Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty() => (h, Some(p)),
+        Some(_) => return bad("only a numeric `:port` suffix is allowed"),
+        None => (rule.as_str(), None),
+    };
+    if let Some(p) = port {
+        if p.parse::<u16>().is_err() {
+            return bad("port out of range");
+        }
+    }
+    let host = host_part
+        .strip_prefix("*.")
+        .or_else(|| host_part.strip_prefix('.'))
+        .unwrap_or(host_part);
+    if host.is_empty() {
+        return bad("empty host");
+    }
+    if !host
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_')
+    {
+        return bad("host may contain only letters, digits, '-', '.', '_'");
+    }
+    if host.starts_with('-') || host.starts_with('.') || host.ends_with('.') || host.contains("..")
+    {
+        return bad("malformed host");
+    }
+    Ok(rule)
+}
+
+/// Resolve the allowlist path for a **mutation**, refusing inside an env box:
+/// the allowlist is host policy, and a confined agent must not widen its own
+/// network grants (defense in depth on top of the fs grants, which never
+/// include this path).
+fn user_allow_guarded_path() -> Result<PathBuf, H5iError> {
+    if std::env::var_os(H5I_ENV_ID_VAR).is_some() {
+        return Err(H5iError::Metadata(
+            "refusing to edit the user egress allowlist from inside an env box — `h5i env \
+             allow` is host-side policy (a confined agent must not widen its own network \
+             grants); run it on the host"
+                .into(),
+        ));
+    }
+    user_allow_path().ok_or_else(|| {
+        H5iError::Metadata(
+            "cannot resolve the user config dir — set $HOME or $XDG_CONFIG_HOME".into(),
+        )
+    })
+}
+
+/// Add a rule to the user allowlist. Returns `(added, path)`; `added` is false
+/// when the rule was already present.
+pub fn user_allow_add(raw: &str) -> Result<(bool, PathBuf), H5iError> {
+    let rule = validate_egress_rule(raw)?;
+    let path = user_allow_guarded_path()?;
+    let mut rules = user_allow_list_at(Some(&path));
+    if rules.iter().any(|r| r == &rule) {
+        return Ok((false, path));
+    }
+    rules.push(rule);
+    write_user_allow(&path, &rules)?;
+    Ok((true, path))
+}
+
+/// Remove a rule from the user allowlist. Returns `(removed, path)`.
+pub fn user_allow_remove(raw: &str) -> Result<(bool, PathBuf), H5iError> {
+    let rule = validate_egress_rule(raw)?;
+    let path = user_allow_guarded_path()?;
+    let mut rules = user_allow_list_at(Some(&path));
+    let before = rules.len();
+    rules.retain(|r| r != &rule);
+    if rules.len() == before {
+        return Ok((false, path));
+    }
+    write_user_allow(&path, &rules)?;
+    Ok((true, path))
+}
+
+fn write_user_allow(path: &Path, rules: &[String]) -> Result<(), H5iError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+    }
+    let mut text = String::from(
+        "# h5i user egress allowlist — extra hosts merged into container-tier envs whose\n\
+         # profile already sets net.egress. Managed by `h5i env allow`; hand-edits kept.\n",
+    );
+    for r in rules {
+        text.push_str(r);
+        text.push('\n');
+    }
+    // Temp-file + rename so a concurrent session never reads a half-written list.
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, text).map_err(|e| H5iError::with_path(e, &tmp))?;
+    std::fs::rename(&tmp, path).map_err(|e| H5iError::with_path(e, path))?;
+    Ok(())
+}
+
+/// Merge the host-side user allowlist into the session policy and announce the
+/// enforced egress scope. The extras apply ONLY where the proxy enforces them:
+/// the container tier, on a profile that already declares `net.egress`
+/// (deny-all is never widened from outside the digested policy; the kernel
+/// tiers have no domain allowlist to widen). Explained, not silent: the
+/// effective list is printed at session start so an in-box
+/// `403 Blocked by network policy` is self-diagnosing.
+fn apply_user_egress(policy: &mut sandbox::ResolvedPolicy) {
+    let user = user_allow_list();
+    let enforced = matches!(policy.claim, IsolationClaim::Container)
+        && !policy.profile.net_egress.is_empty();
+    if enforced {
+        policy.user_egress_allow = user
+            .into_iter()
+            .filter(|u| {
+                !policy
+                    .profile
+                    .net_egress
+                    .iter()
+                    .any(|p| p.trim().eq_ignore_ascii_case(u))
+            })
+            .collect();
+        announce_egress(policy);
+    } else if matches!(policy.claim, IsolationClaim::Container) && !user.is_empty() {
+        eprintln!(
+            "note: {} `h5i env allow` rule(s) ignored — profile '{}' sets no net.egress \
+             (a deny-all profile is never widened from outside the policy)",
+            user.len(),
+            policy.profile.name
+        );
+    }
+}
+
+/// One line at session start explaining the enforced egress scope.
+fn announce_egress(policy: &sandbox::ResolvedPolicy) {
+    const SHOW: usize = 8;
+    let profile = &policy.profile.net_egress;
+    let mut line = profile
+        .iter()
+        .map(|s| s.trim())
+        .take(SHOW)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = profile.len().saturating_sub(SHOW);
+    if more > 0 {
+        line.push_str(&format!(" (+{more} more)"));
+    }
+    let user_part = if policy.user_egress_allow.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "  + user allow: {} (via `h5i env allow`)",
+            policy.user_egress_allow.join(", ")
+        )
+    };
+    eprintln!("⦿ egress (proxy-enforced, everything else 403): {line}{user_part}");
+}
+
 /// Run `argv` inside the env's worktree under its pinned policy, and record
 /// the execution as evidence (a tagged capture). Every exec is captured —
 /// provenance is the point (§8) — regardless of output size.
@@ -2654,6 +2911,13 @@ pub fn run(
     // below and must not interleave). Held for the duration of the run.
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
+    // Register in the live-session registry for the run's duration, so
+    // list/status/the dashboard can tell a live run from a stale status.
+    let _live = LiveGuard::register(
+        &m.dir(h5i_root),
+        "run",
+        Some(crate::secrets::redact_text(&argv.join(" "))),
+    );
 
     // The stored policy, digest-verified, then re-resolved against a fresh
     // host probe (fail closed if the host can no longer satisfy the claim).
@@ -2673,6 +2937,8 @@ pub fn run(
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
     let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
+    // Host-side `h5i env allow` extras + the explained-egress line.
+    apply_user_egress(&mut policy);
 
     // Broker any declared secrets BEFORE marking the env running, so a
     // fail-closed grant (missing source, unsupported inject) aborts cleanly
@@ -2912,6 +3178,13 @@ pub fn shell(
     } else {
         RunLock::acquire(&m.dir(h5i_root))?
     };
+    // Register in the live-session registry for the session's duration (an
+    // observer registers too — "who is watching" is part of the live picture).
+    let _live = LiveGuard::register(
+        &m.dir(h5i_root),
+        if readonly { "observe" } else { "shell" },
+        (!command.is_empty()).then(|| crate::secrets::redact_text(&command.join(" "))),
+    );
 
     let mut policy = load_policy(h5i_root, m)?;
 
@@ -3015,6 +3288,8 @@ pub fn shell(
         ),
         &team_identity_env(m, h5i_root),
     );
+    // Host-side `h5i env allow` extras + the explained-egress line.
+    apply_user_egress(&mut policy);
 
     // No command given → launch an interactive shell. Rather than inherit the
     // host `~/.bashrc` (which, under confinement, routinely references tools the
@@ -3054,8 +3329,8 @@ pub fn shell(
             None,
         )?;
     }
-    let exit_code = match sandbox::run_interactive(&policy, &work, &argv, &injected_env) {
-        Ok(code) => code,
+    let session = match sandbox::run_interactive(&policy, &work, &argv, &injected_env) {
+        Ok(outcome) => outcome,
         Err(e) => {
             let _ = protected_hook_configs.finish();
             if !readonly {
@@ -3072,6 +3347,7 @@ pub fn shell(
             return Err(e);
         }
     };
+    let exit_code = session.exit_code;
     if let Err(e) = protected_hook_configs.finish() {
         if !readonly {
             set_status(
@@ -3131,6 +3407,32 @@ pub fn shell(
         }
     };
 
+    // The session's egress verdicts (container tier's allowlist proxy) become
+    // evidence exactly like a captured run's — an interactive session must not
+    // be a network blind spot. Recorded only when the proxy saw traffic;
+    // best-effort (a failed capture warns, never breaks the session).
+    let egress_capture = match session.egress.as_ref() {
+        Some(eg) if eg.allowed + eg.denied > 0 => {
+            match capture_shell_egress(h5i_root, m, &work, eg, exit_code) {
+                Ok(id) => {
+                    m.captures.push(id.clone());
+                    Some(id)
+                }
+                Err(e) => {
+                    eprintln!("warning: shell egress capture failed: {e}");
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    let egress_note = session
+        .egress
+        .as_ref()
+        .filter(|eg| eg.allowed + eg.denied > 0)
+        .map(|eg| format!(" egress={}ok/{}denied", eg.allowed, eg.denied))
+        .unwrap_or_default();
+
     let safe_cmd = crate::secrets::redact_text(&argv.join(" "));
     let observed_note = if observed > 0 {
         format!(" observed={observed}")
@@ -3144,9 +3446,9 @@ pub fn shell(
         ST_IDLE,
         "shell",
         Some(format!(
-            "interactive cmd=`{safe_cmd}` exit={exit_code}{observed_note}"
+            "interactive cmd=`{safe_cmd}` exit={exit_code}{observed_note}{egress_note}"
         )),
-        None,
+        egress_capture,
     )?;
 
     // Audit each delivered secret grant (id + source + inject + fingerprint).
@@ -3164,6 +3466,53 @@ pub fn shell(
         )?;
     }
     Ok(exit_code)
+}
+
+/// Persist an interactive session's egress tally as an env-tagged capture. The
+/// raw payload is a small human-readable rendering; the queryable data rides
+/// in `Manifest::egress` and the synthesized `egress-denied` findings (see
+/// `objects::capture`), so `recall search <host>` covers shell sessions too.
+fn capture_shell_egress(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    work: &Path,
+    eg: &crate::objects::EgressSummary,
+    exit_code: i32,
+) -> Result<String, H5iError> {
+    let mut raw = format!(
+        "interactive session egress: {} allowed, {} denied\n",
+        eg.allowed, eg.denied
+    );
+    for h in &eg.hosts {
+        raw.push_str(&format!(
+            "  {}:{}  allowed={} denied={}\n",
+            h.host, h.port, h.allowed, h.denied
+        ));
+    }
+    let wt_repo = Repository::open(work)?;
+    let head_tree = wt_repo
+        .head()
+        .ok()
+        .and_then(|h| h.peel_to_tree().ok())
+        .map(|t| t.id().to_string());
+    let opts = objects::CaptureOptions {
+        kind: crate::token_filter::OutputKind::Auto,
+        cmd: Some(format!("env shell {}", m.id)),
+        cwd: Some(work.display().to_string()),
+        exit_code: Some(exit_code),
+        git_tree: head_tree,
+        files: Vec::new(),
+        cmd_argv: vec!["env-shell".into()],
+        filter: Default::default(),
+        env_id: Some(m.id.clone()),
+        policy_digest: Some(m.policy_digest.clone()),
+        evidence_source: Some("host-env-shell".into()),
+        egress: Some(eg.clone()),
+        redact: true,
+    };
+    Ok(objects::capture(&wt_repo, h5i_root, raw.as_bytes(), opts)?
+        .manifest
+        .id)
 }
 
 // ─── interactive shell rc ────────────────────────────────────────────────────
@@ -4253,7 +4602,29 @@ pub fn drift(repo: &Repository, m: &EnvManifest) -> Drift {
 pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> String {
     let mut out = String::new();
     out.push_str(&format!("── {} ──\n", m.id));
-    out.push_str(&format!("  status   : {}\n", m.status));
+    // Reconcile the durable status against the live registry: a `running`
+    // manifest with no live writer is a crash leftover, and saying so beats
+    // letting the reader trust it.
+    let live = live_sessions(&m.dir(h5i_root));
+    let has_writer = live.iter().any(|s| live_is_writer(&s.kind));
+    let stale_note = if m.status == ST_RUNNING && !has_writer {
+        "  (stale — no live session holds this env; the writer likely crashed)"
+    } else {
+        ""
+    };
+    out.push_str(&format!("  status   : {}{}\n", m.status, stale_note));
+    for s in &live {
+        out.push_str(&format!(
+            "  live     : {} pid {} since {}{}\n",
+            s.kind,
+            s.pid,
+            s.started_at,
+            s.command
+                .as_ref()
+                .map(|c| format!(" — {c}"))
+                .unwrap_or_default()
+        ));
+    }
     out.push_str(&format!("  agent    : {}\n", m.agent));
     out.push_str(&format!(
         "  base     : {} (from {})\n",
@@ -4289,6 +4660,19 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
         ));
         if !p.tools.is_empty() {
             out.push_str(&format!("  tools    : {}\n", p.tools.join(", ")));
+        }
+        if !p.net_egress.is_empty() {
+            out.push_str(&format!("  egress   : {}", p.net_egress.join(", ")));
+            if matches!(policy.claim, IsolationClaim::Container) {
+                let extras: Vec<String> = user_allow_list()
+                    .into_iter()
+                    .filter(|u| !p.net_egress.iter().any(|e| e.trim().eq_ignore_ascii_case(u)))
+                    .collect();
+                if !extras.is_empty() {
+                    out.push_str(&format!("  (+ h5i env allow: {})", extras.join(", ")));
+                }
+            }
+            out.push('\n');
         }
     }
     let evidence_detail = if m.captures.is_empty() {
@@ -4623,6 +5007,100 @@ pub struct ServiceDef {
 struct ServiceFileToml {
     #[serde(default)]
     service: std::collections::BTreeMap<String, ServiceDef>,
+}
+
+// ─── live-session registry (the env control-plane groundwork) ───────────────
+
+/// One live `env run` / `env shell` session's on-disk record — the daemon-free
+/// registry under `.git/.h5i/env/<agent>/<slug>/live/<pid>.json`, mirroring
+/// the `services/` pid-registry pattern. Written by the session holding the
+/// run/observer lock; removed on clean exit; a crash leaves the file and the
+/// reader reconciles by PID identity (`pid_alive`), not timestamps.
+///
+/// **Informational only, never authoritative for security:** grants derive
+/// exclusively from the identity-validated manifest + digested policy; the
+/// registry exists so `env list`/`status`/the dashboard can tell a live
+/// session from a stale `running` status (a SIGKILLed session never resets
+/// its manifest status). The `live/` dir is host state — it is not part of
+/// the box's fs grants.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveSession {
+    pub pid: u32,
+    /// Session kind: `run` (captured exec), `shell` (read-write interactive),
+    /// or `observe` (read-only observer).
+    pub kind: String,
+    /// RFC3339 UTC start time (display only — liveness is PID-based).
+    pub started_at: String,
+    /// What the session is executing (secret-redacted), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+}
+
+/// Kinds that hold the exclusive writer lock (a live one of these means the
+/// env is genuinely busy, not just observed).
+pub fn live_is_writer(kind: &str) -> bool {
+    matches!(kind, "run" | "shell")
+}
+
+/// RAII registration of the calling process in an env's live registry.
+/// Best-effort on both ends: failing to write never blocks a session, and
+/// `Drop` removal failing just leaves a record the next reader reconciles.
+struct LiveGuard {
+    path: PathBuf,
+}
+
+impl LiveGuard {
+    fn register(env_dir: &Path, kind: &str, command: Option<String>) -> LiveGuard {
+        let dir = env_dir.join(LIVE_DIR);
+        let _ = std::fs::create_dir_all(&dir);
+        let pid = std::process::id();
+        let path = dir.join(format!("{pid}.json"));
+        let rec = LiveSession {
+            pid,
+            kind: kind.to_string(),
+            started_at: now_ts(),
+            command,
+        };
+        if let Ok(json) = serde_json::to_string(&rec) {
+            let _ = std::fs::write(&path, json);
+        }
+        LiveGuard { path }
+    }
+}
+
+impl Drop for LiveGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// The env's live sessions: scan `live/`, keep records whose PID is alive,
+/// and best-effort unlink crash leftovers (dead PIDs, unparseable files).
+/// PID-identity staleness — same trade-off as the services registry (a reused
+/// PID can briefly read as alive; the next scan after it exits heals it).
+pub fn live_sessions(env_dir: &Path) -> Vec<LiveSession> {
+    let dir = env_dir.join(LIVE_DIR);
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let parsed = std::fs::read_to_string(&p)
+            .ok()
+            .and_then(|text| serde_json::from_str::<LiveSession>(&text).ok());
+        match parsed {
+            Some(rec) if pid_alive(rec.pid) => out.push(rec),
+            _ => {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+    out.sort_by(|a, b| a.started_at.cmp(&b.started_at).then(a.pid.cmp(&b.pid)));
+    out
 }
 
 /// A running service's on-disk record — the daemon-free pid registry under
@@ -5534,7 +6012,7 @@ pub fn compare(
 /// `(files_changed, insertions, deletions)` of an env's changes vs. its pinned
 /// base. Uses the worktree when present, else the env branch tip (so pulled
 /// "remote" envs still compare).
-fn diffstat_numbers(
+pub(crate) fn diffstat_numbers(
     repo: &Repository,
     h5i_root: &Path,
     m: &EnvManifest,
@@ -6596,6 +7074,91 @@ pub fn rm(
 mod tests {
     use super::*;
 
+    #[test]
+    fn egress_rule_validation_accepts_proxy_forms_only() {
+        // The three forms the proxy's AllowList understands, normalized.
+        assert_eq!(validate_egress_rule(" API.Example.com ").unwrap(), "api.example.com");
+        assert_eq!(validate_egress_rule(".example.com").unwrap(), ".example.com");
+        assert_eq!(validate_egress_rule("*.example.com").unwrap(), "*.example.com");
+        assert_eq!(validate_egress_rule("github.com:443").unwrap(), "github.com:443");
+        // Strict intake: URLs, paths, whitespace, malformed hosts, bad ports.
+        for bad in [
+            "",
+            "https://example.com",
+            "example.com/path",
+            "two hosts",
+            "a,b",
+            "example.com:notaport",
+            "example.com:99999",
+            "-leading.example",
+            ".",
+            "a..b",
+            "trailing.example.",
+            "::1",
+        ] {
+            assert!(validate_egress_rule(bad).is_err(), "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn live_registry_registers_and_reconciles_dead_pids() {
+        let dir = tempfile::tempdir().unwrap();
+        let env_dir = dir.path().join("envdir");
+        {
+            let _g = LiveGuard::register(&env_dir, "shell", Some("bash".into()));
+            let live = live_sessions(&env_dir);
+            assert_eq!(live.len(), 1);
+            assert_eq!(live[0].pid, std::process::id());
+            assert_eq!(live[0].kind, "shell");
+            assert!(live_is_writer(&live[0].kind));
+            assert!(!live_is_writer("observe"));
+        }
+        // A cleanly-dropped guard removed its record.
+        assert!(live_sessions(&env_dir).is_empty());
+
+        // Crash leftovers: a dead PID's record and an unparseable file are
+        // reconciled away on read (PID identity, not timestamps).
+        let live_dir = env_dir.join(LIVE_DIR);
+        std::fs::create_dir_all(&live_dir).unwrap();
+        let dead = LiveSession {
+            // Far above any real pid_max, and positive as i32 (kill probe).
+            pid: 2_147_483_646,
+            kind: "run".into(),
+            started_at: now_ts(),
+            command: None,
+        };
+        std::fs::write(
+            live_dir.join("2147483646.json"),
+            serde_json::to_string(&dead).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(live_dir.join("garbage.json"), "not json").unwrap();
+        assert!(live_sessions(&env_dir).is_empty());
+        assert!(!live_dir.join("2147483646.json").exists());
+        assert!(!live_dir.join("garbage.json").exists());
+    }
+
+    #[test]
+    fn user_allow_file_round_trips_and_skips_junk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h5i").join("egress-allow");
+        write_user_allow(&path, &["pypi.org".into(), ".github.com:443".into()]).unwrap();
+        assert_eq!(
+            user_allow_list_at(Some(&path)),
+            vec!["pypi.org".to_string(), ".github.com:443".to_string()]
+        );
+        // Comments, blanks, dupes, and invalid lines are tolerated on read
+        // (fail-closed toward fewer grants, never toward aborting a session).
+        std::fs::write(
+            &path,
+            "# comment\n\npypi.org\nPYPI.ORG\nhttps://not-a-host\npypi.org\n",
+        )
+        .unwrap();
+        assert_eq!(user_allow_list_at(Some(&path)), vec!["pypi.org".to_string()]);
+        // Missing file → empty, not an error.
+        assert!(user_allow_list_at(Some(&dir.path().join("absent"))).is_empty());
+    }
+
     // Write an H5iCommitRecord note (ai_metadata prompt + optional test metrics)
     // onto `oid`, exactly as an in-box `capture commit` would. Used to seed env
     // commits so the fold / RMW tests have real per-commit provenance to carry.
@@ -6826,6 +7389,8 @@ mod tests {
             captures: vec![],
             service_digest: None,
             persona_digest: None,
+            pr: None,
+            pr_head_ref: None,
         }
     }
 
@@ -8017,6 +8582,8 @@ mod tests {
             captures: vec!["cap1".into()],
             service_digest: None,
             persona_digest: None,
+            pr: None,
+            pr_head_ref: None,
         };
         let text = serde_json::to_string_pretty(&m).unwrap();
         let back: EnvManifest = serde_json::from_str(&text).unwrap();
@@ -8129,6 +8696,8 @@ mod tests {
                 captures: Vec::new(),
                 service_digest: None,
                 persona_digest: None,
+                pr: None,
+                pr_head_ref: None,
             };
             save_manifest(h5i_root, &m).unwrap();
         }

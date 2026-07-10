@@ -591,6 +591,16 @@ pub struct ResolvedPolicy {
     /// shared worktree.
     #[serde(skip)]
     pub work_readonly: bool,
+    /// Runtime-only extra egress hosts from the **host-side** user allowlist
+    /// (`h5i env allow`, stored under the user config dir — never inside the
+    /// repo, `$WORK`, or any box-visible path). Never serialized: the pinned
+    /// `policy_digest` stays reproducible; the extras are recorded per-run in
+    /// the capture manifest instead. Applied only when the digested profile
+    /// already declares a non-empty `net.egress` (a deny-all profile can never
+    /// be widened from outside the digested policy) and only on the container
+    /// tier (the only tier that enforces a domain allowlist).
+    #[serde(skip)]
+    pub user_egress_allow: Vec<String>,
 }
 
 impl ResolvedPolicy {
@@ -605,6 +615,7 @@ impl ResolvedPolicy {
             private_binds: Vec::new(),
             home_binds: Vec::new(),
             work_readonly: false,
+            user_egress_allow: Vec::new(),
         }
     }
 
@@ -647,6 +658,28 @@ pub struct ExecOutcome {
     /// `isolation=container` tier (whose allowlist proxy sees every request)
     /// populates this; `None` for `workspace`/`process`.
     pub egress: Option<crate::objects::EgressSummary>,
+}
+
+/// Outcome of one **interactive** session (`env shell`): the child's exit code
+/// plus, on the container tier, the egress proxy's allow/deny tally — so an
+/// interactive session leaves the same network evidence a captured run does.
+/// Nothing else is recorded (stdio is inherited, the operator owns the session).
+#[derive(Debug, Clone)]
+pub struct InteractiveOutcome {
+    pub exit_code: i32,
+    /// Egress verdicts observed for the session's lifetime. Only the
+    /// `isolation=container` tier populates this; `None` elsewhere.
+    pub egress: Option<crate::objects::EgressSummary>,
+}
+
+impl InteractiveOutcome {
+    /// Wrap a bare exit code (the kernel tiers, which run no egress proxy).
+    pub fn from_code(exit_code: i32) -> Self {
+        InteractiveOutcome {
+            exit_code,
+            egress: None,
+        }
+    }
 }
 
 #[cfg(test)]

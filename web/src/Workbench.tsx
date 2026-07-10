@@ -33,11 +33,12 @@ import { ReplayView } from "./ReplayView";
 import { CockpitView } from "./CockpitView";
 import { RadioView } from "./RadioView";
 import { SandboxView } from "./SandboxView";
+import { BoardView } from "./BoardView";
 import { TeamView } from "./TeamView";
 import { ContextStrip } from "./ContextStrip";
 import { BranchPicker } from "./BranchPicker";
 
-type Mode = "replay" | "cockpit" | "radio" | "team" | "explore" | "memory" | "context" | "sandbox";
+type Mode = "replay" | "cockpit" | "radio" | "team" | "explore" | "memory" | "context" | "sandbox" | "board";
 type RightTab = "refs" | "sessions" | "integrity" | "context";
 
 export function Workbench() {
@@ -135,16 +136,16 @@ export function Workbench() {
           <ButtonGroup minimal>
             <Button
               className="wb-mode-lead"
-              icon="people"
-              text="Ensemble"
-              active={mode === "team"}
-              onClick={() => setMode("team")}
+              icon="shield"
+              text="Sandbox"
+              active={mode === "sandbox"}
+              onClick={() => setMode("sandbox")}
             />
             <Button
-              icon="play"
-              text="Replay"
-              active={mode === "replay"}
-              onClick={() => setMode("replay")}
+              icon="grid-view"
+              text="Board"
+              active={mode === "board"}
+              onClick={() => setMode("board")}
             />
             <Button
               icon="endorsed"
@@ -159,16 +160,22 @@ export function Workbench() {
               onClick={() => setMode("radio")}
             />
             <Button
-              icon="shield"
-              text="Sandbox"
-              active={mode === "sandbox"}
-              onClick={() => setMode("sandbox")}
+              icon="people"
+              text="Ensemble"
+              active={mode === "team"}
+              onClick={() => setMode("team")}
             />
             <Button
               icon="lightbulb"
               text="Context"
               active={mode === "context"}
               onClick={() => setMode("context")}
+            />
+            <Button
+              icon="play"
+              text="Replay"
+              active={mode === "replay"}
+              onClick={() => setMode("replay")}
             />
             <Button
               icon="search-around"
@@ -264,6 +271,8 @@ export function Workbench() {
         </div>
       ) : mode === "sandbox" ? (
         <SandboxView />
+      ) : mode === "board" ? (
+        <BoardView />
       ) : (
         <div className="wb-body wb-body-single">
           <div className="wb-pane">

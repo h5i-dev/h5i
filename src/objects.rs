@@ -705,6 +705,7 @@ pub fn capture(
         s.raw_oid = Some(format!("sha256:{hex}"));
         // raw isn't fully represented if we dropped lines OR byte-clamped the summary.
         s.truncated.raw = raw_lines > kept_lines || summary_clamped;
+        attach_egress_findings(&mut s, opts.egress.as_ref());
         s.cap();
         Some(s)
     };
@@ -749,6 +750,52 @@ pub fn capture(
 
     append_manifest(repo, &manifest)?;
     Ok(CaptureOutcome { manifest, deduped })
+}
+
+/// Surface each **denied** egress destination as a structured finding, so
+/// `recall search <host>` / `--rule egress-denied` answers "what did the box
+/// try to reach?" without rehydrating anything. Only denials become findings
+/// (the full allow/deny tally already travels in `Manifest::egress`); the
+/// fingerprint is normalized to `host:port` — attempt counts vary per run, the
+/// destination is the stable identity — so `--fingerprint` answers "has this
+/// box tried this host before?". The host list is already bounded upstream
+/// ([`MAX_EGRESS_HOSTS`]) and [`crate::structured::ToolResult::cap`] runs after.
+fn attach_egress_findings(
+    s: &mut crate::structured::ToolResult,
+    egress: Option<&EgressSummary>,
+) {
+    let Some(eg) = egress else { return };
+    if eg.denied == 0 {
+        return;
+    }
+    for h in eg.hosts.iter().filter(|h| h.denied > 0) {
+        let location = format!("{}:{}", h.host, h.port);
+        s.findings.push(crate::structured::Finding {
+            kind: crate::structured::FindingKind::Diagnostic,
+            severity: crate::structured::Severity::Warning,
+            id: None,
+            rule: Some("egress-denied".into()),
+            message: format!(
+                "blocked egress → {}:{} ({} attempt{})",
+                h.host,
+                h.port,
+                h.denied,
+                if h.denied == 1 { "" } else { "s" }
+            ),
+            location: None,
+            locations: Vec::new(),
+            expected: None,
+            actual: None,
+            detail: None,
+            fixable: false,
+            suggestions: vec![format!(
+                "if this destination is legitimate: `h5i env allow {}`",
+                h.host
+            )],
+            fingerprint: crate::structured::fingerprint(&s.tool, "egress-denied", &location, "blocked egress"),
+        });
+    }
+    s.counts.insert("egress_denied".into(), eg.denied);
 }
 
 /// Append `manifest` to `refs/h5i/objects` with compare-and-swap semantics,
@@ -2068,6 +2115,114 @@ mod tests {
         assert!(outcome.manifest.redactions.is_empty());
         let stored = load_raw(&h5i_root, &outcome.manifest).unwrap().unwrap();
         assert!(String::from_utf8_lossy(&stored).contains(secret));
+    }
+
+    #[test]
+    fn capture_synthesizes_denied_egress_findings_and_search_finds_them() {
+        let (_d, repo, h5i_root) = setup();
+        let mut o = opts();
+        o.cmd = Some("curl https://evil.example".into());
+        o.cmd_argv = vec!["curl".into()];
+        o.exit_code = Some(22);
+        o.egress = Some(EgressSummary {
+            allowed: 3,
+            denied: 2,
+            hosts: vec![
+                EgressHost {
+                    host: "api.anthropic.com".into(),
+                    port: 443,
+                    allowed: 3,
+                    denied: 0,
+                },
+                EgressHost {
+                    host: "evil.example".into(),
+                    port: 443,
+                    allowed: 0,
+                    denied: 2,
+                },
+            ],
+            hosts_truncated: false,
+            log: None,
+        });
+        let m = capture(&repo, &h5i_root, b"curl: (22) blocked\n", o)
+            .unwrap()
+            .manifest;
+        let s = m.structured.as_ref().unwrap();
+        let denied: Vec<_> = s
+            .findings
+            .iter()
+            .filter(|f| f.rule.as_deref() == Some("egress-denied"))
+            .collect();
+        // Only the denied destination becomes a finding — allowed traffic stays
+        // in the manifest's egress tally.
+        assert_eq!(denied.len(), 1, "{:?}", s.findings);
+        assert!(denied[0].message.contains("evil.example:443"));
+        assert_eq!(s.counts.get("egress_denied"), Some(&2));
+
+        // `recall search <host>` / `--rule egress-denied` answers "what did the
+        // box try to reach?".
+        let manifests = vec![m.clone()];
+        let by_host = search_manifests(
+            &manifests,
+            &SearchFilters {
+                query: Some("evil.example".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(by_host.len(), 1);
+        let by_rule = search_manifests(
+            &manifests,
+            &SearchFilters {
+                rule: Some("egress-denied".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(by_rule.len(), 1);
+
+        // The fingerprint is normalized to the destination (attempt counts
+        // vary per run), so "has this box tried this host before?" works.
+        let mut o2 = opts();
+        o2.cmd_argv = vec!["curl".into()];
+        o2.egress = Some(EgressSummary {
+            allowed: 0,
+            denied: 7,
+            hosts: vec![EgressHost {
+                host: "evil.example".into(),
+                port: 443,
+                allowed: 0,
+                denied: 7,
+            }],
+            hosts_truncated: false,
+            log: None,
+        });
+        let m2 = capture(&repo, &h5i_root, b"different raw\n", o2).unwrap().manifest;
+        let fp1 = &denied[0].fingerprint;
+        let fp2 = &m2.structured.as_ref().unwrap().findings[0].fingerprint;
+        assert_eq!(fp1, fp2);
+    }
+
+    #[test]
+    fn capture_without_egress_denials_adds_no_findings() {
+        let (_d, repo, h5i_root) = setup();
+        let mut o = opts();
+        o.cmd_argv = vec!["curl".into()];
+        o.exit_code = Some(0);
+        o.egress = Some(EgressSummary {
+            allowed: 4,
+            denied: 0,
+            hosts: vec![EgressHost {
+                host: "api.anthropic.com".into(),
+                port: 443,
+                allowed: 4,
+                denied: 0,
+            }],
+            hosts_truncated: false,
+            log: None,
+        });
+        let m = capture(&repo, &h5i_root, b"all fine\n", o).unwrap().manifest;
+        let s = m.structured.as_ref().unwrap();
+        assert!(s.findings.iter().all(|f| f.rule.as_deref() != Some("egress-denied")));
+        assert!(!s.counts.contains_key("egress_denied"));
     }
 
     #[test]

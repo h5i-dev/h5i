@@ -60,7 +60,10 @@ h5i msg inbox | history | team | watch [--all]
 h5i msg hook [--block]                   # Stop-hook turn delivery
 
 # Isolated agent environments (worktree + sandbox + provenance)
-h5i env create <name> [--from REV] [--profile P] [--isolation workspace|process|...]
+h5i env create <name> [--from REV | --pr N|URL] [--profile P] [--isolation workspace|process|...]
+                                         # --pr fetches refs/pull/<n>/head, pins it as the base,
+                                         # and reviews onto a local pr/<n> branch (apply prints
+                                         # the push-back command; gh optional)
                                          # --profile unset auto-picks the creating runtime's agent-in-box
                                          # profile (`agent-claude`/`agent-codex`: only that runtime's HOME
                                          # state + API egress) where the host can enforce it, else
@@ -68,6 +71,10 @@ h5i env create <name> [--from REV] [--profile P] [--isolation workspace|process|
 h5i env run <name> -- <cmd>              # policy-enforced, capture-wrapped
 h5i env shell <name> [-- <cmd>]          # interactive confined session (agent-in-box)
 h5i env probe                            # host isolation capabilities (incl. rootless Podman)
+h5i env allow [<host>] [--remove]        # persistent user egress allowlist (container tier;
+                                         # merged only into profiles that already set net.egress;
+                                         # host-side — refuses inside a box; denied hosts become
+                                         # searchable `egress-denied` findings)
 h5i env capabilities [--json]            # machine-readable enforcement report (tier, egress, limits)
 h5i env list | status <name> [--json] | log <name> | diff <name> [--stat]
 h5i env context <name> [--trace]        # show the env's reasoning/context branch
