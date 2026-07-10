@@ -695,3 +695,30 @@ async fn pattern_debate_argues_and_concludes() {
     let conclusion = outcome.conclusion.unwrap();
     assert_eq!(conclusion.winner, "codex");
 }
+
+#[tokio::test]
+async fn roster_binds_enrolled_seats_for_a_driver() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "claude", "r");
+    fabricate_env(&repo, &h5i_root, "codex", "r");
+
+    // Enrollment happens in one process (auto-create / add-env)…
+    let script = scripted("APPROVE");
+    let c1 = conductor(dir.path(), "rost", Script::launcher(&script));
+    c1.agent("claude").env("env/claude/r").hire().await.unwrap();
+    c1.agent("codex").env("env/codex/r").hire().await.unwrap();
+
+    // …and a separate driver (h5i team run) binds the seats without hiring.
+    let c2 = conductor(dir.path(), "rost", Script::launcher(&script));
+    let agents = c2.roster().await.unwrap();
+    let mut ids: Vec<&str> = agents.iter().map(|a| a.id()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["claude", "codex"]);
+
+    // A roster-bound handle drives turns exactly like a hired one.
+    let a = agents.iter().find(|a| a.id() == "claude").unwrap();
+    let artifact = a.work("do the thing").await.unwrap();
+    assert_eq!(artifact.owner_agent, "claude");
+}

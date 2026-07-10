@@ -2141,6 +2141,51 @@ enum TeamCommands {
     },
     /// Print the standing bootstrap prompt for a boxed team agent
     Bootstrap,
+    /// Drive a full hands-off team cycle over the orchestra eDSL: dispatch →
+    /// independent attempts → freeze → mutual review → revise → neutral verify
+    /// → verdict (→ gated apply). Replaces scripts/team-run.sh; unlike the
+    /// script it is journal-backed — re-running it resumes the cycle instead
+    /// of starting over.
+    Run {
+        /// Team id (default: the current team)
+        team: Option<String>,
+        /// Task text to dispatch
+        #[arg(long)]
+        task: Option<String>,
+        /// Read the task from a file
+        #[arg(long = "task-file", conflicts_with = "task")]
+        task_file: Option<std::path::PathBuf>,
+        /// Maximum review→revise cycles (early exit on full approval)
+        #[arg(long, default_value_t = 1)]
+        rounds: u32,
+        /// Neutral verifier command, e.g. --verify-cmd "cargo test -q"
+        #[arg(long = "verify-cmd")]
+        verify_cmd: Option<String>,
+        /// Isolation tier for the verifier (workspace|process|container|…)
+        #[arg(long)]
+        isolation: Option<String>,
+        /// Apply the winner after an auto-applicable verdict
+        #[arg(long)]
+        apply: bool,
+        /// Ask a durable gate question before applying (implies apply on
+        /// approval; the reply may arrive after this process exits — re-run
+        /// to resume at the gate)
+        #[arg(long, conflicts_with = "apply")]
+        gate: bool,
+        /// Spawn resident agent sessions in tmux (default: attach to
+        /// already-running sessions, e.g. from team-launch.sh)
+        #[arg(long = "launch-resident")]
+        launch_resident: bool,
+        /// Poll interval while waiting on turns, seconds
+        #[arg(long, default_value_t = 15)]
+        poll: u64,
+        /// Per-turn wait budget, seconds
+        #[arg(long, default_value_t = 1800)]
+        timeout: u64,
+        /// Emit the outcome as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Render the recorded orchestration trace (journaled steps + phases)
     Trace {
         /// Team id (default: the current team)
@@ -10148,6 +10193,140 @@ fn main() -> anyhow::Result<()> {
                 }
                 TeamCommands::Bootstrap => {
                     println!("{}", h5i_core::team::AGENT_BOOTSTRAP);
+                }
+                TeamCommands::Run {
+                    team,
+                    task,
+                    task_file,
+                    rounds,
+                    verify_cmd,
+                    isolation,
+                    apply,
+                    gate,
+                    launch_resident,
+                    poll,
+                    timeout,
+                    json,
+                } => {
+                    use h5i_core::orchestra::{self, patterns};
+                    let run_id = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let task_text = match (task, task_file) {
+                        (Some(t), _) => t,
+                        (None, Some(f)) => std::fs::read_to_string(&f).map_err(|e| {
+                            anyhow::anyhow!("failed to read task file {}: {e}", f.display())
+                        })?,
+                        (None, None) => anyhow::bail!("pass the task via --task or --task-file"),
+                    };
+                    let launcher: std::sync::Arc<dyn orchestra::RuntimeLauncher> =
+                        if launch_resident {
+                            std::sync::Arc::new(orchestra::LaunchResident)
+                        } else {
+                            eprintln!(
+                                "{} attach mode: agent sessions must already be running \
+                                 (team-launch.sh, or pass --launch-resident for tmux)",
+                                STEP
+                            );
+                            std::sync::Arc::new(orchestra::Attach)
+                        };
+                    let rt = tokio::runtime::Runtime::new()?;
+                    let (outcome, applied) = rt.block_on(async {
+                        let c = h5i_core::orchestra::Conductor::builder(".", &run_id)
+                            .launcher(launcher)
+                            .poll_interval(std::time::Duration::from_secs(poll.max(1)))
+                            .turn_timeout(std::time::Duration::from_secs(timeout.max(1)))
+                            .launch()?;
+                        let agents = c.roster().await?;
+                        if agents.len() < 2 {
+                            return Err(h5i_core::error::H5iError::Metadata(format!(
+                                "team '{run_id}' has {} enrolled agent(s) — team run needs \
+                                 at least two (enroll with `h5i team add-env` or \
+                                 `h5i team auto-create`)",
+                                agents.len()
+                            )));
+                        }
+                        eprintln!(
+                            "{} driving team '{run_id}': {} agents, {rounds} review round(s)",
+                            STEP,
+                            agents.len()
+                        );
+                        let mut ensemble =
+                            patterns::ensemble(&c, &task_text).agents(agents).rounds(rounds);
+                        if let Some(cmd) = &verify_cmd {
+                            ensemble = ensemble.verify(cmd.split_whitespace());
+                        }
+                        if let Some(tier) = &isolation {
+                            ensemble = ensemble.isolation(tier.clone());
+                        }
+                        let outcome = ensemble.run().await?;
+
+                        // Apply, directly or behind a durable gate.
+                        let mut applied = None;
+                        let winner = outcome.verdict.as_ref().and_then(|v| {
+                            v.selected_submission
+                                .as_ref()
+                                .and_then(|id| outcome.artifacts.iter().find(|a| &a.id == id))
+                        });
+                        if let Some(winner) = winner {
+                            let approved = if gate {
+                                eprintln!(
+                                    "{} gate: awaiting approval to apply {} (reply with \
+                                     `h5i msg reply <n> APPROVE`; re-run this command to \
+                                     resume waiting)",
+                                    STEP, winner.id
+                                );
+                                c.gate(format!(
+                                    "apply team '{run_id}' winner {} ({} by {})?",
+                                    winner.id,
+                                    &winner.commit_oid[..12.min(winner.commit_oid.len())],
+                                    winner.owner_agent
+                                ))
+                                .approve()
+                                .await?
+                            } else {
+                                apply
+                            };
+                            if approved {
+                                applied = Some(c.apply(winner).await?);
+                            }
+                        }
+                        Ok((outcome, applied))
+                    })?;
+
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "artifacts": outcome.artifacts,
+                                "reviews": outcome.reviews,
+                                "verdict": outcome.verdict,
+                                "rounds_run": outcome.rounds_run,
+                                "applied": applied,
+                            }))?
+                        );
+                    } else {
+                        eprintln!(
+                            "{} cycle complete: {} artifacts, {} reviews, {} round(s)",
+                            SUCCESS,
+                            outcome.artifacts.len(),
+                            outcome.reviews.len(),
+                            outcome.rounds_run
+                        );
+                        match (&outcome.verdict, &applied) {
+                            (Some(v), Some(a)) => println!(
+                                "verdict: {} — applied as {}",
+                                v.selected_submission.as_deref().unwrap_or("(none)"),
+                                &a.target_commit_oid[..12.min(a.target_commit_oid.len())]
+                            ),
+                            (Some(v), None) => println!(
+                                "verdict: {} — apply with `h5i team apply {run_id}`",
+                                v.selected_submission.as_deref().unwrap_or("(none)")
+                            ),
+                            (None, _) => println!(
+                                "no verdict recorded (pass --verify-cmd to judge) — inspect \
+                                 with `h5i team compare {run_id}`"
+                            ),
+                        }
+                    }
                 }
                 TeamCommands::Trace { team, dot } => {
                     let run = h5i_core::team::resolve_run(&h5i_root, team)?;

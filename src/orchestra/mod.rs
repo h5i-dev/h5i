@@ -311,6 +311,31 @@ impl Conductor {
         run_blocking(move || team::status(&core.repo()?, &core.run_id)).await
     }
 
+    /// Bind every enrolled roster seat as an [`Agent`] handle (not journaled —
+    /// binding is a read). This is how a driver picks up a team whose agents
+    /// were enrolled elsewhere (`team auto-create`, `team add-env`), instead
+    /// of hiring them itself.
+    pub async fn roster(&self) -> Result<Vec<Agent>, H5iError> {
+        let core = self.core.clone();
+        let seats: Vec<(String, String)> = run_blocking(move || {
+            let run = team::status(&core.repo()?, &core.run_id)?.run;
+            Ok(run
+                .agents
+                .iter()
+                .map(|a| (a.agent_id.clone(), a.env_id.clone()))
+                .collect())
+        })
+        .await?;
+        Ok(seats
+            .into_iter()
+            .map(|(name, env_id)| Agent {
+                core: self.core.clone(),
+                name,
+                env_id,
+            })
+            .collect())
+    }
+
     /// Rank the roster side by side (the arena view; not journaled).
     pub async fn compare(&self) -> Result<Vec<team::TeamCompareRow>, H5iError> {
         let core = self.core.clone();
