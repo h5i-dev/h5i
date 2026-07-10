@@ -201,11 +201,30 @@ One dialect per layer, and each layer is implemented in the layer below it. No p
 
 ## 5. Execution and durability model
 
-### 5.1 Journal
+### 5.1 Execution model: resident sessions
+
+The score is a coordinator process, not an LLM client. It holds no model connection and no agent state; it emits instructions and grants into the run, and awaits evidence-bearing events. The LLM substrate is the resident interactive session h5i teams already use: `team-launch.sh` starts one interactive box per agent (`h5i env shell <env> -- claude …`), and the team Stop hook (`h5i team agent hook --block`) holds it alive between turns by blocking the stop, waiting on the env inbox, and injecting the next instruction as the block reason. Sessions stay warm and stateful (conversation memory, prompt cache, loaded repo context), so turn dispatch is sub-second, never a cold process boot. The eDSL does not replace this machinery; it replaces the poll loop in `team-run.sh` that feeds it.
+
+One `agent.work(task)` call is this sequence:
+
+1. The score appends a `work_dispatched` event and sends an i5h ASK fanned into the agent's host-owned, read-only env inbox (today's `dispatch`).
+2. The agent's already-running session is parked in its Stop hook waiting on that inbox. The hook releases with the instruction, in the same session with all accumulated state.
+3. The agent works in its box, commits, and runs `h5i team agent submit`, which writes the outbound spool (the box writes what, never who).
+4. The score ingests the spool (`sync_outbound`), the frozen `TeamArtifact` lands as a `work_done` journal event, and the `work()` future resolves with it. The score watches the event ref via `notify` (the `watcher.rs` machinery) rather than polling.
+
+This division of labor is also what keeps resume cheap: the journal makes the coordinator stateless-resumable, while agent statefulness lives where it already lives, in the env worktree, the per-env HOME copy (the runtime's own session files persist across runs, so an in-box session can be resumed with `--continue`), and the live session itself.
+
+Session bring-up is the `RuntimeLauncher` trait's job, with three strategies:
+
+- **Attach (default).** `work()` requires a live session, detected via heartbeat/lease events (the existing `worker` lease machinery). If none is live, it fails fast with a clear message ("no live session for codex; run `h5i team launch`") rather than silently degrading to headless.
+- **Launch-resident.** The score spawns the interactive session itself at `hire()` time (detached: tmux pane, terminal window, or background pty) and reuses it for every turn. This internalizes `team-launch.sh`.
+- **Headless.** `claude -p` / `codex exec` per turn, as an explicit opt-in for CI-style scores where no resident session can be babysat. The cost is stated plainly: a cold process boot per turn and no cross-turn state beyond what the worktree, `PERSONA.md`, the context branch, and the runtime's `--resume` session files carry. Never the default.
+
+### 5.2 Journal
 
 The journal is the existing event log: `events.jsonl` in `refs/h5i/team/<run>`, CAS-appended, folded on read. The eDSL adds event kinds (`score_started`, `step_done`, `gate_requested`, `gate_answered`, `agent_hired`, ...) to the open vocabulary; `project` ignores kinds it does not know, so old and new binaries coexist. Results larger than a small inline cap (4 KiB) are stored as evidence captures and referenced by id from the event, keeping the ref lean while keeping everything recallable through `h5i recall object`.
 
-### 5.2 Step identity and resume
+### 5.3 Step identity and resume
 
 Every journaled operation has a **step key**: `(label, per-label sequence number)`. Labels come from the API (`agent.work` labels itself `work/<agent>`; `c.step` takes an explicit label). Sequence numbers count per label, not globally, so two concurrent branches with distinct labels produce stable keys regardless of interleaving or completion order. This is the one discipline the eDSL asks of users: steps inside unbounded concurrency must carry distinct labels (the API enforces it by construction for agent operations, and `c.step` in a loop wants `format!("fetch/{i}")`).
 
@@ -213,11 +232,11 @@ Resume (`h5i team resume <run>`, or just re-running the score binary with the ru
 
 This is why we do not need MAF's and LangGraph's Pregel-style superstep barriers: they buy a checkpoint boundary at the cost of a foreign execution model. Journaling puts the boundary at every step and leaves execution to tokio, which users already know how to debug. `dbg!`, breakpoints, and `RUST_LOG` work mid-score because there is nothing between the user's code and its execution.
 
-### 5.3 Concurrency
+### 5.4 Concurrency
 
 Parallel steps append events concurrently; the CAS loop in `append_event` already serializes writers, and event folding is order-tolerant (dedup by id, sort by parent/ts/id). Env-level concurrency is unchanged: each agent works in its own worktree and branch; `run.lock`/`observers.lock` semantics are untouched.
 
-### 5.4 Cross-clone runs
+### 5.5 Cross-clone runs
 
 Because the journal is a ref, `h5i share push` moves a live run to another clone. The reviewer-side clone can run a score (or plain CLI) against the same run id: pulled artifacts have no worktree, so review and apply fall back to branch-tip diffs exactly as env pull does today. This enables the flagship workflow: claude's clone runs the score up to the gate, a human or a codex on another machine reviews and answers, either side resumes. No orchestration server exists, so there is nothing to keep alive; the git remote is the coordination point. None of the surveyed frameworks can do this without a hosted runtime.
 
