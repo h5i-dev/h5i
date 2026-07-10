@@ -6012,7 +6012,7 @@ pub fn compare(
 /// `(files_changed, insertions, deletions)` of an env's changes vs. its pinned
 /// base. Uses the worktree when present, else the env branch tip (so pulled
 /// "remote" envs still compare).
-fn diffstat_numbers(
+pub(crate) fn diffstat_numbers(
     repo: &Repository,
     h5i_root: &Path,
     m: &EnvManifest,

@@ -33,11 +33,12 @@ import { ReplayView } from "./ReplayView";
 import { CockpitView } from "./CockpitView";
 import { RadioView } from "./RadioView";
 import { SandboxView } from "./SandboxView";
+import { BoardView } from "./BoardView";
 import { TeamView } from "./TeamView";
 import { ContextStrip } from "./ContextStrip";
 import { BranchPicker } from "./BranchPicker";
 
-type Mode = "replay" | "cockpit" | "radio" | "team" | "explore" | "memory" | "context" | "sandbox";
+type Mode = "replay" | "cockpit" | "radio" | "team" | "explore" | "memory" | "context" | "sandbox" | "board";
 type RightTab = "refs" | "sessions" | "integrity" | "context";
 
 export function Workbench() {
@@ -139,6 +140,12 @@ export function Workbench() {
               text="Ensemble"
               active={mode === "team"}
               onClick={() => setMode("team")}
+            />
+            <Button
+              icon="grid-view"
+              text="Board"
+              active={mode === "board"}
+              onClick={() => setMode("board")}
             />
             <Button
               icon="play"
@@ -264,6 +271,8 @@ export function Workbench() {
         </div>
       ) : mode === "sandbox" ? (
         <SandboxView />
+      ) : mode === "board" ? (
+        <BoardView />
       ) : (
         <div className="wb-body wb-body-single">
           <div className="wb-pane">

@@ -3514,6 +3514,7 @@ h5i serve --port 8080
 | **Intent Graph** | Directed graph of causal commit chains |
 | **Memory** | Browse and diff agent memory snapshots linked to each commit |
 | **Sessions** | Per-commit session data: exploration footprint, uncertainty heatmap, omissions, churn |
+| **Board** | Environments as **cards flowing through lifecycle columns** (Created / Working / Proposed / Applied / Aborted) — the parallel-agents view. Each card shows the pid-verified **live session** (`● shell pid N`, observers, or a `stale` flag when a `running` status has no live writer), the PR it tracks, base drift, the boundary-pressure score, a diffstat vs the pinned base, capture count, and the parent branch it proposes onto. Read-only like every serve surface: instead of mutating buttons, every card offers its **next CLI command one click from the clipboard** (`env shell` → `env propose` → `env apply` → `env gc`). Polls `GET /api/envs`. |
 | **Sandbox** | The "flight recorder" for [`h5i env`](#h5i-env): host-readiness strip (per-tier probe), an env fleet table with a deterministic **boundary-pressure** score, a five-lane (FS / NET / PROC / RESOURCE / PROVENANCE) per-run timeline, and the enforced-policy inspector. Read-only. Surfaces denials honestly — "Boundary blocked" only when enforcement fired, "Boundary pressure" for probing shapes, "Weak isolation" for capability gaps. Backed by `GET /api/envs`, `/api/env/:agent/:slug`, `/api/env/probe`. |
 
 ---
