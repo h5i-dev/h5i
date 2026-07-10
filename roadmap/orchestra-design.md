@@ -1,6 +1,6 @@
 # h5i orchestra: a programmable agent-orchestration eDSL
 
-Status: design proposal (v0.1, 2026-07-10). Companion to `MANUAL.md` ("h5i team") and `docs/environments-design.md`.
+Status: design accepted; the M1+M2 kernel is implemented in `src/orchestra/` (2026-07-10): journal + step keys + zero-re-execution resume on the team event log, `Conductor` with `step`/`freeze`/`verify`/`judge`/`apply`, `agent().hire()` + `work`/`review`/`revise`, the `VerdictPolicy` trait (built-in rule shared with `team finalize` via `team::default_verdict`/`record_verdict`), `RuntimeLauncher` (`Attach` default, `FnLauncher` for tests/embedding), and `patterns::ensemble`. Naming deviations from the sketches below (builder entry point instead of `#[orchestra::main]`, `approves(&review)` helper) are documented in the module docs. Still open per the roadmap: `gate`, `ask`, `with_materials`, headless launcher, trace rendering, CLI reimplementation over `ensemble`. Companion to `MANUAL.md` ("h5i team") and `docs/environments-design.md`.
 
 ## 1. Summary
 

@@ -371,8 +371,10 @@ fn refname(run_id: &str) -> Result<String, H5iError> {
     Ok(format!("{TEAM_REF_PREFIX}{run_id}"))
 }
 
+// pub(crate): `orchestra` appends its journal/step events through the same
+// constructor so ids, timestamps, and idempotency keys stay uniform.
 #[allow(clippy::too_many_arguments)]
-fn event(
+pub(crate) fn event(
     run_id: &str,
     actor: &str,
     kind: &str,
@@ -1750,8 +1752,12 @@ pub fn verify(
     Ok(verification)
 }
 
-pub fn finalize(repo: &Repository, run_id: &str, actor: &str) -> Result<TeamVerdict, H5iError> {
-    let current = status(repo, run_id)?.run;
+/// The built-in verdict rule, extracted from `finalize` so programmatic judges
+/// (`orchestra::policy::tests_then_smallest_diff`) and the CLI share one
+/// implementation: keep candidates whose latest verification both applies
+/// cleanly and passes tests, refuse to compare candidates verified with
+/// divergent commands, then pick the smallest diff. Pure — records nothing.
+pub fn default_verdict(current: &TeamRun) -> TeamVerdict {
     let mut latest: BTreeMap<String, &TeamVerification> = BTreeMap::new();
     for v in &current.verifications {
         latest.insert(v.submission_id.clone(), v);
@@ -1777,7 +1783,7 @@ pub fn finalize(repo: &Repository, run_id: &str, actor: &str) -> Result<TeamVerd
     let divergent_command = eligible
         .iter()
         .any(|(_, v)| v.command != eligible[0].1.command);
-    let verdict = if eligible.is_empty() {
+    if eligible.is_empty() {
         TeamVerdict {
             selected_submission: None,
             method: METHOD.into(),
@@ -1817,7 +1823,20 @@ pub fn finalize(repo: &Repository, run_id: &str, actor: &str) -> Result<TeamVerd
                 "smallest diff among verifier-passing candidates".into(),
             ],
         }
-    };
+    }
+}
+
+/// Record a decided verdict as the run's `verdict`/`no_verdict` event, moving
+/// the phase to `verdict`. Shared by `finalize` (built-in rule) and programmatic
+/// judges (`orchestra`), so every verdict — whatever policy produced it — lands
+/// in the event log through the same path.
+pub fn record_verdict(
+    repo: &Repository,
+    run_id: &str,
+    verdict: &TeamVerdict,
+    actor: &str,
+) -> Result<(), H5iError> {
+    let current = status(repo, run_id)?.run;
     let kind = if verdict.selected_submission.is_some() {
         "verdict"
     } else {
@@ -1831,9 +1850,15 @@ pub fn finalize(repo: &Repository, run_id: &str, actor: &str) -> Result<TeamVerd
         Some(current.phase),
         Some("verdict".into()),
         format!("verdict:{run_id}:{}", current.current_round),
-        serde_json::to_value(&verdict)?,
+        serde_json::to_value(verdict)?,
     );
-    append_event(repo, &ev)?;
+    append_event(repo, &ev)
+}
+
+pub fn finalize(repo: &Repository, run_id: &str, actor: &str) -> Result<TeamVerdict, H5iError> {
+    let current = status(repo, run_id)?.run;
+    let verdict = default_verdict(&current);
+    record_verdict(repo, run_id, &verdict, actor)?;
     Ok(verdict)
 }
 
