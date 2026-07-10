@@ -88,9 +88,10 @@ pub struct TurnContext {
 
 /// Session bring-up strategy (design doc §5.1). `Attach` is the default: the
 /// resident interactive session (Stop-hook held, `team-launch.sh`-style) picks
-/// the turn out of its inbox; the launcher does nothing. A headless per-turn
-/// launcher is deliberately not shipped yet — resident sessions are the
-/// execution model, and headless would need its own opt-in surface (M4).
+/// the turn out of its inbox; the launcher does nothing. The other planned
+/// strategy is launch-resident (the score spawns that same warm session itself
+/// at hire time, M4); a headless per-turn `claude -p` spawn is rejected — cold
+/// boots and stateless turns defeat the resident-session execution model.
 pub trait RuntimeLauncher: Send + Sync {
     fn on_turn(&self, turn: &TurnContext) -> Result<(), H5iError>;
 }

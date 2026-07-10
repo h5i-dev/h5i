@@ -1,6 +1,6 @@
 # h5i orchestra: a programmable agent-orchestration eDSL
 
-Status: design accepted; the M1+M2 kernel is implemented in `src/orchestra/` (2026-07-10): journal + step keys + zero-re-execution resume on the team event log, `Conductor` with `step`/`freeze`/`verify`/`judge`/`apply`, `agent().hire()` + `work`/`review`/`revise`, the `VerdictPolicy` trait (built-in rule shared with `team finalize` via `team::default_verdict`/`record_verdict`), `RuntimeLauncher` (`Attach` default, `FnLauncher` for tests/embedding), and `patterns::ensemble`. Naming deviations from the sketches below (builder entry point instead of `#[orchestra::main]`, `approves(&review)` helper) are documented in the module docs. Still open per the roadmap: `gate`, `ask`, `with_materials`, headless launcher, trace rendering, CLI reimplementation over `ensemble`. Companion to `MANUAL.md` ("h5i team") and `docs/environments-design.md`.
+Status: design accepted; the M1+M2 kernel is implemented in `src/orchestra/` (2026-07-10): journal + step keys + zero-re-execution resume on the team event log, `Conductor` with `step`/`freeze`/`verify`/`judge`/`apply`, `agent().hire()` + `work`/`review`/`revise`, the `VerdictPolicy` trait (built-in rule shared with `team finalize` via `team::default_verdict`/`record_verdict`), `RuntimeLauncher` (`Attach` default, `FnLauncher` for tests/embedding), and `patterns::ensemble`. Naming deviations from the sketches below (builder entry point instead of `#[orchestra::main]`, `approves(&review)` helper) are documented in the module docs. Still open per the roadmap: `gate`, `ask`, `with_materials`, the launch-resident launcher, trace rendering, CLI reimplementation over `ensemble` (a headless per-turn launcher is rejected, see §5.1). Companion to `MANUAL.md` ("h5i team") and `docs/environments-design.md`.
 
 ## 1. Summary
 
@@ -214,11 +214,11 @@ One `agent.work(task)` call is this sequence:
 
 This division of labor is also what keeps resume cheap: the journal makes the coordinator stateless-resumable, while agent statefulness lives where it already lives, in the env worktree, the per-env HOME copy (the runtime's own session files persist across runs, so an in-box session can be resumed with `--continue`), and the live session itself.
 
-Session bring-up is the `RuntimeLauncher` trait's job, with three strategies:
+Session bring-up is the `RuntimeLauncher` trait's job, with two strategies and one explicit rejection:
 
 - **Attach (default).** `work()` requires a live session, detected via heartbeat/lease events (the existing `worker` lease machinery). If none is live, it fails fast with a clear message ("no live session for codex; run `h5i team launch`") rather than silently degrading to headless.
 - **Launch-resident.** The score spawns the interactive session itself at `hire()` time (detached: tmux pane, terminal window, or background pty) and reuses it for every turn. This internalizes `team-launch.sh`.
-- **Headless.** `claude -p` / `codex exec` per turn, as an explicit opt-in for CI-style scores where no resident session can be babysat. The cost is stated plainly: a cold process boot per turn and no cross-turn state beyond what the worktree, `PERSONA.md`, the context branch, and the runtime's `--resume` session files carry. Never the default.
+- **Headless (rejected).** A per-turn `claude -p` / `codex exec` spawn was considered for unattended hosts (CI, cron) and rejected: every turn pays a cold process boot and loses cross-turn session state, which defeats the resident-session execution model this section exists to establish. Unattended hosts use Launch-resident instead — the score brings up the same warm session a human would, in a background pty, so CI runs the identical execution path rather than a degraded second mode with subtly different semantics.
 
 ### 5.2 Journal
 
