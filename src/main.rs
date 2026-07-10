@@ -1916,6 +1916,20 @@ enum EnvCommands {
         command: Vec<String>,
     },
 
+    /// Manage the persistent user-level egress allowlist: extra hosts merged
+    /// into every container-tier env whose profile already sets net.egress
+    /// (a deny-all profile is never widened). Stored host-side under
+    /// ~/.config/h5i/, outside every box-granted path; takes effect at the
+    /// next `env run`/`env shell`. With no rule, lists the current entries.
+    Allow {
+        /// Host rule: exact `api.example.com`, wildcard `.example.com` /
+        /// `*.example.com`, optionally with a `:port` suffix.
+        rule: Option<String>,
+        /// Remove the rule instead of adding it.
+        #[arg(long)]
+        remove: bool,
+    },
+
     /// Probe what isolation this host can actually provide (Landlock, user
     /// namespaces, seccomp) and which claims are satisfiable.
     Probe,
@@ -11256,6 +11270,47 @@ fn main() -> anyhow::Result<()> {
                         c => std::process::exit(c),
                     }
                 }
+
+                EnvCommands::Allow { rule, remove } => match rule {
+                    None => {
+                        let rules = h5i_core::env::user_allow_list();
+                        match h5i_core::env::user_allow_path() {
+                            Some(path) => println!("── user egress allowlist ({}) ──", path.display()),
+                            None => println!("── user egress allowlist ──"),
+                        }
+                        if rules.is_empty() {
+                            println!("  (empty — add one with `h5i env allow <host>`)");
+                        }
+                        for r in &rules {
+                            println!("  {r}");
+                        }
+                        println!(
+                            "  applies to container-tier envs whose profile sets net.egress; \
+                             takes effect at the next env run/shell"
+                        );
+                    }
+                    Some(raw) => {
+                        if remove {
+                            let (removed, path) = h5i_core::env::user_allow_remove(&raw)?;
+                            if removed {
+                                println!("✔  removed '{}' from {}", raw.trim(), path.display());
+                            } else {
+                                println!("   '{}' was not in {}", raw.trim(), path.display());
+                            }
+                        } else {
+                            let (added, path) = h5i_core::env::user_allow_add(&raw)?;
+                            if added {
+                                println!("✔  allowed '{}' ({})", raw.trim(), path.display());
+                                println!(
+                                    "   merged into container-tier envs whose profile sets \
+                                     net.egress, from the next env run/shell on"
+                                );
+                            } else {
+                                println!("   '{}' already allowed ({})", raw.trim(), path.display());
+                            }
+                        }
+                    }
+                },
 
                 EnvCommands::Probe => {
                     let caps = h5i_core::sandbox::probe_host();

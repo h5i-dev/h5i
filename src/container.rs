@@ -35,7 +35,7 @@ use std::time::Duration;
 
 use crate::error::H5iError;
 use crate::objects::{EgressHost, EgressSummary, MAX_EGRESS_HOSTS};
-use crate::sandbox_policy::{ExecOutcome, NetMode, Profile, ResolvedPolicy};
+use crate::sandbox_policy::{ExecOutcome, InteractiveOutcome, NetMode, Profile, ResolvedPolicy};
 
 /// Per `host:port` allow/deny tally accumulated by the egress proxy across a
 /// run. Shared between the proxy's worker threads and the run, behind a mutex;
@@ -162,6 +162,30 @@ struct AllowEntry {
     wildcard: bool,
     /// Restrict to a single port when present; `None` = any port.
     port: Option<u16>,
+}
+
+/// Combine the digested profile allowlist with the host-side user extras
+/// (`h5i env allow`) into the rule set the proxy enforces. **Fail-closed
+/// widening rule:** when the profile's own `net.egress` is empty (deny-all),
+/// the user extras are IGNORED — state outside the digested policy must never
+/// turn a no-network profile into a networked one; it may only add hosts to a
+/// profile that already opted into egress. Order-preserving, deduplicated.
+pub fn effective_egress(profile_egress: &[String], user_allow: &[String]) -> Vec<String> {
+    if profile_egress.iter().all(|e| e.trim().is_empty()) {
+        return Vec::new();
+    }
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for rule in profile_egress.iter().chain(user_allow.iter()) {
+        let rule = rule.trim();
+        if rule.is_empty() {
+            continue;
+        }
+        if seen.insert(rule.to_ascii_lowercase()) {
+            out.push(rule.to_string());
+        }
+    }
+    out
 }
 
 /// A resolved egress allowlist: parsed host rules plus the set of IPs the
@@ -897,9 +921,12 @@ pub fn run(
     }
 
     // Networking + optional egress proxy (held for the container's lifetime).
+    // The enforced rule set = digested profile allowlist + host-side user
+    // extras (`h5i env allow`); a deny-all profile ignores the extras.
+    let egress_rules = effective_egress(&p.net_egress, &policy.user_egress_allow);
     let mut _proxy: Option<ProxyHandle> = None;
-    let net = if !p.net_egress.is_empty() {
-        let mut allow = AllowList::parse(&p.net_egress);
+    let net = if !egress_rules.is_empty() {
+        let mut allow = AllowList::parse(&egress_rules);
         allow.pin_dns();
         let handle = spawn_proxy(allow)?;
         let port = handle.port;
@@ -973,13 +1000,14 @@ pub fn run(
 /// session whose every command is confined by the box (cap-drop, read-only
 /// rootfs, the `net.egress` allowlist). Unlike [`run`] it captures nothing and
 /// applies no wall-clock (the operator owns the session); it returns the child's
-/// exit code. The egress proxy is held for the whole session.
+/// exit code plus the egress proxy's allow/deny tally (the proxy is held for
+/// the whole session), so an interactive session leaves network evidence too.
 pub fn run_interactive(
     policy: &ResolvedPolicy,
     work: &Path,
     argv: &[String],
     injected_env: &[(String, String)],
-) -> Result<i32, H5iError> {
+) -> Result<InteractiveOutcome, H5iError> {
     use std::io::IsTerminal;
     let p = &policy.profile;
     let rt = probe().ok_or_else(|| {
@@ -1001,9 +1029,10 @@ pub fn run_interactive(
         ));
     }
 
+    let egress_rules = effective_egress(&p.net_egress, &policy.user_egress_allow);
     let mut _proxy: Option<ProxyHandle> = None;
-    let net = if !p.net_egress.is_empty() {
-        let mut allow = AllowList::parse(&p.net_egress);
+    let net = if !egress_rules.is_empty() {
+        let mut allow = AllowList::parse(&egress_rules);
         allow.pin_dns();
         let handle = spawn_proxy(allow)?;
         let port = handle.port;
@@ -1077,7 +1106,13 @@ pub fn run_interactive(
     let status = cmd
         .status()
         .map_err(|e| H5iError::Metadata(format!("failed to start container session: {e}")))?;
-    Ok(status.code().unwrap_or(130))
+    // Snapshot the session's egress verdicts before the proxy handle drops —
+    // this is the only channel the tally has back to the host.
+    let egress = _proxy.as_ref().map(|h| h.egress_summary());
+    Ok(InteractiveOutcome {
+        exit_code: status.code().unwrap_or(130),
+        egress,
+    })
 }
 
 static PROBE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1228,6 +1263,24 @@ mod tests {
     fn empty_allowlist_denies_everything() {
         let a = AllowList::parse(&[]);
         assert!(!a.allows("anything.com", 443));
+    }
+
+    #[test]
+    fn effective_egress_merges_user_extras_onto_profile() {
+        let merged = effective_egress(
+            &["api.anthropic.com".into(), "crates.io".into()],
+            &["pypi.org".into(), "crates.io".into(), "CRATES.IO".into()],
+        );
+        // Profile order first, extras appended, case-insensitive dedupe.
+        assert_eq!(merged, vec!["api.anthropic.com", "crates.io", "pypi.org"]);
+    }
+
+    #[test]
+    fn effective_egress_never_widens_a_deny_all_profile() {
+        // The fail-closed widening rule: user extras must not turn a profile
+        // with no net.egress (deny-all) into a networked one.
+        assert!(effective_egress(&[], &["pypi.org".into()]).is_empty());
+        assert!(effective_egress(&["  ".into()], &["pypi.org".into()]).is_empty());
     }
 
     #[test]

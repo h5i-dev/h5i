@@ -44,8 +44,9 @@ use crate::error::H5iError;
 // imports them from `sandbox_policy` directly, breaking the `sandbox →
 // container → sandbox` dispatch cycle.
 pub use crate::sandbox_policy::{
-    AgentRuntime, AuditCapture, AuditPolicy, BoxGitPath, ExecOutcome, HomeBind, IsolationClaim,
-    NetMode, PrivateBind, PrivatePath, Profile, ResolvedPolicy, SecretGrant, DEFAULT_WALL,
+    AgentRuntime, AuditCapture, AuditPolicy, BoxGitPath, ExecOutcome, HomeBind,
+    InteractiveOutcome, IsolationClaim, NetMode, PrivateBind, PrivatePath, Profile,
+    ResolvedPolicy, SecretGrant, DEFAULT_WALL,
 };
 
 /// Repo-relative path of the checked-in policy file.
@@ -1195,7 +1196,7 @@ pub fn run_interactive(
     work: &Path,
     argv: &[String],
     injected_env: &[(String, String)],
-) -> Result<i32, H5iError> {
+) -> Result<InteractiveOutcome, H5iError> {
     if argv.is_empty() {
         return Err(H5iError::Metadata("empty command".into()));
     }
@@ -1203,10 +1204,16 @@ pub fn run_interactive(
     let injected = augment_injected_env(policy, injected_env);
     let injected_env = injected.as_slice();
     match policy.claim {
-        IsolationClaim::Workspace => interactive_unconfined(work, argv, injected_env),
-        IsolationClaim::Process => interactive_confined(policy, work, argv, injected_env),
+        IsolationClaim::Workspace => {
+            interactive_unconfined(work, argv, injected_env).map(InteractiveOutcome::from_code)
+        }
+        IsolationClaim::Process => {
+            interactive_confined(policy, work, argv, injected_env)
+                .map(InteractiveOutcome::from_code)
+        }
         IsolationClaim::Supervised => {
             crate::supervisor::run_interactive(policy, work, argv, injected_env)
+                .map(InteractiveOutcome::from_code)
         }
         IsolationClaim::Container => {
             crate::container::run_interactive(policy, work, argv, injected_env)
