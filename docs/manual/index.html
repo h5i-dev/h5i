@@ -3604,8 +3604,8 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 <td>The event log (<code>created</code>/<code>exec</code>/<code>service</code>/<code>proposed</code>/<code>applied</code>/<code>aborted</code>/<code>gc</code>/<code>violation</code>/<code>secret</code>).</td>
 </tr>
 <tr>
-<td><code>h5i env diff &lt;name&gt; [--stat]</code></td>
-<td>Diff the env's work against its pinned base.</td>
+<td><code>h5i env diff &lt;name&gt; [--stat] [--json]</code></td>
+<td>Diff the env's work against its pinned base. <code>--json</code> emits a structured diffstat with per-file and total insertion/deletion counts.</td>
 </tr>
 <tr>
 <td><code>h5i env inspect &lt;name&gt; --capture &lt;id&gt; [--json]</code></td>

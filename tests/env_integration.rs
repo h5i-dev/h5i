@@ -1127,6 +1127,18 @@ fn full_lifecycle_create_run_propose_apply() {
     // Diff against the frozen base sees the change.
     let diff = out_str(&r.h5i_ok(&["env", "diff", "feature"]));
     assert!(diff.contains("return 2"), "{diff}");
+    let stat = out_str(&r.h5i_ok(&["env", "diff", "feature", "--stat"]));
+    assert!(stat.contains("lib.py"), "diffstat includes changed file: {stat}");
+
+    let diff_json = out_str(&r.h5i_ok(&["env", "diff", "feature", "--json"]));
+    let report: serde_json::Value =
+        serde_json::from_str(&diff_json).expect("env diff --json emits valid JSON");
+    assert_eq!(report["files_changed"], 1, "one file changed: {diff_json}");
+    assert_eq!(report["insertions"], 1, "one changed line added: {diff_json}");
+    assert_eq!(report["deletions"], 1, "one changed line removed: {diff_json}");
+    assert_eq!(report["files"][0]["path"], "lib.py");
+    assert_eq!(report["files"][0]["insertions"], 1);
+    assert_eq!(report["files"][0]["deletions"], 1);
 
     // Propose: mediated commit + review brief; parent branch untouched.
     let before = out_str(&git(&r.dir, &["rev-parse", "main"]));
@@ -4594,6 +4606,11 @@ fn env_travels_to_another_clone_for_review_and_apply() {
         diff.contains("return 2"),
         "B reviews the proposed diff: {diff}"
     );
+    let diff_json = out_str(&b.ok(&["env", "diff", "fix-auth", "--json"]));
+    let diffstat: serde_json::Value =
+        serde_json::from_str(&diff_json).expect("remote env diff --json is valid JSON");
+    assert_eq!(diffstat["files_changed"], 1, "{diff_json}");
+    assert_eq!(diffstat["files"][0]["path"], "lib.py");
 
     // B sees the policy digest + evidence in status, and the manifest via JSON.
     let json = out_str(&b.ok(&["env", "status", "fix-auth", "--json"]));
