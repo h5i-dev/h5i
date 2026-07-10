@@ -160,6 +160,7 @@ Deliberately few. Everything else is a pattern built from these.
 | `agent.ask::<T>(prompt)` | `T: DeserializeOwned` | `ask_done` | a session that must emit schema-valid output; no artifact |
 | `agent.review(&artifact)` | `Review` | `review_done` | grant + review submit |
 | `agent.revise(&artifact, &review)` | `Artifact` | `work_done` | feedback delivery + new submission |
+| `agent.work(task).with_materials(arts)` | `Artifact` | `work_done` | scoped diff grants on the inputs + influence edges |
 | `c.verify(arts)…` | `Vec<Verified>` | `verify_done` | `team::verify` (neutral sandbox) |
 | `c.judge(&verified, policy)` | `Verdict` | `verdict` | generalized `finalize` |
 | `c.apply(&artifact)` | `Applied` | `applied` | `team::apply` (mediated, gated) |
@@ -169,6 +170,7 @@ Deliberately few. Everything else is a pattern built from these.
 Notes:
 
 - **`ask` vs `work`.** `work` produces code (a frozen `TeamArtifact`); `ask` produces data (a typed value extracted from a schema-constrained reply). `ask` is how judge panels, routers, and summarizers are built: `let s: Scorecard = judge_agent.ask(prompt).await?;` with `Scorecard: Deserialize + JsonSchema`. The schema is enforced at the boundary and the raw transcript is still captured as evidence.
+- **`with_materials` is the integration affordance.** It grants the working agent scoped read of other artifacts' diffs (the same grant machinery as review, same `GRANTABLE_ARTIFACT_KINDS`) and stamps the resulting artifact `independent=false` with influence edges to every input. This is how an integrator agent fuses N implementers' submissions: apply the granted patches in its own worktree, resolve conflicts, submit one merged artifact. A cheap escalation ladder keeps agent tokens for judgment calls only: try a mechanical `git merge` via `c.step`, fall back to `h5i resolve` per conflicted file, and hand only the semantic conflicts to the agent.
 - **`step` is the universal escape hatch.** Any side effect the user wants durable (calling `gh`, fetching an issue list, running a formatter on the host) goes through `c.step("label", || async { ... })`. It executes once, journals the serialized result, and replays from the journal on resume. Restate's `ctx.run`, on git.
 - **`gate` is the HITL primitive.** It sends an i5h ASK (so the human sees it in `h5i msg` and via the Stop hook), appends `gate_requested`, and then either waits (`msg wait`) or, with `--detach`, lets the score exit cleanly. Resume finds the answer in the inbox, journals `gate_answered`, and continues past the gate. Every framework surveyed made HITL first-class; ours must additionally survive process exit, and does, because the journal is the ref.
 - **`VerdictPolicy` is a trait**, not a string. Built-ins reproduce today's rule; a user policy sees `&[Verified]` and returns a `Verdict` with reasons. An LLM-judge policy is just a policy that calls `agent.ask` inside.
@@ -252,7 +254,7 @@ The moat is the bottom two rows: provenance-grade evidence and kernel-enforced i
 - **M1: kernel.** `h5i-orchestra` crate; `Conductor`, journal on the team event log, step keys, resume; `agent().hire()`, `work`, `c.step`. Ensemble expressible manually. Workspace tier only. Exit: the 4.2 score runs, is killed at any point, and resumes without re-running completed agent turns.
 - **M2: parity.** `review`/`revise`/`verify`/`judge`/`apply`; `patterns::ensemble` reproduces today's `team-run.sh` behavior end to end; the CLI auto-flow reimplemented over it; `team-run.sh` deprecated.
 - **M3: durability surface.** `gate` with detach/resume, `patched`, score digests, `h5i team trace <run>` rendering the recorded DAG (text and dot), journal-divergence diagnostics.
-- **M4: breadth.** `ask` with schema enforcement, `VerdictPolicy` and `RuntimeLauncher` traits, `patterns::{arena, pipeline, map_reduce, debate}`, container-tier verification in scores.
+- **M4: breadth.** `ask` with schema enforcement, `VerdictPolicy` and `RuntimeLauncher` traits, `with_materials` grants, `patterns::{arena, pipeline, map_reduce, debate, integrate}`, container-tier verification in scores. `integrate` packages the multi-implementer flow (fan-out, merge in an integrator env via `with_materials`, verify), and `map_reduce`'s `reduce` slot accepts an integrator agent in place of host code: the reduce step of a fan-out is exactly the conflict-resolution seat.
 - **M5: distribution.** Cross-clone resume hardening, run handoff docs, multi-human gates, optional `Journal` backend seam.
 
 ## 10. Open questions
