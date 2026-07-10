@@ -11471,6 +11471,11 @@ fn main() -> anyhow::Result<()> {
                                 if let serde_json::Value::Object(ref mut map) = v {
                                     let d = h5i_core::env::drift(git, m);
                                     map.insert("drift".into(), serde_json::to_value(&d).unwrap_or(serde_json::Value::Null));
+                                    // Live sessions (the pid registry) — runtime
+                                    // state, so injected like drift rather than
+                                    // stored in the manifest.
+                                    let live = h5i_core::env::live_sessions(&m.dir(&h5i_root));
+                                    map.insert("live".into(), serde_json::to_value(&live).unwrap_or(serde_json::Value::Null));
                                 }
                                 v
                             })
@@ -11483,14 +11488,27 @@ fn main() -> anyhow::Result<()> {
                         for m in envs {
                             let d = h5i_core::env::drift(git, &m);
                             let drift_mark = if d.is_current() { "" } else { " ⚠drift" };
+                            let live = h5i_core::env::live_sessions(&m.dir(&h5i_root));
+                            let live_mark = match live
+                                .iter()
+                                .find(|s| h5i_core::env::live_is_writer(&s.kind))
+                            {
+                                Some(s) => format!(" ●{} pid {}", s.kind, s.pid),
+                                None if m.status == "running" => " ⚠stale".to_string(),
+                                None if !live.is_empty() => {
+                                    format!(" ◦{} observer(s)", live.len())
+                                }
+                                None => String::new(),
+                            };
                             println!(
-                                "{:<28} {:<9} isolation={:<10} base={} captures={}{}",
+                                "{:<28} {:<9} isolation={:<10} base={} captures={}{}{}",
                                 style(&m.id).magenta(),
                                 m.status,
                                 m.isolation_claim,
                                 &m.base_commit[..12],
                                 m.captures.len(),
-                                style(drift_mark).yellow()
+                                style(drift_mark).yellow(),
+                                style(&live_mark).green()
                             );
                         }
                     }

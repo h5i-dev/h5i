@@ -56,6 +56,8 @@ const MANIFEST_FILE: &str = "manifest.json";
 const POLICY_RESOLVED_FILE: &str = "policy.resolved.toml";
 const STATUS_FILE: &str = "status";
 const WORK_DIR: &str = "work";
+/// Per-env live-session registry dir (`live/<pid>.json`) — see [`LiveSession`].
+const LIVE_DIR: &str = "live";
 /// Worktree-root file the persona sources are baked into at create; loaded by
 /// the agent via `@PERSONA.md` (Claude) or a read instruction (Codex).
 const PERSONA_FILE: &str = "PERSONA.md";
@@ -2909,6 +2911,13 @@ pub fn run(
     // below and must not interleave). Held for the duration of the run.
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
+    // Register in the live-session registry for the run's duration, so
+    // list/status/the dashboard can tell a live run from a stale status.
+    let _live = LiveGuard::register(
+        &m.dir(h5i_root),
+        "run",
+        Some(crate::secrets::redact_text(&argv.join(" "))),
+    );
 
     // The stored policy, digest-verified, then re-resolved against a fresh
     // host probe (fail closed if the host can no longer satisfy the claim).
@@ -3169,6 +3178,13 @@ pub fn shell(
     } else {
         RunLock::acquire(&m.dir(h5i_root))?
     };
+    // Register in the live-session registry for the session's duration (an
+    // observer registers too — "who is watching" is part of the live picture).
+    let _live = LiveGuard::register(
+        &m.dir(h5i_root),
+        if readonly { "observe" } else { "shell" },
+        (!command.is_empty()).then(|| crate::secrets::redact_text(&command.join(" "))),
+    );
 
     let mut policy = load_policy(h5i_root, m)?;
 
@@ -4586,7 +4602,29 @@ pub fn drift(repo: &Repository, m: &EnvManifest) -> Drift {
 pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> String {
     let mut out = String::new();
     out.push_str(&format!("── {} ──\n", m.id));
-    out.push_str(&format!("  status   : {}\n", m.status));
+    // Reconcile the durable status against the live registry: a `running`
+    // manifest with no live writer is a crash leftover, and saying so beats
+    // letting the reader trust it.
+    let live = live_sessions(&m.dir(h5i_root));
+    let has_writer = live.iter().any(|s| live_is_writer(&s.kind));
+    let stale_note = if m.status == ST_RUNNING && !has_writer {
+        "  (stale — no live session holds this env; the writer likely crashed)"
+    } else {
+        ""
+    };
+    out.push_str(&format!("  status   : {}{}\n", m.status, stale_note));
+    for s in &live {
+        out.push_str(&format!(
+            "  live     : {} pid {} since {}{}\n",
+            s.kind,
+            s.pid,
+            s.started_at,
+            s.command
+                .as_ref()
+                .map(|c| format!(" — {c}"))
+                .unwrap_or_default()
+        ));
+    }
     out.push_str(&format!("  agent    : {}\n", m.agent));
     out.push_str(&format!(
         "  base     : {} (from {})\n",
@@ -4969,6 +5007,100 @@ pub struct ServiceDef {
 struct ServiceFileToml {
     #[serde(default)]
     service: std::collections::BTreeMap<String, ServiceDef>,
+}
+
+// ─── live-session registry (the env control-plane groundwork) ───────────────
+
+/// One live `env run` / `env shell` session's on-disk record — the daemon-free
+/// registry under `.git/.h5i/env/<agent>/<slug>/live/<pid>.json`, mirroring
+/// the `services/` pid-registry pattern. Written by the session holding the
+/// run/observer lock; removed on clean exit; a crash leaves the file and the
+/// reader reconciles by PID identity (`pid_alive`), not timestamps.
+///
+/// **Informational only, never authoritative for security:** grants derive
+/// exclusively from the identity-validated manifest + digested policy; the
+/// registry exists so `env list`/`status`/the dashboard can tell a live
+/// session from a stale `running` status (a SIGKILLed session never resets
+/// its manifest status). The `live/` dir is host state — it is not part of
+/// the box's fs grants.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveSession {
+    pub pid: u32,
+    /// Session kind: `run` (captured exec), `shell` (read-write interactive),
+    /// or `observe` (read-only observer).
+    pub kind: String,
+    /// RFC3339 UTC start time (display only — liveness is PID-based).
+    pub started_at: String,
+    /// What the session is executing (secret-redacted), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+}
+
+/// Kinds that hold the exclusive writer lock (a live one of these means the
+/// env is genuinely busy, not just observed).
+pub fn live_is_writer(kind: &str) -> bool {
+    matches!(kind, "run" | "shell")
+}
+
+/// RAII registration of the calling process in an env's live registry.
+/// Best-effort on both ends: failing to write never blocks a session, and
+/// `Drop` removal failing just leaves a record the next reader reconciles.
+struct LiveGuard {
+    path: PathBuf,
+}
+
+impl LiveGuard {
+    fn register(env_dir: &Path, kind: &str, command: Option<String>) -> LiveGuard {
+        let dir = env_dir.join(LIVE_DIR);
+        let _ = std::fs::create_dir_all(&dir);
+        let pid = std::process::id();
+        let path = dir.join(format!("{pid}.json"));
+        let rec = LiveSession {
+            pid,
+            kind: kind.to_string(),
+            started_at: now_ts(),
+            command,
+        };
+        if let Ok(json) = serde_json::to_string(&rec) {
+            let _ = std::fs::write(&path, json);
+        }
+        LiveGuard { path }
+    }
+}
+
+impl Drop for LiveGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// The env's live sessions: scan `live/`, keep records whose PID is alive,
+/// and best-effort unlink crash leftovers (dead PIDs, unparseable files).
+/// PID-identity staleness — same trade-off as the services registry (a reused
+/// PID can briefly read as alive; the next scan after it exits heals it).
+pub fn live_sessions(env_dir: &Path) -> Vec<LiveSession> {
+    let dir = env_dir.join(LIVE_DIR);
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let parsed = std::fs::read_to_string(&p)
+            .ok()
+            .and_then(|text| serde_json::from_str::<LiveSession>(&text).ok());
+        match parsed {
+            Some(rec) if pid_alive(rec.pid) => out.push(rec),
+            _ => {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+    out.sort_by(|a, b| a.started_at.cmp(&b.started_at).then(a.pid.cmp(&b.pid)));
+    out
 }
 
 /// A running service's on-disk record — the daemon-free pid registry under
@@ -6966,6 +7098,44 @@ mod tests {
         ] {
             assert!(validate_egress_rule(bad).is_err(), "accepted {bad:?}");
         }
+    }
+
+    #[test]
+    fn live_registry_registers_and_reconciles_dead_pids() {
+        let dir = tempfile::tempdir().unwrap();
+        let env_dir = dir.path().join("envdir");
+        {
+            let _g = LiveGuard::register(&env_dir, "shell", Some("bash".into()));
+            let live = live_sessions(&env_dir);
+            assert_eq!(live.len(), 1);
+            assert_eq!(live[0].pid, std::process::id());
+            assert_eq!(live[0].kind, "shell");
+            assert!(live_is_writer(&live[0].kind));
+            assert!(!live_is_writer("observe"));
+        }
+        // A cleanly-dropped guard removed its record.
+        assert!(live_sessions(&env_dir).is_empty());
+
+        // Crash leftovers: a dead PID's record and an unparseable file are
+        // reconciled away on read (PID identity, not timestamps).
+        let live_dir = env_dir.join(LIVE_DIR);
+        std::fs::create_dir_all(&live_dir).unwrap();
+        let dead = LiveSession {
+            // Far above any real pid_max, and positive as i32 (kill probe).
+            pid: 2_147_483_646,
+            kind: "run".into(),
+            started_at: now_ts(),
+            command: None,
+        };
+        std::fs::write(
+            live_dir.join("2147483646.json"),
+            serde_json::to_string(&dead).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(live_dir.join("garbage.json"), "not json").unwrap();
+        assert!(live_sessions(&env_dir).is_empty());
+        assert!(!live_dir.join("2147483646.json").exists());
+        assert!(!live_dir.join("garbage.json").exists());
     }
 
     #[test]
