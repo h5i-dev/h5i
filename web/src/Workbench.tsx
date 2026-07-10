@@ -136,22 +136,16 @@ export function Workbench() {
           <ButtonGroup minimal>
             <Button
               className="wb-mode-lead"
-              icon="people"
-              text="Ensemble"
-              active={mode === "team"}
-              onClick={() => setMode("team")}
+              icon="shield"
+              text="Sandbox"
+              active={mode === "sandbox"}
+              onClick={() => setMode("sandbox")}
             />
             <Button
               icon="grid-view"
               text="Board"
               active={mode === "board"}
               onClick={() => setMode("board")}
-            />
-            <Button
-              icon="play"
-              text="Replay"
-              active={mode === "replay"}
-              onClick={() => setMode("replay")}
             />
             <Button
               icon="endorsed"
@@ -166,16 +160,22 @@ export function Workbench() {
               onClick={() => setMode("radio")}
             />
             <Button
-              icon="shield"
-              text="Sandbox"
-              active={mode === "sandbox"}
-              onClick={() => setMode("sandbox")}
+              icon="people"
+              text="Ensemble"
+              active={mode === "team"}
+              onClick={() => setMode("team")}
             />
             <Button
               icon="lightbulb"
               text="Context"
               active={mode === "context"}
               onClick={() => setMode("context")}
+            />
+            <Button
+              icon="play"
+              text="Replay"
+              active={mode === "replay"}
+              onClick={() => setMode("replay")}
             />
             <Button
               icon="search-around"
