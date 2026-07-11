@@ -782,7 +782,7 @@ Drive a full hands-off team cycle over the orchestra eDSL: dispatch -> independe
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBrun\fR [\fB\-\-task\fR] [\fB\-\-task\-file\fR] [\fB\-\-rounds\fR] [\fB\-\-verify\-cmd\fR] [\fB\-\-isolation\fR] [\fB\-\-apply\fR] [\fB\-\-gate\fR] [\fB\-\-launch\-resident\fR] [\fB\-\-poll\fR] [\fB\-\-timeout\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
+\fBrun\fR [\fB\-\-task\fR] [\fB\-\-task\-file\fR] [\fB\-\-manifest\fR] [\fB\-\-rounds\fR] [\fB\-\-verify\-cmd\fR] [\fB\-\-isolation\fR] [\fB\-\-apply\fR] [\fB\-\-gate\fR] [\fB\-\-launch\-resident\fR] [\fB\-\-poll\fR] [\fB\-\-timeout\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -792,6 +792,9 @@ Task text to dispatch
 .TP
 \fB\-\-task\-file\fR \fI<TASK_FILE>\fR
 Read the task from a file
+.TP
+\fB\-\-manifest\fR \fI<MANIFEST>\fR
+TOML manifest parameterizing the run (task/rounds/verify/gate + optional agent enrollment). Flags below override manifest values
 .TP
 \fB\-\-rounds\fR \fI<ROUNDS>\fR [default: 1]
 Maximum review->revise cycles (early exit on full approval)
