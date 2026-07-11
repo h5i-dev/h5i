@@ -1,0 +1,31 @@
+[package]
+name = "h5i-sandbox"
+version = "0.2.8"
+edition = "2021"
+description = "Multi-tier process/container confinement (Landlock/seccomp/namespaces + rootless Podman) with a fail-closed policy model, for the h5i workspace."
+
+[dependencies]
+h5i-error = { path = "../h5i-error" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+git2 = { workspace = true }
+sha2 = "0.10"
+libc = "0.2.186"
+regex = "1"
+fastrand = "2.3.0"
+tracing = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+# Vendor OpenSSL under musl (libgit2/libssh2 pull it in), matching the root.
+[target.'cfg(target_env = "musl")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
+# Kernel-tier confinement — Linux only.
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4.5"
+seccompiler = "0.5.0"
+
+[dev-dependencies]
+tempfile = "3.8"
+serde_json = { workspace = true }

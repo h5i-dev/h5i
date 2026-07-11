@@ -1,0 +1,11 @@
+[package]
+name = "h5i-error"
+version = "0.2.8"
+edition = "2021"
+description = "Shared error type for the h5i workspace (temporal/intentional/empirical/associative categories)."
+
+[dependencies]
+thiserror = { workspace = true }
+git2 = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
