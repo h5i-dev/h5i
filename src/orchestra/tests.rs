@@ -981,3 +981,73 @@ async fn judge_panel_scores_over_evidence_and_validates_citations() {
     let recorded = c.status().await.unwrap().run.verdict.unwrap();
     assert_eq!(recorded.selected_submission, Some(pa.id));
 }
+
+#[test]
+fn approves_recognizes_common_verdict_forms() {
+    use super::approves;
+    let yes = |b: &str| approves(&crate::team::TeamReview {
+        reviewer: "r".into(), target: "t".into(), round: 1,
+        body: b.into(), referenced_artifacts: vec![],
+    });
+    // Plain and labeled approvals (the live run produced "Verdict: approve").
+    assert!(yes("APPROVE"));
+    assert!(yes("Verdict: approve\n\nReviewed the diff, looks good."));
+    assert!(yes("Verdict: APPROVE"));
+    assert!(yes("LGTM"));
+    assert!(yes("Decision: OK to merge"));
+    assert!(yes("approved — clean and minimal"));
+    // Not approvals: approval token not leading the (delabeled) first line.
+    assert!(!yes("Needs work: rename the helper first"));
+    assert!(!yes("I can't approve this yet"));
+    assert!(!yes("Changes required before I approve"));
+    assert!(!yes(""));
+}
+
+#[tokio::test]
+async fn revise_completes_on_unchanged_resubmit() {
+    // The live-run deadlock: an agent told to revise finds nothing to change
+    // and re-submits the SAME candidate (same tree → same id). revise() must
+    // treat that as a valid response (a new submission event), not wait for a
+    // changed id forever.
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "claude", "rr");
+
+    // A launcher whose Revise turn re-submits the existing tip unchanged.
+    let turns = Arc::new(AtomicUsize::new(0));
+    let turns_cl = turns.clone();
+    let launcher: Arc<dyn RuntimeLauncher> = Arc::new(FnLauncher(move |turn: &TurnContext| {
+        turns_cl.fetch_add(1, Ordering::SeqCst);
+        let repo = Repository::open(&turn.repo_workdir)?;
+        let branch = format!("refs/heads/h5i/{}", turn.env_id);
+        match &turn.kind {
+            TurnKind::Work => {
+                commit_on_branch(&repo, &branch, "answer.txt", "ok\n")?;
+                team::submit(&repo, &turn.h5i_root, &turn.run_id, &turn.agent_id,
+                    None, Some("first".into()), &turn.agent_id)?;
+            }
+            TurnKind::Revise => {
+                // No commit — re-submit the same tip (same tree → same id).
+                team::submit(&repo, &turn.h5i_root, &turn.run_id, &turn.agent_id,
+                    None, Some("no change needed".into()), &turn.agent_id)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }));
+
+    let c = conductor(dir.path(), "rr", launcher);
+    let a = c.agent("claude").env("env/claude/rr").hire().await.unwrap();
+    let first = a.work("do it").await.unwrap();
+    c.freeze().await.unwrap();
+
+    let review = crate::team::TeamReview {
+        reviewer: "peer".into(), target: "claude".into(), round: 1,
+        body: "please rename the helper".into(), referenced_artifacts: vec![],
+    };
+    // Must return promptly (not hang to timeout) with the unchanged candidate.
+    let revised = a.revise(&first, &review).await.unwrap();
+    assert_eq!(revised.id, first.id, "unchanged re-submit returns the same candidate");
+    assert_eq!(turns.load(Ordering::SeqCst), 2, "one work + one revise turn");
+}
