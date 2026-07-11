@@ -36,6 +36,9 @@
     "url": "https://h5i.dev/blog/",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "blogPost": [
+      {"@type": "BlogPosting", "headline": "Programmable Agent Orchestration: the h5i-orchestra eDSL", "datePublished": "2026-07-11", "url": "https://h5i.dev/blog/programmable-agent-orchestration-edsl/"},
+      {"@type": "BlogPosting", "headline": "Write Your First Score: an h5i-orchestra Tutorial", "datePublished": "2026-07-11", "url": "https://h5i.dev/blog/write-your-first-orchestra-score/"},
+      {"@type": "BlogPosting", "headline": "Orchestration Patterns Beyond Ensemble", "datePublished": "2026-07-11", "url": "https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/"},
       {"@type": "BlogPosting", "headline": "Run an AI Agent Ensemble: h5i team", "datePublished": "2026-06-21", "url": "https://h5i.dev/blog/agent-ensembles-with-h5i-team/"},
       {"@type": "BlogPosting", "headline": "Why AI Agents Need Auditable Workspaces", "datePublished": "2026-06-19", "url": "https://h5i.dev/blog/auditable-workspaces-for-ai-agents/"},
       {"@type": "BlogPosting", "headline": "How to Measure Prompt Quality Offline — the h5i Prompt Maturity Score", "datePublished": "2026-06-17", "url": "https://h5i.dev/blog/prompt-maturity-score/"},
@@ -112,7 +115,7 @@
     <div class="post-group-body">
       <div class="post-group-eyebrow">Pillar</div>
       <h2>Ensemble</h2>
-      <p>The whole point: run many coding agents on one task, then merge the single result a neutral verifier clears — each candidate auditable. The two posts the rest of the blog supports.</p>
+      <p>The whole point: run many coding agents on one task, then merge the single result a neutral verifier clears — each candidate auditable. From the fixed <code>h5i team</code> protocol to the programmable <code>h5i-orchestra</code> eDSL. The posts the rest of the blog supports.</p>
     </div>
   </div>
 
@@ -124,6 +127,36 @@
     </div>
     <h2>Run an AI Agent Ensemble: <code>h5i team</code></h2>
     <p>Point several coding agents at the same task in sealed workspaces, let each work blind, then let a neutral, sandboxed verifier — not any agent's own say-so — pick the winner. Sealed workspaces, permissioned reviews, auditable convergence, so a human can merge with proof, hands-off.</p>
+  </a>
+
+  <a class="post-card" href="/blog/programmable-agent-orchestration-edsl/">
+    <div class="card-meta">
+      <span>Ensemble · h5i-orchestra</span>
+      <span>2026-07-11</span>
+      <span>11 min read</span>
+    </div>
+    <h2>Programmable Agent Orchestration: the <code>h5i-orchestra</code> eDSL</h2>
+    <p>One ensemble topology was never going to be enough. h5i-orchestra makes the shape yours to write: a run is a plain async Rust program driving a Conductor, and every agent turn is journaled on a Git ref, so a killed run resumes without re-paying a single turn. Define-by-run, durable on Git, no hosted runtime.</p>
+  </a>
+
+  <a class="post-card" href="/blog/write-your-first-orchestra-score/">
+    <div class="card-meta">
+      <span>Ensemble · Tutorial</span>
+      <span>2026-07-11</span>
+      <span>13 min read</span>
+    </div>
+    <h2>Write Your First Score: an <code>h5i-orchestra</code> Tutorial</h2>
+    <p>Build a complete score end to end: hire a roster of sandboxed agents, fan out the work, seal, review and revise, verify in a neutral sandbox, decide with a pluggable verdict, and land the winner behind a durable human gate. Kill it at any point and re-run: the journaled steps replay for free.</p>
+  </a>
+
+  <a class="post-card" href="/blog/orchestration-patterns-beyond-ensemble/">
+    <div class="card-meta">
+      <span>Ensemble · Patterns</span>
+      <span>2026-07-11</span>
+      <span>12 min read</span>
+    </div>
+    <h2>Orchestration Patterns Beyond Ensemble</h2>
+    <p>arena, pipeline, integrate, map_reduce, debate, and judge_panel, all written in the public eDSL so the built-ins are examples you can copy. The centerpiece: a judge panel that scores candidates over the run's recorded evidence, with every citation validated against real run state. LLM judgment, not an LLM vibe.</p>
   </a>
 
   <a class="post-card" href="/blog/auditable-workspaces-for-ai-agents/">

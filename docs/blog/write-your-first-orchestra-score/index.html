@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Write Your First Score: an h5i-orchestra Tutorial</title>
+  <meta name="description" content="A hands-on h5i-orchestra tutorial. Build a score end to end: hire sandboxed agents, fan out the work, run a review loop, verify in a neutral sandbox, gate the apply, and resume for free after a crash.">
+  <meta name="keywords" content="h5i orchestra tutorial, agent orchestration tutorial, rust edsl, multi-agent coding, durable agent run, conductor score, neutral verifier, human-in-the-loop gate, resumable orchestration">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/write-your-first-orchestra-score/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Write Your First Score: an h5i-orchestra Tutorial">
+  <meta property="og:description" content="Build a score end to end: hire sandboxed agents, fan out the work, run a review loop, verify in a neutral sandbox, gate the apply, and resume for free after a crash.">
+  <meta property="og:url" content="https://h5i.dev/blog/write-your-first-orchestra-score/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-07-11">
+  <meta property="article:author" content="Koukyosyumei">
+  <meta property="article:tag" content="Tutorial">
+  <meta property="article:tag" content="Orchestration">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Write Your First Score: an h5i-orchestra Tutorial">
+  <meta name="twitter:description" content="A score is a plain async Rust program. Build one end to end, from hiring agents to a mediated apply, and kill it at any point to resume for free.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Write Your First Score: an h5i-orchestra Tutorial",
+    "description": "A hands-on h5i-orchestra tutorial. Build a score end to end: hire sandboxed agents, fan out the work, run a review loop, verify in a neutral sandbox, gate the apply, and resume for free after a crash.",
+    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
+    "datePublished": "2026-07-11",
+    "dateModified": "2026-07-11",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/write-your-first-orchestra-score/"},
+    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+    "keywords": "h5i orchestra tutorial, agent orchestration tutorial, rust edsl, durable agent run, neutral verifier"
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Write Your First Score: an h5i-orchestra Tutorial", "item": "https://h5i.dev/blog/write-your-first-orchestra-score/"}]}
+  </script>
+</head>
+<body>
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Ensemble · Tutorial</div>
+      <h1>Write Your First Score: an <code>h5i-orchestra</code> Tutorial</h1>
+      <p class="post-deck">
+        <strong>A score is a plain async Rust program.</strong>
+        In this tutorial you build one end to end: hire two sandboxed agents, fan out the work,
+        run a review round, verify each candidate in a neutral sandbox, gate the apply on a human,
+        and land the winner. Then you kill the process halfway through and watch it resume for free,
+        because every step was journaled on a Git ref.
+      </p>
+      <div class="post-meta">
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 13 min</span>
+        <span><strong>Tags</strong> Tutorial · Orchestration · Multi-agent</span>
+      </div>
+    </header>
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+    <li>A score has one shape: build a <code>Conductor</code>, hire <code>Agent</code> handles, then call <code>work</code>, <code>review</code>, <code>verify</code>, <code>judge</code>, <code>apply</code> on them. The control flow is ordinary Rust.</li>
+    <li>The review and revise loop is a host-language <code>for</code> loop with an early exit on full approval. There is no special routing API.</li>
+    <li>Verify, judge, and apply are neutral and mediated: a fresh sandbox re-runs each candidate, a pluggable <code>VerdictPolicy</code> decides, and apply is gated on an auto-applicable verdict plus a human.</li>
+    <li>Resume is free. Every effectful call is journaled by a stable step key on <code>refs/h5i/team/&lt;run&gt;</code>, so re-running the binary replays completed turns instead of re-paying them.</li>
+  </ul>
+</div>
+
+    <p>
+      The <a href="../programmable-agent-orchestration-edsl/">overview</a> made the case for a
+      define-by-run orchestrator. This post is the hands-on half. We will write a complete score that
+      runs the classic ensemble: two agents attempt the same task independently, review each other,
+      a neutral verifier picks a winner, and a human approves the merge. You will see every method
+      you need, and by the end you will understand why the CLI command <code>h5i team run</code> is
+      just this same score with the Rust taken off the top.
+    </p>
+
+    <p>
+      One assumption before we start: the agents already run inside sandboxed <code>h5i env</code>
+      workspaces, exactly as in an <a href="../agent-ensembles-with-h5i-team/"><code>h5i team</code></a>.
+      The score does not spawn models. It coordinates warm resident sessions over a message inbox.
+      More on that in the execution-model section; for now, treat each agent as a handle you dispatch
+      turns to.
+    </p>
+
+    <h2>1. Build the Conductor</h2>
+
+    <p>
+      Everything hangs off a <code>Conductor</code>. It is a handle over one team run, which lives as
+      an append-only event log at <code>refs/h5i/team/&lt;run-id&gt;</code>. Launching the builder
+      creates the run if it does not exist and resumes it, replaying the journal, if it does.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">score.rs</span></div>
+      <div class="terminal-body"><pre><span class="t-kw">use</span> h5i_orchestra::{Conductor, LaunchResident, policy};
+<span class="t-kw">use</span> std::sync::Arc;
+
+<span class="t-cmt">// A score is just an async main. The Conductor is the whole API.</span>
+<span class="t-prompt"></span><span class="t-kw">let</span> c = Conductor::builder(<span class="t-str">"."</span>, <span class="t-str">"fix-auth"</span>)
+    .launcher(Arc::new(LaunchResident))   <span class="t-cmt">// bring up sessions in tmux</span>
+    .max_rounds(<span class="t-num">2</span>)
+    .launch()?;                           <span class="t-cmt">// create-or-resume refs/h5i/team/fix-auth</span></pre></div>
+    </div>
+
+    <p>
+      The first argument is the repo, the second is the run id. From here on, the run id is the only
+      thing that identifies this orchestration. Kill the program, pass the same id again, and you are
+      resuming, not starting over.
+    </p>
+
+    <h2>2. Hire the roster</h2>
+
+    <p>
+      An agent is a persona bound to a sandboxed env. <code>hire()</code> creates that env, or binds
+      an existing one, and enrolls the agent on the run's roster. It is a journaled step, which means
+      something subtle and important: on a resume it rebinds to the env it already made rather than
+      creating a fresh one. You cannot accidentally double-provision by re-running.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">score.rs</span></div>
+      <div class="terminal-body"><pre><span class="t-kw">let</span> claude = c.agent(<span class="t-str">"claude"</span>)
+    .runtime(<span class="t-str">"claude"</span>)
+    .persona(<span class="t-str">"personas/implementer.md"</span>)   <span class="t-cmt">// baked into the env's PERSONA.md</span>
+    .hire().<span class="t-kw">await</span>?;
+
+<span class="t-kw">let</span> codex = c.agent(<span class="t-str">"codex"</span>)
+    .runtime(<span class="t-str">"codex"</span>)
+    .persona(<span class="t-str">"personas/skeptic.md"</span>)
+    .hire().<span class="t-kw">await</span>?;</pre></div>
+    </div>
+
+    <p>
+      The <code>runtime</code> picks the adapter (claude, codex) and steers the sandbox profile so a
+      claude box gets claude credentials and a codex box gets codex credentials, never each other's.
+      The <code>persona</code> is a working-style brief the env bakes into <code>PERSONA.md</code>, so
+      you can run an architect, an implementer, and a skeptic off the same model.
+    </p>
+
+    <h2>3. Fan out the work</h2>
+
+    <p>
+      Now the first real turns. <code>work(task)</code> dispatches a work turn to the agent's
+      resident session and resolves to the frozen candidate, a <code>TeamArtifact</code> pinned as a
+      commit and tree with a diffstat. Fan-out is not a framework feature. It is
+      <code>tokio::try_join!</code>, the concurrency your language already has.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">score.rs</span></div>
+      <div class="terminal-body"><pre><span class="t-kw">let</span> task = <span class="t-str">"implement `h5i pull` mirroring `h5i push`"</span>;
+
+<span class="t-cmt">// both agents attempt the task at once, each in its own env</span>
+<span class="t-kw">let</span> (mut a, mut b) = tokio::try_join!(
+    claude.work(task),
+    codex.work(task),
+)?;</pre></div>
+    </div>
+
+    <p>
+      Each <code>work</code> call is journaled under a label that embeds the agent id
+      (<code>work/claude</code>, <code>work/codex</code>), so the two run concurrently without their
+      step keys colliding. When you resume, a completed <code>work</code> returns its recorded
+      artifact instantly. The agent is not asked to redo a turn it already finished.
+    </p>
+
+    <h2>4. Freeze, then review and revise</h2>
+
+    <p>
+      Independence is the load-bearing property of an ensemble: a second attempt only adds
+      information if its errors are decorrelated from the first. So before any cross-talk, you seal
+      the round. <code>freeze()</code> moves the run to <code>sealed_submit</code>, after which the
+      review channel opens. h5i refuses cross-agent influence before the freeze by construction.
+    </p>
+
+    <p>
+      The review and revise cycle is a plain loop. Each agent reviews the other's frozen candidate;
+      if a review does not approve, the author revises. <code>approves(&amp;review)</code> reads the
+      documented convention (a verdict line that leads with APPROVE, LGTM, or similar), so you exit
+      early the moment everyone is satisfied.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">score.rs</span></div>
+      <div class="terminal-body"><pre><span class="t-kw">use</span> h5i_orchestra::approves;
+
+c.freeze().<span class="t-kw">await</span>?;   <span class="t-cmt">// seal the independent attempts</span>
+
+<span class="t-kw">for</span> round <span class="t-kw">in</span> <span class="t-num">1</span>..=<span class="t-num">2</span> {
+    <span class="t-kw">let</span> (ra, rb) = tokio::try_join!(codex.review(&a), claude.review(&b))?;
+    <span class="t-kw">if</span> approves(&ra) && approves(&rb) { <span class="t-kw">break</span>; }
+
+    <span class="t-cmt">// address the feedback, produce a fresh candidate</span>
+    (a, b) = tokio::try_join!(
+        claude.revise(&a, &ra),
+        codex.revise(&b, &rb),
+    )?;
+    c.note(format!(<span class="t-str">"revision round {round} complete"</span>)).<span class="t-kw">await</span>?;
+}</pre></div>
+    </div>
+
+    <p>
+      Every review is delivered to the reviewed agent's inbox and recorded on the event log, so the
+      next revision is correctly stamped as non-independent. The provenance of who influenced whom is
+      not lost. It is in the ref.
+    </p>
+
+    <h2>5. Verify in a neutral sandbox, then judge</h2>
+
+    <p>
+      The winner is never chosen from an agent's own say-so. <code>verify</code> replays each frozen
+      candidate into a throwaway worktree at the shared base, never the author's box, and runs your
+      declared command under h5i's fail-closed sandbox. You pick the isolation tier: a container tier
+      gives the strongest confinement for untrusted code.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">score.rs</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt">// each candidate re-run in a fresh, sandboxed worktree at the base commit</span>
+c.verify(&a).command([<span class="t-str">"cargo"</span>, <span class="t-str">"test"</span>, <span class="t-str">"--quiet"</span>]).isolation(<span class="t-str">"container"</span>).<span class="t-kw">await</span>?;
+c.verify(&b).command([<span class="t-str">"cargo"</span>, <span class="t-str">"test"</span>, <span class="t-str">"--quiet"</span>]).isolation(<span class="t-str">"container"</span>).<span class="t-kw">await</span>?;
+
+<span class="t-cmt">// decide through a pluggable policy; the built-in reproduces `team finalize`</span>
+<span class="t-kw">let</span> verdict = c.judge(policy::tests_then_smallest_diff()).<span class="t-kw">await</span>?;</pre></div>
+    </div>
+
+    <p>
+      The verdict comes from a <code>VerdictPolicy</code>, not a hardcoded rule. The built-in
+      <code>tests_then_smallest_diff</code> keeps candidates whose verification both applies cleanly
+      and passes tests, refuses to compare candidates checked with different commands, then picks the
+      smallest diff. When you want a different rule, <code>policy::from_fn</code> wraps a closure that
+      sees the folded run and returns a verdict with reasons. An LLM judge is just a policy that calls
+      <code>agent.ask</code> inside.
+    </p>
+
+    <h2>6. The durable gate, then a mediated apply</h2>
+
+    <p>
+      Apply is where an agent's work reaches your branch, so it stays a human decision by default.
+      <code>gate</code> is durable human-in-the-loop: it asks the question over the i5h message bus,
+      records that it asked, and then waits for a reply. The score can exit here and resume after the
+      human answers, even on a different day and a different machine.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">score.rs</span></div>
+      <div class="terminal-body"><pre><span class="t-kw">let</span> winner = verdict.selected()?;
+
+<span class="t-cmt">// asks over i5h; the human answers with `h5i msg reply &lt;n&gt; APPROVE`</span>
+<span class="t-kw">if</span> c.gate(format!(<span class="t-str">"apply {}?"</span>, winner.id)).approve().<span class="t-kw">await</span>? {
+    c.apply(&winner).<span class="t-kw">await</span>?;   <span class="t-cmt">// gated on an auto-applicable verdict</span>
+}</pre></div>
+    </div>
+
+    <p>
+      <code>apply</code> is mediated: without <code>--force</code> it refuses unless the selected
+      candidate is covered by a verifier verdict that both applies cleanly and passed. A score cannot
+      silently ship a loser. The gate makes the approval durable, not optional.
+    </p>
+
+    <div class="callout">
+      <strong>Two things a general framework cannot give you here.</strong> The verifier runs in a
+      kernel-enforced sandbox, and the whole run, every attempt, review, verification, and verdict,
+      is an append-only Git event log you can share and replay. The orchestration is the thin part.
+      The isolation and the provenance are the substrate.
+    </div>
+
+    <h2>7. What actually runs the agents</h2>
+
+    <p>
+      A common first question: if the score does not call a model, who does? The answer is the
+      <code>RuntimeLauncher</code>. The score is a coordinator. It holds no model connection and no
+      agent state. It delivers a turn to an agent's per-env inbox as an i5h message, and a warm
+      resident session, the same interactive <code>claude</code> or <code>codex</code> you would run
+      by hand, picks it up. The Stop hook keeps that session alive between turns, so dispatch is
+      sub-second and the session keeps its full context and warm prompt cache.
+    </p>
+
+    <p>
+      The default launcher, <code>Attach</code>, assumes a resident session is already running (you
+      brought it up with <code>team-launch.sh</code>). <code>LaunchResident</code> spawns that same
+      warm session itself in tmux. A headless per-turn <code>claude -p</code> is deliberately not the
+      default: a cold process boot per turn, with no cross-turn state, defeats the resident-session
+      model. Fast and stateful beats fresh and stateless when a turn costs minutes.
+    </p>
+
+    <h2>8. Kill it, resume it, or just use the CLI</h2>
+
+    <p>
+      Now the payoff. Run the score, kill the process anywhere, and run the same binary again. Every
+      completed step, both attempts, the reviews, the verifications, replays from the journal by its
+      stable key. The agents are not asked to redo a single turn. The run picks up at the exact step
+      where it stopped.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">resume in practice</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">cargo run --bin score        # runs, then you Ctrl-C during verify</span>
+<span class="t-prompt">$</span> <span class="t-cmd">cargo run --bin score        # same run id: replays hire, work, review</span>
+<span class="t-out">➜ resuming: journaled steps replay without re-execution</span>
+<span class="t-cmt"># inspect the recorded DAG any time:</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team trace fix-auth --dot | dot -Tsvg &gt; run.svg</span></pre></div>
+    </div>
+
+    <p>
+      And here is the part that makes most of this optional: the whole score you just wrote is
+      already a command. <code>h5i team run</code> drives this exact cycle over the built-in
+      <code>patterns::ensemble</code>, journal-backed and resumable, with <code>--rounds</code>,
+      <code>--verify-cmd</code>, and a durable <code>--gate</code>. You write a hand-authored score
+      only when you want a topology the patterns do not cover, an arena, a designer-to-implementer
+      pipeline, a many-to-one integrator. For the classic ensemble, the CLI is the score.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">the score, as a command</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i team run fix-auth --task-file task.md \</span>
+    <span class="t-cmd">--rounds 2 --verify-cmd "cargo test" --gate</span>
+<span class="t-out">✓ cycle complete: 2 artifacts, 2 reviews, verdict recorded</span></pre></div>
+    </div>
+
+    <h2>FAQ</h2>
+
+    <div class="faq">
+      <p><strong>Do I write a full binary, or is there a shorter form?</strong> For repo-resident orchestrations you write a small bin crate that depends on <code>h5i-orchestra</code>. For the classic cycle you write no Rust at all: <code>h5i team run</code> is the ensemble pattern with a CLI on top. Reach for a hand-authored score when the topology is your own.</p>
+      <p><strong>What is the difference between <code>work</code> and <code>ask</code>?</strong> <code>work</code> produces code: it resolves to a frozen <code>TeamArtifact</code>. <code>ask::&lt;T&gt;</code> produces data: the reply must deserialize as <code>T</code>, with a bounded re-ask if it does not parse. Use <code>ask</code> for judges, routers, and summaries; use <code>work</code> for candidates.</p>
+      <p><strong>How do I merge the work of several agents instead of picking one?</strong> Use <code>work(task).with_materials(&amp;parts)</code>. It grants an integrator agent scoped sight of the other candidates' diffs and stamps the merged artifact as non-independent with influence edges. The <code>patterns::integrate</code> helper packages the full fan-out then merge then verify flow.</p>
+      <p><strong>Can I run the review loop for more than two agents?</strong> Yes. The loop is ordinary Rust, so you review every ordered pair, or use <code>patterns::ensemble</code> which does exactly that for N agents with early exit on full approval.</p>
+      <p><strong>What if I change the score between runs?</strong> A resume records a digest of the running binary and warns loudly if it changed, since step keys may have shifted. To upgrade a live run on purpose, a <code>patched("change-id")</code> marker keeps the old and new branches selectable and consistent across resumes.</p>
+    </div>
+
+    <div class="post-cta">
+      <h3>Run your first score</h3>
+      <p>Drive the classic ensemble with one command, then open the Rust when your topology needs it. Every turn journaled, every run resumable.</p>
+      <a href="/manual/" class="btn btn-primary">Read the manual</a>
+      <a href="https://github.com/h5i-dev/h5i" class="btn btn-ghost">Star on GitHub</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/workflows/">Workflows</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/h5i-dev/h5i">GitHub</a>
+      <a href="/manual/">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<script src="/_static/highlight.js" defer></script>
+</body>
+</html>

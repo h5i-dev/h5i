@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Orchestration Patterns Beyond Ensemble: arena, pipeline, integrate, debate, judge_panel</title>
+  <meta name="description" content="h5i-orchestra ships a library of orchestration patterns (arena, pipeline, integrate, map_reduce, debate, judge_panel), all written in the public eDSL. judge_panel scores candidates over recorded evidence with citation validation, not vibes.">
+  <meta name="keywords" content="agent orchestration patterns, multi-agent patterns, llm judge panel, agent arena, agent pipeline, map reduce agents, agent debate, judge citation validation, h5i orchestra">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Orchestration Patterns Beyond Ensemble: arena, pipeline, integrate, debate, judge_panel">
+  <meta property="og:description" content="A library of orchestration patterns written in the public eDSL, with judge_panel scoring candidates over recorded evidence and validating every citation.">
+  <meta property="og:url" content="https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-07-11">
+  <meta property="article:author" content="Koukyosyumei">
+  <meta property="article:tag" content="Patterns">
+  <meta property="article:tag" content="Orchestration">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Orchestration Patterns Beyond Ensemble: arena, pipeline, integrate, debate, judge_panel">
+  <meta name="twitter:description" content="Every pattern is an ordinary eDSL function you can copy. judge_panel is LLM judgment over recorded evidence with citation validation, not vibes.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Orchestration Patterns Beyond Ensemble: arena, pipeline, integrate, debate, judge_panel",
+    "description": "h5i-orchestra ships a library of orchestration patterns (arena, pipeline, integrate, map_reduce, debate, judge_panel), all written in the public eDSL. judge_panel scores candidates over recorded evidence with citation validation, not vibes.",
+    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
+    "datePublished": "2026-07-11",
+    "dateModified": "2026-07-11",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/"},
+    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+    "keywords": "agent orchestration patterns, llm judge panel, agent arena, agent pipeline, agent debate, h5i orchestra"
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Orchestration Patterns Beyond Ensemble", "item": "https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/"}]}
+  </script>
+</head>
+<body>
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Ensemble · Patterns</div>
+      <h1>Orchestration Patterns Beyond Ensemble: <code>arena</code>, <code>pipeline</code>, <code>integrate</code>, <code>debate</code>, <code>judge_panel</code></h1>
+      <p class="post-deck">
+        <strong>The ensemble is one shape. There are more.</strong>
+        <code>h5i-orchestra</code> ships a library of orchestration patterns, and every one of them
+        is written in the same public eDSL you would use yourself. They are not engine features.
+        They are readable, forkable functions, so the built-ins double as worked examples.
+      </p>
+      <div class="post-meta">
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 12 min</span>
+        <span><strong>Tags</strong> Patterns · Orchestration · Multi-agent</span>
+      </div>
+    </header>
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+    <li>Each pattern is an ordinary eDSL function, not a privileged engine primitive. You can read it, fork it, or write your own next to it.</li>
+    <li>Independence and influence are recorded facts. <code>with_materials</code> stamps a merged candidate <code>independent=false</code> with an influence edge to every input, so integration work is honest about what it saw.</li>
+    <li><code>judge_panel</code> is LLM judgment over the run's <em>recorded</em> evidence, and every citation is validated against real run state. That is the difference between grounded judgment and a vibe.</li>
+    <li><code>ask::&lt;T&gt;</code> makes typed data turns. It is how judges, routers, and moderators are built without any of them producing code.</li>
+  </ul>
+</div>
+
+    <p>
+      The <a href="../agent-ensembles-with-h5i-team/">ensemble</a> answers one question: run N agents
+      on a task, seal, review, verify, decide. It is the right default and it is what
+      <code>h5i team run</code> drives. But once orchestration is a program rather than a fixed
+      protocol, the useful shapes multiply. A design that hands a plan to two implementers is a
+      pipeline. Three blind attempts you want ranked is an arena. Many workers whose output one agent
+      has to merge is an integration. A question you want argued before you decide is a debate.
+    </p>
+
+    <p>
+      <code>h5i-orchestra</code> ships <code>patterns::{ensemble, integrate, pipeline, arena,
+      map_reduce, debate, judge_panel}</code>, and all of them live in the public API. There is no
+      hidden machinery: a pattern is a function that composes <code>agent.work</code>,
+      <code>c.freeze</code>, <code>c.verify</code>, <code>c.judge</code>, and the rest. The rest of
+      this post is a tour, each with the shape you write and the moment you reach for it.
+    </p>
+
+    <h2>arena: rank blind attempts</h2>
+
+    <p>
+      An arena runs N agents on the same task with no cross-influence, seals the round, verifies
+      every candidate with one command, and ranks them. It is the ensemble with the mutual-review
+      round removed: when you do not want peers reshaping each other's work, you want an arena.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">arena</span></div>
+      <div class="terminal-body"><pre><span class="t-kw">let</span> outcome = patterns::arena(&c, <span class="t-str">"implement the parser"</span>)
+    .agents(roster)
+    .verify([<span class="t-str">"cargo"</span>, <span class="t-str">"test"</span>])          <span class="t-cmt">// one command, applied to all</span>
+    .judge(policy::tests_then_smallest_diff())
+    .run().<span class="t-kw">await</span>?;
+
+<span class="t-cmt">// outcome.artifacts : the candidates</span>
+<span class="t-cmt">// outcome.rows      : Vec&lt;TeamCompareRow&gt;, the side-by-side ranking</span>
+<span class="t-cmt">// outcome.verdict   : the recorded winner</span></pre></div>
+    </div>
+
+    <p>
+      Each attempt is dispatched as <code>work().expect_independent()</code>, so the run refuses to
+      count a candidate that came back stamped as influenced. The verifier runs one command against
+      every candidate, which keeps the comparison apples to apples: a candidate cannot be waved
+      through with a weaker command than its rivals. What you get back is the artifacts, the
+      <code>TeamCompareRow</code> ranking the dashboard reads, and the recorded verdict.
+    </p>
+
+    <h2>pipeline: role-specialized stages</h2>
+
+    <p>
+      A pipeline chains agents in sequence, each playing a role: an architect designs, an implementer
+      builds, a reviewer checks. Stage one works independently and the round seals. Every later stage
+      receives the previous stage's artifact as material, so its output is stamped non-independent by
+      construction. That is correct: the implementer's work <em>was</em> shaped by the architect's
+      plan, and the record says so.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">pipeline</span></div>
+      <div class="terminal-body"><pre><span class="t-kw">let</span> artifacts = patterns::pipeline(&c, vec![
+    (architect,   <span class="t-str">"design the module layout"</span>.into()),
+    (implementer, <span class="t-str">"implement the design"</span>.into()),
+    (reviewer,    <span class="t-str">"review and tighten it"</span>.into()),
+]).<span class="t-kw">await</span>?;
+
+<span class="t-cmt">// one artifact per stage, in order; stage N+1 saw stage N via with_materials</span></pre></div>
+    </div>
+
+    <h2>integrate and map_reduce: the merge seat</h2>
+
+    <p>
+      When many agents produce diverging branches, someone has to fuse them. <code>integrate</code> is
+      that seat. It seals the round, then hands one integrator agent the granted diffs of every part
+      through <code>with_materials</code>, and the integrator merges them in its own env. The merged
+      candidate is stamped <code>independent=false</code> with an influence edge to each input, plus a
+      <code>materials_granted</code> audit event, so the provenance of the combined result is exact.
+      An optional neutral verify runs at the end.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">integrate</span></div>
+      <div class="terminal-body"><pre><span class="t-kw">let</span> outcome = patterns::integrate(&c, <span class="t-str">"merge the three feature branches"</span>)
+    .parts(&parts)                 <span class="t-cmt">// the artifacts to fuse</span>
+    .integrator(mira)              <span class="t-cmt">// one agent does the merge</span>
+    .verify([<span class="t-str">"cargo"</span>, <span class="t-str">"test"</span>])
+    .run().<span class="t-kw">await</span>?;
+
+<span class="t-cmt">// outcome.merged : one artifact, independent=false, edges to every input</span></pre></div>
+    </div>
+
+    <p>
+      The integrator does not have to burn agent tokens on conflicts a machine can settle. The
+      sensible escalation ladder inside its turn is: try a mechanical <code>git merge</code> first,
+      fall back to <code>h5i resolve</code> per conflicted file, and hand only the genuinely semantic
+      collisions to the agent's judgment. You spend the expensive resource on the conflicts that
+      actually need it.
+    </p>
+
+    <p>
+      <code>map_reduce</code> is the same seat with a fan-out in front. You <code>map</code> a work
+      list across agents (assignments to the same agent run sequentially, since there is one resident
+      session per agent), then the <code>reduce</code> slot takes an integrator agent that merges the
+      parts. The reduce step is exactly the conflict-resolution seat, so a fan-out and a merge are one
+      call.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">map_reduce</span></div>
+      <div class="terminal-body"><pre><span class="t-kw">let</span> outcome = patterns::map_reduce(&c)
+    .map(claude, <span class="t-str">"port the core module"</span>)
+    .map(codex,  <span class="t-str">"port the CLI module"</span>)
+    .reduce(mira, <span class="t-str">"merge both ports, resolve conflicts, make it build"</span>)
+    .run().<span class="t-kw">await</span>?;
+
+<span class="t-cmt">// outcome.parts  : each mapped candidate</span>
+<span class="t-cmt">// outcome.merged : the reduced artifact (None if no reducer was set)</span></pre></div>
+    </div>
+
+    <h2>debate: argue before you decide</h2>
+
+    <p>
+      A debate is pure argument, no code. Each side speaks in turn for a number of rounds, seeing the
+      transcript so far, and an optional moderator concludes. There are no artifacts and no freeze:
+      it is built entirely on <code>ask</code> turns, which is why the sides return prose and the
+      moderator returns a structured verdict.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">debate</span></div>
+      <div class="terminal-body"><pre><span class="t-kw">let</span> outcome = patterns::debate(&c, <span class="t-str">"rewrite the scheduler, or patch it?"</span>)
+    .sides([advocate, skeptic])
+    .moderator(lead)
+    .rounds(3)
+    .run().<span class="t-kw">await</span>?;
+
+<span class="t-cmt">// outcome.transcript : Vec&lt;(agent_id, argument)&gt; in speaking order</span>
+<span class="t-cmt">// outcome.conclusion : Option&lt;DebateConclusion { winner, rationale }&gt;</span></pre></div>
+    </div>
+
+    <h2>judge_panel: judgment over recorded evidence</h2>
+
+    <p>
+      This is the pattern that shows what h5i can do that a general framework cannot, so it is worth
+      slowing down on. A judge panel scores the sealed candidates, but it does not score them on a
+      hunch. It scores them over the run's <em>recorded evidence</em>: the submission ids, the
+      verification ids, the diffs that are already in the event log. And every citation a judge makes
+      is validated against real run state.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">judge_panel</span></div>
+      <div class="terminal-body"><pre><span class="t-kw">let</span> outcome = patterns::judge_panel(&c, <span class="t-str">"pick the cleanest correct solution"</span>)
+    .judges([reviewer, maintainer, verifier])
+    .run().<span class="t-kw">await</span>?;
+
+<span class="t-cmt">// each judge returns Ballot { artifact_id, score (0-10), rationale, cited_ids }</span>
+<span class="t-cmt">// cited_ids must reference real submission / verification ids in this run</span></pre></div>
+    </div>
+
+    <p>
+      Under the hood, each judge is an agent answering an <code>ask</code> for a set of ballots. A
+      <code>Ballot</code> carries the candidate's <code>artifact_id</code>, a score, a rationale, and
+      <code>cited_ids</code>, the evidence ids the rationale is grounded in. Before a ballot is
+      counted, the panel checks every cited id against the run's actual submissions and verifications.
+      A judge that cites an id that does not exist gets its ballot rejected and re-asked, with the
+      offending citation named, up to a bounded number of attempts. A judge that scores a candidate
+      that is not on the ballot is caught the same way.
+    </p>
+
+    <div class="callout">
+      <strong>The differentiator is citation validation, not the LLM call.</strong> Any framework can
+      ask a model "which is better." Only a system with an evidence log can require the model to point
+      at recorded facts and then check that the facts are real. That is what separates evidence-grounded
+      judgment from a plausible-sounding vibe, and it is why the panel lives here and not in a general
+      orchestrator.
+    </div>
+
+    <p>
+      One more thing keeps <code>judge_panel</code> honest as a citizen of the eDSL: its aggregation is
+      a <code>VerdictPolicy</code>. The mean-score rule is expressed with <code>policy::from_fn</code>
+      and the verdict is recorded through the same <code>c.judge</code> path as any other verdict. The
+      panel's job is eliciting evidence-cited ballots, not owning a bespoke verdict format, so
+      <code>VerdictPolicy</code> stays the single way a verdict is decided and recorded. A caller could
+      score the same ballots with a median, a quorum, or a veto rule instead.
+    </p>
+
+    <h2>The building blocks, and your own patterns</h2>
+
+    <p>
+      Two primitives power most of the above, and they are yours to use directly. <code>ask::&lt;T&gt;</code>
+      is a typed data turn: the agent's reply must deserialize as <code>T</code>, so a judge or a router
+      is an ordinary function that returns a struct rather than a diff. Replies come back over the
+      <code>team agent reply</code> spool, and an unparseable answer is re-asked with the parse error, a
+      bounded number of times. <code>work().expect_independent()</code> is a runtime check that a first
+      attempt really came back stamped independent, so arena and ensemble cannot accidentally count a
+      contaminated candidate as a blind one.
+    </p>
+
+    <p>
+      Because the patterns are plain functions over these primitives, composing a new one is not a
+      framework extension, it is just more code. <code>map_reduce</code> already calls
+      <code>integrate</code> for its reduce step. A tournament bracket, a self-repair loop, a
+      staged-escalation review: each is a score you write next to the built-ins, using the same
+      <code>Conductor</code>. The library is a starting set, not a wall.
+    </p>
+
+    <h2>FAQ</h2>
+
+    <div class="faq">
+      <p><strong>Are these patterns special-cased in the engine?</strong> No. Every one is a public function in the <code>patterns</code> module, built from the same <code>Conductor</code> and <code>Agent</code> methods you call. They are examples with a nice signature, not privileged primitives.</p>
+      <p><strong>How is <code>judge_panel</code> different from asking a model to grade?</strong> The judges score over the run's recorded evidence, and every citation is validated against real submission and verification ids, with a bounded re-ask when a judge invents one. Grounding the judgment in checked facts is the whole point.</p>
+      <p><strong>Why does <code>with_materials</code> mark work as non-independent?</strong> Because it is. Once an integrator or a later pipeline stage has seen a teammate's diff, its output was influenced by that diff. The stamp and the influence edges record exactly what shaped the result, which is what makes the provenance defensible.</p>
+      <p><strong>Do patterns like <code>arena</code> need the review round?</strong> No. Arena runs blind attempts and ranks them with no mutual review, which is the difference from ensemble. Use arena when you do not want peers reshaping each other's candidates.</p>
+      <p><strong>Can I mix patterns in one run?</strong> Yes. They share a <code>Conductor</code> and a run, so you can fan out with <code>map_reduce</code>, then hand the parts to <code>integrate</code>, then decide with a <code>judge_panel</code>. It is all one program.</p>
+    </div>
+
+    <div class="post-cta">
+      <h3>Compose your own pattern</h3>
+      <p>Start from a built-in, fork it, or write a new score against the same <code>Conductor</code>. Every turn journaled, every verdict recorded.</p>
+      <a href="/manual/" class="btn btn-primary">Read the manual</a>
+      <a href="https://github.com/h5i-dev/h5i" class="btn btn-ghost">Star on GitHub</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/workflows/">Workflows</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/h5i-dev/h5i">GitHub</a>
+      <a href="/manual/">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<script src="/_static/highlight.js" defer></script>
+</body>
+</html>
