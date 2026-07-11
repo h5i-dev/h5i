@@ -623,7 +623,8 @@ pub fn tool_definitions() -> Value {
                         "type": "string",
                         "enum": ["workspace", "process", "container", "hardened-container", "microvm"],
                         "description": "Minimum isolation claim; fails closed if the host can't satisfy it."
-                    }
+                    },
+                    "image": { "type": "string", "description": "Container base image for isolation=container (pre-pulled; runs never pull). Overrides the profile's container.image and the repo-level [container] image default." }
                 },
                 "required": ["name"]
             }
@@ -1468,6 +1469,7 @@ fn tool_env_create(params: &Value, workdir: &Path) -> Result<Value> {
             .or_else(|| params.get("from").and_then(Value::as_str).map(str::to_owned)),
         profile: params.get("profile").and_then(Value::as_str).map(str::to_owned),
         isolation,
+        image: params.get("image").and_then(Value::as_str).map(str::to_owned),
         backend: "auto".into(),
         audit_capture: params
             .get("audit")

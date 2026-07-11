@@ -112,6 +112,13 @@ fn config_lock_paths(work: &Path, home: Option<&Path>) -> Vec<PathBuf> {
 struct PolicyFileToml {
     #[serde(default)]
     profile: BTreeMap<String, ProfileToml>,
+    /// Repo-level `[container] image = "…"`: the default base image for every
+    /// profile that doesn't declare its own `container.image` — so one line
+    /// makes the built-in agent profiles (which can't know your image) usable
+    /// at the container tier. Declaring it also makes `container` a candidate
+    /// for the isolation auto-pick (strongest-runnable).
+    #[serde(default)]
+    container: ContainerToml,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -172,8 +179,10 @@ struct FsToml {
 #[serde(deny_unknown_fields)]
 struct NetToml {
     mode: Option<String>,
-    #[serde(default)]
-    egress: Vec<String>,
+    /// `None` (key omitted) inherits the builtin base's egress — so a partial
+    /// `[profile.agent-claude]` overlay keeps its API allowlist. An explicit
+    /// `egress = []` opts out (deny).
+    egress: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -296,10 +305,12 @@ pub fn load_profile(
     isolation_override: Option<IsolationClaim>,
 ) -> Result<Profile, H5iError> {
     let path = repo_workdir.join(POLICY_FILE);
-    let raw: Option<ProfileToml> = if path.is_file() {
+    // `file_image` is the repo-level `[container] image` default; it applies to
+    // any profile (builtin or user-defined) that doesn't set its own.
+    let (raw, file_image): (Option<ProfileToml>, Option<String>) = if path.is_file() {
         let text = std::fs::read_to_string(&path).map_err(|e| H5iError::with_path(e, &path))?;
         let mut file: PolicyFileToml = toml::from_str(&text)?;
-        match file.profile.remove(name) {
+        let entry = match file.profile.remove(name) {
             Some(p) => Some(p),
             None if is_builtin_name(name) => None,
             None => {
@@ -308,13 +319,14 @@ pub fn load_profile(
                     file.profile.keys().cloned().collect::<Vec<_>>().join(", ")
                 )))
             }
-        }
+        };
+        (entry, file.container.image)
     } else if !is_builtin_name(name) {
         return Err(H5iError::Metadata(format!(
             "profile '{name}' requested but {POLICY_FILE} does not exist"
         )));
     } else {
-        None
+        (None, None)
     };
 
     let mut profile = match raw {
@@ -336,7 +348,13 @@ pub fn load_profile(
                     Some(ref s) => NetMode::parse(s)?,
                     None => base.net_mode,
                 },
-                net_egress: t.net.egress,
+                // Omitted → inherit the builtin base (a partial
+                // `[profile.agent-claude]` keeps its Anthropic egress instead of
+                // silently bricking the agent); explicit `egress = []` opts out.
+                // Note the inherited list still hits the tier lint below — an
+                // agent overlay pinned to process/workspace is now *refused*
+                // (fail-closed) rather than left egressless.
+                net_egress: t.net.egress.unwrap_or(base.net_egress),
                 secret_grants: merge_secret_grants(&t.secrets, &t.secret),
                 secrets: t.secrets,
                 mem_bytes: match t.resources.as_ref().and_then(|r| r.mem.as_deref()) {
@@ -371,6 +389,12 @@ pub fn load_profile(
             }
         }
     };
+    // Repo-level image default: weakest precedence (profile-level
+    // `container.image` and the builtin base both win). Only consulted when
+    // the profile ends up imageless, so it can never *narrow* anything.
+    if profile.image.is_none() {
+        profile.image = file_image;
+    }
     if let Some(o) = isolation_override {
         profile.isolation = o;
     }
@@ -415,10 +439,15 @@ fn profile_declared_isolation(repo_workdir: &Path, name: &str) -> Result<Option<
 /// profile explicitly declares; `force_probe = true` (`--isolation auto`)
 /// re-probes regardless. Explicit `--isolation <tier>` never reaches here — it
 /// stays fail-closed.
+///
+/// `image_override` is the caller-supplied container image (`env create
+/// --image`): it must be visible *here* so the container tier becomes a
+/// candidate for a profile that declares no image of its own.
 pub fn effective_auto(
     repo_workdir: &Path,
     name: &str,
     force_probe: bool,
+    image_override: Option<&str>,
 ) -> Result<IsolationClaim, H5iError> {
     if !force_probe {
         if let Some(c) = profile_declared_isolation(repo_workdir, name)? {
@@ -442,9 +471,12 @@ pub fn effective_auto(
         IsolationClaim::Supervised,
         IsolationClaim::Process,
     ] {
-        let Ok(profile) = load_profile(repo_workdir, name, Some(tier)) else {
+        let Ok(mut profile) = load_profile(repo_workdir, name, Some(tier)) else {
             continue;
         };
+        if let Some(img) = image_override {
+            profile.image = Some(img.to_string());
+        }
         // Container needs a declared image; without one `resolve` refuses it
         // regardless of the host, so skip the candidate before paying the ~1s
         // Podman probe that `probe_host_for(Container)` would trigger.
@@ -981,8 +1013,9 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
             // "set container.image" message rather than a podman-not-found one.
             if profile.image.is_none() {
                 return Err(H5iError::Metadata(format!(
-                    "isolation claim 'container' requires a base image — set `container.image = \
-                     \"…\"` in profile '{}' (e.g. your toolchain image)",
+                    "isolation claim 'container' requires a base image — pass `--image <img>`, \
+                     set a repo default `[container] image = \"…\"` in .h5i/env.toml, or set \
+                     `container.image` in profile '{}' (e.g. your toolchain image)",
                     profile.name
                 )));
             }
@@ -2810,7 +2843,8 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
     #[test]
     fn user_defined_agent_profile_merges_over_agent_builtin() {
         // A partial [profile.agent-claude] keeps the agent-in-box grants as its
-        // base. (net.egress is NOT inherited: a user profile owns its egress.)
+        // base — including net.egress when the overlay omits it (an agent box
+        // that silently lost its API allowlist would be bricked, not safer).
         let toml_text = r#"
 [profile.agent-claude]
 isolation = "supervised"
@@ -2820,7 +2854,47 @@ resources = { mem = "2G" }
         assert_eq!(p.mem_bytes, Some(2 * 1024 * 1024 * 1024));
         assert!(p.fs_read.iter().any(|s| s == "~/.local/bin"), "agent base grants inherited");
         assert!(p.fs_write.iter().any(|s| s == "~/.claude"));
-        assert!(p.net_egress.is_empty(), "egress is owned by the user profile");
+        assert!(
+            p.net_egress.iter().any(|s| s == "api.anthropic.com"),
+            "omitted net.egress inherits the builtin agent allowlist"
+        );
+    }
+
+    #[test]
+    fn explicit_empty_egress_opts_out_of_the_builtin_allowlist() {
+        // `egress = []` is a deliberate opt-out — kept empty, never re-widened.
+        let toml_text = r#"
+[profile.agent-claude]
+isolation = "supervised"
+net.egress = []
+"#;
+        let p = load_from_str(toml_text, "agent-claude", None).unwrap();
+        assert!(p.net_egress.is_empty(), "explicit [] must stay empty");
+    }
+
+    #[test]
+    fn file_level_container_image_is_the_default_for_imageless_profiles() {
+        // A repo-level `[container] image` supplies the image for the builtin
+        // agent profiles (which cannot know it); a profile-level
+        // `container.image` still wins.
+        let toml_text = r#"
+[container]
+image = "localhost/repo-default:1"
+
+[profile.agent-claude]
+isolation = "container"
+
+[profile.custom]
+isolation = "container"
+container.image = "localhost/mine:2"
+"#;
+        let p = load_from_str(toml_text, "agent-claude", None).unwrap();
+        assert_eq!(p.image.as_deref(), Some("localhost/repo-default:1"));
+        // Builtin name with NO [profile.X] entry also picks up the default.
+        let p = load_from_str(toml_text, "default", None).unwrap();
+        assert_eq!(p.image.as_deref(), Some("localhost/repo-default:1"));
+        let p = load_from_str(toml_text, "custom", None).unwrap();
+        assert_eq!(p.image.as_deref(), Some("localhost/mine:2"));
     }
 
     #[test]
@@ -2863,7 +2937,7 @@ resources = { mem = "2G" }
         // that under the default (non-forced) path — deterministic, no host probe.
         let dir = tmp_repo(Some("[profile.default]\nisolation = \"workspace\"\n"));
         assert_eq!(
-            effective_auto(dir.path(), "default", false).unwrap(),
+            effective_auto(dir.path(), "default", false, None).unwrap(),
             IsolationClaim::Workspace
         );
     }
@@ -2874,7 +2948,7 @@ resources = { mem = "2G" }
         // dependent) MUST pass the very checks `create` applies — so a default
         // env never fails at run time. Forced probe, no declared tier.
         let dir = tmp_repo(None);
-        let tier = effective_auto(dir.path(), "default", true).unwrap();
+        let tier = effective_auto(dir.path(), "default", true, None).unwrap();
         // Workspace is always runnable; any stronger pick must verify-exec clean.
         if tier != IsolationClaim::Workspace {
             let p = load_profile(dir.path(), "default", Some(tier)).unwrap();
@@ -2892,7 +2966,7 @@ resources = { mem = "2G" }
         // `container` (resolve refuses imageless container) — it lands on a
         // kernel tier or workspace instead.
         let dir = tmp_repo(None);
-        let tier = effective_auto(dir.path(), "default", true).unwrap();
+        let tier = effective_auto(dir.path(), "default", true, None).unwrap();
         assert_ne!(tier, IsolationClaim::Container, "imageless default can't be container");
     }
 

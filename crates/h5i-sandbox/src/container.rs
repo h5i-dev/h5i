@@ -907,8 +907,9 @@ pub fn run(
     })?;
     let image = p.image.clone().ok_or_else(|| {
         H5iError::Metadata(format!(
-            "profile '{}' uses isolation=container but sets no image — add `container.image = \
-             \"…\"` (e.g. a toolchain image) to the profile",
+            "profile '{}' uses isolation=container but sets no image — pass `--image` at env \
+             create, or set `container.image = \"…\"` in the profile / a repo-level \
+             `[container] image` in .h5i/env.toml",
             p.name
         ))
     })?;
@@ -1020,7 +1021,8 @@ pub fn run_interactive(
     })?;
     let image = p.image.clone().ok_or_else(|| {
         H5iError::Metadata(format!(
-            "profile '{}' uses isolation=container but sets no image — add `container.image`",
+            "profile '{}' uses isolation=container but sets no image — pass `--image` at env \
+             create or set `container.image` / a repo-level `[container] image`",
             p.name
         ))
     })?;

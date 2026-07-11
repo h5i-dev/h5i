@@ -36,6 +36,12 @@ pub enum EnvCommands {
         /// tier fails closed if the host cannot satisfy it (never silently downgrades).
         #[arg(long)]
         isolation: Option<String>,
+        /// Container base image for isolation=container (pre-pulled; runs use
+        /// --pull=never). Overrides the profile's `container.image` and the
+        /// repo-level `[container] image` default in .h5i/env.toml. Passing it
+        /// makes the container tier a candidate for the isolation auto-pick.
+        #[arg(long)]
+        image: Option<String>,
         /// Workspace backend (auto|worktree)
         #[arg(long, default_value = "auto")]
         backend: String,
@@ -309,6 +315,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     remote,
                     profile,
                     isolation,
+                    image,
                     backend,
                     audit,
                 } => {
@@ -335,6 +342,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                         from: pr_base.as_ref().map(|b| b.oid.clone()).or(from),
                         profile,
                         isolation,
+                        image,
                         backend,
                         audit_capture: h5i_core::sandbox::AuditCapture::parse(&audit)?,
                         parent_branch: pr_base.as_ref().map(|b| b.local_branch.clone()),
@@ -390,8 +398,8 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     {
                         println!(
                             "   {}      the 'container' tier (adds a network egress allowlist) needs \
-                             rootless Podman, which isn't installed — install it, then set \
-                             container.image in .h5i/env.toml. See: h5i env probe",
+                             rootless Podman, which isn't installed — install it, then pass --image \
+                             or set `[container] image` in .h5i/env.toml. See: h5i env probe",
                             style("tip").yellow()
                         );
                     }
