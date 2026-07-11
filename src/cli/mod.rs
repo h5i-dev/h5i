@@ -14,6 +14,7 @@ pub mod objects;
 pub mod env;
 pub mod msg;
 pub mod team;
+pub mod orchestra;
 pub mod commit;
 pub mod log;
 pub mod blame;
