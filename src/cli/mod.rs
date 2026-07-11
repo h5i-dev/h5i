@@ -6,4 +6,12 @@
 //! `pub fn run(action: <Noun>Commands) -> anyhow::Result<()>` (plus any shared
 //! setup it needs threaded in). Migrated incrementally, one noun at a time.
 
+pub mod context;
+pub mod memory;
+pub mod notes;
+pub mod pr;
+pub mod objects;
+pub mod env;
+pub mod msg;
+pub mod team;
 pub mod policy;
