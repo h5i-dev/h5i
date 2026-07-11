@@ -2,8 +2,8 @@
 //! isolation policy, with no dependency on the confinement *machinery* or the
 //! runtime backends.
 //!
-//! This module is a dependency leaf (it imports only [`crate::error`] and
-//! [`crate::idents`]). It exists so backend modules like [`crate::container`]
+//! This module is a dependency leaf (it imports only [`crate::error`]). It
+//! exists so backend modules like [`crate::container`]
 //! and [`crate::secrets_broker`] can name these types without depending on
 //! [`crate::sandbox`] — the module that *dispatches* to those very backends.
 //! That dispatch edge would otherwise form a `sandbox → container → sandbox`
@@ -18,6 +18,16 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::error::H5iError;
+
+/// The agent-identity env var (`$H5I_AGENT`). Kept local to the sandbox layer
+/// so this crate never reaches back into core for the constant.
+const AGENT_ENV: &str = "H5I_AGENT";
+
+/// Absolute in-box path where the managed-settings.json (carrying the
+/// unkillable wrap-bash observation hook) is bind-mounted for the in-box
+/// Claude. It's the sandbox's bind target, so it lives here; `hooks` (host
+/// side) imports it from this crate.
+pub const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
 
 /// Default wall-clock limit when a profile sets none (fail-closed: a confined
 /// command can never run unbounded).
@@ -163,7 +173,7 @@ impl AgentRuntime {
     /// `$H5I_AGENT` set to the creating agent, so the box is scoped to whoever
     /// built it. Explicit `agent-claude`/`agent-codex` profiles bypass this.
     pub(crate) fn detect() -> AgentRuntime {
-        std::env::var(crate::idents::AGENT_ENV)
+        std::env::var(AGENT_ENV)
             .ok()
             .map(|s| AgentRuntime::from_identity(&s))
             .unwrap_or(AgentRuntime::Claude)
@@ -657,7 +667,7 @@ pub struct ExecOutcome {
     /// Network egress verdicts observed during the run. Only the
     /// `isolation=container` tier (whose allowlist proxy sees every request)
     /// populates this; `None` for `workspace`/`process`.
-    pub egress: Option<crate::objects::EgressSummary>,
+    pub egress: Option<EgressSummary>,
 }
 
 /// Outcome of one **interactive** session (`env shell`): the child's exit code
@@ -669,7 +679,7 @@ pub struct InteractiveOutcome {
     pub exit_code: i32,
     /// Egress verdicts observed for the session's lifetime. Only the
     /// `isolation=container` tier populates this; `None` elsewhere.
-    pub egress: Option<crate::objects::EgressSummary>,
+    pub egress: Option<EgressSummary>,
 }
 
 impl InteractiveOutcome {
@@ -813,3 +823,46 @@ audit_capture = "verbose"
         .is_err());
     }
 }
+
+// ── Egress summary (moved from objects.rs to break the sandbox↔objects crate
+// cycle: egress tallies are policy/enforcement data the capture store only
+// renders — objects now imports these from here). ──
+/// Counts + a bounded per-host breakdown of an env's network egress decisions —
+/// the manifest holds only this summary (token-reduction principle, design §8).
+/// Populated by the `isolation=container` allowlist proxy (the only tier that
+/// observes egress today); `None` everywhere else.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EgressSummary {
+    /// Requests the proxy permitted (on-allowlist host:port).
+    pub allowed: u64,
+    /// Requests the proxy refused with `403` (off-allowlist — a network
+    /// boundary trip). The single highest-fidelity egress signal.
+    pub denied: u64,
+    /// Per `host:port` verdict counts, deduped and bounded ([`MAX_EGRESS_HOSTS`])
+    /// so a probing loop can never bloat the shared `refs/h5i/objects` ref. This
+    /// is what the dashboard reads directly — no raw rehydration needed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<EgressHost>,
+    /// True when [`MAX_EGRESS_HOSTS`] was exceeded and the tail was dropped, so a
+    /// reader never mistakes a clamped list for the whole picture.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hosts_truncated: bool,
+    /// Object id (in this store) of the full `egress.jsonl`, when captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log: Option<String>,
+}
+
+/// One destination an env's traffic was steered at, with allow/deny tallies.
+/// A host with `denied > 0` is a refused boundary attempt; the dashboard's NET
+/// lane surfaces these as "Boundary blocked".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EgressHost {
+    pub host: String,
+    pub port: u16,
+    pub allowed: u64,
+    pub denied: u64,
+}
+
+/// Cap on distinct `host:port` entries kept in an [`EgressSummary`] — keeps the
+/// shared manifest bounded regardless of how many hosts a run probes.
+pub const MAX_EGRESS_HOSTS: usize = 64;

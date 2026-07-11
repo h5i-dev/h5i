@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::error::H5iError;
-use crate::objects::{EgressHost, EgressSummary, MAX_EGRESS_HOSTS};
+use crate::sandbox_policy::{EgressHost, EgressSummary, MAX_EGRESS_HOSTS};
 use crate::sandbox_policy::{ExecOutcome, InteractiveOutcome, NetMode, Profile, ResolvedPolicy};
 
 /// Per `host:port` allow/deny tally accumulated by the egress proxy across a
@@ -600,16 +600,16 @@ fn prepare_shim(work: &Path) -> Option<ShimPlan> {
 
 /// Write the managed-settings.json (carrying the unkillable wrap-bash
 /// observation hook) under the env dir, to be bind-mounted read-only into the
-/// box at [`crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH`]. Best-effort: returns
+/// box at [`crate::sandbox_policy::CLAUDE_MANAGED_SETTINGS_PATH`]. Best-effort: returns
 /// `None` (injection skipped, session otherwise unaffected) on any I/O failure
 /// or a path Podman's `--mount` syntax can't carry. Only the in-box Claude
 /// reads this file; it is inert for any other tooling.
-fn prepare_managed_settings(work: &Path) -> Option<PathBuf> {
+fn prepare_managed_settings(work: &Path, content: &str) -> Option<PathBuf> {
     let env_dir = work.parent()?;
     let dir = env_dir.join("managed");
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join("managed-settings.json");
-    std::fs::write(&path, crate::hooks::managed_settings_wrap_bash_json()).ok()?;
+    std::fs::write(&path, content).ok()?;
     if path.display().to_string().contains(',') {
         return None;
     }
@@ -724,7 +724,7 @@ pub fn build_run_argv(
             a.push(format!(
                 "type=bind,source={},target={},ro",
                 ms.display(),
-                crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH
+                crate::sandbox_policy::CLAUDE_MANAGED_SETTINGS_PATH
             ));
         }
     }
@@ -1007,6 +1007,7 @@ pub fn run_interactive(
     work: &Path,
     argv: &[String],
     injected_env: &[(String, String)],
+    managed_settings_content: Option<&str>,
 ) -> Result<InteractiveOutcome, H5iError> {
     use std::io::IsTerminal;
     let p = &policy.profile;
@@ -1075,7 +1076,13 @@ pub fn run_interactive(
     // for `default`/custom profiles we inject, since they may run Claude.
     let is_codex = crate::sandbox_policy::AgentRuntime::from_profile_name(&p.name)
         == Some(crate::sandbox_policy::AgentRuntime::Codex);
-    let managed_settings = if is_codex { None } else { prepare_managed_settings(work) };
+    // The managed-settings content is generated host-side (in `hooks`, which
+    // owns the hook-entry machinery) and passed in — the sandbox layer writes
+    // and mounts it but never depends on core to build it.
+    let managed_settings = match (is_codex, managed_settings_content) {
+        (false, Some(content)) => prepare_managed_settings(work, content),
+        _ => None,
+    };
     let full = build_run_argv(
         &rt,
         p,
@@ -1539,7 +1546,7 @@ mod tests {
         assert!(
             joined.contains(&format!(
                 "type=bind,source=/env/managed/managed-settings.json,target={},ro",
-                crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH
+                crate::sandbox_policy::CLAUDE_MANAGED_SETTINGS_PATH
             )),
             "expected ro managed-settings mount: {joined}"
         );
@@ -1563,7 +1570,7 @@ mod tests {
             &[],
         );
         assert!(
-            !without.join(" ").contains(crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH),
+            !without.join(" ").contains(crate::sandbox_policy::CLAUDE_MANAGED_SETTINGS_PATH),
             "no managed-settings mount when not requested"
         );
     }

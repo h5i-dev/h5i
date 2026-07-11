@@ -436,6 +436,9 @@ pub fn run_interactive(
     work: &std::path::Path,
     argv: &[String],
     injected_env: &[(String, String)],
+    // Supervised tier does not inject managed-settings (no bind-mount ns);
+    // accepted for a uniform interactive-backend signature, ignored.
+    _managed_settings_content: Option<&str>,
 ) -> Result<i32, H5iError> {
     preflight(policy)?;
     let outcome = run_supervised(policy, work, argv, injected_env, true)?;
@@ -919,7 +922,7 @@ fn run_supervised(
     // Surface the socket-gate verdicts as the run's egress summary (the gate is
     // the supervised tier's network-creation enforcement). `denied > 0` is a
     // boundary block the dashboard's NET lane shows.
-    let egress = Some(crate::objects::EgressSummary {
+    let egress = Some(crate::sandbox_policy::EgressSummary {
         allowed: stats.allowed,
         denied: stats.denied,
         hosts: Vec::new(),

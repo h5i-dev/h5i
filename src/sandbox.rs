@@ -1196,6 +1196,10 @@ pub fn run_interactive(
     work: &Path,
     argv: &[String],
     injected_env: &[(String, String)],
+    // Pre-generated managed-settings.json content (the wrap-bash observation
+    // hook), built host-side by `hooks` and injected at the container tier —
+    // threaded through so this crate never depends on core to generate it.
+    managed_settings_content: Option<&str>,
 ) -> Result<InteractiveOutcome, H5iError> {
     if argv.is_empty() {
         return Err(H5iError::Metadata("empty command".into()));
@@ -1212,11 +1216,23 @@ pub fn run_interactive(
                 .map(InteractiveOutcome::from_code)
         }
         IsolationClaim::Supervised => {
-            crate::supervisor::run_interactive(policy, work, argv, injected_env)
-                .map(InteractiveOutcome::from_code)
+            crate::supervisor::run_interactive(
+                policy,
+                work,
+                argv,
+                injected_env,
+                managed_settings_content,
+            )
+            .map(InteractiveOutcome::from_code)
         }
         IsolationClaim::Container => {
-            crate::container::run_interactive(policy, work, argv, injected_env)
+            crate::container::run_interactive(
+                policy,
+                work,
+                argv,
+                injected_env,
+                managed_settings_content,
+            )
         }
         claim => Err(H5iError::Metadata(format!(
             "no interactive backend for isolation claim '{}'",

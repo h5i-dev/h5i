@@ -1882,7 +1882,7 @@ pub struct EnvCaptureView {
     pub exit_code: Option<i32>,
     pub timestamp: String,
     pub summary: String,
-    pub egress: Option<crate::objects::EgressSummary>,
+    pub egress: Option<crate::sandbox_policy::EgressSummary>,
     pub redactions: Vec<String>,
 }
 

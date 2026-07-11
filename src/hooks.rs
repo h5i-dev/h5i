@@ -118,7 +118,9 @@ pub fn merge_hook_settings_json(existing: &str, wrap_bash: bool) -> Result<Strin
 /// in-box agent — which cannot write the root-owned `/etc` and cannot disable
 /// a managed hook from its own writable config — has no way to silence
 /// observation. Host-scoped to the box: the mount lives only in the box's ns.
-pub const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
+/// Defined in the sandbox layer (its bind target); re-exported here for
+/// back-compat so `hooks::CLAUDE_MANAGED_SETTINGS_PATH` keeps resolving.
+pub use crate::sandbox_policy::CLAUDE_MANAGED_SETTINGS_PATH;
 
 /// The minimal managed-settings.json injected into a sandboxed box: ONLY the
 /// wrap-bash enforcement hook, not the core SessionStart/PostToolUse/Stop set.

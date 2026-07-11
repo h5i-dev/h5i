@@ -3387,7 +3387,17 @@ pub fn shell(
             None,
         )?;
     }
-    let session = match sandbox::run_interactive(&policy, &work, &argv, &injected_env) {
+    // Generate the managed-settings content host-side (hooks owns the
+    // hook-entry machinery) and hand it to the sandbox layer, which writes +
+    // bind-mounts it at the container tier.
+    let managed_settings = crate::hooks::managed_settings_wrap_bash_json();
+    let session = match sandbox::run_interactive(
+        &policy,
+        &work,
+        &argv,
+        &injected_env,
+        Some(managed_settings.as_str()),
+    ) {
         Ok(outcome) => outcome,
         Err(e) => {
             let _ = protected_hook_configs.finish();
@@ -3534,7 +3544,7 @@ fn capture_shell_egress(
     h5i_root: &Path,
     m: &EnvManifest,
     work: &Path,
-    eg: &crate::objects::EgressSummary,
+    eg: &crate::sandbox_policy::EgressSummary,
     exit_code: i32,
 ) -> Result<String, H5iError> {
     let mut raw = format!(

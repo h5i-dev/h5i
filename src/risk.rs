@@ -20,7 +20,7 @@
 //! per-finding weights (see [`Finding::weight`]) capped at 100.
 //!
 //! Inputs are exactly what h5i already records: env events (`refs/h5i/env`),
-//! capture manifests (`refs/h5i/objects`, incl. the [`objects::EgressSummary`]
+//! capture manifests (`refs/h5i/objects`, incl. the [`sandbox_policy::EgressSummary`]
 //! the container proxy now populates), and the resolved policy. The scanning
 //! core is string-pure so it unit-tests without a repository.
 
@@ -29,7 +29,8 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use crate::env::EnvEvent;
-use crate::objects::{self, EgressSummary};
+use crate::objects::{self};
+use crate::sandbox_policy::EgressSummary;
 use crate::sandbox::Profile;
 
 /// The five inspectable dimensions of the sandbox boundary — the dashboard's
@@ -569,6 +570,7 @@ fn finalize(mut findings: Vec<Finding>, last_denial_ts: Option<String>) -> EnvRi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox_policy;
 
     #[test]
     fn detects_privilege_tooling() {
@@ -624,8 +626,8 @@ mod tests {
             allowed: 1,
             denied: 2,
             hosts: vec![
-                objects::EgressHost { host: "pypi.org".into(), port: 443, allowed: 1, denied: 0 },
-                objects::EgressHost { host: "evil.example".into(), port: 443, allowed: 0, denied: 2 },
+                sandbox_policy::EgressHost { host: "pypi.org".into(), port: 443, allowed: 1, denied: 0 },
+                sandbox_policy::EgressHost { host: "evil.example".into(), port: 443, allowed: 0, denied: 2 },
             ],
             hosts_truncated: false,
             log: None,
@@ -793,7 +795,7 @@ mod tests {
 
     /// Build a capture carrying an egress summary (the container tier's proxy
     /// verdicts) so classify_env's NET-lane path can be exercised end to end.
-    fn capture_with_egress(id: &str, ts: &str, eg: objects::EgressSummary) -> objects::Manifest {
+    fn capture_with_egress(id: &str, ts: &str, eg: sandbox_policy::EgressSummary) -> objects::Manifest {
         let mut c = capture(id, ts, "pip install requests", "ok");
         c.egress = Some(eg);
         c
@@ -802,12 +804,12 @@ mod tests {
     #[test]
     fn egress_denied_through_classify_env_is_critical() {
         let m = manifest("container");
-        let eg = objects::EgressSummary {
+        let eg = sandbox_policy::EgressSummary {
             allowed: 3,
             denied: 2,
             hosts: vec![
-                objects::EgressHost { host: "pypi.org".into(), port: 443, allowed: 3, denied: 0 },
-                objects::EgressHost { host: "evil.example".into(), port: 443, allowed: 0, denied: 2 },
+                sandbox_policy::EgressHost { host: "pypi.org".into(), port: 443, allowed: 3, denied: 0 },
+                sandbox_policy::EgressHost { host: "evil.example".into(), port: 443, allowed: 0, denied: 2 },
             ],
             hosts_truncated: false,
             log: None,

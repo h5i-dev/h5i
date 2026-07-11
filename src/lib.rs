@@ -58,7 +58,7 @@ pub(crate) mod auth_proxy;
 pub(crate) mod cgroup;
 pub(crate) mod container;
 pub(crate) mod idents;
-pub(crate) mod sandbox_policy;
+pub mod sandbox_policy;
 pub(crate) mod seccomp_notify;
 pub(crate) mod secrets;
 pub(crate) mod secrets_broker;

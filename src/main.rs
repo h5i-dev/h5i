@@ -9154,7 +9154,7 @@ fn main() -> anyhow::Result<()> {
                             /// block — not inferred from an exit code. Absent on
                             /// tiers with no egress enforcement.
                             #[serde(skip_serializing_if = "Option::is_none")]
-                            egress: Option<&'a objects::EgressSummary>,
+                            egress: Option<&'a h5i_core::sandbox_policy::EgressSummary>,
                             raw_size: u64,
                             raw_present: bool,
                         }

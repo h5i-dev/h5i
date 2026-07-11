@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::H5iError;
+use crate::sandbox_policy::EgressSummary;
 use crate::token_filter::{self, FilterConfig, OutputKind};
 
 /// Git ref holding the append-only manifest log (one JSON object per line).
@@ -342,46 +343,6 @@ pub fn classify_action(argv: &[String]) -> &'static str {
 
     "other"
 }
-
-/// Counts + a bounded per-host breakdown of an env's network egress decisions —
-/// the manifest holds only this summary (token-reduction principle, design §8).
-/// Populated by the `isolation=container` allowlist proxy (the only tier that
-/// observes egress today); `None` everywhere else.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EgressSummary {
-    /// Requests the proxy permitted (on-allowlist host:port).
-    pub allowed: u64,
-    /// Requests the proxy refused with `403` (off-allowlist — a network
-    /// boundary trip). The single highest-fidelity egress signal.
-    pub denied: u64,
-    /// Per `host:port` verdict counts, deduped and bounded ([`MAX_EGRESS_HOSTS`])
-    /// so a probing loop can never bloat the shared `refs/h5i/objects` ref. This
-    /// is what the dashboard reads directly — no raw rehydration needed.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub hosts: Vec<EgressHost>,
-    /// True when [`MAX_EGRESS_HOSTS`] was exceeded and the tail was dropped, so a
-    /// reader never mistakes a clamped list for the whole picture.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub hosts_truncated: bool,
-    /// Object id (in this store) of the full `egress.jsonl`, when captured.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub log: Option<String>,
-}
-
-/// One destination an env's traffic was steered at, with allow/deny tallies.
-/// A host with `denied > 0` is a refused boundary attempt; the dashboard's NET
-/// lane surfaces these as "Boundary blocked".
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EgressHost {
-    pub host: String,
-    pub port: u16,
-    pub allowed: u64,
-    pub denied: u64,
-}
-
-/// Cap on distinct `host:port` entries kept in an [`EgressSummary`] — keeps the
-/// shared manifest bounded regardless of how many hosts a run probes.
-pub const MAX_EGRESS_HOSTS: usize = 64;
 
 impl Manifest {
     /// The bare 64-char hex digest (no `sha256:` prefix).
@@ -2047,6 +2008,7 @@ pub fn search_manifests<'a>(manifests: &'a [Manifest], flt: &SearchFilters) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox_policy::EgressHost;
     use tempfile::tempdir;
 
     fn setup() -> (tempfile::TempDir, Repository, PathBuf) {
