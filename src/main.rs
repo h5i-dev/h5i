@@ -765,6 +765,12 @@ enum Commands {
         action: cli::team::TeamCommands,
     },
 
+    /// Programmable orchestration bridge for SDK-driven scores (h5i.orchestra)
+    Orchestra {
+        #[command(subcommand)]
+        action: cli::orchestra::OrchestraCommands,
+    },
+
     /// Commit staged changes with AI provenance and quality tracking
     #[command(hide = true)]
     Commit {
@@ -3624,6 +3630,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Memory { action } => cli::memory::run(action)?,
 
         Commands::Team { action } => cli::team::run(action)?,
+
+        Commands::Orchestra { action } => cli::orchestra::run(action)?,
 
         Commands::Env { action } => cli::env::run(action)?,
 

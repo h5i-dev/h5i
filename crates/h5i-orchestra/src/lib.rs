@@ -43,6 +43,7 @@ mod launcher;
 pub mod manifest;
 pub mod patterns;
 mod preflight;
+pub mod rpc;
 pub mod trace;
 
 pub use agent::{Agent, AgentBuilder, WorkRequest};
@@ -105,6 +106,7 @@ pub struct ConductorBuilder {
     poll_interval: Duration,
     turn_timeout: Duration,
     score_digest: bool,
+    digest_override: Option<String>,
 }
 
 impl Conductor {
@@ -123,6 +125,7 @@ impl Conductor {
             poll_interval: Duration::from_millis(1500),
             turn_timeout: Duration::from_secs(1800),
             score_digest: true,
+            digest_override: None,
         }
     }
 
@@ -396,6 +399,15 @@ impl ConductorBuilder {
         self
     }
 
+    /// Record this digest as the score's provenance instead of hashing the
+    /// current executable — for bridge hosts (`h5i orchestra serve`) where
+    /// the score lives outside this process (e.g. a Python file driving the
+    /// run over JSON-RPC).
+    pub fn score_digest_override(mut self, digest: impl Into<String>) -> Self {
+        self.digest_override = Some(digest.into());
+        self
+    }
+
     pub fn launch(self) -> Result<Conductor, H5iError> {
         let repo = Repository::discover(&self.repo)?;
         let workdir = repo
@@ -432,10 +444,10 @@ impl ConductorBuilder {
                 "orchestra: resuming run — journaled steps replay without re-execution"
             );
         }
-        let digest = if self.score_digest {
-            Journal::current_exe_digest()
-        } else {
-            None
+        let digest = match (self.digest_override, self.score_digest) {
+            (Some(d), _) => Some(d),
+            (None, true) => Journal::current_exe_digest(),
+            (None, false) => None,
         };
         if let Some(warning) = journal.record_score_start(digest.as_deref())? {
             tracing::warn!(run = %self.run, "orchestra: {warning}");
