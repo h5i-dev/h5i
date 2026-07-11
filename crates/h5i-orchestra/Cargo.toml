@@ -1,0 +1,20 @@
+[package]
+name = "h5i-orchestra"
+version = "0.2.8"
+edition = "2021"
+description = "Programmable agent-orchestration eDSL over h5i teams/envs — define-by-run scores journaled on the git-backed team event log."
+
+[dependencies]
+h5i-core = { path = "../.." }
+tokio = { version = "1.0", features = ["full"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+git2 = { workspace = true }
+toml = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3.8"
+libc = "0.2.186"

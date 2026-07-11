@@ -566,6 +566,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "h5i-cli"
+version = "0.2.8"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "clap_mangen",
+ "console",
+ "git2",
+ "h5i-core",
+ "h5i-orchestra",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "h5i-core"
 version = "0.2.8"
 dependencies = [
@@ -609,6 +631,23 @@ dependencies = [
  "serde_json",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "h5i-orchestra"
+version = "0.2.8"
+dependencies = [
+ "chrono",
+ "git2",
+ "h5i-core",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

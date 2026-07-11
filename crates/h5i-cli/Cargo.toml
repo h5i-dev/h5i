@@ -1,0 +1,37 @@
+[package]
+name = "h5i-cli"
+version = "0.2.8"
+edition = "2021"
+description = "The h5i command-line binary — a thin CLI over h5i-core and h5i-orchestra."
+
+[[bin]]
+name = "h5i"
+path = "src/main.rs"
+
+[features]
+# Mirror the core `web` feature so `cargo build`/`--no-default-features` on the
+# binary toggle the dashboard exactly as before.
+default = ["web"]
+web = ["h5i-core/web"]
+
+[dependencies]
+h5i-core = { path = "../.." }
+h5i-orchestra = { path = "../h5i-orchestra" }
+git2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5.60", features = ["derive"] }
+clap_complete = "4.5"
+clap_mangen = "0.2"
+console = "0.16.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+tempfile = "3.8"
+serde_json = { workspace = true }
+# For the web-gated sandbox_api integration test (boots the real axum router).
+axum = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

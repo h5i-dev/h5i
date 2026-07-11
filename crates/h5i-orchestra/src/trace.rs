@@ -2,7 +2,7 @@
 //! define-by-run principle's payoff: the graph is a *view over the journal*,
 //! derived after (or during) execution, never a prerequisite for it.
 
-use crate::team::TeamEvent;
+use h5i_core::team::TeamEvent;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 

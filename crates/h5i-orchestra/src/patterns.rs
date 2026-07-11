@@ -10,8 +10,8 @@
 //! front, alongside the workers.
 
 use super::{approves, Agent, Conductor, VerdictPolicy};
-use crate::error::H5iError;
-use crate::team::{TeamArtifact, TeamCompareRow, TeamReview, TeamVerdict, TeamVerification};
+use h5i_core::error::H5iError;
+use h5i_core::team::{TeamArtifact, TeamCompareRow, TeamReview, TeamVerdict, TeamVerification};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -661,7 +661,7 @@ impl JudgePanel {
 fn mean_score_verdict(
     ballots: &[Ballot],
     n_judges: usize,
-    run: &crate::team::TeamRun,
+    run: &h5i_core::team::TeamRun,
 ) -> TeamVerdict {
     let method = format!("panel:mean-score({n_judges} judges)");
     let mut best: Option<(String, f64)> = None;
@@ -747,7 +747,7 @@ async fn ask_with_valid_citations(
     unreachable!()
 }
 
-fn render_evidence(run: &crate::team::TeamRun) -> String {
+fn render_evidence(run: &h5i_core::team::TeamRun) -> String {
     let mut s = String::new();
     s.push_str("Submissions:\n");
     for sub in &run.submissions {

@@ -1231,7 +1231,7 @@ fn read_cursors(h5i_root: &Path) -> Result<CursorStore, H5iError> {
 
 /// Read every message currently on the `refs/h5i/msg` tip.
 /// pub(crate): `orchestra`'s durable gate scans for replies to its ASK.
-pub(crate) fn read_messages(repo: &Repository) -> Vec<Message> {
+pub fn read_messages(repo: &Repository) -> Vec<Message> {
     parse_messages(&read_blob(repo, MESSAGES_FILE).unwrap_or_default())
 }
 

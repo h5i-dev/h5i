@@ -14,8 +14,8 @@
 //! distinct labels (agent operations get this by construction — their labels
 //! embed the agent id).
 
-use crate::error::H5iError;
-use crate::team;
+use h5i_core::error::H5iError;
+use h5i_core::team;
 use git2::Repository;
 use serde::de::DeserializeOwned;
 use serde::Serialize;

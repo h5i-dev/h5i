@@ -22,7 +22,7 @@
 //! runtime = "codex"
 //! ```
 
-use crate::error::H5iError;
+use h5i_core::error::H5iError;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

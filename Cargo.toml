@@ -18,10 +18,6 @@ name = "h5i-core"
 version = "0.2.8"
 edition = "2021"
 
-[[bin]]
-name = "h5i"
-path = "src/main.rs"
-
 [features]
 # `web` compiles the `h5i serve` dashboard (axum + asset embedding). On by
 # default so existing builds are unchanged; build with `--no-default-features`

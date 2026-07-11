@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use h5i_core::error::H5iError;
-use h5i_core::orchestra::{patterns, Conductor, FnLauncher, RuntimeLauncher, TurnContext, TurnKind};
+use h5i_orchestra::{patterns, Conductor, FnLauncher, RuntimeLauncher, TurnContext, TurnKind};
 
 fn h5i_bin() -> &'static str {
     env!("CARGO_BIN_EXE_h5i")

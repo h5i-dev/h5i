@@ -128,7 +128,7 @@ enum LockMode {
 /// A brief host op also holds the lock, so callers should sample more than
 /// once before concluding either way — this is a heuristic, not a guarantee.
 #[cfg(unix)]
-pub(crate) fn writer_session_live(env_dir: &Path) -> bool {
+pub fn writer_session_live(env_dir: &Path) -> bool {
     use std::os::unix::io::AsRawFd;
     let path = env_dir.join(RUN_LOCK_FILE);
     let file = match std::fs::OpenOptions::new()
@@ -151,7 +151,7 @@ pub(crate) fn writer_session_live(env_dir: &Path) -> bool {
 }
 
 #[cfg(not(unix))]
-pub(crate) fn writer_session_live(_env_dir: &Path) -> bool {
+pub fn writer_session_live(_env_dir: &Path) -> bool {
     false
 }
 

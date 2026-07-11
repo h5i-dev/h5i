@@ -5,7 +5,7 @@
 
 use super::patterns::ensemble;
 use super::*;
-use crate::team::{TeamVerdict, PHASE_SEALED_SUBMIT};
+use h5i_core::team::{TeamVerdict, PHASE_SEALED_SUBMIT};
 use git2::Oid;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -111,7 +111,7 @@ fn fabricate_env(repo: &Repository, h5i_root: &Path, agent: &str, slug: &str) ->
 /// Review turn it posts `review_body`; on an Ask turn it pops the next queued
 /// reply (via the in-box spool when `ask_via_spool`, else recorded directly).
 /// Counts every turn so resume tests can assert zero re-execution.
-type AskFn = dyn Fn(&TurnContext, &crate::team::TeamRun) -> String + Send + Sync;
+type AskFn = dyn Fn(&TurnContext, &h5i_core::team::TeamRun) -> String + Send + Sync;
 
 struct Script {
     turns: AtomicUsize,
@@ -217,7 +217,7 @@ fn conductor(dir: &Path, run: &str, launcher: Arc<dyn RuntimeLauncher>) -> Condu
 /// keeps the sandboxed verifier out of unit tests.
 fn smallest_diff_policy() -> impl VerdictPolicy {
     policy::from_fn("smallest_diff_unverified", |run| {
-        let mut latest: Vec<&crate::team::TeamArtifact> = run
+        let mut latest: Vec<&h5i_core::team::TeamArtifact> = run
             .agents
             .iter()
             .filter_map(|a| {
@@ -917,7 +917,7 @@ async fn judge_panel_scores_over_evidence_and_validates_citations() {
         ask_replies: Mutex::new(Vec::new()),
         ask_via_spool: false,
         ask_fn: Some(Box::new(move |_turn, run| {
-            let subs: Vec<&crate::team::TeamArtifact> = run.submissions.iter().collect();
+            let subs: Vec<&h5i_core::team::TeamArtifact> = run.submissions.iter().collect();
             let first = subs.first().map(|s| s.id.clone()).unwrap_or_default();
             let attempt = attempts_cl.fetch_add(1, Ordering::SeqCst);
             // Each judge's first ask cites a hallucinated id → must re-ask.
@@ -985,7 +985,7 @@ async fn judge_panel_scores_over_evidence_and_validates_citations() {
 #[test]
 fn approves_recognizes_common_verdict_forms() {
     use super::approves;
-    let yes = |b: &str| approves(&crate::team::TeamReview {
+    let yes = |b: &str| approves(&h5i_core::team::TeamReview {
         reviewer: "r".into(), target: "t".into(), round: 1,
         body: b.into(), referenced_artifacts: vec![],
     });
@@ -1042,7 +1042,7 @@ async fn revise_completes_on_unchanged_resubmit() {
     let first = a.work("do it").await.unwrap();
     c.freeze().await.unwrap();
 
-    let review = crate::team::TeamReview {
+    let review = h5i_core::team::TeamReview {
         reviewer: "peer".into(), target: "claude".into(), round: 1,
         body: "please rename the helper".into(), referenced_artifacts: vec![],
     };

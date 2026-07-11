@@ -14,7 +14,7 @@
 //! host-validated submit spool — the eDSL adds no new trust surface.
 //!
 //! ```no_run
-//! use h5i_core::orchestra::{policy, Attach, Conductor};
+//! use h5i_orchestra::{policy, Attach, Conductor};
 //! use std::sync::Arc;
 //!
 //! #[tokio::main]
@@ -51,11 +51,11 @@ pub use judge::{policy, VerdictPolicy};
 pub use launcher::{Attach, FnLauncher, LaunchResident, RuntimeLauncher, TurnContext, TurnKind};
 pub use preflight::Preflight;
 
-use crate::env;
-use crate::error::H5iError;
-use crate::msg;
-use crate::storage;
-use crate::team::{
+use h5i_core::env;
+use h5i_core::error::H5iError;
+use h5i_core::msg;
+use h5i_core::storage;
+use h5i_core::team::{
     self, TeamApplyResult, TeamArtifact, TeamReview, TeamRun, TeamStatus, TeamVerdict,
     TeamVerification,
 };

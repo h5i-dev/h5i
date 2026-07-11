@@ -10213,7 +10213,7 @@ fn main() -> anyhow::Result<()> {
                     timeout,
                     json,
                 } => {
-                    use h5i_core::orchestra::{self, manifest::TeamManifest, patterns};
+                    use h5i_orchestra::{self as orchestra, manifest::TeamManifest, patterns};
                     let run_id = h5i_core::team::resolve_run(&h5i_root, team)?;
 
                     // A manifest supplies parameters (never control flow);
@@ -10330,7 +10330,7 @@ fn main() -> anyhow::Result<()> {
                         };
                     let rt = tokio::runtime::Runtime::new()?;
                     let (outcome, applied) = rt.block_on(async {
-                        let c = h5i_core::orchestra::Conductor::builder(".", &run_id)
+                        let c = h5i_orchestra::Conductor::builder(".", &run_id)
                             .launcher(launcher)
                             .poll_interval(std::time::Duration::from_secs(poll.max(1)))
                             .turn_timeout(std::time::Duration::from_secs(timeout.max(1)))
@@ -10441,9 +10441,9 @@ fn main() -> anyhow::Result<()> {
                     let run = h5i_core::team::resolve_run(&h5i_root, team)?;
                     let events = h5i_core::team::read_events(git, &run)?;
                     if dot {
-                        print!("{}", h5i_core::orchestra::trace::render_trace_dot(&run, &events));
+                        print!("{}", h5i_orchestra::trace::render_trace_dot(&run, &events));
                     } else {
-                        print!("{}", h5i_core::orchestra::trace::render_trace(&run, &events));
+                        print!("{}", h5i_orchestra::trace::render_trace(&run, &events));
                     }
                 }
                 TeamCommands::Use { name, clear } => {

@@ -374,7 +374,7 @@ fn refname(run_id: &str) -> Result<String, H5iError> {
 // pub(crate): `orchestra` appends its journal/step events through the same
 // constructor so ids, timestamps, and idempotency keys stay uniform.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn event(
+pub fn event(
     run_id: &str,
     actor: &str,
     kind: &str,

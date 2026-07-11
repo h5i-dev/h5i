@@ -6,8 +6,8 @@
 //! policy decides is recorded through `team::record_verdict`, so a programmatic
 //! verdict is exactly as auditable as the CLI's.
 
-use crate::error::H5iError;
-use crate::team::{self, TeamRun, TeamVerdict};
+use h5i_core::error::H5iError;
+use h5i_core::team::{self, TeamRun, TeamVerdict};
 
 pub trait VerdictPolicy: Send + Sync {
     /// Short policy name, recorded in the verdict's `method` audit field by
