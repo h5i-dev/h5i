@@ -18,11 +18,6 @@ use std::process::Command;
 use std::time::SystemTime;
 
 fn main() {
-    if std::env::var("H5I_SKIP_WEB_BUILD").is_ok() {
-        eprintln!("h5i build.rs: H5I_SKIP_WEB_BUILD set — skipping frontend build");
-        return;
-    }
-
     // This crate (h5i-core) lives at `crates/h5i-core`; the frontend project is
     // at the workspace root's `web/`, two levels up. `rust-embed` in this crate
     // reads `../../web/dist/`, and this build script (which runs *before* this
@@ -30,8 +25,17 @@ fn main() {
     // that dist exist.
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let web = manifest.join("../../web");
+
+    if std::env::var("H5I_SKIP_WEB_BUILD").is_ok() {
+        eprintln!("h5i build.rs: H5I_SKIP_WEB_BUILD set — skipping frontend build");
+        ensure_stub_dist(&web);
+        return;
+    }
+
     if !web.exists() {
-        // No frontend in this checkout; nothing to do (e.g. a slim source export).
+        // No frontend in this checkout (e.g. a slim source export) — still
+        // materialize the stub, or rust-embed's derive fails to compile.
+        ensure_stub_dist(&web);
         return;
     }
 
@@ -61,6 +65,26 @@ fn main() {
     }
 
     run_npm(&web, &["run", "build"]);
+}
+
+/// `#[derive(RustEmbed)]` fails to compile when its folder is missing, so
+/// every path that skips the npm build (H5I_SKIP_WEB_BUILD, no `web/` in the
+/// checkout) must still leave a `web/dist/` behind. A stub index.html is
+/// written only when none exists — a real bundle is never touched.
+fn ensure_stub_dist(web: &Path) {
+    let dist = web.join("dist");
+    if let Err(e) = std::fs::create_dir_all(&dist) {
+        panic!("failed to create stub {}: {e}", dist.display());
+    }
+    let marker = dist.join("index.html");
+    if !marker.exists() {
+        let stub = "<!doctype html><title>h5i</title>\
+                    <p>frontend not built (H5I_SKIP_WEB_BUILD or slim checkout) — \
+                    run <code>npm run build</code> in <code>web/</code>.</p>";
+        if let Err(e) = std::fs::write(&marker, stub) {
+            panic!("failed to write stub {}: {e}", marker.display());
+        }
+    }
 }
 
 fn run_npm(cwd: &Path, args: &[&str]) {
