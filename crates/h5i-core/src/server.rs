@@ -174,7 +174,7 @@ fn fallback_report() -> IntegrityReport {
 #[derive(rust_embed::Embed)]
 // The frontend project + its build output live at the repo root; this crate is
 // one level down in the workspace.
-#[folder = "$CARGO_MANIFEST_DIR/../../web/dist/"]
+#[folder = "../../web/dist/"]
 struct WebAsset;
 
 async fn index() -> Response {

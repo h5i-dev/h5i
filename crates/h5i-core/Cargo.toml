@@ -31,7 +31,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 axum = { version = "0.7", optional = true }
 toml = { workspace = true }
 regex = "1"
-rust-embed = { version = "8.5", features = ["interpolate-folder-path"] }
+rust-embed = "8.5"
 mime_guess = { version = "2.0", optional = true }
 tracing = "0.1"
 libc = "0.2.186"

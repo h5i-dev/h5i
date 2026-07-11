@@ -52,9 +52,13 @@ pub mod server;
 // resolves unchanged. `idents` stays here (a core identity constant table).
 pub(crate) mod idents;
 pub use h5i_sandbox::{
-    auth_proxy, cgroup, container, sandbox, sandbox_policy, seccomp_notify, secrets,
-    secrets_broker, supervisor,
+    auth_proxy, cgroup, container, sandbox, sandbox_policy, secrets, secrets_broker, supervisor,
 };
+// `seccomp_notify` is Linux+x86_64/aarch64 only (its whole module is cfg'd out
+// elsewhere), so the re-export must carry the same gate or it fails to resolve
+// on macOS/other targets in the cross-check job.
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub use h5i_sandbox::seccomp_notify;
 /// Risk classification for the web dashboard only — its sole consumer is the
 /// feature-gated `server`, so it is gated too (and absent from a lean CLI build).
 #[cfg(feature = "web")]

@@ -23,20 +23,26 @@ fn main() {
         return;
     }
 
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let web = root.join("web");
+    // This crate (h5i-core) lives at `crates/h5i-core`; the frontend project is
+    // at the workspace root's `web/`, two levels up. `rust-embed` in this crate
+    // reads `../../web/dist/`, and this build script (which runs *before* this
+    // crate compiles, unlike a build script on the top-level bin) is what makes
+    // that dist exist.
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let web = manifest.join("../../web");
     if !web.exists() {
         // No frontend in this checkout; nothing to do (e.g. a slim source export).
         return;
     }
 
-    // Tell cargo to re-evaluate this script when relevant frontend inputs change.
+    // Tell cargo to re-evaluate this script when relevant frontend inputs change
+    // (paths relative to this crate's manifest dir → `../../web/...`).
     for rel in [
-        "web/index.html",
-        "web/package.json",
-        "web/package-lock.json",
-        "web/tsconfig.json",
-        "web/vite.config.ts",
+        "../../web/index.html",
+        "../../web/package.json",
+        "../../web/package-lock.json",
+        "../../web/tsconfig.json",
+        "../../web/vite.config.ts",
     ] {
         println!("cargo:rerun-if-changed={}", rel);
     }

@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 #[derive(RustEmbed)]
 // Assets live at the repo root (shared with tooling/CI); this crate sits one
 // level down in the workspace, so resolve relative to its manifest dir.
-#[folder = "$CARGO_MANIFEST_DIR/../../assets/filters/"]
+#[folder = "../../assets/filters/"]
 struct BuiltinFilters;
 
 /// Embedded paths that are rule files (ignore NOTICE, README, …).
