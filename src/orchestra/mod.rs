@@ -313,17 +313,6 @@ impl Conductor {
         .await
     }
 
-    /// Record a verdict decided out-of-band (e.g. by `patterns::judge_panel`)
-    /// on the run's event log, through the same path as `judge`/`team finalize`.
-    pub async fn record_verdict(&self, verdict: &TeamVerdict) -> Result<(), H5iError> {
-        let core = self.core.clone();
-        let verdict = verdict.clone();
-        run_blocking(move || {
-            team::record_verdict(&core.repo()?, &core.run_id, &verdict, &core.actor)
-        })
-        .await
-    }
-
     /// Apply an artifact onto the current branch, gated on an auto-applicable
     /// verdict selecting it — mediated, exactly like `h5i team apply`.
     pub async fn apply(&self, artifact: &TeamArtifact) -> Result<TeamApplyResult, H5iError> {

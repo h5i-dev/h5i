@@ -634,52 +634,74 @@ impl JudgePanel {
             ballots.push((judge.id().to_string(), card.ballots));
         }
 
-        // Aggregate: mean score per candidate; ties → smallest diff.
-        let mut best: Option<(String, f64)> = None;
-        for cand in &candidates {
-            let scores: Vec<u32> = ballots
-                .iter()
-                .flat_map(|(_, bs)| bs.iter())
-                .filter(|b| b.artifact_id == cand.id)
-                .map(|b| b.score.min(10))
-                .collect();
-            if scores.is_empty() {
-                continue;
-            }
-            let mean = scores.iter().sum::<u32>() as f64 / scores.len() as f64;
-            let better = match &best {
-                None => true,
-                Some((cur_id, cur_mean)) => {
-                    mean > *cur_mean + f64::EPSILON
-                        || ((mean - *cur_mean).abs() <= f64::EPSILON
-                            && smaller_diff(cand, cur_id, &candidates))
-                }
-            };
-            if better {
-                best = Some((cand.id.clone(), mean));
-            }
-        }
-
-        let verdict = match best {
-            Some((id, mean)) => TeamVerdict {
-                selected_submission: Some(id.clone()),
-                method: format!("panel:mean-score({} judges)", judges.len()),
-                decided_by: "judge-panel".into(),
-                // A judge panel is advisory over evidence, not a neutral
-                // re-execution — apply stays a human/explicit decision.
-                can_auto_apply: false,
-                reasons: vec![format!("{id} won the panel with mean score {mean:.1}/10")],
-            },
-            None => TeamVerdict {
-                selected_submission: None,
-                method: format!("panel:mean-score({} judges)", judges.len()),
-                decided_by: "judge-panel".into(),
-                can_auto_apply: false,
-                reasons: vec!["no candidate received a ballot".into()],
-            },
-        };
-        c.record_verdict(&verdict).await?;
+        // Aggregation is a VerdictPolicy — `VerdictPolicy` is the real
+        // primitive; the panel's contribution is eliciting evidence-cited
+        // ballots, not owning a bespoke verdict. The mean-score rule is
+        // expressed as one policy (via `policy::from_fn`) and recorded through
+        // the same `c.judge` path as any other verdict, so a caller could just
+        // as well score the same ballots with their own policy (median,
+        // quorum, veto). Ballots close into the policy; the run's submissions
+        // supply the smallest-diff tiebreak.
+        let flat: Vec<Ballot> = ballots.iter().flat_map(|(_, bs)| bs.clone()).collect();
+        let n_judges = judges.len();
+        let verdict = c
+            .judge(super::policy::from_fn("panel:mean-score", move |run| {
+                Ok(mean_score_verdict(&flat, n_judges, run))
+            }))
+            .await?;
         Ok(JudgePanelOutcome { ballots, verdict })
+    }
+}
+
+/// Mean-score aggregation over judge ballots, expressed as pure logic so it
+/// can back a `VerdictPolicy`: highest mean score wins, ties broken by the
+/// smallest diff. A panel is advisory over evidence (not a neutral
+/// re-execution), so the verdict is never auto-applicable — apply stays an
+/// explicit human decision.
+fn mean_score_verdict(
+    ballots: &[Ballot],
+    n_judges: usize,
+    run: &crate::team::TeamRun,
+) -> TeamVerdict {
+    let method = format!("panel:mean-score({n_judges} judges)");
+    let mut best: Option<(String, f64)> = None;
+    for cand in &run.submissions {
+        let scores: Vec<u32> = ballots
+            .iter()
+            .filter(|b| b.artifact_id == cand.id)
+            .map(|b| b.score.min(10))
+            .collect();
+        if scores.is_empty() {
+            continue;
+        }
+        let mean = scores.iter().sum::<u32>() as f64 / scores.len() as f64;
+        let better = match &best {
+            None => true,
+            Some((cur_id, cur_mean)) => {
+                mean > *cur_mean + f64::EPSILON
+                    || ((mean - *cur_mean).abs() <= f64::EPSILON
+                        && smaller_diff(cand, cur_id, &run.submissions))
+            }
+        };
+        if better {
+            best = Some((cand.id.clone(), mean));
+        }
+    }
+    match best {
+        Some((id, mean)) => TeamVerdict {
+            selected_submission: Some(id.clone()),
+            method,
+            decided_by: "judge-panel".into(),
+            can_auto_apply: false,
+            reasons: vec![format!("{id} won the panel with mean score {mean:.1}/10")],
+        },
+        None => TeamVerdict {
+            selected_submission: None,
+            method,
+            decided_by: "judge-panel".into(),
+            can_auto_apply: false,
+            reasons: vec!["no candidate received a ballot".into()],
+        },
     }
 }
 
@@ -756,7 +778,7 @@ fn render_evidence(run: &crate::team::TeamRun) -> String {
     s
 }
 
-fn smaller_diff(cand: &TeamArtifact, other_id: &str, all: &[&TeamArtifact]) -> bool {
+fn smaller_diff(cand: &TeamArtifact, other_id: &str, all: &[TeamArtifact]) -> bool {
     match all.iter().find(|a| a.id == other_id) {
         Some(other) => {
             (cand.files_changed, cand.insertions, &cand.id)
