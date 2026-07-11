@@ -711,6 +711,11 @@ mod tests {
             (&["docker", "build", "."], "docker-build"),
             (&["tsc", "--noEmit"], "tsc"),
             (&["ruff", "check", "."], "ruff"),
+            (&["phpunit", "--testdox"], "phpunit"),
+            (&["./vendor/bin/phpunit", "--testdox"], "phpunit"),
+            (&["php", "-d", "xdebug.mode=coverage", "vendor/bin/phpunit"], "phpunit"),
+            (&["php", "-c", "php.ini", "./vendor/bin/phpunit"], "phpunit"),
+            (&["php", "-n", "phpunit.phar"], "phpunit"),
         ];
         for (cmd, expected) in cases {
             let argv: Vec<String> = cmd.iter().map(|s| s.to_string()).collect();
@@ -719,6 +724,24 @@ mod tests {
                 hit.map(|f| f.name.as_str()),
                 Some(*expected),
                 "command {cmd:?} should route to rule {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn phpunit_command_routing_stays_narrow() {
+        let none: &[&[&str]] = &[
+            &["php", "script.php", "phpunit"],
+            &["php", "-r", "phpunit"],
+            &["phpunit-wrapper"],
+        ];
+        for cmd in none {
+            let argv: Vec<String> = cmd.iter().map(|s| s.to_string()).collect();
+            let hit = registry().find(&command_string(&argv));
+            assert_ne!(
+                hit.map(|f| f.name.as_str()),
+                Some("phpunit"),
+                "command {cmd:?} should not route to phpunit"
             );
         }
     }
