@@ -566,6 +566,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "h5i"
+version = "0.2.8"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "clap_mangen",
+ "console",
+ "git2",
+ "h5i-core",
+ "h5i-orchestra",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "h5i-core"
 version = "0.2.8"
 dependencies = [
@@ -573,20 +595,17 @@ dependencies = [
  "axum",
  "base64",
  "chrono",
- "clap",
- "clap_complete",
- "clap_mangen",
  "console",
  "fastrand",
  "git2",
- "landlock",
+ "h5i-error",
+ "h5i-sandbox",
  "libc",
  "mime_guess",
  "openssl",
  "regex",
  "reqwest",
  "rust-embed",
- "seccompiler",
  "serde",
  "serde_json",
  "sha2",
@@ -596,7 +615,54 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
- "tracing-subscriber",
+]
+
+[[package]]
+name = "h5i-error"
+version = "0.2.8"
+dependencies = [
+ "git2",
+ "serde_json",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
+name = "h5i-orchestra"
+version = "0.2.8"
+dependencies = [
+ "chrono",
+ "git2",
+ "h5i-core",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "h5i-sandbox"
+version = "0.2.8"
+dependencies = [
+ "fastrand",
+ "git2",
+ "h5i-error",
+ "landlock",
+ "libc",
+ "openssl",
+ "regex",
+ "reqwest",
+ "seccompiler",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

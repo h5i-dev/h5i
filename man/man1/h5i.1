@@ -43,6 +43,9 @@ Isolated agent environments \(em worktree + sandbox + provenance (docs/environme
 h5i\-team(1)
 Agent teams \(em phased evidence publication over existing h5i envs
 .TP
+h5i\-orchestra(1)
+Programmable orchestration bridge for SDK\-driven scores (h5i.orchestra)
+.TP
 h5i\-resolve(1)
 Resolve branch conflicts using CRDT\-based semantic merging
 .TP
@@ -1218,30 +1221,6 @@ Print help
 .TP
 [\fITEAM\fR]
 Team id (defaults to the current team \(em see `team use`)
-.SH "H5I TEAM AUTO-PEER-REVIEW"
-Open the peer-review round in one shot: sync staged work, freeze the round, grant every agent mutual review access, and send each the review-and-revise instruction. Native equivalent of `scripts/team-review.sh`
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBauto\-peer\-review\fR [\fB\-\-artifacts\fR] [\fB\-\-allow\-missing\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-\-artifacts\fR \fI<ARTIFACTS>\fR [default: diff,summary,tests]
-Comma\-separated artifact kinds to grant (diff,summary,tests,test\-status)
-.TP
-\fB\-\-allow\-missing\fR
-Freeze even if some agents have not submitted (seals a partial round)
-.TP
-\fB\-\-json\fR
-Emit JSON
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
-.TP
-[\fITEAM\fR]
-Team id (defaults to the current team \(em see `team use`)
 .SH "H5I TEAM REVIEW"
 Record a review body for a target candidate
 .ie \n(.g .ds Aq \(aq
@@ -1395,6 +1374,30 @@ Print help
 .TP
 [\fITEXT\fR]
 Reply body (or use \-\-file)
+.SH "H5I ORCHESTRA"
+Programmable orchestration bridge for SDK-driven scores (h5i.orchestra)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBorchestra\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I ORCHESTRA SERVE"
+Serve the orchestra JSON-RPC bridge on stdin/stdout (SDK-facing). stdout is protocol-only; logs go to stderr (H5I_LOG)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBserve\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
 .SH "H5I RESOLVE"
 Resolve branch conflicts using CRDT-based semantic merging
 .ie \n(.g .ds Aq \(aq

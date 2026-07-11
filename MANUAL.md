@@ -3448,10 +3448,9 @@ tmux; the default attaches to sessions already brought up by `team-launch.sh`.
 - Reviews delivered with `h5i team review submit` land in the reviewed agent's
   inbox (post-freeze) and are recorded as discussion, so the target sees the
   critique and its next revision is stamped non-independent.
-- **Deprecated:** `scripts/team-run.sh` (use `h5i team run`) and
-  `scripts/team-review.sh` (use `h5i team auto-peer-review`, or just let
-  `h5i team run` drive the round). Both still work but print a deprecation
-  notice.
+- **Deprecated:** `scripts/team-run.sh` and `scripts/team-review.sh`. Use
+  `h5i team run`, which drives the whole cycle including the review round. Both
+  scripts still work but print a deprecation notice.
 
 `team sync` is the keystone: it ingests each box's staged submissions/reviews on
 demand, so the host sees them while the boxes stay alive waiting (the at-exit

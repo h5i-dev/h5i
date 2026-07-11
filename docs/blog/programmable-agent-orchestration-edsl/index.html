@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Programmable Agent Orchestration: the h5i-orchestra eDSL</title>
+  <meta name="description" content="h5i-orchestra is a define-by-run Rust eDSL for orchestrating coding agents. A score is a plain async program driving a Conductor, journaled on a Git-backed event log so a killed run resumes without re-paying agent turns.">
+  <meta name="keywords" content="agent orchestration, multi-agent framework, define-by-run, rust edsl, durable execution, agent workflow, h5i orchestra, journaled orchestration, langgraph alternative">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/programmable-agent-orchestration-edsl/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Programmable Agent Orchestration: the h5i-orchestra eDSL">
+  <meta property="og:description" content="A define-by-run Rust eDSL for orchestrating coding agents, journaled on a Git-backed event log so a killed run resumes without re-paying agent turns.">
+  <meta property="og:url" content="https://h5i.dev/blog/programmable-agent-orchestration-edsl/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-07-11">
+  <meta property="article:author" content="Koukyosyumei">
+  <meta property="article:tag" content="Ensembles">
+  <meta property="article:tag" content="Orchestration">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Programmable Agent Orchestration: the h5i-orchestra eDSL">
+  <meta name="twitter:description" content="A score is a plain async Rust program driving a Conductor. Every agent turn is journaled on a Git ref, so a killed run resumes without re-paying it.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Programmable Agent Orchestration: the h5i-orchestra eDSL",
+    "description": "h5i-orchestra is a define-by-run Rust eDSL for orchestrating coding agents. A score is a plain async program driving a Conductor, journaled on a Git-backed event log so a killed run resumes without re-paying agent turns.",
+    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
+    "datePublished": "2026-07-11",
+    "dateModified": "2026-07-11",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/programmable-agent-orchestration-edsl/"},
+    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+    "keywords": "agent orchestration, define-by-run, rust edsl, durable execution, h5i orchestra"
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Programmable Agent Orchestration: the h5i-orchestra eDSL", "item": "https://h5i.dev/blog/programmable-agent-orchestration-edsl/"}]}
+  </script>
+</head>
+<body>
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Ensemble · h5i-orchestra</div>
+      <h1>Programmable Agent Orchestration: the <code>h5i-orchestra</code> eDSL</h1>
+      <p class="post-deck">
+        <strong>One topology was never going to be enough.</strong>
+        <code>h5i team</code> ships a single shape: N agents on one task, a review round, a
+        neutral verdict. <code>h5i-orchestra</code> makes the shape yours to write. A run is a
+        plain async Rust program. Every agent turn is journaled on a Git ref, so a killed run
+        resumes without re-paying a single turn.
+      </p>
+      <div class="post-meta">
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 11 min</span>
+        <span><strong>Tags</strong> Orchestration · Multi-agent · Durable execution</span>
+      </div>
+    </header>
+
+<div class="callout kt-takeaways">
+  <strong>Key takeaways</strong>
+  <ul>
+    <li>A score is define-by-run: the orchestration graph is a trace of what executed, not a graph you build up front. <code>if</code>, <code>for</code>, and <code>tokio::join!</code> are the control flow.</li>
+    <li>Every effectful step is journaled on the team event log (<code>refs/h5i/team/&lt;run&gt;</code>). Resuming replays completed steps from the journal, so agent turns are never re-run.</li>
+    <li>The journal is a Git ref, so a run is shareable and resumable across clones with <code>h5i share push</code>. The handoff is a <code>git push</code>, not a hosted runtime.</li>
+    <li>Agents stay in sandboxed <code>h5i env</code> boxes. The score is host-side code. The eDSL adds orchestration, not a new trust surface.</li>
+  </ul>
+</div>
+
+    <p>
+      An agent ensemble has one fixed answer to "what should happen next": everyone attempts the
+      task, the round is sealed, peers review, a verifier decides. That is a good default, and
+      <a href="../agent-ensembles-with-h5i-team/"><code>h5i team</code></a> ships it. But the real
+      space of useful topologies is larger. Sometimes you want a designer agent to hand a plan to
+      two implementers. Sometimes you want three independent attempts ranked in an arena. Sometimes
+      you want one integrator to merge the work of many. Each of those is a different program, and a
+      fixed protocol cannot express them.
+    </p>
+
+    <p>
+      <code>h5i-orchestra</code> is that program layer. It is an embedded DSL in Rust: you write an
+      ordinary async function, you are handed a <code>Conductor</code>, and you drive the run by
+      calling methods on it. There is no graph builder. There is no <code>compile()</code> step. The
+      orchestration is whatever your code did, recorded as it ran.
+    </p>
+
+    <h2>Define-by-run: the graph is a trace, not a prerequisite</h2>
+
+    <p>
+      This is the one design decision everything else follows from, and it is not a new idea. It is
+      the decision that settled the deep-learning framework wars a decade ago. Theano and early
+      TensorFlow asked you to describe a computation to a smarter executor, then hand it over.
+      PyTorch let you perform the computation and quietly recorded it. The recorded-execution side
+      won on the things that actually matter day to day: errors surface where you wrote the code,
+      the host language is the control flow, and you can drop a breakpoint anywhere.
+    </p>
+
+    <p>
+      Agent orchestration is more dynamic and more failure-prone than a training loop, so the lesson
+      transfers with force. In <code>h5i-orchestra</code>, the classic ensemble is a loop you can
+      read:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">a score, in ~15 lines</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt">// hire two agents, each into its own sandboxed env</span>
+<span class="t-kw">let</span> claude = c.agent(<span class="t-str">"claude"</span>).runtime(<span class="t-str">"claude"</span>).hire().<span class="t-kw">await</span>?;
+<span class="t-kw">let</span> codex  = c.agent(<span class="t-str">"codex"</span>).runtime(<span class="t-str">"codex"</span>).hire().<span class="t-kw">await</span>?;
+
+<span class="t-cmt">// fan-out is just host-language concurrency</span>
+<span class="t-kw">let</span> (a, b) = tokio::try_join!(claude.work(&task), codex.work(&task))?;
+c.freeze().<span class="t-kw">await</span>?;                       <span class="t-cmt">// seal the independent attempts</span>
+
+<span class="t-cmt">// cross review, a plain loop</span>
+<span class="t-kw">let</span> (ra, rb) = tokio::try_join!(codex.review(&a), claude.review(&b))?;
+
+<span class="t-cmt">// neutral verification in a fresh sandbox, then a pluggable verdict</span>
+<span class="t-kw">let</span> verified = c.verify([&a, &b]).command(<span class="t-str">"cargo test"</span>).<span class="t-kw">await</span>?;
+<span class="t-kw">let</span> verdict  = c.judge(verified, policy::tests_then_smallest_diff()).<span class="t-kw">await</span>?;</pre></div>
+    </div>
+
+    <p>
+      There is no framework vocabulary here. No executors, no edges, no supersteps. To add a
+      condition, you write an <code>if</code>. To retry, you write a loop. To run two agents at once,
+      you use the concurrency your language already has. The DAG that a reviewer will later want to
+      see is derived from the trace after the fact, with <code>h5i team trace --dot</code>. It is a
+      view over what happened, never a thing you had to construct before anything could happen.
+    </p>
+
+    <div class="callout">
+      <strong>Not a graph engine. Not an actor system. A thin eDSL over a Git event log.</strong>
+      The frameworks that asked users to describe computation to an executor lost to the ones that
+      let users perform it and observed the result. h5i-orchestra builds the observed-execution
+      layer and bolts the audit graph on underneath, never in front.
+    </div>
+
+    <h2>Durability without a server: journaling on a Git ref</h2>
+
+    <p>
+      A coding-agent turn costs minutes and real money. So the property that matters most in an
+      orchestrator is not speed, it is this: if the process dies at step forty, restarting must not
+      re-run the first thirty-nine. That is durable execution, and the industry has three designs
+      for it. Temporal replays your workflow code against an event history. Restate journals each
+      named step's result and skips it on recovery. Graph frameworks checkpoint at a barrier and
+      re-execute forward, which can re-pay LLM calls.
+    </p>
+
+    <p>
+      <code>h5i-orchestra</code> takes the journaling design, because for agent turns it is the only
+      one where a resume is free. Every effectful operation, an <code>agent().hire()</code>, a
+      <code>work</code>, a <code>verify</code>, an arbitrary <code>step</code>, executes once and
+      appends its serialized result to the run's event log at <code>refs/h5i/team/&lt;run&gt;</code>.
+      Each step carries a stable key, <code>label#seq</code>. Re-running the score consults the
+      journal by key: a hit returns the recorded result instantly, a miss executes live and records.
+      Kill the run at any point, run the same binary again, and it fast-forwards through everything
+      already done and picks up exactly where it stopped.
+    </p>
+
+    <p>
+      Because the journal is a Git ref, durability costs nothing to operate and it travels. There is
+      no database to run and no checkpoint store to configure. <code>h5i share push</code> moves a
+      live run to another clone. One machine can drive a score up to a human approval gate, a
+      reviewer on a different machine can answer, and either side can resume. The cross-machine
+      handoff is a <code>git push</code>. None of the general-purpose orchestration frameworks can do
+      that without a hosted runtime, because their state does not live in your repo.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">resume is free</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i team run fix-auth --task-file task.md --verify-cmd "cargo test"</span>
+<span class="t-out">➜ driving team 'fix-auth': 2 agents, 1 review round</span>
+<span class="t-cmt"># ...process killed at the verify step...</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team run fix-auth --task-file task.md --verify-cmd "cargo test"</span>
+<span class="t-out">➜ resuming: 6 journaled steps replay without re-execution</span>
+<span class="t-cmt"># the two agent attempts and the reviews are NOT re-run: they replay from the ref</span></pre></div>
+    </div>
+
+    <h2>The primitives</h2>
+
+    <p>
+      The surface is deliberately small. A score composes a handful of methods on the
+      <code>Conductor</code> and on the <code>Agent</code> handles it hands you. Everything else is a
+      pattern built from these.
+    </p>
+
+    <div class="callout">
+      <ul>
+        <li><code>c.agent(name)...hire()</code> creates or binds a sandboxed <code>h5i env</code> and enrolls the agent on the roster.</li>
+        <li><code>agent.work(task)</code> dispatches a work turn and resolves to the frozen candidate. <code>with_materials(&amp;parts)</code> grants it sight of teammates' diffs for integration work.</li>
+        <li><code>agent.ask::&lt;T&gt;(prompt)</code> returns typed data instead of code: the reply must deserialize as <code>T</code>, so judges and routers are ordinary functions.</li>
+        <li><code>agent.review</code> / <code>agent.revise</code> drive the peer-review loop.</li>
+        <li><code>c.verify</code>, <code>c.judge</code>, <code>c.apply</code> run the neutral verifier, decide a verdict through a pluggable <code>VerdictPolicy</code>, and land the winner. Apply stays mediated and human-gated.</li>
+        <li><code>c.gate(question)</code> is durable human-in-the-loop: it asks over the i5h message bus, and a score can exit and resume after the answer arrives, even the next day.</li>
+        <li><code>c.step(label, f)</code> is the universal escape hatch: run any side effect exactly once, journaled.</li>
+      </ul>
+    </div>
+
+    <p>
+      The one discipline the eDSL asks of you is stable step identity: parallel steps must carry
+      distinct labels, so a resume pairs the right recorded result with the right call. Agent
+      operations get this for free, since their labels embed the agent id. For your own parallel
+      loops, <code>Conductor::scope</code> gives each branch its own label namespace, and the journal
+      fails closed if two concurrent steps ever collide on a label. That is the analog of the one
+      constraint PyTorch borrowed from JAX: demand discipline only where it buys something users
+      cannot get otherwise. Here it buys a free resume.
+    </p>
+
+    <h2>Where this sits</h2>
+
+    <p>
+      It would be a mistake to sell <code>h5i-orchestra</code> as a better LangGraph or a better
+      Microsoft Agent Framework. Those orchestrate arbitrary in-process LLM calls, they have hosted
+      observability, and they have ecosystems this does not. If you are building a general
+      multi-agent application, use one of them.
+    </p>
+
+    <p>
+      What <code>h5i-orchestra</code> owns is the layer none of them touch: the agents are
+      semi-trusted coding agents that need kernel-enforced isolation, their outputs need provenance,
+      their cross-influence needs to be auditable, and their merged result needs a mediated,
+      evidence-gated path back to the main branch. That is not a feature you bolt onto a general
+      framework. It is the substrate underneath, and h5i already had it. The orchestrator is the
+      thin part. The isolated envs, the capture evidence, the neutral verifier, and the Git-native
+      event log are the parts that are hard to build and easy to depend on.
+    </p>
+
+    <p>
+      The result is an orchestrator with a different center of gravity. Not "describe a graph to a
+      runtime," but "write a program, and the runtime records it into a Git ref you can share,
+      resume, and audit." The score is yours. The proof travels with it.
+    </p>
+
+    <h2>FAQ</h2>
+
+    <div class="faq">
+      <p><strong>Do I have to write Rust to use this?</strong> No. The CLI drives the common cases: <code>h5i team run</code> executes the full classic cycle over the <code>ensemble</code> pattern, with <code>--rounds</code>, <code>--verify-cmd</code>, <code>--gate</code>, and <code>--manifest team.toml</code> to parameterize it. You reach for a hand-written score when you want a topology the built-in patterns do not cover.</p>
+      <p><strong>How does the score talk to the agents?</strong> Through the same wire an <code>h5i team</code> uses: an i5h message plus a per-env inbox, delivered to a warm resident session that the Stop hook keeps alive between turns. The score is a coordinator, not an LLM client. It holds no model connection and no agent state.</p>
+      <p><strong>What runs the agents, then?</strong> A <code>RuntimeLauncher</code>. The default, <code>Attach</code>, expects a resident interactive session (started by <code>team-launch.sh</code>) to pick the turn out of its inbox. <code>LaunchResident</code> spawns that same warm session itself in tmux. A headless per-turn <code>claude -p</code> is deliberately not the default, because cold boots and stateless turns defeat the resident-session model.</p>
+      <p><strong>Is the run really reproducible?</strong> The journal is. Re-running the same score against the same run replays every recorded step. A changed binary is detected by a recorded score digest and warns loudly, and a <code>patched("change-id")</code> marker lets you upgrade a live run deliberately.</p>
+      <p><strong>Where is the code?</strong> The eDSL is the <code>h5i-orchestra</code> crate; the design and rationale live in <code>roadmap/orchestra-design.md</code> in the repo.</p>
+    </div>
+
+    <div class="post-cta">
+      <h3>Write your run as a program</h3>
+      <p>Drive a full agent cycle with <code>h5i team run</code>, or write a score for a topology of your own. Every turn journaled, every run resumable.</p>
+      <a href="/manual/" class="btn btn-primary">Read the manual</a>
+      <a href="https://github.com/h5i-dev/h5i" class="btn btn-ghost">Star on GitHub</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/workflows/">Workflows</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/h5i-dev/h5i">GitHub</a>
+      <a href="/manual/">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<script src="/_static/highlight.js" defer></script>
+</body>
+</html>
