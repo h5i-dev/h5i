@@ -579,6 +579,7 @@ dependencies = [
  "console",
  "fastrand",
  "git2",
+ "h5i-error",
  "landlock",
  "libc",
  "mime_guess",
@@ -597,6 +598,16 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "h5i-error"
+version = "0.2.8"
+dependencies = [
+ "git2",
+ "serde_json",
+ "thiserror",
+ "toml",
 ]
 
 [[package]]

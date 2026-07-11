@@ -15,7 +15,10 @@ pub mod ctx;
 /// Deprecated alias — use `ctx` instead.
 pub use ctx as gcc;
 pub mod env;
-pub mod error;
+// The error type now lives in its own leaf crate (`h5i-error`) so extracted
+// crates can depend on it without depending on `h5i-core`. Re-exported as
+// `crate::error` so every existing `crate::error::*` path resolves unchanged.
+pub use h5i_error as error;
 pub mod filter_rules;
 pub mod hooks;
 pub mod injection;
