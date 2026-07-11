@@ -17,6 +17,7 @@ pub mod team;
 pub mod commit;
 pub mod log;
 pub mod blame;
+#[cfg(feature = "web")]
 pub mod serve;
 pub mod resolve;
 pub mod doctor;
