@@ -3419,37 +3419,39 @@ H5I=/path/to/h5i h5i-team-launch fix-auth
 
 ### Automated peer-review cycle
 
-Three scripts compose into a hands-off run. Install the team Stop hook once so
-boxes stay alive between turns instead of exiting after each submit:
+The full cycle is driven natively by **`h5i team run`** (built on the orchestra
+eDSL, `roadmap/orchestra-design.md`). Install the team Stop hook once so boxes
+stay alive between turns instead of exiting after each submit:
 
 ```bash
 h5i hook setup --write --team
+h5i team auto-create fix-auth                  # or team create + add-env
+scripts/team-launch.sh fix-auth                # bring up the resident sessions
+h5i team run fix-auth --task-file task.md --verify-cmd "cargo test" --gate
+# → dispatch → independent attempts → freeze → mutual review → revise →
+#   neutral verify → verdict → durable approval gate → apply, hands-off
 ```
+
+`h5i team run` dispatches the task per agent, waits on each submission, seals
+the round, runs approval-aware mutual review/revise cycles (`--rounds N`),
+verifies every candidate in the neutral sandbox (`--verify-cmd`, `--isolation`),
+records the verdict, and applies either automatically (`--apply`) or behind a
+**durable gate** (`--gate`: the question lands in your `h5i msg` inbox; reply
+`APPROVE`/`DECLINE`). Every phase is journaled on the run's event log, so if
+the driver is interrupted — or you exit at the gate — **re-running the same
+command resumes the cycle** instead of starting over, and `h5i team trace`
+renders what happened. `--launch-resident` spawns the agent sessions itself in
+tmux; the default attaches to sessions already brought up by `team-launch.sh`.
 
 - **`scripts/team-launch.sh <team> [--task F]`** — bring up one box per agent
-  (above). Each agent implements and runs `h5i team agent submit`.
-- **`scripts/team-review.sh <team>`** — open the review round: `freeze`, grant
-  **mutual** review access (each grant fans a request into the reviewer's inbox),
-  and send every agent a review-and-revise prompt. A running box picks it up via
-  the team Stop hook; `--relaunch` re-opens any box that already exited. Each
-  boxed reviewer reads its target read-only with `h5i team artifact show <id>
-  --diff` (the inbox carries the artifact ids), reviews statically, then
-  re-submits — which marks it done for the round. A review written with `h5i team
-  review submit` is also **delivered to the reviewed agent's inbox** (post-freeze)
-  and recorded as a discussion, so the target sees the critique of its own work
-  and its next revision is stamped non-independent.
-- **`scripts/team-run.sh <team> [--task F] [--verify-cmd "<cmd>"] [--apply]`** —
-  the full driver. It launches, then **polls with `h5i team sync`** to advance
-  each phase: wait until all submitted → freeze → grant review → wait until all
-  revised → `verify` each candidate → `finalize` (the neutral verdict) →
-  optionally `apply`. `finalize`/`apply` fan a `TEAM_DONE` signal that releases
-  the boxes.
-
-```bash
-h5i hook setup --write --team
-scripts/team-run.sh fix-auth --task task.md --verify-cmd "cargo test" --apply
-# → individual implementation → peer review → improvement → neutral verdict, hands-off
-```
+  (above); still the way to get GUI terminal windows per agent.
+- Reviews delivered with `h5i team review submit` land in the reviewed agent's
+  inbox (post-freeze) and are recorded as discussion, so the target sees the
+  critique and its next revision is stamped non-independent.
+- **Deprecated:** `scripts/team-run.sh` (use `h5i team run`) and
+  `scripts/team-review.sh` (use `h5i team auto-peer-review`, or just let
+  `h5i team run` drive the round). Both still work but print a deprecation
+  notice.
 
 `team sync` is the keystone: it ingests each box's staged submissions/reviews on
 demand, so the host sees them while the boxes stay alive waiting (the at-exit

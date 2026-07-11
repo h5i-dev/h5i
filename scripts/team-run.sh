@@ -37,7 +37,13 @@
 #   -h, --help          This help.
 #
 # Requires: h5i, jq (+ team-launch.sh / team-review.sh siblings).
+#
+# DEPRECATED: the driver is now native — `h5i team run <team> --task-file F
+# [--verify-cmd "<cmd>"] [--apply|--gate]`. Unlike this script it is
+# journal-backed (re-running resumes the cycle) and needs no jq.
 set -euo pipefail
+
+echo "team-run.sh is deprecated — prefer: h5i team run (journal-backed, resumable)" >&2
 
 H5I="${H5I:-h5i}"
 TASK=""

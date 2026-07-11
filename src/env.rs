@@ -122,6 +122,39 @@ enum LockMode {
     Shared,
 }
 
+/// Non-blocking probe: is a writer session (interactive shell, `run`, or a
+/// mutating op) currently holding this env's `run.lock`? pub(crate): the
+/// orchestra preflight uses it as its resident-session liveness heuristic.
+/// A brief host op also holds the lock, so callers should sample more than
+/// once before concluding either way — this is a heuristic, not a guarantee.
+#[cfg(unix)]
+pub(crate) fn writer_session_live(env_dir: &Path) -> bool {
+    use std::os::unix::io::AsRawFd;
+    let path = env_dir.join(RUN_LOCK_FILE);
+    let file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+    {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if rc == 0 {
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+        false
+    } else {
+        true
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn writer_session_live(_env_dir: &Path) -> bool {
+    false
+}
+
 /// Which role is taking the lock — selects the "busy" message on contention.
 #[cfg(unix)]
 #[derive(Clone, Copy)]
@@ -2517,6 +2550,31 @@ pub fn write_team_review_spool(
     Ok(base)
 }
 
+/// One outbound data reply staged in-box by `h5i team agent reply` — the
+/// box-side half of an orchestra `ask` turn: free-text/JSON addressed to the
+/// host, ingested as an `agent_reply` team event (like the other spools, the
+/// box writes *what*, never *who* — authority is the env binding).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamReplySpool {
+    pub body: String,
+}
+
+pub fn write_team_reply_spool(
+    spool: &Path,
+    request: &TeamReplySpool,
+) -> Result<String, H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = format!("team-reply-{}-{nanos}", std::process::id());
+    let path = spool.join(format!("{base}.json"));
+    let json = serde_json::to_vec(request)?;
+    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(base)
+}
+
 const PROTECTED_HOOK_CONFIGS: &[&str] = &[".claude/settings.json", ".codex/config.toml"];
 
 enum ProtectedHookScope {
@@ -4453,6 +4511,56 @@ pub fn ingest_team_outbound(
                     count += 1;
                 }
                 Err(e) => eprintln!("warning: applying in-box team review failed: {e}"),
+            }
+            let _ = std::fs::remove_file(&path);
+        }
+        // Outbound data replies staged by the boxed agent (`team agent reply`) —
+        // orchestra `ask` turns. Ingested as `agent_reply` team events under the
+        // env binding's identity; always removed (a reply has no retry story).
+        let mut reply_bases: Vec<String> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&spool) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if let Some(base) = name.strip_suffix(".json") {
+                    if base.starts_with("team-reply-")
+                        && base.len() <= 128
+                        && base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    {
+                        reply_bases.push(base.to_string());
+                    }
+                }
+            }
+        }
+        reply_bases.sort();
+        for base in reply_bases.iter().take(SPOOL_MAX_ENTRIES) {
+            let path = spool.join(format!("{base}.json"));
+            let bytes = match read_spool_capped(&path, SPOOL_MAX_CMD_BYTES) {
+                Some(b) => b,
+                None => continue,
+            };
+            let request: TeamReplySpool = match serde_json::from_slice(&bytes) {
+                Ok(r) => r,
+                Err(_) => {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            };
+            match crate::team::record_agent_reply(repo, &team_id, &agent_id, request.body) {
+                Ok(()) => {
+                    append_event(
+                        repo,
+                        &EnvEvent {
+                            ts: now_ts(),
+                            env_id: m.id.clone(),
+                            agent: m.agent.clone(),
+                            event: "team-reply".into(),
+                            detail: Some(format!("in-box team reply ingested from {agent_id}")),
+                            capture: None,
+                        },
+                    )?;
+                    count += 1;
+                }
+                Err(e) => eprintln!("warning: ingesting in-box team reply failed: {e}"),
             }
             let _ = std::fs::remove_file(&path);
         }

@@ -25,6 +25,7 @@ pub mod memory;
 pub mod metadata;
 pub mod msg;
 pub mod objects;
+pub mod orchestra;
 pub mod policy;
 pub mod pr;
 pub mod prompt_score;

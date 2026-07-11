@@ -2141,6 +2141,63 @@ enum TeamCommands {
     },
     /// Print the standing bootstrap prompt for a boxed team agent
     Bootstrap,
+    /// Drive a full hands-off team cycle over the orchestra eDSL: dispatch →
+    /// independent attempts → freeze → mutual review → revise → neutral verify
+    /// → verdict (→ gated apply). Replaces scripts/team-run.sh; unlike the
+    /// script it is journal-backed — re-running it resumes the cycle instead
+    /// of starting over.
+    Run {
+        /// Team id (default: the current team)
+        team: Option<String>,
+        /// Task text to dispatch
+        #[arg(long)]
+        task: Option<String>,
+        /// Read the task from a file
+        #[arg(long = "task-file", conflicts_with = "task")]
+        task_file: Option<std::path::PathBuf>,
+        /// TOML manifest parameterizing the run (task/rounds/verify/gate +
+        /// optional agent enrollment). Flags below override manifest values.
+        #[arg(long)]
+        manifest: Option<std::path::PathBuf>,
+        /// Maximum review→revise cycles (early exit on full approval)
+        #[arg(long, default_value_t = 1)]
+        rounds: u32,
+        /// Neutral verifier command, e.g. --verify-cmd "cargo test -q"
+        #[arg(long = "verify-cmd")]
+        verify_cmd: Option<String>,
+        /// Isolation tier for the verifier (workspace|process|container|…)
+        #[arg(long)]
+        isolation: Option<String>,
+        /// Apply the winner after an auto-applicable verdict
+        #[arg(long)]
+        apply: bool,
+        /// Ask a durable gate question before applying (implies apply on
+        /// approval; the reply may arrive after this process exits — re-run
+        /// to resume at the gate)
+        #[arg(long, conflicts_with = "apply")]
+        gate: bool,
+        /// Spawn resident agent sessions in tmux (default: attach to
+        /// already-running sessions, e.g. from team-launch.sh)
+        #[arg(long = "launch-resident")]
+        launch_resident: bool,
+        /// Poll interval while waiting on turns, seconds
+        #[arg(long, default_value_t = 15)]
+        poll: u64,
+        /// Per-turn wait budget, seconds
+        #[arg(long, default_value_t = 1800)]
+        timeout: u64,
+        /// Emit the outcome as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Render the recorded orchestration trace (journaled steps + phases)
+    Trace {
+        /// Team id (default: the current team)
+        team: Option<String>,
+        /// Emit Graphviz dot instead of text
+        #[arg(long)]
+        dot: bool,
+    },
     /// Show or set the current team (omit NAME to show; --clear to unset)
     Use {
         /// Team id to make current; omit to print the current team
@@ -2479,6 +2536,21 @@ enum TeamAgentCommands {
         /// Summary text file
         #[arg(long = "summary-file")]
         summary_file: Option<std::path::PathBuf>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reply with data (text/JSON) to the host — the return channel of an
+    /// orchestra `ask` turn; boxed envs stage for host ingest
+    Reply {
+        /// Reply body (or use --file)
+        text: Option<String>,
+        /// Read the reply body from a file
+        #[arg(long, conflicts_with = "text")]
+        file: Option<std::path::PathBuf>,
+        /// Team id (host-side only; default: the current team)
+        #[arg(long)]
+        team: Option<String>,
         /// Emit JSON
         #[arg(long)]
         json: bool,
@@ -10126,6 +10198,254 @@ fn main() -> anyhow::Result<()> {
                 TeamCommands::Bootstrap => {
                     println!("{}", h5i_core::team::AGENT_BOOTSTRAP);
                 }
+                TeamCommands::Run {
+                    team,
+                    task,
+                    task_file,
+                    manifest,
+                    rounds,
+                    verify_cmd,
+                    isolation,
+                    apply,
+                    gate,
+                    launch_resident,
+                    poll,
+                    timeout,
+                    json,
+                } => {
+                    use h5i_core::orchestra::{self, manifest::TeamManifest, patterns};
+                    let run_id = h5i_core::team::resolve_run(&h5i_root, team)?;
+
+                    // A manifest supplies parameters (never control flow);
+                    // explicit flags override it. `clap`'s defaults are used
+                    // as the override signal for the numeric/bool ones.
+                    let manifest_data = match &manifest {
+                        Some(path) => {
+                            let src = std::fs::read_to_string(path).map_err(|e| {
+                                anyhow::anyhow!(
+                                    "failed to read manifest {}: {e}",
+                                    path.display()
+                                )
+                            })?;
+                            Some(TeamManifest::parse(&src)?)
+                        }
+                        None => None,
+                    };
+                    let base_dir = manifest
+                        .as_ref()
+                        .and_then(|p| p.parent())
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+                    let flag_task = match (task, task_file) {
+                        (Some(t), _) => Some(t),
+                        (None, Some(f)) => Some(std::fs::read_to_string(&f).map_err(|e| {
+                            anyhow::anyhow!("failed to read task file {}: {e}", f.display())
+                        })?),
+                        (None, None) => None,
+                    };
+                    let task_text = match &manifest_data {
+                        Some(m) => m.resolve_task(&base_dir, flag_task)?,
+                        None => flag_task
+                            .ok_or_else(|| anyhow::anyhow!("pass the task via --task, --task-file, or --manifest"))?,
+                    };
+                    // Merge parameters: flag if non-default, else manifest, else default.
+                    let rounds = if rounds != 1 {
+                        rounds
+                    } else {
+                        manifest_data.as_ref().map(|m| m.rounds).unwrap_or(1)
+                    };
+                    let verify_cmd = verify_cmd
+                        .or_else(|| manifest_data.as_ref().and_then(|m| m.verify_cmd.clone()));
+                    let isolation = isolation
+                        .or_else(|| manifest_data.as_ref().and_then(|m| m.isolation.clone()));
+                    let apply = apply || manifest_data.as_ref().map(|m| m.apply).unwrap_or(false);
+                    let gate = gate || manifest_data.as_ref().map(|m| m.gate).unwrap_or(false);
+
+                    // Optional roster enrollment from the manifest, when the
+                    // team has none yet (idempotent: skip already-present ids).
+                    if let Some(m) = &manifest_data {
+                        if !m.agents.is_empty() {
+                            let existing = h5i_core::team::status(git, &run_id)?.run;
+                            let workdir = git.workdir().ok_or_else(|| {
+                                anyhow::anyhow!("team run requires a non-bare repository")
+                            })?;
+                            let env_agent = msg::resolve_identity(&h5i_root, None)
+                                .unwrap_or_else(|_| "human".into());
+                            for a in &m.agents {
+                                if existing.agents.iter().any(|e| e.agent_id == a.name) {
+                                    continue;
+                                }
+                                let env_id = match &a.env {
+                                    Some(id) => h5i_core::env::find(&h5i_root, id)?.id,
+                                    None => {
+                                        let owner = a
+                                            .runtime
+                                            .clone()
+                                            .unwrap_or_else(|| env_agent.clone());
+                                        let slug = format!("{run_id}-{}", a.name);
+                                        h5i_core::env::create(
+                                            git,
+                                            &h5i_root,
+                                            workdir,
+                                            &owner,
+                                            &slug,
+                                            h5i_core::env::CreateOpts {
+                                                profile: a.profile.clone(),
+                                                ..Default::default()
+                                            },
+                                        )?
+                                        .id
+                                    }
+                                };
+                                h5i_core::team::add_env(
+                                    git,
+                                    &h5i_root,
+                                    &run_id,
+                                    &env_id,
+                                    &a.name,
+                                    a.runtime.clone(),
+                                    a.model.clone(),
+                                    &actor,
+                                )?;
+                                eprintln!(
+                                    "{} enrolled {} → {}",
+                                    STEP,
+                                    style(&a.name).green().bold(),
+                                    env_id
+                                );
+                            }
+                        }
+                    }
+                    let launcher: std::sync::Arc<dyn orchestra::RuntimeLauncher> =
+                        if launch_resident {
+                            std::sync::Arc::new(orchestra::LaunchResident)
+                        } else {
+                            eprintln!(
+                                "{} attach mode: agent sessions must already be running \
+                                 (team-launch.sh, or pass --launch-resident for tmux)",
+                                STEP
+                            );
+                            std::sync::Arc::new(orchestra::Attach)
+                        };
+                    let rt = tokio::runtime::Runtime::new()?;
+                    let (outcome, applied) = rt.block_on(async {
+                        let c = h5i_core::orchestra::Conductor::builder(".", &run_id)
+                            .launcher(launcher)
+                            .poll_interval(std::time::Duration::from_secs(poll.max(1)))
+                            .turn_timeout(std::time::Duration::from_secs(timeout.max(1)))
+                            .launch()?;
+                        let agents = c.roster().await?;
+                        if agents.len() < 2 {
+                            return Err(h5i_core::error::H5iError::Metadata(format!(
+                                "team '{run_id}' has {} enrolled agent(s) — team run needs \
+                                 at least two (enroll with `h5i team add-env` or \
+                                 `h5i team auto-create`)",
+                                agents.len()
+                            )));
+                        }
+                        eprintln!(
+                            "{} driving team '{run_id}': {} agents, {rounds} review round(s)",
+                            STEP,
+                            agents.len()
+                        );
+                        // Fail the predictable ways now, not at minute 30.
+                        let mut preflight = c.preflight();
+                        if !launch_resident {
+                            preflight = preflight.require_live(&agents);
+                        }
+                        if apply || gate {
+                            preflight = preflight.require_clean_worktree();
+                        }
+                        preflight.run().await?;
+                        let mut ensemble =
+                            patterns::ensemble(&c, &task_text).agents(agents).rounds(rounds);
+                        if let Some(cmd) = &verify_cmd {
+                            ensemble = ensemble.verify(cmd.split_whitespace());
+                        }
+                        if let Some(tier) = &isolation {
+                            ensemble = ensemble.isolation(tier.clone());
+                        }
+                        let outcome = ensemble.run().await?;
+
+                        // Apply, directly or behind a durable gate.
+                        let mut applied = None;
+                        let winner = outcome.verdict.as_ref().and_then(|v| {
+                            v.selected_submission
+                                .as_ref()
+                                .and_then(|id| outcome.artifacts.iter().find(|a| &a.id == id))
+                        });
+                        if let Some(winner) = winner {
+                            let approved = if gate {
+                                eprintln!(
+                                    "{} gate: awaiting approval to apply {} (reply with \
+                                     `h5i msg reply <n> APPROVE`; re-run this command to \
+                                     resume waiting)",
+                                    STEP, winner.id
+                                );
+                                c.gate(format!(
+                                    "apply team '{run_id}' winner {} ({} by {})?",
+                                    winner.id,
+                                    &winner.commit_oid[..12.min(winner.commit_oid.len())],
+                                    winner.owner_agent
+                                ))
+                                .approve()
+                                .await?
+                            } else {
+                                apply
+                            };
+                            if approved {
+                                applied = Some(c.apply(winner).await?);
+                            }
+                        }
+                        Ok((outcome, applied))
+                    })?;
+
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "artifacts": outcome.artifacts,
+                                "reviews": outcome.reviews,
+                                "verdict": outcome.verdict,
+                                "rounds_run": outcome.rounds_run,
+                                "applied": applied,
+                            }))?
+                        );
+                    } else {
+                        eprintln!(
+                            "{} cycle complete: {} artifacts, {} reviews, {} round(s)",
+                            SUCCESS,
+                            outcome.artifacts.len(),
+                            outcome.reviews.len(),
+                            outcome.rounds_run
+                        );
+                        match (&outcome.verdict, &applied) {
+                            (Some(v), Some(a)) => println!(
+                                "verdict: {} — applied as {}",
+                                v.selected_submission.as_deref().unwrap_or("(none)"),
+                                &a.target_commit_oid[..12.min(a.target_commit_oid.len())]
+                            ),
+                            (Some(v), None) => println!(
+                                "verdict: {} — apply with `h5i team apply {run_id}`",
+                                v.selected_submission.as_deref().unwrap_or("(none)")
+                            ),
+                            (None, _) => println!(
+                                "no verdict recorded (pass --verify-cmd to judge) — inspect \
+                                 with `h5i team compare {run_id}`"
+                            ),
+                        }
+                    }
+                }
+                TeamCommands::Trace { team, dot } => {
+                    let run = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let events = h5i_core::team::read_events(git, &run)?;
+                    if dot {
+                        print!("{}", h5i_core::orchestra::trace::render_trace_dot(&run, &events));
+                    } else {
+                        print!("{}", h5i_core::orchestra::trace::render_trace(&run, &events));
+                    }
+                }
                 TeamCommands::Use { name, clear } => {
                     if clear {
                         h5i_core::team::clear_current(&h5i_root)?;
@@ -11048,6 +11368,28 @@ fn main() -> anyhow::Result<()> {
                                 .map(Ok)
                                 .unwrap_or_else(|| h5i_core::team::resolve_run(&h5i_root, None))?;
                             let agent = msg::resolve_identity(&h5i_root, None)?;
+                            // Auto-commit the worktree before submitting, mirroring
+                            // the in-box (process+/container) path — otherwise a
+                            // workspace-tier agent that made changes but didn't
+                            // `git commit` would submit a no-op (branch tip == base)
+                            // and lose its work. Only when boxed (H5I_TEAM set) and
+                            // no explicit commit was pinned, so a human running
+                            // `team agent submit` from the main repo is untouched.
+                            let boxed = std::env::var_os(h5i_core::env::H5I_TEAM_VAR).is_some();
+                            if boxed && commit.is_none() {
+                                match h5i_core::env::commit_box_worktree() {
+                                    Ok(Some(oid)) => eprintln!(
+                                        "{} snapshotted worktree at {}",
+                                        style("▢").cyan().dim(),
+                                        &oid.to_string()[..12]
+                                    ),
+                                    Ok(None) => {}
+                                    Err(e) => eprintln!(
+                                        "warning: worktree snapshot failed (submit will use \
+                                         the branch tip — commit your work if this persists): {e}"
+                                    ),
+                                }
+                            }
                             let artifact = h5i_core::team::submit(
                                 git,
                                 &h5i_root,
@@ -11067,6 +11409,68 @@ fn main() -> anyhow::Result<()> {
                                     artifact.owner_agent,
                                     &artifact.commit_oid[..12.min(artifact.commit_oid.len())]
                                 );
+                            }
+                        }
+                    }
+                    TeamAgentCommands::Reply { text, file, team, json } => {
+                        let body = match (text, file) {
+                            (Some(t), _) => t,
+                            (None, Some(path)) => {
+                                std::fs::read_to_string(&path).map_err(|e| {
+                                    anyhow::anyhow!(
+                                        "failed to read reply file {}: {e}",
+                                        path.display()
+                                    )
+                                })?
+                            }
+                            (None, None) => {
+                                anyhow::bail!("team agent reply needs a body (text or --file)")
+                            }
+                        };
+                        let in_env_spool =
+                            std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR)
+                                .map(PathBuf::from);
+                        let in_box = in_env_spool.is_some()
+                            && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
+                            && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
+                        if let (true, Some(spool)) = (in_box, in_env_spool) {
+                            let request = h5i_core::env::TeamReplySpool { body };
+                            let staged =
+                                h5i_core::env::write_team_reply_spool(&spool, &request)?;
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "staged": staged,
+                                        "host_ingest": "env-shell-exit"
+                                    }))?
+                                );
+                            } else {
+                                println!(
+                                    "{} team reply staged for host ingest ({})",
+                                    style("▢").cyan().dim(),
+                                    staged
+                                );
+                            }
+                        } else {
+                            let team = std::env::var(h5i_core::env::H5I_TEAM_VAR)
+                                .ok()
+                                .filter(|s| !s.trim().is_empty())
+                                .map(Ok)
+                                .unwrap_or_else(|| {
+                                    h5i_core::team::resolve_run(&h5i_root, team)
+                                })?;
+                            let agent = msg::resolve_identity(&h5i_root, None)?;
+                            h5i_core::team::record_agent_reply(git, &team, &agent, body)?;
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "recorded": true, "team": team, "agent": agent
+                                    }))?
+                                );
+                            } else {
+                                println!("{} reply recorded for {agent} on {team}", SUCCESS);
                             }
                         }
                     }
