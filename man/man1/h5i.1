@@ -43,6 +43,9 @@ Isolated agent environments \(em worktree + sandbox + provenance (docs/environme
 h5i\-team(1)
 Agent teams \(em phased evidence publication over existing h5i envs
 .TP
+h5i\-orchestra(1)
+Programmable orchestration bridge for SDK\-driven scores (h5i.orchestra)
+.TP
 h5i\-resolve(1)
 Resolve branch conflicts using CRDT\-based semantic merging
 .TP
@@ -1371,6 +1374,30 @@ Print help
 .TP
 [\fITEXT\fR]
 Reply body (or use \-\-file)
+.SH "H5I ORCHESTRA"
+Programmable orchestration bridge for SDK-driven scores (h5i.orchestra)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBorchestra\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I ORCHESTRA SERVE"
+Serve the orchestra JSON-RPC bridge on stdin/stdout (SDK-facing). stdout is protocol-only; logs go to stderr (H5I_LOG)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBserve\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
 .SH "H5I RESOLVE"
 Resolve branch conflicts using CRDT-based semantic merging
 .ie \n(.g .ds Aq \(aq
