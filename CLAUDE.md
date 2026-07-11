@@ -22,6 +22,10 @@ CI runs clippy (`-D warnings`), `cargo build --verbose` then `cargo test --verbo
 
 **h5i** ("high-five") gives every AI coding agent an auditable workspace: a sandboxed Git worktree to work in, plus a complete record of the prompts, commands, test metrics, policies, and cross-agent messages behind every change. Internally the code is organized around four dimensions that record this: temporal (Git history), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging via `refs/h5i/msg`) — these map to the `error.rs` categories. It stores its data in `.git/.h5i/` with subdirectories `metadata/` and `msg/` (per-agent identity, read cursors, and reply views).
 
+### Workspace layout
+
+The repo is a Cargo workspace. Most of the code is still the `h5i-core` lib at the repo root (`src/`), but four things are extracted into `crates/` (dependency order): `h5i-error` (shared error type, leaf) ← `h5i-sandbox` (the whole confinement layer: `sandbox`/`sandbox_policy`/`container`/`supervisor`/`seccomp_notify`/`cgroup`/`secrets`/`secrets_broker`/`auth_proxy`; isolates the Linux-only landlock/seccompiler + reqwest deps) ← `h5i-core` (the domain: repository/env/team/msg/objects/ctx/…) ← `h5i-orchestra` (the eDSL) — and `h5i-cli` (the `h5i` binary, `src/main.rs`) on top depending on core + orchestra. `h5i-core` re-exports the sandbox modules (`pub use h5i_sandbox::{sandbox, …}`) so `crate::sandbox::*` etc. still resolve inside core. Integration tests that spawn the binary (`CARGO_BIN_EXE_h5i`) live in `crates/h5i-cli/tests/`; the pure-logic ones stay in `tests/`. Module paths below say `X.rs` — for the extracted modules that means `crates/h5i-sandbox/src/X.rs` or `crates/h5i-orchestra/src/X.rs`.
+
 ### Module Overview
 
 - **`repository.rs`** (67KB) — Core hub. `H5iRepository` wraps a `git2::Repository` and orchestrates the dimensions. Key operations: `init`, `commit`, `log`, `blame`, `resolve`. Commit flow optionally captures AI metadata, test metrics, and runs integrity audits.
