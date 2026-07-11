@@ -1,0 +1,83 @@
+[filters.phpunit]
+description = "Compact PHPUnit output — drop progress and blank lines while preserving failures, errors, and summaries"
+match_command = "^(?:phpunit(?:\\.phar)?|php(?:\\s+(?:-n|-[dc]\\s+\\S+))*\\s+(?:\\S*/)?phpunit(?:\\.phar)?)(?:\\s|$)"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^\\s*[.FEWRDNIS]+\\s+\\d+\\s*/\\s*\\d+\\s*\\(\\s*\\d+%\\)\\s*$",
+]
+on_empty = "phpunit: no output"
+
+[[tests.phpunit]]
+name = "all-pass run drops progress and blank lines"
+input = """
+PHPUnit 12.2.0 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.2.2
+
+..                                                                  2 / 2 (100%)
+
+Time: 00:00.077, Memory: 10.00 MB
+
+OK (2 tests, 2 assertions)
+"""
+expected = """
+PHPUnit 12.2.0 by Sebastian Bergmann and contributors.
+Runtime:       PHP 8.2.2
+Time: 00:00.077, Memory: 10.00 MB
+OK (2 tests, 2 assertions)
+"""
+
+[[tests.phpunit]]
+name = "failure run keeps diagnostics, stack trace, and summary"
+input = """
+PHPUnit 10.5.0 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.2.27 with Xdebug 3.3.1
+Configuration: /var/www/html/phpunit.xml
+
+........................................          40 / 110 ( 36%)
+........................................          80 / 110 ( 72%)
+.F............................                    110 / 110 (100%)
+
+Time: 00:01:23.456, Memory: 48.00 MB
+
+There was 1 failure:
+
+1) App\\Tests\\UserTest::testEmailValidation
+Failed asserting that two strings are identical.
+--- Expected
++++ Actual
+@@ @@
+-'expected@example.com'
++'actual@example.com'
+
+#0 /var/www/html/src/User.php:142 (App\\User::validate)
+#1 /var/www/html/tests/UserTest.php:38 (App\\Tests\\UserTest::testEmailValidation)
+
+FAILURES!
+Tests: 110, Assertions: 340, Failures: 1.
+"""
+expected = """
+PHPUnit 10.5.0 by Sebastian Bergmann and contributors.
+Runtime:       PHP 8.2.27 with Xdebug 3.3.1
+Configuration: /var/www/html/phpunit.xml
+Time: 00:01:23.456, Memory: 48.00 MB
+There was 1 failure:
+1) App\\Tests\\UserTest::testEmailValidation
+Failed asserting that two strings are identical.
+--- Expected
++++ Actual
+@@ @@
+-'expected@example.com'
++'actual@example.com'
+#0 /var/www/html/src/User.php:142 (App\\User::validate)
+#1 /var/www/html/tests/UserTest.php:38 (App\\Tests\\UserTest::testEmailValidation)
+FAILURES!
+Tests: 110, Assertions: 340, Failures: 1.
+"""
+
+[[tests.phpunit]]
+name = "empty output is not reported as success"
+input = ""
+expected = "phpunit: no output"
