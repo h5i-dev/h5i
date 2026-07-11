@@ -3,9 +3,8 @@ members = ["crates/*"]
 resolver = "2"
 
 # Shared dependency versions for every workspace crate — a single source of
-# truth so an extracted crate (h5i-error, …) and the root never skew versions
-# (a git2/serde version mismatch would break `#[from]` conversions across the
-# crate boundary).
+# truth so the crates never skew versions (a git2/serde mismatch would break
+# `#[from]` conversions across a crate boundary).
 [workspace.dependencies]
 thiserror = "2.0.18"
 git2 = "0.20.4"
@@ -13,64 +12,49 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = { version = "0.8", features = ["parse", "display"] }
 
+# The repo's primary product is the `h5i` binary, so it lives at the root
+# (`cargo install --path .` / `cargo run` do the obvious thing). The library it
+# drives is `crates/h5i-core`; the eDSL is `crates/h5i-orchestra`.
 [package]
-name = "h5i-core"
+name = "h5i"
 version = "0.2.8"
 edition = "2021"
+description = "h5i — auditable, sandboxed workspaces and programmable orchestration for AI coding agents (CLI)."
+
+[[bin]]
+name = "h5i"
+path = "src/main.rs"
 
 [features]
-# `web` compiles the `h5i serve` dashboard (axum + asset embedding). On by
-# default so existing builds are unchanged; build with `--no-default-features`
-# for a lean CLI that never pulls in axum/mime_guess.
+# Mirror the core `web` feature so `cargo build` / `--no-default-features`
+# toggle the dashboard exactly as before.
 default = ["web"]
-web = ["dep:axum", "dep:mime_guess"]
+web = ["h5i-core/web"]
 
 [dependencies]
-h5i-error = { path = "crates/h5i-error" }
-h5i-sandbox = { path = "crates/h5i-sandbox" }
+h5i-core = { path = "crates/h5i-core" }
+h5i-orchestra = { path = "crates/h5i-orchestra" }
 git2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1.0", features = ["full"] }
-thiserror = { workspace = true }
 anyhow = "1.0"
-sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5.60", features = ["derive"] }
 clap_complete = "4.5"
 clap_mangen = "0.2"
-fastrand = "2.3.0"
-tiktoken-rs = "0.9.1"
 console = "0.16.2"
-base64 = "0.22.1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-# Web dashboard deps — optional, gated behind the `web` feature (on by
-# default). `cargo build --no-default-features` drops the HTTP server and these
-# from the build entirely.
-axum = { version = "0.7", optional = true }
-toml = { workspace = true }
-regex = "1"
-rust-embed = "8.5"
-mime_guess = { version = "2.0", optional = true }
-tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-libc = "0.2.186"
-
-# When targeting musl, vendor OpenSSL so the build doesn't require a musl-linked
-# system libssl (libgit2-sys → libssh2-sys → openssl-sys pulls this in).
-[target.'cfg(target_env = "musl")'.dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-landlock = "0.4.5"
-seccompiler = "0.5.0"
 
 [dev-dependencies]
 tempfile = "3.8"
-serde_json = "1.0"
+serde_json = { workspace = true }
+# For the web-gated sandbox_api integration test (boots the real axum router).
+axum = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
-# This crate's units are big (main.rs, repository.rs, env.rs): full debuginfo is
-# the dominant rustc-memory + link-time cost for test binaries, and it has
-# OOM'd parallel test compiles on 8GB hosts. Line tables keep usable backtraces.
+# Big translation units (main.rs, and the core lib's repository.rs/env.rs): full
+# debuginfo dominates rustc memory + link time and has OOM'd parallel test
+# compiles on 8GB hosts. Line tables keep usable backtraces.
 [profile.dev]
 debug = "line-tables-only"

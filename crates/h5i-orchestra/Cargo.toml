@@ -5,7 +5,7 @@ edition = "2021"
 description = "Programmable agent-orchestration eDSL over h5i teams/envs — define-by-run scores journaled on the git-backed team event log."
 
 [dependencies]
-h5i-core = { path = "../.." }
+h5i-core = { path = "../h5i-core" }
 tokio = { version = "1.0", features = ["full"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

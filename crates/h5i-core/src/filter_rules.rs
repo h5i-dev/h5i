@@ -34,7 +34,9 @@ use serde::{Deserialize, Serialize};
 
 /// The built-in rule files, embedded at compile time from `assets/filters/`.
 #[derive(RustEmbed)]
-#[folder = "assets/filters/"]
+// Assets live at the repo root (shared with tooling/CI); this crate sits one
+// level down in the workspace, so resolve relative to its manifest dir.
+#[folder = "$CARGO_MANIFEST_DIR/../../assets/filters/"]
 struct BuiltinFilters;
 
 /// Embedded paths that are rule files (ignore NOTICE, README, …).

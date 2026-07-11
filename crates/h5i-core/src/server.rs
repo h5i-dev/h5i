@@ -172,7 +172,9 @@ fn fallback_report() -> IntegrityReport {
 // without rebuilding the Rust binary. Release builds embed at compile time.
 
 #[derive(rust_embed::Embed)]
-#[folder = "web/dist/"]
+// The frontend project + its build output live at the repo root; this crate is
+// one level down in the workspace.
+#[folder = "$CARGO_MANIFEST_DIR/../../web/dist/"]
 struct WebAsset;
 
 async fn index() -> Response {
