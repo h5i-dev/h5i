@@ -275,7 +275,7 @@ fn box_team_inbox(consume: bool) -> Option<Vec<msg::Message>> {
 }
 
 /// The team round a message belongs to, read from its i5h `links.round` (set by
-/// `grant_review` / `auto_peer_review`). `None` for non-team messages — those are
+/// `dispatch` / `grant_review`). `None` for non-team messages, those are
 /// always surfaced (never silently swallowed by the round filter).
 fn msg_round(m: &msg::Message) -> Option<u32> {
     m.links

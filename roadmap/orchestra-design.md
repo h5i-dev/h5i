@@ -28,7 +28,7 @@ What is hardcoded, and what this design generalizes:
 | Hardcoded today | Location | Generalized to |
 |---|---|---|
 | Two-agent claude+codex roster | `auto_create_roster` | roster builder in the eDSL |
-| Mutual review circle | `auto_peer_review` | any review topology, in user code |
+| Mutual review circle | the `ensemble` review round | any review topology, in user code |
 | Verdict rule `VerifierTestsPass,AppliesCleanly,SmallestDiff` | `finalize` | `VerdictPolicy` trait |
 | Phase progression driven by shell scripts | `team-run.sh` etc. | the score program |
 | One task per run | `dispatch` | any number of tasks, rounds, branches |

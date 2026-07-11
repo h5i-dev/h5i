@@ -159,14 +159,13 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i env shell env/human/codex-env  -- codex  --sandbox danger-full-access "$(h5i team bootstrap)"</span></pre></div>
     </div>
 
-    <p>Each agent peer-reviews and revises inside its own implementation; then the verifier replays every candidate, runs the tests, and merges the winner:</p>
+    <p>With both agents resident, one command drives the rest. It seals the independent attempts, runs the peer-review and revise rounds, replays every candidate through a neutral sandboxed verifier, records the verdict, and merges the winner behind it:</p>
     <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">verify-merge</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i team auto-peer-review qsort-demo</span>             <span class="t-cmt"># sync → freeze → mutual grant → instruct</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team verify   qsort-demo --agent &lt;agent-id&gt; -- pytest</span>  <span class="t-cmt"># id from `team status`</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team finalize qsort-demo</span>                       <span class="t-cmt"># explainable verdict (gates + smallest diff)</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team apply    qsort-demo</span>                       <span class="t-cmt"># merge the winner, gated on the verdict</span></pre></div>
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">team run</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i team run qsort-demo --verify-cmd "pytest" --apply</span>
+<span class="t-cmt"># attempts, freeze, mutual review, revise, neutral verify, verdict, apply.</span>
+<span class="t-cmt"># journal-backed: re-run to resume; drop --apply to review the verdict first,</span>
+<span class="t-cmt"># or use --gate for a durable human approval before the merge.</span></pre></div>
     </div>
 
     <p>Watch the whole run — candidates, peer reviews, and the verdict — in the dashboard:</p>

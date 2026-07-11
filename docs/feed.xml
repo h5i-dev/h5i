@@ -8,6 +8,27 @@
     <language>en</language>
     <lastBuildDate>Sun, 21 Jun 2026 00:00:00 +0000</lastBuildDate>
     <item>
+      <title>Programmable Agent Orchestration: the h5i-orchestra eDSL</title>
+      <link>https://h5i.dev/blog/programmable-agent-orchestration-edsl/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/programmable-agent-orchestration-edsl/</guid>
+      <pubDate>Sat, 11 Jul 2026 00:00:00 +0000</pubDate>
+      <description>A define-by-run Rust eDSL for orchestrating coding agents. A score is a plain async program driving a Conductor, journaled on a Git-backed event log so a killed run resumes without re-paying agent turns.</description>
+    </item>
+    <item>
+      <title>Write Your First Score: an h5i-orchestra Tutorial</title>
+      <link>https://h5i.dev/blog/write-your-first-orchestra-score/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/write-your-first-orchestra-score/</guid>
+      <pubDate>Sat, 11 Jul 2026 00:00:00 +0000</pubDate>
+      <description>Build a complete score end to end: hire a roster of sandboxed agents, fan out the work, seal, review and revise, verify in a neutral sandbox, decide with a pluggable verdict, and land the winner behind a durable human gate.</description>
+    </item>
+    <item>
+      <title>Orchestration Patterns Beyond Ensemble</title>
+      <link>https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/</guid>
+      <pubDate>Sat, 11 Jul 2026 00:00:00 +0000</pubDate>
+      <description>arena, pipeline, integrate, map_reduce, debate, and judge_panel, all written in the public eDSL. The centerpiece: a judge panel that scores candidates over the run's recorded evidence, with every citation validated against real run state.</description>
+    </item>
+    <item>
       <title>Run an AI Agent Ensemble: h5i team</title>
       <link>https://h5i.dev/blog/agent-ensembles-with-h5i-team/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/agent-ensembles-with-h5i-team/</guid>

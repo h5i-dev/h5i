@@ -248,6 +248,24 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://h5i.dev/blog/programmable-agent-orchestration-edsl/</loc>
+    <lastmod>2026-07-11</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://h5i.dev/blog/write-your-first-orchestra-score/</loc>
+    <lastmod>2026-07-11</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/</loc>
+    <lastmod>2026-07-11</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://h5i.dev/blog/agent-ensembles-with-h5i-team/</loc>
     <lastmod>2026-06-26</lastmod>
     <changefreq>weekly</changefreq>
