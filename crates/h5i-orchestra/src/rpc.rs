@@ -29,6 +29,7 @@
 //!   [`VerdictPolicy`]: begin snapshots the folded run, the client decides,
 //!   commit records the verdict and journals it in one step (mirroring
 //!   [`Conductor::judge`]).
+//!
 //! A crash between the client's side effect and `commit` re-runs the step on
 //! resume — the same window the in-process eDSL has between a closure's
 //! side effect and its journal append; external effects should carry
