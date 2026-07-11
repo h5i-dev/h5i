@@ -496,3 +496,103 @@ fn is_artifact_path(path: &str) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report_with_counts(total_commits: usize, ai_commits: usize) -> VibeReport {
+        VibeReport {
+            repo_name: "test-repo".to_string(),
+            total_commits,
+            ai_commits,
+            human_authors: vec![],
+            ai_models: vec![],
+            dir_stats: vec![],
+            total_blind_edits: 0,
+            blind_edit_file_count: 0,
+            risky_files: vec![],
+        }
+    }
+
+    #[test]
+    fn vibe_report_ai_pct_handles_empty_partial_and_full_inputs() {
+        assert_eq!(report_with_counts(0, 0).ai_pct(), 0.0);
+        assert_eq!(report_with_counts(4, 1).ai_pct(), 25.0);
+        assert_eq!(report_with_counts(3, 3).ai_pct(), 100.0);
+    }
+
+    #[test]
+    fn dir_ai_ratio_handles_empty_partial_and_full_inputs() {
+        let empty = DirAiStat {
+            path: "src/".to_string(),
+            total_commits: 0,
+            ai_commits: 0,
+        };
+        let partial = DirAiStat {
+            path: "src/".to_string(),
+            total_commits: 4,
+            ai_commits: 1,
+        };
+        let full = DirAiStat {
+            path: "src/".to_string(),
+            total_commits: 3,
+            ai_commits: 3,
+        };
+
+        assert_eq!(empty.ai_ratio(), 0.0);
+        assert_eq!(partial.ai_ratio(), 0.25);
+        assert_eq!(full.ai_ratio(), 1.0);
+    }
+
+    #[test]
+    fn risky_file_ranking_prioritizes_high_ai_untested_blind_edits() {
+        let mut files = vec![
+            RiskyFile {
+                path: "src/covered.rs".to_string(),
+                ai_ratio: 1.0,
+                has_tests: true,
+                uncertainty_count: 0,
+                blind_edit_count: 0,
+            },
+            RiskyFile {
+                path: "src/untested.rs".to_string(),
+                ai_ratio: 1.0,
+                has_tests: false,
+                uncertainty_count: 0,
+                blind_edit_count: 0,
+            },
+            RiskyFile {
+                path: "src/blind.rs".to_string(),
+                ai_ratio: 1.0,
+                has_tests: false,
+                uncertainty_count: 0,
+                blind_edit_count: 3,
+            },
+            RiskyFile {
+                path: "src/partial.rs".to_string(),
+                ai_ratio: 0.7,
+                has_tests: false,
+                uncertainty_count: 0,
+                blind_edit_count: 0,
+            },
+        ];
+
+        files.sort_by(|a, b| {
+            risk_score(b)
+                .partial_cmp(&risk_score(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let ranked_paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
+        assert_eq!(
+            ranked_paths,
+            vec![
+                "src/blind.rs",
+                "src/untested.rs",
+                "src/partial.rs",
+                "src/covered.rs",
+            ]
+        );
+    }
+}
