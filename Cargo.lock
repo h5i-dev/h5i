@@ -580,6 +580,7 @@ dependencies = [
  "fastrand",
  "git2",
  "h5i-error",
+ "h5i-sandbox",
  "landlock",
  "libc",
  "mime_guess",
@@ -608,6 +609,27 @@ dependencies = [
  "serde_json",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "h5i-sandbox"
+version = "0.2.8"
+dependencies = [
+ "fastrand",
+ "git2",
+ "h5i-error",
+ "landlock",
+ "libc",
+ "openssl",
+ "regex",
+ "reqwest",
+ "seccompiler",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

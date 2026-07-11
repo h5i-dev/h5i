@@ -38,7 +38,6 @@ pub mod repository;
 pub mod resume;
 pub mod review;
 pub mod rules;
-pub mod sandbox;
 pub mod session_log;
 pub mod storage;
 pub mod structured;
@@ -49,20 +48,14 @@ pub mod vibe;
 #[cfg(feature = "web")]
 pub mod server;
 
-// ─── crate-internal machinery ───────────────────────────────────────────────
-// Implementation detail not used outside this crate. `pub(crate)` so it cannot
-// be depended on externally and stays free to refactor; types that need a
-// public path (e.g. the sandbox policy vocabulary) are re-exported `pub` from a
-// public module like `sandbox`.
-pub(crate) mod auth_proxy;
-pub(crate) mod cgroup;
-pub(crate) mod container;
+// The confinement layer now lives in its own crate (`h5i-sandbox`). Re-exported
+// so every existing `crate::sandbox::*` / `crate::container::*` / … path
+// resolves unchanged. `idents` stays here (a core identity constant table).
 pub(crate) mod idents;
-pub mod sandbox_policy;
-pub(crate) mod seccomp_notify;
-pub(crate) mod secrets;
-pub(crate) mod secrets_broker;
-pub(crate) mod supervisor;
+pub use h5i_sandbox::{
+    auth_proxy, cgroup, container, sandbox, sandbox_policy, seccomp_notify, secrets,
+    secrets_broker, supervisor,
+};
 /// Risk classification for the web dashboard only — its sole consumer is the
 /// feature-gated `server`, so it is gated too (and absent from a lean CLI build).
 #[cfg(feature = "web")]

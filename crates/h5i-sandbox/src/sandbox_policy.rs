@@ -199,8 +199,9 @@ impl AgentRuntime {
     }
 
     /// Read-write HOME state this runtime needs — its *own* credentials/config
-    /// only. Never the other runtime's.
-    pub(crate) fn state_write(self) -> &'static [&'static str] {
+    /// only. Never the other runtime's. `pub`: core's `env` reads it to seed
+    /// the per-env HOME copy.
+    pub fn state_write(self) -> &'static [&'static str] {
         match self {
             AgentRuntime::Claude => &["~/.claude", "~/.claude.json"],
             AgentRuntime::Codex => &["~/.codex"],

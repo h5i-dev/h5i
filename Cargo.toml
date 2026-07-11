@@ -31,6 +31,7 @@ web = ["dep:axum", "dep:mime_guess"]
 
 [dependencies]
 h5i-error = { path = "crates/h5i-error" }
+h5i-sandbox = { path = "crates/h5i-sandbox" }
 git2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
