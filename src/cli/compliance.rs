@@ -1,5 +1,4 @@
 //! `h5i compliance` — CLI handler (migrated from main.rs).
-#![allow(clippy::all)]
 use crate::*;
 
 pub fn run(since: Option<String>, until: Option<String>, format: String, output: Option<std::path::PathBuf>, limit: usize) -> anyhow::Result<()> {

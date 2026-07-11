@@ -1,5 +1,4 @@
 //! `h5i resume` — CLI handler (migrated from main.rs).
-#![allow(clippy::all)]
 use crate::*;
 
 pub fn run(branch: Option<String>) -> anyhow::Result<()> {

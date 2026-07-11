@@ -1,7 +1,7 @@
 //! `h5i commit` — CLI handler (migrated from main.rs).
-#![allow(clippy::all)]
 use crate::*;
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(message: String, intent: Option<String>, model: Option<String>, agent: Option<String>, tests: bool, test_results: Option<std::path::PathBuf>, test_cmd: Option<String>, audit: bool, force: bool, caused_by: Option<Vec<String>>, decisions_file: Option<std::path::PathBuf>, add_paths: Option<Vec<std::path::PathBuf>>) -> anyhow::Result<()> {
     {
             let repo = H5iRepository::open(".")?;

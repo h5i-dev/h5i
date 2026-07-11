@@ -1,5 +1,4 @@
 //! `h5i pr` — CLI handlers (migrated from main.rs).
-#![allow(clippy::all)]
 use crate::*;
 
 #[derive(Subcommand)]

@@ -1,5 +1,4 @@
 //! `h5i pull` — CLI handler (migrated from main.rs).
-#![allow(clippy::all)]
 use crate::*;
 
 pub fn run(remote: String, force: bool) -> anyhow::Result<()> {

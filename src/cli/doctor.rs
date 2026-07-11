@@ -1,5 +1,4 @@
 //! `h5i doctor` — CLI handler (migrated from main.rs).
-#![allow(clippy::all)]
 use crate::*;
 
 pub fn run(repair: bool, export: Option<PathBuf>, json: bool) -> anyhow::Result<()> {

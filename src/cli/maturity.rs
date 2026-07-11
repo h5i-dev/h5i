@@ -1,5 +1,4 @@
 //! `h5i maturity` — CLI handler (migrated from main.rs).
-#![allow(clippy::all)]
 use crate::*;
 
 pub fn run(text: Option<String>, oid: Option<String>, limit: usize, json: bool) -> anyhow::Result<()> {

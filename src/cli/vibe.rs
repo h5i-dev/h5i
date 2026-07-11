@@ -1,5 +1,4 @@
 //! `h5i vibe` — CLI handler (migrated from main.rs).
-#![allow(clippy::all)]
 use crate::*;
 
 pub fn run(limit: usize, json: bool) -> anyhow::Result<()> {

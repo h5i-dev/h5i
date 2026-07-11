@@ -1,5 +1,4 @@
 //! `h5i blame` — CLI handler (migrated from main.rs).
-#![allow(clippy::all)]
 use crate::*;
 
 pub fn run(file: PathBuf, show_prompt: bool) -> anyhow::Result<()> {

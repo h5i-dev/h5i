@@ -1,5 +1,4 @@
 //! `h5i migrate_remote` — CLI handler (migrated from main.rs).
-#![allow(clippy::all)]
 use crate::*;
 
 pub fn run(remote: String, dry_run: bool) -> anyhow::Result<()> {

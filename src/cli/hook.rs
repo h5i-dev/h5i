@@ -1,5 +1,4 @@
 //! `h5i hook` — hook management (setup/wrap-bash/session-start). Migrated from main.rs.
-#![allow(clippy::all)]
 use crate::*;
 
 #[derive(Subcommand)]

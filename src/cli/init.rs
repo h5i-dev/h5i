@@ -1,5 +1,4 @@
 //! `h5i init` — CLI handler (migrated from main.rs).
-#![allow(clippy::all)]
 use crate::*;
 
 pub fn run() -> anyhow::Result<()> {
