@@ -34,11 +34,11 @@
 #
 # Requires: h5i, jq.
 #
-# DEPRECATED: use `h5i team auto-peer-review <team>` (same freeze + mutual
+# DEPRECATED: use `h5i team run <team>`, which drives the whole cycle including
 # grants + instructions, native), or let `h5i team run` drive the whole cycle.
 set -euo pipefail
 
-echo "team-review.sh is deprecated — prefer: h5i team auto-peer-review (or h5i team run)" >&2
+echo "team-review.sh is deprecated: prefer h5i team run" >&2
 
 H5I="${H5I:-h5i}"
 DRY=0

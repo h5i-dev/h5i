@@ -1218,30 +1218,6 @@ Print help
 .TP
 [\fITEAM\fR]
 Team id (defaults to the current team \(em see `team use`)
-.SH "H5I TEAM AUTO-PEER-REVIEW"
-Open the peer-review round in one shot: sync staged work, freeze the round, grant every agent mutual review access, and send each the review-and-revise instruction. Native equivalent of `scripts/team-review.sh`
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS SYNOPSIS
-\fBauto\-peer\-review\fR [\fB\-\-artifacts\fR] [\fB\-\-allow\-missing\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fITEAM\fR] 
-.ie \n(.g .ds Aq \(aq
-.el .ds Aq '
-.SS OPTIONS
-.TP
-\fB\-\-artifacts\fR \fI<ARTIFACTS>\fR [default: diff,summary,tests]
-Comma\-separated artifact kinds to grant (diff,summary,tests,test\-status)
-.TP
-\fB\-\-allow\-missing\fR
-Freeze even if some agents have not submitted (seals a partial round)
-.TP
-\fB\-\-json\fR
-Emit JSON
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help
-.TP
-[\fITEAM\fR]
-Team id (defaults to the current team \(em see `team use`)
 .SH "H5I TEAM REVIEW"
 Record a review body for a target candidate
 .ie \n(.g .ds Aq \(aq
