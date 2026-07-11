@@ -718,6 +718,8 @@ mod tests {
             (&["php", "-d", "xdebug.mode=coverage", "vendor/bin/phpunit"], "phpunit"),
             (&["php", "-c", "php.ini", "./vendor/bin/phpunit"], "phpunit"),
             (&["php", "-n", "phpunit.phar"], "phpunit"),
+            (&["glab", "mr", "list", "--per-page", "20"], "glab"),
+            (&["/usr/bin/glab", "issue", "ls"], "glab"),
         ];
         for (cmd, expected) in cases {
             let argv: Vec<String> = cmd.iter().map(|s| s.to_string()).collect();
@@ -762,6 +764,8 @@ mod tests {
             &["npm", "ls", "--json"],
             &["pnpm", "list", "--json"],
             &["yarn", "info", "react", "--json"],
+            &["glab", "mr", "view", "42"],
+            &["glab", "api", "projects/1"],
         ];
         for cmd in none {
             let argv: Vec<String> = cmd.iter().map(|s| s.to_string()).collect();
