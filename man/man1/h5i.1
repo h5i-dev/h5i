@@ -206,7 +206,7 @@ Create an isolated environment: code branch + git worktree under .git/.h5i/env/,
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-pr\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-pr\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -225,6 +225,9 @@ Policy profile from .h5i/env.toml. Built\-ins need no file: `agent` (agent\-in\-
 .TP
 \fB\-\-isolation\fR \fI<ISOLATION>\fR
 Isolation: auto (default) | workspace | process | supervised | container | hardened\-container | microvm. `auto` (or unset) picks the strongest tier the host can run; an explicit tier fails closed if the host cannot satisfy it (never silently downgrades)
+.TP
+\fB\-\-image\fR \fI<IMAGE>\fR
+Container base image for isolation=container (pre\-pulled; runs use \-\-pull=never). Overrides the profile\*(Aqs `container.image` and the repo\-level `[container] image` default in .h5i/env.toml. Passing it makes the container tier a candidate for the isolation auto\-pick
 .TP
 \fB\-\-backend\fR \fI<BACKEND>\fR [default: auto]
 Workspace backend (auto|worktree)
