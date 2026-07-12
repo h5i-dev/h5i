@@ -30,6 +30,18 @@ For Codex, swap the Containerfile/tag and export `OPENAI_API_KEY` instead.
 `--image localhost/h5i-agent-claude:latest` at `env create` works instead of
 the `[container]` default (and alone makes the container tier the auto-pick).
 
+**Codex must run with its own sandbox off inside the box** — set
+`sandbox_mode = "danger-full-access"` (in `~/.codex/config.toml`, or launch
+with `codex --sandbox danger-full-access`). Codex's default `workspace-write`
+sandbox treats everything outside the cwd as read-only, but an h5i env is a
+git *worktree*: its real git dir lives outside `/work` (the box mounts it
+read-write on purpose), so a nested Codex sandbox breaks every git/h5i write
+with "Read-only file system" — e.g. `h5i recall context init` or `git commit`.
+This is safe precisely because the h5i container *is* the sandbox: read-only
+rootfs, dropped capabilities, the egress allowlist, and fine-grained git
+mounts are all enforced outside the agent, so the inner layer is redundant.
+(Claude Code doesn't self-sandbox; the claude image needs nothing here.)
+
 ## What the box looks like at run time
 
 - **Read-only rootfs**; the only writable surfaces are `/work` (the env
