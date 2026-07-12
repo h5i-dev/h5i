@@ -1,0 +1,39 @@
+# Agent-in-box image for `h5i env` container mode with the `agent-claude`
+# profile: Claude Code + git + an in-box h5i (built from this checkout, so the
+# wrap-bash observation hook and in-box `h5i capture run` work).
+#
+# Build (context = repo root):
+#   podman build -f containers/Containerfile.agent-claude -t h5i-agent-claude .
+#
+# Wire it up (repo default image; or pass --image at env create):
+#   printf '[container]\nimage = "localhost/h5i-agent-claude:latest"\n' >> .h5i/env.toml
+#
+# Run (host credential is brokered by h5i's auth proxy — never enters the box):
+#   CLAUDE_CODE_OAUTH_TOKEN=$(claude setup-token) h5i env shell <name>
+#
+# See containers/README.md for details (egress, state lifetime, extending
+# with your project's toolchain).
+
+FROM docker.io/library/rust:1-bookworm AS h5i-build
+WORKDIR /src
+COPY . .
+# No dashboard in-box: skip the web frontend (stub dist) and the axum feature.
+# -j2 keeps peak memory sane on small hosts.
+RUN H5I_SKIP_WEB_BUILD=1 cargo build --release --no-default-features -j 2 \
+ && strip target/release/h5i
+
+FROM docker.io/library/node:22-bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates curl procps \
+ && rm -rf /var/lib/apt/lists/*
+RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
+# The box's rootfs is read-only at run time — the self-updater could never
+# write /usr/local/lib anyway, so switch it off cleanly.
+ENV DISABLE_AUTOUPDATER=1
+COPY --from=h5i-build /src/target/release/h5i /usr/local/bin/h5i
+COPY containers/entrypoint.sh /usr/local/bin/h5i-box-entrypoint
+RUN chmod 0755 /usr/local/bin/h5i-box-entrypoint
+# The entrypoint repoints HOME at the private /tmp tmpfs (the read-only rootfs
+# has no writable home for the forwarded host $HOME path) — see entrypoint.sh.
+ENTRYPOINT ["/usr/local/bin/h5i-box-entrypoint"]
+CMD ["/bin/bash"]

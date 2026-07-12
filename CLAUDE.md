@@ -75,7 +75,10 @@ h5i env create <name> [--from REV | --pr N|URL] [--profile P] [--isolation works
                                          # --image sets the container-tier base image (strongest
                                          # precedence; also makes container an auto-pick candidate);
                                          # a repo-level `[container] image = "…"` in .h5i/env.toml is
-                                         # the default for any profile without its own container.image
+                                         # the default for any profile without its own container.image.
+                                         # Ready-made agent-in-box images (Claude/Codex + git + in-box
+                                         # h5i): containers/Containerfile.agent-{claude,codex}
+                                         # (see containers/README.md)
 h5i env run <name> -- <cmd>              # policy-enforced, capture-wrapped
 h5i env shell <name> [-- <cmd>]          # interactive confined session (agent-in-box)
 h5i env probe                            # host isolation capabilities (incl. rootless Podman)

@@ -1,0 +1,34 @@
+# Agent-in-box image for `h5i env` container mode with the `agent-codex`
+# profile: Codex CLI + git + an in-box h5i (built from this checkout, so
+# in-box `h5i capture run` works; the Claude managed-settings injection is
+# skipped for Codex profiles — the tee-shim is the observation floor here).
+#
+# Build (context = repo root):
+#   podman build -f containers/Containerfile.agent-codex -t h5i-agent-codex .
+#
+# Wire it up (repo default image; or pass --image at env create):
+#   printf '[container]\nimage = "localhost/h5i-agent-codex:latest"\n' >> .h5i/env.toml
+#
+# Run (host credential is brokered by h5i's auth proxy — never enters the box):
+#   OPENAI_API_KEY=… h5i env shell <name>
+#
+# See containers/README.md for details.
+
+FROM docker.io/library/rust:1-bookworm AS h5i-build
+WORKDIR /src
+COPY . .
+RUN H5I_SKIP_WEB_BUILD=1 cargo build --release --no-default-features -j 2 \
+ && strip target/release/h5i
+
+FROM docker.io/library/node:22-bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates curl procps \
+ && rm -rf /var/lib/apt/lists/*
+RUN npm install -g @openai/codex && npm cache clean --force
+COPY --from=h5i-build /src/target/release/h5i /usr/local/bin/h5i
+COPY containers/entrypoint.sh /usr/local/bin/h5i-box-entrypoint
+RUN chmod 0755 /usr/local/bin/h5i-box-entrypoint
+# The entrypoint repoints HOME at the private /tmp tmpfs (the read-only rootfs
+# has no writable home for the forwarded host $HOME path) — see entrypoint.sh.
+ENTRYPOINT ["/usr/local/bin/h5i-box-entrypoint"]
+CMD ["/bin/bash"]

@@ -1,0 +1,7 @@
+# Build-context trim for containers/Containerfile.* (podman honors this file
+# too). The image build compiles h5i from source; nothing below is needed.
+.git
+target
+web/node_modules
+web/dist
+docs
