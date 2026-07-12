@@ -46,10 +46,10 @@ export function Workbench() {
   const [commits, setCommits] = useState<Commit[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedOid, setSelectedOid] = useState<string | null>(null);
-  // Default landing is Ensemble — the workspace's centerpiece: many agents
-  // attempt the same task in sealed lanes, one verified verdict comes out.
-  // Users jump to the supporting views via the header nav.
-  const [mode, setMode] = useState<Mode>("team");
+  // Default landing is Sandbox — the fleet of isolated envs (what is running,
+  // under which policy, with what evidence) is the first thing an operator
+  // wants to see. Users jump to Ensemble and the other views via the header nav.
+  const [mode, setMode] = useState<Mode>("sandbox");
   const [rightTab, setRightTab] = useState<RightTab>("refs");
   // When the cockpit asks to replay a specific commit, focus the replay there.
   const [replayFocusOid, setReplayFocusOid] = useState<string | null>(null);
