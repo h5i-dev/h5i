@@ -236,13 +236,18 @@ pub enum EnvCommands {
     /// Abort an environment — manifest and workspace preserved for forensics
     Abort { name: String },
 
-    /// Permanently remove an environment from this clone: prune its worktree,
-    /// delete its code + reasoning branches, and erase its manifest. Destroys
-    /// local provenance (only the `removed` event in refs/h5i/env survives).
-    /// A still-live env (created/running/proposed) needs --force.
+    /// Permanently remove one or more environments from this clone: prune
+    /// their worktrees, delete their code + reasoning branches, and erase
+    /// their manifests. Destroys local provenance (only the `removed` event
+    /// in refs/h5i/env survives). A still-live env (created/running/proposed)
+    /// needs --force. Multiple names are processed in order; a failure for one
+    /// env is reported but does not abort the rest.
     Rm {
-        name: String,
-        /// Remove even if the env is still live (not applied/aborted)
+        /// One or more environment names (slug, `agent/slug`, or full `env/agent/slug`)
+        #[arg(required = true, num_args = 1..)]
+        names: Vec<String>,
+        /// Remove even if the env is still live (not applied/aborted).
+        /// Applies to every listed env.
         #[arg(long)]
         force: bool,
     },
@@ -936,13 +941,37 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     );
                 }
 
-                EnvCommands::Rm { name, force } => {
-                    let m = h5i_core::env::find(&h5i_root, &name)?;
-                    h5i_core::env::rm(git, &h5i_root, &m, force)?;
-                    println!(
-                        "{} {} removed (workspace, branches, and manifest erased)",
-                        SUCCESS, m.id
-                    );
+                EnvCommands::Rm { names, force } => {
+                    let mut any_failed = false;
+                    for name in &names {
+                        match h5i_core::env::find(&h5i_root, name) {
+                            Ok(m) => match h5i_core::env::rm(git, &h5i_root, &m, force) {
+                                Ok(()) => println!(
+                                    "{} {} removed (workspace, branches, and manifest erased)",
+                                    SUCCESS, m.id
+                                ),
+                                Err(e) => {
+                                    eprintln!(
+                                        "{} failed to remove {}: {e}",
+                                        style("error:").red().bold(),
+                                        name
+                                    );
+                                    any_failed = true;
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!(
+                                    "{} env '{}' not found: {e}",
+                                    style("error:").red().bold(),
+                                    name
+                                );
+                                any_failed = true;
+                            }
+                        }
+                    }
+                    if any_failed {
+                        std::process::exit(1);
+                    }
                 }
 
                 EnvCommands::Gc => {
