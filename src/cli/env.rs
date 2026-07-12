@@ -164,6 +164,9 @@ pub enum EnvCommands {
     /// Show the event log (refs/h5i/env) for one environment
     Log {
         name: String,
+        /// Show only the newest N events (0 shows the full log)
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
         /// Emit the event records as JSON instead of the human view
         #[arg(long)]
         json: bool,
@@ -826,9 +829,12 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     println!("{} {}", SUCCESS, msg_out);
                 }
 
-                EnvCommands::Log { name, json } => {
+                EnvCommands::Log { name, limit, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
-                    let events = h5i_core::env::read_events(git, Some(&m.id));
+                    let mut events = h5i_core::env::read_events(git, Some(&m.id));
+                    if limit > 0 && events.len() > limit {
+                        events.drain(..events.len() - limit);
+                    }
                     if json {
                         println!("{}", serde_json::to_string_pretty(&events)?);
                     } else {
