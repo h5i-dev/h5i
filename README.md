@@ -19,7 +19,7 @@
 
 **h5i** (pronounced *high-five*) gives every AI coding agent a sandboxed Git worktree, and records the prompts, commands, logs, policies, and reviews behind every change. Run one agent safely, scale to many via a conflict-free multi-agent orchestra, then merge one auditable result. It all lives in your repo, carried by Git, with no SaaS.
 
-- Prompt versioning
+- Prompt versioning and quality assessment
 - Persistent context/memory
 - Supervised sandboxed environment
 - Token reduction up to 95%
