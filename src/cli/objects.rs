@@ -224,12 +224,45 @@ pub enum ObjectsCommands {
     },
 }
 
+/// Fail-open path for an in-box `capture run` whose h5i side is unusable: run
+/// the command unrecorded with inherited stdio and pass its exit code through.
+/// A lost capture is acceptable; an agent whose every Bash call dies is not.
+fn passthrough_unrecorded(command: &[String], why: &str) -> anyhow::Result<()> {
+    if command.is_empty() {
+        anyhow::bail!("usage: h5i capture run [--kind K] [--budget N] -- <command> [args…]");
+    }
+    eprintln!(
+        "{} h5i capture unavailable in this box ({why}) — running unrecorded",
+        style("warning:").yellow().bold()
+    );
+    let status = std::process::Command::new(&command[0])
+        .args(&command[1..])
+        .status()
+        .map_err(|e| anyhow::anyhow!("failed to run `{}`: {e}", command.join(" ")))?;
+    std::process::exit(status.code().unwrap_or(1));
+}
+
 pub fn run(action: ObjectsCommands) -> anyhow::Result<()> {
     {
             use h5i_core::objects::{self, Backend};
             use h5i_core::token_filter::{FilterConfig, OutputKind};
 
-            let repo = H5iRepository::open(".")?;
+            // Fail OPEN for a wrapped run inside an env box: the wrap-bash hook
+            // is unremovable there by design (root-owned managed settings), so a
+            // capture-side failure that refused to run the command would brick
+            // every Bash call the agent makes. Observation is best-effort — the
+            // box's enforcement lives in its mounts/proxy, not in this capture —
+            // so degrade to exec-and-passthrough instead. Host-side (out of a
+            // box) store errors stay fail-visible: the user can fix or unhook.
+            let repo = match H5iRepository::open(".") {
+                Ok(r) => r,
+                Err(e) => match action {
+                    ObjectsCommands::Run { command, .. } if h5i_core::env::in_env_box() => {
+                        return passthrough_unrecorded(&command, &e.to_string());
+                    }
+                    _ => return Err(e.into()),
+                },
+            };
             let h5i_root = repo.h5i_root.clone();
             let git = repo.git();
 
@@ -420,30 +453,48 @@ pub fn run(action: ObjectsCommands) -> anyhow::Result<()> {
                             files: files.clone(),
                             cmd_argv: command.clone(),
                         };
-                        let staged = h5i_core::env::write_inbox_capture_spool(&spool, &meta, &raw)?;
-                        let text = String::from_utf8_lossy(&raw);
-                        let filtered = h5i_core::token_filter::filter(&text, &cfg);
-                        let structured = h5i_core::structured::parse(&command, &text, exit_code);
-                        match (format, &structured) {
-                            (CaptureFormat::Summary | CaptureFormat::Text, _) | (_, None) => {
-                                println!("{}", filtered.summary)
+                        // The command already ran — a spool failure must never
+                        // discard its output or fabricate a failing exit code.
+                        // Fail open: emit the raw output unrecorded and fall
+                        // through to the exit-code passthrough below.
+                        match h5i_core::env::write_inbox_capture_spool(&spool, &meta, &raw) {
+                            Ok(staged) => {
+                                let text = String::from_utf8_lossy(&raw);
+                                let filtered = h5i_core::token_filter::filter(&text, &cfg);
+                                let structured =
+                                    h5i_core::structured::parse(&command, &text, exit_code);
+                                match (format, &structured) {
+                                    (CaptureFormat::Summary | CaptureFormat::Text, _)
+                                    | (_, None) => {
+                                        println!("{}", filtered.summary)
+                                    }
+                                    (CaptureFormat::Json, Some(s)) => {
+                                        println!("{}", h5i_core::structured::render_json_pretty(s))
+                                    }
+                                    (CaptureFormat::Structured | CaptureFormat::Yaml, Some(s)) => {
+                                        println!("{}", h5i_core::structured::render_yaml(s))
+                                    }
+                                    (CaptureFormat::Compact, Some(s)) => {
+                                        println!("{}", h5i_core::structured::render_compact(s))
+                                    }
+                                }
+                                if !quiet {
+                                    eprintln!(
+                                        "\n{} {} · inbox-capture · staged for host ingest",
+                                        style("▢ h5i env capture").dim(),
+                                        style(staged).cyan().bold(),
+                                    );
+                                }
                             }
-                            (CaptureFormat::Json, Some(s)) => {
-                                println!("{}", h5i_core::structured::render_json_pretty(s))
+                            Err(e) => {
+                                eprintln!(
+                                    "{} env capture spool write failed ({e}) — output passed \
+                                     through unrecorded",
+                                    style("warning:").yellow().bold()
+                                );
+                                use std::io::Write;
+                                std::io::stdout().write_all(&raw)?;
                             }
-                            (CaptureFormat::Structured | CaptureFormat::Yaml, Some(s)) => {
-                                println!("{}", h5i_core::structured::render_yaml(s))
-                            }
-                            (CaptureFormat::Compact, Some(s)) => {
-                                println!("{}", h5i_core::structured::render_compact(s))
-                            }
-                        }
-                        if !quiet {
-                            eprintln!(
-                                "\n{} {} · inbox-capture · staged for host ingest",
-                                style("▢ h5i env capture").dim(),
-                                style(staged).cyan().bold(),
-                            );
                         }
                     } else {
                         let opts = objects::CaptureOptions {

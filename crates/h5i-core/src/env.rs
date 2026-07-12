@@ -2353,6 +2353,22 @@ pub fn read_staged_capture(id: &str) -> Option<StagedCapture> {
 /// drains, so [`ingest_shell_spool`] leaves it alone.
 const SPOOL_PENDING_CONTEXT: &str = "pending_context.json";
 
+/// Is this process running **inside an env box**? True only when all three
+/// host-injected markers are present (`H5I_ENV_ID` + `H5I_ENV_POLICY_DIGEST` +
+/// `H5I_ENV_CAPTURE_SPOOL`) — the same trio that gates every other in-box
+/// redirect, so a single stray var never flips a host process into box mode.
+///
+/// In-box, the `.git/.h5i` sidecar is sealed (kernel tiers: no write grant;
+/// container: not mounted — the path is a bare read-only overlay dir), so any
+/// code that would *initialize or repair* the host store must skip that work
+/// in a box: the layout already exists host-side, and the box's own writes go
+/// through the spool/inbox mounts instead.
+pub fn in_env_box() -> bool {
+    std::env::var_os(H5I_ENV_ID_VAR).is_some()
+        && std::env::var_os(H5I_ENV_POLICY_DIGEST_VAR).is_some()
+        && std::env::var_os(H5I_ENV_CAPTURE_SPOOL_VAR).is_some()
+}
+
 /// The pending-context file path **when running inside an env box**, or `None`
 /// on the host. Inside a box the `.git/.h5i` sidecar is sealed (no read/write
 /// grant), so the human prompt captured by the `UserPromptSubmit` hook can't

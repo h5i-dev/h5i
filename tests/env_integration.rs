@@ -799,6 +799,110 @@ fn capture_run_passes_read_through_h5i_commands_through() {
     );
 }
 
+/// Container-box regression: in-box, `.git/.h5i` is a bare READ-ONLY overlay
+/// dir (Podman auto-creates it as the intermediate dir of the `work/`
+/// dual-mount; the store itself is sealed — never mounted). `capture run`
+/// must not try to initialize the host store layout there: with the wrap-bash
+/// hook rewriting every Bash command, an EROFS in `ensure_layout` bricked the
+/// whole agent session (`/bin/ls`, even `true`, all exited 1 with
+/// "Read-only file system"). In-box h5i is a read-only client of the store;
+/// its writes go to the spool.
+#[test]
+fn capture_run_in_box_survives_a_sealed_readonly_store() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = Repo::new();
+    // Recreate the box's view: .git/.h5i exists but is empty (no metadata/,
+    // no schema file) and read-only.
+    let store = r.dir.join(".git/.h5i");
+    std::fs::remove_dir_all(&store).unwrap();
+    std::fs::create_dir(&store).unwrap();
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o555)).unwrap();
+    // The spool lives outside the sealed store (a dedicated rw mount in a box).
+    let spool = r.dir.join("boxspool");
+    std::fs::create_dir_all(&spool).unwrap();
+
+    let run = |inner: &[&str]| -> Output {
+        let mut args = vec!["capture", "run", "--"];
+        args.extend_from_slice(inner);
+        Command::new(H5I)
+            .args(&args)
+            .env("H5I_AGENT", "tester")
+            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
+            .env(h5i_core::env::H5I_ENV_ID_VAR, "env/tester/box")
+            .env(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR, "deadbeef")
+            .current_dir(&r.dir)
+            .output()
+            .expect("capture run")
+    };
+
+    // The wrapped command must run and its exit code pass through untouched.
+    let out = run(&["echo", "boxed-ok"]);
+    assert!(
+        out.status.success(),
+        "in-box capture run must not die on the sealed store: {}",
+        out_str(&out)
+    );
+    let staged = std::fs::read_dir(&spool)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| e.file_name().to_string_lossy().starts_with("cap-"));
+    assert!(staged, "the capture must be staged in the spool");
+    // Failing commands keep their exit code (transparent wrapper).
+    let out = run(&["sh", "-c", "exit 7"]);
+    assert_eq!(out.status.code(), Some(7), "exit code must pass through: {}", out_str(&out));
+
+    // Restore write permission so TempDir cleanup can remove the tree.
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// Fail-open, layer 2: even when the h5i side of an in-box `capture run` is
+/// wholly unusable, the wrapped command must still run with its output and
+/// exit code passed through — the wrap-bash hook is unremovable in a box, so
+/// failing closed would brick every Bash call. Two shapes:
+/// (a) repo open fails (not a git repository at all) → passthrough exec;
+/// (b) the spool write fails after the command ran → raw output emitted,
+///     exit code preserved, never a fabricated failure.
+#[test]
+fn capture_run_in_box_fails_open_when_h5i_is_unusable() {
+    let box_env: [(&str, &str); 3] = [
+        (h5i_core::env::H5I_ENV_ID_VAR, "env/tester/box"),
+        (h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR, "deadbeef"),
+        (h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, "/nonexistent/spool"),
+    ];
+
+    // (a) Not a git repo: open fails → run unrecorded, warn, pass everything through.
+    let plain = TempDir::new().unwrap();
+    let out = Command::new(H5I)
+        .args(["capture", "run", "--", "sh", "-c", "echo through; exit 3"])
+        .envs(box_env)
+        .current_dir(plain.path())
+        .output()
+        .expect("capture run");
+    let s = out_str(&out);
+    assert_eq!(out.status.code(), Some(3), "exit code must pass through: {s}");
+    assert!(s.contains("through"), "command output must pass through: {s}");
+    assert!(s.contains("unrecorded"), "must warn that the run was unrecorded: {s}");
+
+    // (b) Spool unwritable (points at a FILE): the command already ran — its
+    // raw output must be emitted and its exit code kept.
+    let r = Repo::new();
+    let bogus_spool = r.dir.join("not-a-dir");
+    std::fs::write(&bogus_spool, b"file, not a spool dir").unwrap();
+    let out = Command::new(H5I)
+        .args(["capture", "run", "--", "sh", "-c", "echo spooled-through; exit 5"])
+        .env("H5I_AGENT", "tester")
+        .env(h5i_core::env::H5I_ENV_ID_VAR, "env/tester/box")
+        .env(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR, "deadbeef")
+        .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &bogus_spool)
+        .current_dir(&r.dir)
+        .output()
+        .expect("capture run");
+    let s = out_str(&out);
+    assert_eq!(out.status.code(), Some(5), "exit code must pass through: {s}");
+    assert!(s.contains("spooled-through"), "raw output must pass through: {s}");
+    assert!(s.contains("unrecorded"), "must warn about the lost capture: {s}");
+}
+
 /// In a box, `h5i recall object <cap-id>` must rehydrate a capture that is still
 /// STAGED in the spool (not yet ingested into refs/h5i/objects) — so an agent can
 /// read the full raw output `capture run` compacted, instead of the misleading
