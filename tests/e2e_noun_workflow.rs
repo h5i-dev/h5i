@@ -322,3 +322,19 @@ fn legacy_log_verb_still_works_and_hints_to_recall() {
         "legacy `h5i log` should hint at `h5i recall log`; got:\n{combined}"
     );
 }
+
+#[test]
+fn recall_log_json_emits_limited_commit_records() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    repo.capture_commit("a.txt", "alpha\n", "json log", "record JSON provenance");
+
+    let out = repo.h5i_ok(&["recall", "log", "--limit", "1", "--json"]);
+    let records: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("recall log --json must emit valid JSON");
+    let records = records.as_array().expect("JSON log must be an array");
+
+    assert_eq!(records.len(), 1, "--limit applies to JSON output");
+    assert!(records[0]["git_oid"].is_string(), "record includes the commit SHA");
+    assert!(records[0]["ai_metadata"].is_object(), "record includes provenance metadata");
+}
