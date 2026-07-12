@@ -1256,6 +1256,11 @@ pub struct CreateOpts {
     /// `--isolation` request. `Some(Claim)` is fail-closed (refused if unmet);
     /// `Some(Auto)` or `None` auto-picks the strongest runnable tier.
     pub isolation: Option<sandbox::IsolationRequest>,
+    /// `--image`: container base image, overriding whatever the profile (or the
+    /// repo-level `[container] image` default) declares. Visible to the
+    /// isolation auto-pick, so `--image` alone makes the container tier a
+    /// candidate for an otherwise imageless profile.
+    pub image: Option<String>,
     /// Workspace backend. `auto` and `worktree` are accepted today.
     pub backend: String,
     /// Command evidence policy for wrapped in-env commands.
@@ -1279,6 +1284,7 @@ impl Default for CreateOpts {
             from: None,
             profile: None,
             isolation: None,
+            image: None,
             backend: "auto".into(),
             audit_capture: sandbox::AuditCapture::Signal,
             parent_branch: None,
@@ -1342,9 +1348,12 @@ pub fn create(
             let agent_runnable = (|| -> Result<(), H5iError> {
                 let claim = match opts.isolation {
                     Some(sandbox::IsolationRequest::Claim(c)) => c,
-                    _ => sandbox::effective_auto(workdir, agent_profile, false)?,
+                    _ => sandbox::effective_auto(workdir, agent_profile, false, opts.image.as_deref())?,
                 };
-                let prof = sandbox::load_profile(workdir, agent_profile, Some(claim))?;
+                let mut prof = sandbox::load_profile(workdir, agent_profile, Some(claim))?;
+                if let Some(img) = &opts.image {
+                    prof.image = Some(img.clone());
+                }
                 let pol = sandbox::resolve(&prof, &sandbox::probe_host_for(claim))?;
                 sandbox::verify_exec(&pol)
             })()
@@ -1363,13 +1372,19 @@ pub fn create(
     let claim = match opts.isolation {
         Some(sandbox::IsolationRequest::Claim(c)) => c,
         Some(sandbox::IsolationRequest::Auto) => {
-            sandbox::effective_auto(workdir, profile_name, true)?
+            sandbox::effective_auto(workdir, profile_name, true, opts.image.as_deref())?
         }
-        None => sandbox::effective_auto(workdir, profile_name, false)?,
+        None => sandbox::effective_auto(workdir, profile_name, false, opts.image.as_deref())?,
     };
 
     // Policy first (fail closed BEFORE any state is created on disk).
-    let profile = sandbox::load_profile(workdir, profile_name, Some(claim))?;
+    let mut profile = sandbox::load_profile(workdir, profile_name, Some(claim))?;
+    // `--image` has the strongest precedence; it lands in the profile before
+    // resolve, so it is pinned in policy.resolved.toml and the digest like any
+    // profile-declared image.
+    if let Some(img) = &opts.image {
+        profile.image = Some(img.clone());
+    }
     let caps = sandbox::probe_host_for(claim);
     let mut policy = sandbox::resolve(&profile, &caps)?;
     policy.audit.capture = opts.audit_capture;
@@ -2337,6 +2352,22 @@ pub fn read_staged_capture(id: &str) -> Option<StagedCapture> {
 /// `cmd-*`/`cap-*`/`codex-hook-*`/`note-*`/`ctxsnap-*` records the spool ingest
 /// drains, so [`ingest_shell_spool`] leaves it alone.
 const SPOOL_PENDING_CONTEXT: &str = "pending_context.json";
+
+/// Is this process running **inside an env box**? True only when all three
+/// host-injected markers are present (`H5I_ENV_ID` + `H5I_ENV_POLICY_DIGEST` +
+/// `H5I_ENV_CAPTURE_SPOOL`) — the same trio that gates every other in-box
+/// redirect, so a single stray var never flips a host process into box mode.
+///
+/// In-box, the `.git/.h5i` sidecar is sealed (kernel tiers: no write grant;
+/// container: not mounted — the path is a bare read-only overlay dir), so any
+/// code that would *initialize or repair* the host store must skip that work
+/// in a box: the layout already exists host-side, and the box's own writes go
+/// through the spool/inbox mounts instead.
+pub fn in_env_box() -> bool {
+    std::env::var_os(H5I_ENV_ID_VAR).is_some()
+        && std::env::var_os(H5I_ENV_POLICY_DIGEST_VAR).is_some()
+        && std::env::var_os(H5I_ENV_CAPTURE_SPOOL_VAR).is_some()
+}
 
 /// The pending-context file path **when running inside an env box**, or `None`
 /// on the host. Inside a box the `.git/.h5i` sidecar is sealed (no read/write

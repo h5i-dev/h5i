@@ -113,9 +113,40 @@ pub fn podman_present() -> bool {
 }
 
 /// Detect the only container runtime this phase supports: **rootless Podman**.
-/// Returns `None` when Podman is absent, broken, or running as root. Cheap:
-/// only runs `--version` and one `podman info` field read.
+/// Returns `None` when Podman is absent, broken, or running as root.
+///
+/// **Cached** — the underlying `podman info` costs ~1.3s, and `env run`/`env
+/// shell` pay it on every invocation. Two layers, both skippable with
+/// `H5I_NO_PROBE_CACHE=1`:
+/// - in-process `OnceLock` (a single h5i invocation never probes twice);
+/// - a per-boot file under `$XDG_RUNTIME_DIR/h5i/` (tmpfs — vanishes at
+///   reboot, the natural invalidation for a host-capability fact), validated
+///   against the resolved `podman` binary's path + mtime + size so an
+///   upgraded/moved Podman re-probes.
+///
+/// Only the **positive** result is cached: "no rootless podman" answers fast
+/// anyway and must self-heal the moment the user installs/fixes Podman.
 pub fn probe() -> Option<Runtime> {
+    if std::env::var_os("H5I_NO_PROBE_CACHE").is_some() {
+        return probe_uncached();
+    }
+    static PROBE: std::sync::OnceLock<Option<Runtime>> = std::sync::OnceLock::new();
+    PROBE
+        .get_or_init(|| {
+            let cache = probe_cache_path();
+            if let Some(rt) = cache.as_deref().and_then(read_probe_cache) {
+                return Some(rt);
+            }
+            let rt = probe_uncached();
+            if let (Some(rt), Some(cache)) = (&rt, cache.as_deref()) {
+                write_probe_cache(cache, rt);
+            }
+            rt
+        })
+        .clone()
+}
+
+fn probe_uncached() -> Option<Runtime> {
     if !version_ok("podman") {
         return None;
     }
@@ -126,6 +157,76 @@ pub fn probe() -> Option<Runtime> {
         })
     } else {
         None
+    }
+}
+
+/// Per-boot cache location: `$XDG_RUNTIME_DIR` is a per-user tmpfs, so the
+/// cache dies with the boot. No runtime dir (rare: cron without a session,
+/// containers) → no file cache, probe normally.
+fn probe_cache_path() -> Option<std::path::PathBuf> {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")?;
+    if dir.is_empty() {
+        return None;
+    }
+    Some(Path::new(&dir).join("h5i").join("podman-probe.json"))
+}
+
+/// Identity of the podman binary the cached verdict was probed against.
+/// Path + mtime + size — enough to catch an upgrade, downgrade, or a PATH
+/// change putting a different podman first.
+fn podman_fingerprint() -> Option<(String, u64, u64)> {
+    let path = std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths).find_map(|d| {
+            let c = d.join("podman");
+            c.is_file().then_some(c)
+        })
+    })?;
+    let md = std::fs::metadata(&path).ok()?;
+    let mtime = md
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some((path.display().to_string(), mtime, md.len()))
+}
+
+fn read_probe_cache(cache: &Path) -> Option<Runtime> {
+    let text = std::fs::read_to_string(cache).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let (path, mtime, size) = podman_fingerprint()?;
+    if v.get("podman_path").and_then(|x| x.as_str()) != Some(path.as_str())
+        || v.get("podman_mtime").and_then(|x| x.as_u64()) != Some(mtime)
+        || v.get("podman_size").and_then(|x| x.as_u64()) != Some(size)
+        || v.get("rootless").and_then(|x| x.as_bool()) != Some(true)
+    {
+        return None;
+    }
+    let bin = v.get("bin").and_then(|x| x.as_str())?.to_string();
+    Some(Runtime { bin, rootless: true })
+}
+
+/// Best-effort (a probe cache must never fail a run): tmp-file + rename so a
+/// concurrent h5i invocation reads either the old or the new entry, never a
+/// torn one.
+fn write_probe_cache(cache: &Path, rt: &Runtime) {
+    let Some((path, mtime, size)) = podman_fingerprint() else {
+        return;
+    };
+    let Some(dir) = cache.parent() else { return };
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let entry = serde_json::json!({
+        "bin": rt.bin,
+        "rootless": rt.rootless,
+        "podman_path": path,
+        "podman_mtime": mtime,
+        "podman_size": size,
+    });
+    let tmp = cache.with_extension(format!("tmp.{}", std::process::id()));
+    if std::fs::write(&tmp, entry.to_string()).is_ok() {
+        let _ = std::fs::rename(&tmp, cache);
     }
 }
 
@@ -907,8 +1008,9 @@ pub fn run(
     })?;
     let image = p.image.clone().ok_or_else(|| {
         H5iError::Metadata(format!(
-            "profile '{}' uses isolation=container but sets no image — add `container.image = \
-             \"…\"` (e.g. a toolchain image) to the profile",
+            "profile '{}' uses isolation=container but sets no image — pass `--image` at env \
+             create, or set `container.image = \"…\"` in the profile / a repo-level \
+             `[container] image` in .h5i/env.toml",
             p.name
         ))
     })?;
@@ -1020,7 +1122,8 @@ pub fn run_interactive(
     })?;
     let image = p.image.clone().ok_or_else(|| {
         H5iError::Metadata(format!(
-            "profile '{}' uses isolation=container but sets no image — add `container.image`",
+            "profile '{}' uses isolation=container but sets no image — pass `--image` at env \
+             create or set `container.image` / a repo-level `[container] image`",
             p.name
         ))
     })?;
@@ -1201,6 +1304,48 @@ mod tests {
             bin: "podman".into(),
             rootless: true,
         }
+    }
+
+    /// Probe-cache round-trip: a written entry reads back as a Runtime, and any
+    /// fingerprint drift (podman upgraded) or a non-rootless verdict rejects
+    /// the cache instead of trusting it. Skips when podman isn't on PATH — the
+    /// fingerprint (real binary identity) is what's under test.
+    #[test]
+    fn probe_cache_round_trips_and_rejects_stale_fingerprints() {
+        let Some((path, mtime, size)) = podman_fingerprint() else {
+            eprintln!("skipping: no podman on PATH to fingerprint");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("h5i").join("podman-probe.json");
+
+        // Round-trip.
+        write_probe_cache(&cache, &rt());
+        let got = read_probe_cache(&cache).expect("fresh cache must hit");
+        assert_eq!(got.bin, "podman");
+        assert!(got.rootless);
+
+        // Stale mtime (podman upgraded since the probe) → miss, not a wrong hit.
+        let stale = serde_json::json!({
+            "bin": "podman", "rootless": true,
+            "podman_path": path, "podman_mtime": mtime + 1, "podman_size": size,
+        });
+        std::fs::write(&cache, stale.to_string()).unwrap();
+        assert!(read_probe_cache(&cache).is_none(), "drifted fingerprint must re-probe");
+
+        // A cached non-rootless verdict is never served (positive-only cache).
+        let rootful = serde_json::json!({
+            "bin": "podman", "rootless": false,
+            "podman_path": path, "podman_mtime": mtime, "podman_size": size,
+        });
+        std::fs::write(&cache, rootful.to_string()).unwrap();
+        assert!(read_probe_cache(&cache).is_none(), "non-rootless entry must be ignored");
+
+        // Garbage/missing file → clean miss.
+        std::fs::write(&cache, b"not json").unwrap();
+        assert!(read_probe_cache(&cache).is_none());
+        std::fs::remove_file(&cache).unwrap();
+        assert!(read_probe_cache(&cache).is_none());
     }
 
     #[test]

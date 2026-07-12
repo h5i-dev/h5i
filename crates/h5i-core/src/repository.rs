@@ -180,7 +180,18 @@ impl H5iRepository {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, H5iError> {
         let git_repo = Repository::discover(path)?;
         let h5i_root = crate::storage::h5i_root_for_repo(&git_repo)?;
-        crate::storage::ensure_layout(&h5i_root)?;
+        // Inside an env box the `.git/.h5i` sidecar is sealed: the kernel tiers
+        // grant no write, and the container tier doesn't mount it at all — the
+        // path is a bare read-only overlay dir (auto-created for the nested
+        // `env/<agent>/<slug>/work` dual-mount), so `ensure_layout` would try
+        // to really create `metadata/` etc. and die on EROFS, taking every
+        // hook-wrapped command down with it. The layout is guaranteed to exist
+        // host-side (`env create` opens the repository before any box runs);
+        // in-box h5i is a read-only client of the store whose writes go
+        // through the spool/inbox mounts instead.
+        if !crate::env::in_env_box() {
+            crate::storage::ensure_layout(&h5i_root)?;
+        }
 
         Ok(H5iRepository { git_repo, h5i_root })
     }

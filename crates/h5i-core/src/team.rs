@@ -1316,7 +1316,7 @@ fn verifier_policy(
         Some(s) if !s.is_empty() && !s.eq_ignore_ascii_case("auto") => {
             sandbox::IsolationClaim::parse(s)?
         }
-        _ => sandbox::effective_auto(repo_workdir, "default", false)
+        _ => sandbox::effective_auto(repo_workdir, "default", false, None)
             .unwrap_or(sandbox::IsolationClaim::Workspace),
     };
     // Scope the probe to the chosen claim (the `default` profile never resolves a
