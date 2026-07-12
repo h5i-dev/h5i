@@ -664,23 +664,23 @@ Print help
 <\fINAME\fR>
 
 .SH "H5I ENV RM"
-Permanently remove an environment from this clone: prune its worktree, delete its code + reasoning branches, and erase its manifest. Destroys local provenance (only the `removed` event in refs/h5i/env survives). A still-live env (created/running/proposed) needs --force
+Permanently remove one or more environments from this clone: prune their worktrees, delete their code + reasoning branches, and erase their manifests. Destroys local provenance (only the `removed` event in refs/h5i/env survives). A still-live env (created/running/proposed) needs --force. Multiple names are processed in order; a failure for one env is reported but does not abort the rest
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBrm\fR [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBrm\fR [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAMES\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-\-force\fR
-Remove even if the env is still live (not applied/aborted)
+Remove even if the env is still live (not applied/aborted). Applies to every listed env
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .TP
-<\fINAME\fR>
-
+<\fINAMES\fR>
+One or more environment names (slug, `agent/slug`, or full `env/agent/slug`)
 .SH "H5I ENV GC"
 Reclaim workspaces of applied/aborted environments (worktree prune). Manifests, branches, and captures are retained
 .ie \n(.g .ds Aq \(aq

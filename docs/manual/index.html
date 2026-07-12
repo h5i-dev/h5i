@@ -3659,6 +3659,10 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 <td>Discard the env; manifest + workspace retained for forensics.</td>
 </tr>
 <tr>
+<td><code>h5i env rm &lt;name&gt;… [--force]</code></td>
+<td><strong>Permanently</strong> remove one or more environments: prune their worktrees, delete their code + reasoning branches, and erase their manifests. Multiple names are processed in order; a failure for one does not abort the rest, but the exit code is non-zero if any removal failed. A still-live env (created/running/proposed) needs <code>--force</code>. Only the <code>removed</code> event in <code>refs/h5i/env</code> survives.</td>
+</tr>
+<tr>
 <td><code>h5i env gc</code></td>
 <td>Reclaim worktrees of applied/aborted envs. Manifests, branches, and captures are retained.</td>
 </tr>

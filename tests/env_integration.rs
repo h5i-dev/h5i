@@ -5341,3 +5341,72 @@ fn create_rejects_bad_service_name_in_config() {
         out_str(&out)
     );
 }
+
+// ─── env rm: multi-name and partial-failure ──────────────────────────────────
+
+/// `h5i env rm a b --force` removes both envs in a single call.
+/// Single-name behavior is unchanged: exit 0, both manifests and worktrees gone.
+#[test]
+fn env_rm_removes_multiple_envs() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "alpha"]);
+    r.h5i_ok(&["env", "create", "beta"]);
+
+    // Sanity: both worktrees exist before rm.
+    assert!(r.work("alpha").exists(), "alpha worktree should exist");
+    assert!(r.work("beta").exists(), "beta worktree should exist");
+
+    // Remove both in one call with --force (they are in `created` status).
+    let out = r.h5i_ok(&["env", "rm", "alpha", "beta", "--force"]);
+    let text = out_str(&out);
+    assert!(text.contains("alpha"), "should confirm removal of alpha:\n{text}");
+    assert!(text.contains("beta"), "should confirm removal of beta:\n{text}");
+
+    // Worktrees and manifest files must be gone.
+    assert!(!r.env_dir("alpha").join("manifest.json").exists(), "alpha manifest still present");
+    assert!(!r.env_dir("beta").join("manifest.json").exists(), "beta manifest still present");
+    assert!(!r.work("alpha").exists(), "alpha worktree still present");
+    assert!(!r.work("beta").exists(), "beta worktree still present");
+
+    // h5i env list should show no envs remaining.
+    let list_out = out_str(&r.h5i_ok(&["env", "list"]));
+    assert!(
+        !list_out.contains("env/tester/alpha") && !list_out.contains("env/tester/beta"),
+        "alpha or beta still visible in env list:\n{list_out}"
+    );
+}
+
+/// `h5i env rm good nope` — one missing env must not abort the other.
+/// The present env is removed; exit code is non-zero; both failures are reported.
+#[test]
+fn env_rm_partial_failure_continues_and_exits_nonzero() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "good"]);
+
+    // Attempt to remove both a real env and a nonexistent one.
+    let out = r.h5i(&["env", "rm", "good", "nope", "--force"]);
+
+    // The real env must be gone.
+    assert!(!r.env_dir("good").join("manifest.json").exists(), "good manifest still present");
+    assert!(!r.work("good").exists(), "good worktree still present");
+
+    // The command must exit non-zero because `nope` failed.
+    assert!(
+        !out.status.success(),
+        "expected non-zero exit when a name fails, got 0"
+    );
+
+    // stderr must mention the missing env.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("nope"),
+        "expected 'nope' mentioned in stderr:\n{stderr}"
+    );
+
+    // But the successful removal must still appear in stdout.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("good"),
+        "expected 'good' removal confirmation in stdout:\n{stdout}"
+    );
+}

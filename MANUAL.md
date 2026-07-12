@@ -2932,6 +2932,7 @@ another reviews and applies). See `docs/environments-design.md` and the live
 | `h5i env propose <name>` | Mediated commit (path-allowlist enforced: rejects nested `.git`, symlink escapes, `..`) + review brief. Never writes the parent. |
 | `h5i env apply <name> [--patch]` | Apply a proposed env onto its parent (reviewer-selected). Default merges; `--patch` squashes into one commit. The applied commit is **stamped with env provenance** — a note linking it back to the env and summarizing the evidence by trust lane (`host-env-run` vs box-claimed `inbox-capture`), visible in `h5i recall log`. |
 | `h5i env abort <name>` | Discard the env; manifest + workspace retained for forensics. |
+| `h5i env rm <name>… [--force]` | **Permanently** remove one or more environments: prune their worktrees, delete their code + reasoning branches, and erase their manifests. Multiple names are processed in order; a failure for one does not abort the rest, but the exit code is non-zero if any removal failed. A still-live env (created/running/proposed) needs `--force`. Only the `removed` event in `refs/h5i/env` survives. |
 | `h5i env gc` | Reclaim worktrees of applied/aborted envs. Manifests, branches, and captures are retained. |
 
 `<name>` accepts a bare slug, `agent/slug`, or the full `env/agent/slug`.
