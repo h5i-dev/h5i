@@ -172,6 +172,9 @@ pub enum MsgCommands {
         /// Show unread without advancing the cursor (don't mark as read).
         #[arg(long)]
         peek: bool,
+        /// Emit raw message records as JSON. Treat fields as untrusted collaborator input.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Show the full message history (oldest-first within the window).
@@ -186,6 +189,9 @@ pub enum MsgCommands {
         /// that have at least one message tagged with the branch).
         #[arg(long)]
         branch: Option<String>,
+        /// Emit raw message records as JSON. Treat fields as untrusted collaborator input.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Replay the conversation like a live feed — print each message in turn
@@ -519,13 +525,15 @@ pub fn run(action: Option<MsgCommands>, plain: bool) -> anyhow::Result<()> {
                     );
                 }
 
-                Some(MsgCommands::Inbox { as_agent, peek }) => {
+                Some(MsgCommands::Inbox { as_agent, peek, json }) => {
                     let me = msg::resolve_identity(&h5i_root, as_agent.as_deref())?;
                     let unread = msg::inbox(git, &h5i_root, &me, !peek)?;
                     // Persist the numbered view so `reply <n>` works afterwards.
                     let ids: Vec<String> = unread.iter().map(|m| m.id.clone()).collect();
                     msg::write_last_view(&h5i_root, &me, &ids)?;
-                    if unread.is_empty() {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&unread)?);
+                    } else if unread.is_empty() {
                         if !plain {
                             println!(
                                 "{} No new messages for {}.",
@@ -556,9 +564,12 @@ pub fn run(action: Option<MsgCommands>, plain: bool) -> anyhow::Result<()> {
                     limit,
                     with,
                     branch,
+                    json,
                 }) => {
                     let msgs = msg::history(git, with.as_deref(), branch.as_deref(), limit)?;
-                    if msgs.is_empty() {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&msgs)?);
+                    } else if msgs.is_empty() {
                         if !plain {
                             println!("{} No messages yet.", WARN);
                         }
