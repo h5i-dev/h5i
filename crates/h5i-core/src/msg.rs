@@ -299,6 +299,10 @@ pub fn send_msg(
     validate_name(from)?;
     validate_name(to)?;
 
+    if let Some(warning) = unknown_recipient_warning(repo, from, to) {
+        eprintln!("{warning}");
+    }
+
     let ts = now_ts();
     let id = gen_id(&ts, from, to, body);
     let tag = opts.tag.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
@@ -353,6 +357,24 @@ pub fn send_msg(
         write_identity(h5i_root, from)?;
     }
     Ok(msg)
+}
+
+fn unknown_recipient_warning(repo: &Repository, from: &str, to: &str) -> Option<String> {
+    if to == BROADCAST || to == from {
+        return None;
+    }
+
+    let roster = read_roster(repo);
+    let known: Vec<&str> = roster.agents.keys().map(String::as_str).collect();
+    let has_other_agent = roster.agents.keys().any(|name| name != from);
+    if !has_other_agent || roster.agents.contains_key(to) {
+        return None;
+    }
+
+    Some(format!(
+        "note: '{to}' has never been seen in this clone; known agents: {}",
+        known.join(", ")
+    ))
 }
 
 /// Send a threaded reply to `original`, as `me`.
@@ -1590,6 +1612,21 @@ mod tests {
         let names: Vec<String> = team(&repo).into_iter().map(|(n, _)| n).collect();
         assert!(names.contains(&"alice".to_string()));
         assert!(names.contains(&"bob".to_string()));
+    }
+
+    #[test]
+    fn unknown_recipient_warning_uses_roster_before_send() {
+        let (_d, repo, root) = fixture();
+        assert_eq!(unknown_recipient_warning(&repo, "alice", "bob"), None);
+
+        send(&repo, &root, "alice", "bob", "hi", None).unwrap();
+        assert_eq!(unknown_recipient_warning(&repo, "alice", "bob"), None);
+        assert_eq!(unknown_recipient_warning(&repo, "alice", "alice"), None);
+        assert_eq!(unknown_recipient_warning(&repo, "alice", BROADCAST), None);
+        assert_eq!(
+            unknown_recipient_warning(&repo, "alice", "codx").as_deref(),
+            Some("note: 'codx' has never been seen in this clone; known agents: alice, bob")
+        );
     }
 
     #[test]
