@@ -177,6 +177,27 @@ fn send_inbox_history_roundtrip_in_one_repo() {
 }
 
 #[test]
+fn inbox_and_history_emit_raw_json_without_changing_cursor_semantics() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "alice", "bob", "raw", "<message>"]);
+
+    let peek = out_str(&a.h5i_ok(&["msg", "inbox", "--as", "bob", "--peek", "--json"]));
+    let peek_messages: serde_json::Value = serde_json::from_str(&peek).expect("valid inbox JSON");
+    assert_eq!(peek_messages[0]["body"], "raw <message>");
+
+    let read = out_str(&a.h5i_ok(&["msg", "inbox", "--as", "bob", "--json"]));
+    let read_messages: serde_json::Value = serde_json::from_str(&read).expect("valid inbox JSON");
+    assert_eq!(read_messages[0]["body"], "raw <message>");
+
+    let empty = out_str(&a.h5i_ok(&["msg", "inbox", "--as", "bob", "--json"]));
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&empty).unwrap(), serde_json::json!([]));
+
+    let history = out_str(&a.h5i_ok(&["msg", "history", "--json"]));
+    let history_messages: serde_json::Value = serde_json::from_str(&history).expect("valid history JSON");
+    assert_eq!(history_messages[0]["body"], "raw <message>");
+}
+
+#[test]
 fn replay_streams_messages_oldest_first() {
     let (_root, a, _b) = two_clones();
 
