@@ -1,0 +1,107 @@
+[filters.deno]
+description = "Compact deno output — keep failures, diagnostics, and the summary; drop passing lines, download notices, and blank lines"
+match_command = "^deno\\b"
+strip_ansi = true
+# Keep-by-default (strip only known noise) so an unexpected error, a diagnostic,
+# or the summary is never dropped or turned into a false success.
+strip_lines_matching = [
+  "^\\s*$",
+  "^Download ",
+  "^Check ",
+  "\\.\\.\\. ok",
+  "^running \\d+ tests? from",
+]
+on_empty = "deno: ok"
+
+[[tests.deno]]
+name = "keeps failures, diagnostics, and the summary; drops passing/download noise"
+input = """
+Download https://jsr.io/@std/assert/1.0.19/assert.ts
+running 3 tests from ./math_test.ts
+adds numbers ... ok (523µs)
+multiplies numbers ... ok (73µs)
+this one fails ... FAILED (18ms)
+
+ ERRORS
+
+this one fails => ./math_test.ts:11:6
+error: AssertionError: Values are not equal.
+
+
+    [Diff] Actual / Expected
+
+
+-   2
++   3
+
+  throw new AssertionError(message);
+        ^
+    at assertEquals (https://jsr.io/@std/assert/1.0.19/equals.ts:67:9)
+    at file:///project/math_test.ts:12:3
+
+ FAILURES
+
+this one fails => ./math_test.ts:11:6
+
+FAILED | 2 passed | 1 failed (21ms)
+
+error: Test failed
+"""
+expected = """
+this one fails ... FAILED (18ms)
+ ERRORS
+this one fails => ./math_test.ts:11:6
+error: AssertionError: Values are not equal.
+    [Diff] Actual / Expected
+-   2
++   3
+  throw new AssertionError(message);
+        ^
+    at assertEquals (https://jsr.io/@std/assert/1.0.19/equals.ts:67:9)
+    at file:///project/math_test.ts:12:3
+ FAILURES
+this one fails => ./math_test.ts:11:6
+FAILED | 2 passed | 1 failed (21ms)
+error: Test failed
+"""
+
+[[tests.deno]]
+name = "all-pass run collapses to the summary line"
+input = """
+running 2 tests from ./pass_test.ts
+a ... ok (340µs)
+b ... ok (47µs)
+
+ok | 2 passed | 0 failed (3ms)
+"""
+expected = "ok | 2 passed | 0 failed (3ms)"
+
+[[tests.deno]]
+name = "keeps lint diagnostics"
+input = """
+error[no-unused-vars]: `x` is never used
+ --> /project/bad.ts:1:7
+ |
+1 | const x = 1;
+ |       ^
+ = hint: If this is intentional, prefix it with an underscore like `_x`
+
+  docs: https://docs.deno.com/lint/rules/no-unused-vars
+
+Found 1 problem
+"""
+expected = """
+error[no-unused-vars]: `x` is never used
+ --> /project/bad.ts:1:7
+ |
+1 | const x = 1;
+ |       ^
+ = hint: If this is intentional, prefix it with an underscore like `_x`
+  docs: https://docs.deno.com/lint/rules/no-unused-vars
+Found 1 problem
+"""
+
+[[tests.deno]]
+name = "clean run collapses to message"
+input = ""
+expected = "deno: ok"
