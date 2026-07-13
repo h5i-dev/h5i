@@ -847,6 +847,10 @@ enum Commands {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
 
+        /// Emit commit provenance records as JSON
+        #[arg(long, conflicts_with = "ancestry")]
+        json: bool,
+
         /// Show the full prompt ancestry chain for a specific line.
         /// Format: <file>:<line>  e.g.  src/model.py:42
         /// Prints every commit that ever touched that line, annotated with the
@@ -3598,7 +3602,11 @@ fn main() -> anyhow::Result<()> {
 
         Commands::Commit { message, intent, model, agent, tests, test_results, test_cmd, audit, force, caused_by, decisions, add } => cli::commit::run(message, intent, model, agent, tests, test_results, test_cmd, audit, force, caused_by, decisions, add)?,
 
-        Commands::Log { limit, ancestry } => cli::log::run(limit, ancestry)?,
+        Commands::Log {
+            limit,
+            json,
+            ancestry,
+        } => cli::log::run(limit, json, ancestry)?,
 
         Commands::Blame { file, show_prompt } => cli::blame::run(file, show_prompt)?,
 

@@ -1,7 +1,7 @@
 //! `h5i log` — CLI handler (migrated from main.rs).
 use crate::*;
 
-pub fn run(limit: usize, ancestry: Option<String>) -> anyhow::Result<()> {
+pub fn run(limit: usize, json: bool, ancestry: Option<String>) -> anyhow::Result<()> {
     {
             let repo = H5iRepository::open(".")?;
 
@@ -72,7 +72,11 @@ pub fn run(limit: usize, ancestry: Option<String>) -> anyhow::Result<()> {
                 }
             } else {
                 let log_limit = if limit == 0 { usize::MAX } else { limit };
-                repo.print_log(log_limit)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&repo.get_log(log_limit)?)?);
+                } else {
+                    repo.print_log(log_limit)?;
+                }
             }
         }
     Ok(())
