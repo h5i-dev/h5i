@@ -96,6 +96,21 @@ impl AgentBuilder {
                 seat.agent_id, hire_core.run_id
             )));
         }
+        // The env behind the seat must still exist — a seat bound to a removed
+        // env otherwise dispatches turns into the void (the resident session
+        // dies instantly on `h5i env shell`, and the score hangs waiting).
+        let env_core = hire_core.clone();
+        let env_id = seat.env_id.clone();
+        let env_exists =
+            run_blocking(move || Ok(env::find(&env_core.h5i_root, &env_id).is_ok())).await?;
+        if !env_exists {
+            return Err(H5iError::Metadata(format!(
+                "orchestra resume divergence: hired agent '{}' is bound to env '{}', which no \
+                 longer exists (it was removed after the run began) — start a fresh run id to \
+                 re-hire on new envs, or hire with .env(...) pointing at an existing one",
+                seat.agent_id, seat.env_id
+            )));
+        }
         Ok(Agent {
             core: hire_core,
             name: seat.agent_id,

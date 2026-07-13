@@ -1051,3 +1051,64 @@ async fn revise_completes_on_unchanged_resubmit() {
     assert_eq!(revised.id, first.id, "unchanged re-submit returns the same candidate");
     assert_eq!(turns.load(Ordering::SeqCst), 2, "one work + one revise turn");
 }
+
+#[tokio::test]
+async fn hire_fails_closed_when_the_seat_env_was_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    let m = fabricate_env(&repo, &h5i_root, "claude", "gone");
+
+    let script = scripted("fine");
+    let c1 = conductor(dir.path(), "stale", Script::launcher(&script));
+    c1.agent("claude")
+        .runtime("claude")
+        .env("env/claude/gone")
+        .hire()
+        .await
+        .unwrap();
+
+    // The env vanishes between runs (an `h5i env rm` / abort during cleanup).
+    fs::remove_dir_all(m.dir(&h5i_root)).unwrap();
+
+    // Resume: the journaled hire replays, but must fail closed on the dead
+    // env instead of letting turns dispatch into the void.
+    let c2 = conductor(dir.path(), "stale", Script::launcher(&script));
+    let err = match c2
+        .agent("claude")
+        .runtime("claude")
+        .env("env/claude/gone")
+        .hire()
+        .await
+    {
+        Ok(_) => panic!("hire must fail closed on a removed env"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(msg.contains("env/claude/gone"), "names the env: {msg}");
+    assert!(msg.contains("no longer exists"), "says why: {msg}");
+    assert!(msg.contains("fresh run id"), "says how to recover: {msg}");
+}
+
+#[tokio::test]
+async fn launch_resident_fails_closed_on_a_missing_env() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    let turn = TurnContext {
+        run_id: "r".into(),
+        agent_id: "claude".into(),
+        env_id: "env/claude/never-created".into(),
+        kind: TurnKind::Work,
+        instruction: "task".into(),
+        repo_workdir: dir.path().to_path_buf(),
+        h5i_root,
+        work_dir: None,
+        runtime: Some("claude".into()),
+        model: None,
+    };
+    let err = LaunchResident.on_turn(&turn).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("env/claude/never-created"), "names the env: {msg}");
+    assert!(msg.contains("no longer exists"), "says why: {msg}");
+}
