@@ -4627,6 +4627,45 @@ fn log_json_emits_env_event_records() {
     assert!(text.contains("exec"), "{text}");
 }
 
+#[test]
+fn env_log_limit_returns_the_newest_events() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "limited-log"]);
+    for marker in ["first", "second", "third"] {
+        r.h5i_ok(&[
+            "env",
+            "run",
+            "limited-log",
+            "--",
+            "sh",
+            "-c",
+            &format!("echo {marker}"),
+        ]);
+    }
+
+    let all: serde_json::Value = serde_json::from_slice(
+        &r.h5i_ok(&["env", "log", "limited-log", "--json"]).stdout,
+    )
+    .expect("full env log must be valid JSON");
+    let limited: serde_json::Value = serde_json::from_slice(
+        &r.h5i_ok(&["env", "log", "limited-log", "--limit", "2", "--json"])
+            .stdout,
+    )
+    .expect("limited env log must be valid JSON");
+
+    let all = all.as_array().expect("full event log is an array");
+    let limited = limited.as_array().expect("limited event log is an array");
+    assert_eq!(limited.len(), 2);
+    assert_eq!(limited, &all[all.len() - 2..]);
+
+    let unlimited: serde_json::Value = serde_json::from_slice(
+        &r.h5i_ok(&["env", "log", "limited-log", "--limit", "0", "--json"])
+            .stdout,
+    )
+    .expect("zero limit env log must be valid JSON");
+    assert_eq!(unlimited.as_array().unwrap(), all);
+}
+
 // ─── 14. shareable environments across clones (the multi-agent review loop) ──
 
 /// A clone addressed through the h5i binary under a fixed agent identity.
