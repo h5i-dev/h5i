@@ -4089,6 +4089,10 @@ inboxes and never locks the round.</p>
 <td>Pin a <strong>current team</strong> (like git's current branch) so other subcommands can drop <code>&lt;team&gt;</code>. No arg prints the current; <code>--clear</code> unsets. <code>create</code> auto-pins the new run.</td>
 </tr>
 <tr>
+<td><code>h5i team rm &lt;team&gt; [--purge] [--envs] [--force] [--json]</code></td>
+<td>Remove a run from the listing. By default the whole event log is <strong>archived</strong> to <code>refs/h5i/team-attic/&lt;team&gt;</code> (a final <code>run_removed</code> event is appended first) — auditable, and recoverable by moving the ref back; <code>--purge</code> deletes the ref outright. Bound envs are kept unless <code>--envs</code> (they may hold uncommitted agent work). A run with submissions but no verdict is plausibly live and needs <code>--force</code>. Clone-local: there is no cross-clone tombstone, so a manually synced team ref would re-introduce the run.</td>
+</tr>
+<tr>
 <td><code>h5i team submit &lt;team&gt; --agent &lt;id&gt; [--commit OID] [--summary-file F] [--json]</code></td>
 <td>Freeze the agent's candidate as an <strong>immutable</strong> submission — frozen commit/tree oids + diffstat + capture ids, reviewable even if the env later changes. Without <code>--commit</code> it first <strong>mediates-commits the env worktree</strong> onto the env branch (so uncommitted edits are captured, not silently lost) and freezes the result; with <code>--commit</code> it pins that exact commit. A submission whose tree is identical to the team base is <strong>refused</strong> (nothing to review).</td>
 </tr>

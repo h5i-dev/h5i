@@ -114,6 +114,26 @@ pub enum TeamCommands {
         #[arg(long)]
         clear: bool,
     },
+    /// Remove a team run from the listing. By default the run's event log is
+    /// archived to refs/h5i/team-attic/ (auditable, recoverable by moving the
+    /// ref back); bound envs are kept unless --envs
+    Rm {
+        /// Team id
+        team: String,
+        /// Delete the run's ref outright instead of archiving it to the attic
+        #[arg(long)]
+        purge: bool,
+        /// Also remove the run's bound envs (workspaces, branches, manifests)
+        #[arg(long)]
+        envs: bool,
+        /// Required for a run with submissions but no verdict (plausibly live
+        /// work); with --envs, also forces removal of still-live envs
+        #[arg(long)]
+        force: bool,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Add an existing env to a team roster
     AddEnv {
         /// Team id
@@ -887,6 +907,76 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                             Some(c) => println!("{c}"),
                             None => println!("(no current team — set one: h5i team use <name>)"),
                         }
+                    }
+                }
+                TeamCommands::Rm {
+                    team,
+                    purge,
+                    envs,
+                    force,
+                    json,
+                } => {
+                    let outcome = h5i_core::team::rm(git, &h5i_root, &team, purge, force, &actor)?;
+                    let mut envs_removed: Vec<String> = Vec::new();
+                    let mut envs_failed: Vec<(String, String)> = Vec::new();
+                    if envs {
+                        for env_id in &outcome.env_ids {
+                            match h5i_core::env::find(&h5i_root, env_id) {
+                                Ok(m) => match h5i_core::env::rm(git, &h5i_root, &m, force) {
+                                    Ok(()) => envs_removed.push(m.id.clone()),
+                                    Err(e) => envs_failed.push((env_id.clone(), e.to_string())),
+                                },
+                                // Already gone (the zombie-run case) — nothing to do.
+                                Err(_) => {}
+                            }
+                        }
+                    }
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "run_id": outcome.run_id,
+                                "attic_ref": outcome.attic_ref,
+                                "cleared_current": outcome.cleared_current,
+                                "envs_removed": envs_removed,
+                                "envs_failed": envs_failed
+                                    .iter()
+                                    .map(|(id, e)| serde_json::json!({"env_id": id, "error": e}))
+                                    .collect::<Vec<_>>(),
+                                "envs_kept": if envs { Vec::new() } else { outcome.env_ids.clone() },
+                            }))?
+                        );
+                    } else {
+                        match &outcome.attic_ref {
+                            Some(attic) => println!(
+                                "{} team '{}' removed — event log archived at {attic}",
+                                SUCCESS, outcome.run_id
+                            ),
+                            None => println!(
+                                "{} team '{}' purged (event log deleted locally)",
+                                SUCCESS, outcome.run_id
+                            ),
+                        }
+                        if outcome.cleared_current {
+                            println!("  cleared the current-team pointer");
+                        }
+                        for id in &envs_removed {
+                            println!("  {} {} removed", SUCCESS, id);
+                        }
+                        for (id, e) in &envs_failed {
+                            eprintln!("{} failed to remove {id}: {e}", style("error:").red().bold());
+                        }
+                        if !envs && !outcome.env_ids.is_empty() {
+                            println!(
+                                "\u{2139} {} bound env(s) kept: {} — remove with `h5i team rm --envs` \
+                                 next time, or `h5i env rm <env>`",
+                                outcome.env_ids.len(),
+                                outcome.env_ids.join(", ")
+                            );
+                        }
+                    }
+                    if !envs_failed.is_empty() {
+                        std::process::exit(1);
                     }
                 }
                 TeamCommands::AddEnv {

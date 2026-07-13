@@ -18,6 +18,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const TEAM_REF_PREFIX: &str = "refs/h5i/team/";
+/// Where `rm` parks a removed run's event log: out of `list`, but the audit
+/// trail survives and the run is recoverable by moving the ref back.
+const TEAM_ATTIC_REF_PREFIX: &str = "refs/h5i/team-attic/";
 const EVENTS_FILE: &str = "events.jsonl";
 const MAX_ATTEMPTS: usize = 64;
 
@@ -467,6 +470,98 @@ pub fn list(repo: &Repository) -> Result<Vec<TeamRun>, H5iError> {
     }
     out.sort_by(|a, b| a.created_at.cmp(&b.created_at));
     Ok(out)
+}
+
+/// What `rm` did, for the caller to report (and act on, e.g. `--envs`).
+#[derive(Debug, Clone, Serialize)]
+pub struct RmOutcome {
+    pub run_id: String,
+    /// Where the event log was archived; `None` when purged.
+    pub attic_ref: Option<String>,
+    /// Envs the roster was bound to — still present after `rm` (they may hold
+    /// uncommitted agent work); the caller decides whether to remove them.
+    pub env_ids: Vec<String>,
+    /// Whether the current-team pointer named this run and was cleared.
+    pub cleared_current: bool,
+}
+
+/// Remove a team run from the listing.
+///
+/// By default the run's ref (and with it the whole append-only event log) is
+/// *archived* — moved to `refs/h5i/team-attic/<run_id>` (suffixed `-2`, `-3`, …
+/// on collision) after a final `run_removed` event — so the audit trail
+/// survives and a mistaken removal is recoverable by moving the ref back.
+/// `purge` deletes the ref outright instead. Either way the removal is
+/// clone-local (team refs are not part of `share push` today); there is no
+/// cross-clone tombstone, so a manually synced ref would re-introduce the run.
+///
+/// A run with submissions but no verdict is plausibly live work; removing it
+/// requires `force`. Bound envs are never touched — their ids are returned so
+/// the caller can remove them explicitly.
+pub fn rm(
+    repo: &Repository,
+    h5i_root: &Path,
+    run_id: &str,
+    purge: bool,
+    force: bool,
+    actor: &str,
+) -> Result<RmOutcome, H5iError> {
+    let run = status(repo, run_id)?.run;
+    if !force && run.verdict.is_none() && !run.submissions.is_empty() {
+        return Err(H5iError::Metadata(format!(
+            "team '{run_id}' has {} submission(s) but no verdict — this looks like live work; \
+             finish it (`h5i team finalize`) or pass --force to remove it anyway",
+            run.submissions.len()
+        )));
+    }
+    let refname = refname(run_id)?;
+    let attic_ref = if purge {
+        None
+    } else {
+        // First free attic slot: the base name, then `-2`, `-3`, …
+        let mut candidate = format!("{TEAM_ATTIC_REF_PREFIX}{run_id}");
+        let mut n = 1;
+        while repo.find_reference(&candidate).is_ok() {
+            n += 1;
+            candidate = format!("{TEAM_ATTIC_REF_PREFIX}{run_id}-{n}");
+        }
+        Some(candidate)
+    };
+    // The removal is itself evidence — journal it before moving the ref, so
+    // the attic copy records why its run disappeared from the listing.
+    let tip = repo.refname_to_id(&refname)?;
+    let ev = event(
+        run_id,
+        actor,
+        "run_removed",
+        run.current_round,
+        Some(run.phase.clone()),
+        None,
+        format!("run_removed:{run_id}:{tip}"),
+        serde_json::json!({
+            "purged": purge,
+            "attic_ref": attic_ref,
+            "forced": force,
+        }),
+    );
+    append_event(repo, &ev)?;
+
+    let tip = repo.refname_to_id(&refname)?;
+    if let Some(attic) = &attic_ref {
+        repo.reference(attic, tip, false, &format!("h5i team rm: archived {run_id}"))?;
+    }
+    repo.find_reference(&refname)?.delete()?;
+
+    let cleared_current = get_current(h5i_root).as_deref() == Some(run_id);
+    if cleared_current {
+        clear_current(h5i_root)?;
+    }
+    Ok(RmOutcome {
+        run_id: run_id.to_string(),
+        attic_ref,
+        env_ids: run.agents.iter().map(|a| a.env_id.clone()).collect(),
+        cleared_current,
+    })
 }
 
 pub fn status(repo: &Repository, run_id: &str) -> Result<TeamStatus, H5iError> {
@@ -2412,6 +2507,87 @@ mod tests {
         assert_eq!(id.trim(), "codex-impl");
         let team = std::fs::read_to_string(m.dir(h5i_root).join("team-run")).unwrap();
         assert_eq!(team.trim(), "run-i");
+    }
+
+
+    #[test]
+    fn rm_archives_the_run_and_clears_the_pointer() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hi\n");
+        let h5i_root = dir.path();
+        manifest(&repo, h5i_root, "codex", "fix");
+        create(&repo, "gone", "gone", "HEAD", 1, "human").unwrap();
+        add_env(
+            &repo, h5i_root, "gone", "env/codex/fix", "codex-fix", None, None, "human",
+        )
+        .unwrap();
+        set_current(h5i_root, "gone").unwrap();
+
+        let out = rm(&repo, h5i_root, "gone", false, false, "human").unwrap();
+
+        // Out of the listing, pointer cleared, envs reported but untouched.
+        assert!(list(&repo).unwrap().is_empty());
+        assert!(get_current(h5i_root).is_none());
+        assert!(out.cleared_current);
+        assert_eq!(out.env_ids, vec!["env/codex/fix".to_string()]);
+        assert!(env::find(h5i_root, "env/codex/fix").is_ok(), "envs are kept");
+
+        // The attic holds the whole event log, final run_removed included.
+        let attic = out.attic_ref.unwrap();
+        assert_eq!(attic, "refs/h5i/team-attic/gone");
+        let tip = repo.refname_to_id(&attic).unwrap();
+        let tree = repo.find_commit(tip).unwrap().tree().unwrap();
+        let log = objects::read_blob_from_tree(&repo, Some(&tree), EVENTS_FILE).unwrap();
+        assert!(log.contains("\"kind\":\"created\""));
+        assert!(log.contains("\"kind\":\"run_removed\""));
+
+        // The name is free again; a second rm lands in the next attic slot.
+        create(&repo, "gone", "gone", "HEAD", 1, "human").unwrap();
+        let again = rm(&repo, h5i_root, "gone", false, false, "human").unwrap();
+        assert_eq!(again.attic_ref.as_deref(), Some("refs/h5i/team-attic/gone-2"));
+        assert!(!again.cleared_current);
+    }
+
+    #[test]
+    fn rm_refuses_live_work_unless_forced() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let m = manifest(&repo, h5i_root, "codex", "fix");
+        let candidate = commit_file(&repo, "feature.txt", "ok\n");
+        repo.reference(&m.branch, candidate, true, "candidate").unwrap();
+        create(&repo, "live", "live", "HEAD~1", 1, "human").unwrap();
+        add_env(
+            &repo, h5i_root, "live", "env/codex/fix", "codex-fix",
+            Some("codex".into()), None, "human",
+        )
+        .unwrap();
+        submit(&repo, h5i_root, "live", "codex-fix", None, Some("done".into()), "codex").unwrap();
+
+        let err = rm(&repo, h5i_root, "live", false, false, "human").unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("no verdict"), "says why: {msg}");
+        assert!(msg.contains("--force"), "says how: {msg}");
+
+        rm(&repo, h5i_root, "live", false, true, "human").unwrap();
+        assert!(list(&repo).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rm_purge_deletes_the_ref_outright() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hi\n");
+        let h5i_root = dir.path();
+        create(&repo, "junk", "junk", "HEAD", 1, "human").unwrap();
+
+        let out = rm(&repo, h5i_root, "junk", true, false, "human").unwrap();
+        assert!(out.attic_ref.is_none());
+        assert!(list(&repo).unwrap().is_empty());
+        assert!(repo.find_reference("refs/h5i/team-attic/junk").is_err());
+        assert!(rm(&repo, h5i_root, "junk", true, false, "human").is_err(), "already gone");
     }
 
     #[test]
