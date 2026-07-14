@@ -16,6 +16,21 @@ pub enum TurnKind {
     Ask,
 }
 
+impl TurnKind {
+    /// Wire label for this turn kind. It rides in the dispatched message's
+    /// i5h `links.turn` (and the RPC turn feed), so the team Stop hook can
+    /// tell a data request — finished with `team agent reply` — from a
+    /// submit-shaped turn without parsing the instruction body.
+    pub fn label(&self) -> &'static str {
+        match self {
+            TurnKind::Work => "work",
+            TurnKind::Review { .. } => "review",
+            TurnKind::Revise => "revise",
+            TurnKind::Ask => "ask",
+        }
+    }
+}
+
 /// Everything a launcher needs to bring up / drive one agent turn. The
 /// instruction is already in the agent's per-env inbox when `on_turn` runs —
 /// completion is detected through the event log, never through the launcher.

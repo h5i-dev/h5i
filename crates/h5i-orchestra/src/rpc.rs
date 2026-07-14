@@ -204,11 +204,10 @@ impl RuntimeLauncher for ClientLauncher {
 }
 
 fn turn_to_json(turn: &TurnContext) -> Value {
-    let (kind, target) = match &turn.kind {
-        TurnKind::Work => ("work", None),
-        TurnKind::Review { target } => ("review", Some(target.clone())),
-        TurnKind::Revise => ("revise", None),
-        TurnKind::Ask => ("ask", None),
+    let kind = turn.kind.label();
+    let target = match &turn.kind {
+        TurnKind::Review { target } => Some(target.clone()),
+        _ => None,
     };
     json!({
         "run_id": turn.run_id,

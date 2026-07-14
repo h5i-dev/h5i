@@ -622,7 +622,14 @@ export interface TeamRun {
 }
 export interface TeamStatus {
   run: TeamRun;
-  events: Array<{ id: string; ts: string; actor: string; kind: string; payload: unknown }>;
+  events: Array<{
+    id: string;
+    ts: string;
+    actor: string;
+    kind: string;
+    round?: number;
+    payload: unknown;
+  }>;
 }
 export interface TeamCompareRow {
   agent_id: string;

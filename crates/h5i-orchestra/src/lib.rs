@@ -605,6 +605,10 @@ fn dispatch_turn(
                 "team": core.run_id,
                 "round": run.current_round,
                 "agent_id": agent_id,
+                // The turn kind lets the team Stop hook steer the agent to the
+                // right finish (`team agent reply` for an ask, submit for the
+                // rest) and exempts one-shot asks from its round filter.
+                "turn": kind.label(),
             })),
             ..Default::default()
         },

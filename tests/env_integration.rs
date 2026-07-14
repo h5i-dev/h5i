@@ -1052,6 +1052,128 @@ fn box_team_hook_releases_after_submit_until_a_new_round_opens() {
     );
 }
 
+/// An orchestra data request (`links.turn == "ask"`) must break through the
+/// hook's round filter even after the box submitted for that round. Asks are
+/// fresh, targeted, deliver-once turns (the seen cursor dedupes them) — the
+/// round filter exists only to mute *re-fanned* standing review requests, and
+/// swallowing a same-round ask would consume it unseen and lose the turn.
+/// The blocking instruction must also steer to `team agent reply`, not to a
+/// (doomed, no-diff) `team agent submit`.
+#[test]
+fn box_team_hook_surfaces_ask_turns_and_steers_to_reply() {
+    let r = Repo::new();
+    let inbox = r.dir.join("ibox");
+    let spool = r.dir.join("ispool");
+    std::fs::create_dir_all(&inbox).unwrap();
+    std::fs::create_dir_all(&spool).unwrap();
+
+    // The box already submitted for round 1…
+    h5i_core::env::write_submitted_round(&spool, 1).unwrap();
+
+    // …and a round-1 data request arrives after that submit.
+    let m = h5i_core::msg::Message {
+        id: "ask-round1-id-0001".into(),
+        ts: "2026-07-14T00:00:00Z".into(),
+        from: "host".into(),
+        to: "hana".into(),
+        body: "List the 3 biggest risks as a JSON array".into(),
+        kind: Some("ASK".into()),
+        links: Some(serde_json::json!({
+            "team": "demo",
+            "round": 1,
+            "agent_id": "hana",
+            "turn": "ask",
+        })),
+        ..Default::default()
+    };
+    std::fs::write(inbox.join("a1.json"), serde_json::to_vec(&m).unwrap()).unwrap();
+
+    // --block is the Claude Stop-hook shape: the surfaced turn arrives as a
+    // {"decision":"block","reason":…} JSON with the standing instruction.
+    let out = Command::new(H5I)
+        .args(["team", "agent", "hook", "--block", "--timeout", "1"])
+        .env("H5I_AGENT", "hana")
+        .env(h5i_core::env::H5I_ENV_INBOX_VAR, &inbox)
+        .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
+        .current_dir(&r.dir)
+        .output()
+        .expect("run team agent hook");
+    let s = out_str(&out);
+    assert!(
+        s.contains("List the 3 biggest risks"),
+        "a same-round ask must surface after submit: {s}"
+    );
+    assert!(
+        s.contains("team agent reply"),
+        "an ask-only block must steer to the reply channel: {s}"
+    );
+    assert!(
+        !s.contains("improve and re-submit"),
+        "an ask-only block must not instruct a submit: {s}"
+    );
+}
+
+/// In-box `team agent submit` with provably nothing to submit — clean worktree
+/// AND branch tip identical to the exported `$H5I_ENV_BASE_TREE` — must refuse
+/// in front of the agent (steering an ask turn to `team agent reply`) instead
+/// of staging a spool request the host is guaranteed to reject out of the
+/// agent's sight. A worktree with real changes still stages.
+#[test]
+fn in_box_submit_refuses_provably_empty_submission() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "askbox"]);
+    let work = r.work("askbox");
+    let spool = r.env_dir("askbox").join("spool");
+    std::fs::create_dir_all(&spool).unwrap();
+    let base_tree = r.manifest("askbox")["base_tree"]
+        .as_str()
+        .expect("manifest base_tree")
+        .to_string();
+
+    let submit = || -> Output {
+        Command::new(H5I)
+            .args(["team", "agent", "submit"])
+            .env("H5I_AGENT", "tester")
+            // Simulate the box: the in-box path triggers on these vars.
+            .env(h5i_core::env::H5I_ENV_ID_VAR, "env/tester/askbox")
+            .env(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR, "test-digest")
+            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
+            .env(h5i_core::env::H5I_ENV_BASE_TREE_VAR, &base_tree)
+            .current_dir(&work)
+            .output()
+            .expect("run team agent submit")
+    };
+    let staged_count = || -> usize {
+        std::fs::read_dir(&spool)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("team-submit-")
+            })
+            .count()
+    };
+
+    // Clean worktree at base → refuse with the reply steering; nothing staged.
+    let out = submit();
+    let s = out_str(&out);
+    assert!(!out.status.success(), "empty submission must refuse: {s}");
+    assert!(s.contains("nothing to submit"), "actionable refusal: {s}");
+    assert!(
+        s.contains("team agent reply"),
+        "the refusal must steer to the reply channel: {s}"
+    );
+    assert_eq!(staged_count(), 0, "no doomed request may be staged: {s}");
+
+    // Real work breaks the tree match → submit snapshots in-box and stages.
+    std::fs::write(work.join("feature.py"), "x = 1\n").unwrap();
+    let out = submit();
+    let s = out_str(&out);
+    assert!(out.status.success(), "a real change must stage: {s}");
+    assert_eq!(staged_count(), 1, "the request must stage for host ingest: {s}");
+}
+
 /// `env status` surfaces evidence STAGED in the spool but not yet ingested
 /// (visible mid-session, before the host materializes it at run/shell end) —
 /// staged captures, notes, and tee-shim records, with the pending commands.
