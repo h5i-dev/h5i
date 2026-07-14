@@ -921,13 +921,13 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                     let mut envs_failed: Vec<(String, String)> = Vec::new();
                     if envs {
                         for env_id in &outcome.env_ids {
-                            match h5i_core::env::find(&h5i_root, env_id) {
-                                Ok(m) => match h5i_core::env::rm(git, &h5i_root, &m, force) {
+                            // An env that is already gone (the zombie-run
+                            // case) needs nothing done.
+                            if let Ok(m) = h5i_core::env::find(&h5i_root, env_id) {
+                                match h5i_core::env::rm(git, &h5i_root, &m, force) {
                                     Ok(()) => envs_removed.push(m.id.clone()),
                                     Err(e) => envs_failed.push((env_id.clone(), e.to_string())),
-                                },
-                                // Already gone (the zombie-run case) — nothing to do.
-                                Err(_) => {}
+                                }
                             }
                         }
                     }
