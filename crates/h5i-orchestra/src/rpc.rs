@@ -351,7 +351,11 @@ struct HireParams {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
+    effort: Option<String>,
+    #[serde(default)]
     profile: Option<String>,
+    #[serde(default)]
+    isolation: Option<String>,
     #[serde(default)]
     env: Option<String>,
 }
@@ -804,8 +808,14 @@ impl Server {
                 if let Some(m) = p.model {
                     b = b.model(m);
                 }
+                if let Some(e) = p.effort {
+                    b = b.effort(e);
+                }
                 if let Some(pr) = p.profile {
                     b = b.profile(pr);
+                }
+                if let Some(i) = p.isolation {
+                    b = b.isolation(i);
                 }
                 if let Some(e) = p.env {
                     b = b.env(e);
@@ -1198,7 +1208,8 @@ mod rpc_tests {
             work_dir: None,
             runtime: Some("claude".into()),
             model: None,
-        };
+            effort: None,
+            };
         let worker = tokio::task::spawn_blocking(move || launcher.on_turn(&turn));
 
         // The "client": read the request off the channel, answer it.
@@ -1226,7 +1237,8 @@ mod rpc_tests {
             work_dir: None,
             runtime: None,
             model: None,
-        };
+            effort: None,
+            };
         let worker = tokio::task::spawn_blocking(move || launcher.on_turn(&turn));
         let msg = out_rx.recv().await.expect("launcher request");
         let OutMsg::Line(line) = msg else { panic!("expected a line") };

@@ -149,6 +149,9 @@ pub enum TeamCommands {
         /// Model label
         #[arg(long)]
         model: Option<String>,
+        /// Runtime reasoning-effort override (codex: `model_reasoning_effort`)
+        #[arg(long)]
+        effort: Option<String>,
         /// Emit JSON
         #[arg(long)]
         json: bool,
@@ -616,6 +619,7 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                             &agent_id,
                             Some(member.runtime.to_string()),
                             None,
+                            None,
                             &actor,
                         )?;
                         eprintln!(
@@ -754,6 +758,7 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                                     &a.name,
                                     a.runtime.clone(),
                                     a.model.clone(),
+                                    None,
                                     &actor,
                                 )?;
                                 eprintln!(
@@ -985,6 +990,7 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                     as_agent,
                     runtime,
                     model,
+                    effort,
                     json,
                 } => {
                     // Default the agent key to a generated name so the user
@@ -1002,7 +1008,7 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                         }
                     };
                     let run = h5i_core::team::add_env(
-                        git, &h5i_root, &team, &env, &agent_id, runtime, model, &actor,
+                        git, &h5i_root, &team, &env, &agent_id, runtime, model, effort, &actor,
                     )?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&run)?);

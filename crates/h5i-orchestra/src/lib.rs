@@ -563,9 +563,9 @@ fn turn_context(
                 .agents
                 .iter()
                 .find(|a| a.agent_id == agent_id)
-                .map(|a| (a.runtime.clone(), a.model.clone()))
+                .map(|a| (a.runtime.clone(), a.model.clone(), a.effort.clone()))
         });
-    let (runtime, model) = seat.unwrap_or((None, None));
+    let (runtime, model, effort) = seat.unwrap_or((None, None, None));
     TurnContext {
         run_id: core.run_id.clone(),
         agent_id: agent_id.to_string(),
@@ -577,6 +577,7 @@ fn turn_context(
         work_dir,
         runtime,
         model,
+        effort,
     }
 }
 

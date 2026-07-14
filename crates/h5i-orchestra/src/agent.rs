@@ -17,7 +17,9 @@ pub struct AgentBuilder {
     name: String,
     runtime: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
     profile: Option<String>,
+    isolation: Option<String>,
     existing_env: Option<String>,
 }
 
@@ -30,7 +32,9 @@ impl AgentBuilder {
             name,
             runtime: None,
             model: None,
+            effort: None,
             profile: None,
+            isolation: None,
             existing_env: None,
         }
     }
@@ -49,10 +53,27 @@ impl AgentBuilder {
         self
     }
 
+    /// Runtime reasoning-effort override, recorded on the roster (codex:
+    /// `-c model_reasoning_effort=<effort>`; adapters without an effort knob
+    /// fail closed at launch rather than silently ignoring it).
+    pub fn effort(mut self, effort: impl Into<String>) -> Self {
+        self.effort = Some(effort.into());
+        self
+    }
+
     /// Sandbox profile for the created env (default: auto-pick, exactly like
     /// `h5i env create` without `--profile`).
     pub fn profile(mut self, profile: impl Into<String>) -> Self {
         self.profile = Some(profile.into());
+        self
+    }
+
+    /// Isolation tier for the created env (`workspace`, `process`,
+    /// `supervised`, `container`, …). Explicit tiers are fail-closed —
+    /// refused if the host cannot enforce them, never silently downgraded —
+    /// exactly like `h5i env create --isolation`. Default: auto-pick.
+    pub fn isolation(mut self, tier: impl Into<String>) -> Self {
+        self.isolation = Some(tier.into());
         self
     }
 
@@ -71,7 +92,9 @@ impl AgentBuilder {
             name,
             runtime,
             model,
+            effort,
             profile,
+            isolation,
             existing_env,
         } = self;
         team::validate_agent_id(&name)?;
@@ -79,7 +102,7 @@ impl AgentBuilder {
         let hire_core = core.clone();
         let hire_name = name.clone();
         let seat: AgentSeat = journaled(core.clone(), label, move |c| {
-            hire(c, &hire_name, runtime, model, profile, existing_env)
+            hire(c, &hire_name, runtime, model, effort, profile, isolation, existing_env)
         })
         .await?;
         // A replayed seat must still exist on this clone's roster.
@@ -119,14 +142,23 @@ impl AgentBuilder {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn hire(
     core: &Core,
     name: &str,
     runtime: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
     profile: Option<String>,
+    isolation: Option<String>,
     existing_env: Option<String>,
 ) -> Result<AgentSeat, H5iError> {
+    use h5i_core::sandbox::{IsolationClaim, IsolationRequest};
+    let isolation = match isolation.as_deref() {
+        None => None,
+        Some(s) if s.eq_ignore_ascii_case("auto") => Some(IsolationRequest::Auto),
+        Some(s) => Some(IsolationRequest::Claim(IsolationClaim::parse(s)?)),
+    };
     let repo = core.repo()?;
     let run = team::status(&repo, &core.run_id)?.run;
     // Idempotent re-entry (a crash after add_env but before the journal
@@ -156,6 +188,7 @@ fn hire(
                 &slug,
                 env::CreateOpts {
                     profile,
+                    isolation,
                     ..Default::default()
                 },
             )?;
@@ -170,6 +203,7 @@ fn hire(
         name,
         runtime,
         model,
+        effort,
         &core.actor,
     )?;
     Ok(AgentSeat {

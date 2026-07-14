@@ -1106,9 +1106,41 @@ async fn launch_resident_fails_closed_on_a_missing_env() {
         work_dir: None,
         runtime: Some("claude".into()),
         model: None,
-    };
+        effort: None,
+        };
     let err = LaunchResident.on_turn(&turn).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("env/claude/never-created"), "names the env: {msg}");
     assert!(msg.contains("no longer exists"), "says why: {msg}");
+}
+
+#[test]
+fn resident_command_maps_effort_per_adapter() {
+    let turn = |runtime: &str, effort: Option<&str>| TurnContext {
+        run_id: "r".into(),
+        agent_id: "a".into(),
+        env_id: "env/a/r-a".into(),
+        kind: TurnKind::Work,
+        instruction: "task".into(),
+        repo_workdir: PathBuf::from("."),
+        h5i_root: PathBuf::from("."),
+        work_dir: None,
+        runtime: Some(runtime.into()),
+        model: Some("m1".into()),
+        effort: effort.map(Into::into),
+    };
+
+    // codex: effort rides the config-override flag (wins over config.toml).
+    let cmd = launcher::resident_command(&turn("codex", Some("medium"))).unwrap();
+    assert!(cmd.contains("--model 'm1'"), "{cmd}");
+    assert!(cmd.contains("-c model_reasoning_effort='medium'"), "{cmd}");
+
+    // codex without effort: no flag, the box's own config decides.
+    let cmd = launcher::resident_command(&turn("codex", None)).unwrap();
+    assert!(!cmd.contains("model_reasoning_effort"), "{cmd}");
+
+    // claude has no effort flag: fail closed, never silently drop the knob.
+    let err = launcher::resident_command(&turn("claude", Some("medium"))).unwrap_err();
+    assert!(err.to_string().contains("no reasoning-effort"), "{err}");
+    launcher::resident_command(&turn("claude", None)).unwrap();
 }
