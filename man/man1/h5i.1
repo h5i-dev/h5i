@@ -908,7 +908,7 @@ Add an existing env to a team roster
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBadd\-env\fR [\fB\-\-as\fR] [\fB\-\-runtime\fR] [\fB\-\-model\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITEAM\fR> <\fIENV\fR> 
+\fBadd\-env\fR [\fB\-\-as\fR] [\fB\-\-runtime\fR] [\fB\-\-model\fR] [\fB\-\-effort\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITEAM\fR> <\fIENV\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -921,6 +921,9 @@ Runtime adapter (`claude`, `codex`, etc.)
 .TP
 \fB\-\-model\fR \fI<MODEL>\fR
 Model label
+.TP
+\fB\-\-effort\fR \fI<EFFORT>\fR
+Runtime reasoning\-effort override (codex: `model_reasoning_effort`)
 .TP
 \fB\-\-json\fR
 Emit JSON
