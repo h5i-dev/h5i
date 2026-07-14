@@ -7894,6 +7894,7 @@ mod tests {
             "codex-fix",
             None,
             None,
+            None,
             "human",
         )
         .unwrap();

@@ -76,6 +76,9 @@ pub struct TeamAgent {
     pub runtime: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Runtime reasoning-effort override (e.g. codex `model_reasoning_effort`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub isolation_claim: String,
     pub policy_digest: String,
     pub branch_ref: String,
@@ -705,6 +708,7 @@ pub fn add_env(
     agent_id: &str,
     runtime: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
     actor: &str,
 ) -> Result<TeamRun, H5iError> {
     validate_agent_id(agent_id)?;
@@ -727,6 +731,7 @@ pub fn add_env(
         env_id: m.id.clone(),
         runtime,
         model,
+        effort,
         isolation_claim: m.isolation_claim.clone(),
         policy_digest: m.policy_digest.clone(),
         branch_ref: m.branch.clone(),
@@ -2243,6 +2248,7 @@ mod tests {
             "codex-fix",
             Some("codex".into()),
             None,
+            None,
             "human",
         )
         .unwrap();
@@ -2287,6 +2293,7 @@ mod tests {
             "codex-fix",
             Some("codex".into()),
             None,
+            None,
             "human",
         )
         .unwrap();
@@ -2327,6 +2334,7 @@ mod tests {
             "run-noop",
             "env/codex/fix",
             "codex-fix",
+            None,
             None,
             None,
             "human",
@@ -2381,6 +2389,7 @@ mod tests {
             "codex-fix",
             None,
             None,
+            None,
             "human",
         )
         .unwrap();
@@ -2429,7 +2438,7 @@ mod tests {
             .unwrap();
 
         create(&repo, "run-as", "run-as", "HEAD", 1, "human").unwrap();
-        add_env(&repo, h5i_root, "run-as", "env/codex/fix", "codex-fix", None, None, "human")
+        add_env(&repo, h5i_root, "run-as", "env/codex/fix", "codex-fix", None, None, None, "human")
             .unwrap();
         let sub = submit(&repo, h5i_root, "run-as", "codex-fix", None, None, "codex").unwrap();
 
@@ -2484,6 +2493,7 @@ mod tests {
             "codex-fix",
             None,
             None,
+            None,
             "human",
         )
         .unwrap();
@@ -2500,7 +2510,7 @@ mod tests {
         let m = manifest(&repo, h5i_root, "codex", "fix");
         create(&repo, "run-i", "run-i", "HEAD", 1, "human").unwrap();
         add_env(
-            &repo, h5i_root, "run-i", "env/codex/fix", "codex-impl", None, None, "human",
+            &repo, h5i_root, "run-i", "env/codex/fix", "codex-impl", None, None, None, "human",
         )
         .unwrap();
         let id = std::fs::read_to_string(m.dir(h5i_root).join("team-identity")).unwrap();
@@ -2519,7 +2529,7 @@ mod tests {
         manifest(&repo, h5i_root, "codex", "fix");
         create(&repo, "gone", "gone", "HEAD", 1, "human").unwrap();
         add_env(
-            &repo, h5i_root, "gone", "env/codex/fix", "codex-fix", None, None, "human",
+            &repo, h5i_root, "gone", "env/codex/fix", "codex-fix", None, None, None, "human",
         )
         .unwrap();
         set_current(h5i_root, "gone").unwrap();
@@ -2561,7 +2571,7 @@ mod tests {
         create(&repo, "live", "live", "HEAD~1", 1, "human").unwrap();
         add_env(
             &repo, h5i_root, "live", "env/codex/fix", "codex-fix",
-            Some("codex".into()), None, "human",
+            Some("codex".into()), None, None, "human",
         )
         .unwrap();
         submit(&repo, h5i_root, "live", "codex-fix", None, Some("done".into()), "codex").unwrap();
@@ -2631,6 +2641,7 @@ mod tests {
             "codex-fix",
             None,
             None,
+            None,
             "human",
         )
         .unwrap();
@@ -2640,6 +2651,7 @@ mod tests {
             "run3",
             "env/claude/fix",
             "claude-fix",
+            None,
             None,
             None,
             "human",
@@ -2726,7 +2738,7 @@ mod tests {
 
         create(&repo, "run-sync", "run-sync", "HEAD~1", 1, "human").unwrap();
         add_env(
-            &repo, h5i_root, "run-sync", "env/codex/fix", "codex-fix", None, None, "human",
+            &repo, h5i_root, "run-sync", "env/codex/fix", "codex-fix", None, None, None, "human",
         )
         .unwrap();
 
@@ -2767,6 +2779,7 @@ mod tests {
             "run4",
             "env/codex/fix",
             "codex-fix",
+            None,
             None,
             None,
             "human",
@@ -2813,7 +2826,7 @@ mod tests {
 
         create(&repo, "run-nb", "run-nb", "HEAD", 1, "human").unwrap();
         add_env(
-            &repo, h5i_root, "run-nb", "env/codex/fix", "codex-fix", None, None, "human",
+            &repo, h5i_root, "run-nb", "env/codex/fix", "codex-fix", None, None, None, "human",
         )
         .unwrap();
         // Sever the binding the way a gc / cross-clone pull would: drop the
@@ -2850,7 +2863,7 @@ mod tests {
 
         create(&repo, "run-d", "run-d", "HEAD~2", 1, "human").unwrap();
         add_env(
-            &repo, h5i_root, "run-d", "env/codex/fix", "codex-fix", None, None, "human",
+            &repo, h5i_root, "run-d", "env/codex/fix", "codex-fix", None, None, None, "human",
         )
         .unwrap();
 
@@ -2860,7 +2873,7 @@ mod tests {
 
         // ...but the round is still open: add-env, submit, and freeze all work.
         add_env(
-            &repo, h5i_root, "run-d", "env/claude/impl", "claude-impl", None, None, "human",
+            &repo, h5i_root, "run-d", "env/claude/impl", "claude-impl", None, None, None, "human",
         )
         .unwrap();
         let sub = submit(&repo, h5i_root, "run-d", "codex-fix", None, None, "codex").unwrap();
@@ -2889,7 +2902,7 @@ mod tests {
 
         create(&repo, "run-rev", "run-rev", &base.to_string(), 1, "human").unwrap();
         add_env(
-            &repo, h5i_root, "run-rev", "env/codex/fix", "codex-fix", None, None, "human",
+            &repo, h5i_root, "run-rev", "env/codex/fix", "codex-fix", None, None, None, "human",
         )
         .unwrap();
         let sub = submit(&repo, h5i_root, "run-rev", "codex-fix", None, None, "codex").unwrap();
@@ -2928,6 +2941,7 @@ mod tests {
             "run5",
             "env/codex/fix",
             "codex-fix",
+            None,
             None,
             None,
             "human",
@@ -2976,7 +2990,7 @@ mod tests {
 
         create(&repo, "run8", "run8", &base.to_string(), 1, "human").unwrap();
         add_env(
-            &repo, &h5i_root, "run8", "env/codex/fix", "codex-fix", None, None, "human",
+            &repo, &h5i_root, "run8", "env/codex/fix", "codex-fix", None, None, None, "human",
         )
         .unwrap();
         let sub = submit(&repo, &h5i_root, "run8", "codex-fix", None, None, "codex").unwrap();
@@ -3007,7 +3021,7 @@ mod tests {
 
         create(&repo, "run9", "run9", &base.to_string(), 1, "human").unwrap();
         add_env(
-            &repo, &h5i_root, "run9", "env/codex/fix", "codex-fix", None, None, "human",
+            &repo, &h5i_root, "run9", "env/codex/fix", "codex-fix", None, None, None, "human",
         )
         .unwrap();
 
@@ -3074,6 +3088,7 @@ mod tests {
             "codex-fix",
             None,
             None,
+            None,
             "human",
         )
         .unwrap();
@@ -3083,6 +3098,7 @@ mod tests {
             "run6",
             "env/claude/fix",
             "claude-fix",
+            None,
             None,
             None,
             "human",
@@ -3128,9 +3144,9 @@ mod tests {
             .unwrap();
 
         create(&repo, "run-rv", "run-rv", "HEAD~2", 1, "human").unwrap();
-        add_env(&repo, h5i_root, "run-rv", "env/codex/fix", "codex-fix", None, None, "human")
+        add_env(&repo, h5i_root, "run-rv", "env/codex/fix", "codex-fix", None, None, None, "human")
             .unwrap();
-        add_env(&repo, h5i_root, "run-rv", "env/claude/fix", "claude-fix", None, None, "human")
+        add_env(&repo, h5i_root, "run-rv", "env/claude/fix", "claude-fix", None, None, None, "human")
             .unwrap();
         let codex_sub = submit(&repo, h5i_root, "run-rv", "codex-fix", None, None, "codex").unwrap();
         submit(&repo, h5i_root, "run-rv", "claude-fix", None, None, "claude").unwrap();
@@ -3181,9 +3197,9 @@ mod tests {
             .unwrap();
 
         create(&repo, "run-or", "run-or", "HEAD~1", 1, "human").unwrap();
-        add_env(&repo, h5i_root, "run-or", "env/codex/fix", "codex-fix", None, None, "human")
+        add_env(&repo, h5i_root, "run-or", "env/codex/fix", "codex-fix", None, None, None, "human")
             .unwrap();
-        add_env(&repo, h5i_root, "run-or", "env/claude/fix", "claude-fix", None, None, "human")
+        add_env(&repo, h5i_root, "run-or", "env/claude/fix", "claude-fix", None, None, None, "human")
             .unwrap();
         submit(&repo, h5i_root, "run-or", "codex-fix", None, None, "codex").unwrap();
 
@@ -3220,9 +3236,9 @@ mod tests {
         manifest(&repo, h5i_root, "codex", "fix");
         manifest(&repo, h5i_root, "claude", "fix");
         create(&repo, "run-d", "run-d", "HEAD", 1, "human").unwrap();
-        add_env(&repo, h5i_root, "run-d", "env/codex/fix", "codex-fix", None, None, "human")
+        add_env(&repo, h5i_root, "run-d", "env/codex/fix", "codex-fix", None, None, None, "human")
             .unwrap();
-        add_env(&repo, h5i_root, "run-d", "env/claude/fix", "claude-fix", None, None, "human")
+        add_env(&repo, h5i_root, "run-d", "env/claude/fix", "claude-fix", None, None, None, "human")
             .unwrap();
         // draft → discussion forbidden (first attempts not yet sealed).
         let err = discuss(
@@ -3262,7 +3278,7 @@ mod tests {
         let h5i_root = dir.path();
         manifest(&repo, h5i_root, "a1", "fix");
         create(&repo, "run-l", "run-l", "HEAD", 1, "human").unwrap();
-        add_env(&repo, h5i_root, "run-l", "env/a1/fix", "a1", None, None, "human").unwrap();
+        add_env(&repo, h5i_root, "run-l", "env/a1/fix", "a1", None, None, None, "human").unwrap();
 
         // Two submissions, same agent + round. The OLDER one has an id that sorts
         // lexicographically HIGHER ("sub-zzz…") than the newer ("sub-aaa…"), so a
@@ -3321,8 +3337,8 @@ mod tests {
         manifest(&repo, h5i_root, "a1", "fix");
         manifest(&repo, h5i_root, "a2", "fix");
         create(&repo, "run-v", "run-v", "HEAD", 1, "human").unwrap();
-        add_env(&repo, h5i_root, "run-v", "env/a1/fix", "a1", None, None, "human").unwrap();
-        add_env(&repo, h5i_root, "run-v", "env/a2/fix", "a2", None, None, "human").unwrap();
+        add_env(&repo, h5i_root, "run-v", "env/a1/fix", "a1", None, None, None, "human").unwrap();
+        add_env(&repo, h5i_root, "run-v", "env/a2/fix", "a2", None, None, None, "human").unwrap();
 
         // Hand-craft two passing submissions + verifications with DIFFERENT commands.
         for (agent, sid) in [("a1", "sub-a1"), ("a2", "sub-a2")] {
@@ -3409,6 +3425,7 @@ mod tests {
             "run7",
             "env/codex/fix",
             "codex-fix",
+            None,
             None,
             None,
             "human",

@@ -17,6 +17,7 @@ pub struct AgentBuilder {
     name: String,
     runtime: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
     profile: Option<String>,
     isolation: Option<String>,
     existing_env: Option<String>,
@@ -31,6 +32,7 @@ impl AgentBuilder {
             name,
             runtime: None,
             model: None,
+            effort: None,
             profile: None,
             isolation: None,
             existing_env: None,
@@ -48,6 +50,14 @@ impl AgentBuilder {
 
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
+        self
+    }
+
+    /// Runtime reasoning-effort override, recorded on the roster (codex:
+    /// `-c model_reasoning_effort=<effort>`; adapters without an effort knob
+    /// fail closed at launch rather than silently ignoring it).
+    pub fn effort(mut self, effort: impl Into<String>) -> Self {
+        self.effort = Some(effort.into());
         self
     }
 
@@ -82,6 +92,7 @@ impl AgentBuilder {
             name,
             runtime,
             model,
+            effort,
             profile,
             isolation,
             existing_env,
@@ -91,7 +102,7 @@ impl AgentBuilder {
         let hire_core = core.clone();
         let hire_name = name.clone();
         let seat: AgentSeat = journaled(core.clone(), label, move |c| {
-            hire(c, &hire_name, runtime, model, profile, isolation, existing_env)
+            hire(c, &hire_name, runtime, model, effort, profile, isolation, existing_env)
         })
         .await?;
         // A replayed seat must still exist on this clone's roster.
@@ -131,11 +142,13 @@ impl AgentBuilder {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn hire(
     core: &Core,
     name: &str,
     runtime: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
     profile: Option<String>,
     isolation: Option<String>,
     existing_env: Option<String>,
@@ -190,6 +203,7 @@ fn hire(
         name,
         runtime,
         model,
+        effort,
         &core.actor,
     )?;
     Ok(AgentSeat {

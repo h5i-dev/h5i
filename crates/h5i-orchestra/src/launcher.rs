@@ -34,6 +34,8 @@ pub struct TurnContext {
     pub runtime: Option<String>,
     /// The roster model override (`--model`), when recorded.
     pub model: Option<String>,
+    /// The roster reasoning-effort override, when recorded.
+    pub effort: Option<String>,
 }
 
 /// Session bring-up strategy (design doc §5.1). `Attach` is the default: the
@@ -86,44 +88,7 @@ impl RuntimeLauncher for LaunchResident {
                 turn.env_id, turn.agent_id
             )));
         }
-        // A roster model override (`--model`) — keeps a trivial run on a fast
-        // model instead of the session default.
-        let model_flag = turn
-            .model
-            .as_deref()
-            .map(|m| format!(" --model {}", shell_quote(m)))
-            .unwrap_or_default();
-        let runtime_argv = match turn.runtime.as_deref() {
-            Some("claude") => format!(
-                "claude --dangerously-skip-permissions{model_flag} {}",
-                shell_quote(team::AGENT_BOOTSTRAP)
-            ),
-            Some("codex") => format!(
-                "codex --sandbox danger-full-access{model_flag} {}",
-                shell_quote(team::AGENT_BOOTSTRAP)
-            ),
-            Some(other) => {
-                return Err(H5iError::Metadata(format!(
-                    "orchestra LaunchResident has no adapter for runtime '{other}' — \
-                     bring the session up yourself (team-launch.sh) and use Attach"
-                )))
-            }
-            None => {
-                return Err(H5iError::Metadata(format!(
-                    "orchestra LaunchResident: agent '{}' has no roster runtime — \
-                     hire it with .runtime(\"claude\"|\"codex\")",
-                    turn.agent_id
-                )))
-            }
-        };
-        // `$H5I` overrides the binary, mirroring the scripts' convention —
-        // needed when driving a dev build that isn't first on PATH.
-        let h5i = std::env::var("H5I").unwrap_or_else(|_| "h5i".into());
-        let cmd = format!(
-            "{} env shell {} -- {runtime_argv}",
-            shell_quote(&h5i),
-            turn.env_id
-        );
+        let cmd = resident_command(turn)?;
         let spawned = Command::new("tmux")
             .args(["new-session", "-d", "-s", &session, &cmd])
             .status()
@@ -146,6 +111,68 @@ impl RuntimeLauncher for LaunchResident {
 /// POSIX single-quote escaping for one argv word.
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// The full shell command a resident session runs, from the roster seat:
+/// `h5i env shell <env> -- <runtime adapter argv>`. Extracted from `on_turn`
+/// so adapter argv construction is testable without tmux.
+pub(crate) fn resident_command(turn: &TurnContext) -> Result<String, H5iError> {
+    // A roster model override (`--model`) — keeps a trivial run on a fast
+    // model instead of the session default.
+    let model_flag = turn
+        .model
+        .as_deref()
+        .map(|m| format!(" --model {}", shell_quote(m)))
+        .unwrap_or_default();
+    // A roster reasoning-effort override; the codex flag wins over the box's
+    // ~/.codex/config.toml, which is exactly the point.
+    let effort_flag = turn
+        .effort
+        .as_deref()
+        .map(|e| format!(" -c model_reasoning_effort={}", shell_quote(e)))
+        .unwrap_or_default();
+    let runtime_argv = match turn.runtime.as_deref() {
+        Some("claude") => {
+            if let Some(e) = turn.effort.as_deref() {
+                // Fail closed: pretending to honor a knob the adapter has no
+                // flag for would silently misreport the run's setup.
+                return Err(H5iError::Metadata(format!(
+                    "orchestra LaunchResident: the claude adapter has no reasoning-effort \
+                     flag (agent '{}' asked for effort '{e}') — hire without effort",
+                    turn.agent_id
+                )));
+            }
+            format!(
+                "claude --dangerously-skip-permissions{model_flag} {}",
+                shell_quote(team::AGENT_BOOTSTRAP)
+            )
+        }
+        Some("codex") => format!(
+            "codex --sandbox danger-full-access{model_flag}{effort_flag} {}",
+            shell_quote(team::AGENT_BOOTSTRAP)
+        ),
+        Some(other) => {
+            return Err(H5iError::Metadata(format!(
+                "orchestra LaunchResident has no adapter for runtime '{other}' — \
+                 bring the session up yourself (team-launch.sh) and use Attach"
+            )))
+        }
+        None => {
+            return Err(H5iError::Metadata(format!(
+                "orchestra LaunchResident: agent '{}' has no roster runtime — \
+                 hire it with .runtime(\"claude\"|\"codex\")",
+                turn.agent_id
+            )))
+        }
+    };
+    // `$H5I` overrides the binary, mirroring the scripts' convention —
+    // needed when driving a dev build that isn't first on PATH.
+    let h5i = std::env::var("H5I").unwrap_or_else(|_| "h5i".into());
+    Ok(format!(
+        "{} env shell {} -- {runtime_argv}",
+        shell_quote(&h5i),
+        turn.env_id
+    ))
 }
 
 /// Wrap a closure as a launcher — for tests and for embedding scenarios where
