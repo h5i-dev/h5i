@@ -284,13 +284,16 @@ Manage the persistent user-level egress allowlist: extra hosts merged into every
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBallow\fR [\fB\-\-remove\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIRULE\fR] 
+\fBallow\fR [\fB\-\-remove\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIRULE\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-\-remove\fR
 Remove the rule instead of adding it
+.TP
+\fB\-\-json\fR
+Emit the current allowlist and its source path as JSON
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
