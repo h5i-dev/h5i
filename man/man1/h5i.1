@@ -876,6 +876,33 @@ Print help
 .TP
 [\fINAME\fR]
 Team id to make current; omit to print the current team
+.SH "H5I TEAM RM"
+Remove a team run from the listing. By default the run's event log is archived to refs/h5i/team-attic/ (auditable, recoverable by moving the ref back); bound envs are kept unless --envs
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrm\fR [\fB\-\-purge\fR] [\fB\-\-envs\fR] [\fB\-\-force\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITEAM\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-purge\fR
+Delete the run\*(Aqs ref outright instead of archiving it to the attic
+.TP
+\fB\-\-envs\fR
+Also remove the run\*(Aqs bound envs (workspaces, branches, manifests)
+.TP
+\fB\-\-force\fR
+Required for a run with submissions but no verdict (plausibly live work); with \-\-envs, also forces removal of still\-live envs
+.TP
+\fB\-\-json\fR
+Emit JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITEAM\fR>
+Team id
 .SH "H5I TEAM ADD-ENV"
 Add an existing env to a team roster
 .ie \n(.g .ds Aq \(aq
