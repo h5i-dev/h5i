@@ -353,6 +353,8 @@ struct HireParams {
     #[serde(default)]
     profile: Option<String>,
     #[serde(default)]
+    isolation: Option<String>,
+    #[serde(default)]
     env: Option<String>,
 }
 
@@ -806,6 +808,9 @@ impl Server {
                 }
                 if let Some(pr) = p.profile {
                     b = b.profile(pr);
+                }
+                if let Some(i) = p.isolation {
+                    b = b.isolation(i);
                 }
                 if let Some(e) = p.env {
                     b = b.env(e);
