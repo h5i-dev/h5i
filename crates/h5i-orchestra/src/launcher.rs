@@ -75,6 +75,17 @@ impl RuntimeLauncher for LaunchResident {
         if alive {
             return Ok(());
         }
+        // Fail closed on a missing env *before* spawning: `tmux new-session`
+        // succeeds even when the inner `h5i env shell` dies instantly, leaving
+        // no visible session and a score waiting forever.
+        if env::find(&turn.h5i_root, &turn.env_id).is_err() {
+            return Err(H5iError::Metadata(format!(
+                "orchestra LaunchResident: env '{}' for agent '{}' no longer exists — it was \
+                 removed after the run began; start a fresh run id or rebind the seat to an \
+                 existing env",
+                turn.env_id, turn.agent_id
+            )));
+        }
         // A roster model override (`--model`) — keeps a trivial run on a fast
         // model instead of the session default.
         let model_flag = turn
