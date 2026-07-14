@@ -70,6 +70,10 @@ pub const H5I_TEAM_VAR: &str = "H5I_TEAM";
 /// In-box path to the per-env read-only inbound mailbox (host fans messages in;
 /// the box reads via `h5i team agent inbox`/`--wait`/the team Stop hook).
 pub const H5I_ENV_INBOX_VAR: &str = "H5I_ENV_INBOX";
+/// The env's pinned base *tree* OID, exported into team-bound boxes so
+/// `h5i team agent submit` can refuse a provably empty submission in-box
+/// (the box can't read the sealed team refs to learn the base itself).
+pub const H5I_ENV_BASE_TREE_VAR: &str = "H5I_ENV_BASE_TREE";
 const CONTAINER_CAPTURE_SPOOL: &str = "/.h5i/spool";
 const CONTAINER_INBOX_MOUNT: &str = "/.h5i/inbox";
 /// Inbox subdir under the env admin dir; mounted read-only into the box.
@@ -2453,6 +2457,10 @@ fn team_identity_env(m: &EnvManifest, h5i_root: &Path) -> Vec<(String, String)> 
     vec![
         ("H5I_AGENT".to_string(), agent),
         (H5I_TEAM_VAR.to_string(), team),
+        // The base tree lets the in-box `team agent submit` detect "nothing to
+        // review" *before* staging a request the host must refuse (an env
+        // created by `team add-env` is pinned to the team base).
+        (H5I_ENV_BASE_TREE_VAR.to_string(), m.base_tree.clone()),
     ]
 }
 
@@ -4348,6 +4356,32 @@ fn ingest_shell_spool(
 /// `ingest_shell_spool` and the on-demand `h5i team sync`, so a submission or
 /// review becomes visible to the host without waiting for the box to exit.
 /// Returns the number of records applied; a no-op for a non-team env.
+/// Host-side: is this env's worktree free of uncommitted changes? The spool
+/// drain uses it to distinguish a *deterministic* no-op submission (clean tree
+/// — nothing a retry could ever pick up) from the live-box race the retry
+/// exists for (agent wrote files, the in-box snapshot failed, the at-exit
+/// ingest will commit them). Conservative: any doubt (unopenable checkout,
+/// status error) counts as dirty so the staged request is kept. A missing
+/// worktree (a pulled env) is clean — there is nothing on disk to snapshot.
+/// Reading a live box's worktree is safe (read-only; a torn read at worst
+/// reports dirty, which only defers the drop to the next drain).
+fn worktree_is_clean(h5i_root: &Path, m: &EnvManifest) -> bool {
+    let work = m.work_dir(h5i_root);
+    if !work.is_dir() {
+        return true;
+    }
+    let Ok(repo) = Repository::open(&work) else {
+        return false;
+    };
+    let mut opts = git2::StatusOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true);
+    let clean = match repo.statuses(Some(&mut opts)) {
+        Ok(st) => st.is_empty(),
+        Err(_) => false,
+    };
+    clean
+}
+
 pub fn ingest_team_outbound(
     repo: &Repository,
     h5i_root: &Path,
@@ -4425,6 +4459,10 @@ pub fn ingest_team_outbound(
                     continue;
                 }
             }
+            // Kept for the drop-audit below: the summary may carry the agent's
+            // actual answer (a discussion-phase agent often stuffs its reply
+            // into the submit summary), so a dropped request must not lose it.
+            let summary_for_audit = request.summary.clone();
             match crate::team::submit(
                 repo,
                 h5i_root,
@@ -4454,7 +4492,47 @@ pub fn ingest_team_outbound(
                     let _ = std::fs::remove_file(&path);
                 }
                 Err(e) => {
-                    // Do NOT drop the staged request on failure. The common cause
+                    // A no-op refusal against a *clean* worktree is deterministic:
+                    // no retry can ever make it succeed, keeping it would repeat
+                    // the warning on every drain, and — worse — the stale request
+                    // would fire the moment the agent's tree does change (e.g. a
+                    // work turn after a discussion-phase no-op submit), freezing
+                    // an old summary at a moment nobody asked for. Drop it, with
+                    // a durable audit event that preserves the staged summary.
+                    if crate::team::is_noop_submission_err(&e) && worktree_is_clean(h5i_root, m)
+                    {
+                        eprintln!(
+                            "warning: dropping in-box team submit for {agent_id} \
+                             (nothing to review): {e}"
+                        );
+                        let summary_note = summary_for_audit
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(|s| {
+                                let capped: String = s.chars().take(200).collect();
+                                format!("; staged summary: {}", crate::secrets::redact_text(&capped))
+                            })
+                            .unwrap_or_default();
+                        append_event(
+                            repo,
+                            &EnvEvent {
+                                ts: now_ts(),
+                                env_id: m.id.clone(),
+                                agent: m.agent.clone(),
+                                event: "exec-log".into(),
+                                detail: Some(format!(
+                                    "in-box team submit for {agent_id} dropped — identical \
+                                     to the team base with a clean worktree (a data request \
+                                     is answered with `team agent reply`, not submit){summary_note}"
+                                )),
+                                capture: None,
+                            },
+                        )?;
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    // Otherwise do NOT drop the staged request. The common cause
                     // is a live box: the agent hasn't committed its worktree yet,
                     // so freezing the tip would be a no-op (refused). Keeping the
                     // spool lets the at-exit ingest — which runs with the run lock
@@ -6495,6 +6573,27 @@ pub fn commit_box_worktree() -> Result<Option<git2::Oid>, H5iError> {
     commit_worktree_at(Path::new("."))
 }
 
+/// In-box: does the current checkout's HEAD tree equal `tree_hex`? Paired with
+/// [`commit_box_worktree`] returning `None` (worktree == HEAD) and the exported
+/// `$H5I_ENV_BASE_TREE`, this lets `h5i team agent submit` prove a submission
+/// would be empty (tree identical to the pinned base) and refuse in front of
+/// the agent — instead of staging a spool request the host is guaranteed to
+/// reject. Any doubt (no checkout, unreadable HEAD, malformed hex) answers
+/// `false`, so the submit proceeds and the host stays the authority.
+pub fn head_tree_matches(tree_hex: &str) -> bool {
+    head_tree_matches_at(Path::new("."), tree_hex)
+}
+
+fn head_tree_matches_at(path: &Path, tree_hex: &str) -> bool {
+    let Ok(repo) = Repository::discover(path) else {
+        return false;
+    };
+    let Ok(head) = repo.head().and_then(|h| h.peel_to_commit()) else {
+        return false;
+    };
+    head.tree_id().to_string() == tree_hex
+}
+
 fn commit_worktree_at(path: &Path) -> Result<Option<git2::Oid>, H5iError> {
     let repo = match Repository::discover(path) {
         Ok(r) if !r.is_bare() => r,
@@ -7670,6 +7769,25 @@ mod tests {
 
         // Idempotent: a clean worktree is a no-op (well-behaved already-committed agent).
         assert!(commit_worktree_at(dir.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn head_tree_matches_proves_an_empty_submission() {
+        // The in-box `team agent submit` refusal: nothing snapshotted AND the
+        // branch tip tree still equals the exported base tree → provably empty.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let base = commit_file(&repo, "README.md", "hello\n");
+        let base_tree = repo.find_commit(base).unwrap().tree_id().to_string();
+
+        assert!(head_tree_matches_at(dir.path(), &base_tree));
+
+        // Real work breaks the match — the submit must proceed.
+        commit_file(&repo, "feature.txt", "ok\n");
+        assert!(!head_tree_matches_at(dir.path(), &base_tree));
+
+        // Doubt answers false (host stays the authority): malformed hex.
+        assert!(!head_tree_matches_at(dir.path(), "not-a-tree-oid"));
     }
 
     fn commit_file(repo: &git2::Repository, name: &str, body: &str) -> git2::Oid {

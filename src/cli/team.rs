@@ -473,6 +473,10 @@ pub enum TeamAgentCommands {
 
 pub fn run(action: TeamCommands) -> anyhow::Result<()> {
     {
+            // In-box `team agent submit` fast path: a sealed box stages a spool
+            // request for host ingest and must return BEFORE the
+            // `H5iRepository::open` below (the shared store / roster paths are
+            // sealed in the box). This is the *only* in-box submit surface.
             if let TeamCommands::Agent {
                 action:
                     TeamAgentCommands::Submit {
@@ -488,6 +492,62 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                     && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
                     && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
                 if let (true, Some(spool)) = (in_box, env_spool) {
+                    // Snapshot the worktree onto the env branch *in-box*, before
+                    // staging, unless the caller pinned an explicit commit. The
+                    // host can't snapshot a live box (it holds the env run lock
+                    // all session), so the box commits its own edits here —
+                    // otherwise an agent that wrote files but never `git commit`ed
+                    // would stage a no-op that the host refuses ("identical to
+                    // the team base").
+                    if commit.is_none() {
+                        let snapshotted = match h5i_core::env::commit_box_worktree() {
+                            Ok(Some(oid)) => {
+                                eprintln!(
+                                    "{} snapshotted worktree in-box at {}",
+                                    style("▢").cyan().dim(),
+                                    &oid.to_string()[..12]
+                                );
+                                true
+                            }
+                            Ok(None) => false,
+                            // Surface the failure but don't block the submit —
+                            // the host freezes the branch tip. A silent failure
+                            // here is what makes work vanish into a "no changes
+                            // to review" no-op.
+                            Err(e) => {
+                                eprintln!(
+                                    "warning: in-box worktree snapshot failed \
+                                     (submit will use the branch tip — commit \
+                                     your work in-box if this persists): {e}"
+                                );
+                                // Unknown state — don't refuse below; the host
+                                // stays the authority on no-ops.
+                                true
+                            }
+                        };
+                        // Provably empty submission: nothing new to snapshot AND
+                        // the branch tip is still the pinned base tree. Refuse
+                        // here, in front of the agent — a staged request would
+                        // only be rejected by the host later (out of the agent's
+                        // sight), or linger doomed in the spool.
+                        if !snapshotted {
+                            if let Ok(base_tree) =
+                                std::env::var(h5i_core::env::H5I_ENV_BASE_TREE_VAR)
+                            {
+                                if h5i_core::env::head_tree_matches(&base_tree) {
+                                    anyhow::bail!(
+                                        "nothing to submit: no uncommitted changes and \
+                                         the branch tip is identical to the env base.\n  \
+                                         If you were asked for data (an orchestra ask), \
+                                         answer with: h5i team agent reply '<json>'\n  \
+                                         If you meant to submit code, make your changes \
+                                         in the worktree first, then re-run \
+                                         `h5i team agent submit`."
+                                    );
+                                }
+                            }
+                        }
+                    }
                     let summary = match summary_file {
                         Some(path) => Some(std::fs::read_to_string(path).map_err(|e| {
                             anyhow::anyhow!(
@@ -502,6 +562,21 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                         summary,
                     };
                     let staged = h5i_core::env::write_team_submit_spool(&spool, &request)?;
+                    // Submit == "done for this round": record the round so the
+                    // Stop hook stops re-surfacing this round's standing review
+                    // messages. The box can't read team state, but the round
+                    // rides in the inbox messages' i5h links.
+                    if let Some(inbox) =
+                        std::env::var_os(h5i_core::env::H5I_ENV_INBOX_VAR).map(PathBuf::from)
+                    {
+                        if let Some(round) = h5i_core::env::read_env_inbox(&inbox)
+                            .iter()
+                            .filter_map(msg_round)
+                            .max()
+                        {
+                            let _ = h5i_core::env::write_submitted_round(&spool, round);
+                        }
+                    }
                     if *json {
                         println!(
                             "{}",
@@ -1605,13 +1680,13 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                         let interval = interval.max(1);
                         // The framed messages plus a standing instruction; the hook
                         // keeps waiting between turns, so the agent need not run
-                        // `inbox --wait` itself.
-                        let block_reason = |text: &str| -> String {
+                        // `inbox --wait` itself. The instruction is turn-kind-aware:
+                        // a data request (orchestra ask) is finished with
+                        // `team agent reply`, not a doomed no-op submit.
+                        let block_reason = |text: &str, unread: &[msg::Message]| -> String {
                             format!(
-                                "{text}\n\n[h5i team] Handle the request(s) above — post a review \
-                                 with `h5i team review submit` and/or improve and re-submit with \
-                                 `h5i team agent submit`. Submitting marks you done for this round \
-                                 and releases you until the next round opens — no need to poll."
+                                "{text}\n\n{}",
+                                h5i_core::team::release_instruction(unread)
                             )
                         };
                         let is_done =
@@ -1635,9 +1710,22 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                                     .and_then(h5i_core::env::read_submitted_round);
                             let still_pending = |msgs: Vec<msg::Message>| -> Vec<msg::Message> {
                                 msgs.into_iter()
-                                    .filter(|m| match (submitted_round, msg_round(m)) {
-                                        (Some(s), Some(r)) => r > s,
-                                        _ => true,
+                                    .filter(|m| {
+                                        // A data request (orchestra ask) is a fresh,
+                                        // targeted, deliver-once message — the seen
+                                        // cursor already dedupes it. The round filter
+                                        // exists to mute *re-fanned* standing review
+                                        // requests of an already-submitted round;
+                                        // letting it swallow a same-round ask sent
+                                        // after this box submitted would lose the turn
+                                        // (consumed above, then filtered → never seen).
+                                        if h5i_core::team::is_data_request(m) {
+                                            return true;
+                                        }
+                                        match (submitted_round, msg_round(m)) {
+                                            (Some(s), Some(r)) => r > s,
+                                            _ => true,
+                                        }
                                     })
                                     .collect()
                             };
@@ -1667,7 +1755,8 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                                 }
                                 let unread = still_pending(raw);
                                 if !unread.is_empty() {
-                                    let reason = block_reason(&frame_unread(&agent, &unread));
+                                    let reason =
+                                        block_reason(&frame_unread(&agent, &unread), &unread);
                                     let out =
                                         serde_json::json!({ "decision": "block", "reason": reason });
                                     println!("{}", serde_json::to_string(&out)?);
@@ -1719,7 +1808,7 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                                 msg::write_last_view(&repo.h5i_root, &agent, &ids)?;
                                 let text = frame_unread(&agent, &unread);
                                 if block {
-                                    let reason = block_reason(&text);
+                                    let reason = block_reason(&text, &unread);
                                     let out = serde_json::json!({ "decision": "block", "reason": reason });
                                     println!("{}", serde_json::to_string(&out)?);
                                 } else if quiet {
@@ -1750,73 +1839,11 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                             })?),
                             None => None,
                         };
-                        let in_env_spool =
-                            std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR)
-                                .map(PathBuf::from);
-                        let in_box = in_env_spool.is_some()
-                            && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
-                            && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
-                        if let (true, Some(spool)) = (in_box, in_env_spool) {
-                            // Snapshot the worktree onto the env branch *in-box*,
-                            // before staging, unless the caller pinned an explicit
-                            // commit. The host can't snapshot a live box (it holds
-                            // the run lock all session), so the box commits its own
-                            // edits here — otherwise an agent that wrote files but
-                            // never `git commit`ed would stage a no-op that the
-                            // host refuses ("identical to the team base").
-                            if commit.is_none() {
-                                match h5i_core::env::commit_box_worktree() {
-                                    Ok(Some(oid)) => eprintln!(
-                                        "{} snapshotted worktree in-box at {}",
-                                        style("▢").cyan().dim(),
-                                        &oid.to_string()[..12]
-                                    ),
-                                    Ok(None) => {}
-                                    // Surface the failure but don't block the
-                                    // submit — the host freezes the branch tip.
-                                    // A silent failure here is what makes work
-                                    // vanish into a "no changes to review" no-op.
-                                    Err(e) => eprintln!(
-                                        "warning: in-box worktree snapshot failed \
-                                         (submit will use the branch tip — commit \
-                                         your work in-box if this persists): {e}"
-                                    ),
-                                }
-                            }
-                            let request = h5i_core::env::TeamSubmitSpool { commit, summary };
-                            let staged =
-                                h5i_core::env::write_team_submit_spool(&spool, &request)?;
-                            // Submit == "done for this round": record the round so
-                            // the Stop hook stops re-surfacing this round's standing
-                            // review messages. The box can't read team state, but
-                            // the round rides in the inbox messages' i5h links.
-                            if let Some(inbox) =
-                                std::env::var_os(h5i_core::env::H5I_ENV_INBOX_VAR).map(PathBuf::from)
-                            {
-                                if let Some(round) = h5i_core::env::read_env_inbox(&inbox)
-                                    .iter()
-                                    .filter_map(msg_round)
-                                    .max()
-                                {
-                                    let _ = h5i_core::env::write_submitted_round(&spool, round);
-                                }
-                            }
-                            if json {
-                                println!(
-                                    "{}",
-                                    serde_json::to_string_pretty(&serde_json::json!({
-                                        "staged": staged,
-                                        "host_ingest": "env-shell-exit"
-                                    }))?
-                                );
-                            } else {
-                                println!(
-                                    "{} team submit staged for host ingest ({})",
-                                    style("▢").cyan().dim(),
-                                    staged
-                                );
-                            }
-                        } else {
+                        // The in-box path never reaches this arm — it is handled
+                        // (and returns) by the pre-repo-open fast path at the top
+                        // of `run`, since a sealed box can't open the shared
+                        // store this arm's surrounding code requires.
+                        {
                             let team = std::env::var(h5i_core::env::H5I_TEAM_VAR)
                                 .ok()
                                 .filter(|s| !s.trim().is_empty())

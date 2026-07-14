@@ -3287,6 +3287,52 @@ body { line-height: 1.5; }
   white-space: nowrap;
 }
 
+/* Discussion — the conversational record (discussion_msg + agent_reply).
+   On a debate/discussion run these bodies ARE the work product. */
+.team-discussion {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.team-discussion-msg {
+  border: 1px solid var(--bp-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.team-discussion-meta {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+.team-discussion-who {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--bp-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-discussion-meta .team-event-ts {
+  margin-left: auto;
+}
+.team-discussion-body {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--bp-text);
+  max-height: 180px;
+  overflow-y: auto;
+}
+
 @media (max-width: 720px) {
   .team-view {
     grid-template-columns: 1fr;

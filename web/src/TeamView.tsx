@@ -55,6 +55,11 @@ export function TeamView() {
     return m;
   }, [detail]);
 
+  const discussion = useMemo(
+    () => discussionEntries(detail?.events ?? []),
+    [detail],
+  );
+
   if (error)
     return (
       <div className="team-view team-view-empty">
@@ -307,6 +312,34 @@ export function TeamView() {
               </table>
             </section>
 
+            {/* Discussion — asks, data replies, and peer discussion. On a
+                debate/discussion run the messages ARE the work product, so a
+                diff-less team must not read as empty. Bodies are untrusted
+                agent output: React text nodes escape markup; control chars
+                are stripped in discussionEntries(). */}
+            {discussion.length > 0 ? (
+              <section className="team-section">
+                <h3 className="team-section-title">Discussion</h3>
+                <ul className="team-discussion">
+                  {discussion.map((d) => (
+                    <li key={d.id} className="team-discussion-msg">
+                      <div className="team-discussion-meta">
+                        <span className="team-chip ghost">r{d.round}</span>
+                        <span className="team-event-kind">
+                          {d.kind === "reply" ? "data reply" : "discussion"}
+                        </span>
+                        <span className="team-discussion-who">
+                          {d.from} → {d.to || "host"}
+                        </span>
+                        <span className="team-event-ts">{d.ts}</span>
+                      </div>
+                      <pre className="team-discussion-body">{d.body}</pre>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
             <section className="team-section">
               <h3 className="team-section-title">Recent events</h3>
               <ul className="team-events">
@@ -340,4 +373,58 @@ function Gate({ ok, label }: { ok: boolean; label: string }) {
 
 function shortModel(m: string): string {
   return m.replace(/^claude-/, "").replace(/-\d{8}$/, "");
+}
+
+interface DiscussionEntry {
+  id: string;
+  ts: string;
+  round: number;
+  kind: "discussion" | "reply";
+  from: string;
+  to: string;
+  body: string;
+}
+
+// Untrusted agent output: React text nodes already escape markup, so only
+// control characters (minus \n and \t) need stripping to keep layout honest.
+function cleanText(s: unknown): string {
+  // eslint-disable-next-line no-control-regex
+  return String(s ?? "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
+}
+
+// The conversational record of a run: `discussion_msg` (agent ↔ agent,
+// host-mediated) and `agent_reply` (the return channel of an orchestra ask)
+// events, in log order. Payload shapes come from team.rs — `TeamDiscussion`
+// and the `{ agent_id, body }` reply record.
+function discussionEntries(
+  events: TeamStatus["events"],
+): DiscussionEntry[] {
+  const out: DiscussionEntry[] = [];
+  for (const e of events) {
+    const p = (e.payload ?? {}) as Record<string, unknown>;
+    if (e.kind === "discussion_msg") {
+      out.push({
+        id: e.id,
+        ts: e.ts,
+        round: typeof p.round === "number" ? p.round : (e.round ?? 0),
+        kind: "discussion",
+        from: cleanText(p.sender || e.actor),
+        to: Array.isArray(p.recipients)
+          ? p.recipients.map(cleanText).join(", ")
+          : "",
+        body: cleanText(p.body),
+      });
+    } else if (e.kind === "agent_reply") {
+      out.push({
+        id: e.id,
+        ts: e.ts,
+        round: e.round ?? 0,
+        kind: "reply",
+        from: cleanText(p.agent_id || e.actor),
+        to: "",
+        body: cleanText(p.body),
+      });
+    }
+  }
+  return out;
 }

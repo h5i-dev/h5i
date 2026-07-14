@@ -271,7 +271,7 @@ impl Agent {
                     format!(
                         "{prompt}\n\n(h5i orchestra data request: reply with ONLY a JSON value \
                          — no prose around it — via `h5i team agent reply '<json>'`. Do not \
-                         submit code for this request.)"
+                         run `h5i team agent submit` for this request.)"
                     )
                 } else {
                     format!(
