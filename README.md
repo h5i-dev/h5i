@@ -23,7 +23,7 @@
 - Persistent context/memory
 - Supervised sandboxed environment
 - Token reduction up to 95%
-- Conflict-free multi-agent orchestra
+- Programmable and conflict-free multi-agent orchestra
 - Fully-automated audit of AI-generated code
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i-dev%2Fh5i | Trendshift" width="250" height="55"/></a>
@@ -106,58 +106,36 @@ h5i env propose claude-env   # turn the box's work into a reviewable proposal
 h5i env apply claude-env     # merge the reviewed changes onto your branch
 ```
 
-### 2.4. Run an ensemble
+### 2.4. Programmable Multi-Agent Orchestration
 
-Create a team
+You can further **program** flexible multi-agent workflows using ordinary control flow such as parallel execution, loops, and conditionals in Rust or Python SDK. For example, you can have Claude and Codex independently implement the same task, review and improve each other’s work, and then select the better result.
 
-```bash
-h5i team auto-create qsort-demo
+```python
+from h5i.orchestra import Conductor
 
-##### This `auto-create` corresponds to making and registering two sandboxed environments:
-#
-# h5i env create qsort-demo-claude --profile agent-claude
-# h5i env create qsort-demo-codex  --profile agent-codex
-#
-# h5i team create  qsort-demo --base HEAD
-# h5i team add-env qsort-demo env/human/claude-env --runtime claude
-# h5i team add-env qsort-demo env/human/codex-env  --runtime codex
-# h5i team status  qsort-demo                                 # note the generated agent ids
-```
+async def main():
+    task = "implement quicksort in python with unit test"
 
-Dispatch one task to every agent:
+    async with Conductor(".", "fix-auth") as c:
+        claude = await c.hire("claude-agent", runtime="claude")
+        codex  = await c.hire("codex-agent",  runtime="codex")
 
-```bash
-echo "Implement Quick Sort from scratch in Python." | h5i team dispatch qsort-demo
-```
+        # Have both agents implement the task independently and in parallel
+        claude_work, codex_work = await asyncio.gather(claude.work(task), codex.work(task))
 
-Launch every agent in its own sandboxed environment. Each agent automatically starts working on the dispatched task:
+        await c.freeze() # Seal the round, ensuring that neither agent influenced the other beforehand
 
-```bash
-# Terminal 1: Claude, running inside its own h5i sandboxed env.
-h5i env shell env/human/qsort-demo-claude -- claude "$(h5i team bootstrap)" # `--dangerously-skip-permissions`
-```
+        # Have each agent review the other's work
+        await asyncio.gather(codex.review(claude_work), claude.review(codex_work))
 
-```bash
-# Terminal 2: Codex, running inside its own h5i sandboxed env.
-h5i env shell env/human/qsort-demo-codex  -- codex  "$(h5i team bootstrap)" # `--sandbox danger-full-access`
-```
+        # Verify each submission in a fresh, neutral sandbox
+        await c.verify(claude_work, ["pytest", "--quiet"])
+        await c.verify(codex_work, ["pytest", "--quiet"])
 
-Each agent peer-reviews, and revises inside its own implementation:
+        verdict = await c.judge() # Select the smallest diff among the submissions that pass all tests
+        print("winner:", verdict.selected_submission)
 
-```bash
-h5i team auto-peer-review qsort-demo                       # sync → freeze → mutual grant → instruct
-```
-
-Merge the best one:
-
-```bash
-h5i team apply --agent <agent-id>                          # id from `team status`
-
-##### Alternatively, replay each candidate, run the tests, merge the winner:
-#
-# h5i team verify   qsort-demo --agent <agent-id> -- pytest  # id from `team status`
-# h5i team finalize qsort-demo                               # explainable verdict (gates + smallest diff)
-# h5i team apply    qsort-demo                               # merge the winner, gated on the verdict
+asyncio.run(main())
 ```
 
 ### 2.5. Web UI
