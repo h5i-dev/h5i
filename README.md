@@ -23,7 +23,7 @@
 - Persistent context/memory
 - Supervised sandboxed environment
 - Token reduction up to 95%
-- Programmable and conflict-free multi-agent orchestra
+- Programmable and conflict-free multi-agent orchestration
 - Fully-automated audit of AI-generated code
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i-dev%2Fh5i | Trendshift" width="250" height="55"/></a>
