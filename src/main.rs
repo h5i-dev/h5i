@@ -254,20 +254,34 @@ fn box_team_inbox(consume: bool) -> Option<Vec<msg::Message>> {
     let inbox = std::path::PathBuf::from(std::env::var_os(h5i_core::env::H5I_ENV_INBOX_VAR)?);
     let spool = std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR)
         .map(std::path::PathBuf::from);
-    let seen = spool
+    let mut seen = spool
         .as_deref()
         .map(h5i_core::env::read_inbox_cursor)
         .unwrap_or_default();
-    let unread: Vec<msg::Message> = h5i_core::env::read_env_inbox(&inbox)
-        .into_iter()
-        .filter(|m| !seen.contains(&m.id))
-        .collect();
-    if consume && !unread.is_empty() {
-        if let Some(spool) = spool.as_deref() {
-            let mut seen = seen;
-            for m in &unread {
+    // Dedupe twice: by id (normal redelivery), then by content fingerprint —
+    // a host *re-fan* of an already-delivered standing request arrives under a
+    // fresh id (re-granted review on a resumed run, re-dispatched round
+    // prompt), which the id cursor can't catch. A content-duplicate is
+    // consumed silently (cursor advances) so it can never re-block the hook.
+    let mut unread: Vec<msg::Message> = Vec::new();
+    let mut advanced = false;
+    for m in h5i_core::env::read_env_inbox(&inbox) {
+        if seen.contains(&m.id) {
+            continue;
+        }
+        advanced = true;
+        let fp = h5i_core::team::msg_refan_fingerprint(&m);
+        if let Some(fp) = fp {
+            if !seen.insert(fp) {
                 seen.insert(m.id.clone());
+                continue;
             }
+        }
+        seen.insert(m.id.clone());
+        unread.push(m);
+    }
+    if consume && advanced {
+        if let Some(spool) = spool.as_deref() {
             let _ = h5i_core::env::write_inbox_cursor(spool, &seen);
         }
     }

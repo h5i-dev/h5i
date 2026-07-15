@@ -1113,6 +1113,97 @@ fn box_team_hook_surfaces_ask_turns_and_steers_to_reply() {
     );
 }
 
+/// The classic in-round sequence is work → submit → REVIEW_REQUEST → review →
+/// (revise →) re-submit: the round's review request reaches the box AFTER its
+/// own work submit. The hook's "submit == done for this round" filter must not
+/// swallow that first delivery (a regression consumed it unseen — the cursor
+/// advanced before the filter ran — and the blocking hook hung every boxed
+/// agent at the review phase). Same for an orchestra revise turn. A host
+/// *re-fan* of the identical request under a fresh id is still muted, now by
+/// content fingerprint rather than by round.
+#[test]
+fn box_team_hook_delivers_review_and_revise_turns_after_submit() {
+    let r = Repo::new();
+    let inbox = r.dir.join("ibox");
+    let spool = r.dir.join("ispool");
+    std::fs::create_dir_all(&inbox).unwrap();
+    std::fs::create_dir_all(&spool).unwrap();
+
+    // The box already submitted its round-1 work…
+    h5i_core::env::write_submitted_round(&spool, 1).unwrap();
+
+    let review_req = |id: &str| h5i_core::msg::Message {
+        id: id.into(),
+        ts: "2026-07-15T00:00:00Z".into(),
+        from: "human".into(),
+        to: "hana".into(),
+        body: "Review rohan's team submission for demo".into(),
+        kind: Some("REVIEW_REQUEST".into()),
+        focus: vec!["sub-rohan-r1-aaaaaaaaaaaa".into()],
+        links: Some(serde_json::json!({
+            "team": "demo",
+            "round": 1,
+            "reviewer": "hana",
+            "target": "rohan",
+            "artifact_kinds": ["diff", "summary"],
+        })),
+        ..Default::default()
+    };
+    let run_hook = || -> String {
+        let out = Command::new(H5I)
+            .args(["team", "agent", "hook", "--quiet"])
+            .env("H5I_AGENT", "hana")
+            .env(h5i_core::env::H5I_ENV_INBOX_VAR, &inbox)
+            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
+            .current_dir(&r.dir)
+            .output()
+            .expect("run team agent hook");
+        out_str(&out)
+    };
+
+    // …then the round-1 review request arrives. It must surface.
+    let m = review_req("rev-after-submit-0001");
+    std::fs::write(inbox.join("m1.json"), serde_json::to_vec(&m).unwrap()).unwrap();
+    let first = run_hook();
+    assert!(
+        first.contains("Review rohan's team submission"),
+        "a round-1 REVIEW_REQUEST arriving after the round-1 submit must surface: {first}"
+    );
+
+    // A host re-fan of the SAME request under a fresh id stays muted
+    // (content-duplicate), so a resumed run can't loop the reviewer.
+    let m = review_req("rev-after-submit-0002");
+    std::fs::write(inbox.join("m2.json"), serde_json::to_vec(&m).unwrap()).unwrap();
+    let refan = run_hook();
+    assert!(
+        !refan.contains("Review rohan's team submission"),
+        "an identical re-fanned request must not re-surface: {refan}"
+    );
+
+    // An orchestra revise turn is also same-round-after-submit by design.
+    let m = h5i_core::msg::Message {
+        id: "revise-after-submit-0001".into(),
+        ts: "2026-07-15T00:01:00Z".into(),
+        from: "human".into(),
+        to: "hana".into(),
+        body: "Your teammate reviewed your submission; address the feedback".into(),
+        kind: Some("ASK".into()),
+        links: Some(serde_json::json!({
+            "team": "demo",
+            "round": 1,
+            "agent_id": "hana",
+            "turn": "revise",
+        })),
+        ..Default::default()
+    };
+    std::fs::write(inbox.join("m3.json"), serde_json::to_vec(&m).unwrap()).unwrap();
+    let revise = run_hook();
+    assert!(
+        revise.contains("address the feedback"),
+        "a round-1 revise turn arriving after the round-1 submit must surface: {revise}"
+    );
+}
+
 /// In-box `team agent submit` with provably nothing to submit — clean worktree
 /// AND branch tip identical to the exported `$H5I_ENV_BASE_TREE` — must refuse
 /// in front of the agent (steering an ask turn to `team agent reply`) instead

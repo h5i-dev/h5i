@@ -901,6 +901,18 @@ pub fn is_noop_submission_err(e: &H5iError) -> bool {
 /// finished with `h5i team agent reply`, never `h5i team agent submit`.
 pub const TURN_KIND_ASK: &str = "ask";
 
+/// `links.turn` stamped on an orchestra `revise` dispatch (address a review,
+/// then re-submit). Mirrors `TurnKind::label()` in h5i-orchestra.
+pub const TURN_KIND_REVISE: &str = "revise";
+
+/// `links.turn` stamped on an orchestra `review` dispatch. (Today the review
+/// turn is delivered by `grant_review`'s REVIEW_REQUEST, but the label is part
+/// of the wire contract — see `TurnKind::label()` in h5i-orchestra.)
+pub const TURN_KIND_REVIEW: &str = "review";
+
+/// Message kind of a `grant_review` review request (classic and orchestra).
+pub const REVIEW_REQUEST_KIND: &str = "REVIEW_REQUEST";
+
 /// The orchestra turn kind riding in a team message's i5h `links.turn`
 /// (stamped by the orchestra's `dispatch_turn`). `None` for classic
 /// `team dispatch` messages and non-team mail.
@@ -912,6 +924,56 @@ pub fn msg_turn_kind(m: &msg::Message) -> Option<&str> {
 /// way to finish it is `h5i team agent reply '<json>'`, not a submission.
 pub fn is_data_request(m: &msg::Message) -> bool {
     msg_turn_kind(m) == Some(TURN_KIND_ASK)
+}
+
+/// Whether this team message opens a turn that legitimately arrives in the
+/// SAME round the box has already submitted for. The classic in-round sequence
+/// is work → submit → REVIEW_REQUEST → review → (revise →) re-submit, so a
+/// review or revise turn always lands AFTER a submit of its own round — the
+/// Stop hook's "submit == done for this round" filter must never swallow one
+/// (it would be consumed unseen and the blocking hook would hang the agent at
+/// the review phase). Re-fanned standing copies of these requests are muted by
+/// content ([`msg_refan_fingerprint`]), not by round.
+pub fn is_post_submit_turn(m: &msg::Message) -> bool {
+    m.kind.as_deref() == Some(REVIEW_REQUEST_KIND)
+        || matches!(
+            msg_turn_kind(m),
+            Some(TURN_KIND_REVIEW) | Some(TURN_KIND_REVISE)
+        )
+}
+
+/// Content fingerprint of a team message, used by the box inbox cursor to mute
+/// host *re-fans* of the same standing request under a fresh message id (which
+/// defeats the id-based seen cursor — re-granting a review on a resumed run,
+/// re-dispatching a round prompt). Two sends with identical sender, recipient,
+/// kind, body, focus, and i5h links are the same request; the round and
+/// artifact ids ride in `links`, so a genuinely new round or new artifact
+/// yields a new fingerprint. `None` for non-team mail (never muted) and for
+/// the TEAM_DONE control signal (releasing a waiting hook must never be
+/// suppressed).
+pub fn msg_refan_fingerprint(m: &msg::Message) -> Option<String> {
+    let links = m.links.as_ref()?;
+    links.get("team")?.as_str()?;
+    if m.kind.as_deref() == Some(TEAM_DONE_KIND) {
+        return None;
+    }
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for part in [
+        m.from.as_str(),
+        m.to.as_str(),
+        m.kind.as_deref().unwrap_or(""),
+        m.body.as_str(),
+    ] {
+        h.update(part.as_bytes());
+        h.update([0u8]);
+    }
+    for f in &m.focus {
+        h.update(f.as_bytes());
+        h.update([0u8]);
+    }
+    h.update(links.to_string().as_bytes());
+    Some(format!("fp:{:x}", h.finalize()))
 }
 
 /// The standing instruction the team Stop hook appends when it blocks an agent
@@ -1197,7 +1259,7 @@ pub fn grant_review(
         reviewer,
         &body,
         msg::SendOpts {
-            kind: Some("REVIEW_REQUEST".into()),
+            kind: Some(REVIEW_REQUEST_KIND.into()),
             focus: artifact_ids.clone(),
             links: Some(serde_json::json!({
                 "team": run_id,
@@ -1246,6 +1308,30 @@ pub const GRANTABLE_ARTIFACT_KINDS: [&str; 4] = ["diff", "summary", "tests", "te
 
 
 
+/// Resolve a review's `--target` against authoritative run state: a roster
+/// member's agent id passes through, and a submission *artifact id* resolves
+/// to its owner agent — the review request tells the boxed reviewer the
+/// artifact id ("Artifact ids: sub-codex-r1-…"), so that is what agents
+/// routinely pass. Anything else is an error naming the roster, raised BEFORE
+/// any event is recorded.
+fn resolve_review_target(run: &TeamRun, run_id: &str, target: &str) -> Result<String, H5iError> {
+    if run.agents.iter().any(|a| a.agent_id == target) {
+        return Ok(target.to_string());
+    }
+    if let Some(s) = run.submissions.iter().find(|s| s.id == target) {
+        return Ok(s.owner_agent.clone());
+    }
+    Err(H5iError::Metadata(format!(
+        "team '{run_id}' has no member '{target}' and no submission with that artifact id — \
+         pass the reviewed teammate's agent id or their submission's artifact id (roster: {})",
+        run.agents
+            .iter()
+            .map(|a| a.agent_id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn submit_review(
     repo: &Repository,
@@ -1259,6 +1345,17 @@ pub fn submit_review(
     validate_agent_id(reviewer)?;
     validate_agent_id(target)?;
     let current = status(repo, run_id)?.run;
+    // Fail closed BEFORE recording anything: a bad reviewer/target used to
+    // append the `review_submitted` event and only then die inside `discuss`
+    // (roster check), leaving a half-applied review under a bogus target while
+    // the host ingest surfaced only a warning the boxed reviewer never sees.
+    if !current.agents.iter().any(|a| a.agent_id == reviewer) {
+        return Err(H5iError::Metadata(format!(
+            "team '{run_id}' has no reviewer '{reviewer}'"
+        )));
+    }
+    let target = resolve_review_target(&current, run_id, target)?;
+    let target = target.as_str();
     let referenced_artifacts: Vec<String> = current
         .submissions
         .iter()
@@ -2459,6 +2556,54 @@ mod tests {
     }
 
     #[test]
+    fn post_submit_turns_are_exempt_from_the_round_filter() {
+        let review_turn =
+            msg_with_links(serde_json::json!({"team": "r", "round": 1, "turn": "review"}));
+        let revise_turn =
+            msg_with_links(serde_json::json!({"team": "r", "round": 1, "turn": "revise"}));
+        let work = msg_with_links(serde_json::json!({"team": "r", "round": 1, "turn": "work"}));
+        let mut review_req = msg_with_links(
+            serde_json::json!({"team": "r", "round": 1, "reviewer": "a", "target": "b"}),
+        );
+        review_req.kind = Some(REVIEW_REQUEST_KIND.into());
+
+        assert!(is_post_submit_turn(&review_turn));
+        assert!(is_post_submit_turn(&revise_turn));
+        assert!(is_post_submit_turn(&review_req));
+        assert!(!is_post_submit_turn(&work));
+        assert!(!is_post_submit_turn(&msg_with_links(serde_json::Value::Null)));
+    }
+
+    #[test]
+    fn refan_fingerprint_keys_on_content_not_id() {
+        let links = serde_json::json!({"team": "r", "round": 1, "target": "b"});
+        let mut a = msg_with_links(links.clone());
+        let mut b = msg_with_links(links);
+        b.id = "m2".into();
+        // Same content under a fresh id (a host re-fan) → same fingerprint.
+        assert_eq!(msg_refan_fingerprint(&a), msg_refan_fingerprint(&b));
+        assert!(msg_refan_fingerprint(&a).is_some());
+
+        // A new round is a new request.
+        let next = msg_with_links(serde_json::json!({"team": "r", "round": 2, "target": "b"}));
+        assert_ne!(msg_refan_fingerprint(&a), msg_refan_fingerprint(&next));
+
+        // Body, focus, and kind are all identity.
+        b.body = "y".into();
+        assert_ne!(msg_refan_fingerprint(&a), msg_refan_fingerprint(&b));
+        a.focus = vec!["sub-1".into()];
+        let mut c = a.clone();
+        c.focus = vec!["sub-2".into()];
+        assert_ne!(msg_refan_fingerprint(&a), msg_refan_fingerprint(&c));
+
+        // Non-team mail and the TEAM_DONE release signal are never muted.
+        assert_eq!(msg_refan_fingerprint(&msg_with_links(serde_json::Value::Null)), None);
+        let mut done = msg_with_links(serde_json::json!({"team": "r", "round": 1}));
+        done.kind = Some(TEAM_DONE_KIND.into());
+        assert_eq!(msg_refan_fingerprint(&done), None);
+    }
+
+    #[test]
     fn submit_auto_snapshots_dirty_worktree() {
         // The core fix: an agent edits files in the env worktree and submits
         // WITHOUT committing. submit must mediate-commit the worktree onto the
@@ -3344,6 +3489,173 @@ mod tests {
         assert!(!codex_revised.influence_event_ids.is_empty());
         // The submission predating the review stays independent.
         assert!(codex_sub.independent);
+    }
+
+    /// Two concurrent drains of the same staged review must apply it exactly
+    /// once. `sync_outbound` is polled by every in-flight orchestra turn wait
+    /// while a session's at-exit ingest can run in another process; before the
+    /// per-env drain lock, two drains could both read a `team-review-*.json`
+    /// before either removed it and apply it twice (observed live: one peer
+    /// review ingested twice, 5 ms apart → duplicate discussion messages in
+    /// the radio dashboard).
+    #[test]
+    fn concurrent_outbound_drains_apply_a_staged_review_exactly_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path().to_path_buf();
+        let codex = manifest(&repo, &h5i_root, "codex", "fix");
+        let claude = manifest(&repo, &h5i_root, "claude", "fix");
+        let codex_commit = commit_file(&repo, "codex.txt", "ok\n");
+        repo.reference(&codex.branch, codex_commit, true, "codex")
+            .unwrap();
+        let claude_commit = commit_file(&repo, "claude.txt", "ok\n");
+        repo.reference(&claude.branch, claude_commit, true, "claude")
+            .unwrap();
+
+        create(&repo, "run-dd", "run-dd", "HEAD~2", 1, "human").unwrap();
+        add_env(&repo, &h5i_root, "run-dd", "env/codex/fix", "codex-fix", None, None, None, "human")
+            .unwrap();
+        add_env(
+            &repo, &h5i_root, "run-dd", "env/claude/fix", "claude-fix", None, None, None, "human",
+        )
+        .unwrap();
+        submit(&repo, &h5i_root, "run-dd", "codex-fix", None, None, "codex").unwrap();
+        submit(&repo, &h5i_root, "run-dd", "claude-fix", None, None, "claude").unwrap();
+        freeze(&repo, "run-dd", false, "human").unwrap();
+
+        // claude's box staged ONE review of codex for host ingest.
+        let spool = claude.dir(&h5i_root).join("spool");
+        crate::env::write_team_review_spool(
+            &spool,
+            &crate::env::TeamReviewSpool {
+                target: "codex-fix".into(),
+                body: "dedupe me".into(),
+            },
+        )
+        .unwrap();
+
+        // Two drains race on the same spool (each with its own repo handle,
+        // as two processes would).
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let root = h5i_root.clone();
+                let m = claude.clone();
+                let b = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let repo = Repository::open(&root).unwrap();
+                    b.wait();
+                    crate::env::ingest_team_outbound(&repo, &root, &m).unwrap()
+                })
+            })
+            .collect();
+        let applied: usize = handles.into_iter().map(|h| h.join().unwrap()).sum();
+
+        assert_eq!(applied, 1, "the staged review must be applied exactly once");
+        let events = read_events(&repo, "run-dd").unwrap();
+        assert_eq!(
+            events.iter().filter(|e| e.kind == "review_submitted").count(),
+            1,
+            "one review event"
+        );
+        assert_eq!(
+            events.iter().filter(|e| e.kind == "discussion_msg").count(),
+            1,
+            "one delivered discussion — a duplicate here is what the radio dashboard showed twice"
+        );
+    }
+
+    /// A boxed reviewer is told the *artifact id* ("Artifact ids: sub-…") and
+    /// routinely passes it as `--target`. It must resolve to the owner agent;
+    /// a target that is neither a roster member nor an artifact id must fail
+    /// BEFORE any event is recorded (a bad target used to append the
+    /// review_submitted event and only then die delivering the discussion —
+    /// a half-applied review under a bogus target, surfaced only as a host
+    /// warning the boxed reviewer never sees).
+    #[test]
+    fn submit_review_resolves_artifact_id_target_and_fails_closed_before_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let codex = manifest(&repo, h5i_root, "codex", "fix");
+        let claude = manifest(&repo, h5i_root, "claude", "fix");
+        let codex_commit = commit_file(&repo, "codex.txt", "ok\n");
+        repo.reference(&codex.branch, codex_commit, true, "codex")
+            .unwrap();
+        let claude_commit = commit_file(&repo, "claude.txt", "ok\n");
+        repo.reference(&claude.branch, claude_commit, true, "claude")
+            .unwrap();
+
+        create(&repo, "run-tid", "run-tid", "HEAD~2", 1, "human").unwrap();
+        add_env(&repo, h5i_root, "run-tid", "env/codex/fix", "codex-fix", None, None, None, "human")
+            .unwrap();
+        add_env(
+            &repo, h5i_root, "run-tid", "env/claude/fix", "claude-fix", None, None, None, "human",
+        )
+        .unwrap();
+        let codex_sub = submit(&repo, h5i_root, "run-tid", "codex-fix", None, None, "codex").unwrap();
+        submit(&repo, h5i_root, "run-tid", "claude-fix", None, None, "claude").unwrap();
+        freeze(&repo, "run-tid", false, "human").unwrap();
+
+        // Target given as the artifact id → resolved to the owner agent, and
+        // the review both records and delivers under that agent.
+        let review = submit_review(
+            &repo,
+            h5i_root,
+            "run-tid",
+            "claude-fix",
+            &codex_sub.id,
+            "resolved via artifact id".into(),
+            "claude-fix",
+        )
+        .unwrap();
+        assert_eq!(review.target, "codex-fix");
+        assert_eq!(review.referenced_artifacts, vec![codex_sub.id.clone()]);
+        let events = read_events(&repo, "run-tid").unwrap();
+        assert!(events
+            .iter()
+            .any(|e| e.kind == "review_submitted" && e.idempotency_key.contains(":codex-fix:")));
+
+        // A target that resolves to nothing fails closed: clear error naming
+        // the roster, and NO review_submitted event appended.
+        let before = read_events(&repo, "run-tid")
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind == "review_submitted")
+            .count();
+        let err = submit_review(
+            &repo,
+            h5i_root,
+            "run-tid",
+            "claude-fix",
+            "sub-nobody-r1-deadbeefdead",
+            "goes nowhere".into(),
+            "claude-fix",
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no member"), "must explain the bad target: {msg}");
+        assert!(msg.contains("codex-fix"), "must name the roster: {msg}");
+        // An unknown reviewer fails the same way.
+        let err = submit_review(
+            &repo,
+            h5i_root,
+            "run-tid",
+            "intruder",
+            "codex-fix",
+            "not on this team".into(),
+            "intruder",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("no reviewer"), "{err}");
+        let after = read_events(&repo, "run-tid")
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind == "review_submitted")
+            .count();
+        assert_eq!(before, after, "a refused review must record no event");
     }
 
     #[test]

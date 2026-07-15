@@ -383,7 +383,8 @@ pub enum TeamReviewCommands {
         /// Reviewing team agent id
         #[arg(long)]
         reviewer: String,
-        /// Target team agent id
+        /// Reviewed teammate: their agent id, or their submission's artifact
+        /// id (e.g. `sub-codex-r1-4ea2333c040f`, resolved to its owner)
         #[arg(long)]
         target: String,
         /// Review text file
@@ -1714,12 +1715,22 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                                         // A data request (orchestra ask) is a fresh,
                                         // targeted, deliver-once message — the seen
                                         // cursor already dedupes it. The round filter
-                                        // exists to mute *re-fanned* standing review
-                                        // requests of an already-submitted round;
-                                        // letting it swallow a same-round ask sent
-                                        // after this box submitted would lose the turn
-                                        // (consumed above, then filtered → never seen).
+                                        // exists to mute stale *work* prompts of an
+                                        // already-submitted round; letting it swallow
+                                        // a same-round ask sent after this box
+                                        // submitted would lose the turn (consumed
+                                        // above, then filtered → never seen).
                                         if h5i_core::team::is_data_request(m) {
+                                            return true;
+                                        }
+                                        // Review and revise turns arrive in the SAME
+                                        // round the box just submitted for (work →
+                                        // submit → review → revise → re-submit) —
+                                        // filtering them by round consumed the review
+                                        // phase unseen and hung the agent. Re-fanned
+                                        // standing copies are muted by content
+                                        // fingerprint in box_team_inbox instead.
+                                        if h5i_core::team::is_post_submit_turn(m) {
                                             return true;
                                         }
                                         match (submitted_round, msg_round(m)) {

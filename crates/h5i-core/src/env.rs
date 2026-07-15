@@ -82,6 +82,41 @@ const ENV_INBOX_DIR: &str = "inbox";
 const RUN_LOCK_FILE: &str = "run.lock";
 #[cfg(unix)] // only the unix-gated RunLock references this
 const OBSERVERS_LOCK_FILE: &str = "observers.lock";
+#[cfg(unix)]
+const DRAIN_LOCK_FILE: &str = "drain.lock";
+
+/// Blocking exclusive lock serializing outbound-spool drains for one env
+/// ([`ingest_team_outbound`]). The drain is read-file → apply-to-team-log →
+/// remove-file; it runs concurrently from every orchestra turn wait polling
+/// `team sync` AND from a session's at-exit ingest in another process, and
+/// without serialization two drains can both read a staged record before
+/// either removes it and apply it twice (observed live: one peer review
+/// ingested twice, 5 ms apart → duplicate discussion messages). Blocking is
+/// safe: a drain never takes `run.lock` (mid-session sync must run while the
+/// live session holds it), so no ordering cycle exists — and listing happens
+/// after the lock, so a waiter picks up records staged during the holder's
+/// drain. Non-unix: no-op (the confined-env backends are unix-only).
+#[cfg(unix)]
+fn acquire_drain_lock(env_dir: &Path) -> Result<Option<std::fs::File>, H5iError> {
+    use std::os::unix::io::AsRawFd;
+    let path = env_dir.join(DRAIN_LOCK_FILE);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| H5iError::with_path(e, &path))?;
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+    if rc != 0 {
+        return Err(H5iError::with_path(std::io::Error::last_os_error(), &path));
+    }
+    Ok(Some(file))
+}
+
+#[cfg(not(unix))]
+fn acquire_drain_lock(_env_dir: &Path) -> Result<Option<std::fs::File>, H5iError> {
+    Ok(None)
+}
 
 /// Advisory `flock`s that coordinate concurrent work on one environment. The
 /// kernel releases a lock when the holding process exits — including on a crash
@@ -4391,6 +4426,9 @@ pub fn ingest_team_outbound(
     if !spool.is_dir() {
         return Ok(0);
     }
+    // One drain at a time per env — every lane below is read → apply → remove,
+    // and a record read by two unserialized drains is applied twice.
+    let _drain_lock = acquire_drain_lock(&m.dir(h5i_root))?;
     let env_tip = repo
         .find_reference(&m.branch)
         .ok()
