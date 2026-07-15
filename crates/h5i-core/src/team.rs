@@ -1308,6 +1308,30 @@ pub const GRANTABLE_ARTIFACT_KINDS: [&str; 4] = ["diff", "summary", "tests", "te
 
 
 
+/// Resolve a review's `--target` against authoritative run state: a roster
+/// member's agent id passes through, and a submission *artifact id* resolves
+/// to its owner agent — the review request tells the boxed reviewer the
+/// artifact id ("Artifact ids: sub-codex-r1-…"), so that is what agents
+/// routinely pass. Anything else is an error naming the roster, raised BEFORE
+/// any event is recorded.
+fn resolve_review_target(run: &TeamRun, run_id: &str, target: &str) -> Result<String, H5iError> {
+    if run.agents.iter().any(|a| a.agent_id == target) {
+        return Ok(target.to_string());
+    }
+    if let Some(s) = run.submissions.iter().find(|s| s.id == target) {
+        return Ok(s.owner_agent.clone());
+    }
+    Err(H5iError::Metadata(format!(
+        "team '{run_id}' has no member '{target}' and no submission with that artifact id — \
+         pass the reviewed teammate's agent id or their submission's artifact id (roster: {})",
+        run.agents
+            .iter()
+            .map(|a| a.agent_id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn submit_review(
     repo: &Repository,
@@ -1321,6 +1345,17 @@ pub fn submit_review(
     validate_agent_id(reviewer)?;
     validate_agent_id(target)?;
     let current = status(repo, run_id)?.run;
+    // Fail closed BEFORE recording anything: a bad reviewer/target used to
+    // append the `review_submitted` event and only then die inside `discuss`
+    // (roster check), leaving a half-applied review under a bogus target while
+    // the host ingest surfaced only a warning the boxed reviewer never sees.
+    if !current.agents.iter().any(|a| a.agent_id == reviewer) {
+        return Err(H5iError::Metadata(format!(
+            "team '{run_id}' has no reviewer '{reviewer}'"
+        )));
+    }
+    let target = resolve_review_target(&current, run_id, target)?;
+    let target = target.as_str();
     let referenced_artifacts: Vec<String> = current
         .submissions
         .iter()
@@ -3454,6 +3489,98 @@ mod tests {
         assert!(!codex_revised.influence_event_ids.is_empty());
         // The submission predating the review stays independent.
         assert!(codex_sub.independent);
+    }
+
+    /// A boxed reviewer is told the *artifact id* ("Artifact ids: sub-…") and
+    /// routinely passes it as `--target`. It must resolve to the owner agent;
+    /// a target that is neither a roster member nor an artifact id must fail
+    /// BEFORE any event is recorded (a bad target used to append the
+    /// review_submitted event and only then die delivering the discussion —
+    /// a half-applied review under a bogus target, surfaced only as a host
+    /// warning the boxed reviewer never sees).
+    #[test]
+    fn submit_review_resolves_artifact_id_target_and_fails_closed_before_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let codex = manifest(&repo, h5i_root, "codex", "fix");
+        let claude = manifest(&repo, h5i_root, "claude", "fix");
+        let codex_commit = commit_file(&repo, "codex.txt", "ok\n");
+        repo.reference(&codex.branch, codex_commit, true, "codex")
+            .unwrap();
+        let claude_commit = commit_file(&repo, "claude.txt", "ok\n");
+        repo.reference(&claude.branch, claude_commit, true, "claude")
+            .unwrap();
+
+        create(&repo, "run-tid", "run-tid", "HEAD~2", 1, "human").unwrap();
+        add_env(&repo, h5i_root, "run-tid", "env/codex/fix", "codex-fix", None, None, None, "human")
+            .unwrap();
+        add_env(
+            &repo, h5i_root, "run-tid", "env/claude/fix", "claude-fix", None, None, None, "human",
+        )
+        .unwrap();
+        let codex_sub = submit(&repo, h5i_root, "run-tid", "codex-fix", None, None, "codex").unwrap();
+        submit(&repo, h5i_root, "run-tid", "claude-fix", None, None, "claude").unwrap();
+        freeze(&repo, "run-tid", false, "human").unwrap();
+
+        // Target given as the artifact id → resolved to the owner agent, and
+        // the review both records and delivers under that agent.
+        let review = submit_review(
+            &repo,
+            h5i_root,
+            "run-tid",
+            "claude-fix",
+            &codex_sub.id,
+            "resolved via artifact id".into(),
+            "claude-fix",
+        )
+        .unwrap();
+        assert_eq!(review.target, "codex-fix");
+        assert_eq!(review.referenced_artifacts, vec![codex_sub.id.clone()]);
+        let events = read_events(&repo, "run-tid").unwrap();
+        assert!(events
+            .iter()
+            .any(|e| e.kind == "review_submitted" && e.idempotency_key.contains(":codex-fix:")));
+
+        // A target that resolves to nothing fails closed: clear error naming
+        // the roster, and NO review_submitted event appended.
+        let before = read_events(&repo, "run-tid")
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind == "review_submitted")
+            .count();
+        let err = submit_review(
+            &repo,
+            h5i_root,
+            "run-tid",
+            "claude-fix",
+            "sub-nobody-r1-deadbeefdead",
+            "goes nowhere".into(),
+            "claude-fix",
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no member"), "must explain the bad target: {msg}");
+        assert!(msg.contains("codex-fix"), "must name the roster: {msg}");
+        // An unknown reviewer fails the same way.
+        let err = submit_review(
+            &repo,
+            h5i_root,
+            "run-tid",
+            "intruder",
+            "codex-fix",
+            "not on this team".into(),
+            "intruder",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("no reviewer"), "{err}");
+        let after = read_events(&repo, "run-tid")
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind == "review_submitted")
+            .count();
+        assert_eq!(before, after, "a refused review must record no event");
     }
 
     #[test]

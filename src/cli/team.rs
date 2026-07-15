@@ -383,7 +383,8 @@ pub enum TeamReviewCommands {
         /// Reviewing team agent id
         #[arg(long)]
         reviewer: String,
-        /// Target team agent id
+        /// Reviewed teammate: their agent id, or their submission's artifact
+        /// id (e.g. `sub-codex-r1-4ea2333c040f`, resolved to its owner)
         #[arg(long)]
         target: String,
         /// Review text file
