@@ -901,6 +901,18 @@ pub fn is_noop_submission_err(e: &H5iError) -> bool {
 /// finished with `h5i team agent reply`, never `h5i team agent submit`.
 pub const TURN_KIND_ASK: &str = "ask";
 
+/// `links.turn` stamped on an orchestra `revise` dispatch (address a review,
+/// then re-submit). Mirrors `TurnKind::label()` in h5i-orchestra.
+pub const TURN_KIND_REVISE: &str = "revise";
+
+/// `links.turn` stamped on an orchestra `review` dispatch. (Today the review
+/// turn is delivered by `grant_review`'s REVIEW_REQUEST, but the label is part
+/// of the wire contract — see `TurnKind::label()` in h5i-orchestra.)
+pub const TURN_KIND_REVIEW: &str = "review";
+
+/// Message kind of a `grant_review` review request (classic and orchestra).
+pub const REVIEW_REQUEST_KIND: &str = "REVIEW_REQUEST";
+
 /// The orchestra turn kind riding in a team message's i5h `links.turn`
 /// (stamped by the orchestra's `dispatch_turn`). `None` for classic
 /// `team dispatch` messages and non-team mail.
@@ -912,6 +924,56 @@ pub fn msg_turn_kind(m: &msg::Message) -> Option<&str> {
 /// way to finish it is `h5i team agent reply '<json>'`, not a submission.
 pub fn is_data_request(m: &msg::Message) -> bool {
     msg_turn_kind(m) == Some(TURN_KIND_ASK)
+}
+
+/// Whether this team message opens a turn that legitimately arrives in the
+/// SAME round the box has already submitted for. The classic in-round sequence
+/// is work → submit → REVIEW_REQUEST → review → (revise →) re-submit, so a
+/// review or revise turn always lands AFTER a submit of its own round — the
+/// Stop hook's "submit == done for this round" filter must never swallow one
+/// (it would be consumed unseen and the blocking hook would hang the agent at
+/// the review phase). Re-fanned standing copies of these requests are muted by
+/// content ([`msg_refan_fingerprint`]), not by round.
+pub fn is_post_submit_turn(m: &msg::Message) -> bool {
+    m.kind.as_deref() == Some(REVIEW_REQUEST_KIND)
+        || matches!(
+            msg_turn_kind(m),
+            Some(TURN_KIND_REVIEW) | Some(TURN_KIND_REVISE)
+        )
+}
+
+/// Content fingerprint of a team message, used by the box inbox cursor to mute
+/// host *re-fans* of the same standing request under a fresh message id (which
+/// defeats the id-based seen cursor — re-granting a review on a resumed run,
+/// re-dispatching a round prompt). Two sends with identical sender, recipient,
+/// kind, body, focus, and i5h links are the same request; the round and
+/// artifact ids ride in `links`, so a genuinely new round or new artifact
+/// yields a new fingerprint. `None` for non-team mail (never muted) and for
+/// the TEAM_DONE control signal (releasing a waiting hook must never be
+/// suppressed).
+pub fn msg_refan_fingerprint(m: &msg::Message) -> Option<String> {
+    let links = m.links.as_ref()?;
+    links.get("team")?.as_str()?;
+    if m.kind.as_deref() == Some(TEAM_DONE_KIND) {
+        return None;
+    }
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for part in [
+        m.from.as_str(),
+        m.to.as_str(),
+        m.kind.as_deref().unwrap_or(""),
+        m.body.as_str(),
+    ] {
+        h.update(part.as_bytes());
+        h.update([0u8]);
+    }
+    for f in &m.focus {
+        h.update(f.as_bytes());
+        h.update([0u8]);
+    }
+    h.update(links.to_string().as_bytes());
+    Some(format!("fp:{:x}", h.finalize()))
 }
 
 /// The standing instruction the team Stop hook appends when it blocks an agent
@@ -1197,7 +1259,7 @@ pub fn grant_review(
         reviewer,
         &body,
         msg::SendOpts {
-            kind: Some("REVIEW_REQUEST".into()),
+            kind: Some(REVIEW_REQUEST_KIND.into()),
             focus: artifact_ids.clone(),
             links: Some(serde_json::json!({
                 "team": run_id,
@@ -2456,6 +2518,54 @@ mod tests {
         let text = release_instruction(&[ask, work]);
         assert!(text.contains("improve and re-submit"));
         assert!(text.contains("team agent reply"));
+    }
+
+    #[test]
+    fn post_submit_turns_are_exempt_from_the_round_filter() {
+        let review_turn =
+            msg_with_links(serde_json::json!({"team": "r", "round": 1, "turn": "review"}));
+        let revise_turn =
+            msg_with_links(serde_json::json!({"team": "r", "round": 1, "turn": "revise"}));
+        let work = msg_with_links(serde_json::json!({"team": "r", "round": 1, "turn": "work"}));
+        let mut review_req = msg_with_links(
+            serde_json::json!({"team": "r", "round": 1, "reviewer": "a", "target": "b"}),
+        );
+        review_req.kind = Some(REVIEW_REQUEST_KIND.into());
+
+        assert!(is_post_submit_turn(&review_turn));
+        assert!(is_post_submit_turn(&revise_turn));
+        assert!(is_post_submit_turn(&review_req));
+        assert!(!is_post_submit_turn(&work));
+        assert!(!is_post_submit_turn(&msg_with_links(serde_json::Value::Null)));
+    }
+
+    #[test]
+    fn refan_fingerprint_keys_on_content_not_id() {
+        let links = serde_json::json!({"team": "r", "round": 1, "target": "b"});
+        let mut a = msg_with_links(links.clone());
+        let mut b = msg_with_links(links);
+        b.id = "m2".into();
+        // Same content under a fresh id (a host re-fan) → same fingerprint.
+        assert_eq!(msg_refan_fingerprint(&a), msg_refan_fingerprint(&b));
+        assert!(msg_refan_fingerprint(&a).is_some());
+
+        // A new round is a new request.
+        let next = msg_with_links(serde_json::json!({"team": "r", "round": 2, "target": "b"}));
+        assert_ne!(msg_refan_fingerprint(&a), msg_refan_fingerprint(&next));
+
+        // Body, focus, and kind are all identity.
+        b.body = "y".into();
+        assert_ne!(msg_refan_fingerprint(&a), msg_refan_fingerprint(&b));
+        a.focus = vec!["sub-1".into()];
+        let mut c = a.clone();
+        c.focus = vec!["sub-2".into()];
+        assert_ne!(msg_refan_fingerprint(&a), msg_refan_fingerprint(&c));
+
+        // Non-team mail and the TEAM_DONE release signal are never muted.
+        assert_eq!(msg_refan_fingerprint(&msg_with_links(serde_json::Value::Null)), None);
+        let mut done = msg_with_links(serde_json::json!({"team": "r", "round": 1}));
+        done.kind = Some(TEAM_DONE_KIND.into());
+        assert_eq!(msg_refan_fingerprint(&done), None);
     }
 
     #[test]
