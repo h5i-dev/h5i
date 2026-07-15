@@ -108,7 +108,7 @@ h5i env apply claude-env     # merge the reviewed changes onto your branch
 
 ### 2.4. Programmable Multi-Agent Orchestration
 
-You can further **program** flexible multi-agent workflows using ordinary control flow such as parallel execution, loops, and conditionals in Rust or Python SDK. For example, you can have Claude and Codex independently implement the same task, review and improve each other’s work, and then select the better result.
+You can further **program** flexible multi-agent workflows using ordinary control flow such as parallel execution, loops, and conditionals in Rust or [Python SDK](https://github.com/h5i-dev/h5i-python). For example, you can have Claude and Codex independently implement the same task, review and improve each other’s work, and then select the better result.
 
 ```python
 from h5i.orchestra import Conductor
