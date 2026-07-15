@@ -3491,6 +3491,81 @@ mod tests {
         assert!(codex_sub.independent);
     }
 
+    /// Two concurrent drains of the same staged review must apply it exactly
+    /// once. `sync_outbound` is polled by every in-flight orchestra turn wait
+    /// while a session's at-exit ingest can run in another process; before the
+    /// per-env drain lock, two drains could both read a `team-review-*.json`
+    /// before either removed it and apply it twice (observed live: one peer
+    /// review ingested twice, 5 ms apart → duplicate discussion messages in
+    /// the radio dashboard).
+    #[test]
+    fn concurrent_outbound_drains_apply_a_staged_review_exactly_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path().to_path_buf();
+        let codex = manifest(&repo, &h5i_root, "codex", "fix");
+        let claude = manifest(&repo, &h5i_root, "claude", "fix");
+        let codex_commit = commit_file(&repo, "codex.txt", "ok\n");
+        repo.reference(&codex.branch, codex_commit, true, "codex")
+            .unwrap();
+        let claude_commit = commit_file(&repo, "claude.txt", "ok\n");
+        repo.reference(&claude.branch, claude_commit, true, "claude")
+            .unwrap();
+
+        create(&repo, "run-dd", "run-dd", "HEAD~2", 1, "human").unwrap();
+        add_env(&repo, &h5i_root, "run-dd", "env/codex/fix", "codex-fix", None, None, None, "human")
+            .unwrap();
+        add_env(
+            &repo, &h5i_root, "run-dd", "env/claude/fix", "claude-fix", None, None, None, "human",
+        )
+        .unwrap();
+        submit(&repo, &h5i_root, "run-dd", "codex-fix", None, None, "codex").unwrap();
+        submit(&repo, &h5i_root, "run-dd", "claude-fix", None, None, "claude").unwrap();
+        freeze(&repo, "run-dd", false, "human").unwrap();
+
+        // claude's box staged ONE review of codex for host ingest.
+        let spool = claude.dir(&h5i_root).join("spool");
+        crate::env::write_team_review_spool(
+            &spool,
+            &crate::env::TeamReviewSpool {
+                target: "codex-fix".into(),
+                body: "dedupe me".into(),
+            },
+        )
+        .unwrap();
+
+        // Two drains race on the same spool (each with its own repo handle,
+        // as two processes would).
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let root = h5i_root.clone();
+                let m = claude.clone();
+                let b = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let repo = Repository::open(&root).unwrap();
+                    b.wait();
+                    crate::env::ingest_team_outbound(&repo, &root, &m).unwrap()
+                })
+            })
+            .collect();
+        let applied: usize = handles.into_iter().map(|h| h.join().unwrap()).sum();
+
+        assert_eq!(applied, 1, "the staged review must be applied exactly once");
+        let events = read_events(&repo, "run-dd").unwrap();
+        assert_eq!(
+            events.iter().filter(|e| e.kind == "review_submitted").count(),
+            1,
+            "one review event"
+        );
+        assert_eq!(
+            events.iter().filter(|e| e.kind == "discussion_msg").count(),
+            1,
+            "one delivered discussion — a duplicate here is what the radio dashboard showed twice"
+        );
+    }
+
     /// A boxed reviewer is told the *artifact id* ("Artifact ids: sub-…") and
     /// routinely passes it as `--target`. It must resolve to the owner agent;
     /// a target that is neither a roster member nor an artifact id must fail
