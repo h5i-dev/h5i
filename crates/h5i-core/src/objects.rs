@@ -759,6 +759,52 @@ fn attach_egress_findings(
     s.counts.insert("egress_denied".into(), eg.denied);
 }
 
+/// One compare-and-swap ref update: create `refname` at `new_oid` when `tip`
+/// is `None` (`force = false`, so a racing creator wins), otherwise move it to
+/// `new_oid` only if it still points at `tip`. Both failure modes — a CAS
+/// mismatch (the ref moved under us) and the loose-ref lock being held by a
+/// concurrent writer — are retryable; the returned error says which.
+pub(crate) fn cas_ref_update(
+    repo: &Repository,
+    refname: &str,
+    tip: Option<git2::Oid>,
+    new_oid: git2::Oid,
+    message: &str,
+) -> Result<(), git2::Error> {
+    match tip {
+        None => repo.reference(refname, new_oid, false, message).map(|_| ()),
+        Some(old) => repo
+            .reference_matching(refname, new_oid, true, old, message)
+            .map(|_| ()),
+    }
+}
+
+/// Randomized full-jitter sleep before CAS retry `attempt` (no-op before the
+/// first attempt). The append loops have no cross-process coordination:
+/// without jitter, concurrent writers retry in lockstep and can livelock on
+/// the loose-ref lock until the whole attempt budget is spent — the flaky
+/// "could not be appended after 64 attempts" failures on slow CI runners.
+/// Capped at 50ms so a fully spent 64-attempt budget waits ~1.5s on average.
+pub(crate) fn cas_backoff(attempt: usize) {
+    if attempt == 0 {
+        return;
+    }
+    const BASE_US: u64 = 500; // 0.5 ms
+    const CAP_US: u64 = 50_000; // 50 ms
+    let ceiling = CAP_US.min(BASE_US << attempt.min(7));
+    std::thread::sleep(std::time::Duration::from_micros(fastrand::u64(1..=ceiling)));
+}
+
+/// Render the last CAS failure for an attempts-exhausted error message, so a
+/// held lock ("failed to lock") is distinguishable from a ref that kept
+/// moving ("old reference value does not match").
+pub(crate) fn cas_error_detail(last_err: &Option<git2::Error>) -> String {
+    match last_err {
+        Some(e) => format!(" (last git error: {e})"),
+        None => String::new(),
+    }
+}
+
 /// Append `manifest` to `refs/h5i/objects` with compare-and-swap semantics,
 /// mirroring the i5h message log: build a commit off the current tip, then move
 /// the ref only if it hasn't moved under us. Retries on a lost race.
@@ -767,7 +813,9 @@ pub fn append_manifest(repo: &Repository, manifest: &Manifest) -> Result<(), H5i
     let line = serde_json::to_string(manifest)?;
     let message = format!("h5i objects: {} ({})", manifest.id, manifest.kind);
 
-    for _ in 0..MAX_ATTEMPTS {
+    let mut last_err: Option<git2::Error> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        cas_backoff(attempt);
         let tip = repo.refname_to_id(OBJECTS_REF).ok();
         let parent = match tip {
             Some(oid) => Some(repo.find_commit(oid)?),
@@ -789,19 +837,15 @@ pub fn append_manifest(repo: &Repository, manifest: &Manifest) -> Result<(), H5i
         let parents: Vec<&git2::Commit> = parent.iter().collect();
         let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
 
-        let cas_ok = match tip {
-            None => repo.reference(OBJECTS_REF, new_oid, false, &message).is_ok(),
-            Some(old) => repo
-                .reference_matching(OBJECTS_REF, new_oid, true, old, &message)
-                .is_ok(),
-        };
-        if cas_ok {
-            return Ok(());
+        match cas_ref_update(repo, OBJECTS_REF, tip, new_oid, &message) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = Some(e),
         }
     }
     Err(H5iError::Internal(format!(
-        "h5i objects: manifest {} could not be appended after {MAX_ATTEMPTS} attempts",
-        manifest.id
+        "h5i objects: manifest {} could not be appended after {MAX_ATTEMPTS} attempts{}",
+        manifest.id,
+        cas_error_detail(&last_err)
     )))
 }
 
@@ -1003,7 +1047,9 @@ pub fn remove_branch_scoped(
     const MAX_ATTEMPTS: usize = 64;
     let message = format!("h5i recall rm: drop objects scoped to branch {branch}");
 
-    for _ in 0..MAX_ATTEMPTS {
+    let mut last_err: Option<git2::Error> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        cas_backoff(attempt);
         let tip = repo.refname_to_id(OBJECTS_REF).ok();
         let parent = match tip {
             Some(oid) => Some(repo.find_commit(oid)?),
@@ -1038,15 +1084,14 @@ pub fn remove_branch_scoped(
         let parents: Vec<&git2::Commit> = parent.iter().collect();
         let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
 
-        let cas_ok = repo
-            .reference_matching(OBJECTS_REF, new_oid, true, tip.unwrap(), &message)
-            .is_ok();
-        if cas_ok {
-            return Ok(removed);
+        match cas_ref_update(repo, OBJECTS_REF, tip, new_oid, &message) {
+            Ok(()) => return Ok(removed),
+            Err(e) => last_err = Some(e),
         }
     }
     Err(H5iError::Internal(format!(
-        "h5i recall rm: objects ref could not be rewritten after {MAX_ATTEMPTS} attempts"
+        "h5i recall rm: objects ref could not be rewritten after {MAX_ATTEMPTS} attempts{}",
+        cas_error_detail(&last_err)
     )))
 }
 
@@ -1485,7 +1530,9 @@ impl<'a> GitRefStore<'a> {
             Some(_) => format!("h5i objects-data: + {hex}"),
             None => format!("h5i objects-data: - {hex}"),
         };
-        for _ in 0..MAX_ATTEMPTS {
+        let mut last_err: Option<git2::Error> = None;
+        for attempt in 0..MAX_ATTEMPTS {
+            cas_backoff(attempt);
             let tip = self.repo.refname_to_id(OBJECTS_DATA_REF).ok();
             let parent = match tip {
                 Some(oid) => Some(self.repo.find_commit(oid)?),
@@ -1505,19 +1552,14 @@ impl<'a> GitRefStore<'a> {
             let sig = signature(self.repo)?;
             let parents: Vec<&git2::Commit> = parent.iter().collect();
             let new_oid = self.repo.commit(None, &sig, &sig, &msg, &tree, &parents)?;
-            let cas_ok = match tip {
-                None => self.repo.reference(OBJECTS_DATA_REF, new_oid, false, &msg).is_ok(),
-                Some(old) => self
-                    .repo
-                    .reference_matching(OBJECTS_DATA_REF, new_oid, true, old, &msg)
-                    .is_ok(),
-            };
-            if cas_ok {
-                return Ok(());
+            match cas_ref_update(self.repo, OBJECTS_DATA_REF, tip, new_oid, &msg) {
+                Ok(()) => return Ok(()),
+                Err(e) => last_err = Some(e),
             }
         }
         Err(H5iError::Internal(format!(
-            "h5i objects-data: could not update {hex} after {MAX_ATTEMPTS} attempts"
+            "h5i objects-data: could not update {hex} after {MAX_ATTEMPTS} attempts{}",
+            cas_error_detail(&last_err)
         )))
     }
 }

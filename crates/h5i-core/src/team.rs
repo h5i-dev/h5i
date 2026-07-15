@@ -386,7 +386,9 @@ pub fn append_event(repo: &Repository, ev: &TeamEvent) -> Result<(), H5iError> {
     let line = serde_json::to_string(ev)?;
     let message = format!("h5i team {}: {}", ev.run_id, ev.kind);
 
-    for _ in 0..MAX_ATTEMPTS {
+    let mut last_err: Option<git2::Error> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        objects::cas_backoff(attempt);
         let tip = repo.refname_to_id(&refname).ok();
         let parent = match tip {
             Some(oid) => Some(repo.find_commit(oid)?),
@@ -408,20 +410,17 @@ pub fn append_event(repo: &Repository, ev: &TeamEvent) -> Result<(), H5iError> {
         let parents: Vec<&git2::Commit> = parent.iter().collect();
         let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
 
-        let cas_ok = match tip {
-            None => repo.reference(&refname, new_oid, false, &message).is_ok(),
-            Some(old) => repo
-                .reference_matching(&refname, new_oid, true, old, &message)
-                .is_ok(),
-        };
-        if cas_ok {
-            return Ok(());
+        match objects::cas_ref_update(repo, &refname, tip, new_oid, &message) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = Some(e),
         }
     }
 
     Err(H5iError::Internal(format!(
-        "h5i team: event {} for {} could not be appended after {MAX_ATTEMPTS} attempts",
-        ev.kind, ev.run_id
+        "h5i team: event {} for {} could not be appended after {MAX_ATTEMPTS} attempts{}",
+        ev.kind,
+        ev.run_id,
+        objects::cas_error_detail(&last_err)
     )))
 }
 
@@ -2381,6 +2380,53 @@ mod tests {
         };
         write_env(h5i_root, &m);
         m
+    }
+
+    #[test]
+    fn append_event_survives_concurrent_writers() {
+        // 8 writers × 16 appends into one clone, each writer on its own
+        // Repository handle — the shape of several agent processes sharing a
+        // repo. Every append must land (the CAS loop converges under
+        // contention) with no event lost or duplicated.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        create(&repo, "run1", "run1", "HEAD", 1, "human").unwrap();
+
+        let handles: Vec<_> = (0..8)
+            .map(|w| {
+                let path = dir.path().to_path_buf();
+                std::thread::spawn(move || {
+                    let repo = Repository::open(&path).unwrap();
+                    for i in 0..16 {
+                        let ev = event(
+                            "run1",
+                            "human",
+                            "note_added",
+                            1,
+                            None,
+                            None,
+                            format!("writer{w}-note{i}"),
+                            serde_json::json!({ "text": format!("w{w} n{i}") }),
+                        );
+                        append_event(&repo, &ev).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let notes: Vec<_> = read_events(&repo, "run1")
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.kind == "note_added")
+            .collect();
+        assert_eq!(notes.len(), 8 * 16);
+        let unique: std::collections::HashSet<String> =
+            notes.iter().map(|e| e.idempotency_key.clone()).collect();
+        assert_eq!(unique.len(), 8 * 16);
     }
 
     #[test]
