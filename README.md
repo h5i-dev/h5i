@@ -152,23 +152,6 @@ h5i serve
 
 ---
 
-
-## 3. What h5i is, and is not
-
-> h5i **is not** a Git replacement, a hosted SaaS / dev-environment, or *just* a sandbox.
-
-**Why not a hosted sandbox?**: The whole point is that the workspace and its evidence live *in your repo* (`refs/h5i/*`): pushable, fetchable, offline, and yours. Codespaces, Coder, and E2B give you an environment; h5i gives you an *auditable* one, versioned in Git with no service to depend on.
-
-**Why naive agent teams break**: In ML, ensembles beat the best single model: diverse estimators cut variance and won a decade of competitions. The same shift is coming to coding agents. But spawn several agents on one repo with **no coordination layer** and you don't get an ensemble, you get a pileup:
-
-| Failure mode | What happens | h5i's answer |
-|---|---|---|
-| **Environment conflict** | agents overwrite/destroy each other's files | a confined worktree per agent |
-| **Token explosion** | every agent re-reads the repo and runs tools | compressed tool logs |
-| **Review overload** | humans can't inspect every prompt or command | reviewer-ready PR |
-
----
-
 ## 4. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Pitch Deck](https://h5i.dev/pitch/)
