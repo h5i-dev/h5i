@@ -440,7 +440,9 @@ fn append_message_cas(repo: &Repository, msg: &Message) -> Result<(), H5iError> 
     let line = serde_json::to_string(msg)?;
     let message = format!("h5i msg: {} → {}", msg.from, msg.to);
 
-    for _ in 0..MAX_ATTEMPTS {
+    let mut last_err: Option<git2::Error> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        crate::objects::cas_backoff(attempt);
         let tip = repo.refname_to_id(MSG_REF).ok();
         let parent = match tip {
             Some(oid) => Some(repo.find_commit(oid)?),
@@ -478,24 +480,18 @@ fn append_message_cas(repo: &Repository, msg: &Message) -> Result<(), H5iError> 
         // Create the commit object WITHOUT moving the ref.
         let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
 
-        // Compare-and-swap the ref.
-        let cas_ok = match tip {
-            // No tip yet: create only if still absent (force=false fails if a
-            // racing writer created it first).
-            None => repo.reference(MSG_REF, new_oid, false, &message).is_ok(),
-            // Tip existed: overwrite only if it still equals what we read.
-            Some(old) => repo
-                .reference_matching(MSG_REF, new_oid, true, old, &message)
-                .is_ok(),
-        };
-        if cas_ok {
-            return Ok(());
+        // Compare-and-swap the ref; on failure loop, re-read the new tip
+        // (after a jittered backoff), and re-append.
+        match crate::objects::cas_ref_update(repo, MSG_REF, tip, new_oid, &message) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = Some(e),
         }
-        // Lost the race — loop, re-read the new tip, and re-append.
     }
     Err(H5iError::Internal(format!(
-        "h5i msg: {} → {} could not be appended after {MAX_ATTEMPTS} attempts (ref kept moving)",
-        msg.from, msg.to
+        "h5i msg: {} → {} could not be appended after {MAX_ATTEMPTS} attempts{}",
+        msg.from,
+        msg.to,
+        crate::objects::cas_error_detail(&last_err)
     )))
 }
 
@@ -515,7 +511,9 @@ pub fn remove_branch_scoped(repo: &Repository, branch: &str) -> Result<usize, H5
     const MAX_ATTEMPTS: usize = 64;
     let message = format!("h5i recall rm: drop messages scoped to branch {branch}");
 
-    for _ in 0..MAX_ATTEMPTS {
+    let mut last_err: Option<git2::Error> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        crate::objects::cas_backoff(attempt);
         let tip = repo.refname_to_id(MSG_REF).ok();
         let parent = match tip {
             Some(oid) => Some(repo.find_commit(oid)?),
@@ -549,15 +547,14 @@ pub fn remove_branch_scoped(repo: &Repository, branch: &str) -> Result<usize, H5
         let parents: Vec<&git2::Commit> = parent.iter().collect();
         let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
 
-        let cas_ok = repo
-            .reference_matching(MSG_REF, new_oid, true, tip.unwrap(), &message)
-            .is_ok();
-        if cas_ok {
-            return Ok(removed);
+        match crate::objects::cas_ref_update(repo, MSG_REF, tip, new_oid, &message) {
+            Ok(()) => return Ok(removed),
+            Err(e) => last_err = Some(e),
         }
     }
     Err(H5iError::Internal(format!(
-        "h5i recall rm: msg ref could not be rewritten after {MAX_ATTEMPTS} attempts"
+        "h5i recall rm: msg ref could not be rewritten after {MAX_ATTEMPTS} attempts{}",
+        crate::objects::cas_error_detail(&last_err)
     )))
 }
 

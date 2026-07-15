@@ -591,7 +591,9 @@ pub fn append_env_commit(
     };
     let message = format!("h5i env: {} {}", ev.event, ev.env_id);
 
-    for _ in 0..MAX_ATTEMPTS {
+    let mut last_err: Option<git2::Error> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        objects::cas_backoff(attempt);
         let tip = repo.refname_to_id(ENV_REF).ok();
         let parent = match tip {
             Some(oid) => Some(repo.find_commit(oid)?),
@@ -641,19 +643,16 @@ pub fn append_env_commit(
         let parents: Vec<&git2::Commit> = parent.iter().collect();
         let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
 
-        let cas_ok = match tip {
-            None => repo.reference(ENV_REF, new_oid, false, &message).is_ok(),
-            Some(old) => repo
-                .reference_matching(ENV_REF, new_oid, true, old, &message)
-                .is_ok(),
-        };
-        if cas_ok {
-            return Ok(());
+        match objects::cas_ref_update(repo, ENV_REF, tip, new_oid, &message) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = Some(e),
         }
     }
     Err(H5iError::Internal(format!(
-        "h5i env: event {} for {} could not be appended after {MAX_ATTEMPTS} attempts",
-        ev.event, ev.env_id
+        "h5i env: event {} for {} could not be appended after {MAX_ATTEMPTS} attempts{}",
+        ev.event,
+        ev.env_id,
+        objects::cas_error_detail(&last_err)
     )))
 }
 
@@ -670,7 +669,9 @@ fn append_removed_and_strip(repo: &Repository, ev: &EnvEvent) -> Result<(), H5iE
     let event_line = serde_json::to_string(ev)?;
     let message = format!("h5i env: removed {}", ev.env_id);
 
-    for _ in 0..MAX_ATTEMPTS {
+    let mut last_err: Option<git2::Error> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        objects::cas_backoff(attempt);
         let tip = repo.refname_to_id(ENV_REF).ok();
         let parent = match tip {
             Some(oid) => Some(repo.find_commit(oid)?),
@@ -708,19 +709,15 @@ fn append_removed_and_strip(repo: &Repository, ev: &EnvEvent) -> Result<(), H5iE
         let parents: Vec<&git2::Commit> = parent.iter().collect();
         let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
 
-        let cas_ok = match tip {
-            None => repo.reference(ENV_REF, new_oid, false, &message).is_ok(),
-            Some(old) => repo
-                .reference_matching(ENV_REF, new_oid, true, old, &message)
-                .is_ok(),
-        };
-        if cas_ok {
-            return Ok(());
+        match objects::cas_ref_update(repo, ENV_REF, tip, new_oid, &message) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = Some(e),
         }
     }
     Err(H5iError::Internal(format!(
-        "h5i env: removal of {} could not be committed after {MAX_ATTEMPTS} attempts",
-        ev.env_id
+        "h5i env: removal of {} could not be committed after {MAX_ATTEMPTS} attempts{}",
+        ev.env_id,
+        objects::cas_error_detail(&last_err)
     )))
 }
 
