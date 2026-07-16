@@ -17,7 +17,7 @@ toml = { version = "0.8", features = ["parse", "display"] }
 # drives is `crates/h5i-core`; the eDSL is `crates/h5i-orchestra`.
 [package]
 name = "h5i"
-version = "0.2.8"
+version = "0.2.9"
 edition = "2021"
 description = "h5i — auditable, sandboxed workspaces and programmable orchestration for AI coding agents (CLI)."
 
