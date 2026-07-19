@@ -7,8 +7,14 @@
  * (Sandbox, Ensemble, …) is displaying the entity, so the subject stays
  * fixed while the lens changes.
  */
-import { Icon, Tag } from "@blueprintjs/core";
+import { Button, Icon, Tag } from "@blueprintjs/core";
 import type { WorkItem } from "./attention";
+
+/** The lenses every work item offers. `overview` is the entity's own
+ * surface (for envs it includes the assurance flight recorder); the rest
+ * remount the existing repo views scoped by the subject's focus. */
+export type Lens = "overview" | "messages" | "context" | "evidence" | "history";
+const LENSES: Lens[] = ["overview", "messages", "context", "evidence", "history"];
 
 const ENV_STEPS = ["draft", "working", "review", "applied"];
 const TEAM_STEPS = ["collect", "review", "decided"];
@@ -39,12 +45,36 @@ function Stepper({ lifecycle, kind }: { lifecycle: string; kind: string }) {
   );
 }
 
-export function WorkItemStrip({ item }: { item: WorkItem }) {
+export function WorkItemStrip({
+  item,
+  lens,
+  onLens,
+  onClear,
+}: {
+  item: WorkItem;
+  lens: Lens;
+  onLens: (lens: Lens) => void;
+  onClear: () => void;
+}) {
   return (
     <div className="wi-strip">
       <Icon icon={item.kind === "team" ? "people" : "shield"} size={13} />
       <span className="wi-title">{item.title}</span>
       <span className="wi-id">{item.id}</span>
+      <span className="wi-lenses" role="tablist">
+        {LENSES.map((l) => (
+          <button
+            key={l}
+            type="button"
+            role="tab"
+            aria-selected={lens === l}
+            className={`wi-lens${lens === l ? " wi-lens-on" : ""}`}
+            onClick={() => onLens(l)}
+          >
+            {l}
+          </button>
+        ))}
+      </span>
       <span className="wi-steps">
         <Stepper lifecycle={item.lifecycle} kind={item.kind} />
       </span>
@@ -60,6 +90,13 @@ export function WorkItemStrip({ item }: { item: WorkItem }) {
           {item.unseen} unseen
         </Tag>
       ) : null}
+      <Button
+        minimal
+        small
+        icon="cross"
+        title="Back to Now (drop the work-item focus)"
+        onClick={onClear}
+      />
     </div>
   );
 }

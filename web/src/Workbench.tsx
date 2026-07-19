@@ -107,16 +107,39 @@ export function Workbench() {
   // back/forward work and every view is shareable.
   const applyHash = useCallback(() => {
     const parts = window.location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+    // A lens is a view *of the focused work item*: overview (the entity's
+    // own surface, which for envs includes assurance), messages, context,
+    // evidence, history. Under the hood each lens maps onto an existing
+    // view — the hierarchy changed (work first, lens second), not the views.
+    const lensMode = (lens: string | undefined, kind: "env" | "team"): Mode => {
+      switch (lens) {
+        case "messages":
+          return "radio";
+        case "context":
+          return "context";
+        case "evidence":
+          return "replay";
+        case "history":
+          return "explore";
+        default:
+          return kind === "team" ? "team" : "sandbox";
+      }
+    };
     if (parts[0] === "env" && parts.length >= 3) {
       setFocusEnv(`env/${parts[1]}/${parts[2]}`);
-      setMode("sandbox");
+      setFocusTeam(null);
+      setMode(lensMode(parts[3], "env"));
     } else if (parts[0] === "team" && parts[1]) {
       setFocusTeam(decodeURIComponent(parts[1]));
-      setMode("team");
+      setFocusEnv(null);
+      setMode(lensMode(parts[2], "team"));
     } else if (parts[0] === "commit" && parts[1]) {
       setSelectedOid(parts[1]);
       setMode("explore");
     } else if (parts[0] === "mode" && parts[1]) {
+      // Repo-scoped surfaces drop any entity focus.
+      setFocusEnv(null);
+      setFocusTeam(null);
       setMode(parts[1] as Mode);
     }
   }, []);
@@ -224,7 +247,8 @@ export function Workbench() {
             <Button
               className="wb-mode-lead"
               icon="shield"
-              text="Sandbox"
+              text="Now"
+              title="The fleet and the attention rail — what needs you"
               active={mode === "sandbox"}
               onClick={() => navigate("/mode/sandbox")}
             />
@@ -236,37 +260,14 @@ export function Workbench() {
             />
             <Button
               icon="endorsed"
-              text="Cockpit"
+              text="Decide"
+              title="Review-worthiness ranking (cockpit)"
               active={mode === "cockpit"}
               onClick={() => navigate("/mode/cockpit")}
             />
             <Button
-              icon="feed"
-              text="Radio"
-              active={mode === "radio"}
-              onClick={() => navigate("/mode/radio")}
-            />
-            <Button
-              icon="people"
-              text="Ensemble"
-              active={mode === "team"}
-              onClick={() => navigate("/mode/team")}
-            />
-            <Button
-              icon="lightbulb"
-              text="Context"
-              active={mode === "context"}
-              onClick={() => navigate("/mode/context")}
-            />
-            <Button
-              icon="play"
-              text="Replay"
-              active={mode === "replay"}
-              onClick={() => navigate("/mode/replay")}
-            />
-            <Button
               icon="search-around"
-              text="Explore"
+              text="History"
               active={mode === "explore"}
               onClick={() => navigate("/mode/explore")}
             />
@@ -330,17 +331,34 @@ export function Workbench() {
         />
         <div className="wb-rail-main">
       {(() => {
-        // The selected work item, when the current view is entity-scoped.
-        const focusedId =
-          mode === "sandbox" && focusEnv
-            ? focusEnv
-            : mode === "team" && focusTeam
-              ? `team/${focusTeam}`
-              : null;
+        // The selected work item persists across its lenses; the strip is
+        // the fixed subject header, the tabs switch the lens beneath it.
+        const focusedId = focusEnv ?? (focusTeam ? `team/${focusTeam}` : null);
         const wi = focusedId
           ? attention?.work_items.find((w) => w.id === focusedId)
           : null;
-        return wi ? <WorkItemStrip item={wi} /> : null;
+        if (!wi) return null;
+        const base = focusEnv
+          ? `/${focusEnv}`
+          : `/team/${encodeURIComponent(focusTeam ?? "")}`;
+        const lens =
+          mode === "radio"
+            ? "messages"
+            : mode === "context"
+              ? "context"
+              : mode === "replay"
+                ? "evidence"
+                : mode === "explore"
+                  ? "history"
+                  : "overview";
+        return (
+          <WorkItemStrip
+            item={wi}
+            lens={lens}
+            onLens={(l) => navigate(l === "overview" ? base : `${base}/${l}`)}
+            onClear={() => navigate("/mode/sandbox")}
+          />
+        );
       })()}
       {mode === "replay" ? (
         <ReplayView focusOid={replayFocusOid} branch={branchInUI} />
@@ -389,7 +407,7 @@ export function Workbench() {
           </div>
         </div>
       ) : mode === "sandbox" ? (
-        <SandboxView focusEnv={focusEnv} />
+        <SandboxView focusEnv={focusEnv} showProbe={!focusEnv} />
       ) : mode === "board" ? (
         <BoardView />
       ) : (

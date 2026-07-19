@@ -3699,3 +3699,23 @@ body { line-height: 1.5; }
   color: var(--bp-text-muted);
 }
 .wi-seat-working { color: var(--bp-green-hi); box-shadow: inset 0 0 0 1px var(--bp-green-hi); }
+
+/* Work-item lens tabs — the subject stays fixed, the lens switches. */
+.wi-lenses { display: flex; gap: 2px; margin-left: 8px; }
+.wi-lens {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--bp-text-muted);
+  padding: 2px 7px 1px;
+  cursor: pointer;
+}
+.wi-lens:hover { color: var(--bp-text); }
+.wi-lens:focus-visible { outline: 1px solid var(--h5-accent); }
+.wi-lens-on {
+  color: var(--bp-text);
+  font-weight: 600;
+  border-bottom-color: var(--h5-accent);
+}

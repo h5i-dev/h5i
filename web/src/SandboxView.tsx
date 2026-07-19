@@ -39,7 +39,13 @@ const LANES: { key: RiskLane; label: string; hint: string }[] = [
 
 const POLL_MS = 8000;
 
-export function SandboxView({ focusEnv }: { focusEnv?: string | null }) {
+export function SandboxView({
+  focusEnv,
+  showProbe = true,
+}: {
+  focusEnv?: string | null;
+  showProbe?: boolean;
+}) {
   const [envs, setEnvs] = useState<EnvFleetItem[] | null>(null);
   const [probe, setProbe] = useState<ProbeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +99,7 @@ export function SandboxView({ focusEnv }: { focusEnv?: string | null }) {
 
   return (
     <div className="sbx-shell">
-      <TopStrip probe={probe} envs={envs} />
+      {showProbe ? <TopStrip probe={probe} envs={envs} /> : null}
       <div className="sbx-body">
         <FleetPane
           envs={filtered}
