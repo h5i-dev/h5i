@@ -29,7 +29,7 @@
 //! the triage logic is unit-testable without a repo; [`report`] is the
 //! thin glue that feeds them from a live repository.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -337,16 +337,74 @@ pub fn env_attention(
 
 /// Attention raised by one team run: failed verifiers, verdict pending.
 pub fn team_attention(run: &TeamRun) -> Vec<AttentionItem> {
+    // A recorded verdict resolves the run, including any verifier failures
+    // from earlier attempts. The run detail remains the audit surface for
+    // that history; attention only projects current unresolved conditions.
+    if run.verdict.is_some() {
+        return Vec::new();
+    }
+
     let mut items = Vec::new();
 
-    for v in run
-        .verifications
+    // One current candidate per enrolled agent. `latest_submission_id` is
+    // populated by team status; the fallback keeps legacy/hand-authored runs
+    // deterministic by applying the same round/time/id ordering.
+    let current_submissions: Vec<_> = run
+        .agents
         .iter()
+        .filter_map(|agent| {
+            agent
+                .latest_submission_id
+                .as_deref()
+                .and_then(|id| {
+                    run.submissions
+                        .iter()
+                        .find(|s| s.id == id && s.round == run.current_round)
+                })
+                .or_else(|| {
+                    run.submissions
+                        .iter()
+                        .filter(|s| {
+                            s.owner_agent == agent.agent_id && s.round == run.current_round
+                        })
+                        .max_by(|a, b| {
+                            a.round
+                                .cmp(&b.round)
+                                .then(a.submitted_at.cmp(&b.submitted_at))
+                                .then(a.id.cmp(&b.id))
+                        })
+                })
+        })
+        .collect();
+    let current_ids: BTreeSet<&str> =
+        current_submissions.iter().map(|s| s.id.as_str()).collect();
+
+    // Verification ids end in their creation timestamp, so the greatest id
+    // is the latest neutral re-execution for a submission (the same ordering
+    // used by team::default_verdict). An older failure must not survive a
+    // later passing verification or a superseding submission.
+    let mut latest_verifications: BTreeMap<&str, &crate::team::TeamVerification> =
+        BTreeMap::new();
+    for verification in &run.verifications {
+        if !current_ids.contains(verification.submission_id.as_str()) {
+            continue;
+        }
+        let slot = latest_verifications
+            .entry(verification.submission_id.as_str())
+            .or_insert(verification);
+        if verification.id > slot.id {
+            *slot = verification;
+        }
+    }
+
+    for v in latest_verifications
+        .values()
+        .copied()
         .filter(|v| !v.tests_passed || !v.applies_cleanly)
     {
         let what = if !v.applies_cleanly { "does not apply cleanly" } else { "tests failed" };
         items.push(AttentionItem {
-            id: format!("verify-fail:{}:{}", run.id, v.owner_agent),
+            id: format!("verify-fail:{}:{}", run.id, v.id),
             priority: Priority::Critical,
             state: "blocked".into(),
             entity: entity("team", &run.id),
@@ -369,20 +427,19 @@ pub fn team_attention(run: &TeamRun) -> Vec<AttentionItem> {
         });
     }
 
-    if !run.submissions.is_empty() && run.verdict.is_none() {
-        let verified = run
-            .verifications
-            .iter()
+    let all_agents_submitted =
+        !run.agents.is_empty() && current_submissions.len() == run.agents.len();
+    if all_agents_submitted {
+        let verified = latest_verifications
+            .values()
             .filter(|v| v.tests_passed && v.applies_cleanly)
             .count();
-        let latest = run
-            .submissions
+        let latest = current_submissions
             .iter()
             .map(|s| s.submitted_at.clone())
             .max()
             .unwrap_or_else(|| run.created_at.clone());
-        let mut evidence: Vec<EvidenceRef> = run
-            .submissions
+        let mut evidence: Vec<EvidenceRef> = current_submissions
             .iter()
             .map(|s| EvidenceRef {
                 kind: "capture".into(),
@@ -391,7 +448,7 @@ pub fn team_attention(run: &TeamRun) -> Vec<AttentionItem> {
                 note: Some(format!("submitted by {}", s.owner_agent)),
             })
             .collect();
-        evidence.extend(run.verifications.iter().map(|v| EvidenceRef {
+        evidence.extend(latest_verifications.values().map(|v| EvidenceRef {
             kind: "verification".into(),
             id: v.id.clone(),
             authority: Authority::Verified,
@@ -405,12 +462,12 @@ pub fn team_attention(run: &TeamRun) -> Vec<AttentionItem> {
             title: format!(
                 "{}: {} candidate(s) ready, no verdict",
                 run.name,
-                run.submissions.len()
+                current_submissions.len()
             ),
             reasons: vec![format!(
                 "{} of {} candidates verified; finalize records the verdict",
                 verified,
-                run.submissions.len()
+                current_submissions.len()
             )],
             evidence,
             commands: vec![
@@ -728,7 +785,7 @@ mod tests {
                 policy_digest: "d".into(),
                 branch_ref: "refs/heads/h5i/env/claude/x".into(),
                 worktree_known_local: true,
-                latest_submission_id: None,
+                latest_submission_id: Some("sub1".into()),
                 state: "enrolled".into(),
             }],
             submissions: vec![TeamArtifact {
@@ -862,10 +919,91 @@ mod tests {
     #[test]
     fn failed_verifier_is_critical_with_verified_authority() {
         let items = team_attention(&run(false, false));
-        let f = items.iter().find(|i| i.id == "verify-fail:r1:claude").unwrap();
+        let f = items.iter().find(|i| i.id == "verify-fail:r1:v1").unwrap();
         assert_eq!(f.priority, Priority::Critical);
         assert_eq!(f.evidence[0].authority, Authority::Verified);
         assert!(f.reasons[0].contains("cargo test"));
+    }
+
+    #[test]
+    fn latest_passing_verification_supersedes_an_older_failure() {
+        let mut current = run(false, false);
+        let mut passing = current.verifications[0].clone();
+        passing.id = "v2".into();
+        passing.tests_passed = true;
+        current.verifications.push(passing);
+
+        let items = team_attention(&current);
+        assert!(
+            items.iter().all(|i| i.priority != Priority::Critical),
+            "an older failed re-execution is audit history, not a live blocker"
+        );
+        let decision = items.iter().find(|i| i.id == "decide:r1").unwrap();
+        assert_eq!(
+            decision.reasons,
+            vec!["1 of 1 candidates verified; finalize records the verdict"]
+        );
+    }
+
+    #[test]
+    fn resubmission_replaces_the_old_candidate_in_attention() {
+        let mut current = run(false, false);
+        let mut replacement = current.submissions[0].clone();
+        replacement.id = "sub2".into();
+        replacement.commit_oid = "c2".into();
+        replacement.submitted_at = "2026-01-05T00:00:00Z".into();
+        current.submissions.push(replacement);
+        current.agents[0].latest_submission_id = Some("sub2".into());
+
+        let mut passing = current.verifications[0].clone();
+        passing.id = "v2".into();
+        passing.submission_id = "sub2".into();
+        passing.tests_passed = true;
+        current.verifications.push(passing);
+
+        let items = team_attention(&current);
+        assert!(items.iter().all(|i| i.priority != Priority::Critical));
+        let decision = items.iter().find(|i| i.id == "decide:r1").unwrap();
+        assert!(decision.title.contains("1 candidate(s)"));
+        assert!(decision.evidence.iter().any(|e| e.id == "sub2"));
+        assert!(
+            decision
+                .evidence
+                .iter()
+                .all(|e| e.id != "sub1" && e.id != "v1")
+        );
+    }
+
+    #[test]
+    fn decision_waits_for_every_enrolled_agent_to_submit() {
+        let mut current = run(false, true);
+        let mut waiting = current.agents[0].clone();
+        waiting.agent_id = "codex".into();
+        waiting.env_id = "env/codex/x".into();
+        waiting.latest_submission_id = None;
+        current.agents.push(waiting);
+
+        assert!(
+            team_attention(&current).iter().all(|i| i.id != "decide:r1"),
+            "one early submission is not yet a host decision point"
+        );
+    }
+
+    #[test]
+    fn a_new_round_does_not_project_previous_round_candidates() {
+        let mut current = run(false, false);
+        current.current_round = 2;
+
+        assert!(
+            team_attention(&current).is_empty(),
+            "round-one submissions and failures are history once round two opens"
+        );
+    }
+
+    #[test]
+    fn verdict_resolves_failures_from_earlier_attempts() {
+        let current = run(true, false);
+        assert!(team_attention(&current).is_empty());
     }
 
     #[test]

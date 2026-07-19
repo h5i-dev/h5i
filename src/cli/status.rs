@@ -4,8 +4,9 @@
 //! workbench serves at `/api/attention`, so CLI and web give one answer to
 //! "what needs me?". `--json` prints the shared projection verbatim;
 //! `--explain <id>` opens one item's evidence (the Why? drawer);
-//! `--mark-seen [<id>…]` records this identity's seen-cursor — the queue
-//! drains once, everywhere.
+//! `--mark-seen [<id>…]` records this identity's acknowledgement cursor.
+//! Acknowledged conditions remain visible until their backing state resolves;
+//! the cursor only suppresses new-item counts and notifications.
 
 use crate::*;
 use h5i_core::attention::{self, Authority, AttentionItem, Priority};
@@ -83,7 +84,6 @@ pub fn run(
     mark_seen: bool,
     only: Vec<String>,
     identity: Option<String>,
-    all: bool,
 ) -> anyhow::Result<()> {
     let repo = H5iRepository::open(".")?;
     let report = attention::report(&repo, identity.as_deref());
@@ -115,11 +115,10 @@ pub fn run(
         return Ok(());
     }
 
-    let visible: Vec<&AttentionItem> = report
-        .items
-        .iter()
-        .filter(|i| all || i.seen_at.is_none())
-        .collect();
+    // Every item in the live projection is an unresolved condition. Seen is
+    // acknowledgement state, not resolution, so it must never remove an item
+    // from the default status view.
+    let visible: Vec<&AttentionItem> = report.items.iter().collect();
     if visible.is_empty() {
         println!(
             "{} nothing needs you — {} work item(s), all quiet",
@@ -163,7 +162,7 @@ pub fn run(
     println!(
         "{}",
         style(format!(
-            "identity {} · explain: h5i status --explain <id> · drain: h5i status --mark-seen",
+            "identity {} · explain: h5i status --explain <id> · acknowledge: h5i status --mark-seen",
             report.identity
         ))
         .dim()

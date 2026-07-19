@@ -904,7 +904,7 @@ enum Commands {
         /// Explain one attention item: its reasons and evidence, with authority
         #[arg(long, value_name = "ITEM_ID", conflicts_with_all = ["json", "mark_seen"])]
         explain: Option<String>,
-        /// Record this identity's seen-cursor for current items (drains the queue)
+        /// Acknowledge current items for this identity (conditions remain until resolved)
         #[arg(long)]
         mark_seen: bool,
         /// With --mark-seen: limit to these item ids (repeatable)
@@ -913,9 +913,6 @@ enum Commands {
         /// Identity whose seen-cursor applies (default: $H5I_AGENT > stored > host)
         #[arg(long)]
         identity: Option<String>,
-        /// Include already-seen items in the listing
-        #[arg(long)]
-        all: bool,
     },
 
     /// Launch the h5i web dashboard in your browser
@@ -3659,8 +3656,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Codex { action } => cli::codex::run(action)?,
 
         #[cfg(feature = "web")]
-        Commands::Status { json, explain, mark_seen, only, identity, all } => {
-            cli::status::run(json, explain, mark_seen, only, identity, all)?
+        Commands::Status { json, explain, mark_seen, only, identity } => {
+            cli::status::run(json, explain, mark_seen, only, identity)?
         }
 
         Commands::Serve { port } => cli::serve::run(port)?,

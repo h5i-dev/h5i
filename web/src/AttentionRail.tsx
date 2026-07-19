@@ -1,14 +1,13 @@
 /**
  * The attention rail — the workbench's persistent left column.
  *
- * A queue that drains: NEEDS YOU (unseen blocked-on-you items, most urgent
- * first — the backend ranks, the UI never re-sorts), ACTIVE (live agents),
- * INFO, then seen items collapsed under "quiet". Clicking a row opens the
- * entity and records the seen-cursor, so the same item also drains from
- * `h5i status` in the terminal. The footer is honest about freshness:
+ * Unresolved conditions stay in NEEDS YOU / ACTIVE / INFO until their backing
+ * state resolves. Seen-ness is acknowledgement only: it suppresses unread
+ * counts and notifications but never moves a live condition into "quiet".
+ * Clicking a row opens the entity and records that acknowledgement in both
+ * the web and `h5i status`. The footer is honest about freshness:
  * `live` means the SSE stream is connected, not that we hope it is.
  */
-import { useState } from "react";
 import { Button } from "@blueprintjs/core";
 
 import {
@@ -35,7 +34,8 @@ function Row({
         type="button"
         className={`att-row att-${item.priority}${item.seen_at ? " att-seen" : ""}`}
         onClick={() => {
-          // Viewing is the mutation: drain here and in the CLI alike.
+          // Viewing acknowledges the condition; only source-state resolution
+          // removes it from the rail.
           void markSeen([item.id]).catch(() => {});
           onOpen(item.entity, item.id);
         }}
@@ -62,29 +62,31 @@ export function AttentionRail({
   report: AttentionReport | null;
   connected: boolean;
   onOpen: (entity: EntityRef, itemId: string) => void;
-  /** Called after mark-all so the owner can refetch the projection. */
+  /** Called after acknowledge-all so the owner can refetch the projection. */
   onDrained: () => void;
 }) {
-  const [showQuiet, setShowQuiet] = useState(false);
   const items = report?.items ?? [];
-  const unseen = items.filter((i) => !i.seen_at);
-  const needsYou = unseen.filter((i) => NEEDS_YOU.has(i.priority));
-  const active = unseen.filter((i) => i.priority === "active");
-  const info = unseen.filter((i) => i.priority === "info");
-  const quiet = items.filter((i) => i.seen_at);
+  const needsYou = items.filter((i) => NEEDS_YOU.has(i.priority));
+  const active = items.filter((i) => i.priority === "active");
+  const info = items.filter((i) => i.priority === "info");
+  const unseenNeedsYou = needsYou.filter((i) => !i.seen_at);
 
   return (
     <aside className="att-rail" aria-label="Attention">
       <div className="att-group">
         <div className="att-head att-head-urgent">
           needs you {needsYou.length ? `(${needsYou.length})` : ""}
-          {needsYou.length > 0 ? (
+          {unseenNeedsYou.length > 0 ? (
             <Button
               minimal
               small
               icon="tick"
-              title="Mark all seen (drains here and in `h5i status`)"
-              onClick={() => void markSeen().then(onDrained).catch(() => {})}
+              title={`Acknowledge ${unseenNeedsYou.length} new item(s)`}
+              onClick={() =>
+                void markSeen(unseenNeedsYou.map((item) => item.id))
+                  .then(onDrained)
+                  .catch(() => {})
+              }
             />
           ) : null}
         </div>
@@ -110,21 +112,6 @@ export function AttentionRail({
           {info.map((i) => (
             <Row key={i.id} item={i} onOpen={onOpen} />
           ))}
-        </div>
-      ) : null}
-
-      {quiet.length > 0 ? (
-        <div className="att-group">
-          <button
-            type="button"
-            className="att-head att-quiet-toggle"
-            onClick={() => setShowQuiet((s) => !s)}
-          >
-            quiet ({quiet.length}) {showQuiet ? "▾" : "▸"}
-          </button>
-          {showQuiet
-            ? quiet.map((i) => <Row key={i.id} item={i} onOpen={onOpen} />)
-            : null}
         </div>
       ) : null}
 
