@@ -1752,10 +1752,14 @@ When `--agent` is omitted, h5i infers the backend from `H5I_AGENT_ID` and falls 
 #### h5i recall memory log
 
 ```
-h5i recall memory log
+h5i recall memory log [--limit <n>]
 ```
 
 List all memory snapshots in reverse chronological order, showing the linked commit OID, timestamp, file count, and annotation message.
+
+| Option | Description |
+|--------|-------------|
+| `-l, --limit <n>` | Show only the N newest snapshots (`0` or omitted = all) |
 
 ---
 

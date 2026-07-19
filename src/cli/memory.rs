@@ -27,8 +27,12 @@ pub enum MemoryCommands {
         agent: Option<AgentRuntime>,
     },
 
-    /// List all memory snapshots
-    Log,
+    /// List memory snapshots
+    Log {
+        /// Show only the N newest snapshots (0 = all)
+        #[arg(short, long, default_value_t = 0)]
+        limit: usize,
+    },
 
     /// Restore agent memory to the state captured in a snapshot
     Restore {
@@ -180,9 +184,9 @@ pub fn run(action: MemoryCommands) -> anyhow::Result<()> {
                     memory::print_memory_diff(&diff);
                 }
 
-                MemoryCommands::Log => {
+                MemoryCommands::Log { limit } => {
                     println!("{}\n", style("Claude Memory Snapshots").bold().underlined());
-                    memory::print_memory_log(&repo.h5i_root)?;
+                    memory::print_memory_log(&repo.h5i_root, limit)?;
                 }
 
                 MemoryCommands::Restore { commit, agent, yes } => {

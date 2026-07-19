@@ -1241,6 +1241,44 @@ fn memory_snapshot_supports_codex_agent() {
 }
 
 #[test]
+fn memory_log_limit_shows_newest_snapshots() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+
+    let memory_root = repo.path().join(".git").join(".h5i").join("memory");
+    for (oid, timestamp) in [
+        ("1111111111111111111111111111111111111111", "2026-07-17T12:00:00Z"),
+        ("2222222222222222222222222222222222222222", "2026-07-18T12:00:00Z"),
+        ("3333333333333333333333333333333333333333", "2026-07-19T12:00:00Z"),
+    ] {
+        let snapshot_dir = memory_root.join(oid);
+        fs::create_dir_all(&snapshot_dir).unwrap();
+        fs::write(
+            snapshot_dir.join("_meta.json"),
+            format!(
+                r#"{{"commit_oid":"{oid}","timestamp":"{timestamp}","file_count":1}}"#,
+            ),
+        )
+        .unwrap();
+    }
+
+    let limited = stdout(&repo.h5i_ok(&["recall", "memory", "log", "--limit", "2"]));
+    assert!(limited.contains("33333333"));
+    assert!(limited.contains("22222222"));
+    assert!(!limited.contains("11111111"));
+
+    let unlimited = stdout(&repo.h5i_ok(&["recall", "memory", "log", "--limit", "0"]));
+    assert!(unlimited.contains("33333333"));
+    assert!(unlimited.contains("22222222"));
+    assert!(unlimited.contains("11111111"));
+
+    let default_output = stdout(&repo.h5i_ok(&["recall", "memory", "log"]));
+    assert!(default_output.contains("33333333"));
+    assert!(default_output.contains("22222222"));
+    assert!(default_output.contains("11111111"));
+}
+
+#[test]
 fn codex_sync_replays_session_activity_into_context() {
     let repo = Repo::new();
     repo.h5i_ok(&["init"]);
