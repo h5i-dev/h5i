@@ -20,9 +20,14 @@ function railIndex(phase: string): number {
   return i < 0 ? 0 : i;
 }
 
-export function TeamView() {
+export function TeamView({ focusRun }: { focusRun?: string | null }) {
   const [teams, setTeams] = useState<TeamRun[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+
+  // Deep links (#/team/<id>) land here: follow the focused run.
+  useEffect(() => {
+    if (focusRun) setSelected(focusRun);
+  }, [focusRun]);
   const [detail, setDetail] = useState<TeamStatus | null>(null);
   const [compare, setCompare] = useState<TeamCompareRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);

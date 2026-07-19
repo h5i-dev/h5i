@@ -39,12 +39,17 @@ const LANES: { key: RiskLane; label: string; hint: string }[] = [
 
 const POLL_MS = 8000;
 
-export function SandboxView() {
+export function SandboxView({ focusEnv }: { focusEnv?: string | null }) {
   const [envs, setEnvs] = useState<EnvFleetItem[] | null>(null);
   const [probe, setProbe] = useState<ProbeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("all");
+
+  // Deep links (#/env/<agent>/<slug>) land here: follow the focused env.
+  useEffect(() => {
+    if (focusEnv) setSelectedId(focusEnv);
+  }, [focusEnv]);
 
   const load = useCallback(() => {
     api.envs().then(setEnvs).catch((e) => setError(String(e)));
