@@ -49,6 +49,9 @@ Programmable orchestration bridge for SDK\-driven scores (h5i.orchestra)
 h5i\-resolve(1)
 Resolve branch conflicts using CRDT\-based semantic merging
 .TP
+h5i\-status(1)
+What needs you \(em attention triage across envs, teams, and messages
+.TP
 h5i\-serve(1)
 Launch the h5i web dashboard in your browser
 .TP
@@ -1458,6 +1461,33 @@ OID of the incoming branch (THEIRS)
 .TP
 <\fIFILE\fR>
 Relative path to the file to resolve
+.SH "H5I STATUS"
+What needs you \(em attention triage across envs, teams, and messages
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstatus\fR [\fB\-\-json\fR] [\fB\-\-explain\fR] [\fB\-\-mark\-seen\fR] [\fB\-\-only\fR] [\fB\-\-identity\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Print the shared JSON projection (identical to `/api/attention`)
+.TP
+\fB\-\-explain\fR \fI<ITEM_ID>\fR
+Explain one attention item: its reasons and evidence, with authority
+.TP
+\fB\-\-mark\-seen\fR
+Acknowledge current items for this identity (conditions remain until resolved)
+.TP
+\fB\-\-only\fR \fI<ITEM_ID>\fR
+With \-\-mark\-seen: limit to these item ids (repeatable)
+.TP
+\fB\-\-identity\fR \fI<IDENTITY>\fR
+Identity whose seen\-cursor applies (default: $H5I_AGENT > stored > host)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
 .SH "H5I SERVE"
 Launch the h5i web dashboard in your browser
 .ie \n(.g .ds Aq \(aq

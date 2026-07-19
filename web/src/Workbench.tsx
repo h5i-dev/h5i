@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   ButtonGroup,
@@ -37,6 +37,18 @@ import { BoardView } from "./BoardView";
 import { TeamView } from "./TeamView";
 import { ContextStrip } from "./ContextStrip";
 import { BranchPicker } from "./BranchPicker";
+import { AttentionRail } from "./AttentionRail";
+import { WorkItemStrip } from "./WorkItemStrip";
+import {
+  getAttention,
+  subscribeUpdates,
+  type AttentionReport,
+  type EntityRef,
+  type WorkItem,
+} from "./attention";
+
+/** Priorities that mean "blocked on a human" — the notification set. */
+const NEEDS_YOU = new Set(["critical", "decision", "communication"]);
 
 type Mode = "replay" | "cockpit" | "radio" | "team" | "explore" | "memory" | "context" | "sandbox" | "board";
 type RightTab = "refs" | "sessions" | "integrity" | "context";
@@ -55,6 +67,105 @@ export function Workbench() {
   const [replayFocusOid, setReplayFocusOid] = useState<string | null>(null);
   // null = follow HEAD (server default); a string = explicit branch override.
   const [activeBranch, setActiveBranch] = useState<string | null>(null);
+
+  // ── attention: the live triage projection + entity focus (deep links) ──
+  const [attention, setAttention] = useState<AttentionReport | null>(null);
+  const [sseConnected, setSseConnected] = useState(false);
+  const [focusEnv, setFocusEnv] = useState<string | null>(null);
+  const [focusTeam, setFocusTeam] = useState<string | null>(null);
+  const notifiedRef = useRef<Set<string>>(new Set());
+
+  const refreshAttention = useCallback(() => {
+    getAttention().then(setAttention).catch(() => {});
+  }, []);
+
+  // One SSE subscription feeds the rail (and everything else that wants
+  // liveness) — no view polls for attention state.
+  useEffect(() => {
+    refreshAttention();
+    return subscribeUpdates((u) => {
+      if (u.attention) setAttention(u.attention);
+    }, setSseConnected);
+  }, [refreshAttention]);
+
+  // Browser notifications only on blocked-on-you transitions, keyed by
+  // (id, watermark) so a re-armed item notifies again but nothing repeats.
+  useEffect(() => {
+    if (!attention || typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+    for (const item of attention.items) {
+      const key = `${item.id}@${item.occurred_at}`;
+      if (item.seen_at || !NEEDS_YOU.has(item.priority)) continue;
+      if (notifiedRef.current.has(key)) continue;
+      notifiedRef.current.add(key);
+      new Notification(`h5i · ${item.title}`, { body: item.reasons[0] ?? "" });
+    }
+  }, [attention]);
+
+  // ── addressable URLs: #/env/<agent>/<slug>, #/team/<id>, #/commit/<oid>,
+  // #/mode/<mode>. The hash is the single source of navigation truth, so
+  // back/forward work and every view is shareable.
+  const applyHash = useCallback(() => {
+    const parts = window.location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+    // A lens is a view *of the focused work item*: overview (the entity's
+    // own surface, which for envs includes assurance), messages, context,
+    // evidence, history. Under the hood each lens maps onto an existing
+    // view — the hierarchy changed (work first, lens second), not the views.
+    const lensMode = (lens: string | undefined, kind: "env" | "team"): Mode => {
+      switch (lens) {
+        case "messages":
+          return "radio";
+        case "context":
+          return "context";
+        case "evidence":
+          return "replay";
+        case "history":
+          return "explore";
+        default:
+          return kind === "team" ? "team" : "sandbox";
+      }
+    };
+    if (parts[0] === "env" && parts.length >= 3) {
+      setFocusEnv(`env/${parts[1]}/${parts[2]}`);
+      setFocusTeam(null);
+      setMode(lensMode(parts[3], "env"));
+    } else if (parts[0] === "team" && parts[1]) {
+      setFocusTeam(decodeURIComponent(parts[1]));
+      setFocusEnv(null);
+      setMode(lensMode(parts[2], "team"));
+    } else if (parts[0] === "commit" && parts[1]) {
+      setSelectedOid(parts[1]);
+      setMode("explore");
+    } else if (parts[0] === "mode" && parts[1]) {
+      // Repo-scoped surfaces drop any entity focus.
+      setFocusEnv(null);
+      setFocusTeam(null);
+      setMode(parts[1] as Mode);
+    }
+  }, []);
+
+  useEffect(() => {
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, [applyHash]);
+
+  const navigate = useCallback(
+    (hash: string) => {
+      if (window.location.hash === `#${hash}`) applyHash();
+      else window.location.hash = hash;
+    },
+    [applyHash],
+  );
+
+  const openEntity = useCallback(
+    (entity: EntityRef) => {
+      if (entity.kind === "env") navigate(`/${entity.id}`);
+      else if (entity.kind === "team") navigate(`/team/${encodeURIComponent(entity.id)}`);
+      else if (entity.kind === "msg") navigate("/mode/radio");
+    },
+    [navigate],
+  );
 
   const loadRepo = useCallback(() => {
     api.repo().then(setRepo).catch((e) => setError(String(e)));
@@ -106,8 +217,7 @@ export function Workbench() {
   );
 
   const jumpToCommit = (oid: string) => {
-    setMode("explore");
-    setSelectedOid(oid);
+    navigate(`/commit/${oid}`);
   };
   const ghBranchUrl = repo?.github_url
     ? (b: string) => githubBranchUrl(repo.github_url, b)
@@ -137,57 +247,35 @@ export function Workbench() {
             <Button
               className="wb-mode-lead"
               icon="shield"
-              text="Sandbox"
+              text="Now"
+              title="The fleet and the attention rail — what needs you"
               active={mode === "sandbox"}
-              onClick={() => setMode("sandbox")}
+              onClick={() => navigate("/mode/sandbox")}
             />
             <Button
               icon="grid-view"
               text="Board"
               active={mode === "board"}
-              onClick={() => setMode("board")}
+              onClick={() => navigate("/mode/board")}
             />
             <Button
               icon="endorsed"
-              text="Cockpit"
+              text="Decide"
+              title="Review-worthiness ranking (cockpit)"
               active={mode === "cockpit"}
-              onClick={() => setMode("cockpit")}
-            />
-            <Button
-              icon="feed"
-              text="Radio"
-              active={mode === "radio"}
-              onClick={() => setMode("radio")}
-            />
-            <Button
-              icon="people"
-              text="Ensemble"
-              active={mode === "team"}
-              onClick={() => setMode("team")}
-            />
-            <Button
-              icon="lightbulb"
-              text="Context"
-              active={mode === "context"}
-              onClick={() => setMode("context")}
-            />
-            <Button
-              icon="play"
-              text="Replay"
-              active={mode === "replay"}
-              onClick={() => setMode("replay")}
+              onClick={() => navigate("/mode/cockpit")}
             />
             <Button
               icon="search-around"
-              text="Explore"
+              text="History"
               active={mode === "explore"}
-              onClick={() => setMode("explore")}
+              onClick={() => navigate("/mode/explore")}
             />
             <Button
               icon="database"
               text="Memory"
               active={mode === "memory"}
-              onClick={() => setMode("memory")}
+              onClick={() => navigate("/mode/memory")}
             />
           </ButtonGroup>
         </nav>
@@ -198,9 +286,11 @@ export function Workbench() {
             onSelectCommit={jumpToCommit}
             onSelectBranch={(name) => {
               setActiveBranch(name);
-              setMode("explore");
+              navigate("/mode/explore");
             }}
-            onOpenContext={() => setMode("context")}
+            onOpenContext={() => navigate("/mode/context")}
+            workItems={attention?.work_items ?? null}
+            onOpenEntity={openEntity}
           />
           {repo?.github_url ? (
             <a
@@ -214,15 +304,62 @@ export function Workbench() {
               <span style={{ marginLeft: 4 }}>GitHub</span>
             </a>
           ) : null}
+          <Button
+            minimal
+            small
+            icon="notifications"
+            title="Enable desktop notifications when something blocks on you"
+            onClick={() => {
+              if (typeof Notification !== "undefined") void Notification.requestPermission();
+            }}
+          />
           <Button minimal small icon="refresh" onClick={refresh} title="Refresh" />
         </div>
       </header>
 
       <ContextStrip
         repoBranch={branchInUI}
-        onOpen={() => setMode("context")}
+        onOpen={() => navigate("/mode/context")}
       />
 
+      <div className="wb-with-rail">
+        <AttentionRail
+          report={attention}
+          connected={sseConnected}
+          onOpen={openEntity}
+          onDrained={refreshAttention}
+        />
+        <div className="wb-rail-main">
+      {(() => {
+        // The selected work item persists across its lenses; the strip is
+        // the fixed subject header, the tabs switch the lens beneath it.
+        const focusedId = focusEnv ?? (focusTeam ? `team/${focusTeam}` : null);
+        const wi = focusedId
+          ? attention?.work_items.find((w) => w.id === focusedId)
+          : null;
+        if (!wi) return null;
+        const base = focusEnv
+          ? `/${focusEnv}`
+          : `/team/${encodeURIComponent(focusTeam ?? "")}`;
+        const lens =
+          mode === "radio"
+            ? "messages"
+            : mode === "context"
+              ? "context"
+              : mode === "replay"
+                ? "evidence"
+                : mode === "explore"
+                  ? "history"
+                  : "overview";
+        return (
+          <WorkItemStrip
+            item={wi}
+            lens={lens}
+            onLens={(l) => navigate(l === "overview" ? base : `${base}/${l}`)}
+            onClear={() => navigate("/mode/sandbox")}
+          />
+        );
+      })()}
       {mode === "replay" ? (
         <ReplayView focusOid={replayFocusOid} branch={branchInUI} />
       ) : mode === "cockpit" ? (
@@ -230,7 +367,7 @@ export function Workbench() {
           branch={branchInUI}
           onOpenReplay={(oid) => {
             setReplayFocusOid(oid);
-            setMode("replay");
+            navigate("/mode/replay");
           }}
         />
       ) : mode === "radio" ? (
@@ -242,7 +379,7 @@ export function Workbench() {
       ) : mode === "team" ? (
         <div className="wb-body wb-body-single">
           <div className="wb-pane">
-            <TeamView />
+            <TeamView focusRun={focusTeam} />
           </div>
         </div>
       ) : mode === "explore" ? (
@@ -270,7 +407,7 @@ export function Workbench() {
           </div>
         </div>
       ) : mode === "sandbox" ? (
-        <SandboxView />
+        <SandboxView focusEnv={focusEnv} showProbe={!focusEnv} />
       ) : mode === "board" ? (
         <BoardView />
       ) : (
@@ -283,6 +420,8 @@ export function Workbench() {
           </div>
         </div>
       )}
+        </div>
+      </div>
 
       <StatusBar
         repo={repo}
@@ -298,6 +437,7 @@ export function Workbench() {
 type SearchHit =
   | { kind: "commit"; id: string; title: string; detail: string; oid: string }
   | { kind: "branch"; id: string; title: string; detail: string; name: string }
+  | { kind: "work"; id: string; title: string; detail: string; item: WorkItem }
   | { kind: "command"; id: string; title: string; detail: string; run: () => void };
 
 function QuickSearch({
@@ -305,11 +445,15 @@ function QuickSearch({
   onSelectCommit,
   onSelectBranch,
   onOpenContext,
+  workItems,
+  onOpenEntity,
 }: {
   commits: Commit[] | null;
   onSelectCommit: (oid: string) => void;
   onSelectBranch: (name: string) => void;
   onOpenContext: () => void;
+  workItems: WorkItem[] | null;
+  onOpenEntity: (entity: EntityRef) => void;
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -335,6 +479,19 @@ function QuickSearch({
       },
     ];
     if (!q) return commandHits;
+
+    // Work items lead: selecting work is the workbench's primary act.
+    const workHits =
+      workItems
+        ?.filter((w) => `${w.kind} ${w.id} ${w.title} ${w.lifecycle}`.toLowerCase().includes(q))
+        .slice(0, 6)
+        .map<SearchHit>((w) => ({
+          kind: "work",
+          id: `work:${w.id}`,
+          item: w,
+          title: w.title,
+          detail: `${w.kind} · ${w.lifecycle}${w.unseen ? ` · ${w.unseen} unseen` : ""}`,
+        })) ?? [];
 
     const commitHits =
       commits
@@ -363,12 +520,23 @@ function QuickSearch({
           detail: "Switch branch",
         })) ?? [];
 
-    return [...commitHits, ...branchHits, ...commandHits.filter((h) => h.title.toLowerCase().includes(q))];
-  }, [branches, commits, onOpenContext, query]);
+    return [
+      ...workHits,
+      ...commitHits,
+      ...branchHits,
+      ...commandHits.filter((h) => h.title.toLowerCase().includes(q)),
+    ];
+  }, [branches, commits, onOpenContext, query, workItems]);
 
   const choose = (hit: SearchHit) => {
     if (hit.kind === "commit") onSelectCommit(hit.oid);
     if (hit.kind === "branch") onSelectBranch(hit.name);
+    if (hit.kind === "work")
+      onOpenEntity(
+        hit.item.kind === "team"
+          ? { kind: "team", id: hit.item.id.replace(/^team\//, "") }
+          : { kind: "env", id: hit.item.id },
+      );
     if (hit.kind === "command") hit.run();
     setQuery("");
     setOpen(false);
@@ -394,7 +562,11 @@ function QuickSearch({
                     ? "git-commit"
                     : hit.kind === "branch"
                       ? "git-branch"
-                      : "lightbulb"
+                      : hit.kind === "work"
+                        ? hit.item.kind === "team"
+                          ? "people"
+                          : "shield"
+                        : "lightbulb"
                 }
                 text={
                   <span className="wb-search-hit">

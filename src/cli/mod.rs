@@ -20,6 +20,7 @@ pub mod log;
 pub mod blame;
 #[cfg(feature = "web")]
 pub mod serve;
+pub mod status;
 pub mod resolve;
 pub mod doctor;
 pub mod vibe;
