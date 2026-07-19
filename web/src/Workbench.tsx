@@ -38,6 +38,7 @@ import { TeamView } from "./TeamView";
 import { ContextStrip } from "./ContextStrip";
 import { BranchPicker } from "./BranchPicker";
 import { AttentionRail } from "./AttentionRail";
+import { WorkItemStrip } from "./WorkItemStrip";
 import {
   getAttention,
   subscribeUpdates,
@@ -328,6 +329,19 @@ export function Workbench() {
           onDrained={refreshAttention}
         />
         <div className="wb-rail-main">
+      {(() => {
+        // The selected work item, when the current view is entity-scoped.
+        const focusedId =
+          mode === "sandbox" && focusEnv
+            ? focusEnv
+            : mode === "team" && focusTeam
+              ? `team/${focusTeam}`
+              : null;
+        const wi = focusedId
+          ? attention?.work_items.find((w) => w.id === focusedId)
+          : null;
+        return wi ? <WorkItemStrip item={wi} /> : null;
+      })()}
       {mode === "replay" ? (
         <ReplayView focusOid={replayFocusOid} branch={branchInUI} />
       ) : mode === "cockpit" ? (
