@@ -27,14 +27,14 @@
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="og:image:width" content="2257">
   <meta property="og:image:height" content="1222">
-  <meta property="og:image:alt" content="h5i web dashboard showing AI provenance, integrity scores, and test badges for each commit">
+  <meta property="og:image:alt" content="h5i serve workbench: an attention rail showing what needs a human beside sealed agent lanes, every claim badged by its authority (enforced, verified, observed)">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i: Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)">
   <meta name="twitter:description" content="Auditable workspaces for AI coding agents. Run Claude Code, Codex, or whole agent teams in sandboxed Git worktrees. Prompts, commands, logs, policies, reviews, and verifier results versioned beside your code. Start with one, scale to many. No SaaS.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta name="twitter:image:alt" content="h5i web dashboard showing AI provenance, integrity scores, and test badges for each commit">
+  <meta name="twitter:image:alt" content="h5i serve workbench: an attention rail showing what needs a human beside sealed agent lanes, every claim badged by its authority (enforced, verified, observed)">
 
   <!-- Structured data -->
   <script type="application/ld+json">
@@ -461,6 +461,40 @@
     button.ee-tab:hover { color: var(--bp-text-muted); background: var(--bp-surface-2); }
     .ee-tab.active, button.ee-tab.active:hover { color: #04201d; background: var(--h5-accent); font-weight: 700; }
     .ee-panel[hidden] { display: none; }
+    /* Workbench layout: bar spans the top; the attention rail is a persistent
+       left column; the three lens panels share the right cell (one visible). */
+    .ensemble-embed { display: grid; grid-template-columns: 158px 1fr; }
+    .ee-bar { grid-column: 1 / -1; }
+    .ee-rail { grid-column: 1; grid-row: 2; border-right: 1px solid var(--bp-border);
+      background: var(--bp-surface); padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; }
+    .ee-panel { grid-column: 2; grid-row: 2; min-width: 0; }
+    .ee-rail-head { font-family: var(--fm); font-size: 0.56rem; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--bp-text-dim); margin-top: 6px; }
+    .ee-rail-head:first-child { margin-top: 0; }
+    .ee-rail-head.urgent { color: #ff6b6b; }
+    .ee-rail-row { display: flex; align-items: center; gap: 5px; font-size: 0.66rem;
+      color: var(--bp-text); line-height: 1.3; }
+    .ee-rtitle { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ee-rdot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+    .ee-rdot.crit { background: #ff6b6b; }
+    .ee-rdot.dec { background: var(--h5-accent); }
+    .ee-rdot.act { background: #5ee2a0; }
+    /* Authority badges — the epistemic vocabulary: how each claim is known. */
+    .ee-abadge { font-family: var(--fm); font-size: 0.5rem; border: 1px solid currentColor;
+      border-radius: 3px; padding: 0 3px; line-height: 12px; flex: none; }
+    .ab-enf { color: #ff6b6b; }
+    .ab-ver { color: #5ee2a0; }
+    .ab-obs { color: var(--h5-accent); }
+    .ee-rail-foot { margin-top: auto; padding-top: 8px; font-family: var(--fm); font-size: 0.52rem;
+      color: var(--bp-text-dim); display: flex; align-items: center; gap: 4px; }
+    .ee-live { width: 5px; height: 5px; border-radius: 50%; background: #5ee2a0;
+      box-shadow: 0 0 5px #5ee2a0; flex: none; }
+    @media (max-width: 640px) {
+      .ensemble-embed { grid-template-columns: 1fr; }
+      .ee-rail { grid-column: 1; grid-row: 2; border-right: 0; border-bottom: 1px solid var(--bp-border); }
+      .ee-rail-foot { display: none; }
+      .ee-panel { grid-column: 1; grid-row: 3; }
+    }
     .ee-body { padding: 18px 22px 24px;
       background: radial-gradient(120% 80% at 50% -10%, rgba(66,226,208,0.05), transparent 60%), var(--bp-bg); }
 
@@ -1245,17 +1279,26 @@
         <div class="feat-desc">Deterministic risk scan and review ranking flag prompt-injection and the riskiest commits, with no model in the loop.</div>
       </div>
     </div>
-    <!-- Embedded ENSEMBLE tab — the real `h5i serve` dashboard, as live HTML -->
-    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve dashboard: agents attempting one task in sealed lanes (Ensemble), the sandbox flight recorder (Sandbox), and the reasoning/context workspace (Context).">
+    <!-- Embedded workbench — the real `h5i serve` dashboard, as live HTML:
+         attention rail (what needs you, with authority badges) + Now / Ensemble / Context lenses -->
+    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve workbench: an attention rail showing what needs a human (each claim badged by how it is known), beside the fleet (Now), agents attempting one task in sealed lanes (Ensemble), and the reasoning workspace (Context).">
       <div class="ee-bar">
         <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
         <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span>
         <div class="ee-tabs" role="tablist">
+          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Now</button>
           <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Ensemble</button>
-          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Sandbox</button>
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="context">Context</button>
         </div>
       </div>
+      <aside class="ee-rail" aria-label="Attention rail: what needs a human, each claim badged by its authority">
+        <div class="ee-rail-head urgent">needs you (2)</div>
+        <div class="ee-rail-row"><span class="ee-rdot dec"></span><span class="ee-rtitle">fix-auth: 3 candidates, no verdict</span><span class="ee-abadge ab-ver">verified</span></div>
+        <div class="ee-rail-row"><span class="ee-rdot crit"></span><span class="ee-rtitle">payments: egress denied</span><span class="ee-abadge ab-enf">enforced</span></div>
+        <div class="ee-rail-head">active (1)</div>
+        <div class="ee-rail-row"><span class="ee-rdot act"></span><span class="ee-rtitle">claude · session live</span><span class="ee-abadge ab-obs">observed</span></div>
+        <div class="ee-rail-foot"><span class="ee-live"></span>live · event feed</div>
+      </aside>
       <div class="ee-body ee-panel" data-panel="ensemble">
         <header class="team-head">
           <div class="team-head-id">
@@ -1741,7 +1784,7 @@
     });
   }
 
-  /* ── Embedded dashboard tab switch (Ensemble / Sandbox) ──── */
+  /* ── Embedded workbench lens switch (Now / Ensemble / Context) ──── */
   document.querySelectorAll('.ensemble-embed').forEach(embed => {
     const tabs = embed.querySelectorAll('.ee-tab[data-tab]');
     const panels = embed.querySelectorAll('.ee-panel[data-panel]');
