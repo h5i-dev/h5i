@@ -9,7 +9,7 @@ description = "h5i core domain library: git-backed provenance, sandboxed envs, a
 # default so existing builds are unchanged; build with `--no-default-features`
 # for a lean library that never pulls in axum/mime_guess.
 default = ["web"]
-web = ["dep:axum", "dep:mime_guess"]
+web = ["dep:axum", "dep:mime_guess", "dep:tokio-stream"]
 
 [dependencies]
 h5i-error = { path = "../h5i-error" }
@@ -29,6 +29,7 @@ base64 = "0.22.1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 # Web dashboard deps — optional, gated behind the `web` feature (on by default).
 axum = { version = "0.7", optional = true }
+tokio-stream = { version = "0.1", optional = true }
 toml = { workspace = true }
 regex = "1"
 rust-embed = "8.5"

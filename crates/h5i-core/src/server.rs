@@ -4,14 +4,19 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
-    http::{header, StatusCode},
-    response::{IntoResponse, Json, Response},
-    routing::get,
+    http::{header, HeaderMap, StatusCode},
+    response::{
+        sse::{Event as SseEvent, KeepAlive, Sse},
+        IntoResponse, Json, Response,
+    },
+    routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tokio_stream::StreamExt;
 
+use crate::attention;
 use crate::ctx;
 use crate::memory;
 use crate::metadata::{IntegrityReport, IntentGraph};
@@ -1681,13 +1686,7 @@ impl From<&crate::env::EnvEvent> for EnvEventView {
 
 /// Map a `Drift` to a stable kind string for the UI.
 fn drift_kind(d: &crate::env::Drift) -> &'static str {
-    use crate::env::Drift;
-    match d {
-        Drift::UpToDate => "up-to-date",
-        Drift::ParentAhead { .. } => "parent-ahead",
-        Drift::Diverged { .. } => "diverged",
-        Drift::ParentGone => "parent-gone",
-    }
+    d.kind_str()
 }
 
 /// Resolve the capture manifests referenced by a manifest (best-effort; missing
@@ -3299,12 +3298,174 @@ pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
 
 /// Build the full router with all routes wired to `state`. Extracted from
 /// [`serve`] so tests can drive the HTTP surface against a temp repo.
+// ── Attention (the workbench triage) ─────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct AttentionQuery {
+    identity: Option<String>,
+}
+
+/// GET /api/attention — the shared triage projection. Identical to
+/// `h5i status --json` by construction: both call [`attention::report`],
+/// so CLI and web can never disagree about what needs a human.
+async fn api_attention(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<AttentionQuery>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<attention::AttentionReport> {
+        let repo = H5iRepository::open(&path)?;
+        Ok(attention::report(&repo, q.identity.as_deref()))
+    })
+    .await
+    .unwrap_or_else(|e| Err(anyhow::anyhow!("attention task failed: {e}")));
+    match result {
+        Ok(report) => Json(report).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct SeenRequest {
+    /// Item ids to mark; omitted = everything currently raised.
+    ids: Option<Vec<String>>,
+    identity: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SeenResponse {
+    marked: usize,
+    identity: String,
+}
+
+/// POST /api/attention/seen — the one mutation the assurance plane allows:
+/// it records this identity's seen-cursor (attention state), never touching
+/// the repo. CSRF: the custom `x-h5i-attention` header is required; a
+/// cross-origin page cannot attach it without a CORS preflight this server
+/// never grants, so a hostile site cannot drain someone's queue.
+async fn api_attention_seen(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<SeenRequest>,
+) -> Response {
+    if headers.get("x-h5i-attention").is_none() {
+        return (
+            StatusCode::FORBIDDEN,
+            "missing x-h5i-attention header (same-origin guard)",
+        )
+            .into_response();
+    }
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<SeenResponse> {
+        let repo = H5iRepository::open(&path)?;
+        let report = attention::report(&repo, req.identity.as_deref());
+        let marked = attention::mark_seen(
+            &repo.h5i_root,
+            &report.identity,
+            &report.items,
+            req.ids.as_deref(),
+        )?;
+        Ok(SeenResponse { marked, identity: report.identity })
+    })
+    .await
+    .unwrap_or_else(|e| Err(anyhow::anyhow!("mark-seen task failed: {e}")));
+    match result {
+        Ok(resp) => Json(resp).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// One `update` frame on the event stream: a fresh attention report when the
+/// projection changed, plus the domain events that landed since the last
+/// frame (named runtime facts — `created`/`exec`/`proposed`/`applied`/…).
+#[derive(Serialize)]
+struct EventsUpdate {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attention: Option<attention::AttentionReport>,
+    facts: Vec<crate::env::EnvEvent>,
+}
+
+struct EventsCursor {
+    /// Fingerprint of the last attention projection that was sent.
+    fingerprint: Option<String>,
+    /// Env-event watermark (RFC3339, lexically sortable) — facts newer than
+    /// this are new since the previous frame.
+    watermark: String,
+}
+
+/// GET /api/events — Server-Sent Events. The server tails the git-backed
+/// event logs and pushes an `update` frame whenever something changed, so
+/// no client view ever polls. Read-only, like everything else here.
+async fn api_events(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<AttentionQuery>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<SseEvent, std::convert::Infallible>>> {
+    let path = state.repo_path.clone();
+    let identity = q.identity;
+    let cursor = Arc::new(std::sync::Mutex::new(EventsCursor {
+        fingerprint: None,
+        watermark: chrono::Utc::now()
+            .format("%Y-%m-%dT%H:%M:%S%.6fZ")
+            .to_string(),
+    }));
+
+    let interval = tokio::time::interval(std::time::Duration::from_secs(2));
+    let stream = tokio_stream::wrappers::IntervalStream::new(interval)
+        .then(move |_| {
+            let path = path.clone();
+            let identity = identity.clone();
+            let cursor = cursor.clone();
+            async move {
+                tokio::task::spawn_blocking(move || -> Option<EventsUpdate> {
+                    let repo = H5iRepository::open(&path).ok()?;
+                    let report = attention::report(&repo, identity.as_deref());
+                    // The fingerprint deliberately excludes `generated_at`:
+                    // only real state changes push a frame.
+                    let fingerprint = serde_json::to_string(&(&report.items, &report.work_items))
+                        .unwrap_or_default();
+                    let mut cur = cursor.lock().ok()?;
+                    let facts: Vec<crate::env::EnvEvent> =
+                        crate::env::read_events(repo.git(), None)
+                            .into_iter()
+                            .filter(|e| e.ts > cur.watermark)
+                            .collect();
+                    if let Some(latest) = facts.iter().map(|e| e.ts.clone()).max() {
+                        cur.watermark = latest;
+                    }
+                    let changed = cur.fingerprint.as_deref() != Some(fingerprint.as_str());
+                    if changed {
+                        cur.fingerprint = Some(fingerprint);
+                    }
+                    if !changed && facts.is_empty() {
+                        return None;
+                    }
+                    Some(EventsUpdate { attention: changed.then_some(report), facts })
+                })
+                .await
+                .ok()
+                .flatten()
+            }
+        })
+        .filter_map(|update| {
+            update.map(|u| {
+                Ok(SseEvent::default()
+                    .event("update")
+                    .data(serde_json::to_string(&u).unwrap_or_else(|_| "{}".into())))
+            })
+        });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/v2", get(index))
         .route("/v2/", get(index))
         .route("/assets/*path", get(workbench_asset))
+        .route("/api/attention", get(api_attention))
+        .route("/api/attention/seen", post(api_attention_seen))
+        .route("/api/events", get(api_events))
         .route("/api/repo", get(api_repo))
         .route("/api/branches", get(api_branches))
         .route("/api/commits", get(api_commits))
