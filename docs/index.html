@@ -1947,8 +1947,7 @@
       { t: 30, fn: () => { showPanel('ensemble'); overlay('ee-term', '$ h5i team apply fix-auth<br><span class="ok">✓ applied · provenance recorded</span>');
           rail.innerHTML = rails.drained;
           say('The dashboard never mutates. You act in your terminal, where identity and provenance live.'); } },
-      { t: 35, fn: () => { clearOverlays(); showPanel('sandbox'); rail.innerHTML = rails.quiet;
-          point('.ee-tab[data-tab="sandbox"]');
+      { t: 35, fn: () => { clearOverlays();
           say('Git tracks the diff. h5i tracks the run.'); } },
     ];
     const LOOP = 40;
