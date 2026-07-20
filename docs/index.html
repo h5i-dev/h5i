@@ -532,6 +532,21 @@
       box-shadow: 0 8px 26px rgba(0,0,0,0.55); animation: eeSlideIn 0.4s ease-out; }
     .ee-term .ok { color: #5ee2a0; }
     .ee-panel { min-height: 600px; max-height: 600px; overflow-y: auto; }
+    .dc-head { font-family: var(--fm); font-size: 0.6rem; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--bp-text-dim); margin-bottom: 12px; }
+    .dc-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+      border: 1px solid var(--bp-border); border-radius: 7px; margin-bottom: 8px; }
+    .dc-row.dc-top { border-color: var(--h5-accent); box-shadow: 0 0 14px -6px var(--h5-accent); }
+    .dc-rank { font-family: var(--fm); font-size: 0.8rem; color: var(--bp-text-dim); width: 1.2em; }
+    .dc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 0.74rem; }
+    .dc-sub { font-family: var(--fm); font-size: 0.6rem; color: var(--bp-text-dim); }
+    .dc-score { display: flex; flex-direction: column; gap: 2px; width: 74px; font-size: 0.7rem; }
+    .dc-score i { font-family: var(--fm); font-style: normal; font-size: 0.52rem;
+      text-transform: uppercase; letter-spacing: 0.1em; color: var(--bp-text-dim); }
+    .dc-meter { height: 3px; background: var(--bp-surface-2); border-radius: 2px; }
+    .dc-meter > span { display: block; height: 100%; background: var(--h5-accent); border-radius: 2px; }
+    .dc-meter.dc-warn > span { background: #f0a050; }
+    .dc-note { font-family: var(--fm); font-size: 0.58rem; color: var(--bp-text-dim); margin-top: 10px; }
     html.workbench-only .ee-panel { min-height: 0; max-height: none; }
     .ee-ctrl { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 9px;
       padding: 6px 12px; border-top: 1px solid var(--bp-border); background: var(--bp-surface); }
@@ -1356,13 +1371,14 @@
     </div>
     <!-- Embedded workbench — the real `h5i serve` dashboard, as live HTML:
          attention rail (what needs you, with authority badges) + Now / Ensemble / Context lenses -->
-    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve workbench: an attention rail showing what needs a human (each claim badged by how it is known), beside the fleet (Now), candidates, scores, and the neutral verdict (Decide), and the reasoning workspace (Context).">
+    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve workbench: an attention rail showing what needs a human (each claim badged by how it is known), beside the fleet (Now), the sealed candidate lanes (Board), the deterministic review ranking (Decide), and the reasoning workspace (Context).">
       <div class="ee-bar">
         <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
         <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span><a class="ee-full ee-full-open" href="/?workbench=1" title="Open full screen">⛶</a><a class="ee-full ee-full-close" href="/" title="Back to the front page">✕</a>
         <div class="ee-tabs" role="tablist">
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Now</button>
-          <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Decide</button>
+          <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Board</button>
+          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="decide">Decide</button>
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="context">Context</button>
         </div>
       </div>
@@ -1549,6 +1565,31 @@
       </div>
 
       <!-- Context tab — the reasoning/context workspace (refs/h5i/context) -->
+      <div class="ee-body ee-panel" data-panel="decide" hidden>
+        <div class="dc-head">review ranking · deterministic scores, no model in the loop</div>
+        <div class="dc-row dc-top">
+          <span class="dc-rank">1</span>
+          <div class="dc-main"><b>codex-1 · fix-auth</b><span class="dc-sub">4 files · +272 −31 · verifier ✓</span></div>
+          <span class="dc-score"><i>maturity</i><b>82</b><span class="dc-meter"><span style="width:82%"></span></span></span>
+          <span class="dc-score"><i>risk</i><b>38</b><span class="dc-meter dc-warn"><span style="width:38%"></span></span></span>
+          <span class="ee-abadge ab-inf">inferred</span>
+        </div>
+        <div class="dc-row">
+          <span class="dc-rank">2</span>
+          <div class="dc-main"><b>claude-1 · fix-auth</b><span class="dc-sub">3 files · +91 −20 · verifier ✓</span></div>
+          <span class="dc-score"><i>maturity</i><b>74</b><span class="dc-meter"><span style="width:74%"></span></span></span>
+          <span class="dc-score"><i>risk</i><b>12</b><span class="dc-meter"><span style="width:12%"></span></span></span>
+          <span class="ee-abadge ab-inf">inferred</span>
+        </div>
+        <div class="dc-row">
+          <span class="dc-rank">3</span>
+          <div class="dc-main"><b>claude-2 · fix-auth</b><span class="dc-sub">1 file · +12 −3 · tests ✗</span></div>
+          <span class="dc-score"><i>maturity</i><b>61</b><span class="dc-meter"><span style="width:61%"></span></span></span>
+          <span class="dc-score"><i>risk</i><b>55</b><span class="dc-meter dc-warn"><span style="width:55%"></span></span></span>
+          <span class="ee-abadge ab-inf">inferred</span>
+        </div>
+        <div class="dc-note">prompt maturity factors: intent ✓ · constraints ✓ · tests named ✓ · every score opens its reasons</div>
+      </div>
       <div class="ee-body ee-panel" data-panel="context" hidden>
         <div class="ctx-view">
           <div class="ctx-hero">
@@ -1942,17 +1983,12 @@
             '<div class="ee-why-ev">' + badge('obs', 'observed') + '<code>sessions live · pid</code></div>' +
             '<div class="ee-why-h">act in your terminal</div><div class="ee-why-cmd">$ h5i team compare fix-auth</div>');
           say('Every claim shows how it is known. No score without its reasons.'); } },
-      { t: 9.5, fn: () => { clearOverlays(); showPanel('ensemble');
-          point('.ee-tab[data-tab="ensemble"]');
-          overlay('ee-why', '<div class="ee-why-h">deterministic scores</div>' +
-            '<div class="ee-why-ev">' + badge('inf', 'inferred') + '<code>prompt maturity 82/100</code></div>' +
-            '<div class="ee-why-ev"><code>intent ✓ · constraints ✓ · tests named ✓</code></div>' +
-            '<div class="ee-why-ev">' + badge('inf', 'inferred') + '<code>boundary risk 38/100 · pressure, no denial</code></div>');
-          say('Deterministic scores, no model in the loop: prompt maturity and boundary risk.'); } },
-      { t: 11.5, fn: () => { clearOverlays(); showPanel('ensemble'); point('.ee-tab[data-tab="ensemble"]');
+      { t: 9.5, fn: () => { clearOverlays(); showPanel('ensemble'); point('.ee-tab[data-tab="ensemble"]');
           say('Three sealed attempts, one task. A neutral verifier picks the winner.'); } },
-      { t: 14, fn: () => { showPanel('context'); point('.ee-tab[data-tab="context"]');
+      { t: 11.5, fn: () => { showPanel('context'); point('.ee-tab[data-tab="context"]');
           say('The reasoning behind every change, versioned beside your code in refs/h5i/*.'); } },
+      { t: 13, fn: () => { showPanel('decide'); point('.ee-tab[data-tab="decide"]');
+          say('Deterministic scores, no model in the loop: prompt maturity and boundary risk.'); } },
     ];
     const LOOP = 15.5;
     const seek = (t) => { SCENES.filter(sc => sc.t <= t).forEach(sc => sc.fn()); };
