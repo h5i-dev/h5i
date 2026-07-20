@@ -73,24 +73,31 @@ git commit -m "update hooks"
 Once the hooks are registered, h5i versions your human prompts and every agent context step (reads, writes, thinking) as Git objects, trimming noisy tool output along the way (for `pytest`, just the failures) to cut up to 95% of the tokens while keeping the raw output recoverable. 
 
 ```bash
-h5i recall context show   # replay the captured prompts and agent context steps
-```
+$h5i recall context show   # replay the agent context steps
 
-```yaml
 ── Context (depth=2) ────────────────────────────────────
   Goal: add herdr support to h5i-python: launcher='herdr' (seats in herdr panes) + herdr  (branch: herdr-launcher)
 
   Milestones: (showing 20 most recent of 88; --limit 0 for all)
     ✔ [x] edited env.rs; edited env.rs; edited team.rs
     ✔ [x] PyPI release pipeline verified ready
-    ✔ [x] edited env.rs; edited env.rs; edited team.rs
     ✔ [x] Surveyed papers for h5i-python reference implementations
 
   Recent Trace:
     [00:00:37] ACT: edited blog/reimplementing-40-multi-agent-papers.md
     [00:01:04] NOTE: PLACEHOLDER (~/Dev/h5i-python/examples/README.md): iting 40 of these: the only paper mechanics that needed any workaround were self-review (forbidden by the engine, solved with a same-model second seat…
     [01:02:16] OBSERVE: read README.md
-    [01:03:19] ACT: edited README.md
+```
+
+```bash
+$h5i recall log          #  replay the captured prompts
+
+commit 9c76075822d743125587574e63bc1756866df496
+Author:    Koukyosyumei <koukyosyumei@hotmail.com>
+Agent:     claude-code (claude-fable-5)
+Prompt:    "I guess you can remove the arXiv column, and just use hyperlink in Paper column to arviv website"
+Message:
+    README: fold arXiv column into hyperlinked paper names
 ```
 
 
