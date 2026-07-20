@@ -565,6 +565,11 @@
     .dcx-conf .dc-meter { flex: 1; max-width: 220px; }
     .dcx-rf { display: flex; align-items: baseline; gap: 8px; margin: 4px 0; font-size: 0.66rem; }
     .dcx-rf code { font-family: var(--fm); font-size: 0.62rem; color: var(--bp-text); }
+    .pmx { display: flex; flex-direction: column; gap: 5px; margin-bottom: 7px; max-width: 400px; }
+    .pmx-row { display: flex; align-items: center; gap: 9px; }
+    .pmx-l { font-family: var(--fm); font-size: 0.58rem; color: var(--bp-text-muted); width: 82px; }
+    .pmx-row .dc-meter { flex: 1; }
+    .pmx-p { font-family: var(--fm); font-size: 0.58rem; color: var(--bp-text-dim); width: 44px; text-align: right; }
     html.workbench-only .ee-panel { min-height: 0; max-height: none; }
     .ee-ctrl { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 9px;
       padding: 6px 12px; border-top: 1px solid var(--bp-border); background: var(--bp-surface); }
@@ -1596,7 +1601,15 @@
             <div class="dc-sub">codex-1 · 4 files · +272 −31 · verifier ✓ · independent ✓</div>
             <div class="dc-head dcx-gap">merge confidence</div>
             <div class="dcx-conf"><b>78</b><span class="dc-meter"><span style="width:78%"></span></span><span class="ee-abadge ab-inf">inferred</span></div>
-            <div class="dc-sub">prompt maturity 82 (intent ✓ · constraints ✓ · tests named ✓) · boundary risk 38 (pressure, no denial)</div>
+            <div class="dc-head dcx-gap">prompt maturity · 82 · mature</div>
+            <div class="pmx">
+              <div class="pmx-row"><span class="pmx-l">intent</span><span class="dc-meter"><span style="width:93%"></span></span><span class="pmx-p">2.8 / 3</span></div>
+              <div class="pmx-row"><span class="pmx-l">constraints</span><span class="dc-meter"><span style="width:80%"></span></span><span class="pmx-p">2.4 / 3</span></div>
+              <div class="pmx-row"><span class="pmx-l">tests named</span><span class="dc-meter"><span style="width:100%"></span></span><span class="pmx-p">3.0 / 3</span></div>
+              <div class="pmx-row"><span class="pmx-l">grounding</span><span class="dc-meter dc-warn"><span style="width:53%"></span></span><span class="pmx-p">1.6 / 3</span></div>
+              <div class="pmx-row"><span class="pmx-l">scope</span><span class="dc-meter dc-warn"><span style="width:57%"></span></span><span class="pmx-p">1.7 / 3</span></div>
+            </div>
+            <div class="dc-sub">boundary risk 38 · pressure, no denial · scores the delegation, not the dev</div>
             <div class="dc-head dcx-gap">review first</div>
             <div class="dcx-rf"><span class="dc-rank">1</span><code>src/auth/refresh.rs</code><span class="dc-sub">touches token state · largest hunk</span></div>
             <div class="dcx-rf"><span class="dc-rank">2</span><code>src/auth/session.rs</code><span class="dc-sub">expiry check rewritten</span></div>
