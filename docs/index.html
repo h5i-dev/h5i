@@ -570,7 +570,11 @@
     .pmx-l { font-family: var(--fm); font-size: 0.58rem; color: var(--bp-text-muted); width: 82px; }
     .pmx-row .dc-meter { flex: 1; }
     .pmx-p { font-family: var(--fm); font-size: 0.58rem; color: var(--bp-text-dim); width: 44px; text-align: right; }
-    html.workbench-only .ee-panel { min-height: 0; max-height: none; }
+    /* Full window: the content row takes all remaining viewport height and
+       every panel fills it, so switching tabs never changes the frame. */
+    html.workbench-only .ensemble-embed { grid-template-rows: auto 1fr; }
+    html.workbench-only .ee-panel { min-height: 0; max-height: none; height: 100%; }
+    html.workbench-only .ee-rail { height: 100%; }
     .ee-ctrl { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 9px;
       padding: 6px 12px; border-top: 1px solid var(--bp-border); background: var(--bp-surface); }
     .ee-ctrl-btn { background: none; border: 1px solid var(--bp-border); border-radius: 4px;
