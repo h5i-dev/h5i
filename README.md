@@ -96,6 +96,24 @@ Prompt:    "I guess you can remove the arXiv column, and just use hyperlink in P
 Message:   README: fold arXiv column into hyperlinked paper names
 ```
 
+- `h5i audit maturity`: measure the quality of prompts
+
+```yaml
+🧠 Prompt maturity: 42.7/100  🪴 developing
+   coverage: 4/6 AI commits scored (67% coverage) · low confidence
+   common flags: too short, weak context, no acceptance criteria
+   Objective (core)   █████░░░░░ 0.54
+   Grounding (core)   ██████░░░░ 0.60
+   Direction (core)   ██████░░░░ 0.64
+   Context            ██████░░░░ 0.60
+   Examples           ░░░░░░░░░░ 0.00
+   Structure          ██░░░░░░░░ 0.21
+   Diversity          ████████░░ 0.84
+   Clarity            █████████░ 0.94
+   Adequacy           █████████░ 0.87
+   Evidence (bonus)   ████████░░ 0.80 (+bonus)
+```
+
 - Share it with `h5i share push`, or post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) to the pull request with `h5i share pr post` (needs the `gh` CLI).
 
 ```bash
