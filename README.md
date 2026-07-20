@@ -72,10 +72,11 @@ git commit -m "update hooks"
 
 Once the hooks are registered, h5i versions your human prompts and every agent context step (reads, writes, thinking) as Git objects, trimming noisy tool output along the way (for `pytest`, just the failures) to cut up to 95% of the tokens while keeping the raw output recoverable. 
 
-- `h5i recall context show`: replay the agent context steps - [example output](#context-replay)
-- `h5i recall log`: replay the captured prompts - [example output](#context-log)
-- `h5i audit maturity`: measure the quality of prompts - [example output](#context-maturity)
-- `h5i share push`: share the prompts, contexts. and all logs with other team members
+- `h5i recall log`: replay the captured prompts - [example output](#recall-log)
+- `h5i recall context show`: replay the agent context steps - [example output](#recall-context)
+- `h5i audit review`: suggested Review Points - [example output](#audit-review)
+- `h5i audit maturity`: measure the quality of prompts - [example output](#audit-maturity)
+- `h5i share push` / `h5i share pull`: share the prompts, contexts. and all logs with other team members
 - `h5i share pr post`: post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) to the pull request (needs the `gh` CLI)
 
 ### 2.3. Sandboxed Environment
@@ -157,7 +158,19 @@ asyncio.run(main())
 ## 5. Gallary
 
 <details>
-<summary><a id="context-replay">Example output of <code>h5i recall context show</code></a></summary>
+<summary><a id="recall-log">Example output of <code>h5i recall log</code></a></summary>
+
+```yaml
+commit 9c76075822d743125587574e63bc1756866df496
+Author:    Koukyosyumei <koukyosyumei@hotmail.com>
+Agent:     claude-code (claude-fable-5)
+Prompt:    "I guess you can remove the arXiv column, and just use hyperlink in Paper column to arviv website"
+Message:   README: fold arXiv column into hyperlinked paper names
+```
+</details>
+
+<details>
+<summary><a id="recall-context">Example output of <code>h5i recall context show</code></a></summary>
 
 ```yaml
 ── Context (depth=2) ────────────────────────────────────
@@ -173,19 +186,20 @@ asyncio.run(main())
 </details>
 
 <details>
-<summary><a id="context-log">Example output of <code>h5i recall log</code></a></summary>
+<summary><a id="audit-review">Example output of <code>h5i audit review</code></a></summary>
 
 ```yaml
-commit 9c76075822d743125587574e63bc1756866df496
-Author:    Koukyosyumei <koukyosyumei@hotmail.com>
-Agent:     claude-code (claude-fable-5)
-Prompt:    "I guess you can remove the arXiv column, and just use hyperlink in Paper column to arviv website"
-Message:   README: fold arXiv column into hyperlinked paper names
+  #1 3e744a3f  score 1.00  ██████████
+     Floze · 2026-07-19 14:20 UTC
+     docs: benchmark env isolation overhead (#355)
+       ⬦ LARGE_DIFF          182 lines changed (>50)
+       ⬦ UNTESTED_CHANGE     182 lines changed with no test metrics recorded
+       ⬦ CODE_EXECUTION      Dangerous execution pattern 'subprocess.run()' added (line 13). Verify this is intentional and use --force to override.
 ```
 </details>
 
 <details>
-<summary><a id="context-maturity">Example output of <code>h5i audit maturity</code></a></summary>
+<summary><a id="audit-maturity">Example output of <code>h5i audit maturity</code></a></summary>
 
 ```yaml
 🧠 Prompt maturity: 42.7/100  🪴 developing
