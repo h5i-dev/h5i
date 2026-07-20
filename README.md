@@ -100,7 +100,19 @@ h5i env propose claude-env   # turn the box's work into a reviewable proposal
 h5i env apply claude-env     # merge the reviewed changes onto your branch
 ```
 
-### 2.4. Programmable Multi-Agent Orchestration
+### 2.4. Web UI
+
+Monitor the status:
+
+```bash
+h5i serve
+```
+
+<p align="center">
+  <img src="./docs/_static/h5i-serve-film.gif" alt="The h5i serve workbench in motion: an attention rail shows what needs you, the sandbox blocks a forbidden egress, a Why drawer opens with evidence badged by authority (enforced, verified, observed), a neutral verdict lands on the Board, and the Decide tab ranks candidates by merge confidence, prompt maturity, and risk." width="99%">
+</p>
+
+### 2.5. Programmable Multi-Agent Orchestration
 
 You can further **program** flexible multi-agent workflows using ordinary control flow such as parallel execution, loops, and conditionals in Rust or [Python SDK](https://github.com/h5i-dev/h5i-python). For example, you can have Claude and Codex independently implement the same task, review and improve each other’s work, and then select the better result.
 
@@ -136,23 +148,11 @@ async def main():
 asyncio.run(main())
 ```
 
-### 2.5. Web UI
-
-Monitor the status:
-
-```bash
-h5i serve
-```
-
-<p align="center">
-  <img src="./docs/_static/h5i-serve-film.gif" alt="The h5i serve workbench in motion: an attention rail shows what needs you, the sandbox blocks a forbidden egress, a Why drawer opens with evidence badged by authority (enforced, verified, observed), a neutral verdict lands on the Board, and the Decide tab ranks candidates by merge confidence, prompt maturity, and risk." width="99%">
-</p>
-
 ---
 
 ## 4. Documentation
 
-- [Official Website](https://h5i.dev/): project overview, [Pitch Deck](https://h5i.dev/pitch/)
+- [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
 - [Tutorials](https://h5i.dev/guides/): guided workflows · [Blog](https://h5i.dev/blog/): design notes, audits, case studies
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
 - [CONTRIBUTING.md](CONTRIBUTING.md): we welcome contributions of any kind.
