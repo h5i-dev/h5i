@@ -509,7 +509,6 @@
       font-size: 0.72rem; font-weight: 600; line-height: 1.4; padding: 7px 11px;
       border-radius: 9px 9px 9px 2px; opacity: 0; transition: opacity 0.4s; }
     .ee-bubble.show { opacity: 1; }
-    @media (max-width: 640px) { html.workbench-only .ee-bubble { left: 10px; right: 10px; max-width: none; } }
     /* Film overlays: notification toast, Why drawer, terminal. All part of the
        deterministic timeline; removed the moment the viewer takes over. */
     .ee-toast { position: absolute; top: 44px; right: 12px; z-index: 7; background: var(--bp-elev);
@@ -608,14 +607,6 @@
     html.workbench-only .ensemble-embed { padding-bottom: 34px; }
     html.workbench-only .ee-full-open { display: none; }
     html.workbench-only .ee-full-close { display: inline; }
-    /* Narrow-viewport reflow applies only to the full-window mode; the embedded
-       scene keeps its 980px layout and is scaled instead. */
-    @media (max-width: 640px) {
-      html.workbench-only .ensemble-embed { grid-template-columns: 1fr; }
-      html.workbench-only .ee-rail { grid-column: 1; grid-row: 2; border-right: 0; border-bottom: 1px solid var(--bp-border); }
-      html.workbench-only .ee-rail-foot { display: none; }
-      html.workbench-only .ee-panel { grid-column: 1; grid-row: 3; }
-    }
     .ee-body { padding: 18px 22px 24px;
       background: radial-gradient(120% 80% at 50% -10%, rgba(66,226,208,0.05), transparent 60%), var(--bp-bg); }
 
@@ -804,22 +795,12 @@
     .ee .ctx-ota-legend-label { font-family: var(--fm); color: var(--bp-text-muted); text-transform: uppercase; font-size: 9.5px; letter-spacing: 0.06em; font-weight: 600; }
     .ee .ctx-ota-legend-val { font-family: var(--fm); font-size: 12px; color: var(--bp-text); font-variant-numeric: tabular-nums; font-weight: 600; }
     .ee .ctx-ota-legend-pct { font-family: var(--fm); font-variant-numeric: tabular-nums; font-size: 10px; color: var(--bp-text-dim); }
-    @media (max-width: 720px) {
-      html.workbench-only .ee .ctx-hero { grid-template-columns: 1fr; gap: 16px; }
-      html.workbench-only .ee .ctx-kpis { flex-wrap: wrap; gap: 14px 18px; }
-      html.workbench-only .ee .ctx-kpi { text-align: left; }
-    }
 
     /* Caption + value-prop chips beneath the window */
     .ee-caption { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem 1.4rem;
       max-width: 980px; margin: 1.1rem auto 0; }
     .ee-caption span { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.04em; color: var(--text-faint); }
     .ee-caption span b { color: var(--text-dim); font-weight: 700; }
-    @media (max-width: 720px) {
-      html.workbench-only .ee-body { padding: 14px 13px 18px; }
-      html.workbench-only .ee .team-rail-label { font-size: 10px; }
-      html.workbench-only .ee-addr { display: none; }
-    }
 
     /* ── Section heading ───────────────────────────────────── */
     .section-head { max-width: 720px; margin: 0 auto 4rem; }
@@ -1952,32 +1933,41 @@
     }));
   });
 
-  /* ── Scale-to-fit: the embedded workbench is a fixed 980px scene shrunk
-     like a video frame (same behavior as the hero film iframe) instead of
-     reflowed. transform doesn't affect layout, so the wrapper's height is
-     pinned to the scaled height to keep the page flow tight. ── */
+  /* ── Scale-to-fit: the workbench is a fixed 980px scene shrunk like a
+     video frame (same behavior as the hero film iframe) instead of reflowed.
+     Embedded, the .ee-fit wrapper's height is pinned to the scaled height to
+     keep the page flow tight (transform doesn't affect layout). Full-window
+     mode scales to the viewport width and stretches the layout height so the
+     scaled scene fills it exactly; the fixed ctrl/bubble stay correct because
+     the transformed embed becomes their containing block. ── */
   (() => {
     const fit = document.querySelector('.ee-fit');
     const embed = document.querySelector('.ensemble-embed');
-    if (!fit || !embed || document.documentElement.classList.contains('workbench-only')) return;
+    if (!fit || !embed) return;
     const DESIGN = 980;
+    const wb = document.documentElement.classList.contains('workbench-only');
     const apply = () => {
-      const avail = fit.clientWidth;
+      const avail = wb ? window.innerWidth : fit.clientWidth;
       if (avail >= DESIGN) {
-        embed.style.width = ''; embed.style.transform = ''; fit.style.height = '';
+        embed.style.width = ''; embed.style.height = ''; embed.style.transform = '';
+        if (!wb) fit.style.height = '';
       } else {
         const s = avail / DESIGN;
         embed.style.width = DESIGN + 'px';
         embed.style.transformOrigin = 'top left';
         embed.style.transform = 'scale(' + s + ')';
-        fit.style.height = Math.round(embed.offsetHeight * s) + 'px';
+        if (wb) embed.style.height = Math.round(window.innerHeight / s) + 'px';
+        else fit.style.height = Math.round(embed.offsetHeight * s) + 'px';
       }
     };
     apply();
-    // Re-fit on viewport changes and on embed height changes (the film
-    // appends its control bar as an extra grid row).
-    const ro = new ResizeObserver(apply);
-    ro.observe(fit); ro.observe(embed);
+    if (wb) window.addEventListener('resize', apply);
+    else {
+      // Re-fit on column changes and on embed height changes (the film
+      // appends its control bar as an extra grid row).
+      const ro = new ResizeObserver(apply);
+      ro.observe(fit); ro.observe(embed);
+    }
   })();
 
   /* ── The embed film: "a decision, with receipts". A deterministic
