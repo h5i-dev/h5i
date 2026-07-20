@@ -533,6 +533,19 @@
     .ee-row-drained { opacity: 0.35; }
     .ee-rail-empty { font-size: 0.62rem; color: var(--bp-text-dim); padding: 1px 0 3px; }
     @keyframes eeSlideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+    /* Full-screen mode (/?workbench=1): the page becomes the film, demo-style.
+       visibility (not display) so the fixed embed still renders inside its
+       hidden ancestors. */
+    .ee-full { margin-left: 8px; font-size: 0.8rem; color: var(--bp-text-dim); text-decoration: none; line-height: 1; }
+    .ee-full:hover { color: var(--h5-accent); }
+    .ee-full-close { display: none; }
+    html.workbench-only body { overflow: hidden; }
+    html.workbench-only body > * { visibility: hidden; }
+    html.workbench-only .ensemble-embed, html.workbench-only .ensemble-embed * { visibility: visible; }
+    html.workbench-only .ensemble-embed { position: fixed; inset: 0; z-index: 999; margin: 0;
+      width: 100vw; max-width: none; height: 100vh; border-radius: 0; border: 0; overflow-y: auto; }
+    html.workbench-only .ee-full-open { display: none; }
+    html.workbench-only .ee-full-close { display: inline; }
     @media (max-width: 640px) {
       .ensemble-embed { grid-template-columns: 1fr; }
       .ee-rail { grid-column: 1; grid-row: 2; border-right: 0; border-bottom: 1px solid var(--bp-border); }
@@ -1229,6 +1242,7 @@
   .verdict .vv { color: var(--text); }
   </style>
   <link rel="stylesheet" href="/_static/highlight.css">
+<script>if (new URLSearchParams(location.search).has('workbench')) document.documentElement.classList.add('workbench-only');</script>
 </head>
 <body>
 
@@ -1328,7 +1342,7 @@
     <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve workbench: an attention rail showing what needs a human (each claim badged by how it is known), beside the fleet (Now), agents attempting one task in sealed lanes (Ensemble), and the reasoning workspace (Context).">
       <div class="ee-bar">
         <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
-        <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span>
+        <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span><a class="ee-full ee-full-open" href="/?workbench=1" title="Open full screen">⛶</a><a class="ee-full ee-full-close" href="/" title="Back to the front page">✕</a>
         <div class="ee-tabs" role="tablist">
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Now</button>
           <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Ensemble</button>
@@ -1851,6 +1865,9 @@
   (() => {
     const embed = document.querySelector('.ensemble-embed');
     if (!embed) return;
+    // Full-screen mode: reparent to <body> so no transformed ancestor (the
+    // scroll-reveal) becomes the fixed embed's containing block.
+    if (document.documentElement.classList.contains('workbench-only')) document.body.appendChild(embed);
     const rail = embed.querySelector('.ee-rail');
     const tabs = [...embed.querySelectorAll('.ee-tab[data-tab]')];
     const panels = [...embed.querySelectorAll('.ee-panel[data-panel]')];
