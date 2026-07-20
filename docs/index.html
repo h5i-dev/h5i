@@ -505,6 +505,34 @@
       border-radius: 9px 9px 9px 2px; opacity: 0; transition: opacity 0.4s; }
     .ee-bubble.show { opacity: 1; }
     @media (max-width: 640px) { .ee-bubble { left: 10px; right: 10px; max-width: none; } }
+    /* Film overlays: notification toast, Why drawer, terminal. All part of the
+       deterministic timeline; removed the moment the viewer takes over. */
+    .ee-toast { position: absolute; top: 44px; right: 12px; z-index: 7; background: var(--bp-elev);
+      border: 1px solid var(--h5-accent); border-radius: 7px; padding: 8px 12px; max-width: 250px;
+      font-size: 0.66rem; color: var(--bp-text); box-shadow: 0 6px 22px rgba(0,0,0,0.5);
+      animation: eeSlideIn 0.45s ease-out; }
+    .ee-toast b { color: var(--h5-accent); }
+    .ee-why { position: absolute; left: 168px; top: 78px; z-index: 7; width: 270px;
+      background: var(--bp-elev); border: 1px solid var(--bp-border); border-left: 3px solid var(--h5-accent);
+      border-radius: 6px; padding: 9px 11px; font-size: 0.64rem; color: var(--bp-text);
+      box-shadow: 0 8px 26px rgba(0,0,0,0.55); animation: eeSlideIn 0.4s ease-out; }
+    .ee-why-h { font-size: 0.52rem; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--bp-text-dim); margin: 7px 0 3px; font-family: var(--fm); }
+    .ee-why-h:first-child { margin-top: 0; }
+    .ee-why-ev { display: flex; align-items: center; gap: 5px; margin: 2px 0; }
+    .ee-why-ev code { font-family: var(--fm); font-size: 0.56rem; color: var(--bp-text-muted); }
+    .ee-why-cmd { font-family: var(--fm); font-size: 0.58rem; color: var(--h5-accent);
+      background: var(--bp-surface); border: 1px solid var(--bp-border); border-radius: 4px;
+      padding: 3px 7px; margin-top: 3px; }
+    .ee-term { position: absolute; right: 14px; bottom: 14px; z-index: 7; min-width: 250px;
+      background: #0a0e12; border: 1px solid var(--bp-border-strong); border-radius: 7px;
+      padding: 9px 12px; font-family: var(--fm); font-size: 0.62rem; color: var(--bp-text);
+      box-shadow: 0 8px 26px rgba(0,0,0,0.55); animation: eeSlideIn 0.4s ease-out; }
+    .ee-term .ok { color: #5ee2a0; }
+    .ee-row-new { animation: eeSlideIn 0.5s ease-out; }
+    .ee-row-drained { opacity: 0.35; }
+    .ee-rail-empty { font-size: 0.62rem; color: var(--bp-text-dim); padding: 1px 0 3px; }
+    @keyframes eeSlideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
     @media (max-width: 640px) {
       .ensemble-embed { grid-template-columns: 1fr; }
       .ee-rail { grid-column: 1; grid-row: 2; border-right: 0; border-bottom: 1px solid var(--bp-border); }
@@ -1815,46 +1843,97 @@
     }));
   });
 
-  /* ── Embed auto-tour: cycle the lenses with a cursor + captions, like the
-     demo film. Any real interaction stops it and hands the tabs to the viewer.
-     Skipped under prefers-reduced-motion. ──── */
+  /* ── The embed film: "a decision, with receipts". A deterministic
+     scene timeline over the embed DOM (the set). Scenes are idempotent, so
+     window.EE_SEEK(t) can rebuild any moment for rendering. Any real
+     interaction stops the film and hands the live tabs to the viewer.
+     Reduced motion gets the densest still (the Why drawer) with no timers. ── */
   (() => {
     const embed = document.querySelector('.ensemble-embed');
-    if (!embed || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (!embed) return;
+    const rail = embed.querySelector('.ee-rail');
     const tabs = [...embed.querySelectorAll('.ee-tab[data-tab]')];
-    const captions = {
-      ensemble: 'Sealed lanes: agents attempt one task in parallel. A neutral verifier picks the winner.',
-      sandbox: 'The attention rail shows what needs you. Every claim is badged by how it is known.',
-      context: 'The reasoning behind every change, versioned beside your code in refs/h5i/*.',
-    };
+    const panels = [...embed.querySelectorAll('.ee-panel[data-panel]')];
+    const railHome = rail.innerHTML; // restored on takeover
     const cursor = document.createElement('div'); cursor.className = 'ee-cursor';
     const bubble = document.createElement('div'); bubble.className = 'ee-bubble';
-    embed.append(cursor, bubble);
-    let stopped = false, timer = null, i = 0;
-    const stop = () => { stopped = true; clearTimeout(timer); cursor.remove(); bubble.remove(); };
+    const badge = (k, t) => '<span class="ee-abadge ab-' + k + '">' + t + '</span>';
+    const row = (dot, title, b, cls) =>
+      '<div class="ee-rail-row ' + (cls || '') + '"><span class="ee-rdot ' + dot + '"></span>' +
+      '<span class="ee-rtitle">' + title + '</span>' + b + '</div>';
+    const ACTIVE = '<div class="ee-rail-head">active (2)</div>' +
+      row('act', 'claude · session live', badge('obs', 'observed')) +
+      row('act', 'codex · session live', badge('obs', 'observed'));
+    const FOOT = '<div class="ee-rail-foot"><span class="ee-live"></span>live · event feed</div>';
+    const DECIDE = row('dec', 'fix-auth: 3 candidates, no verdict', badge('ver', 'verified'), 'ee-row-new');
+    const rails = {
+      quiet: '<div class="ee-rail-head urgent">needs you</div><div class="ee-rail-empty">nothing blocked on you</div>' + ACTIVE + FOOT,
+      called: '<div class="ee-rail-head urgent">needs you (1)</div>' + DECIDE + ACTIVE + FOOT,
+      drained: '<div class="ee-rail-head urgent">needs you</div>' +
+        row('dec', 'fix-auth: applied', badge('ver', 'verified'), 'ee-row-drained') + ACTIVE + FOOT,
+    };
+    const showPanel = (name) => {
+      tabs.forEach(t => {
+        const on = t.getAttribute('data-tab') === name;
+        t.classList.toggle('active', on); t.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      panels.forEach(p => { p.hidden = p.getAttribute('data-panel') !== name; });
+    };
+    const overlay = (cls, html) => {
+      const el = document.createElement('div'); el.className = cls; el.innerHTML = html;
+      el.dataset.film = '1'; embed.append(el); return el;
+    };
+    const clearOverlays = () => embed.querySelectorAll('[data-film]').forEach(e => e.remove());
+    const say = (text) => { bubble.classList.remove('show'); setTimeout(() => { bubble.textContent = text; bubble.classList.add('show'); }, 200); };
+    const point = (sel) => {
+      const el = embed.querySelector(sel); if (!el) return;
+      const er = embed.getBoundingClientRect(), r = el.getBoundingClientRect();
+      cursor.style.transform = 'translate(' + (r.left - er.left + r.width / 2 - 7) + 'px,' + (r.top - er.top + r.height / 2 - 7) + 'px)';
+    };
+    const SCENES = [
+      { t: 0, fn: () => { showPanel('sandbox'); rail.innerHTML = rails.quiet; clearOverlays();
+          point('.ee-tab[data-tab="sandbox"]');
+          say('Your agents work in sealed sandboxes. Nothing needs you yet.'); } },
+      { t: 8, fn: () => { point('.ee-panel[data-panel="sandbox"]');
+          say('Every run is captured. The sandbox blocks what policy forbids: enforced, not promised.'); } },
+      { t: 18, fn: () => { rail.innerHTML = rails.called;
+          overlay('ee-toast', '<b>h5i</b> · fix-auth: 3 candidates ready<br>no verdict yet');
+          point('.ee-rail-row.ee-row-new');
+          say('When a decision is yours, the dashboard says so. Until then, walk away.'); } },
+      { t: 28, fn: () => { clearOverlays();
+          overlay('ee-why', '<div class="ee-why-h">why</div>3 sealed candidates await a verdict. Finalize records it.' +
+            '<div class="ee-why-h">evidence</div>' +
+            '<div class="ee-why-ev">' + badge('ver', 'verified') + '<code>verify: cargo test · 3 pass</code></div>' +
+            '<div class="ee-why-ev">' + badge('enf', 'enforced') + '<code>egress denial · cap-7f3a</code></div>' +
+            '<div class="ee-why-ev">' + badge('obs', 'observed') + '<code>sessions live · pid</code></div>' +
+            '<div class="ee-why-h">act in your terminal</div><div class="ee-why-cmd">$ h5i team compare fix-auth</div>');
+          say('Every claim shows how it is known. No score without its reasons.'); } },
+      { t: 40, fn: () => { clearOverlays(); showPanel('ensemble'); point('.ee-tab[data-tab="ensemble"]');
+          say('Three sealed attempts, one task. A neutral verifier picks the winner.'); } },
+      { t: 52, fn: () => { overlay('ee-term', '$ h5i team apply fix-auth<br><span class="ok">✓ applied · provenance recorded</span>');
+          rail.innerHTML = rails.drained;
+          say('The dashboard never mutates. You act in your terminal, where identity and provenance live.'); } },
+      { t: 62, fn: () => { clearOverlays(); showPanel('sandbox'); rail.innerHTML = rails.quiet;
+          point('.ee-tab[data-tab="sandbox"]');
+          say('Git tracks the diff. h5i tracks the run.'); } },
+    ];
+    const LOOP = 71;
+    const seek = (t) => { SCENES.filter(sc => sc.t <= t).forEach(sc => sc.fn()); };
+    window.EE_SEEK = seek; // scene-granular seek, for still/video rendering
+    let stopped = false; const timers = [];
+    const stop = () => { stopped = true; timers.forEach(clearTimeout); cursor.remove(); bubble.remove();
+      clearOverlays(); rail.innerHTML = railHome; };
     embed.addEventListener('pointerdown', stop, { capture: true });
-    const order = ['ensemble', 'sandbox', 'context'];
-    const step = () => {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { seek(28); return; }
+    embed.append(cursor, bubble);
+    const play = () => {
       if (stopped) return;
-      const name = order[i % order.length]; i += 1;
-      const tab = tabs.find(t => t.getAttribute('data-tab') === name);
-      const er = embed.getBoundingClientRect(), tr = tab.getBoundingClientRect();
-      const pos = `translate(${tr.left - er.left + tr.width / 2 - 7}px, ${tr.top - er.top + tr.height / 2 - 7}px)`;
-      cursor.style.setProperty('--ee-pos', pos);
-      cursor.style.transform = pos;
-      timer = setTimeout(() => {
-        if (stopped) return;
-        cursor.classList.add('click');
-        setTimeout(() => cursor.classList.remove('click'), 380);
-        tab.click();
-        bubble.classList.remove('show');
-        setTimeout(() => { bubble.textContent = captions[name]; bubble.classList.add('show'); }, 220);
-        timer = setTimeout(step, 5600);
-      }, 950);
+      SCENES.forEach(sc => timers.push(setTimeout(() => { if (!stopped) sc.fn(); }, sc.t * 1000)));
+      timers.push(setTimeout(() => { timers.length = 0; play(); }, LOOP * 1000));
     };
     new IntersectionObserver((entries, obs) => {
-      if (entries.some(e => e.isIntersecting)) { obs.disconnect(); timer = setTimeout(step, 1400); }
-    }, { threshold: 0.4 }).observe(embed);
+      if (entries.some(e => e.isIntersecting)) { obs.disconnect(); play(); }
+    }, { threshold: 0.35 }).observe(embed);
   })();
 
   /* ── Scroll-reveal ────────────────────────── */
