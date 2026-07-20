@@ -499,7 +499,7 @@
       transition: transform 0.85s cubic-bezier(0.4, 0, 0.2, 1); }
     .ee-cursor.click { animation: eeClick 0.35s; }
     @keyframes eeClick { 40% { transform: var(--ee-pos) scale(0.6); } }
-    .ee-bubble { position: absolute; left: 172px; bottom: 14px; max-width: 360px;
+    .ee-bubble { position: absolute; left: 172px; bottom: 44px; max-width: 360px;
       z-index: 6; pointer-events: none; background: var(--h5-accent); color: #04201d;
       font-size: 0.72rem; font-weight: 600; line-height: 1.4; padding: 7px 11px;
       border-radius: 9px 9px 9px 2px; opacity: 0; transition: opacity 0.4s; }
@@ -529,6 +529,16 @@
       padding: 9px 12px; font-family: var(--fm); font-size: 0.62rem; color: var(--bp-text);
       box-shadow: 0 8px 26px rgba(0,0,0,0.55); animation: eeSlideIn 0.4s ease-out; }
     .ee-term .ok { color: #5ee2a0; }
+    .ee-panel { min-height: 600px; max-height: 600px; overflow-y: auto; }
+    html.workbench-only .ee-panel { min-height: 0; max-height: none; }
+    .ee-ctrl { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 9px;
+      padding: 6px 12px; border-top: 1px solid var(--bp-border); background: var(--bp-surface); }
+    .ee-ctrl-btn { background: none; border: 1px solid var(--bp-border); border-radius: 4px;
+      color: var(--bp-text-muted); font-size: 0.68rem; line-height: 1; padding: 3px 8px; cursor: pointer; }
+    .ee-ctrl-btn:hover { color: var(--h5-accent); border-color: var(--h5-accent); }
+    .ee-ctrl-track { flex: 1; height: 4px; background: var(--bp-surface-2); border-radius: 2px; cursor: pointer; }
+    .ee-ctrl-fill { height: 100%; width: 0; background: var(--h5-accent); border-radius: 2px;
+      transition: width 0.1s linear; }
     .ee-row-new { animation: eeSlideIn 0.5s ease-out; }
     .ee-row-drained { opacity: 0.35; }
     .ee-rail-empty { font-size: 0.62rem; color: var(--bp-text-dim); padding: 1px 0 3px; }
@@ -1927,32 +1937,51 @@
           say('Every claim shows how it is known. No score without its reasons.'); } },
       { t: 20, fn: () => { clearOverlays(); showPanel('ensemble'); point('.ee-tab[data-tab="ensemble"]');
           say('Three sealed attempts, one task. A neutral verifier picks the winner.'); } },
-      { t: 26, fn: () => { overlay('ee-term', '$ h5i team apply fix-auth<br><span class="ok">✓ applied · provenance recorded</span>');
+      { t: 25, fn: () => { showPanel('context'); point('.ee-tab[data-tab="context"]');
+          say('The reasoning behind every change, versioned beside your code in refs/h5i/*.'); } },
+      { t: 30, fn: () => { showPanel('ensemble'); overlay('ee-term', '$ h5i team apply fix-auth<br><span class="ok">✓ applied · provenance recorded</span>');
           rail.innerHTML = rails.drained;
           say('The dashboard never mutates. You act in your terminal, where identity and provenance live.'); } },
-      { t: 31, fn: () => { clearOverlays(); showPanel('sandbox'); rail.innerHTML = rails.quiet;
+      { t: 35, fn: () => { clearOverlays(); showPanel('sandbox'); rail.innerHTML = rails.quiet;
           point('.ee-tab[data-tab="sandbox"]');
           say('Git tracks the diff. h5i tracks the run.'); } },
     ];
-    const LOOP = 36;
+    const LOOP = 40;
     const seek = (t) => { SCENES.filter(sc => sc.t <= t).forEach(sc => sc.fn()); };
-    window.EE_SEEK = seek; // scene-granular seek, for still/video rendering
-    let stopped = false; const timers = [];
-    const stop = () => { stopped = true; timers.forEach(clearTimeout); cursor.remove(); bubble.remove();
-      clearOverlays(); rail.innerHTML = railHome; };
-    embed.addEventListener('pointerdown', stop, { capture: true });
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { seek(28); return; }
-    embed.append(cursor, bubble);
-    const play = () => {
-      if (stopped) return;
-      SCENES.forEach(sc => timers.push(setTimeout(() => { if (!stopped) sc.fn(); }, sc.t * 1000)));
-      timers.push(setTimeout(() => { timers.length = 0; play(); }, LOOP * 1000));
+    window.EE_SEEK = (t) => { clearOverlays(); seek(t); clock = t; last = t; };
+    // Controls: pause and a clickable progress track, like the product film.
+    const ctrl = document.createElement('div'); ctrl.className = 'ee-ctrl';
+    ctrl.innerHTML = '<button class="ee-ctrl-btn" type="button" aria-label="Pause">⏸</button>' +
+      '<div class="ee-ctrl-track"><div class="ee-ctrl-fill"></div></div>';
+    const btn = ctrl.querySelector('.ee-ctrl-btn');
+    const track = ctrl.querySelector('.ee-ctrl-track');
+    const fill = ctrl.querySelector('.ee-ctrl-fill');
+    let stopped = false, playing = false, paused = false, clock = 0, last = -1, timer = null;
+    const stop = (ev) => {
+      if (ev && ctrl.contains(ev.target)) return; // the controls are not a takeover
+      stopped = true; clearInterval(timer); cursor.remove(); bubble.remove(); ctrl.remove();
+      clearOverlays(); rail.innerHTML = railHome;
     };
-    // The embed is tall: a high visibility threshold can never be met on
-    // short viewports. Start on any visibility, with a load-time fallback so
-    // the hero film never depends on scroll at all.
-    let started = false;
-    const start = () => { if (started || stopped) return; started = true; play(); };
+    embed.addEventListener('pointerdown', stop, { capture: true });
+    btn.addEventListener('click', () => { paused = !paused; btn.textContent = paused ? '▶' : '⏸'; });
+    track.addEventListener('click', (e) => {
+      const r = track.getBoundingClientRect();
+      window.EE_SEEK(Math.max(0, Math.min(LOOP - 0.01, ((e.clientX - r.left) / r.width) * LOOP)));
+      fill.style.width = ((clock / LOOP) * 100) + '%';
+    });
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { seek(14); return; }
+    const start = () => {
+      if (playing || stopped) return; playing = true;
+      embed.append(cursor, bubble, ctrl);
+      timer = setInterval(() => {
+        if (paused || stopped) return;
+        clock += 0.1;
+        if (clock >= LOOP) { clock = 0; last = -1; clearOverlays(); }
+        SCENES.forEach(sc => { if (sc.t > last && sc.t <= clock) sc.fn(); });
+        last = clock;
+        fill.style.width = ((clock / LOOP) * 100) + '%';
+      }, 100);
+    };
     new IntersectionObserver((entries, obs) => {
       if (entries.some(e => e.isIntersecting)) { obs.disconnect(); start(); }
     }, { threshold: 0.1 }).observe(embed);
