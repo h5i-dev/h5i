@@ -432,6 +432,10 @@
        from web/src/theme.css's .team-* block, namespaced under .ee so the dark
        palette never bleeds into the light page. It is live HTML+CSS, not a
        screenshot — crisp at any zoom. */
+    /* The workbench is a fixed 980px scene inside .ee-fit; below that width the
+       JS scaler shrinks it like a video frame (same behavior as the hero film)
+       instead of reflowing it, which corrupted the layout on phones. */
+    .ee-fit { margin: 3.6rem auto 0; max-width: 980px; }
     .ensemble-embed {
       --bp-bg: #0a0c10; --bp-surface: #12161c; --bp-surface-2: #1a1f26;
       --bp-elev: #232931; --bp-border: #2a3138; --bp-border-strong: #3a424b;
@@ -441,7 +445,6 @@
       --h5-pass: #5ee2a0; --h5-fail: #ff6b6b; --h5-run: #f0a050; --h5-model: #b48bd9;
       --h5-winner-glow: 0 0 0 1px var(--h5-accent), 0 0 22px -2px var(--h5-accent-glow);
       --fd: var(--sans); --fm: var(--mono);
-      margin: 3.6rem auto 0; max-width: 980px;
       border: 1px solid #20262e; border-radius: var(--radius-lg); overflow: hidden;
       box-shadow: 0 40px 90px rgba(0,0,0,0.55); text-align: left;
       color: var(--bp-text);
@@ -506,7 +509,7 @@
       font-size: 0.72rem; font-weight: 600; line-height: 1.4; padding: 7px 11px;
       border-radius: 9px 9px 9px 2px; opacity: 0; transition: opacity 0.4s; }
     .ee-bubble.show { opacity: 1; }
-    @media (max-width: 640px) { .ee-bubble { left: 10px; right: 10px; max-width: none; } }
+    @media (max-width: 640px) { html.workbench-only .ee-bubble { left: 10px; right: 10px; max-width: none; } }
     /* Film overlays: notification toast, Why drawer, terminal. All part of the
        deterministic timeline; removed the moment the viewer takes over. */
     .ee-toast { position: absolute; top: 44px; right: 12px; z-index: 7; background: var(--bp-elev);
@@ -605,11 +608,13 @@
     html.workbench-only .ensemble-embed { padding-bottom: 34px; }
     html.workbench-only .ee-full-open { display: none; }
     html.workbench-only .ee-full-close { display: inline; }
+    /* Narrow-viewport reflow applies only to the full-window mode; the embedded
+       scene keeps its 980px layout and is scaled instead. */
     @media (max-width: 640px) {
-      .ensemble-embed { grid-template-columns: 1fr; }
-      .ee-rail { grid-column: 1; grid-row: 2; border-right: 0; border-bottom: 1px solid var(--bp-border); }
-      .ee-rail-foot { display: none; }
-      .ee-panel { grid-column: 1; grid-row: 3; }
+      html.workbench-only .ensemble-embed { grid-template-columns: 1fr; }
+      html.workbench-only .ee-rail { grid-column: 1; grid-row: 2; border-right: 0; border-bottom: 1px solid var(--bp-border); }
+      html.workbench-only .ee-rail-foot { display: none; }
+      html.workbench-only .ee-panel { grid-column: 1; grid-row: 3; }
     }
     .ee-body { padding: 18px 22px 24px;
       background: radial-gradient(120% 80% at 50% -10%, rgba(66,226,208,0.05), transparent 60%), var(--bp-bg); }
@@ -800,9 +805,9 @@
     .ee .ctx-ota-legend-val { font-family: var(--fm); font-size: 12px; color: var(--bp-text); font-variant-numeric: tabular-nums; font-weight: 600; }
     .ee .ctx-ota-legend-pct { font-family: var(--fm); font-variant-numeric: tabular-nums; font-size: 10px; color: var(--bp-text-dim); }
     @media (max-width: 720px) {
-      .ee .ctx-hero { grid-template-columns: 1fr; gap: 16px; }
-      .ee .ctx-kpis { flex-wrap: wrap; gap: 14px 18px; }
-      .ee .ctx-kpi { text-align: left; }
+      html.workbench-only .ee .ctx-hero { grid-template-columns: 1fr; gap: 16px; }
+      html.workbench-only .ee .ctx-kpis { flex-wrap: wrap; gap: 14px 18px; }
+      html.workbench-only .ee .ctx-kpi { text-align: left; }
     }
 
     /* Caption + value-prop chips beneath the window */
@@ -811,9 +816,9 @@
     .ee-caption span { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.04em; color: var(--text-faint); }
     .ee-caption span b { color: var(--text-dim); font-weight: 700; }
     @media (max-width: 720px) {
-      .ee-body { padding: 14px 13px 18px; }
-      .ee .team-rail-label { font-size: 10px; }
-      .ee-addr { display: none; }
+      html.workbench-only .ee-body { padding: 14px 13px 18px; }
+      html.workbench-only .ee .team-rail-label { font-size: 10px; }
+      html.workbench-only .ee-addr { display: none; }
     }
 
     /* ── Section heading ───────────────────────────────────── */
@@ -1398,7 +1403,8 @@
     </div>
     <!-- Embedded workbench — the real `h5i serve` dashboard, as live HTML:
          attention rail (what needs you, with authority badges) + Now / Ensemble / Context lenses -->
-    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve workbench: an attention rail showing what needs a human (each claim badged by how it is known), beside the fleet (Now), the sealed candidate lanes (Board), the deterministic review ranking (Decide), and the reasoning workspace (Context).">
+    <div class="ee-fit reveal">
+    <div class="ensemble-embed ee" role="group" aria-label="A static preview of the h5i serve workbench: an attention rail showing what needs a human (each claim badged by how it is known), beside the fleet (Now), the sealed candidate lanes (Board), the deterministic review ranking (Decide), and the reasoning workspace (Context).">
       <div class="ee-bar">
         <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
         <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span><a class="ee-full ee-full-open" href="/?workbench=1" title="Open full screen">⛶</a><a class="ee-full ee-full-close" href="/" title="Back to the front page">✕</a>
@@ -1668,6 +1674,7 @@
           </div>
         </div>
       </div>
+    </div>
     </div>
     <div class="ee-caption" aria-hidden="true">
       <span><b>Isolated</b> per agent</span>
@@ -1945,6 +1952,34 @@
     }));
   });
 
+  /* ── Scale-to-fit: the embedded workbench is a fixed 980px scene shrunk
+     like a video frame (same behavior as the hero film iframe) instead of
+     reflowed. transform doesn't affect layout, so the wrapper's height is
+     pinned to the scaled height to keep the page flow tight. ── */
+  (() => {
+    const fit = document.querySelector('.ee-fit');
+    const embed = document.querySelector('.ensemble-embed');
+    if (!fit || !embed || document.documentElement.classList.contains('workbench-only')) return;
+    const DESIGN = 980;
+    const apply = () => {
+      const avail = fit.clientWidth;
+      if (avail >= DESIGN) {
+        embed.style.width = ''; embed.style.transform = ''; fit.style.height = '';
+      } else {
+        const s = avail / DESIGN;
+        embed.style.width = DESIGN + 'px';
+        embed.style.transformOrigin = 'top left';
+        embed.style.transform = 'scale(' + s + ')';
+        fit.style.height = Math.round(embed.offsetHeight * s) + 'px';
+      }
+    };
+    apply();
+    // Re-fit on viewport changes and on embed height changes (the film
+    // appends its control bar as an extra grid row).
+    const ro = new ResizeObserver(apply);
+    ro.observe(fit); ro.observe(embed);
+  })();
+
   /* ── The embed film: "a decision, with receipts". A deterministic
      scene timeline over the embed DOM (the set). Scenes are idempotent, so
      window.EE_SEEK(t) can rebuild any moment for rendering. Any real
@@ -1993,7 +2028,10 @@
     const point = (sel) => {
       const el = embed.querySelector(sel); if (!el) return;
       const er = embed.getBoundingClientRect(), r = el.getBoundingClientRect();
-      cursor.style.transform = 'translate(' + (r.left - er.left + r.width / 2 - 7) + 'px,' + (r.top - er.top + r.height / 2 - 7) + 'px)';
+      // Rects are in scaled (visual) px but the cursor lives inside the
+      // scaled scene, so convert back to layout px via the current scale.
+      const s = er.width / embed.offsetWidth || 1;
+      cursor.style.transform = 'translate(' + ((r.left - er.left + r.width / 2) / s - 7) + 'px,' + ((r.top - er.top + r.height / 2) / s - 7) + 'px)';
     };
     const SCENES = [
       { t: 0, fn: () => { showPanel('sandbox'); rail.innerHTML = rails.quiet; clearOverlays();
