@@ -156,7 +156,8 @@ asyncio.run(main())
 
 ## 5. Gallary
 
-<a id="context-replay">`h5i recall context show`</a>
+<details>
+<summary><a id="context-replay">Example output of <code>h5i recall context show</code></a></summary>
 
 ```yaml
 ── Context (depth=2) ────────────────────────────────────
@@ -169,8 +170,10 @@ asyncio.run(main())
     [00:01:04] NOTE: PLACEHOLDER (~/Dev/h5i-python/examples/README.md): iting 40 of these: the only paper mechanics that needed any workaround were self-review (forbidden by the engine, solved with a same-model second seat…
     [01:02:16] OBSERVE: read README.md
 ```
+</details>
 
-<a id="context-log">`h5i recall log`</a>
+<details>
+<summary><a id="context-log">Example output of <code>h5i recall log</code></a></summary>
 
 ```yaml
 commit 9c76075822d743125587574e63bc1756866df496
@@ -179,8 +182,10 @@ Agent:     claude-code (claude-fable-5)
 Prompt:    "I guess you can remove the arXiv column, and just use hyperlink in Paper column to arviv website"
 Message:   README: fold arXiv column into hyperlinked paper names
 ```
+</details>
 
-<a id="context-maturity">`h5i audit maturity`</a>
+<details>
+<summary><a id="context-maturity">Example output of <code>h5i audit maturity</code></a></summary>
 
 ```yaml
 🧠 Prompt maturity: 42.7/100  🪴 developing
@@ -197,6 +202,7 @@ Message:   README: fold arXiv column into hyperlinked paper names
    Adequacy           █████████░ 0.87
    Evidence (bonus)   ████████░░ 0.80 (+bonus)
 ```
+</details>
 
 ## 6. Acknowledgements
 
