@@ -1944,9 +1944,8 @@
           say('Three sealed attempts, one task. A neutral verifier picks the winner.'); } },
       { t: 25, fn: () => { showPanel('context'); point('.ee-tab[data-tab="context"]');
           say('The reasoning behind every change, versioned beside your code in refs/h5i/*.'); } },
-      { t: 30, fn: () => { say('Git tracks the diff. h5i tracks the run.'); } },
     ];
-    const LOOP = 35;
+    const LOOP = 30;
     const seek = (t) => { SCENES.filter(sc => sc.t <= t).forEach(sc => sc.fn()); };
     window.EE_SEEK = (t) => { clearOverlays(); seek(t); clock = t; last = t; };
     // Controls: pause and a clickable progress track, like the product film.
