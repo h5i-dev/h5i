@@ -1356,13 +1356,13 @@
     </div>
     <!-- Embedded workbench — the real `h5i serve` dashboard, as live HTML:
          attention rail (what needs you, with authority badges) + Now / Ensemble / Context lenses -->
-    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve workbench: an attention rail showing what needs a human (each claim badged by how it is known), beside the fleet (Now), agents attempting one task in sealed lanes (Ensemble), and the reasoning workspace (Context).">
+    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve workbench: an attention rail showing what needs a human (each claim badged by how it is known), beside the fleet (Now), candidates, scores, and the neutral verdict (Decide), and the reasoning workspace (Context).">
       <div class="ee-bar">
         <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
         <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span><a class="ee-full ee-full-open" href="/?workbench=1" title="Open full screen">⛶</a><a class="ee-full ee-full-close" href="/" title="Back to the front page">✕</a>
         <div class="ee-tabs" role="tablist">
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Now</button>
-          <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Ensemble</button>
+          <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Decide</button>
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="context">Context</button>
         </div>
       </div>
@@ -1942,7 +1942,8 @@
             '<div class="ee-why-ev">' + badge('obs', 'observed') + '<code>sessions live · pid</code></div>' +
             '<div class="ee-why-h">act in your terminal</div><div class="ee-why-cmd">$ h5i team compare fix-auth</div>');
           say('Every claim shows how it is known. No score without its reasons.'); } },
-      { t: 9.5, fn: () => { clearOverlays();
+      { t: 9.5, fn: () => { clearOverlays(); showPanel('ensemble');
+          point('.ee-tab[data-tab="ensemble"]');
           overlay('ee-why', '<div class="ee-why-h">deterministic scores</div>' +
             '<div class="ee-why-ev">' + badge('inf', 'inferred') + '<code>prompt maturity 82/100</code></div>' +
             '<div class="ee-why-ev"><code>intent ✓ · constraints ✓ · tests named ✓</code></div>' +
