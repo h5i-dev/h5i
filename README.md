@@ -72,17 +72,11 @@ git commit -m "update hooks"
 
 Once the hooks are registered, h5i versions your human prompts and every agent context step (reads, writes, thinking) as Git objects, trimming noisy tool output along the way (for `pytest`, just the failures) to cut up to 95% of the tokens while keeping the raw output recoverable. 
 
-```bash
-h5i recall context show   # replay the captured prompts and agent context steps
-```
-
-
-Share it with `h5i share push`, or post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) to the pull request with `h5i share pr post` (needs the `gh` CLI).
-
-```bash
-h5i share push      # push the h5i metadata (refs/h5i/*) to your teammates
-h5i share pr post   # post the AI-usage summary to the pull request (needs `gh`)
-```
+- `h5i recall context show`: replay the agent context steps - [example output](#context-replay)
+- `h5i recall log`: replay the captured prompts - [example output](#context-log)
+- `h5i audit maturity`: measure the quality of prompts - [example output](#context-maturity)
+- `h5i share push`: share the prompts, contexts. and all logs with other team members
+- `h5i share pr post`: post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) to the pull request (needs the `gh` CLI)
 
 ### 2.3. Sandboxed Environment
 
@@ -160,7 +154,57 @@ asyncio.run(main())
 
 ---
 
-## 5. Acknowledgements
+## 5. Gallary
+
+<details>
+<summary><a id="context-replay">Example output of <code>h5i recall context show</code></a></summary>
+
+```yaml
+── Context (depth=2) ────────────────────────────────────
+  Goal: add herdr support to h5i-python: launcher='herdr' (seats in herdr panes) + herdr  (branch: herdr-launcher)
+  Milestones: (showing 20 most recent of 88; --limit 0 for all)
+    ✔ [x] edited env.rs; edited env.rs; edited team.rs
+    ✔ [x] Surveyed papers for h5i-python reference implementations
+  Recent Trace:
+    [00:00:37] ACT: edited blog/reimplementing-40-multi-agent-papers.md
+    [00:01:04] NOTE: PLACEHOLDER (~/Dev/h5i-python/examples/README.md): iting 40 of these: the only paper mechanics that needed any workaround were self-review (forbidden by the engine, solved with a same-model second seat…
+    [01:02:16] OBSERVE: read README.md
+```
+</details>
+
+<details>
+<summary><a id="context-log">Example output of <code>h5i recall log</code></a></summary>
+
+```yaml
+commit 9c76075822d743125587574e63bc1756866df496
+Author:    Koukyosyumei <koukyosyumei@hotmail.com>
+Agent:     claude-code (claude-fable-5)
+Prompt:    "I guess you can remove the arXiv column, and just use hyperlink in Paper column to arviv website"
+Message:   README: fold arXiv column into hyperlinked paper names
+```
+</details>
+
+<details>
+<summary><a id="context-maturity">Example output of <code>h5i audit maturity</code></a></summary>
+
+```yaml
+🧠 Prompt maturity: 42.7/100  🪴 developing
+   coverage: 4/6 AI commits scored (67% coverage) · low confidence
+   common flags: too short, weak context, no acceptance criteria
+   Objective (core)   █████░░░░░ 0.54
+   Grounding (core)   ██████░░░░ 0.60
+   Direction (core)   ██████░░░░ 0.64
+   Context            ██████░░░░ 0.60
+   Examples           ░░░░░░░░░░ 0.00
+   Structure          ██░░░░░░░░ 0.21
+   Diversity          ████████░░ 0.84
+   Clarity            █████████░ 0.94
+   Adequacy           █████████░ 0.87
+   Evidence (bonus)   ████████░░ 0.80 (+bonus)
+```
+</details>
+
+## 6. Acknowledgements
 
 h5i's token-reduction filters build on prior art, both Apache-2.0:
 
@@ -169,6 +213,6 @@ h5i's token-reduction filters build on prior art, both Apache-2.0:
 
 See [`NOTICE`](NOTICE) and [`assets/filters/NOTICE`](assets/filters/NOTICE) for full attribution.
 
-## 6. License
+## 7. License
 
 Apache-2.0. See [LICENSE](LICENSE).
