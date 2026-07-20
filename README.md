@@ -72,48 +72,9 @@ git commit -m "update hooks"
 
 Once the hooks are registered, h5i versions your human prompts and every agent context step (reads, writes, thinking) as Git objects, trimming noisy tool output along the way (for `pytest`, just the failures) to cut up to 95% of the tokens while keeping the raw output recoverable. 
 
-- `h5i recall context show`: replay the agent context steps
-
-```yaml
-── Context (depth=2) ────────────────────────────────────
-  Goal: add herdr support to h5i-python: launcher='herdr' (seats in herdr panes) + herdr  (branch: herdr-launcher)
-  Milestones: (showing 20 most recent of 88; --limit 0 for all)
-    ✔ [x] edited env.rs; edited env.rs; edited team.rs
-    ✔ [x] Surveyed papers for h5i-python reference implementations
-  Recent Trace:
-    [00:00:37] ACT: edited blog/reimplementing-40-multi-agent-papers.md
-    [00:01:04] NOTE: PLACEHOLDER (~/Dev/h5i-python/examples/README.md): iting 40 of these: the only paper mechanics that needed any workaround were self-review (forbidden by the engine, solved with a same-model second seat…
-    [01:02:16] OBSERVE: read README.md
-```
-
-- `h5i recall log`: replay the captured prompts
-  
-```yaml
-commit 9c76075822d743125587574e63bc1756866df496
-Author:    Koukyosyumei <koukyosyumei@hotmail.com>
-Agent:     claude-code (claude-fable-5)
-Prompt:    "I guess you can remove the arXiv column, and just use hyperlink in Paper column to arviv website"
-Message:   README: fold arXiv column into hyperlinked paper names
-```
-
-- `h5i audit maturity`: measure the quality of prompts
-
-```yaml
-🧠 Prompt maturity: 42.7/100  🪴 developing
-   coverage: 4/6 AI commits scored (67% coverage) · low confidence
-   common flags: too short, weak context, no acceptance criteria
-   Objective (core)   █████░░░░░ 0.54
-   Grounding (core)   ██████░░░░ 0.60
-   Direction (core)   ██████░░░░ 0.64
-   Context            ██████░░░░ 0.60
-   Examples           ░░░░░░░░░░ 0.00
-   Structure          ██░░░░░░░░ 0.21
-   Diversity          ████████░░ 0.84
-   Clarity            █████████░ 0.94
-   Adequacy           █████████░ 0.87
-   Evidence (bonus)   ████████░░ 0.80 (+bonus)
-```
-
+- `h5i recall context show`: replay the agent context steps - [example output](#context-replay)
+- `h5i recall log`: replay the captured prompts - [example output](#context-log)
+- `h5i audit maturity`: measure the quality of prompts - [example output](#context-maturity)
 - Share it with `h5i share push`, or post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) to the pull request with `h5i share pr post` (needs the `gh` CLI).
 
 ```bash
@@ -197,7 +158,51 @@ asyncio.run(main())
 
 ---
 
-## 5. Acknowledgements
+## 5. Gallary
+
+<a id="context-replay"></a>
+
+```yaml
+── Context (depth=2) ────────────────────────────────────
+  Goal: add herdr support to h5i-python: launcher='herdr' (seats in herdr panes) + herdr  (branch: herdr-launcher)
+  Milestones: (showing 20 most recent of 88; --limit 0 for all)
+    ✔ [x] edited env.rs; edited env.rs; edited team.rs
+    ✔ [x] Surveyed papers for h5i-python reference implementations
+  Recent Trace:
+    [00:00:37] ACT: edited blog/reimplementing-40-multi-agent-papers.md
+    [00:01:04] NOTE: PLACEHOLDER (~/Dev/h5i-python/examples/README.md): iting 40 of these: the only paper mechanics that needed any workaround were self-review (forbidden by the engine, solved with a same-model second seat…
+    [01:02:16] OBSERVE: read README.md
+```
+
+<a id="context-log"></a>
+
+```yaml
+commit 9c76075822d743125587574e63bc1756866df496
+Author:    Koukyosyumei <koukyosyumei@hotmail.com>
+Agent:     claude-code (claude-fable-5)
+Prompt:    "I guess you can remove the arXiv column, and just use hyperlink in Paper column to arviv website"
+Message:   README: fold arXiv column into hyperlinked paper names
+```
+
+<a id="context-maturity"></a>
+
+```yaml
+🧠 Prompt maturity: 42.7/100  🪴 developing
+   coverage: 4/6 AI commits scored (67% coverage) · low confidence
+   common flags: too short, weak context, no acceptance criteria
+   Objective (core)   █████░░░░░ 0.54
+   Grounding (core)   ██████░░░░ 0.60
+   Direction (core)   ██████░░░░ 0.64
+   Context            ██████░░░░ 0.60
+   Examples           ░░░░░░░░░░ 0.00
+   Structure          ██░░░░░░░░ 0.21
+   Diversity          ████████░░ 0.84
+   Clarity            █████████░ 0.94
+   Adequacy           █████████░ 0.87
+   Evidence (bonus)   ████████░░ 0.80 (+bonus)
+```
+
+## 6. Acknowledgements
 
 h5i's token-reduction filters build on prior art, both Apache-2.0:
 
@@ -206,6 +211,6 @@ h5i's token-reduction filters build on prior art, both Apache-2.0:
 
 See [`NOTICE`](NOTICE) and [`assets/filters/NOTICE`](assets/filters/NOTICE) for full attribution.
 
-## 6. License
+## 7. License
 
 Apache-2.0. See [LICENSE](LICENSE).
