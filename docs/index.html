@@ -554,6 +554,11 @@
     html.workbench-only .ensemble-embed, html.workbench-only .ensemble-embed * { visibility: visible; }
     html.workbench-only .ensemble-embed { position: fixed; inset: 0; z-index: 999; margin: 0;
       width: 100vw; max-width: none; height: 100vh; border-radius: 0; border: 0; overflow-y: auto; }
+    /* Full window: controls pin to the viewport bottom; the caption bubble
+       sits fixed just above them, so they can never overlap while scrolling. */
+    html.workbench-only .ee-ctrl { position: fixed; left: 0; right: 0; bottom: 0; z-index: 8; }
+    html.workbench-only .ee-bubble { position: fixed; left: 172px; bottom: 46px; z-index: 8; }
+    html.workbench-only .ensemble-embed { padding-bottom: 34px; }
     html.workbench-only .ee-full-open { display: none; }
     html.workbench-only .ee-full-close { display: inline; }
     @media (max-width: 640px) {
