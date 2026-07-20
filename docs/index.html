@@ -547,6 +547,24 @@
     .dc-meter > span { display: block; height: 100%; background: var(--h5-accent); border-radius: 2px; }
     .dc-meter.dc-warn > span { background: #f0a050; }
     .dc-note { font-family: var(--fm); font-size: 0.58rem; color: var(--bp-text-dim); margin-top: 10px; }
+    .dcx { display: flex; gap: 14px; }
+    .dcx-list { flex: 0 0 240px; display: flex; flex-direction: column; gap: 4px; }
+    .dcx-item { display: flex; align-items: center; gap: 7px; padding: 7px 9px;
+      border: 1px solid var(--bp-border); border-radius: 6px; font-size: 0.68rem; }
+    .dcx-item.dcx-on { border-color: var(--h5-accent); }
+    .dcx-oid { font-family: var(--fm); font-size: 0.6rem; color: var(--bp-text-dim); }
+    .dcx-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dc-pip { width: 8px; height: 8px; border-radius: 50%; background: var(--bp-surface-2); flex: none; }
+    .dc-pip-hi { background: #ff6b6b; }
+    .dc-pip-md { background: #f0a050; }
+    .dcx-detail { flex: 1; min-width: 0; border: 1px solid var(--bp-border); border-radius: 7px; padding: 12px 14px; }
+    .dcx-title { font-weight: 700; font-size: 0.85rem; margin-bottom: 3px; }
+    .dcx-gap { margin-top: 14px; margin-bottom: 6px; }
+    .dcx-conf { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
+    .dcx-conf b { font-size: 1.15rem; }
+    .dcx-conf .dc-meter { flex: 1; max-width: 220px; }
+    .dcx-rf { display: flex; align-items: baseline; gap: 8px; margin: 4px 0; font-size: 0.66rem; }
+    .dcx-rf code { font-family: var(--fm); font-size: 0.62rem; color: var(--bp-text); }
     html.workbench-only .ee-panel { min-height: 0; max-height: none; }
     .ee-ctrl { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 9px;
       padding: 6px 12px; border-top: 1px solid var(--bp-border); background: var(--bp-surface); }
@@ -1378,8 +1396,8 @@
         <div class="ee-tabs" role="tablist">
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Now</button>
           <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Board</button>
-          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="decide">Decide</button>
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="context">Context</button>
+          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="decide">Decide</button>
         </div>
       </div>
       <aside class="ee-rail" aria-label="Attention rail: what needs a human, each claim badged by its authority">
@@ -1566,29 +1584,24 @@
 
       <!-- Context tab — the reasoning/context workspace (refs/h5i/context) -->
       <div class="ee-body ee-panel" data-panel="decide" hidden>
-        <div class="dc-head">review ranking · deterministic scores, no model in the loop</div>
-        <div class="dc-row dc-top">
-          <span class="dc-rank">1</span>
-          <div class="dc-main"><b>codex-1 · fix-auth</b><span class="dc-sub">4 files · +272 −31 · verifier ✓</span></div>
-          <span class="dc-score"><i>maturity</i><b>82</b><span class="dc-meter"><span style="width:82%"></span></span></span>
-          <span class="dc-score"><i>risk</i><b>38</b><span class="dc-meter dc-warn"><span style="width:38%"></span></span></span>
-          <span class="ee-abadge ab-inf">inferred</span>
+        <div class="dc-head">decide · should this merge? · deterministic, no model in the loop</div>
+        <div class="dcx">
+          <div class="dcx-list">
+            <div class="dcx-item dcx-on"><span class="dcx-oid">c34f11d</span><span class="dcx-msg">fix token refresh race</span><span class="dc-pip dc-pip-hi"></span></div>
+            <div class="dcx-item"><span class="dcx-oid">9b02e77</span><span class="dcx-msg">auth: retry backoff</span><span class="dc-pip dc-pip-md"></span></div>
+            <div class="dcx-item"><span class="dcx-oid">51aa310</span><span class="dcx-msg">docs touchup</span><span class="dc-pip"></span></div>
+          </div>
+          <div class="dcx-detail">
+            <div class="dcx-title">fix token refresh race</div>
+            <div class="dc-sub">codex-1 · 4 files · +272 −31 · verifier ✓ · independent ✓</div>
+            <div class="dc-head dcx-gap">merge confidence</div>
+            <div class="dcx-conf"><b>78</b><span class="dc-meter"><span style="width:78%"></span></span><span class="ee-abadge ab-inf">inferred</span></div>
+            <div class="dc-sub">prompt maturity 82 (intent ✓ · constraints ✓ · tests named ✓) · boundary risk 38 (pressure, no denial)</div>
+            <div class="dc-head dcx-gap">review first</div>
+            <div class="dcx-rf"><span class="dc-rank">1</span><code>src/auth/refresh.rs</code><span class="dc-sub">touches token state · largest hunk</span></div>
+            <div class="dcx-rf"><span class="dc-rank">2</span><code>src/auth/session.rs</code><span class="dc-sub">expiry check rewritten</span></div>
+          </div>
         </div>
-        <div class="dc-row">
-          <span class="dc-rank">2</span>
-          <div class="dc-main"><b>claude-1 · fix-auth</b><span class="dc-sub">3 files · +91 −20 · verifier ✓</span></div>
-          <span class="dc-score"><i>maturity</i><b>74</b><span class="dc-meter"><span style="width:74%"></span></span></span>
-          <span class="dc-score"><i>risk</i><b>12</b><span class="dc-meter"><span style="width:12%"></span></span></span>
-          <span class="ee-abadge ab-inf">inferred</span>
-        </div>
-        <div class="dc-row">
-          <span class="dc-rank">3</span>
-          <div class="dc-main"><b>claude-2 · fix-auth</b><span class="dc-sub">1 file · +12 −3 · tests ✗</span></div>
-          <span class="dc-score"><i>maturity</i><b>61</b><span class="dc-meter"><span style="width:61%"></span></span></span>
-          <span class="dc-score"><i>risk</i><b>55</b><span class="dc-meter dc-warn"><span style="width:55%"></span></span></span>
-          <span class="ee-abadge ab-inf">inferred</span>
-        </div>
-        <div class="dc-note">prompt maturity factors: intent ✓ · constraints ✓ · tests named ✓ · every score opens its reasons</div>
       </div>
       <div class="ee-body ee-panel" data-panel="context" hidden>
         <div class="ctx-view">
