@@ -2017,10 +2017,10 @@
           say('Three sealed attempts, one task. A neutral verifier picks the winner.'); } },
       { t: 11.5, fn: () => { showPanel('context'); point('.ee-tab[data-tab="context"]');
           say('The reasoning behind every change, versioned beside your code in refs/h5i/*.'); } },
-      { t: 13, fn: () => { showPanel('decide'); point('.ee-tab[data-tab="decide"]');
+      { t: 14, fn: () => { showPanel('decide'); point('.ee-tab[data-tab="decide"]');
           say('Deterministic scores, no model in the loop: prompt maturity and boundary risk.'); } },
     ];
-    const LOOP = 15.5;
+    const LOOP = 16.5;
     const seek = (t) => { SCENES.filter(sc => sc.t <= t).forEach(sc => sc.fn()); };
     window.EE_SEEK = (t) => { clearOverlays(); seek(t); clock = t; last = t; };
     // Controls: pause and a clickable progress track, like the product film.
