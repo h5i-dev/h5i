@@ -75,12 +75,8 @@ Once the hooks are registered, h5i versions your human prompts and every agent c
 - `h5i recall context show`: replay the agent context steps - [example output](#context-replay)
 - `h5i recall log`: replay the captured prompts - [example output](#context-log)
 - `h5i audit maturity`: measure the quality of prompts - [example output](#context-maturity)
-- Share it with `h5i share push`, or post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) to the pull request with `h5i share pr post` (needs the `gh` CLI).
-
-```bash
-h5i share push      # push the h5i metadata (refs/h5i/*) to your teammates
-h5i share pr post   # post the AI-usage summary to the pull request (needs `gh`)
-```
+- `h5i share push`: share the prompts, contexts. and all logs with other team members
+- `h5i share pr post`: post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) to the pull request (needs the `gh` CLI)
 
 ### 2.3. Sandboxed Environment
 
@@ -160,7 +156,7 @@ asyncio.run(main())
 
 ## 5. Gallary
 
-<a id="context-replay"></a>
+<a id="context-replay">`h5i recall context show`</a>
 
 ```yaml
 ── Context (depth=2) ────────────────────────────────────
@@ -174,7 +170,7 @@ asyncio.run(main())
     [01:02:16] OBSERVE: read README.md
 ```
 
-<a id="context-log"></a>
+<a id="context-log">`h5i recall log`</a>
 
 ```yaml
 commit 9c76075822d743125587574e63bc1756866df496
@@ -184,7 +180,7 @@ Prompt:    "I guess you can remove the arXiv column, and just use hyperlink in P
 Message:   README: fold arXiv column into hyperlinked paper names
 ```
 
-<a id="context-maturity"></a>
+<a id="context-maturity">`h5i audit maturity`</a>
 
 ```yaml
 🧠 Prompt maturity: 42.7/100  🪴 developing
