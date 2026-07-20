@@ -1931,9 +1931,15 @@
       SCENES.forEach(sc => timers.push(setTimeout(() => { if (!stopped) sc.fn(); }, sc.t * 1000)));
       timers.push(setTimeout(() => { timers.length = 0; play(); }, LOOP * 1000));
     };
+    // The embed is tall: a high visibility threshold can never be met on
+    // short viewports. Start on any visibility, with a load-time fallback so
+    // the hero film never depends on scroll at all.
+    let started = false;
+    const start = () => { if (started || stopped) return; started = true; play(); };
     new IntersectionObserver((entries, obs) => {
-      if (entries.some(e => e.isIntersecting)) { obs.disconnect(); play(); }
-    }, { threshold: 0.35 }).observe(embed);
+      if (entries.some(e => e.isIntersecting)) { obs.disconnect(); start(); }
+    }, { threshold: 0.1 }).observe(embed);
+    setTimeout(start, 2500);
   })();
 
   /* ── Scroll-reveal ────────────────────────── */
