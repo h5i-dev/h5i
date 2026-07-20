@@ -489,6 +489,22 @@
       color: var(--bp-text-dim); display: flex; align-items: center; gap: 4px; }
     .ee-live { width: 5px; height: 5px; border-radius: 50%; background: #5ee2a0;
       box-shadow: 0 0 5px #5ee2a0; flex: none; }
+    /* Auto-tour: the embed demonstrates itself (demo-film style) until the
+       viewer interacts, then the real tabs take over. */
+    .ensemble-embed { position: relative; }
+    .ee-cursor { position: absolute; top: 0; left: 0; width: 14px; height: 14px;
+      border-radius: 50%; background: rgba(255,255,255,0.9);
+      box-shadow: 0 0 0 2px rgba(0,0,0,0.35), 0 1px 6px rgba(0,0,0,0.5);
+      z-index: 6; pointer-events: none; transform: translate(46px, 46px);
+      transition: transform 0.85s cubic-bezier(0.4, 0, 0.2, 1); }
+    .ee-cursor.click { animation: eeClick 0.35s; }
+    @keyframes eeClick { 40% { transform: var(--ee-pos) scale(0.6); } }
+    .ee-bubble { position: absolute; left: 172px; bottom: 14px; max-width: 360px;
+      z-index: 6; pointer-events: none; background: var(--h5-accent); color: #04201d;
+      font-size: 0.72rem; font-weight: 600; line-height: 1.4; padding: 7px 11px;
+      border-radius: 9px 9px 9px 2px; opacity: 0; transition: opacity 0.4s; }
+    .ee-bubble.show { opacity: 1; }
+    @media (max-width: 640px) { .ee-bubble { left: 10px; right: 10px; max-width: none; } }
     @media (max-width: 640px) {
       .ensemble-embed { grid-template-columns: 1fr; }
       .ee-rail { grid-column: 1; grid-row: 2; border-right: 0; border-bottom: 1px solid var(--bp-border); }
@@ -1798,6 +1814,48 @@
       panels.forEach(p => { p.hidden = p.getAttribute('data-panel') !== name; });
     }));
   });
+
+  /* ── Embed auto-tour: cycle the lenses with a cursor + captions, like the
+     demo film. Any real interaction stops it and hands the tabs to the viewer.
+     Skipped under prefers-reduced-motion. ──── */
+  (() => {
+    const embed = document.querySelector('.ensemble-embed');
+    if (!embed || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const tabs = [...embed.querySelectorAll('.ee-tab[data-tab]')];
+    const captions = {
+      ensemble: 'Sealed lanes: agents attempt one task in parallel. A neutral verifier picks the winner.',
+      sandbox: 'The attention rail shows what needs you. Every claim is badged by how it is known.',
+      context: 'The reasoning behind every change, versioned beside your code in refs/h5i/*.',
+    };
+    const cursor = document.createElement('div'); cursor.className = 'ee-cursor';
+    const bubble = document.createElement('div'); bubble.className = 'ee-bubble';
+    embed.append(cursor, bubble);
+    let stopped = false, timer = null, i = 0;
+    const stop = () => { stopped = true; clearTimeout(timer); cursor.remove(); bubble.remove(); };
+    embed.addEventListener('pointerdown', stop, { capture: true });
+    const order = ['ensemble', 'sandbox', 'context'];
+    const step = () => {
+      if (stopped) return;
+      const name = order[i % order.length]; i += 1;
+      const tab = tabs.find(t => t.getAttribute('data-tab') === name);
+      const er = embed.getBoundingClientRect(), tr = tab.getBoundingClientRect();
+      const pos = `translate(${tr.left - er.left + tr.width / 2 - 7}px, ${tr.top - er.top + tr.height / 2 - 7}px)`;
+      cursor.style.setProperty('--ee-pos', pos);
+      cursor.style.transform = pos;
+      timer = setTimeout(() => {
+        if (stopped) return;
+        cursor.classList.add('click');
+        setTimeout(() => cursor.classList.remove('click'), 380);
+        tab.click();
+        bubble.classList.remove('show');
+        setTimeout(() => { bubble.textContent = captions[name]; bubble.classList.add('show'); }, 220);
+        timer = setTimeout(step, 5600);
+      }, 950);
+    };
+    new IntersectionObserver((entries, obs) => {
+      if (entries.some(e => e.isIntersecting)) { obs.disconnect(); timer = setTimeout(step, 1400); }
+    }, { threshold: 0.4 }).observe(embed);
+  })();
 
   /* ── Scroll-reveal ────────────────────────── */
   const observer = new IntersectionObserver(entries => {
