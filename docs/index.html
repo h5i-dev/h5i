@@ -1944,13 +1944,9 @@
           say('Three sealed attempts, one task. A neutral verifier picks the winner.'); } },
       { t: 25, fn: () => { showPanel('context'); point('.ee-tab[data-tab="context"]');
           say('The reasoning behind every change, versioned beside your code in refs/h5i/*.'); } },
-      { t: 30, fn: () => { showPanel('ensemble'); overlay('ee-term', '$ h5i team apply fix-auth<br><span class="ok">✓ applied · provenance recorded</span>');
-          rail.innerHTML = rails.drained;
-          say('The dashboard never mutates. You act in your terminal, where identity and provenance live.'); } },
-      { t: 35, fn: () => { clearOverlays();
-          say('Git tracks the diff. h5i tracks the run.'); } },
+      { t: 30, fn: () => { say('Git tracks the diff. h5i tracks the run.'); } },
     ];
-    const LOOP = 40;
+    const LOOP = 35;
     const seek = (t) => { SCENES.filter(sc => sc.t <= t).forEach(sc => sc.fn()); };
     window.EE_SEEK = (t) => { clearOverlays(); seek(t); clock = t; last = t; };
     // Controls: pause and a clickable progress track, like the product film.
