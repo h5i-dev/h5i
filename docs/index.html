@@ -1894,13 +1894,13 @@
       { t: 0, fn: () => { showPanel('sandbox'); rail.innerHTML = rails.quiet; clearOverlays();
           point('.ee-tab[data-tab="sandbox"]');
           say('Your agents work in sealed sandboxes. Nothing needs you yet.'); } },
-      { t: 8, fn: () => { point('.ee-panel[data-panel="sandbox"]');
+      { t: 4, fn: () => { point('.ee-panel[data-panel="sandbox"]');
           say('Every run is captured. The sandbox blocks what policy forbids: enforced, not promised.'); } },
-      { t: 18, fn: () => { rail.innerHTML = rails.called;
+      { t: 9, fn: () => { rail.innerHTML = rails.called;
           overlay('ee-toast', '<b>h5i</b> · fix-auth: 3 candidates ready<br>no verdict yet');
           point('.ee-rail-row.ee-row-new');
           say('When a decision is yours, the dashboard says so. Until then, walk away.'); } },
-      { t: 28, fn: () => { clearOverlays();
+      { t: 14, fn: () => { clearOverlays();
           overlay('ee-why', '<div class="ee-why-h">why</div>3 sealed candidates await a verdict. Finalize records it.' +
             '<div class="ee-why-h">evidence</div>' +
             '<div class="ee-why-ev">' + badge('ver', 'verified') + '<code>verify: cargo test · 3 pass</code></div>' +
@@ -1908,16 +1908,16 @@
             '<div class="ee-why-ev">' + badge('obs', 'observed') + '<code>sessions live · pid</code></div>' +
             '<div class="ee-why-h">act in your terminal</div><div class="ee-why-cmd">$ h5i team compare fix-auth</div>');
           say('Every claim shows how it is known. No score without its reasons.'); } },
-      { t: 40, fn: () => { clearOverlays(); showPanel('ensemble'); point('.ee-tab[data-tab="ensemble"]');
+      { t: 20, fn: () => { clearOverlays(); showPanel('ensemble'); point('.ee-tab[data-tab="ensemble"]');
           say('Three sealed attempts, one task. A neutral verifier picks the winner.'); } },
-      { t: 52, fn: () => { overlay('ee-term', '$ h5i team apply fix-auth<br><span class="ok">✓ applied · provenance recorded</span>');
+      { t: 26, fn: () => { overlay('ee-term', '$ h5i team apply fix-auth<br><span class="ok">✓ applied · provenance recorded</span>');
           rail.innerHTML = rails.drained;
           say('The dashboard never mutates. You act in your terminal, where identity and provenance live.'); } },
-      { t: 62, fn: () => { clearOverlays(); showPanel('sandbox'); rail.innerHTML = rails.quiet;
+      { t: 31, fn: () => { clearOverlays(); showPanel('sandbox'); rail.innerHTML = rails.quiet;
           point('.ee-tab[data-tab="sandbox"]');
           say('Git tracks the diff. h5i tracks the run.'); } },
     ];
-    const LOOP = 71;
+    const LOOP = 36;
     const seek = (t) => { SCENES.filter(sc => sc.t <= t).forEach(sc => sc.fn()); };
     window.EE_SEEK = seek; // scene-granular seek, for still/video rendering
     let stopped = false; const timers = [];
