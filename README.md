@@ -28,11 +28,7 @@
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i-dev%2Fh5i | Trendshift" width="250" height="55"/></a>
 
-> ***Two heads are better than one.***
-
-<p align="center">
-  <img src="./docs/_static/hero-team.svg" alt="One task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo." width="99%">
-</p>
+**Who it's for:** platform, security, and DevEx leads rolling out Claude Code and Codex who want to run *teams* of agents and keep review and audit defensible as agents write more of the diff.
 
 <table align="center">
   <tr>
@@ -42,8 +38,6 @@
     <td align="center"><strong>Lives in your Git</strong><br><sub>refs/h5i/* · no SaaS</sub></td>
   </tr>
 </table>
-
-**Who it's for:** platform, security, and DevEx leads rolling out Claude Code and Codex who want to run *teams* of agents and keep review and audit defensible as agents write more of the diff.
 
 ---
 
@@ -151,7 +145,7 @@ h5i serve
 ```
 
 <p align="center">
-  <img src="./docs/_static/screenshot-team-serve.png" alt="One task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo." width="95%">
+  <img src="./docs/_static/h5i-serve-film.gif" alt="The h5i serve workbench in motion: an attention rail shows what needs you, the sandbox blocks a forbidden egress, a Why drawer opens with evidence badged by authority (enforced, verified, observed), a neutral verdict lands on the Board, and the Decide tab ranks candidates by merge confidence, prompt maturity, and risk." width="99%">
 </p>
 
 ---

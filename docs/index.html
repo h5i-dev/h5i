@@ -27,14 +27,14 @@
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="og:image:width" content="2257">
   <meta property="og:image:height" content="1222">
-  <meta property="og:image:alt" content="h5i web dashboard showing AI provenance, integrity scores, and test badges for each commit">
+  <meta property="og:image:alt" content="h5i serve workbench: an attention rail showing what needs a human beside sealed agent lanes, every claim badged by its authority (enforced, verified, observed)">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i: Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)">
   <meta name="twitter:description" content="Auditable workspaces for AI coding agents. Run Claude Code, Codex, or whole agent teams in sandboxed Git worktrees. Prompts, commands, logs, policies, reviews, and verifier results versioned beside your code. Start with one, scale to many. No SaaS.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta name="twitter:image:alt" content="h5i web dashboard showing AI provenance, integrity scores, and test badges for each commit">
+  <meta name="twitter:image:alt" content="h5i serve workbench: an attention rail showing what needs a human beside sealed agent lanes, every claim badged by its authority (enforced, verified, observed)">
 
   <!-- Structured data -->
   <script type="application/ld+json">
@@ -461,6 +461,156 @@
     button.ee-tab:hover { color: var(--bp-text-muted); background: var(--bp-surface-2); }
     .ee-tab.active, button.ee-tab.active:hover { color: #04201d; background: var(--h5-accent); font-weight: 700; }
     .ee-panel[hidden] { display: none; }
+    /* Workbench layout: bar spans the top; the attention rail is a persistent
+       left column; the three lens panels share the right cell (one visible). */
+    .ensemble-embed { display: grid; grid-template-columns: 158px 1fr; }
+    .ee-bar { grid-column: 1 / -1; }
+    .ee-rail { grid-column: 1; grid-row: 2; border-right: 1px solid var(--bp-border);
+      background: var(--bp-surface); padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; }
+    .ee-panel { grid-column: 2; grid-row: 2; min-width: 0; }
+    .ee-rail-head { font-family: var(--fm); font-size: 0.56rem; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--bp-text-dim); margin-top: 6px; }
+    .ee-rail-head:first-child { margin-top: 0; }
+    .ee-rail-head.urgent { color: #ff6b6b; }
+    .ee-rail-row { display: flex; align-items: center; gap: 5px; font-size: 0.66rem;
+      color: var(--bp-text); line-height: 1.3; }
+    .ee-rtitle { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ee-rdot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+    .ee-rdot.crit { background: #ff6b6b; }
+    .ee-rdot.dec { background: var(--h5-accent); }
+    .ee-rdot.act { background: #5ee2a0; }
+    /* Authority badges — the epistemic vocabulary: how each claim is known. */
+    .ee-abadge { font-family: var(--fm); font-size: 0.5rem; border: 1px solid currentColor;
+      border-radius: 3px; padding: 0 3px; line-height: 12px; flex: none; }
+    .ab-enf { color: #ff6b6b; }
+    .ab-ver { color: #5ee2a0; }
+    .ab-obs { color: var(--h5-accent); }
+    .ab-inf { color: #f0a050; }
+    .ab-rep { color: #b48bd9; }
+    .ee-rail-foot { margin-top: auto; padding-top: 8px; font-family: var(--fm); font-size: 0.52rem;
+      color: var(--bp-text-dim); display: flex; align-items: center; gap: 4px; }
+    .ee-live { width: 5px; height: 5px; border-radius: 50%; background: #5ee2a0;
+      box-shadow: 0 0 5px #5ee2a0; flex: none; }
+    /* Auto-tour: the embed demonstrates itself (demo-film style) until the
+       viewer interacts, then the real tabs take over. */
+    .ensemble-embed { position: relative; }
+    .ee-cursor { position: absolute; top: 0; left: 0; width: 14px; height: 14px;
+      border-radius: 50%; background: rgba(255,255,255,0.9);
+      box-shadow: 0 0 0 2px rgba(0,0,0,0.35), 0 1px 6px rgba(0,0,0,0.5);
+      z-index: 6; pointer-events: none; transform: translate(46px, 46px);
+      transition: transform 0.85s cubic-bezier(0.4, 0, 0.2, 1); }
+    .ee-cursor.click { animation: eeClick 0.35s; }
+    @keyframes eeClick { 40% { transform: var(--ee-pos) scale(0.6); } }
+    .ee-bubble { position: absolute; left: 172px; bottom: 44px; max-width: 360px;
+      z-index: 6; pointer-events: none; background: var(--h5-accent); color: #04201d;
+      font-size: 0.72rem; font-weight: 600; line-height: 1.4; padding: 7px 11px;
+      border-radius: 9px 9px 9px 2px; opacity: 0; transition: opacity 0.4s; }
+    .ee-bubble.show { opacity: 1; }
+    @media (max-width: 640px) { .ee-bubble { left: 10px; right: 10px; max-width: none; } }
+    /* Film overlays: notification toast, Why drawer, terminal. All part of the
+       deterministic timeline; removed the moment the viewer takes over. */
+    .ee-toast { position: absolute; top: 44px; right: 12px; z-index: 7; background: var(--bp-elev);
+      border: 1px solid var(--h5-accent); border-radius: 7px; padding: 8px 12px; max-width: 250px;
+      font-size: 0.66rem; color: var(--bp-text); box-shadow: 0 6px 22px rgba(0,0,0,0.5);
+      animation: eeSlideIn 0.45s ease-out; }
+    .ee-toast b { color: var(--h5-accent); }
+    .ee-why { position: absolute; left: 168px; top: 78px; z-index: 7; width: 270px;
+      background: var(--bp-elev); border: 1px solid var(--bp-border); border-left: 3px solid var(--h5-accent);
+      border-radius: 6px; padding: 9px 11px; font-size: 0.64rem; color: var(--bp-text);
+      box-shadow: 0 8px 26px rgba(0,0,0,0.55); animation: eeSlideIn 0.4s ease-out; }
+    .ee-why-h { font-size: 0.52rem; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--bp-text-dim); margin: 7px 0 3px; font-family: var(--fm); }
+    .ee-why-h:first-child { margin-top: 0; }
+    .ee-why-ev { display: flex; align-items: center; gap: 5px; margin: 2px 0; }
+    .ee-why-ev code { font-family: var(--fm); font-size: 0.56rem; color: var(--bp-text-muted); }
+    .ee-why-cmd { font-family: var(--fm); font-size: 0.58rem; color: var(--h5-accent);
+      background: var(--bp-surface); border: 1px solid var(--bp-border); border-radius: 4px;
+      padding: 3px 7px; margin-top: 3px; }
+    .ee-term { position: absolute; right: 14px; bottom: 14px; z-index: 7; min-width: 250px;
+      background: #0a0e12; border: 1px solid var(--bp-border-strong); border-radius: 7px;
+      padding: 9px 12px; font-family: var(--fm); font-size: 0.62rem; color: var(--bp-text);
+      box-shadow: 0 8px 26px rgba(0,0,0,0.55); animation: eeSlideIn 0.4s ease-out; }
+    .ee-term .ok { color: #5ee2a0; }
+    .ee-panel { min-height: 600px; max-height: 600px; overflow-y: auto; }
+    .dc-head { font-family: var(--fm); font-size: 0.6rem; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--bp-text-dim); margin-bottom: 12px; }
+    .dc-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+      border: 1px solid var(--bp-border); border-radius: 7px; margin-bottom: 8px; }
+    .dc-row.dc-top { border-color: var(--h5-accent); box-shadow: 0 0 14px -6px var(--h5-accent); }
+    .dc-rank { font-family: var(--fm); font-size: 0.8rem; color: var(--bp-text-dim); width: 1.2em; }
+    .dc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 0.74rem; }
+    .dc-sub { font-family: var(--fm); font-size: 0.6rem; color: var(--bp-text-dim); }
+    .dc-score { display: flex; flex-direction: column; gap: 2px; width: 74px; font-size: 0.7rem; }
+    .dc-score i { font-family: var(--fm); font-style: normal; font-size: 0.52rem;
+      text-transform: uppercase; letter-spacing: 0.1em; color: var(--bp-text-dim); }
+    .dc-meter { height: 3px; background: var(--bp-surface-2); border-radius: 2px; }
+    .dc-meter > span { display: block; height: 100%; background: var(--h5-accent); border-radius: 2px; }
+    .dc-meter.dc-warn > span { background: #f0a050; }
+    .dc-note { font-family: var(--fm); font-size: 0.58rem; color: var(--bp-text-dim); margin-top: 10px; }
+    .dcx { display: flex; gap: 14px; }
+    .dcx-list { flex: 0 0 240px; display: flex; flex-direction: column; gap: 4px; }
+    .dcx-item { display: flex; align-items: center; gap: 7px; padding: 7px 9px;
+      border: 1px solid var(--bp-border); border-radius: 6px; font-size: 0.68rem; }
+    .dcx-item.dcx-on { border-color: var(--h5-accent); }
+    .dcx-oid { font-family: var(--fm); font-size: 0.6rem; color: var(--bp-text-dim); }
+    .dcx-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dc-pip { width: 8px; height: 8px; border-radius: 50%; background: var(--bp-surface-2); flex: none; }
+    .dc-pip-hi { background: #ff6b6b; }
+    .dc-pip-md { background: #f0a050; }
+    .dcx-detail { flex: 1; min-width: 0; border: 1px solid var(--bp-border); border-radius: 7px; padding: 12px 14px; }
+    .dcx-title { font-weight: 700; font-size: 0.85rem; margin-bottom: 3px; }
+    .dcx-gap { margin-top: 14px; margin-bottom: 6px; }
+    .dcx-conf { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
+    .dcx-conf b { font-size: 1.15rem; }
+    .dcx-conf .dc-meter { flex: 1; max-width: 220px; }
+    .dcx-rf { display: flex; align-items: baseline; gap: 8px; margin: 4px 0; font-size: 0.66rem; }
+    .dcx-rf code { font-family: var(--fm); font-size: 0.62rem; color: var(--bp-text); }
+    .pmx { display: flex; flex-direction: column; gap: 5px; margin-bottom: 7px; max-width: 400px; }
+    .pmx-row { display: flex; align-items: center; gap: 9px; }
+    .pmx-l { font-family: var(--fm); font-size: 0.58rem; color: var(--bp-text-muted); width: 82px; }
+    .pmx-row .dc-meter { flex: 1; }
+    .pmx-p { font-family: var(--fm); font-size: 0.58rem; color: var(--bp-text-dim); width: 44px; text-align: right; }
+    /* Full window: the content row takes all remaining viewport height and
+       every panel fills it, so switching tabs never changes the frame. */
+    html.workbench-only .ensemble-embed { grid-template-rows: auto 1fr; }
+    html.workbench-only .ee-panel { min-height: 0; max-height: none; height: 100%; }
+    html.workbench-only .ee-rail { height: 100%; }
+    .ee-ctrl { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 9px;
+      padding: 6px 12px; border-top: 1px solid var(--bp-border); background: var(--bp-surface); }
+    .ee-ctrl-btn { background: none; border: 1px solid var(--bp-border); border-radius: 4px;
+      color: var(--bp-text-muted); font-size: 0.68rem; line-height: 1; padding: 3px 8px; cursor: pointer; }
+    .ee-ctrl-btn:hover { color: var(--h5-accent); border-color: var(--h5-accent); }
+    .ee-ctrl-track { flex: 1; height: 4px; background: var(--bp-surface-2); border-radius: 2px; cursor: pointer; }
+    .ee-ctrl-fill { height: 100%; width: 0; background: var(--h5-accent); border-radius: 2px;
+      transition: width 0.1s linear; }
+    .ee-row-new { animation: eeSlideIn 0.5s ease-out; }
+    .ee-row-drained { opacity: 0.35; }
+    .ee-rail-empty { font-size: 0.62rem; color: var(--bp-text-dim); padding: 1px 0 3px; }
+    @keyframes eeSlideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+    /* Full-screen mode (/?workbench=1): the page becomes the film, demo-style.
+       visibility (not display) so the fixed embed still renders inside its
+       hidden ancestors. */
+    .ee-full { margin-left: 8px; font-size: 0.8rem; color: var(--bp-text-dim); text-decoration: none; line-height: 1; }
+    .ee-full:hover { color: var(--h5-accent); }
+    .ee-full-close { display: none; }
+    html.workbench-only body { overflow: hidden; }
+    html.workbench-only body > * { visibility: hidden; }
+    html.workbench-only .ensemble-embed, html.workbench-only .ensemble-embed * { visibility: visible; }
+    html.workbench-only .ensemble-embed { position: fixed; inset: 0; z-index: 999; margin: 0;
+      width: 100vw; max-width: none; height: 100vh; border-radius: 0; border: 0; overflow-y: auto; }
+    /* Full window: controls pin to the viewport bottom; the caption bubble
+       sits fixed just above them, so they can never overlap while scrolling. */
+    html.workbench-only .ee-ctrl { position: fixed; left: 0; right: 0; bottom: 0; z-index: 8; }
+    html.workbench-only .ee-bubble { position: fixed; left: 172px; bottom: 46px; z-index: 8; }
+    html.workbench-only .ensemble-embed { padding-bottom: 34px; }
+    html.workbench-only .ee-full-open { display: none; }
+    html.workbench-only .ee-full-close { display: inline; }
+    @media (max-width: 640px) {
+      .ensemble-embed { grid-template-columns: 1fr; }
+      .ee-rail { grid-column: 1; grid-row: 2; border-right: 0; border-bottom: 1px solid var(--bp-border); }
+      .ee-rail-foot { display: none; }
+      .ee-panel { grid-column: 1; grid-row: 3; }
+    }
     .ee-body { padding: 18px 22px 24px;
       background: radial-gradient(120% 80% at 50% -10%, rgba(66,226,208,0.05), transparent 60%), var(--bp-bg); }
 
@@ -1151,6 +1301,7 @@
   .verdict .vv { color: var(--text); }
   </style>
   <link rel="stylesheet" href="/_static/highlight.css">
+<script>if (new URLSearchParams(location.search).has('workbench')) document.documentElement.classList.add('workbench-only');</script>
 </head>
 <body>
 
@@ -1245,17 +1396,27 @@
         <div class="feat-desc">Deterministic risk scan and review ranking flag prompt-injection and the riskiest commits, with no model in the loop.</div>
       </div>
     </div>
-    <!-- Embedded ENSEMBLE tab — the real `h5i serve` dashboard, as live HTML -->
-    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve dashboard: agents attempting one task in sealed lanes (Ensemble), the sandbox flight recorder (Sandbox), and the reasoning/context workspace (Context).">
+    <!-- Embedded workbench — the real `h5i serve` dashboard, as live HTML:
+         attention rail (what needs you, with authority badges) + Now / Ensemble / Context lenses -->
+    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve workbench: an attention rail showing what needs a human (each claim badged by how it is known), beside the fleet (Now), the sealed candidate lanes (Board), the deterministic review ranking (Decide), and the reasoning workspace (Context).">
       <div class="ee-bar">
         <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
-        <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span>
+        <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span><a class="ee-full ee-full-open" href="/?workbench=1" title="Open full screen">⛶</a><a class="ee-full ee-full-close" href="/" title="Back to the front page">✕</a>
         <div class="ee-tabs" role="tablist">
-          <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Ensemble</button>
-          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Sandbox</button>
+          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Now</button>
+          <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Board</button>
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="context">Context</button>
+          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="decide">Decide</button>
         </div>
       </div>
+      <aside class="ee-rail" aria-label="Attention rail: what needs a human, each claim badged by its authority">
+        <div class="ee-rail-head urgent">needs you (2)</div>
+        <div class="ee-rail-row"><span class="ee-rdot dec"></span><span class="ee-rtitle">fix-auth: 3 candidates, no verdict</span><span class="ee-abadge ab-ver">verified</span></div>
+        <div class="ee-rail-row"><span class="ee-rdot crit"></span><span class="ee-rtitle">payments: egress denied</span><span class="ee-abadge ab-enf">enforced</span></div>
+        <div class="ee-rail-head">active (1)</div>
+        <div class="ee-rail-row"><span class="ee-rdot act"></span><span class="ee-rtitle">claude · session live</span><span class="ee-abadge ab-obs">observed</span></div>
+        <div class="ee-rail-foot"><span class="ee-live"></span>live · event feed</div>
+      </aside>
       <div class="ee-body ee-panel" data-panel="ensemble">
         <header class="team-head">
           <div class="team-head-id">
@@ -1431,6 +1592,34 @@
       </div>
 
       <!-- Context tab — the reasoning/context workspace (refs/h5i/context) -->
+      <div class="ee-body ee-panel" data-panel="decide" hidden>
+        <div class="dc-head">decide · should this merge? · deterministic, no model in the loop</div>
+        <div class="dcx">
+          <div class="dcx-list">
+            <div class="dcx-item dcx-on"><span class="dcx-oid">c34f11d</span><span class="dcx-msg">fix token refresh race</span><span class="dc-pip dc-pip-hi"></span></div>
+            <div class="dcx-item"><span class="dcx-oid">9b02e77</span><span class="dcx-msg">auth: retry backoff</span><span class="dc-pip dc-pip-md"></span></div>
+            <div class="dcx-item"><span class="dcx-oid">51aa310</span><span class="dcx-msg">docs touchup</span><span class="dc-pip"></span></div>
+          </div>
+          <div class="dcx-detail">
+            <div class="dcx-title">fix token refresh race</div>
+            <div class="dc-sub">codex-1 · 4 files · +272 −31 · verifier ✓ · independent ✓</div>
+            <div class="dc-head dcx-gap">merge confidence</div>
+            <div class="dcx-conf"><b>78</b><span class="dc-meter"><span style="width:78%"></span></span><span class="ee-abadge ab-inf">inferred</span></div>
+            <div class="dc-head dcx-gap">prompt maturity · 82 · mature</div>
+            <div class="pmx">
+              <div class="pmx-row"><span class="pmx-l">intent</span><span class="dc-meter"><span style="width:93%"></span></span><span class="pmx-p">2.8 / 3</span></div>
+              <div class="pmx-row"><span class="pmx-l">constraints</span><span class="dc-meter"><span style="width:80%"></span></span><span class="pmx-p">2.4 / 3</span></div>
+              <div class="pmx-row"><span class="pmx-l">tests named</span><span class="dc-meter"><span style="width:100%"></span></span><span class="pmx-p">3.0 / 3</span></div>
+              <div class="pmx-row"><span class="pmx-l">grounding</span><span class="dc-meter dc-warn"><span style="width:53%"></span></span><span class="pmx-p">1.6 / 3</span></div>
+              <div class="pmx-row"><span class="pmx-l">scope</span><span class="dc-meter dc-warn"><span style="width:57%"></span></span><span class="pmx-p">1.7 / 3</span></div>
+            </div>
+            <div class="dc-sub">boundary risk 38 · pressure, no denial · scores the delegation, not the dev</div>
+            <div class="dc-head dcx-gap">review first</div>
+            <div class="dcx-rf"><span class="dc-rank">1</span><code>src/auth/refresh.rs</code><span class="dc-sub">touches token state · largest hunk</span></div>
+            <div class="dcx-rf"><span class="dc-rank">2</span><code>src/auth/session.rs</code><span class="dc-sub">expiry check rewritten</span></div>
+          </div>
+        </div>
+      </div>
       <div class="ee-body ee-panel" data-panel="context" hidden>
         <div class="ctx-view">
           <div class="ctx-hero">
@@ -1741,7 +1930,7 @@
     });
   }
 
-  /* ── Embedded dashboard tab switch (Ensemble / Sandbox) ──── */
+  /* ── Embedded workbench lens switch (Now / Ensemble / Context) ──── */
   document.querySelectorAll('.ensemble-embed').forEach(embed => {
     const tabs = embed.querySelectorAll('.ee-tab[data-tab]');
     const panels = embed.querySelectorAll('.ee-panel[data-panel]');
@@ -1755,6 +1944,123 @@
       panels.forEach(p => { p.hidden = p.getAttribute('data-panel') !== name; });
     }));
   });
+
+  /* ── The embed film: "a decision, with receipts". A deterministic
+     scene timeline over the embed DOM (the set). Scenes are idempotent, so
+     window.EE_SEEK(t) can rebuild any moment for rendering. Any real
+     interaction stops the film and hands the live tabs to the viewer.
+     Reduced motion gets the densest still (the Why drawer) with no timers. ── */
+  (() => {
+    const embed = document.querySelector('.ensemble-embed');
+    if (!embed) return;
+    // Full-screen mode: reparent to <body> so no transformed ancestor (the
+    // scroll-reveal) becomes the fixed embed's containing block.
+    if (document.documentElement.classList.contains('workbench-only')) document.body.appendChild(embed);
+    const rail = embed.querySelector('.ee-rail');
+    const tabs = [...embed.querySelectorAll('.ee-tab[data-tab]')];
+    const panels = [...embed.querySelectorAll('.ee-panel[data-panel]')];
+    const railHome = rail.innerHTML; // restored on takeover
+    const cursor = document.createElement('div'); cursor.className = 'ee-cursor';
+    const bubble = document.createElement('div'); bubble.className = 'ee-bubble';
+    const badge = (k, t) => '<span class="ee-abadge ab-' + k + '">' + t + '</span>';
+    const row = (dot, title, b, cls) =>
+      '<div class="ee-rail-row ' + (cls || '') + '"><span class="ee-rdot ' + dot + '"></span>' +
+      '<span class="ee-rtitle">' + title + '</span>' + b + '</div>';
+    const ACTIVE = '<div class="ee-rail-head">active (2)</div>' +
+      row('act', 'claude · session live', badge('obs', 'observed')) +
+      row('act', 'codex · session live', badge('obs', 'observed'));
+    const FOOT = '<div class="ee-rail-foot"><span class="ee-live"></span>live · event feed</div>';
+    const DECIDE = row('dec', 'fix-auth: 3 candidates, no verdict', badge('ver', 'verified'), 'ee-row-new');
+    const rails = {
+      quiet: '<div class="ee-rail-head urgent">needs you</div><div class="ee-rail-empty">nothing blocked on you</div>' + ACTIVE + FOOT,
+      called: '<div class="ee-rail-head urgent">needs you (1)</div>' + DECIDE + ACTIVE + FOOT,
+      drained: '<div class="ee-rail-head urgent">needs you</div>' +
+        row('dec', 'fix-auth: applied', badge('ver', 'verified'), 'ee-row-drained') + ACTIVE + FOOT,
+    };
+    const showPanel = (name) => {
+      tabs.forEach(t => {
+        const on = t.getAttribute('data-tab') === name;
+        t.classList.toggle('active', on); t.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      panels.forEach(p => { p.hidden = p.getAttribute('data-panel') !== name; });
+    };
+    const overlay = (cls, html) => {
+      const el = document.createElement('div'); el.className = cls; el.innerHTML = html;
+      el.dataset.film = '1'; embed.append(el); return el;
+    };
+    const clearOverlays = () => embed.querySelectorAll('[data-film]').forEach(e => e.remove());
+    const say = (text) => { bubble.classList.remove('show'); setTimeout(() => { bubble.textContent = text; bubble.classList.add('show'); }, 200); };
+    const point = (sel) => {
+      const el = embed.querySelector(sel); if (!el) return;
+      const er = embed.getBoundingClientRect(), r = el.getBoundingClientRect();
+      cursor.style.transform = 'translate(' + (r.left - er.left + r.width / 2 - 7) + 'px,' + (r.top - er.top + r.height / 2 - 7) + 'px)';
+    };
+    const SCENES = [
+      { t: 0, fn: () => { showPanel('sandbox'); rail.innerHTML = rails.quiet; clearOverlays();
+          point('.ee-tab[data-tab="sandbox"]');
+          say('Your agents work in sealed sandboxes. Nothing needs you yet.'); } },
+      { t: 2, fn: () => { point('.ee-panel[data-panel="sandbox"]');
+          say('Every run is captured. The sandbox blocks what policy forbids: enforced, not promised.'); } },
+      { t: 4.5, fn: () => { rail.innerHTML = rails.called;
+          overlay('ee-toast', '<b>h5i</b> · fix-auth: 3 candidates ready<br>no verdict yet');
+          point('.ee-rail-row.ee-row-new');
+          say('When a decision is yours, the dashboard says so. Until then, walk away.'); } },
+      { t: 7, fn: () => { clearOverlays();
+          overlay('ee-why', '<div class="ee-why-h">why</div>3 sealed candidates await a verdict. Finalize records it.' +
+            '<div class="ee-why-h">evidence</div>' +
+            '<div class="ee-why-ev">' + badge('ver', 'verified') + '<code>verify: cargo test · 3 pass</code></div>' +
+            '<div class="ee-why-ev">' + badge('enf', 'enforced') + '<code>egress denial · cap-7f3a</code></div>' +
+            '<div class="ee-why-ev">' + badge('obs', 'observed') + '<code>sessions live · pid</code></div>' +
+            '<div class="ee-why-h">act in your terminal</div><div class="ee-why-cmd">$ h5i team compare fix-auth</div>');
+          say('Every claim shows how it is known. No score without its reasons.'); } },
+      { t: 9.5, fn: () => { clearOverlays(); showPanel('ensemble'); point('.ee-tab[data-tab="ensemble"]');
+          say('Three sealed attempts, one task. A neutral verifier picks the winner.'); } },
+      { t: 11.5, fn: () => { showPanel('context'); point('.ee-tab[data-tab="context"]');
+          say('The reasoning behind every change, versioned beside your code in refs/h5i/*.'); } },
+      { t: 14, fn: () => { showPanel('decide'); point('.ee-tab[data-tab="decide"]');
+          say('Deterministic scores, no model in the loop: prompt maturity and boundary risk.'); } },
+    ];
+    const LOOP = 16.5;
+    const seek = (t) => { SCENES.filter(sc => sc.t <= t).forEach(sc => sc.fn()); };
+    window.EE_SEEK = (t) => { clearOverlays(); seek(t); clock = t; last = t; };
+    // Controls: pause and a clickable progress track, like the product film.
+    const ctrl = document.createElement('div'); ctrl.className = 'ee-ctrl';
+    ctrl.innerHTML = '<button class="ee-ctrl-btn" type="button" aria-label="Pause">⏸</button>' +
+      '<div class="ee-ctrl-track"><div class="ee-ctrl-fill"></div></div>';
+    const btn = ctrl.querySelector('.ee-ctrl-btn');
+    const track = ctrl.querySelector('.ee-ctrl-track');
+    const fill = ctrl.querySelector('.ee-ctrl-fill');
+    let stopped = false, playing = false, paused = false, clock = 0, last = -1, timer = null;
+    const stop = (ev) => {
+      if (ev && ctrl.contains(ev.target)) return; // the controls are not a takeover
+      stopped = true; clearInterval(timer); cursor.remove(); bubble.remove(); ctrl.remove();
+      clearOverlays(); rail.innerHTML = railHome;
+    };
+    embed.addEventListener('pointerdown', stop, { capture: true });
+    btn.addEventListener('click', () => { paused = !paused; btn.textContent = paused ? '▶' : '⏸'; });
+    track.addEventListener('click', (e) => {
+      const r = track.getBoundingClientRect();
+      window.EE_SEEK(Math.max(0, Math.min(LOOP - 0.01, ((e.clientX - r.left) / r.width) * LOOP)));
+      fill.style.width = ((clock / LOOP) * 100) + '%';
+    });
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { seek(7); return; }
+    const start = () => {
+      if (playing || stopped) return; playing = true;
+      embed.append(cursor, bubble, ctrl);
+      timer = setInterval(() => {
+        if (paused || stopped) return;
+        clock += 0.1;
+        if (clock >= LOOP) { clock = 0; last = -1; clearOverlays(); }
+        SCENES.forEach(sc => { if (sc.t > last && sc.t <= clock) sc.fn(); });
+        last = clock;
+        fill.style.width = ((clock / LOOP) * 100) + '%';
+      }, 100);
+    };
+    new IntersectionObserver((entries, obs) => {
+      if (entries.some(e => e.isIntersecting)) { obs.disconnect(); start(); }
+    }, { threshold: 0.1 }).observe(embed);
+    setTimeout(start, 2500);
+  })();
 
   /* ── Scroll-reveal ────────────────────────── */
   const observer = new IntersectionObserver(entries => {
