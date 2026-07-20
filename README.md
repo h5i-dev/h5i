@@ -31,7 +31,7 @@
 > ***Two heads are better than one.***
 
 <p align="center">
-  <img src="./docs/_static/hero-team.svg" alt="One task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo." width="99%">
+  <img src="./docs/_static/h5i-serve-film.gif" alt="The h5i serve workbench in motion: an attention rail shows what needs you, the sandbox blocks a forbidden egress, a Why drawer opens with evidence badged by authority (enforced, verified, observed), a neutral verdict lands on the Board, and the Decide tab ranks candidates by merge confidence, prompt maturity, and risk." width="99%">
 </p>
 
 <table align="center">
