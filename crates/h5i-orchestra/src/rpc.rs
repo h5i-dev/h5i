@@ -398,10 +398,11 @@ struct VerifyParams {
     command: Vec<String>,
     #[serde(default)]
     isolation: Option<String>,
-    /// Sealed-tests mode: submission id or team agent id whose base..commit
-    /// diff is overlaid over the candidate before the command runs.
+    /// Sealed-overlay mode: submission id or team agent id whose base..commit
+    /// diff is overlaid over the candidate before the command runs (typically
+    /// a test-designer's sealed test set).
     #[serde(default)]
-    tests_from: Option<String>,
+    sealed_from: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -637,9 +638,9 @@ impl Server {
             "conductor.verify" => {
                 let p: VerifyParams = parse(params)?;
                 let c = self.conductor()?;
-                let v = match p.tests_from.as_deref() {
+                let v = match p.sealed_from.as_deref() {
                     Some(tf) => {
-                        c.verify_with_tests(&p.artifact, tf, p.command, p.isolation.as_deref())
+                        c.verify_sealed(&p.artifact, tf, p.command, p.isolation.as_deref())
                             .await
                     }
                     None => c.verify(&p.artifact, p.command, p.isolation.as_deref()).await,

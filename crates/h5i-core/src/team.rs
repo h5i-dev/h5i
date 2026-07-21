@@ -134,42 +134,31 @@ pub struct TeamVerification {
     pub capture_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
-    /// Where the executed test content came from: `"submission"` (the
-    /// candidate's own tree — the default, and what every record predating
-    /// this field meant) or `"sealed"` (a designated teammate's test set was
-    /// overlaid over the candidate before running, so the candidate's own
-    /// edits to those paths cannot weaken the check).
-    #[serde(default = "tests_source_submission")]
-    pub tests_source: String,
-    /// Sealed mode only: the submission id whose diff supplied the test set.
+    /// Sealed-overlay mode (`Some` = sealed): the submission id whose
+    /// base..commit diff was overlaid over the candidate before the command
+    /// ran, so the candidate's own edits to those paths could not weaken the
+    /// check. `None` (the default, and the meaning of every record predating
+    /// this field) means the command ran against the candidate's own tree
+    /// alone. The sealed content is *typically* a test set from a designer
+    /// agent, but the mechanism is content-agnostic — golden files, scoring
+    /// harnesses, protected specs all work the same way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tests_from: Option<String>,
+    pub sealed_from: Option<String>,
     /// Sealed mode only: tree OID of the sealing submission — the content
     /// digest `default_verdict` compares across candidates so two candidates
-    /// "passing tests" against different test sets are never ranked as equals.
+    /// "passing" against different sealed sets are never ranked as equals.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tests_tree_oid: Option<String>,
+    pub sealed_tree_oid: Option<String>,
     /// Sealed mode only: the paths pinned by the overlay (everything the
     /// sealing submission changed relative to the run base).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tests_paths: Vec<String>,
+    pub sealed_paths: Vec<String>,
     /// Sealed paths where the candidate's content matched neither the run base
-    /// nor the sealed version — the candidate actively rewrote a sealed test
-    /// path and the overlay discarded that edit. Tamper *evidence* (it may be
-    /// a well-meant fix), surfaced for reviewers rather than silently dropped.
+    /// nor the sealed version — the candidate actively rewrote a sealed path
+    /// and the overlay discarded that edit. Tamper *evidence* (it may be a
+    /// well-meant fix), surfaced for reviewers rather than silently dropped.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tests_overridden: Vec<String>,
-}
-
-/// `TeamVerification.tests_source` for a candidate verified against its own
-/// submitted tree (the default, and the meaning of every legacy record).
-pub const TESTS_SOURCE_SUBMISSION: &str = "submission";
-/// `TeamVerification.tests_source` for a candidate verified against a sealed
-/// teammate test set overlaid at verify time.
-pub const TESTS_SOURCE_SEALED: &str = "sealed";
-
-fn tests_source_submission() -> String {
-    TESTS_SOURCE_SUBMISSION.to_string()
+    pub sealed_overridden: Vec<String>,
 }
 
 fn isolation_unknown() -> String {
@@ -1747,7 +1736,7 @@ pub fn verify(
     agent_id: &str,
     command: Vec<String>,
     isolation: Option<&str>,
-    tests_from: Option<&str>,
+    sealed_from: Option<&str>,
     actor: &str,
 ) -> Result<TeamVerification, H5iError> {
     if command.is_empty() {
@@ -1765,12 +1754,12 @@ pub fn verify(
             ))
         })?
         .clone();
-    // Sealed-tests mode: `tests_from` names the submission (by id, or by team
+    // Sealed-tests mode: `sealed_from` names the submission (by id, or by team
     // agent id → that agent's latest submission) whose base..commit diff is
     // the authoritative test set. Its paths are overlaid over the candidate
     // before the command runs, so the check measures the candidate's code
     // against tests the candidate cannot weaken.
-    let sealed = match tests_from {
+    let sealed = match sealed_from {
         None => None,
         Some(spec) => {
             let tests_sub = current
@@ -1788,14 +1777,14 @@ pub fn verify(
                 .ok_or_else(|| {
                     H5iError::Metadata(format!(
                         "team '{run_id}' has no submission '{spec}' to seal tests from \
-                         (tests-from takes a submission id or a team agent id)"
+                         (sealed-from takes a submission id or a team agent id)"
                     ))
                 })?;
             if tests_sub.owner_agent == submission.owner_agent {
                 return Err(H5iError::Metadata(format!(
-                    "sealed tests must come from a different agent than the candidate: \
-                     '{}' owns both — self-sealed tests are just the candidate's own \
-                     tree, drop tests-from or point it at the test designer",
+                    "a sealed overlay must come from a different agent than the \
+                     candidate: '{}' owns both — self-sealing is just the candidate's \
+                     own tree, drop sealed-from or point it at the designer",
                     submission.owner_agent
                 )));
             }
@@ -1872,12 +1861,12 @@ pub fn verify(
         }
     }
 
-    // Overlay the sealed test set after the candidate's diff, so the sealed
+    // Overlay the sealed set after the candidate's diff, so the sealed
     // content wins. An overlay failure is recorded like an apply failure
     // (applies_cleanly=false, never a silent green) — the verification still
     // lands in the event log as evidence.
-    let mut tests_paths: Vec<String> = Vec::new();
-    let mut tests_overridden: Vec<String> = Vec::new();
+    let mut sealed_paths: Vec<String> = Vec::new();
+    let mut sealed_overridden: Vec<String> = Vec::new();
     let mut executed_tree = submission.tree_oid.clone();
     if applies_cleanly {
         if let Some(ts) = &sealed {
@@ -1890,8 +1879,8 @@ pub fn verify(
                 ts,
             ) {
                 Ok(overlay) => {
-                    tests_paths = overlay.paths;
-                    tests_overridden = overlay.overridden;
+                    sealed_paths = overlay.paths;
+                    sealed_overridden = overlay.overridden;
                     executed_tree = overlay.executed_tree;
                 }
                 Err(e) => {
@@ -2000,15 +1989,10 @@ pub fn verify(
         isolation: isolation_used,
         capture_id,
         failure,
-        tests_source: if sealed.is_some() {
-            TESTS_SOURCE_SEALED.to_string()
-        } else {
-            tests_source_submission()
-        },
-        tests_from: sealed.as_ref().map(|t| t.id.clone()),
-        tests_tree_oid: sealed.as_ref().map(|t| t.tree_oid.clone()),
-        tests_paths,
-        tests_overridden,
+        sealed_from: sealed.as_ref().map(|t| t.id.clone()),
+        sealed_tree_oid: sealed.as_ref().map(|t| t.tree_oid.clone()),
+        sealed_paths,
+        sealed_overridden,
     };
     let ev = event(
         run_id,
@@ -2084,19 +2068,16 @@ pub fn default_verdict(current: &TeamRun) -> TeamVerdict {
     let divergent_command = eligible
         .iter()
         .any(|(_, v)| v.command != eligible[0].1.command);
-    // Same-shaped guard for the test CONTENT: once any candidate was verified
-    // against a sealed test set, every candidate must be — and against the
-    // same set. Otherwise one candidate could pass its own (weakened) tests
-    // while a rival is held to the designer's. When no candidate is sealed,
-    // divergent test trees are legitimate (each agent wrote its own tests)
-    // and only the command guard above applies.
-    let any_sealed = eligible
-        .iter()
-        .any(|(_, v)| v.tests_source == TESTS_SOURCE_SEALED);
-    let divergent_tests = any_sealed
+    // Same-shaped guard for the check CONTENT: once any candidate was
+    // verified against a sealed overlay, every candidate must be — and
+    // against the same one. Otherwise one candidate could pass its own
+    // (weakened) tests while a rival is held to the designer's. When no
+    // candidate is sealed, divergent test trees are legitimate (each agent
+    // wrote its own tests) and only the command guard above applies.
+    let any_sealed = eligible.iter().any(|(_, v)| v.sealed_from.is_some());
+    let divergent_sealed = any_sealed
         && eligible.iter().any(|(_, v)| {
-            v.tests_source != TESTS_SOURCE_SEALED
-                || v.tests_tree_oid != eligible[0].1.tests_tree_oid
+            v.sealed_from.is_none() || v.sealed_tree_oid != eligible[0].1.sealed_tree_oid
         });
     if eligible.is_empty() {
         TeamVerdict {
@@ -2120,16 +2101,16 @@ pub fn default_verdict(current: &TeamRun) -> TeamVerdict {
                 commands.into_iter().collect::<Vec<_>>().join(" | ")
             )],
         }
-    } else if divergent_tests {
+    } else if divergent_sealed {
         TeamVerdict {
             selected_submission: None,
             method: METHOD.into(),
             decided_by: "team-policy".into(),
             can_auto_apply: false,
             reasons: vec![
-                "candidates were verified against different test sets — a sealed-tests \
-                 run must verify every candidate against the same sealed set; re-verify \
-                 every candidate with the same tests-from submission"
+                "candidates were verified against different sealed sets — a sealed run \
+                 must verify every candidate against the same overlay; re-verify every \
+                 candidate with the same sealed-from submission"
                     .into(),
             ],
         }
@@ -2144,22 +2125,22 @@ pub fn default_verdict(current: &TeamRun) -> TeamVerdict {
                 verification.id
             ),
         ];
-        if verification.tests_source == TESTS_SOURCE_SEALED {
+        if verification.sealed_from.is_some() {
             reasons.push(format!(
-                "verified against sealed test set {} (tree {}, {} path(s){})",
-                verification.tests_from.as_deref().unwrap_or("?"),
+                "verified against sealed set {} (tree {}, {} path(s){})",
+                verification.sealed_from.as_deref().unwrap_or("?"),
                 verification
-                    .tests_tree_oid
+                    .sealed_tree_oid
                     .as_deref()
                     .map(|t| &t[..t.len().min(12)])
                     .unwrap_or("?"),
-                verification.tests_paths.len(),
-                if verification.tests_overridden.is_empty() {
+                verification.sealed_paths.len(),
+                if verification.sealed_overridden.is_empty() {
                     String::new()
                 } else {
                     format!(
                         "; overrode candidate edits to {}",
-                        verification.tests_overridden.join(", ")
+                        verification.sealed_overridden.join(", ")
                     )
                 }
             ));
@@ -3610,9 +3591,8 @@ mod tests {
         )
         .unwrap();
         assert!(unsealed.tests_passed, "the weakened tests pass unsealed — the gap");
-        assert_eq!(unsealed.tests_source, TESTS_SOURCE_SUBMISSION);
-        assert!(unsealed.tests_from.is_none());
-        assert!(unsealed.tests_paths.is_empty());
+        assert!(unsealed.sealed_from.is_none());
+        assert!(unsealed.sealed_paths.is_empty());
 
         // Sealed by the designer's team agent id.
         let sealed = verify(
@@ -3622,12 +3602,11 @@ mod tests {
         .unwrap();
         assert!(sealed.applies_cleanly);
         assert!(!sealed.tests_passed, "the designer's tests judge the bad impl");
-        assert_eq!(sealed.tests_source, TESTS_SOURCE_SEALED);
-        assert_eq!(sealed.tests_from.as_deref(), Some(tests_sub.id.as_str()));
-        assert_eq!(sealed.tests_tree_oid.as_deref(), Some(tests_sub.tree_oid.as_str()));
-        assert_eq!(sealed.tests_paths, vec!["tests.sh".to_string()]);
+        assert_eq!(sealed.sealed_from.as_deref(), Some(tests_sub.id.as_str()));
+        assert_eq!(sealed.sealed_tree_oid.as_deref(), Some(tests_sub.tree_oid.as_str()));
+        assert_eq!(sealed.sealed_paths, vec!["tests.sh".to_string()]);
         assert_eq!(
-            sealed.tests_overridden,
+            sealed.sealed_overridden,
             vec!["tests.sh".to_string()],
             "the discarded candidate edit is recorded as tamper evidence"
         );
@@ -3683,9 +3662,9 @@ mod tests {
         )
         .unwrap();
         assert!(sealed.tests_passed, "overlay supplies the tests; good impl passes");
-        assert_eq!(sealed.tests_paths, vec!["tests.sh".to_string()]);
+        assert_eq!(sealed.sealed_paths, vec!["tests.sh".to_string()]);
         assert!(
-            sealed.tests_overridden.is_empty(),
+            sealed.sealed_overridden.is_empty(),
             "never-copied is normal, not an override"
         );
     }
@@ -3750,11 +3729,11 @@ mod tests {
             sealed.tests_passed,
             "restored flaky.sh runs against the good impl, obsolete.txt is gone"
         );
-        let mut paths = sealed.tests_paths.clone();
+        let mut paths = sealed.sealed_paths.clone();
         paths.sort();
         assert_eq!(paths, vec!["flaky.sh".to_string(), "obsolete.txt".to_string()]);
         assert_eq!(
-            sealed.tests_overridden,
+            sealed.sealed_overridden,
             vec!["flaky.sh".to_string()],
             "deleting a sealed test is an override; keeping base obsolete.txt is not"
         );
@@ -3855,7 +3834,7 @@ mod tests {
         assert!(mixed.selected_submission.is_none());
         assert!(!mixed.can_auto_apply);
         assert!(
-            mixed.reasons[0].contains("different test sets"),
+            mixed.reasons[0].contains("different sealed sets"),
             "got reasons: {:?}",
             mixed.reasons
         );
@@ -3870,27 +3849,26 @@ mod tests {
         assert!(verdict.selected_submission.is_some());
         assert!(verdict.can_auto_apply);
         assert!(
-            verdict.reasons.iter().any(|r| r.contains("sealed test set")),
+            verdict.reasons.iter().any(|r| r.contains("sealed set")),
             "verdict cites the sealed provenance, got: {:?}",
             verdict.reasons
         );
     }
 
-    /// Records written before the sealed-tests fields existed must read back
-    /// as submission-sourced (which is what they were).
+    /// Records written before the sealed-overlay fields existed must read
+    /// back as unsealed (which is what they were).
     #[test]
-    fn team_verification_legacy_json_defaults_to_submission_source() {
+    fn team_verification_legacy_json_defaults_to_unsealed() {
         let legacy = r#"{
             "id": "ver-1", "submission_id": "sub-1", "owner_agent": "codex",
             "round": 1, "command": ["cargo", "test"],
             "applies_cleanly": true, "tests_passed": true
         }"#;
         let v: TeamVerification = serde_json::from_str(legacy).unwrap();
-        assert_eq!(v.tests_source, TESTS_SOURCE_SUBMISSION);
-        assert!(v.tests_from.is_none());
-        assert!(v.tests_tree_oid.is_none());
-        assert!(v.tests_paths.is_empty());
-        assert!(v.tests_overridden.is_empty());
+        assert!(v.sealed_from.is_none());
+        assert!(v.sealed_tree_oid.is_none());
+        assert!(v.sealed_paths.is_empty());
+        assert!(v.sealed_overridden.is_empty());
     }
 
     #[test]
@@ -4526,11 +4504,10 @@ mod tests {
                 isolation: "workspace".into(),
                 capture_id: None,
                 failure: None,
-                tests_source: TESTS_SOURCE_SUBMISSION.into(),
-                tests_from: None,
-                tests_tree_oid: None,
-                tests_paths: vec![],
-                tests_overridden: vec![],
+                sealed_from: None,
+                sealed_tree_oid: None,
+                sealed_paths: vec![],
+                sealed_overridden: vec![],
             };
             let ev = event(
                 "run-v",

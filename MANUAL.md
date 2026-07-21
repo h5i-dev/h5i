@@ -3332,7 +3332,7 @@ inboxes and never locks the round.
 | `h5i team compare <team> [--json]` | Side-by-side candidates + verifier metrics (advisory only — does not pick a winner). |
 | `h5i team artifact show <id> [--team T] [--diff] [--summary] [--tests] [--json]` | Read one teammate's submission by artifact id — the **in-box, read-only** per-candidate view a granted reviewer uses, so a boxed reviewer never needs the host-only `compare`. Defaults to the unified diff against the team base; `--summary` / `--tests` show the submission summary / captured test evidence (capture ids + change stats). Resolves `--team` from the current team / `$H5I_TEAM`. |
 | `h5i team sync <team> [--json]` | **Live ingest**: apply every agent's staged in-box submissions/reviews to `refs/h5i/team/*` now, without the box exiting (the on-demand counterpart to the at-exit ingest). Lets a run advance while the team Stop hook keeps boxes alive — no relaunch. |
-| `h5i team verify <team> --agent <id> [--isolation TIER] [--tests-from SRC] -- <cmd>` | **Neutral, sandboxed verifier**: replays the frozen candidate into a throwaway worktree at the run base and runs `<cmd>` under the fail-closed `default` build/test profile. `--isolation` (`workspace`/`process`/`supervised`/`container`) defaults to the strongest tier the host can enforce (falls back to `workspace`); the tier is recorded on the verification. `--tests-from` **seals the test set**: `SRC` is a submission id or team agent id (must differ from the candidate's owner) whose base..commit diff is overlaid over the candidate *after* its patch — the candidate's own edits to those paths are discarded (recorded as `tests_overridden` tamper evidence) so it cannot weaken tests it was handed; the verification records the sealed source, tree digest, and pinned paths. |
+| `h5i team verify <team> --agent <id> [--isolation TIER] [--sealed-from SRC] -- <cmd>` | **Neutral, sandboxed verifier**: replays the frozen candidate into a throwaway worktree at the run base and runs `<cmd>` under the fail-closed `default` build/test profile. `--isolation` (`workspace`/`process`/`supervised`/`container`) defaults to the strongest tier the host can enforce (falls back to `workspace`); the tier is recorded on the verification. `--sealed-from` **seals part of the checked tree** (typically a test-designer's test set — the mechanism is content-agnostic): `SRC` is a submission id or team agent id (must differ from the candidate's owner) whose base..commit diff is overlaid over the candidate *after* its patch — the candidate's own edits to those paths are discarded (recorded as `sealed_overridden` tamper evidence) so it cannot weaken checks it was handed; the verification records the sealed source, tree digest, and pinned paths. |
 | `h5i team finalize <team> [--json]` | Apply the finalization rule over **verifier** evidence → a verdict event. Hard gates (tests pass, applies cleanly) first; `smallest diff` only breaks ties among gate-passers. Records method + the verifier command + losers' reasons. No gate-passer → `no_verdict` (never applies a loser). |
 | `h5i team apply <team> [--winner <submission-id>] [--agent <id>] [--force] [--json]` | Replay the winning submission's recorded patch (`base..commit`) into the current branch and commit; records source + target commit oids; on conflict records an event, never mutates the artifact. Gated on the verdict's `can_auto_apply` unless `--force`. **`--agent <id>`** picks that roster agent's **latest submission directly, skipping verify/finalize** — an explicit human override that bypasses the verdict gate (no `--force` needed; mutually exclusive with `--winner`). The agent must have submitted (`team submit`) — there is no apply-direct-from-env-branch. |
 | `h5i team worker --once \| --watch [--interval N] [--id ID] [--lease-ttl S] [--json]` | Optional automation: one lease-and-finalize pass (`--once`) or an opt-in in-process loop (`--watch`). **Finalize-only — never auto-applies.** Leases are idempotent + TTL'd; for production prefer an external scheduler driving `--once`. |
@@ -3475,21 +3475,24 @@ refuses (`no_verdict`) — the comparison isn't apples-to-apples.
 One gap remains in the default mode: the verifier runs whatever test files are
 in the candidate's *own* tree, so a candidate can still weaken tests it was
 handed (a test-designer → coder split is otherwise guarded only at the prompt
-level). `--tests-from <submission-or-agent>` closes it: the named submission's
-base..commit diff becomes the **sealed test set**, overlaid over every
-candidate in the verify worktree after its patch applies. Sealed content
-always wins — a candidate edit to a sealed path is discarded and recorded as
-`tests_overridden` (tamper evidence, surfaced rather than silently dropped),
-and a faithful candidate needn't carry the tests at all (the overlay supplies
-them). Self-sealing fails closed, and `finalize` extends the apples-to-apples
-rule to content: once any candidate is verified sealed, every candidate must
-be verified against the *same* sealed set (same tests tree digest) or the run
-records `no_verdict`. Scope note: the sealed set is exactly what the sealing
-submission changed vs the run base — a designer that wants an *existing* test
-or harness config file (`conftest.py`, `Cargo.toml`, …) pinned must include it
-in its own commit. In the eDSL this is `c.verify_with_tests(&candidate,
-&tests.id, cmd, tier)`, or `.verify_tests_from(...)` on the
-`ensemble`/`integrate`/`arena` builders.
+level). `--sealed-from <submission-or-agent>` closes it: the named
+submission's base..commit diff becomes a **sealed overlay**, applied over
+every candidate in the verify worktree after its patch. Sealed content always
+wins — a candidate edit to a sealed path is discarded and recorded as
+`sealed_overridden` (tamper evidence, surfaced rather than silently dropped),
+and a faithful candidate needn't carry the sealed files at all (the overlay
+supplies them). Self-sealing fails closed, and `finalize` extends the
+apples-to-apples rule to content: once any candidate is verified sealed,
+every candidate must be verified against the *same* overlay (same sealed
+tree digest) or the run records `no_verdict`. The sealed content is
+typically a test set, but the mechanism is content-agnostic — golden
+reference files, a scoring harness for an arena, or an interface spec the
+candidate must not touch seal the same way. Scope note: the sealed set is
+exactly what the sealing submission changed vs the run base — a designer
+that wants an *existing* test or harness config file (`conftest.py`,
+`Cargo.toml`, …) pinned must include it in its own commit. In the eDSL this
+is `c.verify_sealed(&candidate, &tests.id, cmd, tier)`, or
+`.verify_sealed_from(...)` on the `ensemble`/`integrate`/`arena` builders.
 
 ### Minimal-human-labor finalization
 
