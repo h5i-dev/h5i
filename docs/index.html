@@ -1697,8 +1697,6 @@
 <span class="t-prompt">from</span> h5i.orchestra <span class="t-prompt">import</span> Conductor
 
 <span class="t-prompt">async def</span> main():
-    task = <span class="t-ai">"implement quicksort in python with unit test"</span>
-
     <span class="t-prompt">async with</span> Conductor(<span class="t-ai">"."</span>, <span class="t-ai">"fix-auth"</span>) <span class="t-prompt">as</span> c:
         claude = <span class="t-prompt">await</span> c.hire(<span class="t-ai">"claude-agent"</span>, runtime=<span class="t-ai">"claude"</span>)
         codex  = <span class="t-prompt">await</span> c.hire(<span class="t-ai">"codex-agent"</span>,  runtime=<span class="t-ai">"codex"</span>)
@@ -1722,7 +1720,7 @@
         verdict = <span class="t-prompt">await</span> c.judge()
         <span class="t-prompt">print</span>(<span class="t-ai">"winner:"</span>, verdict.selected_submission)
 
-asyncio.run(main())</pre></div>
+asyncio.run(main(<span class="t-ai">"implement quicksort in python with unit test"</span>))</pre></div>
       </div>
       <div class="stack">
         <p style="color:var(--text-dim);line-height:1.7;margin:0;">The same auditable workspace that contains one agent scales to a whole ensemble, and the workflow itself is <strong>a program you write</strong>. With <code>h5i-orchestra</code>, parallel fan-out, loops, and conditionals are ordinary control flow in Python or Rust: hire a roster of personas, let them work sealed and in parallel, cross-review, verify in a neutral sandbox, and let an explainable verdict pick the winner. Every step is journaled to <code>refs/h5i/team</code>, so an interrupted run resumes instead of re-paying agent turns.</p>
@@ -1831,7 +1829,7 @@ asyncio.run(main())</pre></div>
   <div class="cta-glow"></div>
   <div class="container">
     <div class="cta-inner">
-      <h2 class="cta-title">Run your next change as a team.</h2>
+      <h2 class="cta-title">Give every agent an auditable workspace.</h2>
       <p class="cta-sub">Spin up a roster of agents, seal their independent attempts, let a neutral verifier pick the winner, and merge one auditable result. Versioned in your Git. Apache 2.0. No SaaS, no lock-in.</p>
       <div class="hero-actions">
         <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
