@@ -1872,9 +1872,17 @@ pub struct SearchFilters {
 /// captures of a since-removed env (no on-disk manifest needed). Unlike `find`,
 /// a bare slug shared by two agents matches both (this is a filter, not a
 /// unique selection).
+///
+/// The sentinel `none` selects the opposite set: captures taken *outside* any
+/// environment (plain `h5i capture run`/`commit` in the primary checkout,
+/// `env_id` absent). The sentinel wins over an env that happens to be slugged
+/// `none` — name such an env by its full `env/<agent>/none` id instead.
 pub fn env_id_matches(env_id: Option<&str>, query: &str) -> bool {
-    let Some(id) = env_id else { return false };
     let q = query.trim().trim_matches('/');
+    if q == "none" {
+        return env_id.is_none();
+    }
+    let Some(id) = env_id else { return false };
     id == q || id == format!("env/{q}") || id.rsplit('/').next() == Some(q)
 }
 
@@ -2977,6 +2985,18 @@ mod tests {
         assert!(!env_id_matches(id, "claude")); // agent alone is not the slug
         assert!(!env_id_matches(id, "codex/fix-auth")); // wrong agent
         assert!(!env_id_matches(None, "fix-auth")); // capture has no env_id
+    }
+
+    #[test]
+    fn env_id_matches_none_sentinel_selects_workspace_captures() {
+        // `none` selects captures taken outside any env…
+        assert!(env_id_matches(None, "none"));
+        assert!(env_id_matches(None, " none ")); // trimmed like every query
+        // …and never an env capture, even one slugged `none`: the sentinel
+        // wins, and such an env stays reachable by its full id.
+        assert!(!env_id_matches(Some("env/claude/fix-auth"), "none"));
+        assert!(!env_id_matches(Some("env/claude/none"), "none"));
+        assert!(env_id_matches(Some("env/claude/none"), "env/claude/none"));
     }
 
     #[test]

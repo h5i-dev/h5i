@@ -97,6 +97,8 @@ pub enum ObjectsCommands {
         tool: Option<String>,
         /// Only objects captured inside this environment (`env run`). Accepts the
         /// full id `env/<agent>/<slug>`, `<agent>/<slug>`, or a bare `<slug>`.
+        /// The sentinel `none` selects the opposite: workspace captures taken
+        /// outside any environment.
         #[arg(long)]
         env: Option<String>,
         /// Emit a structured JSON array (id, cmd, exit, action, tool, status,
@@ -140,6 +142,8 @@ pub enum ObjectsCommands {
         tool: Option<String>,
         /// Only captures taken inside this environment (`env run`). Accepts the
         /// full id `env/<agent>/<slug>`, `<agent>/<slug>`, or a bare `<slug>`.
+        /// The sentinel `none` selects the opposite: workspace captures taken
+        /// outside any environment.
         #[arg(long)]
         env: Option<String>,
         /// Only captures at most this old (e.g. 7d, 12h, 90m).
@@ -508,7 +512,9 @@ pub fn run(action: ObjectsCommands) -> anyhow::Result<()> {
                             filter: cfg,
                             env_id: None,
                             policy_digest: None,
-                            evidence_source: None,
+                            // Explicit provenance: unconfined host capture in the
+                            // primary checkout, not the absence of a source.
+                            evidence_source: Some("workspace".into()),
                             egress: None,
                             redact: false,
                         };
@@ -571,7 +577,7 @@ pub fn run(action: ObjectsCommands) -> anyhow::Result<()> {
                         filter: cfg,
                         env_id: None,
                         policy_digest: None,
-                        evidence_source: None,
+                        evidence_source: Some("workspace".into()),
                         egress: None,
                         redact: false,
                     };

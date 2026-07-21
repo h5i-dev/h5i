@@ -1866,6 +1866,7 @@ h5i recall objects                       # list captures (newest first) with sum
 h5i recall objects --status failed       # filter by structured status
 h5i recall objects --tool pytest         # by tool  (compose with --branch/--file/--diff)
 h5i recall objects --env fix-auth --json # typed feed for headless / CI grading
+h5i recall objects --env none            # only workspace captures (taken outside any env)
 h5i recall object <id>                    # rehydrate the FULL raw bytes
 h5i recall object <id> --summary          # the reduced summary only
 h5i recall object <id> --manifest         # the full manifest JSON record
@@ -3574,7 +3575,7 @@ h5i serve --port 8080
 | **Memory** | Browse and diff agent memory snapshots linked to each commit |
 | **Sessions** | Per-commit session data: exploration footprint, uncertainty heatmap, omissions, churn |
 | **Board** | Environments as **cards flowing through lifecycle columns** (Created / Working / Proposed / Applied / Aborted) — the parallel-agents view. Each card shows the pid-verified **live session** (`● shell pid N`, observers, or a `stale` flag when a `running` status has no live writer), the PR it tracks, base drift, the boundary-pressure score, a diffstat vs the pinned base, capture count, and the parent branch it proposes onto. Read-only like every serve surface: instead of mutating buttons, every card offers its **next CLI command one click from the clipboard** (`env shell` → `env propose` → `env apply` → `env gc`). Polls `GET /api/envs`. |
-| **Sandbox** | The "flight recorder" for [`h5i env`](#h5i-env): host-readiness strip (per-tier probe), an env fleet table with a deterministic **boundary-pressure** score, a five-lane (FS / NET / PROC / RESOURCE / PROVENANCE) per-run timeline, and the enforced-policy inspector. Read-only. Surfaces denials honestly — "Boundary blocked" only when enforcement fired, "Boundary pressure" for probing shapes, "Weak isolation" for capability gaps. Backed by `GET /api/envs`, `/api/env/:agent/:slug`, `/api/env/probe`. |
+| **Sandbox** | The "flight recorder" for [`h5i env`](#h5i-env): host-readiness strip (per-tier probe), an env fleet table with a deterministic **boundary-pressure** score, a five-lane (FS / NET / PROC / RESOURCE / PROVENANCE) per-run timeline, and the enforced-policy inspector. Read-only. Surfaces denials honestly — "Boundary blocked" only when enforcement fired, "Boundary pressure" for probing shapes, "Weak isolation" for capability gaps. Backed by `GET /api/envs`, `/api/env/:agent/:slug`, `/api/env/probe`. Above the fleet sits the **workspace bucket**: captures taken *outside* any env (plain `h5i capture run`/`commit` in the primary checkout), explicitly labeled **unconfined — host trust** with no policy panel — the absence of confinement is displayed, never implied. It is deliberately a bucket, not an env card: an env row is a claim (isolation tier, policy digest, mediated commit) the workspace doesn't make. Backed by `GET /api/workspace`, `/api/workspace/captures/:id` (env-owned capture ids are refused there, mirroring `env inspect`'s ownership check in reverse). |
 
 ---
 
