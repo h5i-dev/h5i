@@ -398,6 +398,20 @@ export interface EnvDetail {
   diffstat?: string | null;
 }
 
+/** Evidence captured outside any environment (plain `h5i capture run` /
+ * `capture commit` in the primary checkout). Unconfined — host trust: no
+ * policy was enforced, so this is surfaced as a distinct bucket, never as
+ * an environment. */
+export interface WorkspaceDetail {
+  branch?: string | null;
+  /** Env-less captures on the current branch (list below is capped). */
+  total: number;
+  /** Env-less captures across all branches. */
+  total_all_branches: number;
+  /** Newest first, current branch only. */
+  captures: EnvCaptureView[];
+}
+
 export interface ProbeTier {
   claim: string;
   satisfiable: boolean;
@@ -724,6 +738,11 @@ export const api = {
       `/api/env/${encodeURIComponent(agent)}/${encodeURIComponent(
         slug,
       )}/captures/${encodeURIComponent(id)}`,
+    ),
+  workspace: () => getJSON<WorkspaceDetail>("/api/workspace"),
+  workspaceCapture: (id: string) =>
+    getJSON<{ render: string }>(
+      `/api/workspace/captures/${encodeURIComponent(id)}`,
     ),
 
   // Replay (the flight recorder) + cockpit + prompt coach + radio

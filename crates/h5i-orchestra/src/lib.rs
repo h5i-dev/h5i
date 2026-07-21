@@ -268,10 +268,56 @@ impl Conductor {
     }
 
     /// Neutrally verify an artifact owner's latest submission in a fresh
-    /// sandboxed worktree — never the author's box (`team verify`).
+    /// sandboxed worktree — never the author's box (`team verify`). The
+    /// command runs against the candidate's own submitted tree, tests
+    /// included — appropriate when tests are part of the deliverable under
+    /// review. When tests are meant to be an independent check authored by
+    /// another agent, use [`Conductor::verify_sealed`].
     pub async fn verify<I, S>(
         &self,
         artifact: &TeamArtifact,
+        command: I,
+        isolation: Option<&str>,
+    ) -> Result<TeamVerification, H5iError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.verify_inner(artifact, None, command, isolation).await
+    }
+
+    /// Like [`Conductor::verify`], but with a sealed overlay: `sealed_from`
+    /// names the submission (a submission id, or a team agent id → that
+    /// agent's latest submission) whose base..commit diff is authoritative.
+    /// Its paths are overlaid over the candidate in the verify worktree
+    /// before the command runs, so the candidate cannot weaken checks it
+    /// was handed — its edits to sealed paths are discarded and recorded as
+    /// `sealed_overridden` tamper evidence. The typical sealed content is a
+    /// test-designer's test set, but the mechanism is content-agnostic
+    /// (golden files, scoring harnesses, protected specs). A score holding
+    /// the designer's `TeamArtifact` should pass `&tests.id` to pin that
+    /// exact submission. The sealing agent must differ from the candidate's
+    /// owner (fails closed on self-sealing), and `default_verdict` refuses
+    /// to compare candidates verified against divergent sealed sets.
+    pub async fn verify_sealed<I, S>(
+        &self,
+        artifact: &TeamArtifact,
+        sealed_from: &str,
+        command: I,
+        isolation: Option<&str>,
+    ) -> Result<TeamVerification, H5iError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.verify_inner(artifact, Some(sealed_from.to_string()), command, isolation)
+            .await
+    }
+
+    async fn verify_inner<I, S>(
+        &self,
+        artifact: &TeamArtifact,
+        sealed_from: Option<String>,
         command: I,
         isolation: Option<&str>,
     ) -> Result<TeamVerification, H5iError>
@@ -293,6 +339,7 @@ impl Conductor {
                     &owner,
                     command,
                     isolation.as_deref(),
+                    sealed_from.as_deref(),
                     &core.actor,
                 )
             },

@@ -1958,6 +1958,124 @@ async fn api_env_capture(
     }
 }
 
+// ── Workspace evidence (captures taken outside any env) ──────────────────────
+//
+// Plain `h5i capture run`/`capture commit` in the primary checkout stores
+// captures with `env_id: None` — real evidence, but owned by no environment,
+// so the env-scoped routes above never surface it. These routes give that
+// work an explicit, honestly-labeled home: the dashboard renders it as an
+// "unconfined — host trust" bucket, never as an environment (an env row is a
+// *claim* — policy digest, mediated commit — that the workspace doesn't make).
+
+/// Newest-first captures with no `env_id`, capped to keep the payload bounded.
+const WORKSPACE_CAPTURES_CAP: usize = 300;
+
+#[derive(Serialize)]
+pub struct WorkspaceDetail {
+    /// Current checked-out branch of the primary worktree, if resolvable.
+    pub branch: Option<String>,
+    /// Env-less captures on the current branch (may exceed `captures.len()`).
+    pub total: usize,
+    /// Env-less captures across ALL branches — shown so a small `total`
+    /// doesn't read as "no other evidence exists".
+    pub total_all_branches: usize,
+    /// Newest first, current branch only, capped at `WORKSPACE_CAPTURES_CAP`.
+    pub captures: Vec<EnvCaptureView>,
+}
+
+/// GET /api/workspace — evidence captured outside any environment, scoped to
+/// the branch the primary checkout is currently on (a capture list mixing
+/// branches would conflate unrelated lines of work). A detached HEAD scopes
+/// to captures that also recorded no branch.
+async fn api_workspace(State(state): State<Arc<AppState>>) -> Json<WorkspaceDetail> {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<WorkspaceDetail> {
+        let repo = H5iRepository::open(&path)?;
+        let git = repo.git();
+        let branch = git
+            .head()
+            .ok()
+            .and_then(|h| h.shorthand().map(str::to_string));
+        let mut total_all_branches = 0usize;
+        let mut manifests: Vec<crate::objects::Manifest> = crate::objects::read_manifests(git)
+            .into_iter()
+            .filter(|m| m.env_id.is_none())
+            .inspect(|_| total_all_branches += 1)
+            .filter(|m| m.branch == branch)
+            .collect();
+        // Sort explicitly: the manifests jsonl is union-merged across writers,
+        // so file order is not reliably chronological. RFC3339 UTC timestamps
+        // compare lexicographically.
+        manifests.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        let total = manifests.len();
+        manifests.truncate(WORKSPACE_CAPTURES_CAP);
+        Ok(WorkspaceDetail {
+            branch,
+            total,
+            total_all_branches,
+            captures: manifests.iter().map(EnvCaptureView::from).collect(),
+        })
+    })
+    .await;
+    Json(result.ok().and_then(|r| r.ok()).unwrap_or(WorkspaceDetail {
+        branch: None,
+        total: 0,
+        total_all_branches: 0,
+        captures: Vec::new(),
+    }))
+}
+
+/// GET /api/workspace/captures/:id — one env-less capture, rendered like
+/// `env inspect` (structured findings, no raw rehydration). Env-owned capture
+/// ids are refused, mirroring `env::inspect`'s ownership check in reverse —
+/// this route can't be used to read an environment's evidence unscoped.
+async fn api_workspace_capture(
+    State(state): State<Arc<AppState>>,
+    Path(cap_id): Path<String>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<String>> {
+        let repo = H5iRepository::open(&path)?;
+        let git = repo.git();
+        let Ok(m) = crate::objects::resolve_manifest(git, &cap_id) else {
+            return Ok(None);
+        };
+        if m.env_id.is_some() {
+            return Ok(None);
+        }
+        let mut out = String::new();
+        out.push_str(&format!("── Capture {} (workspace) ──\n", m.id));
+        if let Some(cmd) = &m.cmd {
+            out.push_str(&format!("  cmd      : {cmd}\n"));
+        }
+        if let Some(code) = m.exit_code {
+            out.push_str(&format!("  exit     : {code}\n"));
+        }
+        if let Some(source) = &m.evidence_source {
+            out.push_str(&format!("  source   : {source}\n"));
+        }
+        if !m.redactions.is_empty() {
+            out.push_str(&format!("  redacted : {}\n", m.redactions.join(", ")));
+        }
+        out.push_str(&format!(
+            "  raw      : {} bytes, {} lines (object {})\n",
+            m.raw_size, m.raw_lines, m.raw_oid
+        ));
+        out.push('\n');
+        match &m.structured {
+            Some(s) => out.push_str(&crate::structured::render_compact(s)),
+            None => out.push_str(&m.summary),
+        }
+        out.push('\n');
+        Ok(Some(out))
+    })
+    .await;
+    match result.ok().and_then(|r| r.ok()).flatten() {
+        Some(text) => Json(serde_json::json!({ "render": text })).into_response(),
+        None => (StatusCode::NOT_FOUND, "capture not found in the workspace").into_response(),
+    }
+}
+
 // ── Replay (the flight recorder) ───────────────────────────────────────────────
 //
 // The roadmap's centerpiece: "Review the run, not just the diff." A Replay is a
@@ -3495,6 +3613,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/env/:agent/:slug", get(api_env_detail))
         .route("/api/env/:agent/:slug/replay", get(api_env_replay))
         .route("/api/env/:agent/:slug/captures/:id", get(api_env_capture))
+        .route("/api/workspace", get(api_workspace))
+        .route("/api/workspace/captures/:id", get(api_workspace_capture))
         .route("/api/teams", get(api_teams))
         .route("/api/team/:id", get(api_team_detail))
         .route("/api/team/:id/compare", get(api_team_compare))

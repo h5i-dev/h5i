@@ -2278,6 +2278,7 @@ h5i capture memory -m &quot;end of session&quot;  # checkpoint memory
 h5i recall objects --status failed       # filter by structured status
 h5i recall objects --tool pytest         # by tool  (compose with --branch/--file/--diff)
 h5i recall objects --env fix-auth --json # typed feed for headless / CI grading
+h5i recall objects --env none            # only workspace captures (taken outside any env)
 h5i recall object &lt;id&gt;                    # rehydrate the FULL raw bytes
 h5i recall object &lt;id&gt; --summary          # the reduced summary only
 h5i recall object &lt;id&gt; --manifest         # the full manifest JSON record
@@ -4121,8 +4122,8 @@ inboxes and never locks the round.</p>
 <td><strong>Live ingest</strong>: apply every agent's staged in-box submissions/reviews to <code>refs/h5i/team/*</code> now, without the box exiting (the on-demand counterpart to the at-exit ingest). Lets a run advance while the team Stop hook keeps boxes alive — no relaunch.</td>
 </tr>
 <tr>
-<td><code>h5i team verify &lt;team&gt; --agent &lt;id&gt; [--isolation TIER] -- &lt;cmd&gt;</code></td>
-<td><strong>Neutral, sandboxed verifier</strong>: replays the frozen candidate into a throwaway worktree at the run base and runs <code>&lt;cmd&gt;</code> under the fail-closed <code>default</code> build/test profile. <code>--isolation</code> (<code>workspace</code>/<code>process</code>/<code>supervised</code>/<code>container</code>) defaults to the strongest tier the host can enforce (falls back to <code>workspace</code>); the tier is recorded on the verification.</td>
+<td><code>h5i team verify &lt;team&gt; --agent &lt;id&gt; [--isolation TIER] [--sealed-from SRC] -- &lt;cmd&gt;</code></td>
+<td><strong>Neutral, sandboxed verifier</strong>: replays the frozen candidate into a throwaway worktree at the run base and runs <code>&lt;cmd&gt;</code> under the fail-closed <code>default</code> build/test profile. <code>--isolation</code> (<code>workspace</code>/<code>process</code>/<code>supervised</code>/<code>container</code>) defaults to the strongest tier the host can enforce (falls back to <code>workspace</code>); the tier is recorded on the verification. <code>--sealed-from</code> <strong>seals part of the checked tree</strong> (typically a test-designer's test set — the mechanism is content-agnostic): <code>SRC</code> is a submission id or team agent id (must differ from the candidate's owner) whose base..commit diff is overlaid over the candidate <em>after</em> its patch — the candidate's own edits to those paths are discarded (recorded as <code>sealed_overridden</code> tamper evidence) so it cannot weaken checks it was handed; the verification records the sealed source, tree digest, and pinned paths.</td>
 </tr>
 <tr>
 <td><code>h5i team finalize &lt;team&gt; [--json]</code></td>
@@ -4266,6 +4267,27 @@ diffstat tie-breaker (<code>SmallestDiff</code>) is consulted <strong>only among
 pass every gate</strong> — so a candidate can't win by deleting tests or stubbing
 features. If candidates were verified with <em>different</em> commands, <code>finalize</code>
 refuses (<code>no_verdict</code>) — the comparison isn't apples-to-apples.</p>
+<p>One gap remains in the default mode: the verifier runs whatever test files are
+in the candidate's <em>own</em> tree, so a candidate can still weaken tests it was
+handed (a test-designer → coder split is otherwise guarded only at the prompt
+level). <code>--sealed-from &lt;submission-or-agent&gt;</code> closes it: the named
+submission's base..commit diff becomes a <strong>sealed overlay</strong>, applied over
+every candidate in the verify worktree after its patch. Sealed content always
+wins — a candidate edit to a sealed path is discarded and recorded as
+<code>sealed_overridden</code> (tamper evidence, surfaced rather than silently dropped),
+and a faithful candidate needn't carry the sealed files at all (the overlay
+supplies them). Self-sealing fails closed, and <code>finalize</code> extends the
+apples-to-apples rule to content: once any candidate is verified sealed,
+every candidate must be verified against the <em>same</em> overlay (same sealed
+tree digest) or the run records <code>no_verdict</code>. The sealed content is
+typically a test set, but the mechanism is content-agnostic — golden
+reference files, a scoring harness for an arena, or an interface spec the
+candidate must not touch seal the same way. Scope note: the sealed set is
+exactly what the sealing submission changed vs the run base — a designer
+that wants an <em>existing</em> test or harness config file (<code>conftest.py</code>,
+<code>Cargo.toml</code>, …) pinned must include it in its own commit. In the eDSL this
+is <code>c.verify_sealed(&amp;candidate, &amp;tests.id, cmd, tier)</code>, or
+<code>.verify_sealed_from(...)</code> on the <code>ensemble</code>/<code>integrate</code>/<code>arena</code> builders.</p>
 <h3 id="minimal-human-labor-finalization">Minimal-human-labor finalization</h3>
 <p>The default rule is <code>VerifierTestsPass, AppliesCleanly, SmallestDiff</code> and runs
 with no human in the loop, yet every verdict is <strong>explainable</strong> (method + which
@@ -4365,7 +4387,7 @@ h5i serve --port 8080
 </tr>
 <tr>
 <td><strong>Sandbox</strong></td>
-<td>The "flight recorder" for <a href="#h5i-env"><code>h5i env</code></a>: host-readiness strip (per-tier probe), an env fleet table with a deterministic <strong>boundary-pressure</strong> score, a five-lane (FS / NET / PROC / RESOURCE / PROVENANCE) per-run timeline, and the enforced-policy inspector. Read-only. Surfaces denials honestly — "Boundary blocked" only when enforcement fired, "Boundary pressure" for probing shapes, "Weak isolation" for capability gaps. Backed by <code>GET /api/envs</code>, <code>/api/env/:agent/:slug</code>, <code>/api/env/probe</code>.</td>
+<td>The "flight recorder" for <a href="#h5i-env"><code>h5i env</code></a>: host-readiness strip (per-tier probe), an env fleet table with a deterministic <strong>boundary-pressure</strong> score, a five-lane (FS / NET / PROC / RESOURCE / PROVENANCE) per-run timeline, and the enforced-policy inspector. Read-only. Surfaces denials honestly — "Boundary blocked" only when enforcement fired, "Boundary pressure" for probing shapes, "Weak isolation" for capability gaps. Backed by <code>GET /api/envs</code>, <code>/api/env/:agent/:slug</code>, <code>/api/env/probe</code>. Above the fleet sits the <strong>workspace bucket</strong>: captures taken <em>outside</em> any env (plain <code>h5i capture run</code>/<code>commit</code> in the primary checkout), scoped to the <strong>branch currently checked out</strong> (an all-branch list would conflate unrelated lines of work; the pane notes how many captures live on other branches), explicitly labeled <strong>unconfined — host trust</strong> with no policy panel — the absence of confinement is displayed, never implied. It is deliberately a bucket, not an env card: an env row is a claim (isolation tier, policy digest, mediated commit) the workspace doesn't make. Backed by <code>GET /api/workspace</code>, <code>/api/workspace/captures/:id</code> (env-owned capture ids are refused there, mirroring <code>env inspect</code>'s ownership check in reverse).</td>
 </tr>
 </tbody>
 </table>
