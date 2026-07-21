@@ -228,6 +228,12 @@ pub enum TeamCommands {
         /// enforce, falling back to workspace
         #[arg(long)]
         isolation: Option<String>,
+        /// Seal the test set: a submission id or team agent id whose
+        /// base..commit diff is overlaid over the candidate before the command
+        /// runs, so the candidate's own edits to those paths cannot weaken the
+        /// check (must be a different agent than the candidate)
+        #[arg(long)]
+        tests_from: Option<String>,
         /// Verifier command and args (everything after `--`), e.g. `-- cargo test`
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
         cmd: Vec<String>,
@@ -1262,7 +1268,7 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                         }
                     }
                 }
-                TeamCommands::Verify { team, agent, isolation, cmd, json } => {
+                TeamCommands::Verify { team, agent, isolation, tests_from, cmd, json } => {
                     let verification = h5i_core::team::verify(
                         git,
                         &h5i_root,
@@ -1270,6 +1276,7 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                         &agent,
                         cmd,
                         isolation.as_deref(),
+                        tests_from.as_deref(),
                         &actor,
                     )?;
                     if json {
@@ -1284,6 +1291,21 @@ pub fn run(action: TeamCommands) -> anyhow::Result<()> {
                             verification.applies_cleanly,
                             verification.tests_passed
                         );
+                        if verification.tests_source == h5i_core::team::TESTS_SOURCE_SEALED {
+                            println!(
+                                "  {} sealed tests from {} ({} path(s) pinned)",
+                                STEP,
+                                verification.tests_from.as_deref().unwrap_or("?"),
+                                verification.tests_paths.len()
+                            );
+                            if !verification.tests_overridden.is_empty() {
+                                println!(
+                                    "  {} candidate edits to sealed paths were discarded: {}",
+                                    style("⚠").yellow(),
+                                    verification.tests_overridden.join(", ")
+                                );
+                            }
+                        }
                     }
                 }
                 TeamCommands::Finalize { team, json } => {

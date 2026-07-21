@@ -398,6 +398,10 @@ struct VerifyParams {
     command: Vec<String>,
     #[serde(default)]
     isolation: Option<String>,
+    /// Sealed-tests mode: submission id or team agent id whose base..commit
+    /// diff is overlaid over the candidate before the command runs.
+    #[serde(default)]
+    tests_from: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -632,11 +636,15 @@ impl Server {
             "conductor.freeze" => ok(self.conductor()?.freeze().await.map_err(Rej::from)?),
             "conductor.verify" => {
                 let p: VerifyParams = parse(params)?;
-                ok(self
-                    .conductor()?
-                    .verify(&p.artifact, p.command, p.isolation.as_deref())
-                    .await
-                    .map_err(Rej::from)?)
+                let c = self.conductor()?;
+                let v = match p.tests_from.as_deref() {
+                    Some(tf) => {
+                        c.verify_with_tests(&p.artifact, tf, p.command, p.isolation.as_deref())
+                            .await
+                    }
+                    None => c.verify(&p.artifact, p.command, p.isolation.as_deref()).await,
+                };
+                ok(v.map_err(Rej::from)?)
             }
             "conductor.judge" => {
                 let p: JudgeParams = parse(params)?;

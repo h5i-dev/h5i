@@ -816,6 +816,11 @@ mod tests {
                 isolation: "supervised".into(),
                 capture_id: None,
                 failure: None,
+                tests_source: crate::team::TESTS_SOURCE_SUBMISSION.into(),
+                tests_from: None,
+                tests_tree_oid: None,
+                tests_paths: vec![],
+                tests_overridden: vec![],
             }],
             verdict: verdict.then(|| TeamVerdict {
                 selected_submission: Some("sub1".into()),

@@ -26,6 +26,7 @@ pub fn ensemble(c: &Conductor, task: impl Into<String>) -> Ensemble {
         agents: Vec::new(),
         rounds: 1,
         verify_cmd: None,
+        verify_tests_from: None,
         isolation: None,
         policy: None,
     }
@@ -37,6 +38,7 @@ pub struct Ensemble {
     agents: Vec<Agent>,
     rounds: u32,
     verify_cmd: Option<Vec<String>>,
+    verify_tests_from: Option<String>,
     isolation: Option<String>,
     policy: Option<Box<dyn VerdictPolicy>>,
 }
@@ -76,6 +78,15 @@ impl Ensemble {
         self
     }
 
+    /// Seal the verifier's test set: a submission id or team agent id whose
+    /// base..commit diff is overlaid over every candidate before the verify
+    /// command runs (see `Conductor::verify_with_tests`). The sealing agent
+    /// must not be one of the candidates (self-sealing fails closed).
+    pub fn verify_tests_from(mut self, tests_from: impl Into<String>) -> Self {
+        self.verify_tests_from = Some(tests_from.into());
+        self
+    }
+
     /// Isolation tier for the verifier (`workspace`/`process`/`container`…).
     pub fn isolation(mut self, tier: impl Into<String>) -> Self {
         self.isolation = Some(tier.into());
@@ -96,6 +107,7 @@ impl Ensemble {
             agents,
             rounds,
             verify_cmd,
+            verify_tests_from,
             isolation,
             policy,
         } = self;
@@ -188,8 +200,16 @@ impl Ensemble {
         //    share on-disk state; parallel `git worktree add` is racy).
         if let Some(cmd) = &verify_cmd {
             for artifact in latest.values() {
-                c.verify(artifact, cmd.iter().cloned(), isolation.as_deref())
-                    .await?;
+                match &verify_tests_from {
+                    Some(tf) => {
+                        c.verify_with_tests(artifact, tf, cmd.iter().cloned(), isolation.as_deref())
+                            .await?
+                    }
+                    None => {
+                        c.verify(artifact, cmd.iter().cloned(), isolation.as_deref())
+                            .await?
+                    }
+                };
             }
         }
 
@@ -230,6 +250,7 @@ pub fn integrate(c: &Conductor, task: impl Into<String>) -> Integrate {
         parts: Vec::new(),
         integrator: None,
         verify_cmd: None,
+        verify_tests_from: None,
         isolation: None,
     }
 }
@@ -240,6 +261,7 @@ pub struct Integrate {
     parts: Vec<TeamArtifact>,
     integrator: Option<Agent>,
     verify_cmd: Option<Vec<String>>,
+    verify_tests_from: Option<String>,
     isolation: Option<String>,
 }
 
@@ -265,6 +287,16 @@ impl Integrate {
         S: Into<String>,
     {
         self.verify_cmd = Some(command.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Seal the verifier's test set to one of the parts (typically a
+    /// test-designer's artifact — pass its submission id, or the designer's
+    /// team agent id): the integrator's merged candidate is verified against
+    /// that part's tests as overlaid at verify time, so a merge cannot
+    /// weaken them (see `Conductor::verify_with_tests`).
+    pub fn verify_tests_from(mut self, tests_from: impl Into<String>) -> Self {
+        self.verify_tests_from = Some(tests_from.into());
         self
     }
 
@@ -295,11 +327,18 @@ impl Integrate {
             .with_materials(self.parts.iter())
             .await?;
         let verification = match &self.verify_cmd {
-            Some(cmd) => Some(
-                self.c
-                    .verify(&merged, cmd.iter().cloned(), self.isolation.as_deref())
-                    .await?,
-            ),
+            Some(cmd) => Some(match &self.verify_tests_from {
+                Some(tf) => {
+                    self.c
+                        .verify_with_tests(&merged, tf, cmd.iter().cloned(), self.isolation.as_deref())
+                        .await?
+                }
+                None => {
+                    self.c
+                        .verify(&merged, cmd.iter().cloned(), self.isolation.as_deref())
+                        .await?
+                }
+            }),
             None => None,
         };
         Ok(IntegrateOutcome {
@@ -351,6 +390,7 @@ pub fn arena(c: &Conductor, task: impl Into<String>) -> Arena {
         task: task.into(),
         agents: Vec::new(),
         verify_cmd: None,
+        verify_tests_from: None,
         isolation: None,
         policy: None,
     }
@@ -361,6 +401,7 @@ pub struct Arena {
     task: String,
     agents: Vec<Agent>,
     verify_cmd: Option<Vec<String>>,
+    verify_tests_from: Option<String>,
     isolation: Option<String>,
     policy: Option<Box<dyn VerdictPolicy>>,
 }
@@ -386,6 +427,17 @@ impl Arena {
         self
     }
 
+    /// Seal the verifier's test set: a submission id or team agent id (an
+    /// agent OUTSIDE the arena roster — typically a test designer who
+    /// submitted before the arena) whose base..commit diff is overlaid over
+    /// every candidate before the verify command runs (see
+    /// `Conductor::verify_with_tests`). Sealing from one of the competing
+    /// candidates fails closed on that candidate's own verification.
+    pub fn verify_tests_from(mut self, tests_from: impl Into<String>) -> Self {
+        self.verify_tests_from = Some(tests_from.into());
+        self
+    }
+
     pub fn isolation(mut self, tier: impl Into<String>) -> Self {
         self.isolation = Some(tier.into());
         self
@@ -402,6 +454,7 @@ impl Arena {
             task,
             agents,
             verify_cmd,
+            verify_tests_from,
             isolation,
             policy,
         } = self;
@@ -424,8 +477,16 @@ impl Arena {
         c.freeze().await?;
         if let Some(cmd) = &verify_cmd {
             for artifact in &artifacts {
-                c.verify(artifact, cmd.iter().cloned(), isolation.as_deref())
-                    .await?;
+                match &verify_tests_from {
+                    Some(tf) => {
+                        c.verify_with_tests(artifact, tf, cmd.iter().cloned(), isolation.as_deref())
+                            .await?
+                    }
+                    None => {
+                        c.verify(artifact, cmd.iter().cloned(), isolation.as_deref())
+                            .await?
+                    }
+                };
             }
         }
         let verdict = match (policy, &verify_cmd) {
