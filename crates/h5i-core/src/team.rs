@@ -934,6 +934,12 @@ pub const TURN_KIND_REVISE: &str = "revise";
 /// of the wire contract — see `TurnKind::label()` in h5i-orchestra.)
 pub const TURN_KIND_REVIEW: &str = "review";
 
+/// `links.turn` stamped on an orchestra `reflect` dispatch — self-feedback on
+/// the agent's OWN submission, answered via `h5i team agent reply` (a data
+/// request, like `ask`). The critique is recorded as a `reflection_submitted`
+/// event, never as a peer review.
+pub const TURN_KIND_REFLECT: &str = "reflect";
+
 /// Message kind of a `grant_review` review request (classic and orchestra).
 pub const REVIEW_REQUEST_KIND: &str = "REVIEW_REQUEST";
 
@@ -944,16 +950,21 @@ pub fn msg_turn_kind(m: &msg::Message) -> Option<&str> {
     m.links.as_ref()?.get("turn")?.as_str()
 }
 
-/// Whether this team message is a data request (an orchestra `ask` turn): the
-/// way to finish it is `h5i team agent reply '<json>'`, not a submission.
+/// Whether this team message is a data request (an orchestra `ask` or
+/// `reflect` turn): the way to finish it is `h5i team agent reply '<json>'`,
+/// not a submission.
 pub fn is_data_request(m: &msg::Message) -> bool {
-    msg_turn_kind(m) == Some(TURN_KIND_ASK)
+    matches!(
+        msg_turn_kind(m),
+        Some(TURN_KIND_ASK) | Some(TURN_KIND_REFLECT)
+    )
 }
 
 /// Whether this team message opens a turn that legitimately arrives in the
 /// SAME round the box has already submitted for. The classic in-round sequence
-/// is work → submit → REVIEW_REQUEST → review → (revise →) re-submit, so a
-/// review or revise turn always lands AFTER a submit of its own round — the
+/// is work → submit → REVIEW_REQUEST → review → (revise →) re-submit — and the
+/// self-feedback loop is work → submit → reflect → revise — so a review,
+/// revise, or reflect turn always lands AFTER a submit of its own round — the
 /// Stop hook's "submit == done for this round" filter must never swallow one
 /// (it would be consumed unseen and the blocking hook would hang the agent at
 /// the review phase). Re-fanned standing copies of these requests are muted by
@@ -962,7 +973,7 @@ pub fn is_post_submit_turn(m: &msg::Message) -> bool {
     m.kind.as_deref() == Some(REVIEW_REQUEST_KIND)
         || matches!(
             msg_turn_kind(m),
-            Some(TURN_KIND_REVIEW) | Some(TURN_KIND_REVISE)
+            Some(TURN_KIND_REVIEW) | Some(TURN_KIND_REVISE) | Some(TURN_KIND_REFLECT)
         )
 }
 
@@ -1249,6 +1260,16 @@ pub fn grant_review(
             "team '{run_id}' has no target '{target}'"
         )));
     }
+    // A review attests an independent second opinion — reviewer and target
+    // must be different seats. Self-feedback is a `reflection_submitted`
+    // event (`submit_reflection`), which never counts as peer review.
+    if reviewer == target {
+        return Err(H5iError::Metadata(format!(
+            "team '{run_id}': '{reviewer}' cannot be granted a review of its own \
+             submission — a review is a peer attestation. Record self-feedback as \
+             a reflection instead (orchestra `reflect`)"
+        )));
+    }
     let allowed: BTreeSet<&str> = ["diff", "summary", "tests", "test-status"]
         .into_iter()
         .collect();
@@ -1380,6 +1401,16 @@ pub fn submit_review(
     }
     let target = resolve_review_target(&current, run_id, target)?;
     let target = target.as_str();
+    // Same peer-attestation invariant as `grant_review`: a `review_submitted`
+    // event must never be self-authored (quorum/approval evidence counts on
+    // it). Self-feedback goes through `submit_reflection`.
+    if reviewer == target {
+        return Err(H5iError::Metadata(format!(
+            "team '{run_id}': '{reviewer}' cannot review its own submission — a \
+             review is a peer attestation. Record self-feedback as a reflection \
+             instead (orchestra `reflect`)"
+        )));
+    }
     let referenced_artifacts: Vec<String> = current
         .submissions
         .iter()
@@ -1430,6 +1461,72 @@ pub fn submit_review(
         )?;
     }
     Ok(review)
+}
+
+/// Record an agent's critique of its OWN current-round submission as a
+/// `reflection_submitted` event — first-class self-feedback (the orchestra
+/// `reflect` turn), deliberately distinct from peer review:
+///
+/// - it is never a `review_submitted` event, so nothing that counts peer
+///   review / quorum evidence ever sees it;
+/// - it is NOT routed through `discuss` — the agent authored the critique
+///   itself, so there is no cross-agent influence edge to record, and a
+///   revision addressing it stays stamped `independent`;
+/// - lineage is carried by `referenced_artifacts` (the reflected-on
+///   submissions), so each feedback → revision hop is a fresh event even
+///   though the agent-identity graph has a self-edge.
+///
+/// Allowed in any phase: a reflection is inert (no delivery, no influence),
+/// so it cannot contaminate an open round.
+pub fn submit_reflection(
+    repo: &Repository,
+    run_id: &str,
+    agent_id: &str,
+    body: String,
+    actor: &str,
+) -> Result<TeamReview, H5iError> {
+    validate_agent_id(agent_id)?;
+    let current = status(repo, run_id)?.run;
+    if !current.agents.iter().any(|a| a.agent_id == agent_id) {
+        return Err(H5iError::Metadata(format!(
+            "team '{run_id}' has no agent '{agent_id}'"
+        )));
+    }
+    let referenced_artifacts: Vec<String> = current
+        .submissions
+        .iter()
+        .filter(|s| s.owner_agent == agent_id && s.round == current.current_round)
+        .map(|s| s.id.clone())
+        .collect();
+    if referenced_artifacts.is_empty() {
+        return Err(H5iError::Metadata(format!(
+            "team '{run_id}' has no round {} submission by '{agent_id}' to reflect on \
+             — submit first, then reflect",
+            current.current_round
+        )));
+    }
+    let reflection = TeamReview {
+        reviewer: agent_id.into(),
+        target: agent_id.into(),
+        round: current.current_round,
+        body,
+        referenced_artifacts,
+    };
+    let ev = event(
+        run_id,
+        actor,
+        "reflection_submitted",
+        current.current_round,
+        Some(current.phase),
+        None,
+        format!(
+            "reflection_submitted:{run_id}:{agent_id}:{}",
+            current.current_round
+        ),
+        serde_json::to_value(&reflection)?,
+    );
+    append_event(repo, &ev)?;
+    Ok(reflection)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3775,6 +3872,111 @@ mod tests {
         assert!(
             err.to_string().contains("no submission 'ghost'"),
             "unknown source must fail closed, got: {err}"
+        );
+    }
+
+    /// Reflection is first-class self-feedback: recorded as its own event
+    /// kind, never as a peer review, and with no influence edge — while
+    /// review itself stays strictly peer-to-peer (self-review fails closed
+    /// at the data model, not just in the orchestra eDSL).
+    #[test]
+    fn reflection_is_not_peer_review_and_self_review_fails_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let base = commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let solo = manifest(&repo, h5i_root, "solo", "impl");
+        let tip = commit_file(&repo, "impl.txt", "draft\n");
+        repo.reference(&solo.branch, tip, true, "impl").unwrap();
+
+        create(&repo, "run-reflect", "run-reflect", &base.to_string(), 3, "human").unwrap();
+        add_env(
+            &repo, h5i_root, "run-reflect", "env/solo/impl", "solo", None, None, None, "human",
+        )
+        .unwrap();
+
+        // Reflecting before any submission fails closed.
+        let err =
+            submit_reflection(&repo, "run-reflect", "solo", "too early".into(), "solo")
+                .unwrap_err();
+        assert!(
+            err.to_string().contains("no round 1 submission"),
+            "reflection needs a submission, got: {err}"
+        );
+
+        let sub = submit(&repo, h5i_root, "run-reflect", "solo", None, None, "solo").unwrap();
+        let reflection = submit_reflection(
+            &repo,
+            "run-reflect",
+            "solo",
+            "needs edge-case tests".into(),
+            "solo",
+        )
+        .unwrap();
+        assert_eq!(reflection.reviewer, "solo");
+        assert_eq!(reflection.target, "solo");
+        assert_eq!(reflection.referenced_artifacts, vec![sub.id.clone()]);
+
+        // Its event kind is reflection_submitted — review counters never see
+        // it — and it routes nothing through discuss (no influence edge).
+        let events = read_events(&repo, "run-reflect").unwrap();
+        assert_eq!(
+            events.iter().filter(|e| e.kind == "reflection_submitted").count(),
+            1
+        );
+        assert_eq!(events.iter().filter(|e| e.kind == "review_submitted").count(), 0);
+        assert_eq!(events.iter().filter(|e| e.kind == "discussion_msg").count(), 0);
+
+        // A post-reflection revision stays stamped independent.
+        let tip2 = commit_file(&repo, "impl.txt", "refined\n");
+        repo.reference(&solo.branch, tip2, true, "impl").unwrap();
+        let revised = submit(
+            &repo,
+            h5i_root,
+            "run-reflect",
+            "solo",
+            Some(&tip2.to_string()),
+            None,
+            "solo",
+        )
+        .unwrap();
+        assert!(
+            revised.independent,
+            "self-feedback must not create an influence edge"
+        );
+
+        // Reflection works post-freeze too (it is inert, phase-agnostic).
+        freeze(&repo, "run-reflect", false, "human").unwrap();
+        submit_reflection(&repo, "run-reflect", "solo", "APPROVE".into(), "solo").unwrap();
+
+        // Self-review fails closed at the core layer, both entry points.
+        let err = submit_review(
+            &repo,
+            h5i_root,
+            "run-reflect",
+            "solo",
+            "solo",
+            "lgtm".into(),
+            "solo",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("cannot review its own submission"),
+            "self submit_review must fail closed, got: {err}"
+        );
+        let err = grant_review(
+            &repo,
+            h5i_root,
+            "run-reflect",
+            "solo",
+            "solo",
+            vec!["diff".into()],
+            "human",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("review of its own submission"),
+            "self grant_review must fail closed, got: {err}"
         );
     }
 

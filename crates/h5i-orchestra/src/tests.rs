@@ -171,6 +171,18 @@ impl Script {
                         &turn.agent_id,
                     )?;
                 }
+                TurnKind::Reflect => {
+                    // Self-feedback is a data-reply turn: pop a queued reply
+                    // if one is scripted, else fall back to the review body.
+                    let mut q = script.ask_replies.lock().unwrap();
+                    let body = if q.is_empty() {
+                        script.review_body.lock().unwrap().clone()
+                    } else {
+                        q.remove(0)
+                    };
+                    drop(q);
+                    team::record_agent_reply(&repo, &turn.run_id, &turn.agent_id, body)?;
+                }
                 TurnKind::Ask => {
                     let body = if let Some(f) = &script.ask_fn {
                         let run = team::status(&repo, &turn.run_id)?.run;
@@ -335,6 +347,78 @@ async fn work_review_revise_and_resume_without_reexecution() {
     assert_eq!(first.1.id, second.1.id);
     assert_eq!(first.2.body, second.2.body);
     assert_eq!(first.3.id, second.3.id);
+}
+
+/// The Self-Refine shape on one seat: generate → reflect → revise, looping
+/// until the agent's own critique approves. Reflection is recorded as
+/// self-feedback (never peer review), the loop's revisions stay stamped
+/// independent, and reflecting on a teammate's artifact fails closed.
+#[tokio::test]
+async fn reflect_loop_on_a_single_seat() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = init_repo(dir.path());
+    let h5i_root = repo.commondir().join(".h5i");
+    fabricate_env(&repo, &h5i_root, "author", "refine");
+    fabricate_env(&repo, &h5i_root, "other", "refine");
+
+    let script = scripted("unused");
+    script
+        .ask_replies
+        .lock()
+        .unwrap()
+        .extend(["Needs edge-case tests.".to_string(), "APPROVE".to_string()]);
+
+    let c = conductor(dir.path(), "refine", Script::launcher(&script));
+    let author = c
+        .agent("author")
+        .env("env/author/refine")
+        .hire()
+        .await
+        .unwrap();
+    let other = c
+        .agent("other")
+        .env("env/other/refine")
+        .hire()
+        .await
+        .unwrap();
+
+    let mut artifact = author.work("implement quicksort").await.unwrap();
+
+    // Reflecting on someone else's artifact is a review, not a reflection.
+    let err = other.reflect(&artifact).await.unwrap_err();
+    assert!(
+        err.to_string().contains("only reflect on its own artifact"),
+        "cross-agent reflect must fail closed, got: {err}"
+    );
+
+    let mut rounds = 0;
+    loop {
+        let feedback = author.reflect(&artifact).await.unwrap();
+        assert_eq!(feedback.reviewer, "author");
+        assert_eq!(feedback.target, "author");
+        if approves(&feedback) {
+            break;
+        }
+        rounds += 1;
+        artifact = author.revise(&artifact, &feedback).await.unwrap();
+    }
+    assert_eq!(rounds, 1, "first critique rejects, second approves");
+    assert!(
+        artifact.independent,
+        "self-feedback must not stamp the revision influenced"
+    );
+
+    // The journal holds reflections, not reviews — the peer-review evidence
+    // channel never sees self-feedback.
+    let events = team::read_events(&repo, &c.core.run_id).unwrap();
+    assert_eq!(
+        events.iter().filter(|e| e.kind == "reflection_submitted").count(),
+        2
+    );
+    assert_eq!(
+        events.iter().filter(|e| e.kind == "review_submitted").count(),
+        0
+    );
 }
 
 #[tokio::test]
