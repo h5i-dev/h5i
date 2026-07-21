@@ -1,6 +1,6 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH h5i 1  "h5i 0.2.9" 
+.TH h5i 1  "h5i 0.3.0" 
 .SH NAME
 h5i \- Auditable workspaces for AI coding agents
 .SH SYNOPSIS
@@ -49,6 +49,9 @@ Programmable orchestration bridge for SDK\-driven scores (h5i.orchestra)
 h5i\-resolve(1)
 Resolve branch conflicts using CRDT\-based semantic merging
 .TP
+h5i\-status(1)
+What needs you \(em attention triage across envs, teams, and messages
+.TP
 h5i\-serve(1)
 Launch the h5i web dashboard in your browser
 .TP
@@ -73,7 +76,7 @@ Agent radio \(em cross\-agent messaging over a shareable Git ref
 h5i\-help(1)
 Print this message or the help of the given subcommand(s)
 .SH VERSION
-v0.2.9
+v0.3.0
 .SH "H5I INIT"
 Initialize the h5i sidecar in the current repository
 .ie \n(.g .ds Aq \(aq
@@ -1085,7 +1088,7 @@ Run neutral verifier evidence for one submitted candidate
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBverify\fR <\fB\-\-agent\fR> [\fB\-\-isolation\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITEAM\fR> [\fICMD\fR] 
+\fBverify\fR <\fB\-\-agent\fR> [\fB\-\-isolation\fR] [\fB\-\-sealed\-from\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITEAM\fR> [\fICMD\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1095,6 +1098,9 @@ Team agent id whose latest submission should be verified
 .TP
 \fB\-\-isolation\fR \fI<ISOLATION>\fR
 Isolation tier for the sandboxed verifier (workspace|process| supervised|container); default auto\-picks the strongest the host can enforce, falling back to workspace
+.TP
+\fB\-\-sealed\-from\fR \fI<SEALED_FROM>\fR
+Seal part of the checked tree: a submission id or team agent id whose base..commit diff is overlaid over the candidate before the command runs, so the candidate\*(Aqs own edits to those paths cannot weaken the check (typically a test\-designer\*(Aqs test set; must be a different agent than the candidate)
 .TP
 \fB\-\-json\fR
 Emit JSON
@@ -1458,6 +1464,33 @@ OID of the incoming branch (THEIRS)
 .TP
 <\fIFILE\fR>
 Relative path to the file to resolve
+.SH "H5I STATUS"
+What needs you \(em attention triage across envs, teams, and messages
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstatus\fR [\fB\-\-json\fR] [\fB\-\-explain\fR] [\fB\-\-mark\-seen\fR] [\fB\-\-only\fR] [\fB\-\-identity\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Print the shared JSON projection (identical to `/api/attention`)
+.TP
+\fB\-\-explain\fR \fI<ITEM_ID>\fR
+Explain one attention item: its reasons and evidence, with authority
+.TP
+\fB\-\-mark\-seen\fR
+Acknowledge current items for this identity (conditions remain until resolved)
+.TP
+\fB\-\-only\fR \fI<ITEM_ID>\fR
+With \-\-mark\-seen: limit to these item ids (repeatable)
+.TP
+\fB\-\-identity\fR \fI<IDENTITY>\fR
+Identity whose seen\-cursor applies (default: $H5I_AGENT > stored > host)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
 .SH "H5I SERVE"
 Launch the h5i web dashboard in your browser
 .ie \n(.g .ds Aq \(aq

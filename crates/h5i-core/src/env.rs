@@ -4887,6 +4887,15 @@ impl Drift {
     pub fn is_current(&self) -> bool {
         matches!(self, Drift::UpToDate)
     }
+    /// Stable machine kind — the string clients filter/badge on.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Drift::UpToDate => "up-to-date",
+            Drift::ParentAhead { .. } => "parent-ahead",
+            Drift::Diverged { .. } => "diverged",
+            Drift::ParentGone => "parent-gone",
+        }
+    }
     /// One-line human summary.
     pub fn summary(&self) -> String {
         match self {

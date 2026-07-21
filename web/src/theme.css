@@ -1956,6 +1956,41 @@ body { line-height: 1.5; }
   font-weight: 600;
 }
 .sbx-fleet-body { flex: 1; overflow: auto; min-height: 0; }
+
+/* workspace bucket: env-less evidence, deliberately not styled as an env row */
+.sbx-workspace-row {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; text-align: left; cursor: pointer;
+  padding: 8px 11px;
+  border: none; border-bottom: 1px dashed var(--bp-border);
+  background: transparent; color: var(--bp-text);
+}
+.sbx-workspace-row:hover { background: var(--bp-surface-2); }
+.sbx-workspace-row.selected { background: var(--bp-surface-2); }
+.sbx-workspace-row .sbx-env-sub { flex: 1; }
+.sbx-ws-captures { display: flex; flex-direction: column; gap: 6px; }
+.sbx-ws-capnote { font-size: 11px; color: var(--bp-text-dim); }
+.sbx-ws-agebar { display: flex; align-items: center; gap: 4px; }
+.sbx-ws-agebar .sbx-ws-capnote { margin-left: 8px; }
+.sbx-ws-caphint { font-family: var(--font-mono); }
+.sbx-ws-cmd {
+  font-family: var(--font-mono); font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.sbx-ws-capid { font-size: 10px; }
+.sbx-ws-exit { font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+.sbx-ws-exit.ok { color: var(--bp-green-hi); }
+.sbx-ws-exit.bad { color: var(--bp-red); }
+.sbx-ws-render-row td { padding: 0 10px 10px; }
+.sbx-ws-render {
+  margin: 0; padding: 10px;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.45;
+  background: var(--bp-surface); border: 1px solid var(--bp-border);
+  border-radius: 4px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  max-height: 420px; overflow: auto;
+}
+
 .sbx-fleet-table { width: 100%; }
 .sbx-fleet-table td { vertical-align: middle; }
 .sbx-fleet-table tr.selected { background: var(--bp-surface-2) !important; }
@@ -3478,4 +3513,244 @@ body { line-height: 1.5; }
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 220px;
+}
+
+/* ── Attention rail + authority vocabulary (the assurance workbench) ────────
+   The rail is the persistent left column: a queue that drains as items are
+   seen. Authority colors are semantic, not decorative: enforced=red (a
+   denial fired), verified=green (neutral re-exec), observed=mint (host saw
+   it), reported=violet (claimed), inferred=orange (classifier), unknown=
+   dim + dashed (absence shown as absence). */
+.wb-with-rail {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.wb-rail-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.att-rail {
+  flex: 0 0 236px;
+  overflow-y: auto;
+  background: var(--bp-surface);
+  border-right: 1px solid var(--bp-border);
+  padding: 8px 6px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: var(--font-ui);
+}
+@media (max-width: 900px) {
+  /* Narrow screens: attention first, evidence behind drill-down. */
+  .att-rail { flex-basis: 170px; }
+}
+.att-group { display: flex; flex-direction: column; gap: 2px; }
+.att-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bp-text-dim);
+  padding: 0 4px;
+  min-height: 20px;
+}
+.att-head-urgent { color: var(--bp-red); }
+.att-quiet-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.att-empty {
+  font-size: 11px;
+  color: var(--bp-text-dim);
+  padding: 2px 4px 6px;
+}
+.att-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 4px;
+  cursor: pointer;
+  color: var(--bp-text);
+  font-size: 12px;
+  line-height: 1.3;
+}
+.att-row:hover { background: var(--bp-surface-2); }
+.att-row:focus-visible { outline: 1px solid var(--h5-accent); }
+.att-row.att-seen { opacity: 0.55; }
+.att-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.att-badges { display: flex; gap: 3px; flex: none; }
+.att-age {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--bp-text-dim);
+}
+.att-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.att-dot-critical { background: var(--bp-red); }
+.att-dot-decision { background: var(--h5-accent); }
+.att-dot-communication { background: var(--bp-violet); }
+.att-dot-active { background: var(--bp-green-hi); }
+.att-dot-info { background: var(--bp-border-strong); }
+.att-foot {
+  margin-top: auto;
+  padding: 6px 4px 2px;
+  font-size: 10px;
+  color: var(--bp-text-dim);
+  font-family: var(--font-mono);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.att-live { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.att-live-on { background: var(--bp-green-hi); box-shadow: 0 0 6px var(--bp-green-hi); }
+.att-live-off { background: var(--bp-red); }
+.att-ident { opacity: 0.8; }
+
+.auth-badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 0 4px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+.auth-enforced { color: var(--bp-red); }
+.auth-verified { color: var(--bp-green-hi); }
+.auth-observed { color: var(--h5-accent); }
+.auth-reported { color: var(--bp-violet); }
+.auth-inferred { color: var(--bp-orange); }
+.auth-unknown { color: var(--bp-text-dim); border-style: dashed; }
+
+.why-drawer {
+  max-width: 380px;
+  padding: 10px 12px;
+  background: var(--bp-elev);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.why-title { font-weight: 600; }
+.why-section {
+  margin-top: 6px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bp-text-dim);
+}
+.why-reason { color: var(--bp-text-muted); }
+.why-evidence {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.why-evidence code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--bp-text-muted);
+  word-break: break-all;
+}
+.why-note { color: var(--bp-text-dim); font-size: 10px; }
+.why-cmd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-align: left;
+  color: var(--h5-accent);
+  background: var(--bp-surface);
+  border: 1px solid var(--bp-border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  cursor: copy;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.why-cmd:hover { border-color: var(--h5-accent); }
+
+/* Work-item strip — the selected subject's header above whatever lens shows it. */
+.wi-strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  background: var(--bp-surface);
+  border-bottom: 1px solid var(--bp-border);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.wi-title { font-weight: 600; }
+.wi-id { font-family: var(--font-mono); font-size: 10px; color: var(--bp-text-dim); }
+.wi-steps { display: flex; gap: 4px; align-items: center; }
+.wi-step {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  border: 1px solid var(--bp-border);
+  border-radius: 3px;
+  padding: 0 6px;
+  line-height: 16px;
+  color: var(--bp-text-dim);
+}
+.wi-step-done { border-color: var(--bp-green-hi); color: var(--bp-green-hi); }
+.wi-step-now {
+  border-color: var(--h5-accent);
+  color: var(--bp-bg);
+  background: var(--h5-accent);
+  font-weight: 700;
+}
+.wi-step-bad { background: var(--bp-red); border-color: var(--bp-red); }
+.wi-seats { display: flex; gap: 4px; }
+.wi-seat {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  border-radius: 3px;
+  padding: 0 6px;
+  line-height: 16px;
+  background: var(--bp-surface-2);
+  color: var(--bp-text-muted);
+}
+.wi-seat-working { color: var(--bp-green-hi); box-shadow: inset 0 0 0 1px var(--bp-green-hi); }
+
+/* Work-item lens tabs — the subject stays fixed, the lens switches. */
+.wi-lenses { display: flex; gap: 2px; margin-left: 8px; }
+.wi-lens {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--bp-text-muted);
+  padding: 2px 7px 1px;
+  cursor: pointer;
+}
+.wi-lens:hover { color: var(--bp-text); }
+.wi-lens:focus-visible { outline: 1px solid var(--h5-accent); }
+.wi-lens-on {
+  color: var(--bp-text);
+  font-weight: 600;
+  border-bottom-color: var(--h5-accent);
 }

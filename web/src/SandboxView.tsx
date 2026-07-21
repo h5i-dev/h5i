@@ -19,6 +19,7 @@ import {
   type RiskFinding,
   type RiskLane,
   type RiskSeverity,
+  type WorkspaceDetail,
 } from "./api";
 
 // The Sandbox "flight recorder": a read-only operator console over h5i
@@ -39,15 +40,32 @@ const LANES: { key: RiskLane; label: string; hint: string }[] = [
 
 const POLL_MS = 8000;
 
-export function SandboxView() {
+// Synthetic selection id for the workspace (env-less evidence) bucket. Real
+// env ids always start with `env/`, so this can't collide.
+const WORKSPACE_ID = "workspace";
+
+export function SandboxView({
+  focusEnv,
+  showProbe = true,
+}: {
+  focusEnv?: string | null;
+  showProbe?: boolean;
+}) {
   const [envs, setEnvs] = useState<EnvFleetItem[] | null>(null);
+  const [ws, setWs] = useState<WorkspaceDetail | null>(null);
   const [probe, setProbe] = useState<ProbeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("all");
 
+  // Deep links (#/env/<agent>/<slug>) land here: follow the focused env.
+  useEffect(() => {
+    if (focusEnv) setSelectedId(focusEnv);
+  }, [focusEnv]);
+
   const load = useCallback(() => {
     api.envs().then(setEnvs).catch((e) => setError(String(e)));
+    api.workspace().then(setWs).catch(() => setWs(null));
     api.envProbe().then(setProbe).catch(() => setProbe(null));
   }, []);
 
@@ -61,6 +79,7 @@ export function SandboxView() {
   useEffect(() => {
     if (!envs) return;
     setSelectedId((prev) => {
+      if (prev === WORKSPACE_ID) return prev;
       if (prev && envs.some((e) => e.id === prev)) return prev;
       return envs[0]?.id ?? null;
     });
@@ -88,7 +107,7 @@ export function SandboxView() {
 
   return (
     <div className="sbx-shell">
-      <TopStrip probe={probe} envs={envs} />
+      {showProbe ? <TopStrip probe={probe} envs={envs} /> : null}
       <div className="sbx-body">
         <FleetPane
           envs={filtered}
@@ -97,8 +116,13 @@ export function SandboxView() {
           onFilter={setFilter}
           selectedId={selectedId}
           onSelect={setSelectedId}
+          workspace={ws}
         />
-        <DetailPane env={selected} />
+        {selectedId === WORKSPACE_ID ? (
+          <WorkspacePane ws={ws} />
+        ) : (
+          <DetailPane env={selected} />
+        )}
       </div>
     </div>
   );
@@ -213,8 +237,9 @@ function FleetPane(props: {
   onFilter: (f: string) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  workspace: WorkspaceDetail | null;
 }) {
-  const { envs, total, filter, onFilter, selectedId, onSelect } = props;
+  const { envs, total, filter, onFilter, selectedId, onSelect, workspace } = props;
   return (
     <div className="sbx-fleet">
       <div className="wb-pane-header sbx-fleet-header">
@@ -233,6 +258,26 @@ function FleetPane(props: {
         ))}
       </div>
       <div className="sbx-fleet-body">
+        {/* The primary checkout's env-less evidence: real captures, no policy.
+            A bucket, deliberately NOT styled as an env — an env row is a claim
+            (isolation, policy digest) the workspace doesn't make. */}
+        {filter === "all" && workspace ? (
+          <button
+            className={
+              "sbx-workspace-row" + (selectedId === WORKSPACE_ID ? " selected" : "")
+            }
+            onClick={() => onSelect(WORKSPACE_ID)}
+          >
+            <span className="sbx-env-id">
+              workspace{workspace.branch ? ` · ${workspace.branch}` : ""}
+            </span>
+            <span className="sbx-env-sub">
+              {workspace.total} cap{workspace.total === 1 ? "" : "s"} on this
+              branch · primary checkout
+            </span>
+            <Tag minimal>unconfined</Tag>
+          </button>
+        ) : null}
         {!envs ? (
           <NonIdealState icon={<Spinner size={20} />} title="Loading…" />
         ) : envs.length === 0 ? (
@@ -360,6 +405,204 @@ function DetailPane({ env }: { env: EnvFleetItem | null }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ── right: workspace pane (env-less evidence, honestly labeled) ───────────────
+
+// Recency windows for the workspace capture list. A long-lived branch
+// accumulates months of evidence; default to the recent working set and keep
+// the full branch history one click away (never silently hidden — the note
+// below the chips says exactly how many older captures are folded).
+const WS_AGES: { key: string; label: string; ms: number | null }[] = [
+  { key: "24h", label: "24h", ms: 24 * 3600 * 1000 },
+  { key: "7d", label: "7d", ms: 7 * 24 * 3600 * 1000 },
+  { key: "all", label: "all", ms: null },
+];
+
+function WorkspacePane({ ws }: { ws: WorkspaceDetail | null }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [renders, setRenders] = useState<Map<string, string>>(new Map());
+  const [age, setAge] = useState<string>("7d");
+
+  const visible = useMemo(() => {
+    if (!ws) return [];
+    const win = WS_AGES.find((a) => a.key === age)?.ms ?? null;
+    if (win === null) return ws.captures;
+    const cutoff = Date.now() - win;
+    return ws.captures.filter((c) => {
+      const t = Date.parse(c.timestamp);
+      // An unparseable timestamp is never silently dropped.
+      return Number.isNaN(t) || t >= cutoff;
+    });
+  }, [ws, age]);
+
+  const toggle = useCallback(
+    (id: string) => {
+      setOpenId((prev) => (prev === id ? null : id));
+      if (!renders.has(id)) {
+        api
+          .workspaceCapture(id)
+          .then(({ render }) =>
+            setRenders((m) => new Map(m).set(id, render)),
+          )
+          .catch(() =>
+            setRenders((m) => new Map(m).set(id, "(failed to load capture)")),
+          );
+      }
+    },
+    [renders],
+  );
+
+  if (!ws) {
+    return (
+      <div className="sbx-detail">
+        <NonIdealState icon={<Spinner size={20} />} title="Loading workspace evidence…" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="sbx-detail">
+      <div className="sbx-detail-head">
+        <div>
+          <span className="sbx-detail-title">
+            workspace{ws.branch ? ` · ${ws.branch}` : ""}
+          </span>
+          <Tag minimal>unconfined</Tag>
+        </div>
+        <Tag minimal round>
+          {ws.total} capture{ws.total === 1 ? "" : "s"} on this branch
+        </Tag>
+      </div>
+      <div className="sbx-detail-body">
+        <Callout intent="warning" icon="unlock" className="sbx-callout">
+          Unconfined — host trust. These captures were taken outside any h5i
+          environment (plain <Code>h5i capture run</Code> in the primary
+          checkout): no policy was enforced and the evidence is host-reported.
+          For a confinement boundary and mediated commits, work in an
+          environment (<Code>h5i env create</Code>).
+        </Callout>
+        {ws.captures.length === 0 ? (
+          <NonIdealState
+            icon="inbox"
+            title="No workspace captures on this branch"
+            description={
+              ws.total_all_branches > 0
+                ? `${ws.total_all_branches} capture${
+                    ws.total_all_branches === 1 ? "" : "s"
+                  } exist on other branches (see \`h5i recall objects --env none\`). Wrap commands with \`h5i capture run -- <cmd>\` to leave evidence here.`
+                : "Wrap commands with `h5i capture run -- <cmd>` to leave evidence here."
+            }
+          />
+        ) : (
+          <div className="sbx-ws-captures">
+            <div className="sbx-ws-agebar">
+              {WS_AGES.map((a) => (
+                <button
+                  key={a.key}
+                  className={"sbx-chip" + (age === a.key ? " active" : "")}
+                  onClick={() => setAge(a.key)}
+                >
+                  {a.label}
+                </button>
+              ))}
+              {ws.captures.length > visible.length ? (
+                <span className="sbx-ws-capnote">
+                  {ws.captures.length - visible.length} older on this branch folded
+                </span>
+              ) : null}
+            </div>
+            {ws.total > ws.captures.length ? (
+              <div className="sbx-ws-capnote">
+                showing the newest {ws.captures.length} of {ws.total} on this branch
+              </div>
+            ) : ws.total_all_branches > ws.total ? (
+              <div className="sbx-ws-capnote">
+                {ws.total_all_branches - ws.total} more on other branches ·{" "}
+                <span className="sbx-ws-caphint">h5i recall objects --env none</span>
+              </div>
+            ) : null}
+            {visible.length === 0 ? (
+              <NonIdealState
+                icon="inbox"
+                title={`No captures in the last ${age}`}
+                description="Widen the window (all) to see this branch's older evidence."
+              />
+            ) : (
+              <HTMLTable className="sbx-fleet-table" interactive compact>
+                <thead>
+                  <tr>
+                    <th>Command</th>
+                    <th style={{ width: 54 }}>Exit</th>
+                    <th style={{ width: 150 }}>When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((c) => (
+                    <WorkspaceCaptureRow
+                      key={c.id}
+                      capture={c}
+                      open={openId === c.id}
+                      render={renders.get(c.id)}
+                      onToggle={() => toggle(c.id)}
+                    />
+                  ))}
+                </tbody>
+              </HTMLTable>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceCaptureRow({
+  capture,
+  open,
+  render,
+  onToggle,
+}: {
+  capture: EnvCaptureView;
+  open: boolean;
+  render: string | undefined;
+  onToggle: () => void;
+}) {
+  const ok = capture.exit_code === 0;
+  return (
+    <>
+      <tr className={open ? "selected" : ""} onClick={onToggle}>
+        <td>
+          <div className="sbx-env-id sbx-ws-cmd">{capture.cmd ?? "(stdin)"}</div>
+          <div className="sbx-env-sub">
+            <Code className="sbx-ws-capid">{capture.id}</Code>
+            {capture.redactions.length > 0 ? (
+              <span className="sbx-drift"> · redacted</span>
+            ) : null}
+          </div>
+        </td>
+        <td>
+          <span className={"sbx-ws-exit" + (ok ? " ok" : " bad")}>
+            {capture.exit_code ?? "—"}
+          </span>
+        </td>
+        <td>
+          <span className="sbx-status">{capture.timestamp}</span>
+        </td>
+      </tr>
+      {open ? (
+        <tr className="sbx-ws-render-row">
+          <td colSpan={3}>
+            {render === undefined ? (
+              <Spinner size={16} />
+            ) : (
+              <pre className="sbx-ws-render">{render}</pre>
+            )}
+          </td>
+        </tr>
+      ) : null}
+    </>
   );
 }
 

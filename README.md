@@ -28,11 +28,7 @@
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i-dev%2Fh5i | Trendshift" width="250" height="55"/></a>
 
-> ***Two heads are better than one.***
-
-<p align="center">
-  <img src="./docs/_static/hero-team.svg" alt="One task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo." width="99%">
-</p>
+**Who it's for:** platform, security, and DevEx leads rolling out Claude Code and Codex who want to run *teams* of agents and keep review and audit defensible as agents write more of the diff.
 
 <table align="center">
   <tr>
@@ -42,8 +38,6 @@
     <td align="center"><strong>Lives in your Git</strong><br><sub>refs/h5i/* · no SaaS</sub></td>
   </tr>
 </table>
-
-**Who it's for:** platform, security, and DevEx leads rolling out Claude Code and Codex who want to run *teams* of agents and keep review and audit defensible as agents write more of the diff.
 
 ---
 
@@ -69,7 +63,7 @@ Initialize h5i and wire the Claude Code / Codex hooks:
 
 ```bash
 h5i init
-h5i hook setup --write --wrap-bash --team
+h5i hook setup --write --wrap-bash # --team
 git add .
 git commit -m "update hooks"
 ```
@@ -78,17 +72,12 @@ git commit -m "update hooks"
 
 Once the hooks are registered, h5i versions your human prompts and every agent context step (reads, writes, thinking) as Git objects, trimming noisy tool output along the way (for `pytest`, just the failures) to cut up to 95% of the tokens while keeping the raw output recoverable. 
 
-```bash
-h5i recall context show   # replay the captured prompts and agent context steps
-```
-
-
-Share it with `h5i share push`, or post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) to the pull request with `h5i share pr post` (needs the `gh` CLI).
-
-```bash
-h5i share push      # push the h5i metadata (refs/h5i/*) to your teammates
-h5i share pr post   # post the AI-usage summary to the pull request (needs `gh`)
-```
+- `h5i recall log`: replay the captured prompts - [example output](#recall-log)
+- `h5i recall context show`: replay the agent context steps - [example output](#recall-context)
+- `h5i audit review`: suggested Review Points - [example output](#audit-review)
+- `h5i audit maturity`: measure the quality of prompts - [example output](#audit-maturity)
+- `h5i share push` / `h5i share pull`: share the prompts, contexts. and all logs with other team members
+- `h5i share pr post`: post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) to the pull request (needs the `gh` CLI)
 
 ### 2.3. Sandboxed Environment
 
@@ -106,7 +95,19 @@ h5i env propose claude-env   # turn the box's work into a reviewable proposal
 h5i env apply claude-env     # merge the reviewed changes onto your branch
 ```
 
-### 2.4. Programmable Multi-Agent Orchestration
+### 2.4. Web UI
+
+Monitor the status:
+
+```bash
+h5i serve
+```
+
+<p align="center">
+  <img src="./docs/_static/h5i-serve-film.gif" alt="The h5i serve workbench in motion: an attention rail shows what needs you, the sandbox blocks a forbidden egress, a Why drawer opens with evidence badged by authority (enforced, verified, observed), a neutral verdict lands on the Board, and the Decide tab ranks candidates by merge confidence, prompt maturity, and risk." width="99%">
+</p>
+
+### 2.5. Programmable Multi-Agent Orchestration
 
 You can further **program** flexible multi-agent workflows using ordinary control flow such as parallel execution, loops, and conditionals in Rust or [Python SDK](https://github.com/h5i-dev/h5i-python). For example, you can have Claude and Codex independently implement the same task, review and improve each other’s work, and then select the better result.
 
@@ -142,23 +143,11 @@ async def main():
 asyncio.run(main())
 ```
 
-### 2.5. Web UI
-
-Monitor the status:
-
-```bash
-h5i serve
-```
-
-<p align="center">
-  <img src="./docs/_static/screenshot-team-serve.png" alt="One task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo." width="95%">
-</p>
-
 ---
 
 ## 4. Documentation
 
-- [Official Website](https://h5i.dev/): project overview, [Pitch Deck](https://h5i.dev/pitch/)
+- [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
 - [Tutorials](https://h5i.dev/guides/): guided workflows · [Blog](https://h5i.dev/blog/): design notes, audits, case studies
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
 - [CONTRIBUTING.md](CONTRIBUTING.md): we welcome contributions of any kind.
@@ -166,7 +155,70 @@ h5i serve
 
 ---
 
-## 5. Acknowledgements
+## 5. Gallary
+
+<details>
+<summary><a id="recall-log">Example output of <code>h5i recall log</code></a></summary>
+
+```yaml
+commit 9c76075822d743125587574e63bc1756866df496
+Author:    Koukyosyumei <koukyosyumei@hotmail.com>
+Agent:     claude-code (claude-fable-5)
+Prompt:    "I guess you can remove the arXiv column, and just use hyperlink in Paper column to arviv website"
+Message:   README: fold arXiv column into hyperlinked paper names
+```
+</details>
+
+<details>
+<summary><a id="recall-context">Example output of <code>h5i recall context show</code></a></summary>
+
+```yaml
+── Context (depth=2) ────────────────────────────────────
+  Goal: add herdr support to h5i-python: launcher='herdr' (seats in herdr panes) + herdr  (branch: herdr-launcher)
+  Milestones: (showing 20 most recent of 88; --limit 0 for all)
+    ✔ [x] edited env.rs; edited env.rs; edited team.rs
+    ✔ [x] Surveyed papers for h5i-python reference implementations
+  Recent Trace:
+    [00:00:37] ACT: edited blog/reimplementing-40-multi-agent-papers.md
+    [00:01:04] NOTE: PLACEHOLDER (~/Dev/h5i-python/examples/README.md): iting 40 of these: the only paper mechanics that needed any workaround were self-review (forbidden by the engine, solved with a same-model second seat…
+    [01:02:16] OBSERVE: read README.md
+```
+</details>
+
+<details>
+<summary><a id="audit-review">Example output of <code>h5i audit review</code></a></summary>
+
+```yaml
+  #1 3e744a3f  score 1.00  ██████████
+     Floze · 2026-07-19 14:20 UTC
+     docs: benchmark env isolation overhead (#355)
+       ⬦ LARGE_DIFF          182 lines changed (>50)
+       ⬦ UNTESTED_CHANGE     182 lines changed with no test metrics recorded
+       ⬦ CODE_EXECUTION      Dangerous execution pattern 'subprocess.run()' added (line 13). Verify this is intentional and use --force to override.
+```
+</details>
+
+<details>
+<summary><a id="audit-maturity">Example output of <code>h5i audit maturity</code></a></summary>
+
+```yaml
+🧠 Prompt maturity: 42.7/100  🪴 developing
+   coverage: 4/6 AI commits scored (67% coverage) · low confidence
+   common flags: too short, weak context, no acceptance criteria
+   Objective (core)   █████░░░░░ 0.54
+   Grounding (core)   ██████░░░░ 0.60
+   Direction (core)   ██████░░░░ 0.64
+   Context            ██████░░░░ 0.60
+   Examples           ░░░░░░░░░░ 0.00
+   Structure          ██░░░░░░░░ 0.21
+   Diversity          ████████░░ 0.84
+   Clarity            █████████░ 0.94
+   Adequacy           █████████░ 0.87
+   Evidence (bonus)   ████████░░ 0.80 (+bonus)
+```
+</details>
+
+## 6. Acknowledgements
 
 h5i's token-reduction filters build on prior art, both Apache-2.0:
 
@@ -175,6 +227,6 @@ h5i's token-reduction filters build on prior art, both Apache-2.0:
 
 See [`NOTICE`](NOTICE) and [`assets/filters/NOTICE`](assets/filters/NOTICE) for full attribution.
 
-## 6. License
+## 7. License
 
 Apache-2.0. See [LICENSE](LICENSE).
