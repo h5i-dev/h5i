@@ -257,6 +257,67 @@ fn jest_rule_cuts_tokens_keeps_failed_assertion_and_totals() {
 }
 
 #[test]
+fn playwright_rule_cuts_tokens_keeps_failure_diff_and_totals() {
+    let mut raw = String::from("Running 181 tests using 6 workers\n");
+    for i in 0..180 {
+        raw.push_str(&format!(
+            "[{}/181] [chromium] › tests/scenario_{i}.spec.ts:4:1 › scenario {i}\n",
+            i + 1
+        ));
+        raw.push_str(&format!(
+            "  ✓  {} [chromium] › tests/scenario_{i}.spec.ts:4:1 › scenario {i} ({}ms)\n",
+            i + 1,
+            20 + (i % 30)
+        ));
+    }
+    raw.push_str("[181/181] [chromium] › tests/checkout.spec.ts:18:1 › submits payment\n");
+    raw.push_str("  ✘  181 [chromium] › tests/checkout.spec.ts:18:1 › submits payment (1.2s)\n");
+    raw.push_str("  1) [chromium] › tests/checkout.spec.ts:18:1 › submits payment\n");
+    raw.push_str("    Error: expect(received).toBe(expected)\n");
+    raw.push_str("    Expected: \"confirmed\"\n    Received: \"declined\"\n");
+    raw.push_str("  1 failed\n  180 passed (18.4s)\n");
+
+    let res = filter(
+        &raw,
+        &cfg(
+            OutputKind::Auto,
+            Some(argv(&["npx", "playwright", "test"])),
+        ),
+    );
+    keeps(
+        &res,
+        &[
+            "tests/checkout.spec.ts",
+            "Expected: \"confirmed\"",
+            "Received: \"declined\"",
+            "1 failed",
+            "180 passed",
+        ],
+    );
+    drops(&res, &["tests/scenario_5.spec.ts", "✓  6"]);
+    assert_token_cut(&res, 1_000, 0.10);
+}
+
+#[test]
+fn playwright_rule_routes_common_invocations_but_not_similar_names() {
+    for command in [
+        &["playwright", "test"][..],
+        &["npx", "playwright", "test"][..],
+        &["pnpm", "exec", "playwright", "test"][..],
+        &["yarn", "playwright", "test"][..],
+    ] {
+        let command = argv(command);
+        let hit = h5i_core::filter_rules::summarize_with_rules(&command, "1 passed", None);
+        assert_eq!(hit.as_ref().map(|(_, name)| name.as_str()), Some("playwright"));
+    }
+
+    let unrelated = argv(&["playwright-helper", "test"]);
+    assert!(
+        h5i_core::filter_rules::summarize_with_rules(&unrelated, "1 passed", None).is_none()
+    );
+}
+
+#[test]
 fn go_rule_cuts_tokens_keeps_failing_test_and_package_status() {
     let mut raw = String::new();
     for i in 0..180 {
