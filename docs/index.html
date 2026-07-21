@@ -887,7 +887,7 @@
     .t-bold   { font-weight: 700; color: var(--ink); }
 
     /* ── Deck-derived sections: even spacing + separator line ── */
-    #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more,
+    #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with,
     #whatis, #primitives, #in-git, #team {
       padding: 120px 0; border-top: 1px solid var(--border);
     }
@@ -1050,7 +1050,7 @@
       .hero-stat:last-child { border-bottom: none; }
       .usecase-header { flex-direction: column; gap: 1rem; }
       .works-inner { gap: 0.8rem 1.6rem; }
-      #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more,
+      #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with,
       #whatis, #primitives, #in-git, #team,
       #faq, #cta { padding: 80px 0; }
     }
@@ -1183,12 +1183,6 @@
     .pr-sec .pr-h { font-family: var(--mono); font-size: 0.76rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--red-text); min-width: 118px; flex-shrink: 0; }
     .pr-sec .pr-c { font-size: 0.98rem; color: var(--text); line-height: 1.5; }
 
-    /* explore-more band */
-    .explore-band {
-      display: flex; align-items: center; justify-content: space-between; gap: 28px; flex-wrap: wrap;
-      background: var(--bg-card); border: 1px solid var(--border-hi);
-      border-radius: var(--radius-lg); padding: 2rem 2.4rem;
-    }
 
   /* ── Agent-teams components (mirrors /pitch) ───────────────── */
   .fm-split { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
@@ -1756,18 +1750,6 @@ asyncio.run(main(<span class="t-ai">"implement quicksort in python with unit tes
 <!-- ── Built with h5i (commented out) ────────────────────────── -->
 <!-- Built with h5i (dogfood proof) section intentionally hidden from the front page. -->
 
-<!-- ── Explore more ──────────────────────────────────────────── -->
-<section id="explore-more">
-  <div class="container">
-    <div class="explore-band reveal">
-      <div>
-        <h2 class="section-title" style="font-size:clamp(1.6rem,3vw,2.2rem);">See every command in action</h2>
-        <p class="section-sub" style="margin-top:0.6rem;">Eight worked use cases, blame, resume, uncertainty heatmaps, the web dashboard, and the full five-verb feature reference.</p>
-      </div>
-      <a href="/features/" class="btn btn-primary">Explore all features &amp; use cases →</a>
-    </div>
-  </div>
-</section>
 
 
 <!-- ── FAQ ────────────────────────────────────────────────────── -->
@@ -1833,6 +1815,7 @@ asyncio.run(main(<span class="t-ai">"implement quicksort in python with unit tes
       <p class="cta-sub">Spin up a roster of agents, seal their independent attempts, let a neutral verifier pick the winner, and merge one auditable result. Versioned in your Git. Apache 2.0. No SaaS, no lock-in.</p>
       <div class="hero-actions">
         <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
+        <a href="/features/" class="btn btn-ghost">Features &amp; Use Cases</a>
         <a href="/workflows/" class="btn btn-ghost">Read Workflows</a>
         <a href="/manual/" class="btn btn-ghost">Read the Manual</a>
       </div>
