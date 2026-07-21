@@ -53,6 +53,7 @@ const CAPABILITIES: &[&str] = &[
     "conductor.step", // step_begin/step_commit/step_abort — remote journaled closures
     "conductor.judge", // built-in policies + judge_begin/judge_commit — remote policies
     "agent.turns",    // hire/work/ask/review/revise
+    "agent.reflect",  // self-feedback turn (reflection_submitted, not peer review)
     "gate",           // durable human gates
     "preflight",
     "launcher.client", // server→client launcher.on_turn callbacks
@@ -380,6 +381,13 @@ struct AskParams {
 #[derive(Deserialize)]
 struct ReviewParams {
     reviewer: String,
+    env_id: String,
+    artifact: TeamArtifact,
+}
+
+#[derive(Deserialize)]
+struct ReflectParams {
+    agent: String,
     env_id: String,
     artifact: TeamArtifact,
 }
@@ -852,6 +860,11 @@ impl Server {
                 let p: ReviewParams = parse(params)?;
                 let agent = Agent::bind(self.conductor()?.core.clone(), p.reviewer, p.env_id);
                 ok(agent.review(&p.artifact).await.map_err(Rej::from)?)
+            }
+            "agent.reflect" => {
+                let p: ReflectParams = parse(params)?;
+                let agent = Agent::bind(self.conductor()?.core.clone(), p.agent, p.env_id);
+                ok(agent.reflect(&p.artifact).await.map_err(Rej::from)?)
             }
             "agent.revise" => {
                 let p: ReviseParams = parse(params)?;

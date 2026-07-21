@@ -14,6 +14,10 @@ pub enum TurnKind {
     Revise,
     /// Answer with data (JSON) via `h5i team agent reply` — no submission.
     Ask,
+    /// Critique your OWN submission and reply with the critique via
+    /// `h5i team agent reply` — self-feedback, recorded as a
+    /// `reflection_submitted` event, never as a peer review.
+    Reflect,
 }
 
 impl TurnKind {
@@ -27,6 +31,7 @@ impl TurnKind {
             TurnKind::Review { .. } => "review",
             TurnKind::Revise => "revise",
             TurnKind::Ask => "ask",
+            TurnKind::Reflect => "reflect",
         }
     }
 }

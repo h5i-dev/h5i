@@ -69,7 +69,7 @@ fn subprocess_launcher(repo: std::path::PathBuf) -> Arc<dyn RuntimeLauncher> {
                 );
                 box_shell(&repo, &turn.env_id, &script)
             }
-            TurnKind::Ask => return Ok(()),
+            TurnKind::Ask | TurnKind::Reflect => return Ok(()),
         };
         if !out.status.success() {
             return Err(H5iError::Metadata(format!(
