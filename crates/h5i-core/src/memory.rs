@@ -312,7 +312,7 @@ pub fn restore_snapshot(
 
 // ── Display helpers ───────────────────────────────────────────────────────────
 
-pub fn print_memory_log(h5i_root: &Path) -> Result<(), H5iError> {
+pub fn print_memory_log(h5i_root: &Path, limit: usize) -> Result<(), H5iError> {
     let snapshots = list_snapshots(h5i_root)?;
 
     if snapshots.is_empty() {
@@ -334,7 +334,8 @@ pub fn print_memory_log(h5i_root: &Path) -> Result<(), H5iError> {
         .underlined()
     );
 
-    for snap in snapshots.iter().rev() {
+    let snapshots_to_show = if limit == 0 { snapshots.len() } else { limit };
+    for snap in snapshots.iter().rev().take(snapshots_to_show) {
         println!(
             "{}  {}  {} file{}",
             style(short_oid(&snap.commit_oid)).magenta().bold(),
