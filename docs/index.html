@@ -1678,13 +1678,12 @@
   </div>
 </section>
 
-<!-- ── Programmable Multi-Agent Orchestra (centerpiece) ──────── -->
+<!-- ── Programmable Multi-Agent Orchestration (centerpiece) ──── -->
 <section id="team">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">Programmable Multi-Agent Orchestra</span>
-      <h2 class="section-title">Run many coding agents. Merge one auditable result.</h2>
-      <p class="section-sub">The same auditable workspace that contains one agent scales to a whole ensemble, and the workflow itself is <strong>a program you write</strong>. With <code>h5i-orchestra</code>, parallel fan-out, loops, and conditionals are ordinary control flow in Python or Rust: hire a roster of personas, let them work sealed and in parallel, cross-review, verify in a neutral sandbox, and let an explainable verdict pick the winner. Every step is journaled to <code>refs/h5i/team</code>, so an interrupted run resumes instead of re-paying agent turns.</p>
+      <span class="section-tag">Run many coding agents. Merge one auditable result.</span>
+      <h2 class="section-title">Programmable Multi-Agent Orchestration</h2>
       <div class="divider"></div>
     </div>
 
@@ -1726,9 +1725,7 @@
 asyncio.run(main())</pre></div>
       </div>
       <div class="stack">
-        <h3 style="font-size:1.15rem;font-weight:700;margin:0;">The score is plain code</h3>
-        <p style="color:var(--text-dim);line-height:1.7;margin:0;">No YAML graph, no DSL to learn: <code>asyncio.gather</code> is your parallelism, <code>if</code> and <code>for</code> are your routing. Here Claude and Codex implement the same task sealed from each other, cross-review after <code>freeze</code>, a neutral sandbox replays the tests, and <code>judge</code> picks the winner by explainable rules. Ready-made patterns (ensemble, pipeline, arena, map-reduce, debate, judge panel) ship as one-liners.</p>
-        <p style="color:var(--text-dim);line-height:1.7;margin:0;">Every effectful step lands in an append-only journal in <code>refs/h5i/team</code>. Kill the script and run it again: completed turns replay from the journal, the run picks up where it stopped, and <code>h5i team trace</code> renders the recorded DAG for the audit.</p>
+        <p style="color:var(--text-dim);line-height:1.7;margin:0;">The same auditable workspace that contains one agent scales to a whole ensemble, and the workflow itself is <strong>a program you write</strong>. With <code>h5i-orchestra</code>, parallel fan-out, loops, and conditionals are ordinary control flow in Python or Rust: hire a roster of personas, let them work sealed and in parallel, cross-review, verify in a neutral sandbox, and let an explainable verdict pick the winner. Every step is journaled to <code>refs/h5i/team</code>, so an interrupted run resumes instead of re-paying agent turns.</p>
         <div class="hero-install" style="align-self:flex-start;">
           <code>pip3 install h5i-orchestra</code>
           <button class="copy-btn" onclick="copyCmd(this)">copy</button>
