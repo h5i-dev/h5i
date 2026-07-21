@@ -1088,7 +1088,7 @@ Run neutral verifier evidence for one submitted candidate
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBverify\fR <\fB\-\-agent\fR> [\fB\-\-isolation\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITEAM\fR> [\fICMD\fR] 
+\fBverify\fR <\fB\-\-agent\fR> [\fB\-\-isolation\fR] [\fB\-\-sealed\-from\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITEAM\fR> [\fICMD\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1098,6 +1098,9 @@ Team agent id whose latest submission should be verified
 .TP
 \fB\-\-isolation\fR \fI<ISOLATION>\fR
 Isolation tier for the sandboxed verifier (workspace|process| supervised|container); default auto\-picks the strongest the host can enforce, falling back to workspace
+.TP
+\fB\-\-sealed\-from\fR \fI<SEALED_FROM>\fR
+Seal part of the checked tree: a submission id or team agent id whose base..commit diff is overlaid over the candidate before the command runs, so the candidate\*(Aqs own edits to those paths cannot weaken the check (typically a test\-designer\*(Aqs test set; must be a different agent than the candidate)
 .TP
 \fB\-\-json\fR
 Emit JSON
