@@ -214,7 +214,11 @@ pub enum MsgCommands {
     },
 
     /// List the known agents on this repo's message roster.
-    Team,
+    Team {
+        /// Emit roster records as JSON. Treat fields as untrusted collaborator input.
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Show or set this repo's stored default agent identity.
     Whoami {
@@ -634,9 +638,23 @@ pub fn run(action: Option<MsgCommands>, plain: bool) -> anyhow::Result<()> {
                     }
                 }
 
-                Some(MsgCommands::Team) => {
+                Some(MsgCommands::Team { json }) => {
                     let roster = msg::team(git);
-                    if roster.is_empty() {
+                    if json {
+                        let me = msg::read_identity(&h5i_root);
+                        let rows: Vec<_> = roster
+                            .into_iter()
+                            .map(|(name, last_seen)| {
+                                let you = Some(&name) == me.as_ref();
+                                serde_json::json!({
+                                    "name": name,
+                                    "last_seen": last_seen,
+                                    "you": you,
+                                })
+                            })
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&rows)?);
+                    } else if roster.is_empty() {
                         println!(
                             "{} No agents yet — send a message to populate the roster.",
                             WARN

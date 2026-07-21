@@ -2860,6 +2860,7 @@ h5i msg history --with codex     # full conversation log
 h5i msg history --json           # machine-readable message history
 h5i msg replay --with codex      # replay the log as a live feed (1s between messages)
 h5i msg team                     # known agents
+h5i msg team --json              # machine-readable roster with last-seen and you fields
 ```
 
 Add `--plain` to any read command for greppable, uncoloured output.
