@@ -2003,7 +2003,10 @@ async fn api_workspace(State(state): State<Arc<AppState>>) -> Json<WorkspaceDeta
             .inspect(|_| total_all_branches += 1)
             .filter(|m| m.branch == branch)
             .collect();
-        manifests.reverse(); // append-only log → newest first
+        // Sort explicitly: the manifests jsonl is union-merged across writers,
+        // so file order is not reliably chronological. RFC3339 UTC timestamps
+        // compare lexicographically.
+        manifests.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         let total = manifests.len();
         manifests.truncate(WORKSPACE_CAPTURES_CAP);
         Ok(WorkspaceDetail {

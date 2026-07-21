@@ -410,9 +410,32 @@ function DetailPane({ env }: { env: EnvFleetItem | null }) {
 
 // ── right: workspace pane (env-less evidence, honestly labeled) ───────────────
 
+// Recency windows for the workspace capture list. A long-lived branch
+// accumulates months of evidence; default to the recent working set and keep
+// the full branch history one click away (never silently hidden — the note
+// below the chips says exactly how many older captures are folded).
+const WS_AGES: { key: string; label: string; ms: number | null }[] = [
+  { key: "24h", label: "24h", ms: 24 * 3600 * 1000 },
+  { key: "7d", label: "7d", ms: 7 * 24 * 3600 * 1000 },
+  { key: "all", label: "all", ms: null },
+];
+
 function WorkspacePane({ ws }: { ws: WorkspaceDetail | null }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [renders, setRenders] = useState<Map<string, string>>(new Map());
+  const [age, setAge] = useState<string>("7d");
+
+  const visible = useMemo(() => {
+    if (!ws) return [];
+    const win = WS_AGES.find((a) => a.key === age)?.ms ?? null;
+    if (win === null) return ws.captures;
+    const cutoff = Date.now() - win;
+    return ws.captures.filter((c) => {
+      const t = Date.parse(c.timestamp);
+      // An unparseable timestamp is never silently dropped.
+      return Number.isNaN(t) || t >= cutoff;
+    });
+  }, [ws, age]);
 
   const toggle = useCallback(
     (id: string) => {
@@ -474,6 +497,22 @@ function WorkspacePane({ ws }: { ws: WorkspaceDetail | null }) {
           />
         ) : (
           <div className="sbx-ws-captures">
+            <div className="sbx-ws-agebar">
+              {WS_AGES.map((a) => (
+                <button
+                  key={a.key}
+                  className={"sbx-chip" + (age === a.key ? " active" : "")}
+                  onClick={() => setAge(a.key)}
+                >
+                  {a.label}
+                </button>
+              ))}
+              {ws.captures.length > visible.length ? (
+                <span className="sbx-ws-capnote">
+                  {ws.captures.length - visible.length} older on this branch folded
+                </span>
+              ) : null}
+            </div>
             {ws.total > ws.captures.length ? (
               <div className="sbx-ws-capnote">
                 showing the newest {ws.captures.length} of {ws.total} on this branch
@@ -484,26 +523,34 @@ function WorkspacePane({ ws }: { ws: WorkspaceDetail | null }) {
                 <span className="sbx-ws-caphint">h5i recall objects --env none</span>
               </div>
             ) : null}
-            <HTMLTable className="sbx-fleet-table" interactive compact>
-              <thead>
-                <tr>
-                  <th>Command</th>
-                  <th style={{ width: 54 }}>Exit</th>
-                  <th style={{ width: 150 }}>When</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ws.captures.map((c) => (
-                  <WorkspaceCaptureRow
-                    key={c.id}
-                    capture={c}
-                    open={openId === c.id}
-                    render={renders.get(c.id)}
-                    onToggle={() => toggle(c.id)}
-                  />
-                ))}
-              </tbody>
-            </HTMLTable>
+            {visible.length === 0 ? (
+              <NonIdealState
+                icon="inbox"
+                title={`No captures in the last ${age}`}
+                description="Widen the window (all) to see this branch's older evidence."
+              />
+            ) : (
+              <HTMLTable className="sbx-fleet-table" interactive compact>
+                <thead>
+                  <tr>
+                    <th>Command</th>
+                    <th style={{ width: 54 }}>Exit</th>
+                    <th style={{ width: 150 }}>When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((c) => (
+                    <WorkspaceCaptureRow
+                      key={c.id}
+                      capture={c}
+                      open={openId === c.id}
+                      render={renders.get(c.id)}
+                      onToggle={() => toggle(c.id)}
+                    />
+                  ))}
+                </tbody>
+              </HTMLTable>
+            )}
           </div>
         )}
       </div>

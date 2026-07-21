@@ -1970,6 +1970,8 @@ body { line-height: 1.5; }
 .sbx-workspace-row .sbx-env-sub { flex: 1; }
 .sbx-ws-captures { display: flex; flex-direction: column; gap: 6px; }
 .sbx-ws-capnote { font-size: 11px; color: var(--bp-text-dim); }
+.sbx-ws-agebar { display: flex; align-items: center; gap: 4px; }
+.sbx-ws-agebar .sbx-ws-capnote { margin-left: 8px; }
 .sbx-ws-caphint { font-family: var(--font-mono); }
 .sbx-ws-cmd {
   font-family: var(--font-mono); font-size: 12px;
