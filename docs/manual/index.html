@@ -2130,9 +2130,23 @@ h5i recall recap            # idempotent on re-run
 <p>When <code>--agent</code> is omitted, h5i infers the backend from <code>H5I_AGENT_ID</code> and falls back to <code>claude</code>.</p>
 <hr />
 <h4 id="h5i-recall-memory-log">h5i recall memory log</h4>
-<pre><code>h5i recall memory log
+<pre><code>h5i recall memory log [--limit &lt;n&gt;]
 </code></pre>
 <p>List all memory snapshots in reverse chronological order, showing the linked commit OID, timestamp, file count, and annotation message.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-l, --limit &lt;n&gt;</code></td>
+<td>Show only the N newest snapshots (<code>0</code> or omitted = all)</td>
+</tr>
+</tbody>
+</table>
 <hr />
 <h4 id="h5i-recall-memory-diff">h5i recall memory diff</h4>
 <pre><code>h5i recall memory diff [&lt;from-oid&gt; [&lt;to-oid&gt;]]
