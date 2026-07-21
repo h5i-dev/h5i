@@ -272,8 +272,8 @@ function FleetPane(props: {
               workspace{workspace.branch ? ` · ${workspace.branch}` : ""}
             </span>
             <span className="sbx-env-sub">
-              {workspace.total} cap{workspace.total === 1 ? "" : "s"} · primary
-              checkout
+              {workspace.total} cap{workspace.total === 1 ? "" : "s"} on this
+              branch · primary checkout
             </span>
             <Tag minimal>unconfined</Tag>
           </button>
@@ -449,7 +449,7 @@ function WorkspacePane({ ws }: { ws: WorkspaceDetail | null }) {
           <Tag minimal>unconfined</Tag>
         </div>
         <Tag minimal round>
-          {ws.total} capture{ws.total === 1 ? "" : "s"}
+          {ws.total} capture{ws.total === 1 ? "" : "s"} on this branch
         </Tag>
       </div>
       <div className="sbx-detail-body">
@@ -463,14 +463,25 @@ function WorkspacePane({ ws }: { ws: WorkspaceDetail | null }) {
         {ws.captures.length === 0 ? (
           <NonIdealState
             icon="inbox"
-            title="No workspace captures"
-            description="Wrap commands with `h5i capture run -- <cmd>` to leave evidence here."
+            title="No workspace captures on this branch"
+            description={
+              ws.total_all_branches > 0
+                ? `${ws.total_all_branches} capture${
+                    ws.total_all_branches === 1 ? "" : "s"
+                  } exist on other branches (see \`h5i recall objects --env none\`). Wrap commands with \`h5i capture run -- <cmd>\` to leave evidence here.`
+                : "Wrap commands with `h5i capture run -- <cmd>` to leave evidence here."
+            }
           />
         ) : (
           <div className="sbx-ws-captures">
             {ws.total > ws.captures.length ? (
               <div className="sbx-ws-capnote">
-                showing the newest {ws.captures.length} of {ws.total}
+                showing the newest {ws.captures.length} of {ws.total} on this branch
+              </div>
+            ) : ws.total_all_branches > ws.total ? (
+              <div className="sbx-ws-capnote">
+                {ws.total_all_branches - ws.total} more on other branches ·{" "}
+                <span className="sbx-ws-caphint">h5i recall objects --env none</span>
               </div>
             ) : null}
             <HTMLTable className="sbx-fleet-table" interactive compact>

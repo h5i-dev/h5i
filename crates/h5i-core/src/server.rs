@@ -1974,13 +1974,19 @@ const WORKSPACE_CAPTURES_CAP: usize = 300;
 pub struct WorkspaceDetail {
     /// Current checked-out branch of the primary worktree, if resolvable.
     pub branch: Option<String>,
-    /// Total env-less captures in the store (may exceed `captures.len()`).
+    /// Env-less captures on the current branch (may exceed `captures.len()`).
     pub total: usize,
-    /// Newest first, capped at `WORKSPACE_CAPTURES_CAP`.
+    /// Env-less captures across ALL branches — shown so a small `total`
+    /// doesn't read as "no other evidence exists".
+    pub total_all_branches: usize,
+    /// Newest first, current branch only, capped at `WORKSPACE_CAPTURES_CAP`.
     pub captures: Vec<EnvCaptureView>,
 }
 
-/// GET /api/workspace — evidence captured outside any environment.
+/// GET /api/workspace — evidence captured outside any environment, scoped to
+/// the branch the primary checkout is currently on (a capture list mixing
+/// branches would conflate unrelated lines of work). A detached HEAD scopes
+/// to captures that also recorded no branch.
 async fn api_workspace(State(state): State<Arc<AppState>>) -> Json<WorkspaceDetail> {
     let path = state.repo_path.clone();
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<WorkspaceDetail> {
@@ -1990,9 +1996,12 @@ async fn api_workspace(State(state): State<Arc<AppState>>) -> Json<WorkspaceDeta
             .head()
             .ok()
             .and_then(|h| h.shorthand().map(str::to_string));
+        let mut total_all_branches = 0usize;
         let mut manifests: Vec<crate::objects::Manifest> = crate::objects::read_manifests(git)
             .into_iter()
             .filter(|m| m.env_id.is_none())
+            .inspect(|_| total_all_branches += 1)
+            .filter(|m| m.branch == branch)
             .collect();
         manifests.reverse(); // append-only log → newest first
         let total = manifests.len();
@@ -2000,6 +2009,7 @@ async fn api_workspace(State(state): State<Arc<AppState>>) -> Json<WorkspaceDeta
         Ok(WorkspaceDetail {
             branch,
             total,
+            total_all_branches,
             captures: manifests.iter().map(EnvCaptureView::from).collect(),
         })
     })
@@ -2007,6 +2017,7 @@ async fn api_workspace(State(state): State<Arc<AppState>>) -> Json<WorkspaceDeta
     Json(result.ok().and_then(|r| r.ok()).unwrap_or(WorkspaceDetail {
         branch: None,
         total: 0,
+        total_all_branches: 0,
         captures: Vec::new(),
     }))
 }

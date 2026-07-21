@@ -404,8 +404,11 @@ export interface EnvDetail {
  * an environment. */
 export interface WorkspaceDetail {
   branch?: string | null;
-  /** Total env-less captures in the store (list below is capped). */
+  /** Env-less captures on the current branch (list below is capped). */
   total: number;
+  /** Env-less captures across all branches. */
+  total_all_branches: number;
+  /** Newest first, current branch only. */
   captures: EnvCaptureView[];
 }
 
