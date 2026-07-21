@@ -427,11 +427,11 @@
     }
     .hero-shot-caption code { font-family: var(--mono); color: var(--red-text); font-size: 0.92em; }
 
-    /* ── Embedded ENSEMBLE dashboard (real h5i serve DOM, scoped dark) ────────
-       The markup mirrors web/src/TeamView.tsx and the rules below are ported
-       from web/src/theme.css's .team-* block, namespaced under .ee so the dark
-       palette never bleeds into the light page. It is live HTML+CSS, not a
-       screenshot — crisp at any zoom. */
+    /* ── Embedded workbench dashboard (real h5i serve DOM, scoped dark) ───────
+       The markup mirrors web/src/BoardView.tsx (and the other workbench
+       lenses) and the rules below are ported from web/src/theme.css,
+       namespaced under .ee so the dark palette never bleeds into the light
+       page. It is live HTML+CSS, not a screenshot — crisp at any zoom. */
     /* The workbench is a fixed 980px scene inside .ee-fit; below that width the
        JS scaler shrinks it like a video frame (same behavior as the hero film)
        instead of reflowing it, which corrupted the layout on phones. */
@@ -443,7 +443,6 @@
       --h5-accent: #42e2d0; --h5-accent-hi: #7cefe0;
       --h5-accent-bg: rgba(66,226,208,0.14); --h5-accent-glow: rgba(66,226,208,0.32);
       --h5-pass: #5ee2a0; --h5-fail: #ff6b6b; --h5-run: #f0a050; --h5-model: #b48bd9;
-      --h5-winner-glow: 0 0 0 1px var(--h5-accent), 0 0 22px -2px var(--h5-accent-glow);
       --fd: var(--sans); --fm: var(--mono);
       border: 1px solid #20262e; border-radius: var(--radius-lg); overflow: hidden;
       box-shadow: 0 40px 90px rgba(0,0,0,0.55); text-align: left;
@@ -610,69 +609,30 @@
     .ee-body { padding: 18px 22px 24px;
       background: radial-gradient(120% 80% at 50% -10%, rgba(66,226,208,0.05), transparent 60%), var(--bp-bg); }
 
-    /* Run header */
-    .ee .team-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
-    .ee .team-head h2 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: -0.02em; font-family: var(--fd); color: var(--bp-text); }
-    .ee .team-head-meta { display: flex; align-items: center; gap: 7px; margin-top: 5px; font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); }
-    .ee .team-base { color: var(--bp-text-muted); }
-    .ee .team-dot-sep { color: var(--bp-border-strong); }
-    .ee .team-phase-badge { flex-shrink: 0; font-family: var(--fm); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--h5-accent-hi); background: var(--h5-accent-bg); border: 1px solid rgba(66,226,208,0.4); padding: 5px 11px; border-radius: 20px; }
-
-    /* Settlement rail */
-    .ee .team-rail { list-style: none; margin: 0 0 22px; padding: 18px 6px 4px; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
-    .ee .team-rail-stage { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 6px; min-width: 0; }
-    .ee .team-rail-stage::before { content: ""; position: absolute; top: 9px; left: -50%; width: 100%; height: 2px; background: var(--bp-border); }
-    .ee .team-rail-stage:first-child::before { display: none; }
-    .ee .team-rail-stage.lit::before { background: var(--h5-accent); }
-    .ee .team-rail-dot { position: relative; z-index: 1; width: 20px; height: 20px; border-radius: 50%; background: var(--bp-bg); border: 2px solid var(--bp-border-strong); display: flex; align-items: center; justify-content: center; }
-    .ee .team-rail-num { font-family: var(--fm); font-size: 9px; font-weight: 700; color: var(--bp-text-dim); }
-    .ee .team-rail-label { margin-top: 8px; font-family: var(--fd); font-size: 12px; font-weight: 600; color: var(--bp-text-dim); }
-    .ee .team-rail-hint { margin-top: 3px; font-size: 9.5px; line-height: 1.4; color: var(--bp-text-dim); opacity: 0; transition: opacity 0.15s; max-width: 130px; }
-    .ee .team-rail-stage:hover .team-rail-hint { opacity: 0.7; }
-    .ee .team-rail-stage.is-done .team-rail-dot { background: var(--h5-accent); border-color: var(--h5-accent); }
-    .ee .team-rail-stage.is-done .team-rail-num { color: #04201d; }
-    .ee .team-rail-stage.is-done .team-rail-label { color: var(--bp-text-muted); }
-    .ee .team-rail-stage.is-active .team-rail-dot { background: var(--bp-bg); border-color: var(--h5-accent); box-shadow: 0 0 0 4px var(--h5-accent-bg); animation: team-pulse 1.8s ease-in-out infinite; }
-    .ee .team-rail-stage.is-active .team-rail-num { color: var(--h5-accent-hi); }
-    .ee .team-rail-stage.is-active .team-rail-label { color: var(--bp-text); }
-    @keyframes team-pulse { 0%,100% { box-shadow: 0 0 0 4px var(--h5-accent-bg); } 50% { box-shadow: 0 0 0 7px rgba(66,226,208,0.05); } }
-
-    /* Lanes */
-    .ee .team-lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr)); gap: 12px; margin-bottom: 20px; }
-    .ee .team-lane { position: relative; border: 1px solid var(--bp-border); border-radius: 9px; padding: 13px 14px; background: var(--bp-surface); display: flex; flex-direction: column; gap: 10px; transition: border-color 0.15s, box-shadow 0.15s, opacity 0.2s; }
-    .ee .team-lane.winner { border-color: var(--h5-accent); box-shadow: var(--h5-winner-glow); background: linear-gradient(180deg, rgba(66,226,208,0.06), transparent 60%), var(--bp-surface); }
-    .ee .team-lane.dimmed { opacity: 0.55; filter: saturate(0.55); }
-    .ee .team-lane.dimmed:hover { opacity: 0.9; filter: none; }
-    .ee .team-lane-ribbon { position: absolute; top: 10px; right: -1px; font-family: var(--fm); font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.14em; color: #04201d; background: var(--h5-accent); padding: 3px 9px 3px 8px; border-radius: 10px 0 0 10px; font-weight: 700; }
-    .ee .team-lane-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .ee .team-lane-name { font-family: var(--fd); font-size: 14px; font-weight: 600; color: var(--bp-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ee .team-seal { flex-shrink: 0; font-family: var(--fm); font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--h5-accent-hi); border: 1px solid rgba(66,226,208,0.4); border-radius: 3px; padding: 2px 6px; }
-    .ee .team-lane-ident { display: flex; flex-wrap: wrap; gap: 5px; }
-    .ee .team-chip { font-family: var(--fm); font-size: 10px; color: var(--bp-text-muted); background: var(--bp-elev); border-radius: 4px; padding: 2px 7px; }
-    .ee .team-chip.model { color: var(--h5-model); background: rgba(180,139,217,0.12); }
-    .ee .team-chip.ghost { color: var(--bp-text-dim); background: transparent; border: 1px solid var(--bp-border); }
-    .ee .team-lane-diff { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; font-family: var(--fm); font-size: 11px; font-variant-numeric: tabular-nums; }
-    .ee .team-lane-diff .d-files { color: var(--bp-text); }
-    .ee .team-lane-diff .d-ins { color: var(--h5-pass); }
-    .ee .team-lane-diff .d-del { color: var(--bp-text-dim); }
-    .ee .team-lane-diff .d-indep { margin-left: auto; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--h5-pass); }
-    .ee .team-gates { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 9px; border-top: 1px solid var(--bp-border); }
-    .ee .team-gate { display: inline-flex; align-items: center; gap: 5px; font-family: var(--fm); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 7px; border-radius: 4px; }
-    .ee .team-gate-mark { font-size: 11px; }
-    .ee .team-gate.pass { color: var(--h5-pass); background: rgba(94,226,160,0.1); }
-    .ee .team-gate.fail { color: var(--h5-fail); background: rgba(255,107,107,0.1); }
-
-    /* Verdict card */
-    .ee .team-verdict-card { display: flex; border: 1px solid rgba(66,226,208,0.35); border-radius: 10px; overflow: hidden; background: var(--bp-surface); }
-    .ee .team-verdict-rail { flex: 0 0 4px; background: var(--h5-accent); box-shadow: 0 0 18px -2px var(--h5-accent-glow); }
-    .ee .team-verdict-body { padding: 15px 18px; flex: 1; min-width: 0; }
-    .ee .team-verdict-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-    .ee .team-verdict-eyebrow { font-family: var(--fm); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--bp-text-dim); }
-    .ee .team-verdict-pick { font-family: var(--fm); font-size: 17px; font-weight: 700; color: var(--h5-accent-hi); }
-    .ee .team-verdict-meta { margin-top: 4px; font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); }
-    .ee .team-verdict-reasons { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
-    .ee .team-verdict-reasons li { position: relative; padding-left: 16px; font-size: 12px; color: var(--bp-text-muted); line-height: 1.5; }
-    .ee .team-verdict-reasons li::before { content: "▸"; position: absolute; left: 0; color: var(--h5-accent); }
+    /* ── Board panel — the env kanban, ported from web/src/theme.css .brd-* ── */
+    .ee .brd-columns { display: flex; gap: 8px; align-items: stretch; min-height: 552px; }
+    .ee .brd-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; background: var(--bp-surface); border: 1px solid var(--bp-border); border-radius: 8px; }
+    .ee .brd-col-header { display: flex; align-items: baseline; justify-content: space-between; padding: 8px 10px 6px; border-bottom: 1px solid var(--bp-border); }
+    .ee .brd-col-title { font-family: var(--fm); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-muted); }
+    .ee .brd-col-count { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); }
+    .ee .brd-col-body { flex: 1; padding: 7px; display: flex; flex-direction: column; gap: 7px; }
+    .ee .brd-col-empty { color: var(--bp-text-dim); text-align: center; padding: 14px 0; font-size: 11px; }
+    .ee .brd-card { background: var(--bp-surface-2); border: 1px solid var(--bp-border); border-radius: 6px; padding: 7px 9px; display: flex; flex-direction: column; gap: 6px; }
+    .ee .brd-card-live { border-color: var(--h5-pass); box-shadow: 0 0 0 1px rgba(94,226,160,0.35); }
+    .ee .brd-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+    .ee .brd-card-slug { font-size: 12px; font-weight: 600; color: var(--bp-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ee .brd-card-agent { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); flex: none; }
+    .ee .brd-card-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .ee .brd-card-meta { display: flex; flex-wrap: wrap; gap: 7px; font-family: var(--fm); font-size: 10px; font-variant-numeric: tabular-nums; color: var(--bp-text-muted); }
+    .ee .brd-ins { color: var(--h5-pass); }
+    .ee .brd-del { color: var(--h5-fail); }
+    .ee .brd-card-when { margin-left: auto; color: var(--bp-text-dim); }
+    .ee .brd-card-foot { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--bp-border); padding-top: 6px; }
+    .ee .brd-card-parent { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ee .brd-copy { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; align-self: flex-start;
+      font-family: var(--fm); font-size: 10px; color: var(--h5-accent-hi); background: var(--bp-elev); border-radius: 4px; padding: 2px 6px; }
+    .ee .brd-copy::before { content: "⧉"; opacity: 0.7; }
+    .ee .brd-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* ── Sandbox panel — ported from web/src/theme.css .sbx-* block ───────── */
     .ee-tag { display: inline-flex; align-items: center; font-family: var(--fm); font-size: 10px;
@@ -680,6 +640,8 @@
     .ee-tag.round { border-radius: 10px; }
     .ee-tag.ok { background: rgba(94,226,160,0.14); color: var(--h5-pass); }
     .ee-tag.pri { background: var(--h5-accent-bg); color: var(--h5-accent-hi); }
+    .ee-tag.warn { background: rgba(240,160,80,0.14); color: var(--h5-run); }
+    .ee-tag.bad { background: rgba(255,107,107,0.12); color: var(--h5-fail); }
     .ee-code { font-family: var(--fm); font-size: 10px; color: var(--h5-accent-hi); background: var(--bp-elev); border-radius: 3px; padding: 1px 5px; }
 
     .ee .sbx-shell { display: flex; flex-direction: column; }
@@ -1383,15 +1345,15 @@
       </div>
     </div>
     <!-- Embedded workbench — the real `h5i serve` dashboard, as live HTML:
-         attention rail (what needs you, with authority badges) + Now / Ensemble / Context lenses -->
+         attention rail (what needs you, with authority badges) + Now / Board / Context lenses -->
     <div class="ee-fit reveal">
-    <div class="ensemble-embed ee" role="group" aria-label="A static preview of the h5i serve workbench: an attention rail showing what needs a human (each claim badged by how it is known), beside the fleet (Now), the sealed candidate lanes (Board), the deterministic review ranking (Decide), and the reasoning workspace (Context).">
+    <div class="ensemble-embed ee" role="group" aria-label="A static preview of the h5i serve workbench: an attention rail showing what needs a human (each claim badged by how it is known), beside the fleet (Now), the environment kanban (Board), the deterministic review ranking (Decide), and the reasoning workspace (Context).">
       <div class="ee-bar">
         <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
         <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span><a class="ee-full ee-full-open" href="/?workbench=1" title="Open full screen">⛶</a><a class="ee-full ee-full-close" href="/" title="Back to the front page">✕</a>
         <div class="ee-tabs" role="tablist">
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Now</button>
-          <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Board</button>
+          <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="board">Board</button>
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="context">Context</button>
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="decide">Decide</button>
         </div>
@@ -1404,64 +1366,78 @@
         <div class="ee-rail-row"><span class="ee-rdot act"></span><span class="ee-rtitle">claude · session live</span><span class="ee-abadge ab-obs">observed</span></div>
         <div class="ee-rail-foot"><span class="ee-live"></span>live · event feed</div>
       </aside>
-      <div class="ee-body ee-panel" data-panel="ensemble">
-        <header class="team-head">
-          <div class="team-head-id">
-            <h2>fix-auth</h2>
-            <div class="team-head-meta">
-              <span class="team-base">base 3d80a8d7b4</span>
-              <span class="team-dot-sep">·</span><span>3 agents</span>
-              <span class="team-dot-sep">·</span><span>3 sealed</span>
+      <!-- Board tab — the env kanban (web/src/BoardView.tsx): every environment
+           as a card flowing through the lifecycle, each offering its next command -->
+      <div class="ee-body ee-panel" data-panel="board">
+        <div class="brd-columns">
+          <section class="brd-col" aria-label="Created">
+            <header class="brd-col-header" title="fresh worktrees, nothing run yet"><span class="brd-col-title">Created</span><span class="brd-col-count">1</span></header>
+            <div class="brd-col-body">
+              <article class="brd-card">
+                <div class="brd-card-head"><span class="brd-card-slug">docs-refresh</span><span class="brd-card-agent">claude-1</span></div>
+                <div class="brd-card-tags"><span class="ee-tag">workspace</span></div>
+                <div class="brd-card-meta"><span>0 files</span><span class="brd-ins">+0</span><span class="brd-del">−0</span><span>0 cap</span><span class="brd-card-when">3h ago</span></div>
+                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env shell docs-refresh</span></span></div>
+              </article>
             </div>
-          </div>
-          <span class="team-phase-badge">applied</span>
-        </header>
-
-        <ol class="team-rail" aria-label="ensemble lifecycle">
-          <li class="team-rail-stage is-done lit"><span class="team-rail-dot"><span class="team-rail-num">1</span></span><span class="team-rail-label">Draft</span><span class="team-rail-hint">roster created · agents working sealed</span></li>
-          <li class="team-rail-stage is-done lit"><span class="team-rail-dot"><span class="team-rail-num">2</span></span><span class="team-rail-label">Seal</span><span class="team-rail-hint">submissions frozen, immutable</span></li>
-          <li class="team-rail-stage is-done lit"><span class="team-rail-dot"><span class="team-rail-num">3</span></span><span class="team-rail-label">Review</span><span class="team-rail-hint">permissioned peer review</span></li>
-          <li class="team-rail-stage is-done lit"><span class="team-rail-dot"><span class="team-rail-num">4</span></span><span class="team-rail-label">Verify</span><span class="team-rail-hint">neutral verifier replays each candidate</span></li>
-          <li class="team-rail-stage is-active lit"><span class="team-rail-dot"><span class="team-rail-num">5</span></span><span class="team-rail-label">Apply</span><span class="team-rail-hint">one winner committed to base</span></li>
-        </ol>
-
-        <section class="team-lanes">
-          <article class="team-lane dimmed">
-            <div class="team-lane-top"><strong class="team-lane-name">claude-1</strong><span class="team-seal">sealed</span></div>
-            <div class="team-lane-ident"><span class="team-chip model">opus-4-8</span><span class="team-chip">design</span><span class="team-chip ghost">container</span></div>
-            <div class="team-lane-diff"><span class="d-files">3 files</span><span class="d-ins">+91</span><span class="d-del">−20</span><span class="d-indep">independent</span></div>
-            <div class="team-gates"><span class="team-gate pass"><span class="team-gate-mark">✓</span>applies</span><span class="team-gate pass"><span class="team-gate-mark">✓</span>tests</span></div>
-          </article>
-          <article class="team-lane winner">
-            <div class="team-lane-ribbon">verdict</div>
-            <div class="team-lane-top"><strong class="team-lane-name">codex-1</strong></div>
-            <div class="team-lane-ident"><span class="team-chip model">codex</span><span class="team-chip">build</span><span class="team-chip ghost">container</span></div>
-            <div class="team-lane-diff"><span class="d-files">4 files</span><span class="d-ins">+272</span><span class="d-del">−31</span><span class="d-indep">independent</span></div>
-            <div class="team-gates"><span class="team-gate pass"><span class="team-gate-mark">✓</span>applies</span><span class="team-gate pass"><span class="team-gate-mark">✓</span>tests</span></div>
-          </article>
-          <article class="team-lane dimmed">
-            <div class="team-lane-top"><strong class="team-lane-name">claude-2</strong><span class="team-seal">sealed</span></div>
-            <div class="team-lane-ident"><span class="team-chip model">sonnet-4-6</span><span class="team-chip">security</span><span class="team-chip ghost">process</span></div>
-            <div class="team-lane-diff"><span class="d-files">1 file</span><span class="d-ins">+12</span><span class="d-del">−3</span><span class="d-indep">independent</span></div>
-            <div class="team-gates"><span class="team-gate pass"><span class="team-gate-mark">✓</span>applies</span><span class="team-gate fail"><span class="team-gate-mark">✕</span>tests</span></div>
-          </article>
-        </section>
-
-        <section class="team-verdict-card">
-          <div class="team-verdict-rail"></div>
-          <div class="team-verdict-body">
-            <div class="team-verdict-head">
-              <span class="team-verdict-eyebrow">neutral verdict</span>
-              <span class="team-verdict-pick">sub-codex-1-r1-c34f11daf8e2</span>
+          </section>
+          <section class="brd-col" aria-label="Working">
+            <header class="brd-col-header" title="runs/sessions happening (or idle between them)"><span class="brd-col-title">Working</span><span class="brd-col-count">3</span></header>
+            <div class="brd-col-body">
+              <article class="brd-card brd-card-live">
+                <div class="brd-card-head"><span class="brd-card-slug">fix-auth</span><span class="brd-card-agent">claude-1</span></div>
+                <div class="brd-card-tags"><span class="ee-tag">container</span><span class="ee-tag ok">● shell pid 41213</span></div>
+                <div class="brd-card-meta"><span>3 files</span><span class="brd-ins">+91</span><span class="brd-del">−20</span><span>4 cap</span><span class="brd-card-when">2m ago</span></div>
+                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env propose fix-auth</span></span></div>
+              </article>
+              <article class="brd-card">
+                <div class="brd-card-head"><span class="brd-card-slug">fix-auth</span><span class="brd-card-agent">claude-2</span></div>
+                <div class="brd-card-tags"><span class="ee-tag">process</span><span class="ee-tag warn">behind 2</span></div>
+                <div class="brd-card-meta"><span>1 file</span><span class="brd-ins">+12</span><span class="brd-del">−3</span><span>3 cap</span><span class="brd-card-when">18m ago</span></div>
+                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env propose fix-auth</span></span></div>
+              </article>
+              <article class="brd-card">
+                <div class="brd-card-head"><span class="brd-card-slug">payments</span><span class="brd-card-agent">codex-2</span></div>
+                <div class="brd-card-tags"><span class="ee-tag">container</span><span class="ee-tag bad">risk 3</span></div>
+                <div class="brd-card-meta"><span>2 files</span><span class="brd-ins">+36</span><span class="brd-del">−8</span><span>7 cap</span><span class="brd-card-when">5m ago</span></div>
+                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env propose payments</span></span></div>
+              </article>
             </div>
-            <div class="team-verdict-meta">verify:replay-tests · smallest-diff tiebreak<span class="team-dot-sep"> · </span>auto-apply enabled</div>
-            <ul class="team-verdict-reasons">
-              <li>sub-codex-1-r1-c34f11daf8e2 applies cleanly</li>
-              <li>sub-codex-1-r1-c34f11daf8e2 verifier tests passed</li>
-              <li>smallest diff among verifier-passing candidates</li>
-            </ul>
-          </div>
-        </section>
+          </section>
+          <section class="brd-col" aria-label="Proposed">
+            <header class="brd-col-header" title="mediated commit ready — waiting on a reviewer"><span class="brd-col-title">Proposed</span><span class="brd-col-count">1</span></header>
+            <div class="brd-col-body">
+              <article class="brd-card">
+                <div class="brd-card-head"><span class="brd-card-slug">fix-auth</span><span class="brd-card-agent">codex-1</span></div>
+                <div class="brd-card-tags"><span class="ee-tag">container</span><span class="ee-tag warn">risk 1</span></div>
+                <div class="brd-card-meta"><span>4 files</span><span class="brd-ins">+272</span><span class="brd-del">−31</span><span>5 cap</span><span class="brd-card-when">9m ago</span></div>
+                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env apply fix-auth</span></span></div>
+              </article>
+            </div>
+          </section>
+          <section class="brd-col" aria-label="Applied">
+            <header class="brd-col-header" title="merged onto the parent branch"><span class="brd-col-title">Applied</span><span class="brd-col-count">1</span></header>
+            <div class="brd-col-body">
+              <article class="brd-card">
+                <div class="brd-card-head"><span class="brd-card-slug">session-retry</span><span class="brd-card-agent">codex-1</span></div>
+                <div class="brd-card-tags"><span class="ee-tag">container</span><span class="ee-tag pri">PR #212</span></div>
+                <div class="brd-card-meta"><span>2 files</span><span class="brd-ins">+48</span><span class="brd-del">−9</span><span>6 cap</span><span class="brd-card-when">1d ago</span></div>
+                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env gc</span></span></div>
+              </article>
+            </div>
+          </section>
+          <section class="brd-col" aria-label="Aborted">
+            <header class="brd-col-header" title="discarded (manifest kept for forensics)"><span class="brd-col-title">Aborted</span><span class="brd-col-count">1</span></header>
+            <div class="brd-col-body">
+              <article class="brd-card">
+                <div class="brd-card-head"><span class="brd-card-slug">net-probe</span><span class="brd-card-agent">claude-1</span></div>
+                <div class="brd-card-tags"><span class="ee-tag">process</span></div>
+                <div class="brd-card-meta"><span>0 files</span><span class="brd-ins">+0</span><span class="brd-del">−0</span><span>2 cap</span><span class="brd-card-when">3d ago</span></div>
+                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env gc</span></span></div>
+              </article>
+            </div>
+          </section>
+        </div>
       </div>
 
       <!-- Sandbox tab — the read-only flight recorder over h5i environments -->
@@ -1918,7 +1894,7 @@
     });
   }
 
-  /* ── Embedded workbench lens switch (Now / Ensemble / Context) ──── */
+  /* ── Embedded workbench lens switch (Now / Board / Context / Decide) ──── */
   document.querySelectorAll('.ensemble-embed').forEach(embed => {
     const tabs = embed.querySelectorAll('.ee-tab[data-tab]');
     const panels = embed.querySelectorAll('.ee-panel[data-panel]');
@@ -2041,14 +2017,14 @@
             '<div class="ee-why-ev">' + badge('obs', 'observed') + '<code>sessions live · pid</code></div>' +
             '<div class="ee-why-h">act in your terminal</div><div class="ee-why-cmd">$ h5i team compare fix-auth</div>');
           say('Every claim shows how it is known. No score without its reasons.'); } },
-      { t: 9.5, fn: () => { clearOverlays(); showPanel('ensemble'); point('.ee-tab[data-tab="ensemble"]');
-          say('Three sealed attempts, one task. A neutral verifier picks the winner.'); } },
-      { t: 11.5, fn: () => { showPanel('context'); point('.ee-tab[data-tab="context"]');
+      { t: 9.5, fn: () => { clearOverlays(); showPanel('board'); point('.ee-tab[data-tab="board"]');
+          say('One board, the whole fleet: created → working → proposed → applied, each card offering its next command.'); } },
+      { t: 12, fn: () => { showPanel('context'); point('.ee-tab[data-tab="context"]');
           say('The reasoning behind every change, versioned beside your code in refs/h5i/*.'); } },
-      { t: 14, fn: () => { showPanel('decide'); point('.ee-tab[data-tab="decide"]');
+      { t: 14.5, fn: () => { showPanel('decide'); point('.ee-tab[data-tab="decide"]');
           say('Deterministic scores, no model in the loop: prompt maturity and boundary risk.'); } },
     ];
-    const LOOP = 16.5;
+    const LOOP = 17;
     const seek = (t) => { SCENES.filter(sc => sc.t <= t).forEach(sc => sc.fn()); };
     window.EE_SEEK = (t) => { clearOverlays(); seek(t); clock = t; last = t; };
     // Controls: pause and a clickable progress track, like the product film.
