@@ -63,7 +63,7 @@ Initialize h5i and wire the Claude Code / Codex hooks:
 
 ```bash
 h5i init
-h5i hook setup --write --wrap-bash --team
+h5i hook setup --write --wrap-bash # --team
 git add .
 git commit -m "update hooks"
 ```
