@@ -343,17 +343,6 @@
       margin: -1.6rem auto 2.5rem; max-width: 640px;
     }
     .hero-punch::before { content: '→ '; color: var(--red-text); }
-    .hero-proverbs {
-      display: flex; flex-wrap: wrap; justify-content: center; gap: 0.55rem;
-      margin: 1.6rem auto 0; max-width: 760px;
-    }
-    .hero-proverbs span {
-      display: inline-flex; align-items: center;
-      min-height: 34px; padding: 0.42rem 0.75rem;
-      border: 1px solid var(--border); border-radius: 999px;
-      background: rgba(255,255,255,0.035); color: var(--text-dim);
-      font-size: 0.86rem; line-height: 1.2;
-    }
     .hero-actions { display: flex; gap: 0.9rem; justify-content: center; flex-wrap: wrap; margin-bottom: 2.8rem; }
     .hero-film { width: min(980px, 94vw); margin: 4.5rem 0 0; margin-left: 50%; transform: translateX(-50%); text-align: center; }
     .hero-film-frame { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 16px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 24px 70px rgba(0,0,0,0.55); background: #08080b; }
@@ -903,18 +892,6 @@
       padding: 120px 0; border-top: 1px solid var(--border);
     }
 
-    /* ── Dashboard ─────────────────────────────────────────── */
-    .dashboard-wrap {
-      border: 1px solid var(--border); border-radius: var(--radius-lg);
-      overflow: hidden; box-shadow: 0 40px 90px rgba(0,0,0,0.55);
-    }
-    .dashboard-wrap img { width: 100%; }
-    .dashboard-caption {
-      text-align: center; margin-top: 1.6rem;
-      font-size: 0.85rem; color: var(--text-dim);
-    }
-    .dashboard-caption strong { color: var(--text); }
-
     /* ── Install ───────────────────────────────────────────── */
     #install { padding: 120px 0; border-top: 1px solid var(--border); }
     .install-grid {
@@ -1227,19 +1204,6 @@
   .fm-row.solved .fm-cell:first-child { color: var(--green); }
   .fm-row.solved .fm-cell:last-child  { color: var(--text); }
   .fm-cell .cmd { font-family: var(--mono); font-size: 0.82rem; color: var(--cyan); }
-
-  .pipe { display: flex; align-items: stretch; width: 100%; gap: 0; }
-  .pipe-step { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 14px 13px; border: 1px solid var(--border); background: var(--bg-card); position: relative; }
-  .pipe-step + .pipe-step { border-left: none; }
-  .pipe-step:first-child { border-radius: 12px 0 0 12px; }
-  .pipe-step:last-child  { border-radius: 0 12px 12px 0; }
-  .pipe-step:not(:last-child)::after { content: '›'; position: absolute; right: -7px; top: 50%; transform: translateY(-50%); z-index: 2; font-family: var(--mono); font-size: 1.1rem; color: var(--text-faint); background: var(--bg); padding: 0 1px; }
-  .pipe-step .pn { font-family: var(--mono); font-size: 0.66rem; color: var(--text-faint); letter-spacing: 0.04em; }
-  .pipe-step .pt { font-size: 0.94rem; font-weight: 700; color: var(--ink); line-height: 1.15; }
-  .pipe-step .pd { font-size: 0.76rem; color: var(--text-faint); line-height: 1.34; }
-  .pipe-step.key { border-color: var(--border-red); background: rgba(224,36,27,0.055); }
-  .pipe-step.key .pn { color: var(--red-text); }
-  @media (max-width: 760px) { .pipe { flex-direction: column; } .pipe-step:not(:last-child)::after { content: '⌄'; right: 50%; top: auto; bottom: -10px; transform: translateX(50%); } .pipe-step:first-child { border-radius: 12px 12px 0 0; } .pipe-step:last-child { border-radius: 0 0 12px 12px; } .pipe-step + .pipe-step { border-left: 1px solid var(--border); border-top: none; } }
 
   .verdict { width: 100%; border: 1px solid rgba(98,201,140,0.35); background: rgba(98,201,140,0.05); border-radius: var(--radius-lg); padding: 16px 20px; }
   .verdict .vh { font-family: var(--mono); font-size: 0.76rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--green); margin-bottom: 10px; }
@@ -1714,38 +1678,65 @@
   </div>
 </section>
 
-<!-- ── Agent Teams (centerpiece) ─────────────────────────────── -->
+<!-- ── Programmable Multi-Agent Orchestra (centerpiece) ──────── -->
 <section id="team">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">The killer workflow · then scale</span>
+      <span class="section-tag">Programmable Multi-Agent Orchestra</span>
       <h2 class="section-title">Run many coding agents. Merge one auditable result.</h2>
-      <p class="section-sub">The same auditable workspace that contains one agent scales to a whole team. <code>h5i team</code> runs several agents on the <em>same</em> task, each in its own isolated <code>h5i env</code>, then drives them through a phased, permissioned protocol. A roster member is a <strong>persona, not a backend</strong>: three Claudes with different skills, a Claude+Codex mix, or one model under two roles. The audit records which configuration produced which candidate.</p>
+      <p class="section-sub">The same auditable workspace that contains one agent scales to a whole ensemble, and the workflow itself is <strong>a program you write</strong>. With <code>h5i-orchestra</code>, parallel fan-out, loops, and conditionals are ordinary control flow in Python or Rust: hire a roster of personas, let them work sealed and in parallel, cross-review, verify in a neutral sandbox, and let an explainable verdict pick the winner. Every step is journaled to <code>refs/h5i/team</code>, so an interrupted run resumes instead of re-paying agent turns.</p>
       <div class="divider"></div>
     </div>
 
-    <div class="pipe reveal">
-      <div class="pipe-step"><span class="pn">01 · create</span><span class="pt">Roster</span><span class="pd">N envs, each a persona: runtime · model · role</span></div>
-      <div class="pipe-step"><span class="pn">02 · dispatch</span><span class="pt">One task → all</span><span class="pd">same task delivered to every agent</span></div>
-      <div class="pipe-step key"><span class="pn">03 · independent</span><span class="pt">Sealed work</span><span class="pd">no agent sees a peer's attempt</span></div>
-      <div class="pipe-step key"><span class="pn">04 · freeze</span><span class="pt">Submissions</span><span class="pd">immutable frozen candidates</span></div>
-      <div class="pipe-step"><span class="pn">05 · review</span><span class="pt">Permissioned</span><span class="pd">scoped peer review + opt-in discuss</span></div>
-      <div class="pipe-step key"><span class="pn">06 · verify</span><span class="pt">Neutral judge</span><span class="pd">sandboxed replay at shared base</span></div>
-      <div class="pipe-step"><span class="pn">07 · verdict</span><span class="pt">Apply winner</span><span class="pd">explainable, gated, one patch</span></div>
-    </div>
-    <p class="reveal" style="margin:0.9rem 0 0;text-align:center;font-family:var(--mono);font-size:0.8rem;color:var(--text-faint);">⟵ <span style="color:var(--red-text)">independence-first:</span> diversity is protected until <code>freeze</code> · discussion is opt-in and logged afterward ⟶</p>
+    <div class="split2 reveal" style="margin-bottom:2.5rem;">
+      <div class="terminal" style="margin:0;">
+        <div class="terminal-bar">
+          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+          <span class="terminal-path">ensemble.py</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-prompt">import</span> asyncio
+<span class="t-prompt">from</span> h5i.orchestra <span class="t-prompt">import</span> Conductor
 
-    <div class="dashboard-wrap reveal" style="margin-top:2.5rem;">
-      <img src="/_static/hero-team.svg" alt="h5i team flow: one task fans out to Claude and Codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the winning result is applied." loading="lazy">
+<span class="t-prompt">async def</span> main():
+    task = <span class="t-ai">"implement quicksort in python with unit test"</span>
+
+    <span class="t-prompt">async with</span> Conductor(<span class="t-ai">"."</span>, <span class="t-ai">"fix-auth"</span>) <span class="t-prompt">as</span> c:
+        claude = <span class="t-prompt">await</span> c.hire(<span class="t-ai">"claude-agent"</span>, runtime=<span class="t-ai">"claude"</span>)
+        codex  = <span class="t-prompt">await</span> c.hire(<span class="t-ai">"codex-agent"</span>,  runtime=<span class="t-ai">"codex"</span>)
+
+        <span class="t-cmt"># Both agents implement the task in parallel</span>
+        claude_work, codex_work = <span class="t-prompt">await</span> asyncio.gather(
+            claude.work(task), codex.work(task))
+
+        <span class="t-cmt"># Seal the round: no agent saw a peer's attempt</span>
+        <span class="t-prompt">await</span> c.freeze()
+
+        <span class="t-cmt"># Each agent reviews the other's work</span>
+        <span class="t-prompt">await</span> asyncio.gather(
+            codex.review(claude_work), claude.review(codex_work))
+
+        <span class="t-cmt"># Replay each submission in a fresh, neutral sandbox</span>
+        <span class="t-prompt">await</span> c.verify(claude_work, [<span class="t-ai">"pytest"</span>, <span class="t-ai">"--quiet"</span>])
+        <span class="t-prompt">await</span> c.verify(codex_work, [<span class="t-ai">"pytest"</span>, <span class="t-ai">"--quiet"</span>])
+
+        <span class="t-cmt"># Smallest diff among submissions that pass all tests</span>
+        verdict = <span class="t-prompt">await</span> c.judge()
+        <span class="t-prompt">print</span>(<span class="t-ai">"winner:"</span>, verdict.selected_submission)
+
+asyncio.run(main())</pre></div>
+      </div>
+      <div class="stack">
+        <h3 style="font-size:1.15rem;font-weight:700;margin:0;">The score is plain code</h3>
+        <p style="color:var(--text-dim);line-height:1.7;margin:0;">No YAML graph, no DSL to learn: <code>asyncio.gather</code> is your parallelism, <code>if</code> and <code>for</code> are your routing. Here Claude and Codex implement the same task sealed from each other, cross-review after <code>freeze</code>, a neutral sandbox replays the tests, and <code>judge</code> picks the winner by explainable rules. Ready-made patterns (ensemble, pipeline, arena, map-reduce, debate, judge panel) ship as one-liners.</p>
+        <p style="color:var(--text-dim);line-height:1.7;margin:0;">Every effectful step lands in an append-only journal in <code>refs/h5i/team</code>. Kill the script and run it again: completed turns replay from the journal, the run picks up where it stopped, and <code>h5i team trace</code> renders the recorded DAG for the audit.</p>
+        <div class="hero-install" style="align-self:flex-start;">
+          <code>pip3 install h5i-orchestra</code>
+          <button class="copy-btn" onclick="copyCmd(this)">copy</button>
+        </div>
+        <p style="color:var(--text-faint);font-size:0.85rem;line-height:1.7;margin:0;">The Python SDK lives at <a href="https://github.com/h5i-dev/h5i-python" style="color:var(--red-text)">github.com/h5i-dev/h5i-python</a>. Prefer Rust? The same define-by-run eDSL ships in the main repo as <code>h5i-orchestra</code>.</p>
+      </div>
     </div>
-    <div class="hero-proverbs reveal" aria-label="On working in concert" style="margin-top:2.5rem;">
-      <span>Two heads are better than one.</span>
-      <span>Dos cabezas piensan mejor que una.</span>
-      <span>三个臭皮匠，胜过一个诸葛亮。</span>
-      <span>एक से भले दो।</span>
-      <span>三人寄れば文殊の知恵。</span>
-      <span>Deux avis valent mieux qu'un.</span>
-    </div>
+
   </div>
 </section>
 
@@ -1889,6 +1880,14 @@
     const text = document.getElementById('install-cmd').textContent;
     navigator.clipboard.writeText(text).then(() => {
       const btn = document.querySelector('.copy-btn');
+      btn.textContent = 'copied!';
+      setTimeout(() => { btn.textContent = 'copy'; }, 2000);
+    });
+  }
+  /* Generic copy for any .hero-install bar (copies its <code> text) */
+  function copyCmd(btn) {
+    const text = btn.parentElement.querySelector('code').textContent;
+    navigator.clipboard.writeText(text).then(() => {
       btn.textContent = 'copied!';
       setTimeout(() => { btn.textContent = 'copy'; }, 2000);
     });
