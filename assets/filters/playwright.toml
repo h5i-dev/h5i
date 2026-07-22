@@ -1,0 +1,106 @@
+[filters.playwright]
+description = "Compact Playwright test output — keep failures, assertion diffs, and summary counts while dropping passing progress noise"
+match_command = "^(?:(?:npx|bunx|yarn)\\s+|pnpm\\s+(?:exec\\s+)?)?playwright(?:\\s|$)"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^Running \\d+ tests? using \\d+ workers?",
+  "^\\s*\\[\\d+/\\d+\\]\\s+",
+  "^\\s*[✓✔]\\s+",
+  "^\\s*To open last HTML report run:",
+  "^\\s*Serving HTML report at ",
+]
+truncate_lines_at = 240
+max_lines = 100
+on_empty = "playwright: no output"
+
+[[tests.playwright]]
+name = "all-pass run keeps only the summary"
+input = """
+Running 12 tests using 3 workers
+
+[1/12] [chromium] › tests/auth.spec.ts:4:1 › signs in
+  ✓  1 [chromium] › tests/auth.spec.ts:4:1 › signs in (421ms)
+[2/12] [chromium] › tests/auth.spec.ts:12:1 › signs out
+  ✓  2 [chromium] › tests/auth.spec.ts:12:1 › signs out (308ms)
+[3/12] [chromium] › tests/cart.spec.ts:5:1 › adds an item
+  ✓  3 [chromium] › tests/cart.spec.ts:5:1 › adds an item (512ms)
+[4/12] [chromium] › tests/cart.spec.ts:16:1 › updates quantity
+  ✓  4 [chromium] › tests/cart.spec.ts:16:1 › updates quantity (442ms)
+[5/12] [chromium] › tests/cart.spec.ts:27:1 › removes an item
+  ✓  5 [chromium] › tests/cart.spec.ts:27:1 › removes an item (391ms)
+[6/12] [firefox] › tests/auth.spec.ts:4:1 › signs in
+  ✓  6 [firefox] › tests/auth.spec.ts:4:1 › signs in (476ms)
+[7/12] [firefox] › tests/auth.spec.ts:12:1 › signs out
+  ✓  7 [firefox] › tests/auth.spec.ts:12:1 › signs out (355ms)
+[8/12] [firefox] › tests/cart.spec.ts:5:1 › adds an item
+  ✓  8 [firefox] › tests/cart.spec.ts:5:1 › adds an item (548ms)
+[9/12] [webkit] › tests/auth.spec.ts:4:1 › signs in
+  ✓  9 [webkit] › tests/auth.spec.ts:4:1 › signs in (501ms)
+[10/12] [webkit] › tests/auth.spec.ts:12:1 › signs out
+  ✓  10 [webkit] › tests/auth.spec.ts:12:1 › signs out (377ms)
+[11/12] [webkit] › tests/cart.spec.ts:5:1 › adds an item
+  ✓  11 [webkit] › tests/cart.spec.ts:5:1 › adds an item (588ms)
+[12/12] [webkit] › tests/cart.spec.ts:16:1 › updates quantity
+  ✓  12 [webkit] › tests/cart.spec.ts:16:1 › updates quantity (527ms)
+
+  12 passed (4.8s)
+"""
+expected = "  12 passed (4.8s)"
+
+[[tests.playwright]]
+name = "failure keeps title error diff and totals"
+input = """
+Running 2 tests using 2 workers
+
+[1/2] [chromium] › tests/home.spec.ts:3:1 › loads the dashboard
+  ✓  1 [chromium] › tests/home.spec.ts:3:1 › loads the dashboard (401ms)
+[2/2] [chromium] › tests/checkout.spec.ts:18:1 › submits payment
+  ✘  2 [chromium] › tests/checkout.spec.ts:18:1 › submits payment (1.2s)
+
+  1) [chromium] › tests/checkout.spec.ts:18:1 › submits payment ─────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: "confirmed"
+    Received: "declined"
+
+      22 |   await page.getByRole('button', { name: 'Pay' }).click();
+    > 23 |   expect(await page.locator('[data-status]').textContent()).toBe('confirmed');
+         |                                                             ^
+
+  1 failed
+    [chromium] › tests/checkout.spec.ts:18:1 › submits payment ──────────────────
+  1 passed (2.1s)
+"""
+expected = """  ✘  2 [chromium] › tests/checkout.spec.ts:18:1 › submits payment (1.2s)
+  1) [chromium] › tests/checkout.spec.ts:18:1 › submits payment ─────────────────
+    Error: expect(received).toBe(expected) // Object.is equality
+    Expected: "confirmed"
+    Received: "declined"
+      22 |   await page.getByRole('button', { name: 'Pay' }).click();
+    > 23 |   expect(await page.locator('[data-status]').textContent()).toBe('confirmed');
+         |                                                             ^
+  1 failed
+    [chromium] › tests/checkout.spec.ts:18:1 › submits payment ──────────────────
+  1 passed (2.1s)"""
+
+[[tests.playwright]]
+name = "setup error survives worker chatter"
+input = """
+Running 1 test using 1 worker
+
+[1/1] [chromium] › tests/bootstrap.spec.ts:2:1 › starts application
+Error: Cannot find module './playwright.env' imported from playwright.config.ts
+    at resolveConfig (/app/node_modules/playwright/lib/common/configLoader.js:88:15)
+
+  1 error was not a part of any test, see above for details
+"""
+expected = """Error: Cannot find module './playwright.env' imported from playwright.config.ts
+    at resolveConfig (/app/node_modules/playwright/lib/common/configLoader.js:88:15)
+  1 error was not a part of any test, see above for details"""
+
+[[tests.playwright]]
+name = "empty output collapses to a clear message"
+input = ""
+expected = "playwright: no output"
