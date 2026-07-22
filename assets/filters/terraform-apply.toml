@@ -6,7 +6,7 @@ strip_lines_matching = [
   "^\\s*$",
   "^Acquiring state lock",
   "^Releasing state lock",
-  "^.+: (?:Creating|Still creating|Creation complete|Modifying|Still modifying|Modifications complete|Destroying|Still destroying|Destruction complete)\\.\\.\\.",
+  "^.+: (?:Creating|Still creating|Creation complete|Modifying|Still modifying|Modifications complete|Destroying|Still destroying|Destruction complete)(?:\\.\\.\\.| after )",
 ]
 truncate_lines_at = 240
 max_lines = 120
