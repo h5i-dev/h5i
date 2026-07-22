@@ -1,0 +1,80 @@
+[filters.prisma]
+description = "Compact Prisma CLI output — drop setup and decorative chatter while preserving migrations, generated-client summaries, and errors"
+match_command = "^(?:(?:npx|bunx|yarn\\s+dlx|pnpm\\s+(?:dlx|exec))\\s+)?prisma(?:\\s|$)"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^Environment variables loaded from ",
+  "^Prisma schema loaded from ",
+  "^Datasource \\"",
+  "^[-─━═┌┐└┘│┃╭╮╰╯ ]+$",
+]
+truncate_lines_at = 240
+max_lines = 120
+on_empty = "prisma: no output"
+
+[[tests.prisma]]
+name = "keeps migration and generated-client summaries"
+input = """
+Environment variables loaded from .env
+Prisma schema loaded from prisma/schema.prisma
+Datasource "db": PostgreSQL database "app", schema "public" at "localhost:5432"
+
+Applying migration `20260722080000_add_profile`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260722080000_add_profile/
+    └─ migration.sql
+
+Your database is now in sync with your schema.
+
+✔ Generated Prisma Client (v6.12.0) to ./node_modules/@prisma/client in 92ms
+"""
+expected = """
+Applying migration `20260722080000_add_profile`
+The following migration(s) have been applied:
+migrations/
+  └─ 20260722080000_add_profile/
+    └─ migration.sql
+Your database is now in sync with your schema.
+✔ Generated Prisma Client (v6.12.0) to ./node_modules/@prisma/client in 92ms
+"""
+
+[[tests.prisma]]
+name = "preserves schema validation errors"
+input = """
+Environment variables loaded from .env
+Prisma schema loaded from prisma/schema.prisma
+
+Error: Prisma schema validation - (validate wasm)
+Error code: P1012
+error: Error validating field `author` in model `Post`: The relation field is missing an opposite relation field.
+  --> prisma/schema.prisma:18
+   |
+17 |   title  String
+18 |   author User
+   |
+
+Validation Error Count: 1
+"""
+expected = """
+Error: Prisma schema validation - (validate wasm)
+Error code: P1012
+error: Error validating field `author` in model `Post`: The relation field is missing an opposite relation field.
+  --> prisma/schema.prisma:18
+   |
+17 |   title  String
+18 |   author User
+   |
+Validation Error Count: 1
+"""
+
+[[tests.prisma]]
+name = "setup chatter alone is not presented as a successful migration"
+input = """
+Environment variables loaded from .env
+Prisma schema loaded from prisma/schema.prisma
+"""
+expected = "prisma: no output"
