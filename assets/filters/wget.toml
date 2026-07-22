@@ -1,0 +1,54 @@
+[filters.wget]
+description = "Compact wget output — drop connection and progress chatter while preserving HTTP status, saved-file summaries, and errors"
+match_command = "^wget(?:\\s|$)"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^--\\d{4}-\\d{2}-\\d{2}",
+  "^Resolving ",
+  "^Connecting to ",
+  "^Length: ",
+  "^Saving to: ",
+  "^\\s*\\d+[KMG]?\\s+.*\\d+%.*[0-9.]+[KMG]?/s",
+]
+truncate_lines_at = 240
+max_lines = 80
+on_empty = "wget: no output"
+
+[[tests.wget]]
+name = "drops transfer progress and keeps the HTTP and saved summaries"
+input = """
+--2026-07-22 08:00:00--  https://example.com/archive.tar.gz
+Resolving example.com (example.com)... 192.0.2.1
+Connecting to example.com (example.com)|192.0.2.1|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 20480 (20K) [application/gzip]
+Saving to: 'archive.tar.gz'
+
+     0K .......... ..........                               100% 1.25M=0.02s
+
+2026-07-22 08:00:01 (1.25 MB/s) - 'archive.tar.gz' saved [20480/20480]
+"""
+expected = """
+HTTP request sent, awaiting response... 200 OK
+2026-07-22 08:00:01 (1.25 MB/s) - 'archive.tar.gz' saved [20480/20480]
+"""
+
+[[tests.wget]]
+name = "preserves HTTP failures"
+input = """
+--2026-07-22 08:00:00--  https://example.com/missing
+Resolving example.com (example.com)... 192.0.2.1
+Connecting to example.com (example.com)|192.0.2.1|:443... connected.
+HTTP request sent, awaiting response... 404 Not Found
+2026-07-22 08:00:00 ERROR 404: Not Found.
+"""
+expected = """
+HTTP request sent, awaiting response... 404 Not Found
+2026-07-22 08:00:00 ERROR 404: Not Found.
+"""
+
+[[tests.wget]]
+name = "empty capture is not reported as a successful download"
+input = ""
+expected = "wget: no output"
