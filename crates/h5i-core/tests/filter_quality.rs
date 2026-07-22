@@ -176,6 +176,51 @@ fn gcc_rule_cuts_tokens_keeps_errors_drops_include_chain() {
     assert_token_cut(&res, 200, 0.5);
 }
 
+#[test]
+fn glab_rule_caps_long_lists_without_mutating_json() {
+    let mut raw = String::from("Showing 100 open merge requests on gitlab-org/cli. (Page 1)\n\n");
+    for i in 0..100 {
+        let id = 3500 - i;
+        raw.push_str(&format!(
+            "!{id}\tgitlab-org/cli!{id}\tfix(cli): preserve result signal for case {i}\t(main) ← (fix/case-{i})\n"
+        ));
+    }
+
+    let res = filter(
+        &raw,
+        &cfg(
+            OutputKind::Auto,
+            Some(argv(&["glab", "mr", "list", "--per-page", "100"])),
+        ),
+    );
+    keeps(
+        &res,
+        &[
+            "!3500\tgitlab-org/cli!3500",
+            "!3461\tgitlab-org/cli!3461",
+            "... (60 lines truncated)",
+        ],
+    );
+    drops(
+        &res,
+        &[
+            "Showing 100 open merge requests",
+            "!3460\tgitlab-org/cli!3460",
+        ],
+    );
+    assert_token_cut(&res, 1_500, 0.5);
+
+    let json = r#"[{"iid":3500,"title":"preserve  internal spacing","state":"opened"}]"#;
+    let json_res = filter(
+        json,
+        &cfg(
+            OutputKind::Auto,
+            Some(argv(&["glab", "mr", "list", "--output", "json"])),
+        ),
+    );
+    assert_eq!(json_res.summary, json);
+}
+
 // ── 1+2: declarative rules for common JS/Go/JVM/TS tools ─────────────────────
 
 #[test]

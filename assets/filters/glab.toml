@@ -1,0 +1,45 @@
+[filters.glab]
+description = "Compact GitLab CLI list output - strip banners and padding, keep result rows and errors"
+match_command = "^glab\\s+(mr|issue|pipeline|ci|release)\\s+(list|ls)\\b"
+strip_ansi = true
+replace = [
+  { pattern = "^\\s+|\\s+$", replacement = "" },
+]
+strip_lines_matching = [
+  "^\\s*$",
+  "^Showing \\d+ .+ \\(Page \\d+\\)$",
+]
+max_lines = 40
+on_empty = "glab: no results"
+
+[[tests.glab]]
+name = "keeps merge request rows and removes the list banner"
+input = """
+Showing 3 open merge requests on gitlab-org/cli. (Page 1)
+
+!3500\tgitlab-org/cli!3500\tchore(deps): update bubbletea\t(main) ← (renovate/bubbletea)
+!3499\tgitlab-org/cli!3499\tperf(issue): fetch board issues in parallel\t(main) ← (fetch-issues-parallel)
+!3494\tgitlab-org/cli!3494\tfeat(securefile): update existing files\t(main) ← (securefile-update)
+"""
+expected = """
+!3500\tgitlab-org/cli!3500\tchore(deps): update bubbletea\t(main) ← (renovate/bubbletea)
+!3499\tgitlab-org/cli!3499\tperf(issue): fetch board issues in parallel\t(main) ← (fetch-issues-parallel)
+!3494\tgitlab-org/cli!3494\tfeat(securefile): update existing files\t(main) ← (securefile-update)
+"""
+
+[[tests.glab]]
+name = "preserves a padded error diagnostic"
+input = """
+   \u001B[31mERROR\u001B[0m
+
+  404 Not Found.
+"""
+expected = """
+ERROR
+404 Not Found.
+"""
+
+[[tests.glab]]
+name = "reports an empty result"
+input = ""
+expected = "glab: no results"
