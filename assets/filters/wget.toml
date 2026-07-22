@@ -9,7 +9,7 @@ strip_lines_matching = [
   "^Connecting to ",
   "^Length: ",
   "^Saving to: ",
-  "^\\s*\\d+[KMG]?\\s+.*\\d+%.*[0-9.]+[KMG]?/s",
+  "^\\s*\\d+[KMG]?\\s+.*\\d+%",
 ]
 truncate_lines_at = 240
 max_lines = 80
