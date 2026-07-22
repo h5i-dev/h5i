@@ -93,6 +93,9 @@ pub enum EnvCommands {
         /// Remove the rule instead of adding it.
         #[arg(long)]
         remove: bool,
+        /// Emit the current allowlist and its source path as JSON.
+        #[arg(long, conflicts_with_all = ["rule", "remove"])]
+        json: bool,
     },
 
     /// Probe what isolation this host can actually provide (Landlock, user
@@ -522,9 +525,24 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Allow { rule, remove } => match rule {
+                EnvCommands::Allow { rule, remove, json } => match rule {
                     None => {
+                        if json && in_env_box {
+                            anyhow::bail!(
+                                "refusing to read the user egress allowlist from inside an env box"
+                            );
+                        }
                         let rules = h5i_core::env::user_allow_list();
+                        if json {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&serde_json::json!({
+                                    "path": h5i_core::env::user_allow_path(),
+                                    "rules": rules,
+                                }))?
+                            );
+                            return Ok(());
+                        }
                         match h5i_core::env::user_allow_path() {
                             Some(path) => println!("── user egress allowlist ({}) ──", path.display()),
                             None => println!("── user egress allowlist ──"),

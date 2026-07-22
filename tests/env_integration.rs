@@ -361,6 +361,25 @@ fn env_allow_add_list_remove_and_in_box_refusal() {
     assert!(out.status.success());
     assert!(out_str(&out).contains("pypi.org"));
 
+    let out = run(&["env", "allow", "--json"], false);
+    assert!(out.status.success(), "{}", out_str(&out));
+    let listed: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("allowlist output must be valid JSON");
+    assert_eq!(listed["path"], file.to_string_lossy().as_ref());
+    assert_eq!(listed["rules"], serde_json::json!(["pypi.org"]));
+
+    let out = run(&["env", "allow", "pypi.org", "--json"], false);
+    assert!(!out.status.success(), "add and --json must conflict");
+    let out = run(&["env", "allow", "--remove", "--json"], false);
+    assert!(!out.status.success(), "remove and --json must conflict");
+    let out = run(&["env", "allow", "--json"], true);
+    assert!(!out.status.success(), "in-box JSON listing must refuse");
+    assert!(
+        out_str(&out).contains("inside an env box"),
+        "{}",
+        out_str(&out)
+    );
+
     // Strict intake: a URL is not a host rule.
     let out = run(&["env", "allow", "https://evil.example/x"], false);
     assert!(!out.status.success(), "URL must be rejected");
@@ -378,6 +397,11 @@ fn env_allow_add_list_remove_and_in_box_refusal() {
     let out = run(&["env", "allow", "pypi.org", "--remove"], false);
     assert!(out.status.success());
     assert!(!std::fs::read_to_string(&file).unwrap().contains("pypi.org"));
+
+    let out = run(&["env", "allow", "--json"], false);
+    assert!(out.status.success(), "{}", out_str(&out));
+    let listed: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(listed["rules"], serde_json::json!([]));
 }
 
 #[test]
