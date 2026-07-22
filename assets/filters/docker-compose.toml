@@ -1,0 +1,77 @@
+[filters.docker-compose]
+description = "Compact docker compose output - strip pull/build progress, keep service state changes and errors"
+match_command = "\\b(docker\\s+compose|docker-compose)\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^Attaching to ",
+  "^\\[\\+\\] (Building|Pulling|Running) ",
+  "^#\\d+ ",
+  "^\\s*=> ",
+  "^\\s*=> => ",
+  "Pulling fs layer",
+  "Waiting$",
+  "Downloading \\[",
+  "Extracting \\[",
+  "Verifying Checksum",
+  "Download complete",
+  "Pull complete",
+  "Already exists",
+  "Digest: ",
+  "Status: Downloaded newer image",
+]
+truncate_lines_at = 240
+max_lines = 80
+on_empty = "docker compose: ok"
+
+[[tests.docker-compose]]
+name = "keeps service state, strips pull and attach noise"
+input = """
+[+] Pulling 3/3
+ ✔ db Pulled
+postgres Pulling fs layer
+postgres Downloading [=========>                                         ]  12.3MB/62.1MB
+postgres Pull complete
+[+] Running 3/3
+ ✔ Network app_default Created
+ ✔ Container app-db-1 Created
+ ✔ Container app-web-1 Started
+Attaching to app-db-1, app-web-1
+app-web-1  | Server listening on :3000
+"""
+expected = """
+ ✔ db Pulled
+ ✔ Network app_default Created
+ ✔ Container app-db-1 Created
+ ✔ Container app-web-1 Started
+app-web-1  | Server listening on :3000
+"""
+
+[[tests.docker-compose]]
+name = "keeps build result and failure lines"
+input = """
+[+] Building 18.4s (9/10)
+ => [web internal] load build definition from Dockerfile
+ => => transferring dockerfile: 512B
+ => [web 4/5] RUN npm ci
+failed to solve: process "/bin/sh -c npm ci" did not complete successfully: exit code: 1
+[+] Running 1/1
+ ✔ web Built
+app-web-1 exited with code 1
+"""
+expected = """
+failed to solve: process "/bin/sh -c npm ci" did not complete successfully: exit code: 1
+ ✔ web Built
+app-web-1 exited with code 1
+"""
+
+[[tests.docker-compose]]
+name = "clean progress-only run collapses to ok"
+input = """
+[+] Building 2.1s (4/4)
+ => [web internal] load build definition from Dockerfile
+ => => transferring dockerfile: 512B
+ => [web] exporting to image
+ => => naming to docker.io/library/app-web
+"""
+expected = "docker compose: ok"
