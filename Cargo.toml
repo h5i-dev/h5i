@@ -53,8 +53,5 @@ serde_json = { workspace = true }
 axum = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
-# Big translation units (main.rs, and the core lib's repository.rs/env.rs): full
-# debuginfo dominates rustc memory + link time and has OOM'd parallel test
-# compiles on 8GB hosts. Line tables keep usable backtraces.
 [profile.dev]
-debug = "line-tables-only"
+debug = "false"
