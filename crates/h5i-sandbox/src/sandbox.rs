@@ -106,6 +106,16 @@ fn config_lock_paths(work: &Path, home: Option<&Path>) -> Vec<PathBuf> {
     out
 }
 
+/// Apply the private `/tmp` bind last. Its backing and the agent HOME-state
+/// copies can live below a repository in `/tmp`; mounting it first hides those
+/// sources before their own binds run.
+#[cfg(target_os = "linux")]
+fn home_binds_in_mount_order(binds: &[HomeBind]) -> Vec<&HomeBind> {
+    let mut ordered: Vec<_> = binds.iter().collect();
+    ordered.sort_by_key(|bind| bind.target == Path::new("/tmp"));
+    ordered
+}
+
 // ── raw TOML schema (what users write; everything optional) ────────────────
 
 #[derive(Debug, Default, Deserialize)]
@@ -1624,9 +1634,9 @@ pub(crate) fn build_confined_command(
     // over the real absolute path so the box's writes land in its own copy and
     // never race the shared real files. Like the private binds these force a mount
     // namespace and are applied before Landlock, in the (egress-)private ns.
-    let home_bind_c: Vec<(std::ffi::CString, std::ffi::CString)> = policy
-        .home_binds
-        .iter()
+    let home_bind_c: Vec<(std::ffi::CString, std::ffi::CString)> =
+        home_binds_in_mount_order(&policy.home_binds)
+        .into_iter()
         .filter_map(|b| {
             let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
             let tc = std::ffi::CString::new(b.target.as_os_str().as_encoded_bytes()).ok()?;
@@ -2354,6 +2364,30 @@ pub(crate) fn wait_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn home_bind_mount_order_places_private_tmp_last() {
+        let binds = vec![
+            HomeBind {
+                backing: PathBuf::from("/tmp/repo/env/tmp"),
+                target: PathBuf::from("/tmp"),
+            },
+            HomeBind {
+                backing: PathBuf::from("/tmp/repo/env/home/claude"),
+                target: PathBuf::from("/home/test/.claude"),
+            },
+            HomeBind {
+                backing: PathBuf::from("/tmp/repo/env/home/claude.json"),
+                target: PathBuf::from("/home/test/.claude.json"),
+            },
+        ];
+
+        let ordered = home_binds_in_mount_order(&binds);
+        assert_eq!(ordered[0].target, Path::new("/home/test/.claude"));
+        assert_eq!(ordered[1].target, Path::new("/home/test/.claude.json"));
+        assert_eq!(ordered[2].target, Path::new("/tmp"));
+    }
 
     /// Functional, real-kernel proof that `policy.home_binds` shadows the target
     /// path inside the confined child (the in-box half of per-env credential
