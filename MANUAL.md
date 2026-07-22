@@ -47,7 +47,7 @@ emits `--json` is safe to consume from a script or another agent.)
 | Record what an AI change was (model, agent, prompt) | [`h5i capture commit`](#h5i-capture-commit) | Provenance stored in Git notes; the human prompt is auto-captured in Claude Code. |
 | Keep noisy command output out of my context | [`h5i capture run -- <cmd>`](#h5i-capture-run) | Prints a compact summary, stores the full output out-of-band, passes the exit code through. |
 | Read history with AI authorship | [`h5i recall log`](#h5i-recall-log), [`recall blame`](#h5i-recall-blame) | Who / which model wrote each line, with the prompt and test metrics. |
-| Inspect or grade what commands actually ran | [`h5i recall objects [--json]`](#h5i-recall-object--objects), [`recall search`](#h5i-recall-object--objects) | Typed feed: `cmd`, `exit`, **action** (test/build/read/write/egress), **tool**, validated **status**, enforced **egress** verdicts. |
+| Inspect or grade what commands actually ran | [`h5i recall objects [--json]`](#h5i-recall-object--objects), [`recall search [--json]`](#h5i-recall-object--objects) | Typed feed: `cmd`, `exit`, **action** (test/build/read/write/egress), **tool**, validated **status**, enforced **egress** verdicts. |
 | Track my goal + reasoning across a task | [`h5i recall context`](#h5i-recall-context) | Goal + auto-derived reasoning trace; snapshotted per commit. |
 | Triage the risk of an AI branch | [`h5i audit review`](#h5i-audit-review), [`audit scan`](#h5i-audit-scan) | Rank commits by risk; scan reasoning traces for prompt-injection. |
 | Score how well the engineer prompted | [`h5i audit maturity [--json]`](#h5i-audit-maturity) | Headless / CI prompt-maturity score (feeds merge confidence). |
@@ -1871,6 +1871,8 @@ h5i recall objects --status failed       # filter by structured status
 h5i recall objects --tool pytest         # by tool  (compose with --branch/--file/--diff)
 h5i recall objects --env fix-auth --json # typed feed for headless / CI grading
 h5i recall objects --env none            # only workspace captures (taken outside any env)
+h5i recall search "connection refused" --severity error --json
+                                             # typed matching findings for headless consumers
 h5i recall object <id>                    # rehydrate the FULL raw bytes
 h5i recall object <id> --summary          # the reduced summary only
 h5i recall object <id> --manifest         # the full manifest JSON record
@@ -1899,6 +1901,11 @@ independent, non-inferred signals. Note that in the default `signal` capture
 mode small **successful** commands aren't stored; create the env with
 `h5i env create <name> --audit all` (or set `H5I_ENV_AUDIT_CAPTURE=all`) to
 record every wrapped command for a complete ledger.
+
+`recall search --json` uses the same capture-level field names, adds a
+`findings` array containing only the findings selected by the query and filters,
+and honors `--limit`. A search with no matches emits `[]`; without `--json`, the
+existing human-readable output is unchanged.
 
 Inside a sandboxed env, a capture you just made is **staged** in the box's spool
 and not yet ingested into `refs/h5i/objects`; `h5i recall object <cap-id>` still
