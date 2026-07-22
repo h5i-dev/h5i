@@ -1,0 +1,54 @@
+[filters.terraform-apply]
+description = "Compact Terraform apply output — drop state-lock and per-resource progress while preserving results, summaries, and errors"
+match_command = "^terraform\\s+apply(?:\\s|$)"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^Acquiring state lock",
+  "^Releasing state lock",
+  "^.+: (?:Creating|Still creating|Creation complete|Modifying|Still modifying|Modifications complete|Destroying|Still destroying|Destruction complete)(?:\\.\\.\\.| after )",
+]
+truncate_lines_at = 240
+max_lines = 120
+on_empty = "terraform apply: no output"
+
+[[tests.terraform-apply]]
+name = "drops resource progress and keeps the apply summary"
+input = """
+Acquiring state lock. This may take a few moments...
+aws_instance.web: Creating...
+aws_instance.web: Still creating... [10s elapsed]
+aws_instance.web: Creation complete after 14s [id=i-012345]
+aws_security_group.web: Modifying... [id=sg-123]
+aws_security_group.web: Modifications complete after 1s [id=sg-123]
+
+Apply complete! Resources: 1 added, 1 changed, 0 destroyed.
+Releasing state lock. This may take a few moments...
+"""
+expected = "Apply complete! Resources: 1 added, 1 changed, 0 destroyed."
+
+[[tests.terraform-apply]]
+name = "preserves apply errors while removing lock chatter"
+input = """
+Acquiring state lock. This may take a few moments...
+aws_instance.web: Creating...
+
+Error: creating EC2 Instance: UnauthorizedOperation
+
+  with aws_instance.web,
+  on main.tf line 12, in resource "aws_instance" "web":
+  12: resource "aws_instance" "web" {
+
+Releasing state lock. This may take a few moments...
+"""
+expected = """
+Error: creating EC2 Instance: UnauthorizedOperation
+  with aws_instance.web,
+  on main.tf line 12, in resource "aws_instance" "web":
+  12: resource "aws_instance" "web" {
+"""
+
+[[tests.terraform-apply]]
+name = "empty capture is not treated as a completed apply"
+input = ""
+expected = "terraform apply: no output"
