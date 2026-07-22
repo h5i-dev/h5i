@@ -174,6 +174,28 @@ fn send_inbox_history_roundtrip_in_one_repo() {
     // roster knows both participants.
     let team = out_str(&a.h5i_ok(&["msg", "team"]));
     assert!(team.contains("alice") && team.contains("bob"), "team: {team}");
+
+    a.h5i_ok(&["msg", "as", "alice"]);
+    let team_json = out_str(&a.h5i_ok(&["msg", "team", "--json"]));
+    let roster: serde_json::Value = serde_json::from_str(&team_json).expect("valid team JSON");
+    assert_eq!(roster.as_array().map(Vec::len), Some(2));
+    assert_eq!(roster[0]["name"], "alice");
+    assert_eq!(roster[0]["you"], true);
+    assert!(roster[0]["last_seen"].as_str().is_some_and(|s| !s.is_empty()));
+    assert_eq!(roster[1]["name"], "bob");
+    assert_eq!(roster[1]["you"], false);
+}
+
+#[test]
+fn team_json_is_an_empty_array_before_any_messages() {
+    let (_root, a, _b) = two_clones();
+
+    let team = out_str(&a.h5i_ok(&["msg", "team", "--json"]));
+
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&team).unwrap(),
+        serde_json::json!([])
+    );
 }
 
 #[test]
