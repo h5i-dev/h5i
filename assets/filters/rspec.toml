@@ -1,0 +1,70 @@
+[filters.rspec]
+description = "Compact RSpec output — drop per-example progress and blank lines while preserving failures, rerun commands, and summaries"
+match_command = "^(?:(?:bundle\\s+exec|bin/)\\s*)?rspec(?:\\s|$)"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^\\s*[.FEP*]+\\s*$",
+]
+truncate_lines_at = 240
+max_lines = 120
+on_empty = "rspec: no output"
+
+[[tests.rspec]]
+name = "drops progress while preserving a failure and rerun command"
+input = """
+..F.
+
+Failures:
+
+  1) Calculator divides two numbers
+     Failure/Error: expect(result).to eq(2)
+
+       expected: 2
+            got: 3
+
+     # ./spec/calculator_spec.rb:14:in `block (2 levels) in <top (required)>'
+
+Failed examples:
+
+rspec ./spec/calculator_spec.rb:12 # Calculator divides two numbers
+
+4 examples, 1 failure
+"""
+expected = """
+Failures:
+  1) Calculator divides two numbers
+     Failure/Error: expect(result).to eq(2)
+       expected: 2
+            got: 3
+     # ./spec/calculator_spec.rb:14:in `block (2 levels) in <top (required)>'
+Failed examples:
+rspec ./spec/calculator_spec.rb:12 # Calculator divides two numbers
+4 examples, 1 failure
+"""
+
+[[tests.rspec]]
+name = "clean run collapses progress to the summary"
+input = """
+........................................
+
+40 examples, 0 failures
+"""
+expected = "40 examples, 0 failures"
+
+[[tests.rspec]]
+name = "preserves load errors"
+input = """
+An error occurred while loading ./spec/broken_spec.rb.
+Failure/Error: require_relative '../lib/broken'
+LoadError:
+  cannot load such file -- broken
+0 examples, 0 failures, 1 error occurred outside of examples
+"""
+expected = """
+An error occurred while loading ./spec/broken_spec.rb.
+Failure/Error: require_relative '../lib/broken'
+LoadError:
+  cannot load such file -- broken
+0 examples, 0 failures, 1 error occurred outside of examples
+"""
