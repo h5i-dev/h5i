@@ -381,6 +381,47 @@ fn env_allow_add_list_remove_and_in_box_refusal() {
 }
 
 #[test]
+fn env_allow_json_lists_rules_and_rejects_mutating_forms() {
+    let r = Repo::new();
+    let cfg = TempDir::new().expect("tempdir");
+    let run = |args: &[&str]| -> Output {
+        Command::new(H5I)
+            .args(args)
+            .env("H5I_AGENT", "tester")
+            .env("H5I_DEFAULT_ISOLATION", "workspace")
+            .env("XDG_CONFIG_HOME", cfg.path())
+            .current_dir(&r.dir)
+            .output()
+            .expect("failed to run h5i")
+    };
+
+    // Empty allowlist: valid JSON with the resolved path and an empty rules array.
+    let out = run(&["env", "allow", "--json"]);
+    assert!(out.status.success(), "{}", out_str(&out));
+    let doc: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("valid JSON");
+    let expected_path = cfg.path().join("h5i").join("egress-allow");
+    assert_eq!(doc["path"], expected_path.to_str().unwrap());
+    assert_eq!(doc["rules"], serde_json::json!([]));
+
+    // After adding one rule, the JSON carries the normalized rule.
+    let out = run(&["env", "allow", "PyPI.org"]);
+    assert!(out.status.success(), "{}", out_str(&out));
+    let out = run(&["env", "allow", "--json"]);
+    assert!(out.status.success(), "{}", out_str(&out));
+    let doc: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("valid JSON");
+    assert_eq!(doc["rules"], serde_json::json!(["pypi.org"]));
+
+    // `--json` only applies to the list form: a rule argument or `--remove`
+    // alongside it is a clap conflict.
+    let out = run(&["env", "allow", "pypi.org", "--json"]);
+    assert!(!out.status.success(), "rule + --json must be rejected");
+    let out = run(&["env", "allow", "--remove", "--json"]);
+    assert!(!out.status.success(), "--remove + --json must be rejected");
+}
+
+#[test]
 fn env_create_pr_pins_pr_head_as_base() {
     let r = Repo::new();
     // A "GitHub-like" remote: a bare repo exposing a PR head at refs/pull/7/head.
