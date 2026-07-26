@@ -93,6 +93,9 @@ pub enum EnvCommands {
         /// Remove the rule instead of adding it.
         #[arg(long)]
         remove: bool,
+        /// Emit the current allowlist as JSON.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Probe what isolation this host can actually provide (Landlock, user
@@ -522,23 +525,38 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Allow { rule, remove } => match rule {
+                EnvCommands::Allow { rule, remove, json } => {
+                    if json && (rule.is_some() || remove) {
+                        anyhow::bail!("--json can only be used when listing the allowlist");
+                    }
+                    match rule {
                     None => {
                         let rules = h5i_core::env::user_allow_list();
-                        match h5i_core::env::user_allow_path() {
-                            Some(path) => println!("── user egress allowlist ({}) ──", path.display()),
-                            None => println!("── user egress allowlist ──"),
+                        let path = h5i_core::env::user_allow_path();
+                        if json {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&serde_json::json!({
+                                    "path": path.map(|path| path.display().to_string()),
+                                    "rules": rules,
+                                }))?
+                            );
+                        } else {
+                            match path {
+                                Some(path) => println!("── user egress allowlist ({}) ──", path.display()),
+                                None => println!("── user egress allowlist ──"),
+                            }
+                            if rules.is_empty() {
+                                println!("  (empty — add one with `h5i env allow <host>`)");
+                            }
+                            for r in &rules {
+                                println!("  {r}");
+                            }
+                            println!(
+                                "  applies to container-tier envs whose profile sets net.egress; \
+                                 takes effect at the next env run/shell"
+                            );
                         }
-                        if rules.is_empty() {
-                            println!("  (empty — add one with `h5i env allow <host>`)");
-                        }
-                        for r in &rules {
-                            println!("  {r}");
-                        }
-                        println!(
-                            "  applies to container-tier envs whose profile sets net.egress; \
-                             takes effect at the next env run/shell"
-                        );
                     }
                     Some(raw) => {
                         if remove {
@@ -561,7 +579,8 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                             }
                         }
                     }
-                },
+                    }
+                }
 
                 EnvCommands::Probe => {
                     // Diagnostics must report the live truth, not last run's
