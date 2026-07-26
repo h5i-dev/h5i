@@ -34,7 +34,7 @@
     "@context": "https://schema.org",
     "@type": "TechArticle",
     "headline": "Why AI Agents Need Auditable Workspaces",
-    "description": "An auditable workspace is the place an AI agent does its work — a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. This is the definition, the three proof pillars (provenance, confinement, governance), the workspace stack, and the golden path.",
+    "description": "An auditable workspace is the place an AI agent does its work: a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. This is the definition, the three proof pillars (provenance, confinement, governance), the workspace stack, and the golden path.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-06-19",
     "dateModified": "2026-06-26",
@@ -56,11 +56,11 @@
   </script>
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
-    {"@type": "Question", "name": "What is an auditable workspace for AI agents?", "acceptedAnswer": {"@type": "Answer", "text": "An auditable workspace is the place an AI coding agent does its work — a Git-backed worktree where the full record behind every change is captured in your repo: the prompt and intent, the model and agent identity, the reasoning the agent followed, the commands it ran, the tests that verified it, the risk signals, and the handoffs to other agents. Because the record lives under refs/h5i/* in the same repository as the code, the work is provable and reviewable after the session ends, with no separate SaaS."}},
-    {"@type": "Question", "name": "Why isn't Git alone enough to audit an AI agent's work?", "acceptedAnswer": {"@type": "Answer", "text": "A Git commit is a snapshot of files plus an author, timestamp, and message — it records the artifact, not the operational session that produced it. The prompt, the files the agent read, the commands it ran, the network it could reach, and the reasoning it followed all happen off-ledger and evaporate when the session ends. That off-ledger material is exactly what a reviewer or incident responder needs, so an auditable workspace records it as Git-native data alongside the diff."}},
-    {"@type": "Question", "name": "Where is the auditable record stored, and does git push share it?", "acceptedAnswer": {"@type": "Answer", "text": "It is stored Git-natively: per-commit provenance as git notes on refs/h5i/notes, agent reasoning on refs/h5i/context, cross-agent coordination on refs/h5i/msg, and sandbox policy and evidence under refs/h5i/env. A plain git push does not move refs/h5i/* — use h5i share push and h5i share pull to carry the record to another clone alongside the code."}},
+    {"@type": "Question", "name": "What is an auditable workspace for AI agents?", "acceptedAnswer": {"@type": "Answer", "text": "An auditable workspace is the place an AI coding agent does its work: a Git-backed worktree where the full record behind every change is captured in your repo: the prompt and intent, the model and agent identity, the reasoning the agent followed, the commands it ran, the tests that verified it, the risk signals, and the handoffs to other agents. Because the record lives under refs/h5i/* in the same repository as the code, the work is provable and reviewable after the session ends, with no separate SaaS."}},
+    {"@type": "Question", "name": "Why isn't Git alone enough to audit an AI agent's work?", "acceptedAnswer": {"@type": "Answer", "text": "A Git commit is a snapshot of files plus an author, timestamp, and message. It records the artifact, not the operational session that produced it. The prompt, the files the agent read, the commands it ran, the network it could reach, and the reasoning it followed all happen off-ledger and evaporate when the session ends. That off-ledger material is exactly what a reviewer or incident responder needs, so an auditable workspace records it as Git-native data alongside the diff."}},
+    {"@type": "Question", "name": "Where is the auditable record stored, and does git push share it?", "acceptedAnswer": {"@type": "Answer", "text": "It is stored Git-natively: per-commit provenance as git notes on refs/h5i/notes, agent reasoning on refs/h5i/context, cross-agent coordination on refs/h5i/msg, and sandbox policy and evidence under refs/h5i/env. A plain git push does not move refs/h5i/*, so use h5i share push and h5i share pull to carry the record to another clone alongside the code."}},
     {"@type": "Question", "name": "How is the record captured without extra work from the agent?", "acceptedAnswer": {"@type": "Answer", "text": "Hooks capture most of it automatically. In Claude Code, a UserPromptSubmit hook records the verbatim human prompt, PostToolUse hooks log reads and edits as OBSERVE and ACT context nodes, and a Stop hook mines reasoning and checkpoints milestones. An optional wrap-bash hook rewrites agent shell commands into h5i capture run so tool output is recorded too. Codex mines the same record from its session JSONL. The agent does not have to remember to log anything."}},
-    {"@type": "Question", "name": "How is an auditable workspace different from a CI artifact or a vendor session transcript?", "acceptedAnswer": {"@type": "Answer", "text": "A green CI run proves tests passed for a pipeline run but is not tied to the prompt or the files the agent inspected. A vendor session transcript lives in that vendor's console, is tied to your account, and is not portable or queryable per commit. An auditable workspace ties prompt, model, reasoning, commands, tests, and risk signals to each commit, stores them in your own repo, and makes them inspectable with recall, audit, and PR tooling — no account to log into and no separate system of record."}}
+    {"@type": "Question", "name": "How is an auditable workspace different from a CI artifact or a vendor session transcript?", "acceptedAnswer": {"@type": "Answer", "text": "A green CI run proves tests passed for a pipeline run but is not tied to the prompt or the files the agent inspected. A vendor session transcript lives in that vendor's console, is tied to your account, and is not portable or queryable per commit. An auditable workspace ties prompt, model, reasoning, commands, tests, and risk signals to each commit, stores them in your own repo, and makes them inspectable with recall, audit, and PR tooling, with no account to log into and no separate system of record."}}
   ]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
@@ -104,7 +104,7 @@
   <ul>
         <li>An auditable workspace is the place an agent works plus the Git-native record it leaves: prompt, model, reasoning, commands, tests, risk, and handoffs.</li>
         <li>The record maps to specific refs (notes, context, msg, env) and is written automatically by hooks, so capture is the default path, not a discipline.</li>
-        <li>It complements PR templates, CI artifacts, vendor transcripts, and SaaS audit tools — the difference is that the trail is yours, durable, and portable because it is Git.</li>
+        <li>It complements PR templates, CI artifacts, vendor transcripts, and SaaS audit tools. The difference is that the trail is yours, durable, and portable because it is Git.</li>
   </ul>
 </div>
     <p>
@@ -166,7 +166,7 @@
     </p>
 
     <p>
-      Naming the missing data is a category question — <a href="/blog/what-is-ai-aware-version-control/">AI-aware
+      Naming the missing data is a category question. <a href="/blog/what-is-ai-aware-version-control/">AI-aware
       version control</a> covers <em>what record a diff structurally can't hold</em> and how to store it on top
       of Git. This post is narrower and more operational: it is about the <em>place</em> the agent works and the
       concrete artifact that place leaves behind. The category says <em>record the process, not just the
@@ -261,7 +261,7 @@
       able to show you the full output later.
     </p>
 
-    <h2>How the record is captured — refs and hooks</h2>
+    <h2>How the record is captured: refs and hooks</h2>
 
     <p>
       "Recorded in your repo" is precise, not a metaphor. Each dimension of the workspace maps to a
@@ -290,7 +290,7 @@
       with <code>h5i hook setup</code>: in Claude Code, <code>SessionStart</code>, <code>UserPromptSubmit</code>,
       <code>PostToolUse</code> (on every <code>Read</code>/<code>Edit</code>/<code>Write</code>), and
       <code>Stop</code> hooks record the prompt, the reads as OBSERVE, the edits as ACT, and mined THINK/NOTE
-      reasoning — without the agent issuing a single logging command. Codex reconstructs the same record from
+      reasoning, without the agent issuing a single logging command. Codex reconstructs the same record from
       its session JSONL. The verbatim human prompt wins over any agent-supplied <code>--intent</code>, so the
       record reflects what a person actually asked, not what the agent later claims it was asked.
     </p>
@@ -299,7 +299,7 @@
 
     <p>
       An audit trail is only worth keeping if you can read it back cheaply. The same workspace that
-      <em>captured</em> the work exposes it through query commands — no console, no export. Suppose a
+      <em>captured</em> the work exposes it through query commands, with no console and no export. Suppose a
       reviewer is staring at a one-line change in <code>src/api/client.py</code> and wants to know who
       and what produced it:
     </p>
@@ -318,7 +318,7 @@
     <p>
       The shape of the answer is the point: <code>recall blame</code> turns "who wrote this line" into
       "which model, steered by which human prompt, with which test result," and <code>audit review</code>
-      is a deterministic triage funnel — no model in the loop grading the work — surfacing the commits
+      is a deterministic triage funnel, with no model in the loop grading the work, surfacing the commits
       whose stored <code>IntegrityReport</code> came back <em>Warning</em> or <em>Violation</em>. A reviewer
       reads the record, not the agent's self-report.
     </p>
@@ -346,13 +346,13 @@
     </div>
 
     <p>
-      None of these is wrong, and an auditable workspace does not replace CI or your PR template — it
+      None of these is wrong, and an auditable workspace does not replace CI or your PR template. It
       complements them by giving the per-commit, in-repo substrate the others assume but don't provide.
       The differentiator is the last column's first entry: the record is <em>yours</em>, durable, and
       portable, because it is Git.
     </p>
 
-    <h2>Failure modes — where this breaks</h2>
+    <h2>Failure modes: where this breaks</h2>
 
     <p>
       A pillar should be honest about its edges. An auditable workspace fails in three predictable ways,
@@ -364,16 +364,16 @@
       <code>git push</code>, so a reviewer on another clone sees the code but not the record. The record is
       there, just local. The fix is operational, not technical: run <code>h5i share push</code> (and
       <code>h5i share pull</code>), ideally from CI on the branch, so the evidence travels with the PR by default.</li>
-      <li><strong>Gaming the record.</strong> Provenance the agent writes about itself — an <code>--intent</code>
-      string, a tidy commit message — can flatter. h5i blunts this by preferring captured signal over
+      <li><strong>Gaming the record.</strong> Provenance the agent writes about itself, an <code>--intent</code>
+      string or a tidy commit message, can flatter. h5i blunts this by preferring captured signal over
       self-report: the verbatim human prompt overrides agent-supplied intent, tool output is captured by the
       <code>wrap-bash</code> hook rather than narrated, the <code>IntegrityReport</code> verdict is computed, and
-      confinement is a <em>boundary</em>, not a claim — an egress allowlist makes "it couldn't exfiltrate"
+      confinement is a <em>boundary</em>, not a claim: an egress allowlist makes "it couldn't exfiltrate"
       provable instead of asserted. What an agent narrates is weaker evidence than what the workspace observed.</li>
       <li><strong>Discipline drift.</strong> If commits skip <code>h5i capture commit</code>, runs skip
       <code>capture run</code>, or hooks aren't installed, coverage is patchy and the trail has holes.
-      The mitigation is to make capture the default path — <code>h5i hook setup</code> wires it into the
-      editor so the agent can't quietly opt out — and to treat a missing record on a PR as a review blocker,
+      The mitigation is to make capture the default path. <code>h5i hook setup</code> wires it into the
+      editor so the agent can't opt out, and a missing record on a PR should be a review blocker,
       the same way an untested change is.</li>
     </ul>
 
@@ -406,11 +406,11 @@
     <h2>Frequently asked questions</h2>
 
     <div class="faq">
-      <p><strong>What is an auditable workspace for AI agents?</strong> It is the place an AI coding agent does its work — a Git-backed worktree where the full record behind every change is captured in your repo: the prompt and intent, the model and agent identity, the <a href="/blog/context-dag-versioned-agent-reasoning/">reasoning the agent followed</a>, the commands it ran, the tests that verified it, the risk signals, and the <a href="/blog/i5h-agent-to-agent-messaging/">handoffs to other agents</a>. Because the record lives under <code>refs/h5i/*</code> in the same repository as the code, the work is provable and reviewable after the session ends, with no separate SaaS.</p>
-      <p><strong>Why isn't Git alone enough to audit an AI agent's work?</strong> A commit is a snapshot of files plus an author, timestamp, and message — it records the artifact, not the operational session that produced it. The prompt, the files the agent read, the commands it ran, the network it could reach, and the reasoning it followed all happen off-ledger and evaporate when the session ends. That off-ledger material is exactly what review and incident response need, so an auditable workspace records it as Git-native data alongside the diff. The category framing is <a href="/blog/what-is-ai-aware-version-control/">AI-aware version control</a>; <a href="/blog/why-git-diffs-are-not-enough-for-ai-generated-code/">why a diff isn't enough</a> goes deeper still.</p>
-      <p><strong>Where is the auditable record stored, and does <code>git push</code> share it?</strong> Git-natively: per-commit provenance as git notes on <code>refs/h5i/notes</code>, agent reasoning on <code>refs/h5i/context</code>, cross-agent coordination on <code>refs/h5i/msg</code>, and sandbox policy and evidence under <code>refs/h5i/env</code>. A plain <code>git push</code> does not move <code>refs/h5i/*</code> — use <code>h5i share push</code> and <code>h5i share pull</code> to carry the record to another clone alongside the code.</p>
+      <p><strong>What is an auditable workspace for AI agents?</strong> It is the place an AI coding agent does its work: a Git-backed worktree where the full record behind every change is captured in your repo: the prompt and intent, the model and agent identity, the <a href="/blog/context-dag-versioned-agent-reasoning/">reasoning the agent followed</a>, the commands it ran, the tests that verified it, the risk signals, and the <a href="/blog/i5h-agent-to-agent-messaging/">handoffs to other agents</a>. Because the record lives under <code>refs/h5i/*</code> in the same repository as the code, the work is provable and reviewable after the session ends, with no separate SaaS.</p>
+      <p><strong>Why isn't Git alone enough to audit an AI agent's work?</strong> A commit is a snapshot of files plus an author, timestamp, and message. It records the artifact, not the operational session that produced it. The prompt, the files the agent read, the commands it ran, the network it could reach, and the reasoning it followed all happen off-ledger and evaporate when the session ends. That off-ledger material is exactly what review and incident response need, so an auditable workspace records it as Git-native data alongside the diff. The category framing is <a href="/blog/what-is-ai-aware-version-control/">AI-aware version control</a>; <a href="/blog/why-git-diffs-are-not-enough-for-ai-generated-code/">why a diff isn't enough</a> goes deeper still.</p>
+      <p><strong>Where is the auditable record stored, and does <code>git push</code> share it?</strong> Git-natively: per-commit provenance as git notes on <code>refs/h5i/notes</code>, agent reasoning on <code>refs/h5i/context</code>, cross-agent coordination on <code>refs/h5i/msg</code>, and sandbox policy and evidence under <code>refs/h5i/env</code>. A plain <code>git push</code> does not move <code>refs/h5i/*</code>, so use <code>h5i share push</code> and <code>h5i share pull</code> to carry the record to another clone alongside the code.</p>
       <p><strong>How is the record captured without extra work from the agent?</strong> Hooks capture most of it automatically. In Claude Code a <code>UserPromptSubmit</code> hook records the verbatim human prompt, <code>PostToolUse</code> hooks log reads and edits as OBSERVE and ACT, and a <code>Stop</code> hook mines reasoning and checkpoints milestones; an optional <a href="/blog/token-reduction-object-store/"><code>wrap-bash</code> hook</a> rewrites shell commands into <code>h5i capture run</code> so tool output is recorded too. Codex mines the same record from its session JSONL.</p>
-      <p><strong>How is this different from a CI artifact or a vendor session transcript?</strong> A green CI run proves tests passed for a pipeline run but isn't tied to the prompt or the files the agent inspected. A vendor transcript lives in that vendor's console, tied to your account, not portable or queryable per commit. An auditable workspace ties prompt, model, reasoning, commands, tests, and risk to each commit, stores them in your own repo, and makes them inspectable with <a href="/blog/auditing-ai-generated-code/">recall, audit</a>, and <a href="/blog/pr-body-ai-code-review/">PR tooling</a> — no account to log into.</p>
+      <p><strong>How is this different from a CI artifact or a vendor session transcript?</strong> A green CI run proves tests passed for a pipeline run but isn't tied to the prompt or the files the agent inspected. A vendor transcript lives in that vendor's console, tied to your account, not portable or queryable per commit. An auditable workspace ties prompt, model, reasoning, commands, tests, and risk to each commit, stores them in your own repo, and makes them inspectable with <a href="/blog/auditing-ai-generated-code/">recall, audit</a>, and <a href="/blog/pr-body-ai-code-review/">PR tooling</a>, with no account to log into.</p>
     </div>
 
     <div class="next-up">
@@ -421,7 +421,7 @@
       </a>
       <a href="/blog/agent-ensembles-with-h5i-team/">
         <h3>Run an AI Agent Ensemble: h5i team</h3>
-        <p>The other half of the Ensemble pillar: run several agents on one task in sealed workspaces, then let a neutral verifier pick the winner — each candidate auditable by the record described here.</p>
+        <p>The other half of the Ensemble pillar: run several agents on one task in sealed workspaces, then let a neutral verifier pick the winner, with each candidate auditable by the record described here.</p>
       </a>
     </div>
 

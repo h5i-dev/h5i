@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Keep tool output out of your agent's context (h5i capture run) — h5i</title>
+  <title>Keep tool output out of your agent's context (h5i capture run) | h5i</title>
   <meta name="description" content="A practical guide to h5i capture run: wrap noisy commands so only a structured summary reaches the agent, recover the full output on demand, and query captures by status, tool, branch, or file.">
   <meta name="keywords" content="h5i capture run, reduce agent tokens, tool output filtering, claude code context, structured tool output, recall object, token reduction guide, git lfs, share raw blobs">
   <meta name="author" content="Koukyosyumei">
@@ -72,7 +72,7 @@
       <div class="post-eyebrow">Guide · Token reduction</div>
       <h1>Keep tool output out of your agent's context</h1>
       <p class="post-deck">
-        Wrap the noisy commands an agent runs — tests, builds, linters, big JSON — so only a small
+        Wrap the noisy commands an agent runs (tests, builds, linters, big JSON) so only a small
         structured summary reaches its context. The full output is stored out-of-band and
         recoverable on demand. Same ergonomics as running the command directly.
       </p>
@@ -110,7 +110,7 @@ pytest test failed · 1 failed, 120 passed (exit 1)
       <table class="data">
         <thead><tr><th>Flag</th><th>Output</th></tr></thead>
         <tbody>
-          <tr><td><code>--format compact</code> (default)</td><td>One line per finding — token-minimal.</td></tr>
+          <tr><td><code>--format compact</code> (default)</td><td>One line per finding: token-minimal.</td></tr>
           <tr><td><code>--format structured</code></td><td>The full normalized result as YAML.</td></tr>
           <tr><td><code>--format json</code></td><td>The canonical <code>ToolResult</code> as JSON.</td></tr>
           <tr><td><code>--format summary</code></td><td>The legacy filtered free-text.</td></tr>
@@ -140,7 +140,7 @@ $ h5i recall object 0bb827e4             # the full raw bytes, exactly</pre></di
     <h2>4. Share raw blobs with the team (optional)</h2>
     <p>
       <code>h5i share push</code> carries the manifests (summaries + pointers) but <strong>not</strong> the
-      huge raw bytes — so nothing large is shared implicitly. To share the bytes, run
+      huge raw bytes, so nothing large is shared implicitly. To share the bytes, run
       <code>h5i objects push</code>; the backend is chosen by <code>--backend auto|lfs|git-ref</code>
       (default <code>auto</code>):
     </p>
@@ -151,7 +151,7 @@ $ h5i objects pull              # fetch shared blobs you don't have locally
 $ h5i objects push --backend git-ref   # force the refs/h5i/objects-data git ref instead</pre></div>
     </div>
     <p>
-      The LFS path is <strong>native</strong> (h5i speaks the LFS Batch API directly — no
+      The LFS path is <strong>native</strong> (h5i speaks the LFS Batch API directly: no
       <code>git lfs</code> CLI, no pointer files), so huge output lives on your git host's LFS server
       and never bloats the git object database. With LFS, <code>h5i recall object &lt;id&gt;</code>
       <strong>lazily fetches</strong> a blob on demand. The <code>git-ref</code> store is the fallback
@@ -170,14 +170,14 @@ $ h5i objects gc --ttl 30d      # also evict referenced blobs older than 30 days
 $ h5i objects pin 0bb827e4      # protect a blob from gc
 $ h5i objects fsck              # verify manifests against the local store</pre></div>
     </div>
-    <p>GC never rewrites a summary — an evicted blob's summary still works; it just reads as absent.</p>
+    <p>GC never rewrites a summary. An evicted blob's summary still works; it just reads as absent.</p>
 
     <h2>6. Make agents use it automatically</h2>
     <p>
       Run <code>h5i objects setup</code> once to wire token-reduction guidance into the project's
       <code>.claude/h5i.md</code> and <code>AGENTS.md</code> (a fresh <code>h5i init</code> already
       includes it). In Claude Code, the <code>h5i_capture_run</code> MCP tool exposes the same
-      behavior with no shell-quoting — the agent calls it instead of the Bash tool and gets the
+      behavior with no shell-quoting: the agent calls it instead of the Bash tool and gets the
       structured result back directly.
     </p>
     <div class="terminal">
@@ -190,7 +190,7 @@ $ h5i objects fsck              # verify manifests against the local store</pre>
     <p>
       h5i ships dedicated parsers for pytest, cargo, go test, tsc, eslint, ruff, and mypy, plus
       dozens of declarative filter rules. A repo can add its own in
-      <code>.h5i/filters.toml</code> — but because that file could mask failures, it's applied only
+      <code>.h5i/filters.toml</code>, but because that file could mask failures, it's applied only
       after you trust its current content:
     </p>
     <div class="terminal">
@@ -209,7 +209,7 @@ $ h5i objects trust            # review + trust a project-local .h5i/filters.tom
 
     <div class="post-cta">
       <h3>Stop flooding your agent's context with tool output</h3>
-      <p>h5i is open source — the store is a content-addressed directory plus a git ref, no service to subscribe to.</p>
+      <p>h5i is open source: the store is a content-addressed directory plus a git ref, no service to subscribe to.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/manual/" class="btn btn-ghost">Read the manual</a>
     </div>

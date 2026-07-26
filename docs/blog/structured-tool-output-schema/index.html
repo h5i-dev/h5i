@@ -34,7 +34,7 @@
     "@context": "https://schema.org",
     "@type": "TechArticle",
     "headline": "One Schema for Every Tool: Structured Output for AI Agents",
-    "description": "h5i adds a unified JSON/YAML result schema on top of token reduction — one shape across tests, compilers, linters, and type checkers — so tool output becomes machine-actionable.",
+    "description": "h5i adds a unified JSON/YAML result schema on top of token reduction, one shape across tests, compilers, linters, and type checkers, so an agent can branch on tool output instead of parsing it.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-06-06",
     "dateModified": "2026-06-26",
@@ -63,17 +63,17 @@
       {
         "@type": "Question",
         "name": "What is a structured tool output schema for AI agents?",
-        "acceptedAnswer": {"@type": "Answer", "text": "It is one typed record — h5i's ToolResult, carrying a list of Findings — that every tool is parsed into, so an agent reads one shape instead of re-learning pytest's, cargo's, then tsc's free-text layout. The envelope carries tool, kind, status, exit_code, counts, parser_confidence and raw_oid; each finding carries a severity, location, message and a stable fingerprint."}
+        "acceptedAnswer": {"@type": "Answer", "text": "It is one typed record, h5i's ToolResult carrying a list of Findings, that every tool is parsed into, so an agent reads one shape instead of re-learning pytest's, cargo's, then tsc's free-text layout. The envelope carries tool, kind, status, exit_code, counts, parser_confidence and raw_oid; each finding carries a severity, location, message and a stable fingerprint."}
       },
       {
         "@type": "Question",
         "name": "How is this different from token-reduction tools like rtk or headroom?",
-        "acceptedAnswer": {"@type": "Answer", "text": "rtk and headroom reduce output to less text, and h5i reuses that text path for tools without a coded adapter. The schema adds a typed, queryable, fingerprinted layer on top: the agent can branch on a status, dedupe by fingerprint, and query across captures. Reduction makes the output small; the schema makes it actionable."}
+        "acceptedAnswer": {"@type": "Answer", "text": "rtk and headroom reduce output to less text, and h5i reuses that text path for tools without a coded adapter. The schema adds a typed, queryable, fingerprinted layer on top: the agent can branch on a status, dedupe by fingerprint, and query across captures. Reduction makes the output small; the schema makes it something the agent can branch on."}
       },
       {
         "@type": "Question",
         "name": "How does h5i avoid inventing structure that isn't in the output?",
-        "acceptedAnswer": {"@type": "Answer", "text": "status is derived from the exit code, not scraped from words like 'passed', and a parser that can't find its anchors declines to a generic result — recording parser_confidence: generic — instead of guessing. The full raw bytes are always one h5i recall object away, so the structure is a view, never the only copy."}
+        "acceptedAnswer": {"@type": "Answer", "text": "status is derived from the exit code, not scraped from words like 'passed', and a parser that can't find its anchors declines to a generic result, recording parser_confidence: generic, instead of guessing. The full raw bytes are always one h5i recall object away, so the structure is a view, never the only copy."}
       },
       {
         "@type": "Question",
@@ -105,7 +105,7 @@
       <div class="post-eyebrow">Design · 2026-06-06</div>
       <h1>One Schema for Every Tool: Structured Output for AI Agents</h1>
       <p class="post-deck">
-        Filtering shrinks tool output. It doesn't make it <em>machine-actionable</em>: the agent
+        Filtering shrinks tool output. It doesn't make it <em>machine-readable</em>: the agent
         still has to parse a different free-text shape for pytest, cargo, tsc, eslint, mypy… h5i
         adds a unified JSON/YAML result schema on top of reduction, one shape across every tool, so the agent can branch on a status, iterate findings, dedupe by fingerprint, and query
         captures. That schema is what sets h5i apart from text-only reducers.
@@ -123,11 +123,11 @@
   <ul>
         <li>A failing test, a compile error, and a lint diagnostic are the same shape, so they collapse into one typed ToolResult / Finding.</li>
         <li>The schema is honest by construction: status comes from the exit code, parser_confidence is explicit, and the raw bytes are always recoverable.</li>
-        <li>Reduction makes tool output small; the typed, fingerprinted, queryable record is what makes it actionable.</li>
+        <li>Reduction makes tool output small; the typed, fingerprinted, queryable record is what makes it usable.</li>
   </ul>
 </div>
     <p>
-      Compressed tool logs are one of the core properties of an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>, and structured output is what makes those logs machine-actionable, not just smaller.
+      Compressed tool logs are one of the core properties of an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>, and structured output is what makes those logs queryable, not just smaller.
       Token reduction is a real win (see <a href="/blog/token-reduction-object-store/">the object-store
       post</a>): keep the raw output out-of-band, hand the agent a small summary. Tools like
       <a href="https://github.com/rtk-ai/rtk">rtk</a> and
@@ -146,7 +146,7 @@
     <h2>The idea: one result, every tool</h2>
 
     <p>
-      Here's what an agent normally swallows — a single failing <code>pytest</code> run:
+      Here's what an agent normally swallows, a single failing <code>pytest</code> run:
     </p>
 
     <div class="terminal">
@@ -184,7 +184,7 @@ FAILED tests/test_auth.py::test_refresh - assert 0 == 100
 
     <p>
       Run that through <code>h5i capture run</code> and the <em>same</em> run becomes the compact
-      typed result below — roughly 95% fewer tokens, with the raw output kept out-of-band and one
+      typed result below is roughly 95% fewer tokens, with the raw output kept out-of-band and one
       command away. h5i parses each tool into a single typed <code>ToolResult</code>. The key realization is that a
       <strong>failing test, a compile error, and a lint diagnostic are the same shape</strong>: a
       thing, somewhere, with a message and a severity. So they all become a unified
@@ -314,9 +314,9 @@ $ h5i recall search --severity error --rule TS2322 # one rule, across every tsc 
       adapter still gets those rtk-derived rules applied, and you can ask for that legacy free-text
       view directly with <code>--format summary</code>. <strong>Gap:</strong> a filtered summary is
       still text, shaped differently per tool, with nothing to branch on, dedupe, or query. The
-      unified <code>ToolResult</code> / <code>Finding</code> schema — typed, fingerprinted,
-      queryable, honest about confidence, and identical across tools — is the layer h5i adds on top.
-      Reduction makes the output <em>small</em>; the schema makes it <em>actionable</em>.
+      unified <code>ToolResult</code> and <code>Finding</code> schema, typed, fingerprinted,
+      queryable, honest about confidence, and identical across tools, is the layer h5i adds on top.
+      Reduction makes the output <em>small</em>; the schema makes it something a program can <em>use</em>.
     </p>
 
     <h2>Coverage</h2>
@@ -325,7 +325,7 @@ $ h5i recall search --severity error --rule TS2322 # one rule, across every tsc 
       Dedicated parsers (rich findings) ship for <strong>pytest, cargo test, go test, tsc, eslint,
       ruff, and mypy</strong>; every other command gets a valid generic result (honest status +
       reduced <code>body</code>). Each parser carries golden tests so the schema stays faithful, and
-      adding a tool is just another parser feeding the same shape — the agent-facing contract never
+      adding a tool is just another parser feeding the same shape, and the agent-facing contract never
       changes.
     </p>
 
@@ -333,7 +333,7 @@ $ h5i recall search --severity error --rule TS2322 # one rule, across every tsc 
 
     <div class="faq">
       <p><strong>What is a structured tool output schema for AI agents?</strong><br>
-        One typed record — h5i's <code>ToolResult</code>, carrying a list of <code>Finding</code>s —
+        One typed record, h5i's <code>ToolResult</code> carrying a list of <code>Finding</code>s,
         that every tool is parsed into, so an agent reads one shape instead of re-learning pytest's,
         then cargo's, then tsc's free-text layout. The envelope carries <code>tool</code>,
         <code>kind</code>, <code>status</code>, <code>exit_code</code>, <code>counts</code>,
@@ -345,12 +345,12 @@ $ h5i recall search --severity error --rule TS2322 # one rule, across every tsc 
         rtk and headroom reduce output to less text, and h5i reuses that text path for tools without
         a coded adapter. The schema adds a typed, queryable, fingerprinted layer on top: the agent
         can branch on a status, dedupe by fingerprint, and query across captures. Reduction makes the
-        output small; the schema makes it actionable.</p>
+        output small; the schema makes it something the agent can branch on.</p>
 
       <p><strong>How does h5i avoid inventing structure that isn't in the output?</strong><br>
         <code>status</code> is derived from the exit code, not scraped from words like "passed", and
-        a parser that can't find its anchors declines to a <code>generic</code> result — recording
-        <code>parser_confidence: generic</code> — instead of guessing. The full raw bytes are always
+        a parser that can't find its anchors declines to a <code>generic</code> result, recording
+        <code>parser_confidence: generic</code>, instead of guessing. The full raw bytes are always
         one <code>h5i recall object</code> away, so the structure is a view, never the only copy.</p>
 
       <p><strong>What does the finding fingerprint enable?</strong><br>
@@ -363,15 +363,15 @@ $ h5i recall search --severity error --rule TS2322 # one rule, across every tsc 
     <h2>Conclusion</h2>
 
     <p>
-      Token reduction solves a real problem — it keeps a 40-line pytest dump out of the context
-      window — but it stops at making output <em>smaller</em>. The step that makes reduction
-      <em>actionable</em> is noticing that a failing test, a compile error, and a lint diagnostic are
+      Token reduction solves a real problem, keeping a 40-line pytest dump out of the context
+      window, but it stops at making output <em>smaller</em>. The step that makes reduction
+      <em>usable</em> is noticing that a failing test, a compile error, and a lint diagnostic are
       the same shape: a thing, somewhere, with a message and a severity. Collapse them into one typed
       <code>ToolResult</code> and the agent stops parsing prose and starts branching on a
       <code>status</code>, jumping to a <code>location</code>, deduping by <code>fingerprint</code>,
       and querying <code>h5i recall search</code> across every run it has ever done. Build the schema
-      to be honest — status from the exit code, confidence labeled rather than faked, raw bytes
-      always recoverable — and it stays trustworthy even when a tool it has never seen shows up. That
+      to be honest, with status from the exit code, confidence labeled rather than faked, and raw bytes
+      always recoverable, and it stays trustworthy even when a tool it has never seen shows up. That
       typed, fingerprinted, queryable record, identical across tools, is the layer that turns a pile
       of reduced logs into something an agent can actually <em>act</em> on.
     </p>
