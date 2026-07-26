@@ -32,7 +32,7 @@
     "@context": "https://schema.org",
     "@type": "Blog",
     "name": "The h5i Blog",
-    "description": "Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, compressed tool logs, AI provenance, and per-line AI blame — all Git-backed.",
+    "description": "Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, compressed tool logs, AI provenance, and per-line AI blame, all Git-backed.",
     "url": "https://h5i.dev/blog/",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "blogPost": [
@@ -41,7 +41,7 @@
       {"@type": "BlogPosting", "headline": "Orchestration Patterns Beyond Ensemble", "datePublished": "2026-07-11", "url": "https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/"},
       {"@type": "BlogPosting", "headline": "Run an AI Agent Ensemble: h5i team", "datePublished": "2026-06-21", "url": "https://h5i.dev/blog/agent-ensembles-with-h5i-team/"},
       {"@type": "BlogPosting", "headline": "Why AI Agents Need Auditable Workspaces", "datePublished": "2026-06-19", "url": "https://h5i.dev/blog/auditable-workspaces-for-ai-agents/"},
-      {"@type": "BlogPosting", "headline": "How to Measure Prompt Quality Offline — the h5i Prompt Maturity Score", "datePublished": "2026-06-17", "url": "https://h5i.dev/blog/prompt-maturity-score/"},
+      {"@type": "BlogPosting", "headline": "How to Measure Prompt Quality Offline: the h5i Prompt Maturity Score", "datePublished": "2026-06-17", "url": "https://h5i.dev/blog/prompt-maturity-score/"},
       {"@type": "BlogPosting", "headline": "Sandboxing AI Agents, Part 1: Foundations", "datePublished": "2026-06-12", "url": "https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},
       {"@type": "BlogPosting", "headline": "Sandboxing AI Agents, Part 2: How to Implement One", "datePublished": "2026-06-12", "url": "https://h5i.dev/blog/sandboxing-ai-agents-implementation/"},
       {"@type": "BlogPosting", "headline": "Sandboxing AI Agents, Part 3: How Popular Sandboxes Differ", "datePublished": "2026-06-12", "url": "https://h5i.dev/blog/sandboxing-ai-agents-landscape/"},
@@ -102,8 +102,8 @@
   <p>
     Git tracks the diff. h5i tracks the workspace behind it, a Git-backed worktree
     where every prompt, command, log, policy, and handoff is recorded in your repo and
-    provable after the fact. It all serves one goal — run many agents, merge one
-    auditable result — the <strong>Ensemble</strong> pillar, supported by four more:
+    provable after the fact. It all serves one goal, run many agents and merge one
+    auditable result, which is the <strong>Ensemble</strong> pillar, supported by four more:
     sandboxed workspaces, reviewable agent work, prompt provenance, and context compression.
   </p>
 </section>
@@ -115,7 +115,7 @@
     <div class="post-group-body">
       <div class="post-group-eyebrow">Pillar</div>
       <h2>Ensemble</h2>
-      <p>The whole point: run many coding agents on one task, then merge the single result a neutral verifier clears — each candidate auditable. From the fixed <code>h5i team</code> protocol to the programmable <code>h5i-orchestra</code> eDSL. The posts the rest of the blog supports.</p>
+      <p>The whole point: run many coding agents on one task, then merge the single result a neutral verifier clears, with each candidate auditable. From the fixed <code>h5i team</code> protocol to the programmable <code>h5i-orchestra</code> eDSL. The posts the rest of the blog supports.</p>
     </div>
   </div>
 
@@ -126,7 +126,7 @@
       <span>12 min read</span>
     </div>
     <h2>Run an AI Agent Ensemble: <code>h5i team</code></h2>
-    <p>Point several coding agents at the same task in sealed workspaces, let each work blind, then let a neutral, sandboxed verifier — not any agent's own say-so — pick the winner. Sealed workspaces, permissioned reviews, auditable convergence, so a human can merge with proof, hands-off.</p>
+    <p>Point several coding agents at the same task in sealed workspaces, let each work blind, then let a neutral, sandboxed verifier, not any agent's own say-so, pick the winner. Sealed workspaces, permissioned reviews, auditable convergence, so a human can merge with proof, hands-off.</p>
   </a>
 
   <a class="post-card" href="/blog/programmable-agent-orchestration-edsl/">
@@ -190,7 +190,7 @@
 
   <a class="post-card" href="/blog/sandboxing-ai-agents-h5i/">
     <div class="card-meta">
-      <span>Deep dive · Sandbox series</span>
+      <span>Long read · Sandbox series</span>
       <span>2026-06-12</span>
       <span>18 min read</span>
     </div>
@@ -358,7 +358,7 @@
 
   <a class="post-card" href="/blog/prompt-maturity-score/">
     <div class="card-meta">
-      <span>Deep dive</span>
+      <span>Long read</span>
       <span>2026-06-17</span>
       <span>11 min read</span>
     </div>
@@ -452,7 +452,7 @@
       <span>7 min read</span>
     </div>
     <h2>One Schema for Every Tool: Structured Output for AI Agents</h2>
-    <p>Compressed tool logs make output small; a unified JSON/YAML result schema makes it actionable, one shape across tests, compilers, linters, and type checkers, that an agent can branch on, dedupe, and query. h5i's layer beyond rtk/headroom.</p>
+    <p>Compressed tool logs make output small; a unified JSON/YAML result schema makes it usable: one shape across tests, compilers, linters, and type checkers that an agent can branch on, dedupe, and query. h5i's layer beyond rtk/headroom.</p>
   </a>
 
 

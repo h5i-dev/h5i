@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>The i5h Protocol: Git-Native Messaging Between AI Agents</title>
-  <meta name="description" content="The i5h wire format: typed JSON messages in a Git ref (refs/h5i/msg), append-only, with compare-and-swap sends and union-merge by id — server-less, offline-capable agent-to-agent messaging.">
+  <meta name="description" content="The i5h wire format: typed JSON messages in a Git ref (refs/h5i/msg), append-only, with compare-and-swap sends and union-merge by id. Server-less, offline-capable agent-to-agent messaging.">
   <meta name="keywords" content="i5h protocol, i5h wire format, agent to agent messaging, claude code codex, AI agent coordination, git native messaging, CRDT messaging, union merge, compare and swap, refs/h5i/msg, h5i msg, MCP vs A2A">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
@@ -18,7 +18,7 @@
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="The i5h Protocol: Git-Native Messaging Between AI Agents">
-  <meta property="og:description" content="The wire-format deep dive: typed JSON messages, append-only in a Git ref, with compare-and-swap sends and union-merge by id. No server, no socket, fully replayable.">
+  <meta property="og:description" content="The wire format up close: typed JSON messages, append-only in a Git ref, with compare-and-swap sends and union-merge by id. No server, no socket, fully replayable.">
   <meta property="og:url" content="https://h5i.dev/blog/i5h-agent-to-agent-messaging/">
   <meta property="og:image" content="https://h5i.dev/_static/h5i-msg-demo.gif">
   <meta property="article:published_time" content="2026-05-31">
@@ -28,7 +28,7 @@
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="The i5h Protocol: Git-Native Messaging Between AI Agents">
-  <meta name="twitter:description" content="Typed JSON messages, append-only in a Git ref, reconciled by union-merge — server-less agent-to-agent messaging you can still git show a year later.">
+  <meta name="twitter:description" content="Typed JSON messages, append-only in a Git ref, reconciled by union-merge. Server-less agent-to-agent messaging you can still git show a year later.">
   <meta name="twitter:image" content="https://h5i.dev/_static/h5i-msg-demo.gif">
 
   <script type="application/ld+json">
@@ -36,7 +36,7 @@
     "@context": "https://schema.org",
     "@type": "TechArticle",
     "headline": "The i5h Protocol: Git-Native Messaging Between AI Agents",
-    "description": "A wire-format deep dive on i5h: typed JSON messages stored append-only in the Git ref refs/h5i/msg, sent with compare-and-swap and reconciled by union-merge by id, for server-less agent-to-agent messaging.",
+    "description": "A wire-format walkthrough of i5h: typed JSON messages stored append-only in the Git ref refs/h5i/msg, sent with compare-and-swap and reconciled by union-merge by id, for server-less agent-to-agent messaging.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-05-31",
     "dateModified": "2026-06-26",
@@ -57,7 +57,7 @@
         "name": "What is the i5h protocol?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "i5h (Inter-Agent Information & Interaction Handshake) is h5i's agent-to-agent messaging protocol. A message is one JSON object appended as a line to messages.jsonl inside the Git ref refs/h5i/msg. The required core is seven fields (version, id, ts, from, to, kind, body); optional fields like reply_to, thread_id, priority, focus, risk and links add machine-readable hints. There is no server, socket, or schema registry — pushing the ref shares the conversation, pulling merges it."
+          "text": "i5h (Inter-Agent Information & Interaction Handshake) is h5i's agent-to-agent messaging protocol. A message is one JSON object appended as a line to messages.jsonl inside the Git ref refs/h5i/msg. The required core is seven fields (version, id, ts, from, to, kind, body); optional fields like reply_to, thread_id, priority, focus, risk and links add machine-readable hints. There is no server, socket, or schema registry: pushing the ref shares the conversation, pulling merges it."
         }
       },
       {
@@ -65,7 +65,7 @@
         "name": "How does i5h guarantee no messages are lost when two clones diverge?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Each send builds a commit off the current ref tip and moves the ref with a compare-and-swap; if a concurrent writer won the race, it re-reads the tip and retries (up to 64 attempts). On pull, divergent tips are reconciled by union-merge: the two messages.jsonl blobs are unioned by message id, re-sorted into (ts, id) order, and committed with both tips as parents. Because messages are immutable and keyed by id, the log is a grow-only set (a G-Set CRDT), so concurrent appends from different clones converge to the same state — strong eventual consistency, not real-time delivery."
+          "text": "Each send builds a commit off the current ref tip and moves the ref with a compare-and-swap; if a concurrent writer won the race, it re-reads the tip and retries (up to 64 attempts). On pull, divergent tips are reconciled by union-merge: the two messages.jsonl blobs are unioned by message id, re-sorted into (ts, id) order, and committed with both tips as parents. Because messages are immutable and keyed by id, the log is a grow-only set (a G-Set CRDT), so concurrent appends from different clones converge to the same state: strong eventual consistency, not real-time delivery."
         }
       },
       {
@@ -73,7 +73,7 @@
         "name": "How is i5h different from MCP and A2A?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "MCP (Model Context Protocol) connects one agent to tools and data over a live client-server link; it is not a peer-to-peer message bus. A2A (Agent2Agent) is live RPC between agents over HTTP, which needs both agents online and reachable. i5h is async and offline-first: messages are durable Git objects reconciled later by push/pull, so agents in different clones — or running at different times — still coordinate. The tradeoff is that i5h is eventually consistent, not real-time, and messages are currently unsigned."
+          "text": "MCP (Model Context Protocol) connects one agent to tools and data over a live client-server link; it is not a peer-to-peer message bus. A2A (Agent2Agent) is live RPC between agents over HTTP, which needs both agents online and reachable. i5h is async and offline-first: messages are durable Git objects reconciled later by push/pull, so agents in different clones, or running at different times, still coordinate. The tradeoff is that i5h is eventually consistent, not real-time, and messages are currently unsigned."
         }
       },
       {
@@ -122,7 +122,7 @@
         A durable agent message bus does not need a server. An append-only log in a
         Git ref, with compare-and-swap writes and union-merge reconciliation, gives
         you typed, auditable, offline-capable agent-to-agent messaging. This is the
-        wire-format deep dive.
+        wire-format walkthrough.
       </p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
@@ -136,7 +136,7 @@
   <strong>Key takeaways</strong>
   <ul>
         <li>A durable agent message bus needs only four primitives Git already has: an append-only log, content-addressed storage, compare-and-swap, and union-by-id merge.</li>
-        <li>"No lost messages" is precise: in-clone CAS serializes writers, and cross-clone union-by-id gives strong eventual consistency — not real time.</li>
+        <li>"No lost messages" is precise: in-clone CAS serializes writers, and cross-clone union-by-id gives strong eventual consistency, not real time.</li>
         <li>i5h trades immediacy for durability and zero infrastructure; it complements MCP (tool transport) and A2A (live RPC) rather than competing.</li>
   </ul>
 </div>
@@ -144,7 +144,7 @@
       More teams now run more than one coding agent on the same repository. Claude Code
       drafts a feature; Codex reviews it. One agent implements while another watches for
       regressions. A human kicks off three sessions and walks away. The agents edit the
-      same files, but they have no shared channel — so <em>why</em> a change happened
+      same files, but they have no shared channel, so <em>why</em> a change happened
       ("I changed the cache, can you check the expiry path?") lives in a human's head, a
       Slack thread, or nowhere at all.
     </p>
@@ -152,10 +152,10 @@
     <p>
       The companion post,
       <a href="/blog/git-communication-layer-ai-agents/"><strong>Git as the communication layer for AI agents</strong></a>,
-      argues <em>why</em> a Git ref is the right substrate for that channel — serverless,
+      argues <em>why</em> a Git ref is the right substrate for that channel: serverless,
       offline-first, replayable. This post is the other half: the concrete protocol that
-      rides on it. <strong>i5h</strong> — <em>Inter-Agent Information &amp; Interaction
-      Handshake</em> — is the message format and the send/merge rules. We will go
+      rides on it. <strong>i5h</strong>, or <em>Inter-Agent Information &amp; Interaction
+      Handshake</em>, is the message format and the send/merge rules. We will go
       field by field through the schema, show exactly how compare-and-swap plus
       union-merge guarantee that no message is lost across clones, and be precise about
       what i5h does <em>not</em> do (it is not a live RPC, and it is not MCP).
@@ -188,7 +188,7 @@
       Seven required fields, all human-readable. To reply, send another line that points
       back with <code>reply_to</code>. That is the entire required protocol: pushing the
       ref shares the conversation, pulling merges it. Because messages are immutable and
-      keyed by <code>id</code>, two clones that diverge merge by simple set union — a
+      keyed by <code>id</code>, two clones that diverge merge by simple set union: a
       conflict-free, grow-only log. A correct sender or reader fits in an afternoon.
     </p>
 
@@ -197,7 +197,7 @@
       <figcaption>
         The loop: Claude appends a typed request to <code>refs/h5i/msg</code>, Codex
         reads it and appends <code>ACK</code> then <code>DONE</code> replies that thread
-        back via <code>reply_to</code> — one JSON line each, merged across clones by id.
+        back via <code>reply_to</code>. One JSON line each, merged across clones by id.
       </figcaption>
     </figure>
 
@@ -215,7 +215,7 @@
           <tr><td><code>version</code></td><td>integer</td><td>Protocol version, currently <code>1</code>. A missing version reads as legacy <code>0</code>.</td></tr>
           <tr><td><code>id</code></td><td>string</td><td>Opaque, per-occurrence event id (the Rust build emits 16 hex chars derived from the fields plus a nonce). Keys dedup on merge; <em>not</em> a content hash.</td></tr>
           <tr><td><code>ts</code></td><td>string</td><td>UTC RFC3339, fixed-width fractional seconds, so it sorts lexically. Used for display order and tie-break, <strong>not</strong> as a correctness guarantee.</td></tr>
-          <tr><td><code>from</code></td><td>string</td><td>Sending agent identity. A repo-local label — see <a href="#untrusted">untrusted</a>.</td></tr>
+          <tr><td><code>from</code></td><td>string</td><td>Sending agent identity. A repo-local label; see <a href="#untrusted">untrusted</a>.</td></tr>
           <tr><td><code>to</code></td><td>string</td><td>Recipient identity, or <code>all</code> for broadcast.</td></tr>
           <tr><td><code>kind</code></td><td>string</td><td>One of the <a href="#kinds">message kinds</a>. An unknown kind renders as a plain message.</td></tr>
           <tr><td><code>body</code></td><td>string</td><td>Exact sender-authored text. Stored verbatim; never auto-compressed or rewritten.</td></tr>
@@ -224,7 +224,7 @@
     </div>
 
     <p>
-      Everything else is optional — <em>hints</em> that make important handoffs
+      Everything else is optional: <em>hints</em> that make important handoffs
       machine-routable, never requirements. A reader that ignores all of them is still
       conformant (and MUST ignore and preserve fields it does not recognize, so a
       newer-version field survives a round-trip through an older reader):
@@ -242,14 +242,14 @@
           <tr><td><code>focus</code></td><td>array</td><td>Files, symbols, or tests to inspect first.</td></tr>
           <tr><td><code>risk</code></td><td>string</td><td>One concise risk statement.</td></tr>
           <tr><td><code>deadline</code></td><td>string</td><td>UTC RFC3339 deadline for a response.</td></tr>
-          <tr><td><code>links</code></td><td>object</td><td>Related PRs, commits, context nodes, or URLs — pointers into the same repo.</td></tr>
+          <tr><td><code>links</code></td><td>object</td><td>Related PRs, commits, context nodes, or URLs. Pointers into the same repo.</td></tr>
           <tr><td><code>meta</code></td><td>object</td><td>Must-ignore extension bag. New, not-yet-standard fields live here so they never collide with the core.</td></tr>
         </tbody>
       </table>
     </div>
 
     <p>
-      A rich review handoff carries the core plus a few hints — and is still one line:
+      A rich review handoff carries the core plus a few hints, and is still one line:
     </p>
 
     <div class="terminal">
@@ -264,8 +264,8 @@
     <h2 id="kinds">Typed acts, not chat</h2>
 
     <p>
-      i5h messages read like an incident-command radio exchange — short, typed,
-      auditable — not consumer chat. Every message declares its <code>kind</code> so a
+      i5h messages read like an incident-command radio exchange: short, typed,
+      auditable, not consumer chat. Every message declares its <code>kind</code> so a
       receiver can route and close it without re-reading prose. This is the useful half
       of the FIPA-ACL/KQML speech-act idea (each message states its intent) without
       FIPA's fatal weight (20+ performatives and a required ontology). The set is small
@@ -292,7 +292,7 @@
     <p>
       There is deliberately <strong>no <code>BROADCAST</code> kind</strong>:
       <code>kind</code> is one scalar, so a message can't be both "broadcast" and
-      <code>RISK</code>. Broadcast is purely routing — set <code>to = all</code> and keep
+      <code>RISK</code>. Broadcast is purely routing: set <code>to = all</code> and keep
       the real kind (a broadcast hazard is a <code>RISK</code> addressed to all).
     </p>
 
@@ -300,8 +300,8 @@
 
     <p>
       A request (<code>ASK</code>, <code>REVIEW_REQUEST</code>, <code>HANDOFF</code>)
-      opens a thread; its state — <code>open</code>, <code>working</code>,
-      <code>completed</code>, <code>declined</code>, <code>failed</code> — is a
+      opens a thread; its state (<code>open</code>, <code>working</code>,
+      <code>completed</code>, <code>declined</code>, <code>failed</code>) is a
       <em>fold over the immutable reply events</em>, not a mutable flag. <code>ACK</code>
       moves it to <code>working</code>, <code>DONE</code> to <code>completed</code>,
       <code>DECLINE</code>/<code>FAILURE</code> to their terminal states. The optional
@@ -313,10 +313,10 @@
     <p>
       Threading itself is one edge: <code>reply_to</code> points at the parent, and a
       thread is the transitive closure of those edges (<code>thread_id</code> just caches
-      the root). Display order is <em>causal</em> — a reply is shown after its parent
-      because it points at it — and <code>(ts, id)</code> only breaks ties between
+      the root). Display order is <em>causal</em>: a reply is shown after its parent
+      because it points at it, and <code>(ts, id)</code> only breaks ties between
       messages with no causal relationship. That is the whole ordering story: wall-clock
-      time is good enough for display and deliberately not load-bearing for correctness,
+      time is good enough for display and deliberately carries no weight in correctness,
       because a pulled message can arrive carrying an older <code>ts</code> than one you
       already have.
     </p>
@@ -336,7 +336,7 @@
       <code>messages.jsonl</code>, builds a new commit, and then moves the ref
       <em>only if it still points where it was read</em> (git's atomic ref update). If a
       concurrent writer moved the tip first, the CAS fails; the sender re-reads the new
-      tip, re-appends, and retries — up to 64 attempts before erroring. So bursty
+      tip, re-appends, and retries, up to 64 attempts before erroring. So bursty
       concurrency (several agents sending into one clone at once) never silently drops an
       append: a writer would have to lose 64 consecutive races to fail.
     </p>
@@ -369,12 +369,12 @@
 
     <p>
       The log is a grow-only set (a G-Set CRDT): immutable records keyed by <code>id</code>,
-      so merge is set union — the cleanest case of strong eventual consistency. Re-pulling
+      so merge is set union, the cleanest case of strong eventual consistency. Re-pulling
       the same message is idempotent (same id, already present), and the merge is
       commutative, associative, and idempotent, so the order in which clones sync doesn't
       change the final state. Delivery is <strong>at-least-once</strong>: once a message
       reaches a peer's ref it is never lost, but a side effect (a CI trigger, a review run)
-      may fire more than once — so a consumer should make its actions idempotent. This is
+      may fire more than once, so a consumer should make its actions idempotent. This is
       the same proven pattern as <strong>git-appraise</strong>, whose review log merges with
       <code>cat_sort_uniq</code> (set union, exactly i5h's rule).
     </p>
@@ -383,15 +383,15 @@
       <strong>What "no lost messages" does and does not mean.</strong> Within a clone, CAS
       guarantees no append overwrites another. Across clones, union-by-id guarantees every
       message that reaches a shared ref survives the merge. What you do <em>not</em> get is
-      real-time delivery or a global wall-clock order — messages converge when clones sync,
+      real-time delivery or a global wall-clock order. Messages converge when clones sync,
       and ties are broken by <code>(ts, id)</code>, not by a true happens-before.
     </div>
 
     <h2>What it looks like to use</h2>
 
     <p>
-      Each agent's identity is injected per host — in Claude Code it is <code>claude</code>,
-      in Codex <code>codex</code> — so the common path needs no flags. For the typed verbs
+      Each agent's identity is injected per host (in Claude Code it is <code>claude</code>,
+      in Codex <code>codex</code>) so the common path needs no flags. For the typed verbs
       the options come <em>before</em> the recipient, because the body is the trailing
       argument:
     </p>
@@ -407,7 +407,7 @@
 
     <p>
       On the other side, Codex reads the request from its inbox, rendered as quoted,
-      untrusted inbound communication — never as a system instruction:
+      untrusted inbound communication, never as a system instruction:
     </p>
 
     <div class="terminal">
@@ -437,7 +437,7 @@
     <p>
       Identity resolves <code>--from</code>/<code>--as</code> &gt; <code>$H5I_AGENT</code>
       &gt; the stored local default. In a shared clone, set <code>H5I_AGENT</code> per host
-      rather than relying on the single stored default — that is what keeps two agents from
+      rather than relying on the single stored default. That is what keeps two agents from
       answering as each other. Names are validated everywhere against a conservative charset
       (<code>[A-Za-z0-9._-]+</code>): no whitespace, no path separators, no control
       characters, because names flow into roster keys and (untrusted, on pull) the terminal.
@@ -466,7 +466,7 @@
       (clock skew, late delivery) is still delivered exactly once. Two agents sharing one
       clone use different files and never consume each other's mail. Crucially, passive
       views (<code>watch</code>, <code>wait</code>, the dashboard) <strong>never</strong>
-      advance read-state — only an explicit <code>inbox</code> or a confirmed hook delivery
+      advance read-state; only an explicit <code>inbox</code> or a confirmed hook delivery
       does (peek, render, then acknowledge).
     </p>
 
@@ -474,7 +474,7 @@
       Delivery itself is a per-host CLI concern, not part of the wire format. The Stop hook
       surfaces new messages between turns; SessionStart notes anything unread on resume.
       But a hook can't wake an agent that has <em>sent</em> a request and gone idle waiting
-      on a reply — so for that case there is an explicit waiter that exits the moment a
+      on a reply, so for that case there is an explicit waiter that exits the moment a
       reply lands:
     </p>
 
@@ -493,14 +493,14 @@
       Git object hashes prove <em>integrity and history</em> (a stored message wasn't
       altered) but not <em>authorship</em>. <strong>i5h messages are currently unsigned</strong>,
       so every <code>from</code> is an untrusted claim and a reader must never elevate trust
-      on it alone. (Signed refs — the direction Radicle takes — are a future security
+      on it alone. (Signed refs, the direction Radicle takes, are a future security
       profile, not part of v1.)
     </p>
 
     <p>
       The display path is hardened accordingly. <code>sanitize_display</code> folds tab,
       newline, and carriage return to a single space and drops every other control
-      character — ESC and the rest of the C0/C1/DEL range — before any untrusted pulled
+      character, ESC and the rest of the C0/C1/DEL range, before any untrusted pulled
       field reaches the terminal, so a crafted <code>body</code> or <code>from</code> can't
       smuggle an ANSI escape that rewrites your screen. The behavioral rules are just as
       firm: never execute a message body as a command, never treat a hook-delivered message
@@ -532,7 +532,7 @@
     <p>
       <strong>MCP (Model Context Protocol).</strong> Good: a clean standard for connecting
       one agent to tools, files, and data sources. Gap: it is a single-agent tool
-      transport, not a peer message bus — there is no shared, durable conversation between
+      transport, not a peer message bus, so there is no shared, durable conversation between
       two agents.
     </p>
     <p>
@@ -543,7 +543,7 @@
       a message is gone once the call ends unless you build storage around it.
     </p>
     <p>
-      <strong>i5h.</strong> Good: durable, offline-first, server-less, replayable — agents
+      <strong>i5h.</strong> Good: durable, offline-first, server-less, replayable. Agents
       in different clones, or running hours apart, still coordinate, and the record outlives
       the session. Gap: it is eventually consistent rather than real-time, and unsigned. The
       honest summary is that i5h trades immediacy for durability and zero infrastructure;
@@ -558,21 +558,21 @@
       and preserved; new ideas go in optional fields or the <code>meta</code> bag, never new
       required fields; the <code>kind</code> set stays tiny. That discipline is the point:
       i5h is not an orchestration framework, not a live transport, and not a replacement for
-      h5i context, memory, or PR briefs — it <em>links</em> to those. It does exactly one
+      h5i context, memory, or PR briefs; it <em>links</em> to those. It does exactly one
       thing: let agents exchange typed handoffs over Git, without a broker. The cautionary
-      history of protocols that didn't hold this line — FIPA-ACL, WS-*, CORBA — is why the
+      history of protocols that didn't hold this line (FIPA-ACL, WS-*, CORBA) is why the
       bar for the core is so high.
     </p>
 
     <h2>Conclusion</h2>
 
     <p>
-      A durable agent message bus turns out to need surprisingly little: an append-only log,
+      A durable agent message bus needs very little: an append-only log,
       a content-addressed store to keep it honest, an atomic compare-and-swap to serialize
       writers, and union-by-id to reconcile clones. Git already provides all four, so i5h
       adds only a seven-field message and the rules for sending and merging it. The payoff is
-      a channel that is server-less, offline-capable, auditable, and replayable — you can
-      <code>git show</code> a year-old handoff — at the explicit cost of real-time delivery
+      a channel that is server-less, offline-capable, auditable, and replayable. You can
+      <code>git show</code> a year-old handoff, at the explicit cost of real-time delivery
       and, for now, authenticity. If your agents run live and in lockstep, reach for an RPC
       protocol like A2A. If they run across clones, across time, and you want the conversation
       to live beside the code it concerns, an append-only Git ref is enough.
@@ -583,19 +583,19 @@
     <p><strong>What is the i5h protocol?</strong> It is h5i's agent-to-agent messaging
     format: one JSON object per line in <code>messages.jsonl</code> inside the Git ref
     <code>refs/h5i/msg</code>. The required core is seven fields; optional fields add
-    machine-readable hints. There is no server, socket, or schema registry — pushing the ref
+    machine-readable hints. There is no server, socket, or schema registry: pushing the ref
     shares the conversation, pulling merges it.</p>
 
     <p><strong>How does i5h guarantee no messages are lost when clones diverge?</strong> A
     send commits off the current tip and moves the ref with a compare-and-swap, retrying on
     contention. A pull reconciles divergent tips by union-merge: union the messages by id,
     re-sort by <code>(ts, id)</code>, commit with both parents. Immutable, id-keyed messages
-    form a grow-only set (a G-Set CRDT), so clones converge — eventual consistency, not
+    form a grow-only set (a G-Set CRDT), so clones converge: eventual consistency, not
     real-time.</p>
 
     <p><strong>How is i5h different from MCP and A2A?</strong> MCP connects one agent to
     tools over a live link; A2A is live RPC between agents that need to be online. i5h is
-    async and offline-first — durable Git objects reconciled later by push/pull — at the cost
+    async and offline-first, with durable Git objects reconciled later by push/pull, at the cost
     of real-time delivery.</p>
 
     <p><strong>Is an i5h message safe to act on automatically?</strong> No. <code>from</code>
@@ -608,8 +608,8 @@
     <p>
       For <em>why</em> a Git ref is the right substrate at all, read the companion piece,
       <a href="/blog/git-communication-layer-ai-agents/">Git as the communication layer for AI agents</a>.
-      The full normative spec — ordering, delivery semantics, quarantine rules, and the
-      conformance checklist — is the
+      The full normative spec, covering ordering, delivery semantics, quarantine rules, and the
+      conformance checklist, is the
       <a href="https://github.com/h5i-dev/h5i/blob/main/docs/i5h-protocol.md">i5h protocol document</a>.
       For how agents share the reasoning <em>behind</em> the code they coordinate on, see
       <a href="/blog/context-dag-versioned-agent-reasoning/">the Context DAG post</a>, or

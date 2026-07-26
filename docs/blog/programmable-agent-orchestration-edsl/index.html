@@ -123,7 +123,7 @@
       This is the one design decision everything else follows from, and it is not a new idea. It is
       the decision that settled the deep-learning framework wars a decade ago. Theano and early
       TensorFlow asked you to describe a computation to a smarter executor, then hand it over.
-      PyTorch let you perform the computation and quietly recorded it. The recorded-execution side
+      PyTorch let you perform the computation and recorded it as you went. The recorded-execution side
       won on the things that actually matter day to day: errors surface where you wrote the code,
       the host language is the control flow, and you can drop a breakpoint anywhere.
     </p>
