@@ -197,7 +197,7 @@
 <a class="t2" href="#h5i-objects">h5i objects</a>
 <div class="t3group">
 <a class="t3" href="#h5i-objects-gc--pin--fsck">h5i objects gc / pin / fsck</a>
-<a class="t3" href="#h5i-objects-push--pull--sharing-raw-blobs-optional">h5i objects push / pull: sharing raw blobs (optional)</a>
+<a class="t3" href="#h5i-objects-push--pull--sharing-raw-blobs-optional">h5i objects push / pull — sharing raw blobs (optional)</a>
 <a class="t3" href="#h5i-objects-filters--trust">h5i objects filters / trust</a>
 <a class="t3" href="#h5i-objects-setup">h5i objects setup</a>
 </div>
@@ -276,7 +276,7 @@
   <article class="manual-body">
 <h1 id="h5i-manual">h5i Manual</h1>
 <p>Command reference for all h5i subcommands and flags. <strong>New here? Read <a href="#what-h5i-is">What h5i
-is</a> and <a href="#what-h5i-can-do">What h5i can do</a> first</strong>. They give the
+is</a> and <a href="#what-h5i-can-do">What h5i can do</a> first</strong> — they give the
 mental model and a task-oriented capability map before the per-command reference.</p>
 <hr />
 <h2 id="what-h5i-is">What h5i is</h2>
@@ -284,24 +284,24 @@ mental model and a task-oriented capability map before the per-command reference
 workspace</strong>: a sandboxed Git worktree to work in, plus a complete record of the
 prompts, commands, logs, policies, and reviews behind every change. Run one agent
 safely, scale to many via a conflict-free multi-agent orchestra, then merge one
-auditable result. It all lives in your repo, carried by Git, with no SaaS.</p>
+auditable result. It all lives in your repo, carried by Git — no SaaS.</p>
 <p>Concretely, h5i gives you four things <em>alongside</em> ordinary Git history:</p>
 <ul>
-<li><strong>isolation:</strong> each agent works in a policy-enforced sandbox (a Git worktree
+<li><strong>isolation</strong> — each agent works in a policy-enforced sandbox (a Git worktree
   confined by Landlock/seccomp/netns, or rootless Podman), so what it can read,
-  write, and reach on the network is bounded, and recorded.</li>
-<li><strong>provenance:</strong> which model/agent produced a change, and the prompt that drove
+  write, and reach on the network is bounded — and recorded.</li>
+<li><strong>provenance</strong> — which model/agent produced a change, and the prompt that drove
   it.</li>
-<li><strong>evidence:</strong> test metrics and captured command output (exit code, tool,
+<li><strong>evidence</strong> — test metrics and captured command output (exit code, tool,
   validated pass/fail, and <em>enforced</em> egress verdicts), stored out-of-band so it
   never bloats an agent's context.</li>
-<li><strong>coordination:</strong> cross-agent messages so several agents collaborate on one
+<li><strong>coordination</strong> — cross-agent messages so several agents collaborate on one
   repo.</li>
 </ul>
 <p>This data lives in <code>.git/.h5i/</code> and under <code>refs/h5i/*</code>. <strong>It does NOT travel with
-a plain <code>git push</code></strong>. Use <code>h5i share push</code> / <code>h5i share pull</code> to move it.</p>
+a plain <code>git push</code></strong> — use <code>h5i share push</code> / <code>h5i share pull</code> to move it.</p>
 <p>Two ways to drive h5i: the <strong>CLI</strong> (<code>h5i …</code>, works out of the box) and native
-<strong>MCP tools</strong> (the same operations without shell-quoting; see <a href="#h5i-mcp">h5i mcp</a>).
+<strong>MCP tools</strong> (the same operations without shell-quoting — see <a href="#h5i-mcp">h5i mcp</a>).
 The CLI is organized as <code>h5i &lt;noun&gt; &lt;verb&gt;</code>; see <a href="#command-groups">Command Groups</a>.</p>
 <hr />
 <h2 id="what-h5i-can-do">What h5i can do</h2>
@@ -375,12 +375,12 @@ emits <code>--json</code> is safe to consume from a script or another agent.)</p
 <tr>
 <td>Know what isolation the host can enforce</td>
 <td><a href="#env-lifecycle-commands"><code>h5i env probe</code></a>, <a href="#env-lifecycle-commands"><code>env capabilities --json</code></a></td>
-<td>Tier, egress-enforced, resource limits, machine-readable so a product adapts honestly.</td>
+<td>Tier, egress-enforced, resource limits — machine-readable so a product adapts honestly.</td>
 </tr>
 <tr>
 <td>Prove the sandbox allowed or blocked egress</td>
 <td><a href="#h5i-recall-object--objects"><code>recall objects --json</code></a> (<code>egress</code> field)</td>
-<td>Authoritative allow/deny counts from the container proxy / socket-gate: <em>enforced</em>, not inferred from an exit code.</td>
+<td>Authoritative allow/deny counts from the container proxy / socket-gate — <em>enforced</em>, not inferred from an exit code.</td>
 </tr>
 <tr>
 <td>Coordinate with other AI agents</td>
@@ -404,7 +404,7 @@ emits <code>--json</code> is safe to consume from a script or another agent.)</p
 </tr>
 <tr>
 <td>Drive h5i from an agent without shelling out</td>
-<td>native <strong>MCP tools</strong>; see <a href="#h5i-mcp">h5i mcp</a></td>
+<td>native <strong>MCP tools</strong> — see <a href="#h5i-mcp">h5i mcp</a></td>
 <td>The same operations as the CLI, without shell-quoting.</td>
 </tr>
 </tbody>
@@ -461,11 +461,11 @@ legacy equivalents, and the corresponding MCP tool names.</p>
 </tbody>
 </table>
 <p>All four nouns route through a pre-clap argv rewriter into the legacy
-verbs, so the noun form and the legacy form are functionally identical;
+verbs — so the noun form and the legacy form are functionally identical;
 the noun form is just the canonical name and the only one shown in <code>--help</code>.</p>
 <h3 id="machine-readable-introspection">Machine-readable introspection</h3>
 <p>A product embedding h5i can ask, in JSON, <em>which h5i is this</em> and <em>what can it
-enforce here</em>, with no parsing of human text:</p>
+enforce here</em> — no parsing of human text:</p>
 <pre><code class="language-bash">h5i --version --json        # { &quot;name&quot;: &quot;h5i&quot;, &quot;version&quot;: &quot;0.2.6&quot;, &quot;features&quot;: [&quot;web&quot;] }
 h5i env capabilities --json # isolation tier, egress-enforced, resource limits, per-claim support
 </code></pre>
@@ -602,15 +602,15 @@ merge.</p>
 <pre><code>h5i doctor [--repair] [--export &lt;DIR&gt;] [--json]
 </code></pre>
 <p>Validate and repair h5i's sidecar storage and refs. Run it when the sidecar
-looks damaged or after recovering a repository, for example if <code>.git/.h5i/</code> is
+looks damaged or after recovering a repository — for example if <code>.git/.h5i/</code> is
 missing directories, or refs under <code>refs/h5i/*</code> were lost by an aggressive
 prune. By default it only reports; nothing is changed unless you pass <code>--repair</code>.</p>
 <ul>
-<li><code>--repair</code>: create missing sidecar directories and schema metadata. Existing
+<li><code>--repair</code> — create missing sidecar directories and schema metadata. Existing
   data is left untouched; this only fills in what is absent.</li>
-<li><code>--export &lt;DIR&gt;</code>: write a recovery copy of <code>.git/.h5i</code> plus a refs manifest
+<li><code>--export &lt;DIR&gt;</code> — write a recovery copy of <code>.git/.h5i</code> plus a refs manifest
   into <code>&lt;DIR&gt;</code>, so the sidecar state can be archived or moved.</li>
-<li><code>--json</code>: emit the raw report instead of the pretty view, for tooling.</li>
+<li><code>--json</code> — emit the raw report instead of the pretty view, for tooling.</li>
 </ul>
 <p>The command exits non-zero when the sidecar is unhealthy, so it is safe to gate
 scripts on it.</p>
@@ -620,7 +620,7 @@ h5i doctor --export /tmp/h5i-backup
 </code></pre>
 <blockquote>
 <p><strong>Note:</strong> This is the top-level command for the whole sidecar. The per-env
-health check is separate; see <a href="#h5i-env"><code>h5i env doctor</code></a> for enforcement
+health check is separate — see <a href="#h5i-env"><code>h5i env doctor</code></a> for enforcement
 readiness and structural health of a single environment.</p>
 </blockquote>
 <hr />
@@ -735,19 +735,19 @@ h5i capture memory --agent claude
 </tr>
 </tbody>
 </table>
-<p><strong>Example: basic commit with hooks</strong></p>
+<p><strong>Example — basic commit with hooks</strong></p>
 <pre><code class="language-bash"># Prompt is captured automatically from the Claude Code session
 h5i capture commit -m &quot;add rate limiting&quot;
 </code></pre>
 <pre><code>✔  Committed a3f9c2b  add rate limiting
    model: claude-sonnet-4-6 · agent: claude-code · 312 tokens
 </code></pre>
-<p><strong>Example: commit with test results and audit</strong></p>
+<p><strong>Example — commit with test results and audit</strong></p>
 <pre><code class="language-bash">h5i capture commit -m &quot;add login tests&quot; \
   --test-cmd &quot;python plugin/h5i-pytest-adapter.py&quot; \
   --audit
 </code></pre>
-<p><strong>Example: causal chain</strong></p>
+<p><strong>Example — causal chain</strong></p>
 <p>Link a fix to the commit that introduced the bug:</p>
 <pre><code class="language-bash">h5i capture commit -m &quot;fix off-by-one in validate_token&quot; --caused-by a3f9c2b
 </code></pre>
@@ -756,7 +756,7 @@ h5i capture commit -m &quot;add rate limiting&quot;
   → b2f3a1c &quot;fix bug introduced by rate limiter&quot;
 Continue anyway? [y/N]
 </code></pre>
-<p><strong>Example: design decisions</strong></p>
+<p><strong>Example — design decisions</strong></p>
 <p>Record which alternatives were considered and why the chosen approach was preferred:</p>
 <pre><code class="language-bash">cat &gt; decisions.json &lt;&lt; 'EOF'
 [
@@ -849,7 +849,7 @@ h5i capture run --file src/auth.rs -- pytest tests/test_auth.py   # tag related 
 </tr>
 <tr>
 <td><code>--format &lt;compact\|structured\|json\|summary&gt;</code></td>
-<td>Output format. Default <code>compact</code> (one line per finding: token-minimal). <code>structured</code> = full YAML; <code>json</code> = the <code>ToolResult</code> as JSON; <code>summary</code> = the legacy filtered text.</td>
+<td>Output format. Default <code>compact</code> (one line per finding — token-minimal). <code>structured</code> = full YAML; <code>json</code> = the <code>ToolResult</code> as JSON; <code>summary</code> = the legacy filtered text.</td>
 </tr>
 <tr>
 <td><code>--file &lt;path&gt;</code></td>
@@ -865,8 +865,8 @@ h5i capture run --file src/auth.rs -- pytest tests/test_auth.py   # tag related 
 concerns (explicit <code>--file</code> ∪ paths mentioned in the output) plus the <strong>working
 diff</strong> at capture time.</p>
 <p><strong>Read-through commands pass through.</strong> Wrapping an h5i <em>read</em> whose whole point
-is to emit content in full, meaning <code>h5i recall object</code> / <code>recall objects</code> / <code>recall
-search</code> and <code>h5i team artifact …</code>, is a no-op: <code>capture run</code> runs them
+is to emit content in full — <code>h5i recall object</code> / <code>recall objects</code> / <code>recall
+search</code> and <code>h5i team artifact …</code> — is a no-op: <code>capture run</code> runs them
 verbatim, <strong>unstored and uncompacted</strong> (even inside an audit-all env box, and
 regardless of <code>--min-bytes</code>). So an agent whose harness wraps every command in
 <code>capture run</code> can still rehydrate a teammate's full diff with <code>h5i capture run --
@@ -874,7 +874,7 @@ h5i team artifact show &lt;id&gt; --diff</code> without it being summarized.</p>
 <hr />
 <h3 id="structured-output">Structured output</h3>
 <p><code>h5i capture run</code> emits a normalized, AI-friendly <strong>structured result</strong> by
-default: one schema across test runners, compilers, linters, and type checkers:</p>
+default — one schema across test runners, compilers, linters, and type checkers:</p>
 <pre><code class="language-yaml">tool: pytest
 kind: test
 status: failed          # passed (tests) | ok (other tools) | failed | error | unknown
@@ -891,10 +891,10 @@ findings:
     fingerprint: 0bb827e4e61a   # stable across line shifts → dedupe/query
 </code></pre>
 <ul>
-<li><strong>JSON is canonical:</strong> the manifest stores the <code>ToolResult</code> as JSON (and the
+<li><strong>JSON is canonical</strong> — the manifest stores the <code>ToolResult</code> as JSON (and the
   <code>h5i_capture_run</code> MCP tool returns it under a <code>structured</code> field); the CLI
   <strong>default render is <code>compact</code></strong> (one line per finding), with <code>--format
-  structured</code> for the full YAML, all from the same typed struct.</li>
+  structured</code> for the full YAML — all from the same typed struct.</li>
 <li><strong>Safety</strong>: <code>status</code> is never <code>passed</code>/<code>ok</code> on a nonzero exit; a parser
   <strong>declines to a generic result</strong> when its anchors are missing (<code>parser_confidence</code>
   tells you how much to trust the structure); the raw is always recoverable.</li>
@@ -935,10 +935,10 @@ h5i hook wrap-bash                      # PreToolUse Bash handler (token-reducti
 }
 </code></pre>
 <ul>
-<li><strong>UserPromptSubmit → <code>h5i hook claude prompt</code></strong>: captures the verbatim human prompt so <code>h5i capture commit</code> records what you actually typed, not the agent's paraphrase.</li>
-<li><strong>SessionStart → <code>h5i hook session-start</code></strong>: injects prior context into every new session, and notes any unread messages on resume.</li>
-<li><strong>PostToolUse (Edit|Write|Read) → <code>h5i hook claude sync</code></strong>: auto-traces OBSERVE for every Read, ACT for every Edit/Write.</li>
-<li><strong>Stop → <code>h5i hook claude finish</code></strong>: mines THINK / NOTE entries from the session transcript and auto-checkpoints the context workspace.</li>
+<li><strong>UserPromptSubmit → <code>h5i hook claude prompt</code></strong> — captures the verbatim human prompt so <code>h5i capture commit</code> records what you actually typed, not the agent's paraphrase.</li>
+<li><strong>SessionStart → <code>h5i hook session-start</code></strong> — injects prior context into every new session, and notes any unread messages on resume.</li>
+<li><strong>PostToolUse (Edit|Write|Read) → <code>h5i hook claude sync</code></strong> — auto-traces OBSERVE for every Read, ACT for every Edit/Write.</li>
+<li><strong>Stop → <code>h5i hook claude finish</code></strong> — mines THINK / NOTE entries from the session transcript and auto-checkpoints the context workspace.</li>
 </ul>
 <p>For <strong>Codex</strong>, <code>--write --target codex</code> merges inline hook tables into <code>.codex/config.toml</code>. Codex only supports the agent-agnostic <code>SessionStart</code> and <code>Stop</code> events here (the <code>UserPromptSubmit</code> / <code>PostToolUse</code> handlers are Claude-Code-specific and are skipped):</p>
 <pre><code class="language-toml">[[hooks.SessionStart]]
@@ -953,8 +953,8 @@ command = &quot;h5i hook codex finish --quiet&quot;
 </code></pre>
 <p>Codex requires reviewing/trusting local hooks via <code>/hooks</code>; project-local hooks only load after the project <code>.codex/</code> layer is trusted.</p>
 <p><strong>Bash capture-wrap (<code>--wrap-bash</code>, optional).</strong> Adds a <code>PreToolUse</code> Bash hook (<code>h5i hook wrap-bash</code>) that rewrites every Bash command into a <code>h5i capture run</code> wrapper, so the agent receives a token-reduced summary for large/failing output while the full raw bytes stay stored and searchable via <code>h5i recall</code>. Off by default. Note: with it enabled, permission allowlists then match the rewritten <code>h5i capture run …</code> command, not the original.</p>
-<p><strong>Team peer-review (<code>--team</code>, optional).</strong> Adds a second <code>Stop</code> hook, <code>h5i team agent hook --block</code>, for <strong>both Claude and Codex</strong> (their Stop hooks share the same <code>{"decision":"block","reason":…}</code> continuation contract). When the agent is a member of a live <a href="#h5i-team"><code>h5i team</code></a> round, it keeps the agent from stopping while it still owes work, <strong>waits</strong> for the next review before releasing the stop, and surfaces requests between turns. Each entry carries a long per-hook <code>timeout</code> (~1830s) so the agent runtime doesn't kill it mid-wait (set as the Claude hook's <code>timeout</code>, and the Codex handler's <code>timeout</code> field); a <code>TEAM_DONE</code> signal (sent by <code>finalize</code>/<code>apply</code>) releases it. It <strong>no-ops outside a team</strong>, so it's safe to leave installed. This is what lets <code>scripts/team-run.sh</code> drive the full peer-review cycle hands-off, for <strong>both</strong> agent runtimes, with boxes staying alive between turns.</p>
-<p><strong>MCP server (manual).</strong> Hook setup no longer wires the MCP server; register it by hand if you want native h5i tools in Claude Code. Add the <code>mcpServers</code> block to <code>~/.claude/settings.json</code>:</p>
+<p><strong>Team peer-review (<code>--team</code>, optional).</strong> Adds a second <code>Stop</code> hook — <code>h5i team agent hook --block</code> for <strong>both Claude and Codex</strong> (their Stop hooks share the same <code>{"decision":"block","reason":…}</code> continuation contract). When the agent is a member of a live <a href="#h5i-team"><code>h5i team</code></a> round, it keeps the agent from stopping while it still owes work, <strong>waits</strong> for the next review before releasing the stop, and surfaces requests between turns. Each entry carries a long per-hook <code>timeout</code> (~1830s) so the agent runtime doesn't kill it mid-wait (set as the Claude hook's <code>timeout</code>, and the Codex handler's <code>timeout</code> field); a <code>TEAM_DONE</code> signal (sent by <code>finalize</code>/<code>apply</code>) releases it. It <strong>no-ops outside a team</strong>, so it's safe to leave installed. This is what lets <code>scripts/team-run.sh</code> drive the full peer-review cycle hands-off — for <strong>both</strong> agent runtimes — with boxes staying alive between turns.</p>
+<p><strong>MCP server (manual).</strong> Hook setup no longer wires the MCP server — register it by hand if you want native h5i tools in Claude Code. Add the <code>mcpServers</code> block to <code>~/.claude/settings.json</code>:</p>
 <pre><code class="language-json">{
   &quot;mcpServers&quot;: {
     &quot;h5i&quot;: { &quot;command&quot;: &quot;h5i&quot;, &quot;args&quot;: [&quot;mcp&quot;] }
@@ -976,7 +976,7 @@ command = &quot;h5i hook codex finish --quiet&quot;
 h5i hook claude finish   # Stop handler
 h5i hook claude prompt   # UserPromptSubmit handler (reads JSON from stdin)
 </code></pre>
-<p>Claude Code integration hook handlers. These are wired into <code>.claude/settings.json</code> by <code>h5i hook setup --write</code> (see <a href="#h5i-hook-setup">h5i hook setup</a>) and run automatically per event, so you normally never invoke them by hand. They all fail open (no-op outside an h5i-initialized repo, never block the turn). (The bare <code>h5i claude …</code> path remains as a deprecated alias.)</p>
+<p>Claude Code integration hook handlers. These are wired into <code>.claude/settings.json</code> by <code>h5i hook setup --write</code> (see <a href="#h5i-hook-setup">h5i hook setup</a>) and run automatically per event — you normally never invoke them by hand. They all fail open (no-op outside an h5i-initialized repo, never block the turn). (The bare <code>h5i claude …</code> path remains as a deprecated alias.)</p>
 <h4 id="h5i-hook-claude-sync">h5i hook claude sync</h4>
 <pre><code>h5i hook claude sync
 </code></pre>
@@ -988,7 +988,7 @@ h5i hook claude prompt   # UserPromptSubmit handler (reads JSON from stdin)
 <h4 id="h5i-hook-claude-prompt">h5i hook claude prompt</h4>
 <pre><code>h5i hook claude prompt
 </code></pre>
-<p>The <code>UserPromptSubmit</code> handler. Reads the hook JSON from stdin and records the <strong>verbatim</strong> human prompt into <code>.git/.h5i/pending_context.json</code>, accumulating across turns. <code>h5i capture commit</code> then uses this raw human prompt as the recorded prompt, and it wins over an agent-authored <code>--intent</code>, so AI provenance reflects what the human actually asked rather than the agent's paraphrase.</p>
+<p>The <code>UserPromptSubmit</code> handler. Reads the hook JSON from stdin and records the <strong>verbatim</strong> human prompt into <code>.git/.h5i/pending_context.json</code>, accumulating across turns. <code>h5i capture commit</code> then uses this raw human prompt as the recorded prompt — it wins over an agent-authored <code>--intent</code> — so AI provenance reflects what the human actually asked rather than the agent's paraphrase.</p>
 <hr />
 <h3 id="h5i-hook-codex">h5i hook codex</h3>
 <pre><code>h5i hook codex prelude
@@ -1102,7 +1102,7 @@ h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
 </tr>
 </tbody>
 </table>
-<p><strong>Example: recent commits</strong></p>
+<p><strong>Example — recent commits</strong></p>
 <pre><code class="language-bash">h5i recall log --limit 3
 </code></pre>
 <pre><code>● a3f9c2b  add rate limiting
@@ -1115,7 +1115,7 @@ h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
   2026-03-26 11:45  Bob &lt;bob@example.com&gt;
   (no AI metadata)
 </code></pre>
-<p><strong>Example: prompt ancestry for a specific line</strong></p>
+<p><strong>Example — prompt ancestry for a specific line</strong></p>
 <pre><code class="language-bash">h5i recall log --ancestry src/auth.rs:42
 </code></pre>
 <pre><code>── Prompt ancestry for src/auth.rs:42
@@ -1163,7 +1163,7 @@ h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
 ✅✨  a3f9c2b  claude-code     |     tok.len() == 64 &amp;&amp; tok.chars().all(|c| c.is_ascii_hexdigit())
      9eff001  alice           | }
 </code></pre>
-<p><strong>Example: with prompt annotations</strong></p>
+<p><strong>Example — with prompt annotations</strong></p>
 <pre><code class="language-bash">h5i recall blame src/auth.rs --show-prompt
 </code></pre>
 <pre><code>── commit a3f9c2b ── prompt: &quot;add per-IP rate limiting to the auth endpoint&quot; ──
@@ -1212,7 +1212,7 @@ h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
 <h4 id="h5i-recall-notes-footprint">h5i recall notes footprint</h4>
 <pre><code>h5i recall notes footprint [--commit &lt;oid&gt;]
 </code></pre>
-<p>Show which files Claude read vs. edited, and which files were read but not edited (<em>implicit dependencies</em>: what Claude had to understand to make the change, which Git's diff never captures).</p>
+<p>Show which files Claude read vs. edited, and which files were read but not edited (<em>implicit dependencies</em> — what Claude had to understand to make the change, which Git's diff never captures).</p>
 <pre><code>── Exploration Footprint ──────────────────────────────────────
   Session 90130372  ·  503 messages  ·  181 tool calls
 
@@ -1336,7 +1336,7 @@ h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
 <h4 id="h5i-recall-notes-coverage">h5i recall notes coverage</h4>
 <pre><code>h5i recall notes coverage [options]
 </code></pre>
-<p>Show per-file attention coverage: the fraction of edits that were preceded by at least one Read in the same session. An edit with no prior Read is a <strong>blind edit</strong>: Claude modified the file without direct evidence it understood the current state.</p>
+<p>Show per-file attention coverage: the fraction of edits that were preceded by at least one Read in the same session. An edit with no prior Read is a <strong>blind edit</strong> — Claude modified the file without direct evidence it understood the current state.</p>
 <p><strong>Options</strong></p>
 <table>
 <thead>
@@ -1390,7 +1390,7 @@ h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
 <h4 id="h5i-recall-notes-graph">h5i recall notes graph</h4>
 <pre><code>h5i recall notes graph [options]
 </code></pre>
-<p>Visualize the causal chain across commits: which AI commit triggered which.</p>
+<p>Visualize the causal chain across commits — which AI commit triggered which.</p>
 <p><strong>Options</strong></p>
 <table>
 <thead>
@@ -1414,11 +1414,11 @@ h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
 <h3 id="h5i-recall-context">h5i recall context</h3>
 <p>A version-controlled reasoning workspace stored in <code>refs/h5i/context</code> that survives session resets. Command structure mirrors Git. Based on <a href="https://arxiv.org/abs/2508.00031">arXiv:2508.00031</a>, enhanced with five capabilities derived from recent research (CMV paper arXiv:2602.22402, Claude Code design-space analysis arXiv:2604.14228):</p>
 <ol>
-<li><strong>DAG trace nodes:</strong> every <code>trace</code> entry is a node in a directed acyclic graph with explicit <code>parent_ids</code>; merge operations create two-parent nodes so parallel branches stay causally connected.</li>
-<li><strong>Ephemeral traces</strong> (<code>--ephemeral</code>): scratch observations excluded from the DAG, excluded from snapshots, and cleared on the next <code>context commit</code>; analogous to Claude Code's <code>/btw</code>.</li>
-<li><strong>Three-pass lossless <code>pack</code>:</strong> removes subsumed OBSERVEs, merges consecutive OBSERVEs about the same file, and preserves all THINK/ACT/NOTE entries verbatim.</li>
-<li><strong>Stable-prefix / dynamic-suffix split:</strong> <code>context status</code> and <code>context cached-prefix</code> show the prompt-caching boundary in the trace.</li>
-<li><strong>Subagent-scoped sub-contexts</strong> (<code>context scope</code>): lightweight <code>scope/&lt;name&gt;</code> branches for delegated subagent investigation, shown separately in <code>status</code>.</li>
+<li><strong>DAG trace nodes</strong> — every <code>trace</code> entry is a node in a directed acyclic graph with explicit <code>parent_ids</code>; merge operations create two-parent nodes so parallel branches stay causally connected.</li>
+<li><strong>Ephemeral traces</strong> (<code>--ephemeral</code>) — scratch observations excluded from the DAG, excluded from snapshots, and cleared on the next <code>context commit</code>; analogous to Claude Code's <code>/btw</code>.</li>
+<li><strong>Three-pass lossless <code>pack</code></strong> — removes subsumed OBSERVEs, merges consecutive OBSERVEs about the same file, and preserves all THINK/ACT/NOTE entries verbatim.</li>
+<li><strong>Stable-prefix / dynamic-suffix split</strong> — <code>context status</code> and <code>context cached-prefix</code> show the prompt-caching boundary in the trace.</li>
+<li><strong>Subagent-scoped sub-contexts</strong> (<code>context scope</code>) — lightweight <code>scope/&lt;name&gt;</code> branches for delegated subagent investigation, shown separately in <code>status</code>.</li>
 </ol>
 <p><strong>Workspace layout</strong> (stored entirely inside <code>refs/h5i/context</code>)</p>
 <pre><code>refs/h5i/context tree:
@@ -1458,8 +1458,8 @@ h5i recall context status                                         # session end:
 <pre><code>h5i recall context init --goal &lt;text&gt;
 </code></pre>
 <p>Create the context workspace if needed and set the goal for the current Git branch. Run it once per Git branch before writing context on that branch.</p>
-<p><code>init</code> is <strong>idempotent</strong>: re-running it on the same Git branch updates the goal in place rather than forking a second workspace, so it is safe (and expected) to run at the start of every task. It also <strong>eagerly creates</strong> the current Git branch's <em>shadow</em> context branch (<code>refs/h5i/context/&lt;git-branch&gt;</code>) and makes it active, instead of waiting for the first <code>trace</code>/<code>commit</code> to fork it lazily. This keeps <code>context status</code> consistent immediately after <code>init</code> (no spurious "git/&lt;branch&gt; has no ctx shadow"). It is a no-op on <code>main</code> and when the context is pinned.</p>
-<p>Previous goals are not lost: each change is appended to the history of the <code>main</code> context ref; see <code>context goal --log</code>. Running <code>init</code> with no <code>--goal</code> leaves the existing goal untouched.</p>
+<p><code>init</code> is <strong>idempotent</strong> — re-running it on the same Git branch updates the goal in place rather than forking a second workspace, so it is safe (and expected) to run at the start of every task. It also <strong>eagerly creates</strong> the current Git branch's <em>shadow</em> context branch (<code>refs/h5i/context/&lt;git-branch&gt;</code>) and makes it active, instead of waiting for the first <code>trace</code>/<code>commit</code> to fork it lazily. This keeps <code>context status</code> consistent immediately after <code>init</code> (no spurious "git/&lt;branch&gt; has no ctx shadow"). It is a no-op on <code>main</code> and when the context is pinned.</p>
+<p>Previous goals are not lost: each change is appended to the history of the <code>main</code> context ref — see <code>context goal --log</code>. Running <code>init</code> with no <code>--goal</code> leaves the existing goal untouched.</p>
 <table>
 <thead>
 <tr>
@@ -1481,7 +1481,7 @@ h5i recall context init --goal &quot;Implement retry-safe HTTP client&quot;   # 
 <h4 id="h5i-recall-context-goal">h5i recall context goal</h4>
 <pre><code>h5i recall context goal [--log]
 </code></pre>
-<p>Print just the current goal and pin status for the current Git branch: a cheap, low-token check to run before <code>context init</code>. Warns when the context is pinned to a branch other than the current Git branch (a stale pin that silently misroutes new traces).</p>
+<p>Print just the current goal and pin status for the current Git branch — a cheap, low-token check to run before <code>context init</code>. Warns when the context is pinned to a branch other than the current Git branch (a stale pin that silently misroutes new traces).</p>
 <table>
 <thead>
 <tr>
@@ -1575,7 +1575,7 @@ h5i recall context goal --log    # full revision history for this Git branch
 <p>Append a single OTA (Observe–Think–Act) entry to the trace log.</p>
 <p>Before writing, the CLI verifies that the current Git branch has a goal and the active h5i context branch has a purpose. If either is missing, it prints the setup command to run.</p>
 <p>By default the entry is <strong>durable</strong>: it is written to <code>trace.md</code> (human-readable) and to <code>dag.json</code> (the DAG), and it survives snapshots and session resets.</p>
-<p>With <code>--ephemeral</code> the entry goes to <code>ephemeral.md</code> only. It is excluded from the DAG, excluded from snapshots, and <strong>automatically cleared on the next <code>h5i recall context commit</code></strong>. Use this for scratch observations you only need for the current step (analogous to Claude Code's <code>/btw</code>).</p>
+<p>With <code>--ephemeral</code> the entry goes to <code>ephemeral.md</code> only — it is excluded from the DAG, excluded from snapshots, and <strong>automatically cleared on the next <code>h5i recall context commit</code></strong>. Use this for scratch observations you only need for the current step (analogous to Claude Code's <code>/btw</code>).</p>
 <p><strong>Options</strong></p>
 <table>
 <thead>
@@ -1684,21 +1684,21 @@ h5i recall context init --goal &quot;Current task on this Git branch&quot;
 <h4 id="h5i-recall-context-rm">h5i recall context rm</h4>
 <pre><code>h5i recall context rm &lt;name&gt; [--force]
 </code></pre>
-<p>Permanently remove a context (reasoning) branch (<code>refs/h5i/context/&lt;name&gt;</code>), the
+<p>Permanently remove a context (reasoning) branch (<code>refs/h5i/context/&lt;name&gt;</code>) — the
 safe, first-class counterpart to deleting the ref by hand. <code>h5i recall context
 status</code> lists stale context branches (a <code>ctx/&lt;name&gt;</code> whose Git branch is gone)
 and points here.</p>
 <p>It applies the same guards <code>h5i env rm</code> does:</p>
 <ul>
 <li>refuses <code>main</code> (the root branch holds the project goal and milestone roadmap);</li>
-<li>refuses an <code>env/…</code> branch (those belong to an h5i environment; use <code>h5i env rm</code>);</li>
+<li>refuses an <code>env/…</code> branch (those belong to an h5i environment — use <code>h5i env rm</code>);</li>
 <li>refuses the <strong>active</strong> branch unless <code>--force</code>, which first resets the
   worktree's context HEAD to <code>main</code> and clears the pin;</li>
 <li>never touches the per-commit workspace snapshots, so <code>h5i recall context
   restore &lt;sha&gt;</code> / <code>diff</code> still work after removal.</li>
 </ul>
 <p>This is a <strong>local</strong> removal. If the branch was shared (<code>h5i share push</code>), the
-remote copy survives and a later <code>h5i share pull</code> will resurrect it, so delete it
+remote copy survives and a later <code>h5i share pull</code> will resurrect it — delete it
 on the remote too.</p>
 <p><strong>Options</strong></p>
 <table>
@@ -1726,7 +1726,7 @@ h5i recall context rm improve-shell  # drop one stale reasoning branch
 <h4 id="h5i-recall-context-merge">h5i recall context merge</h4>
 <pre><code>h5i recall context merge &lt;branch&gt;
 </code></pre>
-<p>Merge a branch's commit log and trace into the current branch. A <strong>DAG merge node</strong> is appended to the target branch's <code>dag.json</code> with two parent IDs, one from the target branch head and one from the source branch head, so the full causal history of both branches is preserved.</p>
+<p>Merge a branch's commit log and trace into the current branch. A <strong>DAG merge node</strong> is appended to the target branch's <code>dag.json</code> with two parent IDs — one from the target branch head and one from the source branch head — so the full causal history of both branches is preserved.</p>
 <pre><code class="language-bash">h5i recall context merge experiment/sync-session
 h5i recall context merge scope/investigate-auth    # merge a subagent scope back in
 </code></pre>
@@ -1769,9 +1769,9 @@ h5i recall context merge scope/investigate-auth
 <li>Current Git branch and its goal</li>
 <li>Active h5i context branch and its milestone commit + trace-line counts</li>
 <li>Other h5i context branches (if any)</li>
-<li><strong>Scoped subagents:</strong> <code>scope/*</code> branches listed separately so active delegations are visible at a glance</li>
-<li><strong>Trace cache split:</strong> how many trace lines fall in the stable prefix (prompt-cache friendly) vs. the dynamic suffix (changes every step)</li>
-<li><strong>Commits flagged for review:</strong> if <code>h5i recall notes analyze</code> has been run, the top 3 commits scoring above 0.40 on the review heuristic are surfaced inline, so you don't need a separate <code>h5i audit review</code> call to spot what needs human attention</li>
+<li><strong>Scoped subagents</strong> — <code>scope/*</code> branches listed separately so active delegations are visible at a glance</li>
+<li><strong>Trace cache split</strong> — how many trace lines fall in the stable prefix (prompt-cache friendly) vs. the dynamic suffix (changes every step)</li>
+<li><strong>Commits flagged for review</strong> — if <code>h5i recall notes analyze</code> has been run, the top 3 commits scoring above 0.40 on the review heuristic are surfaced inline, so you don't need a separate <code>h5i audit review</code> call to spot what needs human attention</li>
 </ul>
 <pre><code>── Context Status ──────────────────────────────────────────────
   Git branch: feature/auth  |  goal: Build OAuth2 login system
@@ -1812,7 +1812,7 @@ h5i recall context merge scope/investigate-auth
 
   ◈ 4 design decisions across all branches
 </code></pre>
-<p><strong>MCP tool</strong>: <code>h5i_context_knowledge</code>, which returns <code>{ "thoughts": [{ "branch", "thought" }, ...] }</code>.</p>
+<p><strong>MCP tool</strong>: <code>h5i_context_knowledge</code> — returns <code>{ "thoughts": [{ "branch", "thought" }, ...] }</code>.</p>
 <hr />
 <h4 id="h5i-recall-context-prompt">h5i recall context prompt</h4>
 <pre><code>h5i recall context prompt
@@ -1846,9 +1846,9 @@ h5i recall context merge scope/investigate-auth
 </code></pre>
 <p><strong>When to use</strong></p>
 <ul>
-<li>Continuing a task after a gap of several days: restore the context from the last working commit rather than re-deriving everything from scratch.</li>
-<li>Debugging a regression: restore context to the commit before the regression was introduced to recover the reasoning state.</li>
-<li>Handing off to a colleague: they can restore the exact context you had when you last worked on a feature.</li>
+<li>Continuing a task after a gap of several days — restore the context from the last working commit rather than re-deriving everything from scratch.</li>
+<li>Debugging a regression — restore context to the commit before the regression was introduced to recover the reasoning state.</li>
+<li>Handing off to a colleague — they can restore the exact context you had when you last worked on a feature.</li>
 </ul>
 <hr />
 <h4 id="h5i-recall-context-diff">h5i recall context diff</h4>
@@ -1876,9 +1876,9 @@ h5i recall context merge scope/investigate-auth
 </table>
 <p><strong>Output</strong></p>
 <ul>
-<li><strong>Goal change:</strong> whether the project goal was updated between the two commits</li>
-<li><strong>New milestones:</strong> context commits (reasoning checkpoints) added after <code>&lt;from&gt;</code></li>
-<li><strong>New OTA trace steps:</strong> OBSERVE/THINK/ACT/NOTE entries added after <code>&lt;from&gt;</code> (up to 30)</li>
+<li><strong>Goal change</strong> — whether the project goal was updated between the two commits</li>
+<li><strong>New milestones</strong> — context commits (reasoning checkpoints) added after <code>&lt;from&gt;</code></li>
+<li><strong>New OTA trace steps</strong> — OBSERVE/THINK/ACT/NOTE entries added after <code>&lt;from&gt;</code> (up to 30)</li>
 </ul>
 <pre><code>── Context diff  a3f8c12..9e21b04 ───────────────────────────────────────────
 
@@ -1899,7 +1899,7 @@ h5i recall context merge scope/investigate-auth
 <h4 id="h5i-recall-context-relevant">h5i recall context relevant</h4>
 <pre><code>h5i recall context relevant &lt;file&gt;
 </code></pre>
-<p>Retrieve all context workspace entries that mention a specific file. Run this <strong>before editing a file</strong> to recover accumulated reasoning about it (past decisions, uncertainties, and OTA steps) without re-reading the full trace.</p>
+<p>Retrieve all context workspace entries that mention a specific file. Run this <strong>before editing a file</strong> to recover accumulated reasoning about it — past decisions, uncertainties, and OTA steps — without re-reading the full trace.</p>
 <p><strong>Arguments</strong></p>
 <table>
 <thead>
@@ -1993,15 +1993,15 @@ h5i recall context merge scope/investigate-auth
 </thead>
 <tbody>
 <tr>
-<td><strong>Pass 1: subsumption</strong></td>
-<td>Remove OBSERVE entries whose subject token (file name or first significant word) already appears in a later THINK or ACT entry; those observations have been "consumed" by higher-level reasoning and are redundant.</td>
+<td><strong>Pass 1 — subsumption</strong></td>
+<td>Remove OBSERVE entries whose subject token (file name or first significant word) already appears in a later THINK or ACT entry — those observations have been "consumed" by higher-level reasoning and are redundant.</td>
 </tr>
 <tr>
-<td><strong>Pass 2: preservation</strong></td>
+<td><strong>Pass 2 — preservation</strong></td>
 <td>Retain every THINK, ACT, and NOTE entry verbatim; these represent irreplaceable decisions and actions.</td>
 </tr>
 <tr>
-<td><strong>Pass 3: consolidation</strong></td>
+<td><strong>Pass 3 — consolidation</strong></td>
 <td>Merge consecutive OBSERVE entries that share the same subject token into a single entry annotated with a <code>(×N)</code> count.</td>
 </tr>
 </tbody>
@@ -2018,7 +2018,7 @@ h5i recall context merge scope/investigate-auth
 # ℹ  Nothing to pack — context history is already compact.
 </code></pre>
 <p><strong>When to use</strong></p>
-<p>On long-running tasks the trace grows one line per OTA step. After many iterations the OBSERVE entries (tool outputs, file reads, test results) tend to dwarf the THINK/ACT reasoning that actually matters. <code>h5i recall context pack</code> strips the noise while guaranteeing that no decision or action is ever lost.</p>
+<p>On long-running tasks the trace grows one line per OTA step. After many iterations the OBSERVE entries — tool outputs, file reads, test results — tend to dwarf the THINK/ACT reasoning that actually matters. <code>h5i recall context pack</code> strips the noise while guaranteeing that no decision or action is ever lost.</p>
 <hr />
 <h4 id="h5i-recall-context-ephemeral">h5i recall context ephemeral</h4>
 <pre><code>h5i recall context ephemeral [--branch &lt;name&gt;]
@@ -2118,7 +2118,7 @@ h5i recall recap            # idempotent on re-run
 # ✔  imported 0 new recap(s) · 2 already imported
 </code></pre>
 <p><strong>When to use</strong></p>
-<p>Recaps are already concise, timestamped checkpoints produced by Claude Code itself, so running <code>h5i recall recap</code> before <code>h5i recall context commit</code> lets you cheaply promote them into durable milestones instead of writing each summary by hand. The trailing <code>(disable recaps in /config)</code> marker and the originating UUID / session ID are preserved in the commit detail so each milestone is traceable back to its source record.</p>
+<p>Recaps are already concise, timestamped checkpoints produced by Claude Code itself — running <code>h5i recall recap</code> before <code>h5i recall context commit</code> lets you cheaply promote them into durable milestones instead of writing each summary by hand. The trailing <code>(disable recaps in /config)</code> marker and the originating UUID / session ID are preserved in the commit detail so each milestone is traceable back to its source record.</p>
 <hr />
 <h3 id="h5i-recall-memory">h5i recall memory</h3>
 <p>Version and share agent memory files under <code>refs/h5i/memory</code>.</p>
@@ -2231,7 +2231,7 @@ h5i recall recap            # idempotent on re-run
 <h3 id="h5i-recall-resume">h5i recall resume</h3>
 <pre><code>h5i recall resume [&lt;branch&gt;]
 </code></pre>
-<p>Generate a session handoff briefing assembled entirely from local h5i data, with no API call required. Prints branch state, goal, milestone progress, last session statistics, high-risk files, memory changes since the last snapshot, and a suggested opening prompt for Claude.</p>
+<p>Generate a session handoff briefing assembled entirely from local h5i data — no API call required. Prints branch state, goal, milestone progress, last session statistics, high-risk files, memory changes since the last snapshot, and a suggested opening prompt for Claude.</p>
 <p><strong>Options</strong></p>
 <table>
 <thead>
@@ -2299,7 +2299,7 @@ h5i recall object &lt;id&gt; --manifest         # the full manifest JSON record
 h5i recall object &lt;id&gt; --format json      # re-render the structured findings as JSON
 </code></pre>
 <p>Handles accept the short id, a full <code>sha256:&lt;hex&gt;</code>, or any unambiguous prefix.</p>
-<p><strong><code>--json</code>: a typed feed instead of text.</strong> <code>recall objects --json</code> emits one
+<p><strong><code>--json</code> — a typed feed instead of text.</strong> <code>recall objects --json</code> emits one
 JSON object per capture (newest first, capped at <code>--limit</code>, honoring every
 <code>--branch</code>/<code>--file</code>/<code>--env</code>/<code>--tool</code>/<code>--status</code> filter) so a downstream grader
 never has to regex-parse the human listing. Each record carries:</p>
@@ -2317,7 +2317,7 @@ never has to regex-parse the human listing. Each record carries:</p>
 </tr>
 <tr>
 <td><code>action</code></td>
-<td>best-effort <strong>action class</strong>: <code>test \| build \| read \| write \| egress \| other</code>, computed host-side from the argv (one shell layer peeled). Hard to game: <code>echo test</code> classifies as <code>read</code>, not <code>test</code></td>
+<td>best-effort <strong>action class</strong>: <code>test \| build \| read \| write \| egress \| other</code>, computed host-side from the argv (one shell layer peeled). Robust to gaming — <code>echo test</code> classifies as <code>read</code>, not <code>test</code></td>
 </tr>
 <tr>
 <td><code>tool</code></td>
@@ -2325,7 +2325,7 @@ never has to regex-parse the human listing. Each record carries:</p>
 </tr>
 <tr>
 <td><code>status</code></td>
-<td>the <strong>validated</strong> pass/fail (<code>passed</code>/<code>failed</code>/<code>error</code>), a stronger verification signal than <code>action</code>, because it's parsed from the real output, not the command name</td>
+<td>the <strong>validated</strong> pass/fail (<code>passed</code>/<code>failed</code>/<code>error</code>) — a stronger verification signal than <code>action</code>, because it's parsed from the real output, not the command name</td>
 </tr>
 <tr>
 <td><code>duration_ms</code>, <code>env_id</code>, <code>branch</code>, <code>kind</code></td>
@@ -2338,7 +2338,7 @@ never has to regex-parse the human listing. Each record carries:</p>
 </tbody>
 </table>
 <p><code>action</code> is <em>what kind of operation</em>; <code>tool</code>+<code>status</code> is <em>what tool ran and
-whether it passed</em>; <code>egress</code> is <em>what the sandbox refused</em>: three
+whether it passed</em>; <code>egress</code> is <em>what the sandbox refused</em> — three
 independent, non-inferred signals. Note that in the default <code>signal</code> capture
 mode small <strong>successful</strong> commands aren't stored; create the env with
 <code>h5i env create &lt;name&gt; --audit all</code> (or set <code>H5I_ENV_AUDIT_CAPTURE=all</code>) to
@@ -2354,7 +2354,7 @@ and point you at the raw.</p>
 <pre><code class="language-bash">h5i recall rm &lt;branch&gt;            # dry-run: print what WOULD be removed
 h5i recall rm &lt;branch&gt; --force    # actually remove it
 </code></pre>
-<p>Purge <strong>every</strong> <code>refs/h5i/*</code> artifact scoped to a branch in one shot, the
+<p>Purge <strong>every</strong> <code>refs/h5i/*</code> artifact scoped to a branch in one shot — the
 inverse of <code>h5i share push --branch &lt;b&gt;</code>. It removes, scoped to <code>&lt;branch&gt;</code>:</p>
 <table>
 <thead>
@@ -2373,7 +2373,7 @@ inverse of <code>h5i share push --branch &lt;b&gt;</code>. It removes, scoped to
 <tr>
 <td>notes</td>
 <td><code>refs/h5i/notes</code> provenance</td>
-<td><strong>only</strong> commits reachable from <code>&lt;branch&gt;</code> but no other branch, so shared provenance is never touched</td>
+<td><strong>only</strong> commits reachable from <code>&lt;branch&gt;</code> but no other branch — shared provenance is never touched</td>
 </tr>
 <tr>
 <td>objects</td>
@@ -2399,9 +2399,9 @@ inverse of <code>h5i share push --branch &lt;b&gt;</code>. It removes, scoped to
 <li><strong>Notes are scoped to commits <em>unique</em> to the branch.</strong> A commit also
   reachable from <code>main</code> (or any other live branch) keeps its note, so a purge
   never strips provenance another branch still relies on.</li>
-<li>It <strong>refuses <code>main</code>/<code>master</code></strong>; <code>recall rm</code> is for feature/topic branches.</li>
+<li>It <strong>refuses <code>main</code>/<code>master</code></strong> — <code>recall rm</code> is for feature/topic branches.</li>
 <li>It is <strong>local and irreversible.</strong> If the branch's data was already shared,
-  delete it on the remote too, and run <code>h5i share push</code> afterwards to propagate the
+  delete it on the remote too — run <code>h5i share push</code> afterwards to propagate the
   deletion (a later <code>share pull</code> would otherwise re-fetch what survives there).</li>
 </ul>
 <pre><code>➜  Plan — h5i data for branch feature/login
@@ -2417,7 +2417,7 @@ inverse of <code>h5i share push --branch &lt;b&gt;</code>. It removes, scoped to
 <code>h5i recall context rm &lt;name&gt;</code> instead.</p>
 <hr />
 <h2 id="h5i-objects">h5i objects</h2>
-<p>Large tool outputs (test logs, build output, big JSON, traces) are the biggest
+<p>Large tool outputs — test logs, build output, big JSON, traces — are the biggest
 avoidable drain on an agent's context window. The object store keeps the <strong>full
 raw output out-of-band</strong> (content-addressed) and surfaces only a small filtered,
 <strong>structured</strong> summary, git-annex / git-lfs style:</p>
@@ -2443,7 +2443,7 @@ raw output out-of-band</strong> (content-addressed) and surfaces only a small fi
 <tr>
 <td>Shared raw blobs (optional)</td>
 <td><code>refs/h5i/objects-data</code> (git ref, content-addressed tree)</td>
-<td>Yes, pushed/pulled on demand</td>
+<td>Yes — pushed/pulled on demand</td>
 </tr>
 </tbody>
 </table>
@@ -2462,9 +2462,9 @@ h5i objects gc --dry-run       # show what would be evicted
 h5i objects pin &lt;id&gt;           # protect a blob from eviction (pin/unpin)
 h5i objects fsck               # verify manifests against the local store (absent/orphans)
 </code></pre>
-<p>GC never rewrites a summary; it only reclaims raw bytes, an evicted blob's
+<p>GC never rewrites a summary — it only reclaims raw bytes; an evicted blob's
 summary still works.</p>
-<h3 id="h5i-objects-push--pull--sharing-raw-blobs-optional">h5i objects push / pull: sharing raw blobs (optional)</h3>
+<h3 id="h5i-objects-push--pull--sharing-raw-blobs-optional">h5i objects push / pull — sharing raw blobs (optional)</h3>
 <p>The manifest+summary travel with <code>h5i share push</code> automatically; the <strong>raw bytes are
 local-only</strong> by default (they can be large). To share them:</p>
 <pre><code class="language-bash">h5i objects push                       # upload local raw blobs to the remote
@@ -2484,7 +2484,7 @@ h5i objects push --remote upstream --backend lfs
 <tr>
 <td><code>lfs</code></td>
 <td>Remote <strong>Git LFS</strong> server (content-addressed by sha256)</td>
-<td>default for HTTP(S) remotes: large/numerous objects never touch the git object DB</td>
+<td>default for HTTP(S) remotes — large/numerous objects never touch the git object DB</td>
 </tr>
 <tr>
 <td><code>git-ref</code></td>
@@ -2498,20 +2498,20 @@ h5i objects push --remote upstream --backend lfs
 </tr>
 </tbody>
 </table>
-<p><strong>Git LFS (default).</strong> h5i speaks the <strong>LFS Batch API natively</strong>: it does <em>not</em>
+<p><strong>Git LFS (default).</strong> h5i speaks the <strong>LFS Batch API natively</strong> — it does <em>not</em>
 require the <code>git lfs</code> CLI and does not use LFS pointer files; auth is resolved
 via <code>git credential</code>. The manifest's <code>raw_oid</code> is the pointer, the bytes live in
 LFS. With LFS, <strong><code>h5i recall object &lt;id&gt;</code> lazily fetches</strong> a blob from the server
-on demand (and caches it), so no explicit <code>objects pull</code> is needed. Uploads/downloads
+on demand (and caches it) — no explicit <code>objects pull</code> needed. Uploads/downloads
 process <strong>one blob at a time</strong> (the whole set is never held in memory at once).
 Lazy recall only tries the <code>origin</code> remote.</p>
 <p><strong>git-ref store (fallback).</strong> Blobs live in <code>refs/h5i/objects-data</code>. <code>objects
 push</code> fetches + union-merges the remote ref before a <strong>non-force</strong> push (so it
 never clobbers a peer's blobs); <code>objects pull</code> union-merges and caches locally;
 then <code>recall</code> falls back to the <em>local</em> git-ref store (it does not fetch on
-demand, and the "absent" error says to run <code>objects pull</code>).</p>
+demand — the "absent" error says to run <code>objects pull</code>).</p>
 <p>Both are deliberately separate from the metadata <code>h5i share push</code> (raw output is
-heavy), and both <strong>verify the content address on every read</strong>: bytes that don't
+heavy), and both <strong>verify the content address on every read</strong> — bytes that don't
 hash to their key are rejected and never cached; the git-ref store additionally
 self-heals corrupt entries on <code>put</code>/<code>pull</code>.</p>
 <blockquote>
@@ -2597,7 +2597,7 @@ h5i audit maturity --json
 <h3 id="quality-vs-shape-signals">Quality vs Shape signals</h3>
 <p><code>h5i audit review</code> (and the PR-comment 🚩) split rules into two tiers so
 size-based noise stops drowning out real risk signals.</p>
-<p><strong>Quality</strong> (high-precision; these alone can flag a commit):</p>
+<p><strong>Quality</strong> (high-precision — these alone can flag a commit):</p>
 <table>
 <thead>
 <tr>
@@ -2652,7 +2652,7 @@ size-based noise stops drowning out real risk signals.</p>
 </tr>
 </tbody>
 </table>
-<p><strong>Shape</strong> (informational; never flag a commit alone):</p>
+<p><strong>Shape</strong> (informational — never flag a commit alone):</p>
 <table>
 <thead>
 <tr>
@@ -2688,10 +2688,10 @@ size-based noise stops drowning out real risk signals.</p>
 </tbody>
 </table>
 <p>The PR-comment 🚩 fires when <code>quality_score &gt;= 0.25</code>. Shape signals are
-listed in a secondary "shape signals (informational)" line, <em>only</em> when a
+listed in a secondary "shape signals (informational)" line — <em>only</em> when a
 Quality signal also fired. <code>LARGE_DIFF</code> alone is noise; <code>LARGE_DIFF + BLIND_EDIT</code>
 is a real review point.</p>
-<p>The credential scanner lives in <code>src/secrets.rs</code> as an embedded regex pack;
+<p>The credential scanner lives in <code>src/secrets.rs</code> as an embedded regex pack —
 there is no runtime dependency on the gitleaks binary.</p>
 <hr />
 <h3 id="h5i-audit-review">h5i audit review</h3>
@@ -2810,7 +2810,7 @@ there is no runtime dependency on the gitleaks binary.</p>
 </tr>
 </tbody>
 </table>
-<p>Risk score formula: <code>min(1.0, Σ hit.severity.weight)</code>, where HIGH = 0.5, MEDIUM = 0.25, LOW = 0.1.</p>
+<p>Risk score formula: <code>min(1.0, Σ hit.severity.weight)</code> — HIGH = 0.5, MEDIUM = 0.25, LOW = 0.1.</p>
 <p><strong>Text output example</strong></p>
 <pre><code>── h5i context scan ────────────────────────────── main
   risk score  1.00  ██████████  (48 lines scanned, 2 hit(s))
@@ -2966,17 +2966,17 @@ h5i audit scan
 <h3 id="h5i-audit-maturity">h5i audit maturity</h3>
 <pre><code>h5i audit maturity [--text &lt;str&gt; | --oid &lt;sha&gt;] [--limit N] [--json]
 </code></pre>
-<p>Score <strong>prompt maturity</strong>: how well the engineer directed the agent. This is
+<p>Score <strong>prompt maturity</strong> — how well the engineer directed the agent. This is
 the same signal that feeds <code>merge_confidence</code> and the PR-comment prompt-maturity
 card; before, it was only reachable by running <code>h5i serve</code> and hitting an HTTP
 route. <code>h5i audit maturity</code> exposes it for headless / CI grading.</p>
 <p><strong>Two modes:</strong></p>
 <ul>
-<li><strong>Branch (default):</strong> rolls up every AI-commit prompt on this branch
+<li><strong>Branch (default)</strong> — rolls up every AI-commit prompt on this branch
   (<code>base..HEAD</code>) into one length-weighted score, with a coverage fraction so a
   branch where most AI commits carried no prompt reads as low-confidence rather
   than over-confident.</li>
-<li><strong>Single prompt:</strong> <code>--text "&lt;prompt&gt;"</code> scores a literal string; <code>--oid &lt;sha&gt;</code>
+<li><strong>Single prompt</strong> — <code>--text "&lt;prompt&gt;"</code> scores a literal string; <code>--oid &lt;sha&gt;</code>
   scores one commit's captured prompt. Useful for grading an arbitrary prompt in
   a pipeline.</li>
 </ul>
@@ -3016,7 +3016,7 @@ route. <code>h5i audit maturity</code> exposes it for headless / CI grading.</p>
 objective, concrete grounding, bounded direction) times an additive
 <strong>enrichment</strong> lift (context, examples, structure, diversity, clarity,
 adequacy), with an evidence bonus for attached machine output. Length alone does
-not help: a long pasted log without an authored ask is discounted, not rewarded.</p>
+not help — a long pasted log without an authored ask is discounted, not rewarded.</p>
 <p><strong>Example</strong></p>
 <pre><code class="language-bash">h5i audit maturity --json
 </code></pre>
@@ -3041,7 +3041,7 @@ not help: a long pasted log without an authored ask is discounted, not rewarded.
 <h3 id="h5i-audit-policy">h5i audit policy</h3>
 <pre><code>h5i audit policy &lt;subcommand&gt;
 </code></pre>
-<p>Manage governance rules for AI-assisted commits. Rules live in <code>.h5i/policy.toml</code>, committed alongside your code so the policy is version-controlled and shared with the team.</p>
+<p>Manage governance rules for AI-assisted commits. Rules live in <code>.h5i/policy.toml</code> — committed alongside your code so the policy is version-controlled and shared with the team.</p>
 <p>Policy rules are evaluated automatically on every <code>h5i capture commit</code>. A rule violation blocks the commit unless <code>--force</code> is passed.</p>
 <hr />
 <h4 id="h5i-audit-policy-init">h5i audit policy init</h4>
@@ -3199,7 +3199,7 @@ open report.html
 }
 </code></pre>
 <p><strong>What is checked</strong></p>
-<p>At commit time, only rules from <code>[commit]</code> and <code>[paths]</code> sections are enforced. The compliance report additionally checks <code>max_ai_ratio</code> and <code>max_blind_edit_ratio</code> per path: rules designed for historical trend analysis rather than blocking individual commits.</p>
+<p>At commit time, only rules from <code>[commit]</code> and <code>[paths]</code> sections are enforced. The compliance report additionally checks <code>max_ai_ratio</code> and <code>max_blind_edit_ratio</code> per path — rules designed for historical trend analysis rather than blocking individual commits.</p>
 <table>
 <thead>
 <tr>
@@ -3277,7 +3277,7 @@ open report.html
 </table>
 <blockquote>
 <p><strong>Raw tool output is <em>not</em> shared by <code>share push</code>/<code>pull</code>.</strong> It carries the
-small token-reduction <strong>manifests</strong> (<code>refs/h5i/objects</code>: pointers + filtered
+small token-reduction <strong>manifests</strong> (<code>refs/h5i/objects</code> — pointers + filtered
 summaries), but never the huge raw blobs (<code>refs/h5i/objects-data</code> / Git LFS).
 Those travel only when you explicitly run <a href="#h5i-objects-push--pull--sharing-raw-blobs-optional"><code>h5i objects push</code></a>
 (and are fetched by <code>h5i objects pull</code>, or lazily by <code>recall</code> from LFS). So a
@@ -3288,7 +3288,7 @@ bytes they actually need.</p>
 <pre><code>h5i share push [--remote &lt;name&gt;] [--branch [&lt;name&gt;] | --all-branches]
 </code></pre>
 <p>Push the <code>refs/h5i/*</code> families (notes, memory, context, msg, object manifests, env state) to the remote (default: <code>origin</code>). None of these are included in a plain <code>git push</code>. Canonical form of the legacy <code>h5i push</code>.</p>
-<p><strong>Branch-scoped by default.</strong> Like <code>git push</code>, <code>share push</code> sends only the <em>current branch's</em> h5i material. It does not publish the reasoning, provenance, captures, conversations, or environments of unrelated branches. Pass <code>--branch &lt;name&gt;</code> to scope to a different branch, or <code>--all-branches</code> to push every branch's material (a first full sync, or CI):</p>
+<p><strong>Branch-scoped by default.</strong> Like <code>git push</code>, <code>share push</code> sends only the <em>current branch's</em> h5i material — it does not publish the reasoning, provenance, captures, conversations, or environments of unrelated branches. Pass <code>--branch &lt;name&gt;</code> to scope to a different branch, or <code>--all-branches</code> to push every branch's material (a first full sync, or CI):</p>
 <pre><code>h5i share push                      # the current branch's material (default)
 h5i share push --branch feature-x   # another branch's material
 h5i share push --all-branches       # every branch's material
@@ -3320,11 +3320,11 @@ h5i share push --all-branches       # every branch's material
 </tr>
 <tr>
 <td><strong>env</strong> (<code>refs/h5i/env/meta</code> + <code>…/code/*</code>)</td>
-<td>Only envs whose <code>parent_branch</code> is <code>&lt;branch&gt;</code> travel, along with their manifests/policies/events and their code branches.</td>
+<td>Only envs whose <code>parent_branch</code> is <code>&lt;branch&gt;</code> travel — their manifests/policies/events and their code branches.</td>
 </tr>
 <tr>
 <td><strong>memory</strong></td>
-<td>Pushed in full: a cumulative full-state snapshot whose facts are branch-independent.</td>
+<td>Pushed in full — a cumulative full-state snapshot whose facts are branch-independent.</td>
 </tr>
 </tbody>
 </table>
@@ -3371,7 +3371,7 @@ duplicate comments.</p>
 </ul>
 <p><strong>💬 Agent coordination (i5h messages)</strong></p>
 <p>Below the reasoning DAG, the comment folds in the cross-agent message threads
-(<code>refs/h5i/msg</code>, see <a href="#h5i-msg"><code>h5i msg</code></a>) that are <strong>relevant to this branch</strong>:
+(<code>refs/h5i/msg</code>, see <a href="#h5i-msg"><code>h5i msg</code></a>) that are <strong>relevant to this branch</strong> —
 a thread is included when at least one of its messages was tagged with the PR
 branch, and the whole thread (including replies tagged for another branch or
 none) travels with it. The section is collapsed by default and self-omits when
@@ -3381,7 +3381,7 @@ back-and-forth conducted while working on the branch is captured without any
 extra flags. <code>send</code>, <code>ask</code>, <code>review</code>, <code>risk</code>, and <code>handoff</code> all accept
 <code>--branch &lt;b&gt;</code> to tag for a different branch, or <code>--branch ""</code> to leave a
 message untagged. Replies (<code>reply</code>/<code>ack</code>/<code>done</code>/<code>decline</code>) do <strong>not</strong> use the
-responder's checkout. They inherit their thread's branch, so acknowledging a
+responder's checkout — they inherit their thread's branch, so acknowledging a
 thread from an unrelated branch can't drag it into the wrong PR.</p>
 <p>Because a PR comment is published, message text is treated as untrusted and
 disclosure-safe by default:</p>
@@ -3398,7 +3398,7 @@ disclosure-safe by default:</p>
 <p>When the branch has token-reduction captures (<code>h5i capture run</code>, see
 <a href="#h5i-objects">h5i objects</a>), the comment includes a one-line
 <code>[!NOTE]</code> summarising how much raw tool output was kept out of the agent's
-context, <code>raw → summary</code> tokens and <code>% saved</code> across the branch's captures,
+context — <code>raw → summary</code> tokens and <code>% saved</code> across the branch's captures —
 with a collapsible per-tool breakdown when more than one tool was captured. It
 self-omits when there were no captures on the branch (or no net saving). The raw
 output remains recoverable with <code>h5i recall object</code>.</p>
@@ -3417,7 +3417,7 @@ output remains recoverable with <code>h5i recall object</code>.</p>
 </tr>
 <tr>
 <td><code>--msg-bodies</code></td>
-<td>Show a (still redacted + sanitized) excerpt for <strong>every</strong> kind, not just review-typed ones. Opt-in, and accepts that <code>FYI</code>/free-text bodies are published.</td>
+<td>Show a (still redacted + sanitized) excerpt for <strong>every</strong> kind, not just review-typed ones. Opt-in — accepts that <code>FYI</code>/free-text bodies are published.</td>
 </tr>
 <tr>
 <td><code>--msg-limit N</code></td>
@@ -3426,7 +3426,7 @@ output remains recoverable with <code>h5i recall object</code>.</p>
 </tbody>
 </table>
 <p><strong>Hero block styles (<code>--style</code>)</strong></p>
-<p>The top of the comment, the part that fits in a screenshot, switches between
+<p>The top of the comment — the part that fits in a screenshot — switches between
 the layouts below. The audit sections below the fold (secrets, duplicates,
 reasoning DAG, per-commit provenance) stay shared across styles, except
 <code>replay</code>, which promotes the DAG above the fold.</p>
@@ -3520,7 +3520,7 @@ H5I_AGENT=codex codex
 <p>Several agents can share one clone safely: identity is per-process (env), the
 message ref is concurrency-safe (compare-and-swap on send), and read-state is
 kept in per-agent files (<code>.git/.h5i/msg/cursors/&lt;agent&gt;.json</code>,
-<code>views/&lt;agent&gt;.json</code>). Never use <code>h5i msg as</code> when two agents share a clone, because it
+<code>views/&lt;agent&gt;.json</code>). Never use <code>h5i msg as</code> when two agents share a clone — it
 writes a single shared identity file; prefer <code>$H5I_AGENT</code>.</p>
 <h3 id="sending">Sending</h3>
 <pre><code>h5i msg send codex deploy is done            # free text (joined with spaces)
@@ -3555,11 +3555,11 @@ h5i msg team                     # known agents
 <li><strong>Codex.</strong> <code>h5i hook codex prelude</code> / <code>sync</code> / <code>finish</code> auto-deliver Codex's inbox
   (Codex has no Stop hook).</li>
 <li><strong><code>h5i msg wait</code>.</strong> The autonomous wake primitive: blocks until a message
-  arrives (returns existing unread immediately), prints it, and exits. Peek
+  arrives (returns existing unread immediately), prints it, and exits — peek
   only. Run it as a background task (Claude Code) or in a poll loop (Codex) so
   an <em>idle</em> agent is woken on a reply rather than missing it. <code>--timeout N</code>
   (0 = forever), <code>--all</code> for the whole channel.</li>
-<li><strong><code>h5i msg watch</code>.</strong> A live stream: your inbox with an identity, or the whole
+<li><strong><code>h5i msg watch</code>.</strong> A live stream — your inbox with an identity, or the whole
   channel with <code>--all</code> / no identity (a human-facing dashboard). Real-time push
   into a running agent via the Monitor tool is experimental / host-dependent.</li>
 </ul>
@@ -3568,7 +3568,7 @@ instructions; agents are told to evaluate and decide.</p>
 <hr />
 <h2 id="h5i-env">h5i env</h2>
 <p>An <strong>environment</strong> is a Git-addressed, policy-confined, fully-observed unit of
-agent work, the "triple fusion" of:</p>
+agent work — the "triple fusion" of:</p>
 <ul>
 <li>a <strong>code branch</strong> + git worktree under <code>.git/.h5i/env/&lt;agent&gt;/&lt;slug&gt;/work</code>,</li>
 <li>a <strong>reasoning branch</strong> (forked context workspace), and</li>
@@ -3580,7 +3580,7 @@ is policy-enforced and <strong>capture-wrapped</strong> (evidence lands in <code
 tagged with the env id and the enforced policy digest); <code>env shell</code> opens an
 <strong>interactive</strong> confined session in the same box for hands-on work. The lifecycle
 is <code>create → run → propose → apply | abort → gc</code>, and <strong>apply is never
-automatic</strong>: <code>propose</code> surfaces a review brief, and a reviewer applies.</p>
+automatic</strong> — <code>propose</code> surfaces a review brief, a reviewer applies.</p>
 <p>Env state lives in <code>refs/h5i/env</code> (events, manifests, policies) and is shared by
 <code>h5i share push</code> / <code>h5i share pull</code>, enabling a cross-clone review loop (one agent proposes,
 another reviews and applies). See <code>docs/environments-design.md</code> and the live
@@ -3597,7 +3597,7 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 <tbody>
 <tr>
 <td><code>h5i env create &lt;name&gt; [--from REV \| --pr N\|URL [--remote R]] [--profile P] [--isolation TIER] [--audit signal\|all]</code></td>
-<td>Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. With no <code>--isolation</code> (or <code>--isolation auto</code>) it <strong>auto-picks the strongest tier the host can run</strong>; an explicit tier fails closed if the host can't satisfy it. <code>--audit all</code> pins <code>[audit] capture = "all"</code> in the resolved policy so wrapped in-env commands are recorded even when they succeed with small output. <code>--pr</code> bases the env on a <strong>GitHub pull request</strong>: the PR head (<code>refs/pull/&lt;n&gt;/head</code>) is fetched from the remote (default <code>origin</code>), pinned as the immutable base, and tracked by a local <code>pr/&lt;n&gt;</code> branch that becomes the env's parent, so <code>propose</code>/<code>apply</code>/<code>rebase</code> review the PR, and <code>apply</code> prints the exact push-back command (<code>git push origin pr/&lt;n&gt;:&lt;head-branch&gt;</code>). Needs only <code>git</code>; <code>gh</code>, when installed, enriches the hint with the PR's head branch name and fork-ness. A pre-existing <code>pr/&lt;n&gt;</code> branch pointing elsewhere is refused, never force-moved.</td>
+<td>Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. With no <code>--isolation</code> (or <code>--isolation auto</code>) it <strong>auto-picks the strongest tier the host can run</strong>; an explicit tier fails closed if the host can't satisfy it. <code>--audit all</code> pins <code>[audit] capture = "all"</code> in the resolved policy so wrapped in-env commands are recorded even when they succeed with small output. <code>--pr</code> bases the env on a <strong>GitHub pull request</strong>: the PR head (<code>refs/pull/&lt;n&gt;/head</code>) is fetched from the remote (default <code>origin</code>), pinned as the immutable base, and tracked by a local <code>pr/&lt;n&gt;</code> branch that becomes the env's parent — so <code>propose</code>/<code>apply</code>/<code>rebase</code> review the PR, and <code>apply</code> prints the exact push-back command (<code>git push origin pr/&lt;n&gt;:&lt;head-branch&gt;</code>). Needs only <code>git</code>; <code>gh</code>, when installed, enriches the hint with the PR's head branch name and fork-ness. A pre-existing <code>pr/&lt;n&gt;</code> branch pointing elsewhere is refused, never force-moved.</td>
 </tr>
 <tr>
 <td><code>h5i env run &lt;name&gt; -- &lt;cmd&gt; [args…]</code></td>
@@ -3605,7 +3605,7 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 </tr>
 <tr>
 <td><code>h5i env shell &lt;name&gt; [-- &lt;cmd&gt;]</code></td>
-<td>Open an <strong>interactive</strong> confined session <em>inside</em> the env (the "agent-in-box"): stdio inherited, every command the session spawns confined by the box. With <code>-- &lt;cmd&gt;</code> that command becomes the session (e.g. <code>-- claude "&lt;task&gt;"</code> launches the agent). Boxed agents use staged in-box commands such as <code>h5i capture run</code> and <code>h5i team agent submit</code>; host-owned refs are ingested when the shell exits. Defaults to a login shell. Exit code passes through. The session is <strong>observed</strong>: a <code>shell</code> event is logged, and per-command evidence is staged + ingested where the tier supports it (see <a href="#in-box-git-capture--commit">In-box git, capture &amp; commit</a>).</td>
+<td>Open an <strong>interactive</strong> confined session <em>inside</em> the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. With <code>-- &lt;cmd&gt;</code> that command becomes the session (e.g. <code>-- claude "&lt;task&gt;"</code> launches the agent). Boxed agents use staged in-box commands such as <code>h5i capture run</code> and <code>h5i team agent submit</code>; host-owned refs are ingested when the shell exits. Defaults to a login shell. Exit code passes through. The session is <strong>observed</strong>: a <code>shell</code> event is logged, and per-command evidence is staged + ingested where the tier supports it (see <a href="#in-box-git-capture--commit">In-box git, capture &amp; commit</a>).</td>
 </tr>
 <tr>
 <td><code>h5i env probe</code></td>
@@ -3613,15 +3613,15 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 </tr>
 <tr>
 <td><code>h5i env capabilities [--json]</code></td>
-<td><strong>Machine-readable</strong> enforcement report, the structured form of <code>probe</code>, so a product adapts to the host without scraping text. Reports <code>os</code>, <code>landlock_abi</code>, <code>userns</code>, <code>seccomp</code>, <code>container_runtime</code>, <code>egress_enforced</code> (only the container tier enforces a domain <strong>allowlist</strong>), <code>resource_limits</code>, <code>strongest_tier</code>, and per-claim <code>satisfiable</code> + (kernel tiers) functional <code>runnable</code>.</td>
+<td><strong>Machine-readable</strong> enforcement report — the structured form of <code>probe</code>, so a product adapts to the host without scraping text. Reports <code>os</code>, <code>landlock_abi</code>, <code>userns</code>, <code>seccomp</code>, <code>container_runtime</code>, <code>egress_enforced</code> (only the container tier enforces a domain <strong>allowlist</strong>), <code>resource_limits</code>, <code>strongest_tier</code>, and per-claim <code>satisfiable</code> + (kernel tiers) functional <code>runnable</code>.</td>
 </tr>
 <tr>
 <td><code>h5i env allow [&lt;host&gt;] [--remove]</code></td>
-<td>Manage the persistent <strong>user-level egress allowlist</strong> (<code>~/.config/h5i/egress-allow</code>): extra hosts merged into every container-tier env whose profile already sets <code>net.egress</code>. A deny-all profile is <strong>never</strong> widened from outside the digested policy, and the pinned <code>policy_digest</code> is untouched (the extras are runtime state, recorded per-run in the capture manifest's egress tally). Rules: exact <code>api.example.com</code>, wildcard <code>.example.com</code>/<code>*.example.com</code>, optional <code>:port</code>. Host-side only: the file lives outside every box-granted path and the command <strong>refuses inside an env box</strong>, so a confined agent can't widen its own network grants. Sessions print the effective allowlist at start (<code>⦿ egress …</code>) and denied hosts become <code>egress-denied</code> findings, so <code>h5i recall search &lt;host&gt;</code> answers "what did the box try to reach?", and each finding suggests the one-line fix. No <code>&lt;host&gt;</code> lists the current rules.</td>
+<td>Manage the persistent <strong>user-level egress allowlist</strong> (<code>~/.config/h5i/egress-allow</code>): extra hosts merged into every container-tier env whose profile already sets <code>net.egress</code> — a deny-all profile is <strong>never</strong> widened from outside the digested policy, and the pinned <code>policy_digest</code> is untouched (the extras are runtime state, recorded per-run in the capture manifest's egress tally). Rules: exact <code>api.example.com</code>, wildcard <code>.example.com</code>/<code>*.example.com</code>, optional <code>:port</code>. Host-side only: the file lives outside every box-granted path and the command <strong>refuses inside an env box</strong>, so a confined agent can't widen its own network grants. Sessions print the effective allowlist at start (<code>⦿ egress …</code>) and denied hosts become <code>egress-denied</code> findings — <code>h5i recall search &lt;host&gt;</code> answers "what did the box try to reach?", and each finding suggests the one-line fix. No <code>&lt;host&gt;</code> lists the current rules.</td>
 </tr>
 <tr>
 <td><code>h5i env list [--json]</code></td>
-<td>List environments on this clone (the fleet view), each with a <strong>live marker</strong> from the pid registry (<code>●shell pid N</code> for a live writer session, <code>◦N observer(s)</code>, or <code>⚠stale</code> when the durable status says <code>running</code> but no live session holds the env, which is a crash leftover). <code>--json</code> emits an array of manifests, each enriched with base <code>drift</code> and the <code>live</code> session array.</td>
+<td>List environments on this clone (the fleet view), each with a <strong>live marker</strong> from the pid registry (<code>●shell pid N</code> for a live writer session, <code>◦N observer(s)</code>, or <code>⚠stale</code> when the durable status says <code>running</code> but no live session holds the env — a crash leftover). <code>--json</code> emits an array of manifests, each enriched with base <code>drift</code> and the <code>live</code> session array.</td>
 </tr>
 <tr>
 <td><code>h5i env status &lt;name&gt; [--json]</code></td>
@@ -3633,15 +3633,15 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 </tr>
 <tr>
 <td><code>h5i env secrets &lt;name&gt; [--json]</code></td>
-<td>List the secret grants the env's policy declares, each with its source/inject/ttl and a <strong>dry-run</strong> resolution status: never the value, only a sha256 fingerprint when resolvable. <code>command:</code> extractors are shown "not evaluated" (a status query never runs host-side code).</td>
+<td>List the secret grants the env's policy declares, each with its source/inject/ttl and a <strong>dry-run</strong> resolution status — never the value, only a sha256 fingerprint when resolvable. <code>command:</code> extractors are shown "not evaluated" (a status query never runs host-side code).</td>
 </tr>
 <tr>
 <td><code>h5i env service start\|stop\|status\|logs &lt;name&gt; [&lt;service&gt;]</code></td>
-<td>Manage long-lived services declared in the env's <code>.h5i/env.toml</code> (<code>[service.&lt;name&gt;]</code>), confined and pid-tracked, with <strong>no daemon</strong>. Definitions are pinned at create (immutable from the box, digest in the manifest). <code>start</code> runs the service in the box and allocates+injects a per-env port when one is declared; <code>stop</code> kills it and captures its log as an h5i object; <code>status</code>/<code>logs</code> (<code>--json</code>, <code>--tail N</code>) inspect it. Start/stop append <code>service</code> events to <code>refs/h5i/env</code>.</td>
+<td>Manage long-lived services declared in the env's <code>.h5i/env.toml</code> (<code>[service.&lt;name&gt;]</code>), confined and pid-tracked — <strong>no daemon</strong>. Definitions are pinned at create (immutable from the box, digest in the manifest). <code>start</code> runs the service in the box and allocates+injects a per-env port when one is declared; <code>stop</code> kills it and captures its log as an h5i object; <code>status</code>/<code>logs</code> (<code>--json</code>, <code>--tail N</code>) inspect it. Start/stop append <code>service</code> events to <code>refs/h5i/env</code>.</td>
 </tr>
 <tr>
 <td><code>h5i env ports &lt;name&gt; [--json]</code></td>
-<td>The per-env <strong>injected</strong> port map: each running service with a declared port and the free host port h5i allocated and injected as <code>PORT</code> / <code>H5I_ENV_PORT_&lt;NAME&gt;</code>. v1 is injection only: there is <strong>no host→box forwarder</strong>, so a port is reachable only if the service binds the injected value (the URL is shown as conditional, not a guarantee).</td>
+<td>The per-env <strong>injected</strong> port map: each running service with a declared port and the free host port h5i allocated and injected as <code>PORT</code> / <code>H5I_ENV_PORT_&lt;NAME&gt;</code>. v1 is injection only — there is <strong>no host→box forwarder</strong>, so a port is reachable only if the service binds the injected value (the URL is shown as conditional, not a guarantee).</td>
 </tr>
 <tr>
 <td><code>h5i env log &lt;name&gt; [--json]</code></td>
@@ -3669,7 +3669,7 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 </tr>
 <tr>
 <td><code>h5i env apply &lt;name&gt; [--patch]</code></td>
-<td>Apply a proposed env onto its parent (reviewer-selected). Default merges; <code>--patch</code> squashes into one commit. The applied commit is <strong>stamped with env provenance</strong>, a note linking it back to the env and summarizing the evidence by trust lane (<code>host-env-run</code> vs box-claimed <code>inbox-capture</code>), visible in <code>h5i recall log</code>.</td>
+<td>Apply a proposed env onto its parent (reviewer-selected). Default merges; <code>--patch</code> squashes into one commit. The applied commit is <strong>stamped with env provenance</strong> — a note linking it back to the env and summarizing the evidence by trust lane (<code>host-env-run</code> vs box-claimed <code>inbox-capture</code>), visible in <code>h5i recall log</code>.</td>
 </tr>
 <tr>
 <td><code>h5i env abort &lt;name&gt;</code></td>
@@ -3689,7 +3689,7 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 <p>The same operations are available as native MCP tools (<code>h5i_env_create</code>,
 <code>h5i_env_run</code>, <code>h5i_env_status</code>, <code>h5i_env_diff</code>, <code>h5i_env_inspect</code>,
 <code>h5i_env_compare</code>, <code>h5i_env_propose</code>, <code>h5i_env_apply</code>, <code>h5i_env_rebase</code>,
-<code>h5i_env_abort</code>, <code>h5i_env_list</code>) when the MCP server is configured; see
+<code>h5i_env_abort</code>, <code>h5i_env_list</code>) when the MCP server is configured — see
 <a href="#h5i-mcp"><code>h5i mcp</code></a>.</p>
 <p><a name="env-in-box"></a></p>
 <h3 id="in-box-git-capture--commit">In-box git, capture &amp; commit</h3>
@@ -3698,11 +3698,11 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 <code>h5i recall context …</code>, and other plumbing work against the env's own branch
 (<code>refs/heads/h5i/env/&lt;agent&gt;/&lt;slug&gt;</code>). The box gets exactly the surface it needs
 (its own worktree admin dir, the object store, its own ref namespace + reasoning
-ref) and nothing protected: it <strong>cannot</strong> move <code>main</code>, plant git hooks, touch
+ref) and nothing protected — it <strong>cannot</strong> move <code>main</code>, plant git hooks, touch
 another agent's branches, or rewrite its own policy.</p>
 <p>Interactive sessions are also <strong>locked down and observed</strong>:</p>
 <ul>
-<li><strong>Config lockdown:</strong> the project config dirs (<code>.claude</code>/<code>.codex</code>) are mounted
+<li><strong>Config lockdown</strong> — the project config dirs (<code>.claude</code>/<code>.codex</code>) are mounted
   read-only and the user settings files pinned, so the in-box agent can't edit
   <em>or create</em> config (e.g. a <code>settings.local.json</code> disabling a hook). On
   <code>container</code> the observation hook is additionally pinned via injected
@@ -3712,14 +3712,14 @@ another agent's branches, or rewrite its own policy.</p>
 <li><strong>In-box <code>h5i capture run</code> / <code>h5i capture commit</code></strong> work even though the evidence store
   is sealed from the box: the git commit lands on the env branch, and the
   evidence (and commit note) are <strong>staged to a spool</strong> the host ingests at
-  session end, labeled <code>inbox-capture</code> (box-claimed) so it stays distinct from
+  session end — labeled <code>inbox-capture</code> (box-claimed) so it stays distinct from
   host-verified <code>host-env-run</code> evidence. The trust lanes survive <code>env apply</code>
   (stamped onto the applied commit's note). No <code>h5i</code> binary is required in a
   container image for shell-level observation (the tee-shim writes plain spool
   files, ingested host-side).</li>
 </ul>
-<p><strong>Troubleshooting: "h5i data store not writable".</strong> If a capture/commit fails
-with this, the on-disk store under <code>.git/.h5i</code> is owned by another user, almost
+<p><strong>Troubleshooting — "h5i data store not writable".</strong> If a capture/commit fails
+with this, the on-disk store under <code>.git/.h5i</code> is owned by another user — almost
 always left <strong>root-owned</strong> by an earlier <code>sudo</code>/root run. h5i prints the exact
 repair:</p>
 <pre><code class="language-bash">sudo chown -R &quot;$(id -u):$(id -g)&quot; .git/.h5i
@@ -3733,7 +3733,7 @@ no <code>--isolation</code> (or <code>--isolation auto</code>), <code>env create
 it auto-picks the <em>strongest tier the host can actually run</em> (<code>container</code> &gt;
 <code>supervised</code> &gt; <code>process</code> &gt; <code>workspace</code>), each candidate gated by the same checks
 <code>create</code> applies, so an auto-picked tier is guaranteed runnable. An explicit tier
-<strong>fails closed</strong>: h5i refuses (never silently downgrades) when the host cannot
+<strong>fails closed</strong> — h5i refuses (never silently downgrades) when the host cannot
 satisfy it, and re-verifies functionally (capability bits present ≠ confinement
 can exec). Set <code>H5I_DEFAULT_ISOLATION</code> to pin a clone's default tier.</p>
 <table>
@@ -3757,7 +3757,7 @@ can exec). Set <code>H5I_DEFAULT_ISOLATION</code> to pin a clone's default tier.
 <tr>
 <td><code>process</code></td>
 <td>Landlock FS allowlist + seccomp deny-list + user/mount/IPC/UTS/(net) namespaces + cgroup v2 / rlimits + <code>no_new_privs</code></td>
-<td><code>deny</code> (empty netns) or <code>host</code>, all-or-nothing</td>
+<td><code>deny</code> (empty netns) or <code>host</code> — all-or-nothing</td>
 <td>✅</td>
 <td>Linux, x86-64/aarch64. The default confined tier.</td>
 </tr>
@@ -3766,7 +3766,7 @@ can exec). Set <code>H5I_DEFAULT_ISOLATION</code> to pin a clone's default tier.
 <td><code>process</code> <strong>+</strong> a live seccomp <strong>user-notification</strong> socket gate + an always-on network namespace</td>
 <td><code>deny</code> (airtight empty netns) <strong>or</strong> a real <strong>L3/L4 <code>net.egress</code> allowlist</strong></td>
 <td>✅</td>
-<td>The first tier that may claim untrusted-code containment. Requires the full stack green (userns + mountns + netns + nftables + seccomp-notif + Landlock + cgroup delegation + no-new-privs + cap-drop), else refused. <code>net.egress</code> runs <code>slirp4netns</code> for the uplink, an <strong>nftables default-drop</strong> allowlist as the airtight guard, and pins DNS via a private <code>/etc/hosts</code> (no port 53), so a raw socket cannot bypass it (vs. the container tier's L7).</td>
+<td>The first tier that may claim untrusted-code containment. Requires the full stack green (userns + mountns + netns + nftables + seccomp-notif + Landlock + cgroup delegation + no-new-privs + cap-drop), else refused. <code>net.egress</code> runs <code>slirp4netns</code> for the uplink, an <strong>nftables default-drop</strong> allowlist as the airtight guard, and pins DNS via a private <code>/etc/hosts</code> (no port 53) — a raw socket cannot bypass it (vs. the container tier's L7).</td>
 </tr>
 <tr>
 <td><code>container</code></td>
@@ -3785,8 +3785,8 @@ can exec). Set <code>H5I_DEFAULT_ISOLATION</code> to pin a clone's default tier.
 </tbody>
 </table>
 <p>The <strong><code>supervised</code> socket gate</strong> is default-deny: only boring inet
-(<code>AF_INET</code>/<code>AF_INET6</code>, <code>SOCK_STREAM</code>/<code>SOCK_DGRAM</code>), or an explicitly granted
-<code>AF_UNIX</code>, may proceed; raw/packet/netlink/vsock and unknown socket shapes are
+(<code>AF_INET</code>/<code>AF_INET6</code>, <code>SOCK_STREAM</code>/<code>SOCK_DGRAM</code>) — or an explicitly granted
+<code>AF_UNIX</code> — may proceed; raw/packet/netlink/vsock and unknown socket shapes are
 denied with <code>EPERM</code>, and every verdict is recorded. This gate is also what makes
 the <code>net.egress</code> allowlist <strong>unbypassable</strong>: untrusted code runs as root within
 its own user namespace (so <code>nft</code> keeps <code>CAP_NET_ADMIN</code> across <code>execve</code>), but the
@@ -3870,24 +3870,24 @@ logs    = true                    # capture the service log as an h5i object on 
 command = &quot;cargo watch -x test&quot;
 </code></pre>
 <p>The fully-resolved policy is serialized to <code>policy.resolved.toml</code> and its
-sha256 <strong>digest is pinned</strong> in the env manifest and in every capture, so the
+sha256 <strong>digest is pinned</strong> in the env manifest and in every capture — so the
 policy actually enforced is tamper-evident.</p>
 <p><a name="env-secrets-broker"></a></p>
 <h3 id="secrets-broker">Secrets broker</h3>
 <p>Declared <code>secrets</code> are resolved from host-side sources <strong>at run time</strong> (never at
 policy load), injected into the run, <strong>scrubbed from the captured evidence</strong>, and
-audited, and all are <strong>fail-closed</strong> (a missing source aborts the run).</p>
+audited — all <strong>fail-closed</strong> (a missing source aborts the run).</p>
 <ul>
 <li><strong>Source:</strong> <code>env:VAR</code>, <code>file:/abs/path</code>, <code>command:&lt;shell&gt;</code>, or the default
   <code>env:H5I_SECRET_&lt;NAME&gt;</code>. A <code>command:</code> extractor runs host-side code <strong>outside
   the sandbox</strong>, so it is refused unless the profile sets
   <code>allow_command_extractors = true</code> (pinned in the policy digest); when allowed
   it is bounded by a 10s wall timeout and a 1 MiB output cap, fail-closed.</li>
-<li><strong>Injection:</strong> <code>env</code> (sets <code>&lt;NAME&gt;</code> on the child: universal, and the default) or
-  <code>file</code> (writes <code>0600</code> outside <code>$WORK</code>, sets <code>&lt;NAME&gt;_FILE</code> to the path,
+<li><strong>Injection:</strong> <code>env</code> (sets <code>&lt;NAME&gt;</code> on the child — universal; the default) or
+  <code>file</code> (writes <code>0600</code> outside <code>$WORK</code>, sets <code>&lt;NAME&gt;_FILE</code> to the path —
   workspace tier in v1).</li>
 <li><strong>Audit:</strong> one <code>secret</code> event per grant records the name, source, injection
-  method, ttl, and a sha256 <strong>fingerprint</strong>, never the value.</li>
+  method, ttl, and a sha256 <strong>fingerprint</strong> — never the value.</li>
 <li><strong>Redaction:</strong> the resolved value is removed from the capture (raw + summary)
   by exact match, on top of h5i's pattern-based secret scrub.</li>
 <li><strong>Inspect (dry-run):</strong> <code>h5i env secrets &lt;name&gt;</code> shows each grant's status and
@@ -3995,7 +3995,7 @@ becomes unreachable. That is harmless: it is best-effort.</p>
 <p><a name="env-services-ports"></a></p>
 <h3 id="services-and-dynamic-ports">Services and dynamic ports</h3>
 <p>Long-lived processes (a dev server, a worker) are declared as <code>[service.&lt;name&gt;]</code>
-in <code>.h5i/env.toml</code> and managed <strong>without a daemon</strong>: a <code>flock</code>'d pid registry
+in <code>.h5i/env.toml</code> and managed <strong>without a daemon</strong> — a <code>flock</code>'d pid registry
 under the env dir, lifecycle events on <code>refs/h5i/env</code>.</p>
 <ul>
 <li><strong>Pinned at create.</strong> Service declarations are snapshotted into an env-local
@@ -4009,7 +4009,7 @@ under the env dir, lifecycle events on <code>refs/h5i/env</code>.</p>
   log as a redacted h5i object, linked from the <code>service</code> event.</li>
 <li><strong>Injected ports.</strong> A service that declares a <code>port</code> gets a free host port
   allocated and <strong>injected</strong> as <code>PORT</code> and <code>H5I_ENV_PORT_&lt;NAME&gt;</code>. There is <strong>no
-  host→box forwarder in v1</strong>: the port is reachable only if the service binds
+  host→box forwarder in v1</strong> — the port is reachable only if the service binds
   the injected value (<code>env ports</code> shows the URL as conditional, not guaranteed).</li>
 </ul>
 <pre><code class="language-bash"># [service.web] command = &quot;npm run dev&quot;  port = 3000
@@ -4023,7 +4023,7 @@ h5i env service stop   fix-auth web    # log captured as an h5i object
 <h3 id="resource-limits">Resource limits</h3>
 <p>The <code>process</code>/<code>supervised</code> tiers apply <strong>cgroup v2</strong> limits (<code>memory.max</code>,
 <code>pids.max</code>, accurate <code>memory.peak</code> / <code>cpu.stat</code>) when the host delegates a
-writable cgroup subtree to the user (a systemd user session; h5i discovers the
+writable cgroup subtree to the user (a systemd user session — h5i discovers the
 delegated <code>user@&lt;uid&gt;.service</code> subtree, no root needed). Where delegation is
 unavailable, it falls back to rlimits (<code>RLIMIT_AS</code>/<code>NPROC</code>/<code>FSIZE</code>/<code>CPU</code>).
 <code>h5i env probe</code> reports whether cgroups are usable. A wall-clock timeout kills
@@ -4032,20 +4032,20 @@ the whole process tree (<code>exit 124</code>).</p>
 <h2 id="h5i-team">h5i team</h2>
 <p>A <strong>team</strong> runs several agents on the <em>same</em> task in their own isolated
 <a href="#h5i-env"><code>h5i env</code></a> workspaces and drives them through
-a phased, permissioned <strong>evidence-publication</strong> protocol: <em>sealed workspaces,
+a phased, permissioned <strong>evidence-publication</strong> protocol — <em>sealed workspaces,
 permissioned reviews, auditable convergence</em>. It is a thin orchestration layer:
 <code>env</code> keeps owning isolation, capture, and propose/apply; <code>team</code> owns only the
 coordination (roster, phases, submissions, verdict). It is <strong>not</strong> a group chat
 and <strong>not</strong> a daemon.</p>
 <p>A roster member is a <strong>persona, not a backend</strong>: the <code>agent_id</code> (auto-generated,
 or pinned with <code>--as</code>) is the durable actor, while <code>runtime</code>/<code>model</code>/persona
-are attributes, so a team can be three Claudes with different system
+are attributes — so a team can be three Claudes with different system
 prompts/skills (architect / implementer / skeptic), a Claude+Codex mix, or one
 model under two personas. A <strong>persona</strong> is the agent's standing working style,
 declared <strong>per profile</strong> in <code>.h5i/env.toml</code> as <code>persona = ["path/to/style.md", …]</code>
 (paths relative to the worktree; see <code>examples/personas/</code>). At <code>h5i env create</code>
 the listed files are concatenated, in order, into a git-ignored <code>PERSONA.md</code> at
-the worktree root, loaded automatically via <code>@PERSONA.md</code> in <code>CLAUDE.md</code>
+the worktree root — loaded automatically via <code>@PERSONA.md</code> in <code>CLAUDE.md</code>
 (Claude) or a read instruction in <code>AGENTS.md</code> (Codex). Because it is git-ignored
 it never enters the agent's diff, and its sha256 is pinned in the env manifest
 (<code>persona_digest</code>) for provenance. To give an agent a persona, create its env
@@ -4054,7 +4054,7 @@ The audit records <em>which configuration produced which candidate</em>. (<code>
 status</code> lists each agent's id for the <code>--agent</code> / <code>--reviewer</code> / <code>--target</code>
 flags below.)</p>
 <p>Run state lives in one ref per run, <code>refs/h5i/team/&lt;run-id&gt;</code>, as an
-<strong>append-only event log</strong> that is the single source of truth: phase, roster, and
+<strong>append-only event log</strong> that is the single source of truth — phase, roster, and
 verdict are <em>folded</em> from events (deduped by id, union-merged), never stored as
 mutable fields. It travels with <code>h5i share push</code> / <code>h5i share pull</code> for a
 cross-clone review loop, and the <strong>Team</strong> views in <a href="#h5i-serve"><code>h5i serve</code></a>
@@ -4067,7 +4067,7 @@ render the board, timeline, compare, and verdict.</p>
 peer's work through the team interface. Discussion is <strong>opt-in and only allowed
 after freeze</strong>, every message is logged, and any candidate revised afterward is
 stamped <code>independent=false</code> with its influence edges recorded.</p>
-<p><code>draft</code> and <code>dispatched</code> are the <strong>same open round</strong> for gating: <code>add-env</code>,
+<p><code>draft</code> and <code>dispatched</code> are the <strong>same open round</strong> for gating — <code>add-env</code>,
 <code>submit</code>, and <code>freeze</code> all work in either, since <code>dispatch</code> only notifies
 inboxes and never locks the round.</p>
 <h3 id="lifecycle-commands_1">Lifecycle commands</h3>
@@ -4085,11 +4085,11 @@ inboxes and never locks the round.</p>
 </tr>
 <tr>
 <td><code>h5i team auto-create &lt;name&gt; [--base REV] [--rounds N] [--title T] [--json]</code></td>
-<td><strong>One-shot bootstrap</strong> of a two-agent <strong>claude + codex</strong> team: creates <code>&lt;name&gt;-claude</code> (profile <code>agent-claude</code>) and <code>&lt;name&gt;-codex</code> (profile <code>agent-codex</code>) envs, creates the team, and enrolls both, which is equivalent to one <code>env create</code> per agent plus a <code>team create</code> and two <code>team add-env</code>. Like manual <code>add-env</code>, each member's roster <strong>agent id is an auto-generated persona name</strong> (e.g. <code>tariq</code>, <code>ravi</code>), kept distinct from the <code>runtime</code> (recorded as <code>claude</code>/<code>codex</code>); the command prints the <code>persona → runtime → env</code> mapping, and <code>team status</code> shows it. Env slugs are namespaced by the team id (<code>&lt;name&gt;-claude</code>/<code>&lt;name&gt;-codex</code>) so auto-created teams never collide on env names. The pinned <code>agent-*</code> profiles are <strong>fail-closed</strong>: on a host that can't enforce the agent-in-box tier, env creation errors rather than downgrading.</td>
+<td><strong>One-shot bootstrap</strong> of a two-agent <strong>claude + codex</strong> team: creates <code>&lt;name&gt;-claude</code> (profile <code>agent-claude</code>) and <code>&lt;name&gt;-codex</code> (profile <code>agent-codex</code>) envs, creates the team, and enrolls both — equivalent to one <code>env create</code> per agent plus a <code>team create</code> and two <code>team add-env</code>. Like manual <code>add-env</code>, each member's roster <strong>agent id is an auto-generated persona name</strong> (e.g. <code>tariq</code>, <code>ravi</code>), kept distinct from the <code>runtime</code> (recorded as <code>claude</code>/<code>codex</code>); the command prints the <code>persona → runtime → env</code> mapping, and <code>team status</code> shows it. Env slugs are namespaced by the team id (<code>&lt;name&gt;-claude</code>/<code>&lt;name&gt;-codex</code>) so auto-created teams never collide on env names. The pinned <code>agent-*</code> profiles are <strong>fail-closed</strong>: on a host that can't enforce the agent-in-box tier, env creation errors rather than downgrading.</td>
 </tr>
 <tr>
 <td><code>h5i team add-env &lt;team&gt; &lt;env&gt; [--as &lt;agent-id&gt;] [--runtime R] [--model M] [--json]</code></td>
-<td>Add an already-created env to the roster as a persona-bound member. The agent id is <strong>auto-generated</strong> unless you pin it with <code>--as</code> (a ref-safe key; distinct personas on the same runtime need distinct ids, shown by <code>h5i team status</code>). The persona itself comes from the env's profile (<code>persona = [...]</code> in <code>.h5i/env.toml</code>, baked into <code>PERSONA.md</code> at <code>env create</code>), with no per-add flag. Draft phase only. <strong>Also binds the env's in-box identity</strong> (writes host-owned <code>team-identity</code> / <code>team-run</code> files), so <code>env run</code>/<code>env shell</code> inject <code>H5I_AGENT=&lt;agent&gt;</code> and <code>H5I_TEAM=&lt;team&gt;</code> for scoped team-agent commands.</td>
+<td>Add an already-created env to the roster as a persona-bound member. The agent id is <strong>auto-generated</strong> unless you pin it with <code>--as</code> (a ref-safe key; distinct personas on the same runtime need distinct ids — see it with <code>h5i team status</code>). The persona itself comes from the env's profile (<code>persona = [...]</code> in <code>.h5i/env.toml</code>, baked into <code>PERSONA.md</code> at <code>env create</code>) — no per-add flag. Draft phase only. <strong>Also binds the env's in-box identity</strong> (writes host-owned <code>team-identity</code> / <code>team-run</code> files), so <code>env run</code>/<code>env shell</code> inject <code>H5I_AGENT=&lt;agent&gt;</code> and <code>H5I_TEAM=&lt;team&gt;</code> for scoped team-agent commands.</td>
 </tr>
 <tr>
 <td><code>h5i team status [&lt;team&gt;] [--json]</code></td>
@@ -4105,19 +4105,19 @@ inboxes and never locks the round.</p>
 </tr>
 <tr>
 <td><code>h5i team submit &lt;team&gt; --agent &lt;id&gt; [--commit OID] [--summary-file F] [--json]</code></td>
-<td>Freeze the agent's candidate as an <strong>immutable</strong> submission: frozen commit/tree oids + diffstat + capture ids, reviewable even if the env later changes. Without <code>--commit</code> it first <strong>mediates-commits the env worktree</strong> onto the env branch (so uncommitted edits are captured, not silently lost) and freezes the result; with <code>--commit</code> it pins that exact commit. A submission whose tree is identical to the team base is <strong>refused</strong> (nothing to review).</td>
+<td>Freeze the agent's candidate as an <strong>immutable</strong> submission — frozen commit/tree oids + diffstat + capture ids, reviewable even if the env later changes. Without <code>--commit</code> it first <strong>mediates-commits the env worktree</strong> onto the env branch (so uncommitted edits are captured, not silently lost) and freezes the result; with <code>--commit</code> it pins that exact commit. A submission whose tree is identical to the team base is <strong>refused</strong> (nothing to review).</td>
 </tr>
 <tr>
 <td><code>h5i team agent submit [--commit OID] [--summary-file F] [--json]</code></td>
-<td>In-box submit for a bound team env. In sealed envs it writes a scoped request to the env spool; the host applies it to <code>refs/h5i/team/*</code> when the env shell exits (or on <code>team sync</code>), at which point the worktree is snapshotted as above. Host-side it submits as <code>$H5I_AGENT</code> / <code>$H5I_TEAM</code>. <strong>Submitting marks the agent done for the current round</strong>: it records the round box-side so the team Stop hook stops re-surfacing that round's standing review requests (a host re-fan can't loop the agent). A newer round still breaks through.</td>
+<td>In-box submit for a bound team env. In sealed envs it writes a scoped request to the env spool; the host applies it to <code>refs/h5i/team/*</code> when the env shell exits (or on <code>team sync</code>), at which point the worktree is snapshotted as above. Host-side it submits as <code>$H5I_AGENT</code> / <code>$H5I_TEAM</code>. <strong>Submitting marks the agent done for the current round</strong>: it records the round box-side so the team Stop hook stops re-surfacing that round's standing review requests (a host re-fan can't loop the agent) — a newer round still breaks through.</td>
 </tr>
 <tr>
 <td><code>h5i team agent inbox [&lt;team&gt;] [--peek] [--wait] [--interval 10] [--timeout 1800] [--json]</code></td>
-<td>Scoped inbox for the team persona. In a sealed box it reads the host-fanned <strong>per-env inbox</strong> (<code>$H5I_ENV_INBOX</code>, read-only); host-side it reads the shared store. Each review grant shows its <strong>granted artifact kinds + artifact ids</strong>, which the reviewer reads with <code>h5i team artifact show &lt;id&gt; --diff</code> (no host-only <code>compare</code>). <code>--wait</code> blocks (peek-only) until a message is waiting or the timeout. Use it to await the next round's review request without ending the session.</td>
+<td>Scoped inbox for the team persona. In a sealed box it reads the host-fanned <strong>per-env inbox</strong> (<code>$H5I_ENV_INBOX</code>, read-only); host-side it reads the shared store. Each review grant shows its <strong>granted artifact kinds + artifact ids</strong>, which the reviewer reads with <code>h5i team artifact show &lt;id&gt; --diff</code> (no host-only <code>compare</code>). <code>--wait</code> blocks (peek-only) until a message is waiting or the timeout — use it to await the next round's review request without ending the session.</td>
 </tr>
 <tr>
 <td><code>h5i team agent hook [&lt;team&gt;] [--block] [--quiet] [--timeout 1800] [--interval 10]</code></td>
-<td>Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds in review requests. <code>--block</code> (Claude <strong>and Codex</strong>, whose Stop hooks share the same <code>{"decision":"block"}</code> continuation contract) waits up to <code>--timeout</code> for the next message, then blocks the stop and hands it back; <code>--quiet</code> prints one-shot (manual). Released by a <code>TEAM_DONE</code> signal (sent on finalize/apply), by the agent <strong>submitting for the round</strong> (a round-≤-submitted re-fan no longer re-surfaces; a newer round still does), or the timeout. Registered via <code>h5i hook setup --team</code>; no-ops outside a team.</td>
+<td>Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds in review requests. <code>--block</code> (Claude <strong>and Codex</strong> — their Stop hooks share the same <code>{"decision":"block"}</code> continuation contract) waits up to <code>--timeout</code> for the next message, then blocks the stop and hands it back; <code>--quiet</code> prints one-shot (manual). Released by a <code>TEAM_DONE</code> signal (sent on finalize/apply), by the agent <strong>submitting for the round</strong> (a round-≤-submitted re-fan no longer re-surfaces; a newer round still does), or the timeout. Registered via <code>h5i hook setup --team</code>; no-ops outside a team.</td>
 </tr>
 <tr>
 <td><code>h5i team freeze &lt;team&gt; [--allow-missing] [--json]</code></td>
@@ -4125,19 +4125,19 @@ inboxes and never locks the round.</p>
 </tr>
 <tr>
 <td><code>h5i team compare &lt;team&gt; [--json]</code></td>
-<td>Side-by-side candidates + verifier metrics (advisory only; does not pick a winner).</td>
+<td>Side-by-side candidates + verifier metrics (advisory only — does not pick a winner).</td>
 </tr>
 <tr>
 <td><code>h5i team artifact show &lt;id&gt; [--team T] [--diff] [--summary] [--tests] [--json]</code></td>
-<td>Read one teammate's submission by artifact id: the <strong>in-box, read-only</strong> per-candidate view a granted reviewer uses, so a boxed reviewer never needs the host-only <code>compare</code>. Defaults to the unified diff against the team base; <code>--summary</code> / <code>--tests</code> show the submission summary / captured test evidence (capture ids + change stats). Resolves <code>--team</code> from the current team / <code>$H5I_TEAM</code>.</td>
+<td>Read one teammate's submission by artifact id — the <strong>in-box, read-only</strong> per-candidate view a granted reviewer uses, so a boxed reviewer never needs the host-only <code>compare</code>. Defaults to the unified diff against the team base; <code>--summary</code> / <code>--tests</code> show the submission summary / captured test evidence (capture ids + change stats). Resolves <code>--team</code> from the current team / <code>$H5I_TEAM</code>.</td>
 </tr>
 <tr>
 <td><code>h5i team sync &lt;team&gt; [--json]</code></td>
-<td><strong>Live ingest</strong>: apply every agent's staged in-box submissions/reviews to <code>refs/h5i/team/*</code> now, without the box exiting (the on-demand counterpart to the at-exit ingest). Lets a run advance while the team Stop hook keeps boxes alive, with no relaunch.</td>
+<td><strong>Live ingest</strong>: apply every agent's staged in-box submissions/reviews to <code>refs/h5i/team/*</code> now, without the box exiting (the on-demand counterpart to the at-exit ingest). Lets a run advance while the team Stop hook keeps boxes alive — no relaunch.</td>
 </tr>
 <tr>
 <td><code>h5i team verify &lt;team&gt; --agent &lt;id&gt; [--isolation TIER] [--sealed-from SRC] -- &lt;cmd&gt;</code></td>
-<td><strong>Neutral, sandboxed verifier</strong>: replays the frozen candidate into a throwaway worktree at the run base and runs <code>&lt;cmd&gt;</code> under the fail-closed <code>default</code> build/test profile. <code>--isolation</code> (<code>workspace</code>/<code>process</code>/<code>supervised</code>/<code>container</code>) defaults to the strongest tier the host can enforce (falls back to <code>workspace</code>); the tier is recorded on the verification. <code>--sealed-from</code> <strong>seals part of the checked tree</strong> (typically a test-designer's test set, though the mechanism is content-agnostic): <code>SRC</code> is a submission id or team agent id (must differ from the candidate's owner) whose base..commit diff is overlaid over the candidate <em>after</em> its patch, so the candidate's own edits to those paths are discarded (recorded as <code>sealed_overridden</code> tamper evidence) so it cannot weaken checks it was handed; the verification records the sealed source, tree digest, and pinned paths.</td>
+<td><strong>Neutral, sandboxed verifier</strong>: replays the frozen candidate into a throwaway worktree at the run base and runs <code>&lt;cmd&gt;</code> under the fail-closed <code>default</code> build/test profile. <code>--isolation</code> (<code>workspace</code>/<code>process</code>/<code>supervised</code>/<code>container</code>) defaults to the strongest tier the host can enforce (falls back to <code>workspace</code>); the tier is recorded on the verification. <code>--sealed-from</code> <strong>seals part of the checked tree</strong> (typically a test-designer's test set — the mechanism is content-agnostic): <code>SRC</code> is a submission id or team agent id (must differ from the candidate's owner) whose base..commit diff is overlaid over the candidate <em>after</em> its patch — the candidate's own edits to those paths are discarded (recorded as <code>sealed_overridden</code> tamper evidence) so it cannot weaken checks it was handed; the verification records the sealed source, tree digest, and pinned paths.</td>
 </tr>
 <tr>
 <td><code>h5i team finalize &lt;team&gt; [--json]</code></td>
@@ -4145,15 +4145,15 @@ inboxes and never locks the round.</p>
 </tr>
 <tr>
 <td><code>h5i team apply &lt;team&gt; [--winner &lt;submission-id&gt;] [--agent &lt;id&gt;] [--force] [--json]</code></td>
-<td>Replay the winning submission's recorded patch (<code>base..commit</code>) into the current branch and commit; records source + target commit oids; on conflict records an event, never mutates the artifact. Gated on the verdict's <code>can_auto_apply</code> unless <code>--force</code>. <strong><code>--agent &lt;id&gt;</code></strong> picks that roster agent's <strong>latest submission directly, skipping verify/finalize</strong>: an explicit human override that bypasses the verdict gate (no <code>--force</code> needed; mutually exclusive with <code>--winner</code>). The agent must have submitted (<code>team submit</code>); there is no apply-direct-from-env-branch.</td>
+<td>Replay the winning submission's recorded patch (<code>base..commit</code>) into the current branch and commit; records source + target commit oids; on conflict records an event, never mutates the artifact. Gated on the verdict's <code>can_auto_apply</code> unless <code>--force</code>. <strong><code>--agent &lt;id&gt;</code></strong> picks that roster agent's <strong>latest submission directly, skipping verify/finalize</strong> — an explicit human override that bypasses the verdict gate (no <code>--force</code> needed; mutually exclusive with <code>--winner</code>). The agent must have submitted (<code>team submit</code>) — there is no apply-direct-from-env-branch.</td>
 </tr>
 <tr>
 <td><code>h5i team worker --once \| --watch [--interval N] [--id ID] [--lease-ttl S] [--json]</code></td>
-<td>Optional automation: one lease-and-finalize pass (<code>--once</code>) or an opt-in in-process loop (<code>--watch</code>). <strong>Finalize-only, and never auto-applies.</strong> Leases are idempotent + TTL'd; for production prefer an external scheduler driving <code>--once</code>.</td>
+<td>Optional automation: one lease-and-finalize pass (<code>--once</code>) or an opt-in in-process loop (<code>--watch</code>). <strong>Finalize-only — never auto-applies.</strong> Leases are idempotent + TTL'd; for production prefer an external scheduler driving <code>--once</code>.</td>
 </tr>
 <tr>
 <td><code>h5i team dispatch &lt;team&gt; [--prompt-file F] [--json]</code></td>
-<td>Send the task to <strong>every roster agent in one command</strong> (prompt read from <strong>stdin</strong> by default, as in <code>h5i team dispatch &lt;team&gt; &lt; TASK.md</code>; <code>--prompt-file</code> reads it from a named file instead) over <a href="#h5i-msg"><code>h5i msg</code></a> (an <code>ASK</code> per persona, tagged with the team + round), with no per-env pasting. It <strong>notifies, it does not launch</strong>: each agent must be running in its env to pick the task out of its inbox. Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch.</td>
+<td>Send the task to <strong>every roster agent in one command</strong> (prompt read from <strong>stdin</strong> by default — <code>h5i team dispatch &lt;team&gt; &lt; TASK.md</code>; <code>--prompt-file</code> reads it from a named file instead) over <a href="#h5i-msg"><code>h5i msg</code></a> (an <code>ASK</code> per persona, tagged with the team + round) — no per-env pasting. It <strong>notifies, it does not launch</strong>: each agent must be running in its env to pick the task out of its inbox. Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch.</td>
 </tr>
 <tr>
 <td><code>h5i team grant-review &lt;team&gt; --reviewer A --target B [--artifacts diff,summary,tests] [--json]</code></td>
@@ -4172,8 +4172,8 @@ inboxes and never locks the round.</p>
 <p><code>&lt;env&gt;</code> accepts a bare slug, <code>agent/slug</code>, or the full <code>env/agent/slug</code>.</p>
 <p><strong>Current team.</strong> The single-<code>&lt;team&gt;</code> subcommands (<code>status</code>, <code>submit</code>, <code>freeze</code>,
 <code>compare</code>, <code>sync</code>, <code>finalize</code>, <code>apply</code>, <code>dispatch</code>, <code>grant-review</code>, <code>discuss</code>,
-<code>review submit</code>), plus <code>artifact show</code> (via <code>--team</code>, also honoring <code>$H5I_TEAM</code>),
-default to the <strong>current team</strong> when you omit it. Set it with <code>h5i team
+<code>review submit</code>) — plus <code>artifact show</code> (via <code>--team</code>, also honoring <code>$H5I_TEAM</code>) —
+default to the <strong>current team</strong> when you omit it — set it with <code>h5i team
 use &lt;name&gt;</code> (or let <code>create</code> set it). <code>add-env</code>/<code>verify</code> keep <code>&lt;team&gt;</code> required
 (they take a second positional). The flat CLI stays canonical, so this never
 changes scripting/cron/agent behavior (always pass <code>&lt;team&gt;</code> there). For fast
@@ -4193,17 +4193,17 @@ h5i env shell env/claude-architect/fix-auth        # in-box H5I_AGENT=claude-arc
 h5i env shell env/codex/fix-auth                   # in-box H5I_AGENT=codex
 </code></pre>
 <p><strong>Sealed-box I/O (the per-env channel).</strong> A confined box can't read or write the
-host-owned coordination store (<code>.git/.h5i/msg</code>, <code>refs/h5i/team/*</code>), and that's what
+host-owned coordination store (<code>.git/.h5i/msg</code>, <code>refs/h5i/team/*</code>) — that's what
 keeps an agent from forging messages or corrupting the event log. h5i bridges it
 with a per-env channel, mirrored in both directions:</p>
 <ul>
-<li><strong>Inbound:</strong> a host-owned <code>&lt;env&gt;/inbox/</code> dir, mounted <strong>read-only</strong> in the box
+<li><strong>Inbound</strong> — a host-owned <code>&lt;env&gt;/inbox/</code> dir, mounted <strong>read-only</strong> in the box
   (<code>$H5I_ENV_INBOX</code>). When the host sends to a team agent (<code>grant-review</code>,
   <code>discuss</code>, <code>msg send</code>), it also drops the message there, so a <em>running</em> box
   receives review requests live via <code>h5i team agent inbox</code> / <code>--wait</code> / the team
-  Stop hook, and messages persist for a box that's down. The box reads only its
+  Stop hook — and messages persist for a box that's down. The box reads only its
   own inbox and can't write it.</li>
-<li><strong>Outbound:</strong> <code>h5i team agent submit</code> and <code>h5i team review submit</code> write a
+<li><strong>Outbound</strong> — <code>h5i team agent submit</code> and <code>h5i team review submit</code> write a
   scoped request to the box-writable spool; the host applies it under the
   identity-validated env binding (the box chooses <em>what</em>, never <em>who as</em>). It is
   ingested when the env shell exits, or <strong>on demand via <code>h5i team sync</code></strong> while
@@ -4211,16 +4211,16 @@ with a per-env channel, mirrored in both directions:</p>
 </ul>
 <p>So the box participates in the round securely without any write access to the
 shared store: the agent works normally, uses <code>h5i capture run -- &lt;cmd&gt;</code> for
-evidence, reviews peers, and re-submits, all in the box with no relaunch.</p>
+evidence, reviews peers, and re-submits — all in the box, no relaunch.</p>
 <p><strong>One-command bring-up.</strong> <code>scripts/team-launch.sh &lt;team&gt; [--task &lt;file&gt;]</code> automates
 the grid: it reads the roster, optionally <code>dispatch</code>es the task for the host log,
 embeds the task text in each agent's startup prompt, and opens one interactive
-agent per env, launching <code>claude</code> or <code>codex</code> per the member's runtime via
+agent per env — launching <code>claude</code> or <code>codex</code> per the member's runtime via
 <code>h5i env shell &lt;env&gt; -- &lt;agent&gt; …</code>. <strong>By default each env gets its
-own terminal window</strong>: Windows Terminal (<code>wt.exe</code>) on WSL, a desktop terminal
+own terminal window</strong> — Windows Terminal (<code>wt.exe</code>) on WSL, a desktop terminal
 emulator on Linux-with-a-display, else a tmux window per env (Ctrl-b n/p to
 switch). <code>--panes</code> tiles them all in one tmux window; <code>--gui</code>/<code>--windows</code> force a
-backend. Re-running never collides: an existing <code>h5i-team-&lt;team&gt;</code> session falls
+backend. Re-running never collides — an existing <code>h5i-team-&lt;team&gt;</code> session falls
 through to <code>…-2</code>, <code>…-3</code>. Each box auto-identifies as its persona and team, and
 submissions are staged through <code>h5i team agent submit</code>.</p>
 <pre><code class="language-bash">scripts/team-launch.sh fix-auth --task task.md   # dispatch + embedded task + a tmux window per agent
@@ -4253,12 +4253,12 @@ verifies every candidate in the neutral sandbox (<code>--verify-cmd</code>, <cod
 records the verdict, and applies either automatically (<code>--apply</code>) or behind a
 <strong>durable gate</strong> (<code>--gate</code>: the question lands in your <code>h5i msg</code> inbox; reply
 <code>APPROVE</code>/<code>DECLINE</code>). Every phase is journaled on the run's event log, so if
-the driver is interrupted, or you exit at the gate, <strong>re-running the same
+the driver is interrupted — or you exit at the gate — <strong>re-running the same
 command resumes the cycle</strong> instead of starting over, and <code>h5i team trace</code>
 renders what happened. <code>--launch-resident</code> spawns the agent sessions itself in
 tmux; the default attaches to sessions already brought up by <code>team-launch.sh</code>.</p>
 <ul>
-<li><strong><code>scripts/team-launch.sh &lt;team&gt; [--task F]</code></strong>: bring up one box per agent
+<li><strong><code>scripts/team-launch.sh &lt;team&gt; [--task F]</code></strong> — bring up one box per agent
   (above); still the way to get GUI terminal windows per agent.</li>
 <li>Reviews delivered with <code>h5i team review submit</code> land in the reviewed agent's
   inbox (post-freeze) and are recorded as discussion, so the target sees the
@@ -4271,33 +4271,33 @@ tmux; the default attaches to sessions already brought up by <code>team-launch.s
 demand, so the host sees them while the boxes stay alive waiting (the at-exit
 ingest alone would deadlock with the wait-hook).</p>
 <h3 id="the-neutral-verifier-why-finalization-is-trustworthy">The neutral verifier (why finalization is trustworthy)</h3>
-<p>Finalization must not trust an agent's <em>own</em> captures. An agent can run weak
+<p>Finalization must not trust an agent's <em>own</em> captures — an agent can run weak
 tests, omit failures, or report the wrong result. <code>h5i team verify</code> is the
 authority: for each frozen submission it replays the candidate at the <strong>shared
 base</strong> in a fresh worktree and runs the declared command <strong>sandboxed</strong> under
 h5i's confinement (the same machinery as <code>h5i env</code>). The hard gates
 (<code>VerifierTestsPass</code>, <code>AppliesCleanly</code>) come only from this run; the recorded
 diffstat tie-breaker (<code>SmallestDiff</code>) is consulted <strong>only among candidates that
-pass every gate</strong>, so a candidate can't win by deleting tests or stubbing
+pass every gate</strong> — so a candidate can't win by deleting tests or stubbing
 features. If candidates were verified with <em>different</em> commands, <code>finalize</code>
-refuses (<code>no_verdict</code>); the comparison isn't apples-to-apples.</p>
+refuses (<code>no_verdict</code>) — the comparison isn't apples-to-apples.</p>
 <p>One gap remains in the default mode: the verifier runs whatever test files are
 in the candidate's <em>own</em> tree, so a candidate can still weaken tests it was
 handed (a test-designer → coder split is otherwise guarded only at the prompt
 level). <code>--sealed-from &lt;submission-or-agent&gt;</code> closes it: the named
 submission's base..commit diff becomes a <strong>sealed overlay</strong>, applied over
 every candidate in the verify worktree after its patch. Sealed content always
-wins: a candidate edit to a sealed path is discarded and recorded as
+wins — a candidate edit to a sealed path is discarded and recorded as
 <code>sealed_overridden</code> (tamper evidence, surfaced rather than silently dropped),
 and a faithful candidate needn't carry the sealed files at all (the overlay
 supplies them). Self-sealing fails closed, and <code>finalize</code> extends the
 apples-to-apples rule to content: once any candidate is verified sealed,
 every candidate must be verified against the <em>same</em> overlay (same sealed
 tree digest) or the run records <code>no_verdict</code>. The sealed content is
-typically a test set, but the mechanism is content-agnostic, so golden
+typically a test set, but the mechanism is content-agnostic — golden
 reference files, a scoring harness for an arena, or an interface spec the
 candidate must not touch seal the same way. Scope note: the sealed set is
-exactly what the sealing submission changed vs the run base, so a designer
+exactly what the sealing submission changed vs the run base — a designer
 that wants an <em>existing</em> test or harness config file (<code>conftest.py</code>,
 <code>Cargo.toml</code>, …) pinned must include it in its own commit. In the eDSL this
 is <code>c.verify_sealed(&amp;candidate, &amp;tests.id, cmd, tier)</code>, or
@@ -4307,7 +4307,7 @@ is <code>c.verify_sealed(&amp;candidate, &amp;tests.id, cmd, tier)</code>, or
 with no human in the loop, yet every verdict is <strong>explainable</strong> (method + which
 verifier command + the losers' reasons). <code>apply</code> will only auto-apply a verdict
 that passed the gates (<code>can_auto_apply</code>); <code>--force</code> is an explicit, logged
-override. A run where nothing clears the gates records <code>no_verdict</code> and stops;
+override. A run where nothing clears the gates records <code>no_verdict</code> and stops —
 the one place a human is pinged, by choice.</p>
 <h3 id="worked-example">Worked example</h3>
 <pre><code class="language-bash"># personas are declared per profile in .h5i/env.toml and baked at env create:
@@ -4336,7 +4336,7 @@ h5i team auto-create fix-auth --base HEAD   # envs fix-auth-claude / fix-auth-co
 # …and to ship a chosen candidate without verify/finalize, pick the agent by its persona key (from `team status`):
 h5i team apply fix-auth --agent tariq       # applies that agent's latest submission (gate bypassed)
 </code></pre>
-<p>Hands-off via an external scheduler (recommended: crash-resilient, no daemon):</p>
+<p>Hands-off via an external scheduler (recommended — crash-resilient, no daemon):</p>
 <pre><code class="language-cron">* * * * * cd /repo &amp;&amp; h5i team worker --once &gt;&gt; /var/log/h5i-team.log 2&gt;&amp;1
 </code></pre>
 <hr />
@@ -4397,11 +4397,11 @@ h5i serve --port 8080
 </tr>
 <tr>
 <td><strong>Board</strong></td>
-<td>Environments as <strong>cards flowing through lifecycle columns</strong> (Created / Working / Proposed / Applied / Aborted): the parallel-agents view. Each card shows the pid-verified <strong>live session</strong> (<code>● shell pid N</code>, observers, or a <code>stale</code> flag when a <code>running</code> status has no live writer), the PR it tracks, base drift, the boundary-pressure score, a diffstat vs the pinned base, capture count, and the parent branch it proposes onto. Read-only like every serve surface: instead of mutating buttons, every card offers its <strong>next CLI command one click from the clipboard</strong> (<code>env shell</code> → <code>env propose</code> → <code>env apply</code> → <code>env gc</code>). Polls <code>GET /api/envs</code>.</td>
+<td>Environments as <strong>cards flowing through lifecycle columns</strong> (Created / Working / Proposed / Applied / Aborted) — the parallel-agents view. Each card shows the pid-verified <strong>live session</strong> (<code>● shell pid N</code>, observers, or a <code>stale</code> flag when a <code>running</code> status has no live writer), the PR it tracks, base drift, the boundary-pressure score, a diffstat vs the pinned base, capture count, and the parent branch it proposes onto. Read-only like every serve surface: instead of mutating buttons, every card offers its <strong>next CLI command one click from the clipboard</strong> (<code>env shell</code> → <code>env propose</code> → <code>env apply</code> → <code>env gc</code>). Polls <code>GET /api/envs</code>.</td>
 </tr>
 <tr>
 <td><strong>Sandbox</strong></td>
-<td>The "flight recorder" for <a href="#h5i-env"><code>h5i env</code></a>: host-readiness strip (per-tier probe), an env fleet table with a deterministic <strong>boundary-pressure</strong> score, a five-lane (FS / NET / PROC / RESOURCE / PROVENANCE) per-run timeline, and the enforced-policy inspector. Read-only. Surfaces denials honestly: "Boundary blocked" only when enforcement fired, "Boundary pressure" for probing shapes, "Weak isolation" for capability gaps. Backed by <code>GET /api/envs</code>, <code>/api/env/:agent/:slug</code>, <code>/api/env/probe</code>. Above the fleet sits the <strong>workspace bucket</strong>: captures taken <em>outside</em> any env (plain <code>h5i capture run</code>/<code>commit</code> in the primary checkout), scoped to the <strong>branch currently checked out</strong> (an all-branch list would conflate unrelated lines of work; the pane notes how many captures live on other branches), explicitly labeled <strong>unconfined, host trust</strong> with no policy panel, so the absence of confinement is displayed, never implied. It is deliberately a bucket, not an env card: an env row is a claim (isolation tier, policy digest, mediated commit) the workspace doesn't make. Backed by <code>GET /api/workspace</code>, <code>/api/workspace/captures/:id</code> (env-owned capture ids are refused there, mirroring <code>env inspect</code>'s ownership check in reverse).</td>
+<td>The "flight recorder" for <a href="#h5i-env"><code>h5i env</code></a>: host-readiness strip (per-tier probe), an env fleet table with a deterministic <strong>boundary-pressure</strong> score, a five-lane (FS / NET / PROC / RESOURCE / PROVENANCE) per-run timeline, and the enforced-policy inspector. Read-only. Surfaces denials honestly — "Boundary blocked" only when enforcement fired, "Boundary pressure" for probing shapes, "Weak isolation" for capability gaps. Backed by <code>GET /api/envs</code>, <code>/api/env/:agent/:slug</code>, <code>/api/env/probe</code>. Above the fleet sits the <strong>workspace bucket</strong>: captures taken <em>outside</em> any env (plain <code>h5i capture run</code>/<code>commit</code> in the primary checkout), scoped to the <strong>branch currently checked out</strong> (an all-branch list would conflate unrelated lines of work; the pane notes how many captures live on other branches), explicitly labeled <strong>unconfined — host trust</strong> with no policy panel — the absence of confinement is displayed, never implied. It is deliberately a bucket, not an env card: an env row is a claim (isolation tier, policy digest, mediated commit) the workspace doesn't make. Backed by <code>GET /api/workspace</code>, <code>/api/workspace/captures/:id</code> (env-owned capture ids are refused there, mirroring <code>env inspect</code>'s ownership check in reverse).</td>
 </tr>
 </tbody>
 </table>
@@ -4409,7 +4409,7 @@ h5i serve --port 8080
 <h2 id="h5i-mcp">h5i mcp</h2>
 <pre><code>h5i mcp
 </code></pre>
-<p>Start the h5i MCP (Model Context Protocol) server on stdio. Any MCP client, including Claude Code, can connect to it to call h5i tools and read h5i resources directly without invoking the CLI.</p>
+<p>Start the h5i MCP (Model Context Protocol) server on stdio. Any MCP client — including Claude Code — can connect to it to call h5i tools and read h5i resources directly without invoking the CLI.</p>
 <p>The server implements the <strong>2024-11-05</strong> MCP specification over a newline-delimited JSON-RPC 2.0 stdio transport.</p>
 <h3 id="registering-with-claude-code">Registering with Claude Code</h3>
 <p>Add the following entry to your <code>~/.claude/settings.json</code> (or the project-level <code>.claude/settings.json</code>):</p>
@@ -4422,7 +4422,7 @@ h5i serve --port 8080
   }
 }
 </code></pre>
-<p>After restarting Claude Code, all h5i tools become available natively inside any session, with no shell commands needed.</p>
+<p>After restarting Claude Code, all h5i tools become available natively inside any session — no shell commands needed.</p>
 <h3 id="tools">Tools</h3>
 <table>
 <thead>
@@ -4792,7 +4792,7 @@ h5i serve --port 8080
 </tr>
 </tbody>
 </table>
-<p>Both resources support <strong>live subscriptions</strong>; see <a href="#resource-subscriptions">Resource Subscriptions</a> below.</p>
+<p>Both resources support <strong>live subscriptions</strong> — see <a href="#resource-subscriptions">Resource Subscriptions</a> below.</p>
 <h3 id="resource-subscriptions">Resource Subscriptions</h3>
 <p>The server declares <code>capabilities.resources.subscribe = true</code> in the <code>initialize</code> response. Clients can subscribe to any resource URI to receive push notifications when the content changes, without polling.</p>
 <p><strong>Protocol flow</strong></p>
@@ -4835,7 +4835,7 @@ h5i serve --port 8080
 </tbody>
 </table>
 <p><strong>Implementation</strong></p>
-<p>When a subscription is registered, h5i spawns a background polling thread (2-second interval) per URI. Each poll serialises the full <code>resources/read</code> response and compares it to the last-seen snapshot. If the content changed, the snapshot is updated and a <code>notifications/resources/updated</code> notification is pushed to stdout. Subscribing to an already-watched URI is idempotent: the existing thread is reused. Unsubscribing removes the URI from the watch map; the thread exits on its next poll.</p>
+<p>When a subscription is registered, h5i spawns a background polling thread (2-second interval) per URI. Each poll serialises the full <code>resources/read</code> response and compares it to the last-seen snapshot. If the content changed, the snapshot is updated and a <code>notifications/resources/updated</code> notification is pushed to stdout. Subscribing to an already-watched URI is idempotent — the existing thread is reused. Unsubscribing removes the URI from the watch map; the thread exits on its next poll.</p>
 <p><strong>Error responses</strong></p>
 <table>
 <thead>
@@ -4947,7 +4947,7 @@ h5i serve --port 8080
 <p>None of the <code>refs/h5i/*</code> refs are pushed or fetched by a plain <code>git push</code> / <code>git pull</code>. Use <code>h5i share push</code> / <code>h5i share pull</code> to share them.</p>
 <hr />
 <h2 id="appendix-integrity-rules">Appendix: Integrity Rules</h2>
-<p>Run with <code>h5i capture commit --audit</code> or via the Re-audit button in <code>h5i serve</code>. Pure string and stat checks, with no AI and no network.</p>
+<p>Run with <code>h5i capture commit --audit</code> or via the Re-audit button in <code>h5i serve</code>. Pure string and stat checks — no AI, no network.</p>
 <table>
 <thead>
 <tr>
@@ -5048,17 +5048,17 @@ h5i serve --port 8080
 <tbody>
 <tr>
 <td><code>h5i-pytest-adapter.py</code></td>
-<td><code>python plugin/h5i-pytest-adapter.py</code>, which uses <code>pytest-json-report</code> when available and falls back to output parsing</td>
+<td><code>python plugin/h5i-pytest-adapter.py</code> — uses <code>pytest-json-report</code> when available, falls back to output parsing</td>
 </tr>
 <tr>
 <td><code>h5i-cargo-test-adapter.sh</code></td>
-<td><code>bash plugin/h5i-cargo-test-adapter.sh</code>, which accumulates counts across lib/integration/doc-test sections</td>
+<td><code>bash plugin/h5i-cargo-test-adapter.sh</code> — accumulates counts across lib/integration/doc-test sections</td>
 </tr>
 </tbody>
 </table>
 <hr />
 <h2 id="appendix-environment-variables">Appendix: Environment Variables</h2>
-<p>h5i reads the following environment variables. All are optional; h5i ships with sensible defaults.</p>
+<p>h5i reads the following environment variables. All are optional — h5i ships with sensible defaults.</p>
 <h3 id="commit-provenance">Commit provenance</h3>
 <p>Auto-captured when the Claude Code hook is installed; you usually do not set these by hand.</p>
 <table>
@@ -5137,7 +5137,7 @@ h5i serve --port 8080
 <tr>
 <td><code>H5I_SECRET_&lt;NAME&gt;</code></td>
 <td>unset</td>
-<td>Default source for a secret grant <code>&lt;name&gt;</code> whose profile <code>source</code> is <code>env:H5I_SECRET_&lt;NAME&gt;</code> (the default). The broker injects it into the run, redacts it from evidence, and audits it by fingerprint, never the value. See <a href="#secrets-broker">secrets</a>.</td>
+<td>Default source for a secret grant <code>&lt;name&gt;</code> whose profile <code>source</code> is <code>env:H5I_SECRET_&lt;NAME&gt;</code> (the default). The broker injects it into the run, redacts it from evidence, and audits it by fingerprint — never the value. See <a href="#secrets-broker">secrets</a>.</td>
 </tr>
 </tbody>
 </table>
