@@ -177,6 +177,37 @@ fn send_inbox_history_roundtrip_in_one_repo() {
 }
 
 #[test]
+fn team_emits_json_roster_with_active_identity_marker() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "alice", "bob", "hello"]);
+
+    let output = a.h5i_as("alice", &["msg", "team", "--json"]);
+    assert!(output.status.success(), "{}", out_str(&output));
+    let roster: serde_json::Value =
+        serde_json::from_str(&out_str(&output)).expect("valid roster JSON");
+
+    assert_eq!(roster.as_array().map(Vec::len), Some(2));
+    assert!(roster.as_array().unwrap().iter().any(|entry| {
+        entry["name"] == "alice" && entry["you"] == true && entry["last_seen"].is_string()
+    }));
+    assert!(roster.as_array().unwrap().iter().any(|entry| {
+        entry["name"] == "bob" && entry["you"] == false && entry["last_seen"].is_string()
+    }));
+}
+
+#[test]
+fn team_emits_empty_json_array_for_an_empty_roster() {
+    let (_root, a, _b) = two_clones();
+
+    let output = a.h5i_as("alice", &["msg", "team", "--json"]);
+    assert!(output.status.success(), "{}", out_str(&output));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&out_str(&output)).expect("valid roster JSON"),
+        serde_json::json!([])
+    );
+}
+
+#[test]
 fn inbox_and_history_emit_raw_json_without_changing_cursor_semantics() {
     let (_root, a, _b) = two_clones();
     a.h5i_ok(&["msg", "send", "--from", "alice", "bob", "raw", "<message>"]);
