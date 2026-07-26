@@ -29,3 +29,8 @@ Allow: /
 
 Sitemap: https://h5i.dev/sitemap.xml
 # LLM-friendly index: https://h5i.dev/llms.txt
+
+# Sibling docs subdomain (h5i-db). Cross-submitted here so crawlers reach it
+# even though h5i.dev's visible navigation does not link to it yet.
+Sitemap: https://db.h5i.dev/sitemap.xml
+# LLM-friendly index: https://db.h5i.dev/llms.txt
