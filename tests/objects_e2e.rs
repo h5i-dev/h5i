@@ -499,6 +499,50 @@ fn search_finds_findings_by_text_path_and_metadata() {
 }
 
 #[test]
+fn search_json_emits_typed_hits_and_an_empty_array() {
+    let (_root, a) = single();
+    install_fake_tool(&a.dir, "pytest", FAILING_PYTEST);
+    h5i_path(&a, &["capture", "run", "--min-bytes", "0", "--", "pytest", "-q"]);
+
+    let matched = h5i_path(&a, &["recall", "search", "100", "--json"]);
+    assert!(
+        matched.status.success(),
+        "recall search --json failed:\nstdout: {}\nstderr: {}",
+        stdout(&matched),
+        stderr(&matched)
+    );
+    let rows: serde_json::Value =
+        serde_json::from_slice(&matched.stdout).expect("search output should be valid JSON");
+    let rows = rows
+        .as_array()
+        .expect("search output should be a JSON array");
+    assert_eq!(rows.len(), 1, "one capture should match: {rows:#?}");
+    assert!(rows[0]["id"].as_str().is_some_and(|id| !id.is_empty()));
+    assert!(rows[0]["timestamp"]
+        .as_str()
+        .is_some_and(|timestamp| !timestamp.is_empty()));
+    assert_eq!(rows[0]["cmd"], "pytest -q");
+    assert_eq!(rows[0]["exit_code"], 1);
+    assert_eq!(rows[0]["action"], "test");
+    assert_eq!(rows[0]["tool"], "pytest");
+    assert_eq!(rows[0]["status"], "failed");
+    assert_eq!(rows[0]["findings"][0]["kind"], "test_failure");
+    assert_eq!(rows[0]["findings"][0]["severity"], "failure");
+    assert_eq!(rows[0]["findings"][0]["message"], "assert 0 == 100");
+    assert_eq!(rows[0]["findings"][0]["location"]["path"], "tests/t.py");
+    assert!(rows[0]["findings"][0]["fingerprint"]
+        .as_str()
+        .is_some_and(|fingerprint| !fingerprint.is_empty()));
+
+    let empty = h5i_path(
+        &a,
+        &["recall", "search", "not-a-matching-finding", "--json"],
+    );
+    assert!(empty.status.success(), "empty JSON search should succeed");
+    assert_eq!(stdout(&empty).trim(), "[]");
+}
+
+#[test]
 fn search_validates_enum_and_duration_arguments() {
     let (_root, a) = single();
     // Each invalid enum value is rejected before any work, with a helpful message.

@@ -334,7 +334,7 @@ emits <code>--json</code> is safe to consume from a script or another agent.)</p
 </tr>
 <tr>
 <td>Inspect or grade what commands actually ran</td>
-<td><a href="#h5i-recall-object--objects"><code>h5i recall objects [--json]</code></a>, <a href="#h5i-recall-object--objects"><code>recall search</code></a></td>
+<td><a href="#h5i-recall-object--objects"><code>h5i recall objects [--json]</code></a>, <a href="#h5i-recall-object--objects"><code>recall search [--json]</code></a></td>
 <td>Typed feed: <code>cmd</code>, <code>exit</code>, <strong>action</strong> (test/build/read/write/egress), <strong>tool</strong>, validated <strong>status</strong>, enforced <strong>egress</strong> verdicts.</td>
 </tr>
 <tr>
@@ -2293,6 +2293,8 @@ h5i recall objects --status failed       # filter by structured status
 h5i recall objects --tool pytest         # by tool  (compose with --branch/--file/--diff)
 h5i recall objects --env fix-auth --json # typed feed for headless / CI grading
 h5i recall objects --env none            # only workspace captures (taken outside any env)
+h5i recall search &quot;connection refused&quot; --severity error --json
+                                             # typed matching findings for headless consumers
 h5i recall object &lt;id&gt;                    # rehydrate the FULL raw bytes
 h5i recall object &lt;id&gt; --summary          # the reduced summary only
 h5i recall object &lt;id&gt; --manifest         # the full manifest JSON record
@@ -2343,6 +2345,10 @@ independent, non-inferred signals. Note that in the default <code>signal</code> 
 mode small <strong>successful</strong> commands aren't stored; create the env with
 <code>h5i env create &lt;name&gt; --audit all</code> (or set <code>H5I_ENV_AUDIT_CAPTURE=all</code>) to
 record every wrapped command for a complete ledger.</p>
+<p><code>recall search --json</code> uses the same capture-level field names, adds a
+<code>findings</code> array containing only the findings selected by the query and filters,
+and honors <code>--limit</code>. A search with no matches emits <code>[]</code>; without <code>--json</code>, the
+existing human-readable output is unchanged.</p>
 <p>Inside a sandboxed env, a capture you just made is <strong>staged</strong> in the box's spool
 and not yet ingested into <code>refs/h5i/objects</code>; <code>h5i recall object &lt;cap-id&gt;</code> still
 rehydrates its full raw bytes from the spool (so an agent can re-read output that

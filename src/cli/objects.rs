@@ -152,6 +152,10 @@ pub enum ObjectsCommands {
         /// Maximum number of matching captures to show.
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
+        /// Emit a structured JSON array containing capture metadata and only
+        /// the findings matched by this search.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Evict local raw blobs to reclaim space. Manifests/summaries are kept.
@@ -931,6 +935,7 @@ pub fn run(action: ObjectsCommands) -> anyhow::Result<()> {
                     env,
                     since,
                     limit,
+                    json,
                 } => {
                     // Validate enum-valued filters up front against the canonical
                     // vocabularies, case-insensitively (mirrors `list --status`).
@@ -1003,6 +1008,70 @@ pub fn run(action: ObjectsCommands) -> anyhow::Result<()> {
                     // reverse to newest-first for display.
                     let newest: Vec<objects::Manifest> = all.into_iter().rev().collect();
                     let hits = objects::search_manifests(&newest, &filters);
+
+                    if json {
+                        // Mirror `recall objects --json` for capture-level fields,
+                        // then attach only the findings selected by the search.
+                        let store = objects::LocalStore::new(&h5i_root);
+                        #[derive(serde::Serialize)]
+                        struct SearchJson<'a> {
+                            id: &'a str,
+                            timestamp: &'a str,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            cmd: Option<&'a str>,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            exit_code: Option<i32>,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            action: Option<&'a str>,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            tool: Option<&'a str>,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            status: Option<String>,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            duration_ms: Option<u64>,
+                            kind: &'a str,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            branch: Option<&'a str>,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            env_id: Option<&'a str>,
+                            #[serde(skip_serializing_if = "Option::is_none")]
+                            egress: Option<&'a h5i_core::sandbox_policy::EgressSummary>,
+                            raw_size: u64,
+                            raw_present: bool,
+                            findings: Vec<&'a h5i_core::structured::Finding>,
+                        }
+                        let rows: Vec<SearchJson> = hits
+                            .iter()
+                            .take(limit)
+                            .map(|hit| {
+                                let m = hit.manifest;
+                                let st = m.structured.as_ref();
+                                SearchJson {
+                                    id: &m.id,
+                                    timestamp: &m.timestamp,
+                                    cmd: m.cmd.as_deref(),
+                                    exit_code: m.exit_code,
+                                    action: m.action.as_deref(),
+                                    tool: st.map(|s| s.tool.as_str()),
+                                    status: st.and_then(|s| {
+                                        serde_json::to_value(s.status)
+                                            .ok()
+                                            .and_then(|v| v.as_str().map(str::to_string))
+                                    }),
+                                    duration_ms: st.and_then(|s| s.duration_ms),
+                                    kind: &m.kind,
+                                    branch: m.branch.as_deref(),
+                                    env_id: m.env_id.as_deref(),
+                                    egress: m.egress.as_ref(),
+                                    raw_size: m.raw_size,
+                                    raw_present: store.has(m.hex()),
+                                    findings: hit.findings.clone(),
+                                }
+                            })
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&rows)?);
+                        return Ok(());
+                    }
 
                     if hits.is_empty() {
                         println!("No captured findings match that search.");
