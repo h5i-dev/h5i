@@ -530,55 +530,55 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                         anyhow::bail!("--json can only be used when listing the allowlist");
                     }
                     match rule {
-                    None => {
-                        let rules = h5i_core::env::user_allow_list();
-                        let path = h5i_core::env::user_allow_path();
-                        if json {
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&serde_json::json!({
-                                    "path": path.map(|path| path.display().to_string()),
-                                    "rules": rules,
-                                }))?
-                            );
-                        } else {
-                            match path {
-                                Some(path) => println!("── user egress allowlist ({}) ──", path.display()),
-                                None => println!("── user egress allowlist ──"),
-                            }
-                            if rules.is_empty() {
-                                println!("  (empty — add one with `h5i env allow <host>`)");
-                            }
-                            for r in &rules {
-                                println!("  {r}");
-                            }
-                            println!(
-                                "  applies to container-tier envs whose profile sets net.egress; \
-                                 takes effect at the next env run/shell"
-                            );
-                        }
-                    }
-                    Some(raw) => {
-                        if remove {
-                            let (removed, path) = h5i_core::env::user_allow_remove(&raw)?;
-                            if removed {
-                                println!("✔  removed '{}' from {}", raw.trim(), path.display());
-                            } else {
-                                println!("   '{}' was not in {}", raw.trim(), path.display());
-                            }
-                        } else {
-                            let (added, path) = h5i_core::env::user_allow_add(&raw)?;
-                            if added {
-                                println!("✔  allowed '{}' ({})", raw.trim(), path.display());
+                        None => {
+                            let rules = h5i_core::env::user_allow_list();
+                            let path = h5i_core::env::user_allow_path();
+                            if json {
                                 println!(
-                                    "   merged into container-tier envs whose profile sets \
-                                     net.egress, from the next env run/shell on"
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "path": path.map(|path| path.display().to_string()),
+                                        "rules": rules,
+                                    }))?
                                 );
                             } else {
-                                println!("   '{}' already allowed ({})", raw.trim(), path.display());
+                                match path {
+                                    Some(path) => println!("── user egress allowlist ({}) ──", path.display()),
+                                    None => println!("── user egress allowlist ──"),
+                                }
+                                if rules.is_empty() {
+                                    println!("  (empty — add one with `h5i env allow <host>`)");
+                                }
+                                for r in &rules {
+                                    println!("  {r}");
+                                }
+                                println!(
+                                    "  applies to container-tier envs whose profile sets net.egress; \
+                                     takes effect at the next env run/shell"
+                                );
                             }
                         }
-                    }
+                        Some(raw) => {
+                            if remove {
+                                let (removed, path) = h5i_core::env::user_allow_remove(&raw)?;
+                                if removed {
+                                    println!("✔  removed '{}' from {}", raw.trim(), path.display());
+                                } else {
+                                    println!("   '{}' was not in {}", raw.trim(), path.display());
+                                }
+                            } else {
+                                let (added, path) = h5i_core::env::user_allow_add(&raw)?;
+                                if added {
+                                    println!("✔  allowed '{}' ({})", raw.trim(), path.display());
+                                    println!(
+                                        "   merged into container-tier envs whose profile sets \
+                                         net.egress, from the next env run/shell on"
+                                    );
+                                } else {
+                                    println!("   '{}' already allowed ({})", raw.trim(), path.display());
+                                }
+                            }
+                        }
                     }
                 }
 
