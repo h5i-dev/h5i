@@ -93,6 +93,9 @@ pub enum EnvCommands {
         /// Remove the rule instead of adding it.
         #[arg(long)]
         remove: bool,
+        /// Emit the stored rules and their file as JSON (list form only).
+        #[arg(long, conflicts_with = "rule", conflicts_with = "remove")]
+        json: bool,
     },
 
     /// Probe what isolation this host can actually provide (Landlock, user
@@ -522,7 +525,14 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Allow { rule, remove } => match rule {
+                EnvCommands::Allow { rule, remove, json } => match rule {
+                    None if json => {
+                        let doc = serde_json::json!({
+                            "path": h5i_core::env::user_allow_path(),
+                            "rules": h5i_core::env::user_allow_list(),
+                        });
+                        println!("{}", serde_json::to_string_pretty(&doc)?);
+                    }
                     None => {
                         let rules = h5i_core::env::user_allow_list();
                         match h5i_core::env::user_allow_path() {
