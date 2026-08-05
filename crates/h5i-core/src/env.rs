@@ -2102,31 +2102,16 @@ pub fn write_inbox_cursor(
     Ok(())
 }
 
-/// The highest round this box has submitted for (`h5i team agent submit` records
-/// it). The team Stop hook reads it so that, once an agent has submitted, the
-/// round's standing review messages stop re-surfacing — submit == "done for this
-/// round" — while a *newer* round's messages (higher round) still break through.
-/// Box-writable spool path (the team refs are sealed), like the inbox cursor.
-/// Named without a `team-`/`note-`/`ctxsnap-` prefix so the spool ingest never
-/// drains it.
-pub fn read_submitted_round(spool: &Path) -> Option<u32> {
-    let path = spool.join("submitted-round.json");
-    std::fs::read(path)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-}
-
-/// Record that this box has submitted for `round` (monotonic: never lowers a
-/// previously recorded round). Best-effort.
-pub fn write_submitted_round(spool: &Path, round: u32) -> Result<(), H5iError> {
-    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
-    let next = read_submitted_round(spool).unwrap_or(0).max(round);
-    let path = spool.join("submitted-round.json");
-    let bytes = serde_json::to_vec(&next)?;
-    std::fs::write(&path, bytes).map_err(|e| H5iError::with_path(e, &path))?;
-    Ok(())
-}
-
+/// Stage the box's write window for observation records.
+///
+/// This is the receipt-integrity boundary: the box is granted `<env>/spool`
+/// and nothing else under the env directory. The receipt log itself
+/// (`<env>/receipt.jsonl`) and the stored payloads (`<env>/receipts/`) sit one
+/// level up, outside every grant, so a box can stage a *new* record but can
+/// never rewrite one the host has already recorded. Host-side ingest is what
+/// moves a staged record into the log, and it stamps the lane (`tee-shim`,
+/// `inbox-capture`) so box-claimed evidence stays distinguishable from
+/// host-observed evidence forever.
 fn prepare_env_capture_spool(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -2177,15 +2162,6 @@ pub struct InboxCaptureMeta {
 pub struct CodexHookTraceEvent {
     pub kind: String,
     pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodexHookSpoolRecord {
-    pub session_id: String,
-    #[serde(default)]
-    pub prompts: Vec<String>,
-    #[serde(default)]
-    pub events: Vec<CodexHookTraceEvent>,
 }
 
 pub fn write_inbox_capture_spool(
@@ -2294,22 +2270,6 @@ fn inbox_pending_context_path_from(
     Some(PathBuf::from(capture_spool?).join(SPOOL_PENDING_CONTEXT))
 }
 
-pub fn write_codex_hook_spool(
-    spool: &Path,
-    record: &CodexHookSpoolRecord,
-) -> Result<String, H5iError> {
-    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let base = format!("codex-hook-{}-{nanos}", std::process::id());
-    let path = spool.join(format!("{base}.json"));
-    let json = serde_json::to_vec(record)?;
-    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
-    Ok(base)
-}
-
 fn merged_env(a: &[(String, String)], b: &[(String, String)]) -> Vec<(String, String)> {
     let mut out = a.to_vec();
     out.extend_from_slice(b);
@@ -2346,27 +2306,6 @@ pub fn team_binding(h5i_root: &Path, m: &EnvManifest) -> Option<(String, String)
     }
 }
 
-/// Stage an in-box `h5i commit` note for host ingest. The notes ref
-/// (`refs/h5i/notes`) is sealed in the box, so the commit lands on the env
-/// branch but its `H5iCommitRecord` JSON is written here; the host applies it
-/// (scoped to the env branch) on the next [`ingest_shell_spool`]. The filename
-/// carries the commit oid so the ingest can dedup/validate it.
-pub fn write_note_spool(spool: &Path, oid: &str, record_json: &str) -> Result<(), H5iError> {
-    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
-    // `oid` is a git hex id; constrain the filename to that charset defensively.
-    let safe: String = oid
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .take(64)
-        .collect();
-    if safe.is_empty() {
-        return Err(H5iError::Metadata("empty commit oid for note spool".into()));
-    }
-    let path = spool.join(format!("note-{safe}.json"));
-    std::fs::write(&path, record_json).map_err(|e| H5iError::with_path(e, &path))?;
-    Ok(())
-}
-
 /// A context snapshot staged from inside a box. The box can build the anchor
 /// commit object (the `objects/` store is rw) but can't write
 /// `refs/h5i/context-snapshots/*` (sealed ro), so the *ref creation* is deferred
@@ -2380,30 +2319,6 @@ pub struct ContextSnapshotSpool {
     /// The pre-built anchor commit (already in the shared object store) the ref
     /// should point at.
     pub anchor_oid: String,
-}
-
-/// Stage a context snapshot's ref creation for host ingest. Keyed by short sha,
-/// so a re-commit at the same short sha overwrites rather than piling up.
-pub fn write_context_snapshot_spool(
-    spool: &Path,
-    record: &ContextSnapshotSpool,
-) -> Result<(), H5iError> {
-    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
-    let safe: String = record
-        .short_sha
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .take(64)
-        .collect();
-    if safe.is_empty() {
-        return Err(H5iError::Metadata(
-            "empty short sha for context snapshot spool".into(),
-        ));
-    }
-    let path = spool.join(format!("ctxsnap-{safe}.json"));
-    let json = serde_json::to_vec(record)?;
-    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
-    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -6604,21 +6519,6 @@ mod tests {
     }
 
     #[test]
-    fn submitted_round_sentinel_is_monotonic() {
-        let dir = tempfile::tempdir().unwrap();
-        let spool = dir.path().join("spool");
-        assert_eq!(read_submitted_round(&spool), None);
-        write_submitted_round(&spool, 1).unwrap();
-        assert_eq!(read_submitted_round(&spool), Some(1));
-        // A higher round advances it...
-        write_submitted_round(&spool, 3).unwrap();
-        assert_eq!(read_submitted_round(&spool), Some(3));
-        // ...but a lower (stale) round never lowers it.
-        write_submitted_round(&spool, 2).unwrap();
-        assert_eq!(read_submitted_round(&spool), Some(3));
-    }
-
-    #[test]
     fn read_staged_capture_round_trips_and_rejects_unsafe_ids() {
         let dir = tempfile::tempdir().unwrap();
         let spool = dir.path().join("spool");
@@ -6638,51 +6538,6 @@ mod tests {
         assert!(read_staged_capture_at(&spool, "cap-does-not-exist").is_none());
         assert!(read_staged_capture_at(&spool, "note-abc").is_none());
         assert!(read_staged_capture_at(&spool, "cap-../../etc/passwd").is_none());
-    }
-
-    #[test]
-    fn context_snapshot_spool_is_named_so_ingest_never_drains_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let spool = dir.path().join("spool");
-        let rec = ContextSnapshotSpool {
-            git_sha: "a".repeat(40),
-            short_sha: "abc12345".into(),
-            anchor_oid: "b".repeat(40),
-        };
-        write_context_snapshot_spool(&spool, &rec).unwrap();
-        let name = "ctxsnap-abc12345.json";
-        assert!(spool.join(name).is_file());
-        // Must not collide with the note / team-outbound / inbox-cursor names the
-        // spool ingest recognizes.
-        assert!(!name.starts_with("note-"));
-        assert!(!name.starts_with("team-submit-"));
-        assert!(!name.starts_with("team-review-"));
-        assert_ne!(name, "team-inbox-seen.json");
-        assert_ne!(name, "submitted-round.json");
-    }
-
-    #[test]
-    fn write_note_spool_sanitizes_filename_and_rejects_empty_oid() {
-        let dir = tempfile::tempdir().unwrap();
-        let spool = dir.path().join("spool");
-        // A normal hex oid → `note-<oid>.json`.
-        let oid = "a".repeat(40);
-        write_note_spool(&spool, &oid, "{\"x\":1}").unwrap();
-        assert!(spool.join(format!("note-{oid}.json")).is_file());
-        // A hostile "oid" with path/shell chars is stripped to its alnum run.
-        write_note_spool(&spool, "../../evil-#$", "{}").unwrap();
-        let names: Vec<String> = std::fs::read_dir(&spool)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        assert!(names
-            .iter()
-            .all(|n| n.starts_with("note-") && n.ends_with(".json")));
-        assert!(!names
-            .iter()
-            .any(|n| n.contains("..") || n.contains('/') || n.contains('#')));
-        // An all-non-alnum oid leaves nothing to name → error, no file written.
-        assert!(write_note_spool(&spool, "../", "{}").is_err());
     }
 
     #[test]
@@ -7505,6 +7360,32 @@ mod tests {
         );
         let e = abort(&repo, h5i_root, &mut m).expect_err("abort");
         assert!(format!("{e}").contains("busy"), "abort: {e}");
+    }
+
+    /// The box's staging window is its spool and nothing above it. This is the
+    /// whole receipt-integrity argument: `receipt.jsonl` and `receipts/` are
+    /// siblings of `spool/`, so a grant that stops at the spool cannot reach a
+    /// record the host already wrote.
+    #[test]
+    fn the_capture_spool_grant_never_reaches_the_receipt_store() {
+        let td = tempfile::tempdir().unwrap();
+        let h5i_root = td.path();
+        let m = canonical_manifest("claude", "sealed");
+        let mut policy = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            crate::sandbox::Profile::builtin("default", IsolationClaim::Process),
+        );
+
+        let before = policy.profile.fs_write.len();
+        prepare_env_capture_spool(h5i_root, &m, &mut policy).unwrap();
+        let added: Vec<&String> = policy.profile.fs_write[before..].iter().collect();
+        assert_eq!(added.len(), 1, "exactly one grant is added: {added:?}");
+
+        let granted = std::path::Path::new(added[0]);
+        let dir = env_dir(h5i_root, &m.agent, &m.slug);
+        assert_eq!(granted, dir.join("spool"));
+        assert!(!dir.join("receipt.jsonl").starts_with(granted));
+        assert!(!dir.join("receipts").starts_with(granted));
     }
 
     #[test]

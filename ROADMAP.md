@@ -272,23 +272,33 @@ The receipt is generated **inside** the box, by the shell shim and the browser
 daemon. That is acceptable, and the only property that has to hold is that the
 agent cannot rewrite what has already been recorded.
 
-So the receipt is append only *by construction*, not by convention:
+Today that property comes from **sealing, not from an fd**, and it is already
+true:
 
-- Records are written to an inherited **file descriptor**, not to a path. The
-  box's init process holds the write end of a pipe to a host side collector; the
-  shim writes framed records into it. There is no file in the box to open, seek,
-  or truncate, and a fresh `open()` of the same fd number gets nothing.
-- The host collector timestamps and orders records. Ordering is the host's, not
-  the box's.
+- The box's write window under its env directory is exactly `<env>/spool`. The
+  receipt log (`<env>/receipt.jsonl`) and the stored payloads
+  (`<env>/receipts/`) are siblings of that spool, outside every grant. The box
+  stages a record; the host ingests it. There is no path from inside to a
+  record the host has already written. (`prepare_env_capture_spool`, pinned by
+  a unit test and an integration test.)
+- Ordering and timestamps are the host's, applied at ingest.
 - Two fields are host observed and never taken from the box: process exits and
   resource usage come from the supervisor's `wait4`, and egress comes from the
-  allowlist proxy's own log. If the in box stream and the host observation
-  disagree, the export says so.
+  allowlist proxy's own log.
+- Every record carries the **lane** that observed it (`host-env-run` is host
+  observed; `tee-shim` and `inbox-capture` are box claimed), so the two kinds
+  of evidence never blur together.
 
-What an agent can still do is write *extra* records, or stop writing. Both are
-visible: a gap between host observed exits and box reported commands is itself a
-receipt finding. We do not claim more than that, and the doc will say it in
-these terms.
+What an agent can still do is stage *extra* records, or stop writing. Both are
+visible: a gap between host observed exits and box reported commands is itself
+a receipt finding. We do not claim more than that, and the docs say it in these
+terms.
+
+An inherited-fd writer (records streamed to a host collector over a pipe, no
+file in the box at all) remains the stronger design, because it also removes
+the staging window. It is worth doing when the container tier's spool becomes
+the common path, not before: the sealing argument above already covers the
+"cannot rewrite" half, which is the half that matters for trust.
 
 ### 5.8 Warm caches
 
@@ -472,10 +482,14 @@ env create/run/shell/status/diff/propose/apply/rm/gc` all work with no git notes
 and no context refs, clippy clean with `--all-targets --all-features`, the
 binary builds without the `web` feature because the feature is gone.
 
-**M2. `h5i dev` and copy in.** New command surface with `env` aliased. Copy in
-workspace for the container tier, four sources (`.`, repo URL, PR, `--new`).
-Export gate replacing `propose`/`apply`, with the fd based receipt stream from
-5.7. Exit: a PR reviewed end to end with the host repo mounted nowhere.
+**M2. `h5i dev` and copy in.** New command surface with `env` aliased
+(**done**: short form, `ls`, hidden alias). Export gate replacing
+`propose`/`apply` (**done**: patch + report + receipt bundle, refuses to
+overwrite). `h5i skill install` from the embedded skill (**done**). Receipt
+integrity by sealing, with the test that pins it (**done**, 5.7).
+**Remaining**: the copy-in workspace for the container tier and the other two
+sources (repo URL, `--new`). Exit: a PR reviewed end to end with the host repo
+mounted nowhere.
 
 **M3. Agent in box hardening.** Broker default on, GitHub capability helper,
 credential seed audit, no host creds reachable from a box, verified by a test
@@ -559,9 +573,11 @@ Being explicit about these is a feature, since the claim is a security claim.
   actually needs more than a page viewport.
 - **Warm caches are in scope.** Read only per project cache volumes, written
   only by a dedicated refresh box with no agent in it (5.8).
-- **The receipt may be generated in the box**, provided the agent cannot rewrite
-  it. That is bought with an inherited fd instead of a file, plus two host
-  observed fields for cross checking (5.7).
+- **The receipt may be generated in the box**, provided the agent cannot
+  rewrite it. That is bought today by sealing — the receipt store sits outside
+  every write grant the box has — plus two host observed fields for cross
+  checking. The inherited-fd writer stays on the table as the stronger form
+  (5.7).
 - **No MCP.** `mcp.rs` and the `h5i_env_*` tools go with the rest. The premise
   of MCP here was a host side agent reaching into a box, which is the shape this
   product exists to eliminate. The agent is inside the box, and inside the box

@@ -4357,3 +4357,43 @@ fn skill_install_writes_the_embedded_pages() {
     let page = out_str(&r.h5i_ok(&["skill", "show", "policy"]));
     assert!(page.contains("Profiles"), "{page}");
 }
+
+/// Receipt integrity: the persisted policy grants the box `$WORK` and nothing
+/// else under its env directory, so the receipt log and its payloads — which
+/// live one level up from the worktree — are unreachable for writing from
+/// inside. A box can stage a new record in its spool; it cannot edit one the
+/// host already recorded.
+#[test]
+fn the_receipt_log_is_outside_the_boxs_write_grants() {
+    if !process_tier_runnable() {
+        eprintln!("skipping: this host cannot run process-tier confinement");
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["dev", "--name", "sealed", "--isolation", "process"]);
+    r.h5i_ok(&["dev", "run", "sealed", "--", "sh", "-c", "echo recorded"]);
+
+    let env_dir = r.env_dir("sealed");
+    assert!(env_dir.join("receipt.jsonl").is_file(), "a receipt was written");
+
+    let policy =
+        std::fs::read_to_string(env_dir.join("policy.resolved.toml")).expect("resolved policy");
+    let writes = policy
+        .lines()
+        .find(|l| l.trim_start().starts_with("fs_write"))
+        .expect("the resolved policy states its write grants");
+
+    // `$WORK` is the worktree — a subdirectory of the env dir. Nothing may
+    // grant the env dir itself, which is where receipt.jsonl and receipts/ are.
+    for grant in ["receipt", "receipts"] {
+        assert!(
+            !writes.contains(grant),
+            "the receipt store must never appear in a write grant: {writes}"
+        );
+    }
+    assert!(writes.contains("$WORK"), "the worktree is the write window: {writes}");
+    assert!(
+        !writes.contains(&env_dir.display().to_string()),
+        "no grant names the env directory itself: {writes}"
+    );
+}
