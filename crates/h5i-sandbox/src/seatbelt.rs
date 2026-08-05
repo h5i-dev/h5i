@@ -1624,38 +1624,42 @@ mod tests {
         }
         let (_tmp, work, pol) = functional_env();
         let plan = plan(&pol, &work, &SeatbeltOptions::default());
-        if runs_under(&plan.profile) {
+        if runs_under(&plan.profile, &work) {
             return; // healthy: nothing to locate
         }
         // Each candidate is appended to the real profile; SBPL is last-match-wins
         // so an appended allow overrides the restriction under test.
-        let candidates = [
-            "(allow file-read*)",
-            "(allow file-map-executable)",
-            "(allow file-read* file-map-executable)",
-            "(allow process-exec* (subpath \"/\"))",
-            "(allow file-read* (subpath \"/System/Volumes\"))",
-            "(allow file-read* (subpath \"/private/var/db\"))",
-            "(allow sysctl-read)",
-            "(allow mach-lookup)(allow mach-priv-task-port)",
-            "(allow file-read-metadata)",
-            "(allow process-info*)",
-            "(allow file-issue-extension file-map-executable)",
+        // A blanket `(allow file-read*)` is already known to repair it while
+        // `(allow file-map-executable)` alone does not, so the fault is a
+        // missing **read path**. Narrow it: grant one filesystem root at a time
+        // and see which single root is enough. Roots already in the profile are
+        // included deliberately — if granting `/System` again repairs the run,
+        // then what the program needs resolves somewhere the existing narrower
+        // `/System/...` entries do not reach.
+        let roots = [
+            "/System", "/usr", "/bin", "/sbin", "/private", "/Library",
+            "/Applications", "/opt", "/dev", "/Users", "/Volumes", "/cores",
+            "/net", "/home", "/.vol", "/var", "/etc", "/tmp",
         ];
-        let repairs: Vec<&str> = candidates
+        let repairing_roots: Vec<&str> = roots
             .iter()
             .copied()
-            .filter(|c| runs_under(&format!("{}\n{c}\n", plan.profile)))
+            .filter(|r| {
+                runs_under(
+                    &format!("{}\n(allow file-read* (subpath \"{r}\"))\n", plan.profile),
+                    &work,
+                )
+            })
             .collect();
         panic!(
             "a command cannot run under the real profile.\n\
-             candidates that repair it ({}):\n  {}\n\
+             single filesystem roots that repair it ({}):\n  {}\n\
              --- profile ---\n{}",
-            repairs.len(),
-            if repairs.is_empty() {
-                "(none — the document itself is likely malformed)".to_string()
+            repairing_roots.len(),
+            if repairing_roots.is_empty() {
+                "(none individually — more than one path is missing)".to_string()
             } else {
-                repairs.join("\n  ")
+                repairing_roots.join("\n  ")
             },
             plan.profile
         );
@@ -1665,7 +1669,7 @@ mod tests {
     /// Deliberately not "did it die on a signal": macOS kills on a denied exec,
     /// so only a successful exit distinguishes a working profile.
     #[cfg(target_os = "macos")]
-    fn runs_under(profile: &str) -> bool {
+    fn runs_under(profile: &str, cwd: &Path) -> bool {
         let Ok(file) = ProfileFile::write(profile) else {
             return false;
         };
@@ -1673,6 +1677,11 @@ mod tests {
             .arg("-f")
             .arg(file.path())
             .arg("/usr/bin/true")
+            // The real path runs in $WORK, which is granted. Matching it here
+            // keeps the cwd from becoming a difference between probe and
+            // reality — otherwise a root containing the test's own cwd would
+            // look like the missing grant.
+            .current_dir(cwd)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
