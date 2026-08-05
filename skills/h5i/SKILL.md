@@ -67,6 +67,16 @@ Chrome runs with its own sandbox off (h5i's box is the boundary), its profile
 is created fresh inside the box, and its network reach is the box's egress
 allowlist. `agent-browser --help` is the full verb table.
 
+**Control.** A human at the viewer can take the browser from you:
+
+```bash
+h5i browser status <name>    # who holds control, and whether your @refs are stale
+```
+
+If it says a human holds control, wait — do not retry in a loop. When control
+comes back, your `@ref` handles are stale because the page moved: run
+`agent-browser snapshot` before acting, or the click lands somewhere else.
+
 ## The output gate
 
 A box cannot write to the host. Getting work out is one command, and it is

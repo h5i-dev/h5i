@@ -5,6 +5,7 @@
 //! stays a thin router. A handler is
 //! `pub fn run(action: <Noun>Commands) -> anyhow::Result<()>`.
 
+pub mod browser;
 pub mod completion;
 pub mod dev;
 pub mod man;

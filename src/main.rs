@@ -34,6 +34,12 @@ enum Commands {
         action: cli::dev::DevCommands,
     },
 
+    /// The browser control lock: who is driving the browser in a box.
+    Browser {
+        #[command(subcommand)]
+        action: cli::browser::BrowserCommands,
+    },
+
     /// Write or print the agent skill this binary carries.
     Skill {
         #[command(subcommand)]
@@ -151,6 +157,7 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Dev(args) => cli::dev::run(args.into_command()?)?,
         Commands::Env { action } => cli::dev::run(action)?,
+        Commands::Browser { action } => cli::browser::run(action)?,
         Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,
         Commands::Man => cli::man::run()?,

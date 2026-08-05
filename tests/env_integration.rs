@@ -4507,14 +4507,19 @@ fn the_browser_profile_fails_closed_without_the_tooling() {
         let status = out_str(&r.h5i_ok(&["dev", "status", "br"]));
         assert!(status.contains("profile=browser"), "{status}");
     } else {
+        // Two ways a browser box is legitimately refused, and both must say
+        // which one it is: the host has no browser to grant, or the tier cannot
+        // enforce the egress allowlist the profile carries (it is a
+        // supervised/container profile, like `agent`).
+        let names_tooling = text.contains("agent-browser") || text.contains("Chrome");
+        let names_tier = text.contains("net.egress") && text.contains("cannot enforce");
         assert!(
-            text.contains("agent-browser") || text.contains("Chrome"),
+            names_tooling || names_tier,
             "the refusal must name what is missing: {text}"
         );
-        assert!(
-            text.contains("install"),
-            "and how to get it: {text}"
-        );
+        if names_tooling {
+            assert!(text.contains("install"), "and how to get it: {text}");
+        }
         assert!(
             !r.env_dir("br").exists(),
             "a refused create must leave nothing behind"

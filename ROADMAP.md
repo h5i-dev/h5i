@@ -582,10 +582,16 @@ an unset variable is one the box can set for itself, so it is pinned empty.
 receipt. Exit: an agent fixes a real UI bug using only agent-browser output as
 its feedback.
 
-**M5. Viewer — not started.** `h5i dev view` and `h5i browser url`: an h5i-owned
+**M5. Viewer — control lock landed, forward not yet.** Done: the control lock
+(`crates/h5i-core/src/control.rs`, `h5i browser status|take|release`). The
+agent holds control by default, a human *takes* it rather than asking, and
+handing it back sets a stale-handle flag that refuses the agent's next mutating
+action until it re-snapshots — read-only verbs stay available throughout,
+because watching never collides. Nothing upstream arbitrates this, which is
+why it is ours.
+**Remaining**:  `h5i dev view` and `h5i browser url` — an h5i-owned
 forward of the agent-browser stream to loopback with a per box token, a minimal
-viewer page, the control lock and its pause and resume protocol, session
-recording into the export. The forward has to cross the box's private netns;
+viewer page, and session recording into the export. The forward has to cross the box's private netns;
 h5i is the supervisor and holds the pid, so it joins the namespace rather than
 punching a hole in it. Exit: a human takes over mid run, finishes a form, hands
 control back, and the agent continues from a fresh snapshot.
