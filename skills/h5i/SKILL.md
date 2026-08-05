@@ -72,10 +72,13 @@ h5i dev probe                    # what this host can enforce at all
 h5i dev capabilities <name> --json   # what this box got: tier, egress, limits
 ```
 
-Tiers, weakest to strongest: `workspace` (no confinement, just a separate
-worktree), `process` and `supervised` (Landlock + seccomp + namespaces),
-`container` (rootless Podman; the only tier with a network egress allowlist).
-h5i never silently downgrades — an unsatisfiable request fails closed.
+Tiers: `workspace` (no confinement, just a separate worktree), `process`
+(Landlock + seccomp + namespaces), `supervised` (adds a private netns with an
+nftables egress allowlist pinned to resolved IPs, and a socket gate),
+`container` (rootless Podman: a portable image, with a proxy-based egress
+allowlist). Strongest network scoping is `supervised`; `container` buys
+portability. h5i never silently downgrades — an unsatisfiable request fails
+closed.
 
 ## When something is denied
 

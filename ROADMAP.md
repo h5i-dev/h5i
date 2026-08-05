@@ -168,31 +168,46 @@ Consequences to design for:
   they have no volume abstraction. `container` becomes the default tier for
   `h5i dev`, and the copy in model is container only at first.
 
-### 5.2 Pod layout
+### 5.2 Where the browser runs
 
-A box is a Podman **pod** with a shared network namespace and one shared work
-volume:
+The first draft of this section put the browser in a second container and
+reached for a Podman **pod** to share a network namespace with the agent. That
+was the wrong starting point, for two reasons found while planning M4.
+
+**One: the supervised tier already has stronger network scoping than the
+container tier.** `supervised` puts the box in a private network namespace and
+enforces `net.egress` with **nftables rules pinned to resolved IPs**, DNS
+pinned by a hosts file, and a seccomp-notify gate on `socket()`. That is L3/L4:
+a program that ignores proxy settings still cannot reach an off-list address.
+The container tier's allowlist is an HTTP/HTTPS CONNECT proxy, which only binds
+proxy-respecting tooling. The container tier buys **portability**, not tighter
+network control, and this document said the opposite for two drafts.
+
+**Two: one box is simpler than two.** Put the browser in the *same* box as the
+agent and the dev server on `localhost:3000` is reachable with no netns
+sharing, no pod, no port publishing and no second image. At the kernel tiers
+the "image" is the host filesystem under Landlock grants, so the browser is a
+profile change: grant Chrome and the agent-browser binary, and launch the
+daemon inside the box.
+
+So M4 targets a single supervised box:
 
 ```
-pod h5i-dev-<name>   (rootless, slirp4netns, no host net)
-├── agent      : agent image, /work rw, runs Claude/Codex, build, tests, dev server
-├── browser    : headless Chrome + the agent-browser daemon, /work ro
-└── (host side): egress allowlist proxy, credential broker, viewer on 127.0.0.1
+box (supervised)   private netns, nftables egress allowlist, Landlock, seccomp
+├── the agent, its builds and tests, the dev server on localhost:3000
+├── headless Chrome (no X: --headless=new)
+└── the agent-browser daemon, driven over the CLI
 ```
 
-Why two containers instead of one: the browser image carries Chrome and its
-sandbox, which is a large attack surface and a large image to force on every
-agent box. Splitting keeps the agent image slim and lets a headless run skip the
-browser entirely. The shared netns is what makes it work: the dev server on
-`localhost:3000` in `agent` is `localhost:3000` in `browser`, with no port
-publishing and no host exposure.
+The container tier stays the **portability** path, and it comes back when the
+work needs an arbitrary image or a host without the kernel stack. That is when
+the pod split earns its cost, not before.
 
-Note what is **not** in that list: no X server, no window manager, no
-GStreamer, no PulseAudio. The browser runs headless and the human viewer is fed
-by CDP screencast (7.), so the whole desktop stack disappears.
-
-Single container mode stays available as `--browser=inline` for hosts where a
-pod is not practical.
+One thing this costs, and it should be stated: our seccomp deny-list blocks the
+namespace syscalls Chrome's own sandbox needs, so Chrome runs with
+`--no-sandbox` inside the box. h5i's box is the boundary, not Chrome's; the
+same is true under rootless Podman. It is a real reduction in defence in depth
+and it belongs in the limits section rather than in a footnote.
 
 ### 5.3 Browser control
 
@@ -200,15 +215,16 @@ The automation itself is **agent-browser** (7.), running inside the `browser`
 container. h5i does not reimplement clicking. What h5i owns is everything
 around it:
 
-- The daemon and its CDP port stay on **pod loopback**. Nothing is published to
-  the host; the human viewer reaches the stream through an h5i-owned forward
-  with a per box token (5.9).
+- The daemon and its CDP port stay inside the box's network namespace. Nothing
+  is published to the host; the human viewer reaches the stream through an
+  h5i-owned forward with a per box token (5.9).
 - Chrome runs with a **fresh profile created in the box**. No host profile, no
   host cookie jar, no host extension, no host history.
-- Chrome's egress goes through the same allowlist proxy as everything else,
-  with `NO_PROXY` covering pod loopback so the dev server is always reachable.
-  agent-browser's own `--allowed-domains` is set from the same policy, giving a
-  second, in-process layer.
+- Chrome's egress is the box's egress: at `supervised` that is the nftables
+  allowlist, which needs no cooperation from Chrome at all. Loopback stays open
+  so the dev server is always reachable. agent-browser's own
+  `--allowed-domains` is set from the same policy as a second, in-process
+  layer.
 - **AI features off.** agent-browser's `chat` and the dashboard's AI panel send
   page content to an external gateway. In a box that is an exfiltration path
   with a friendly name, so `AI_GATEWAY_API_KEY` is never injected and `chat` is
@@ -338,7 +354,9 @@ nothing else is in the pod. It is not fine on a developer machine with a
 browser on it.
 
 So the port is never published. `h5i dev view` starts a small forward the host
-owns:
+owns. It reaches into the box's private network namespace the same way the
+supervisor already does (h5i is the parent process and holds the pid), rather
+than by opening a hole in the netns:
 
 - It binds `127.0.0.1` only, on a port h5i chose, and prints the URL.
 - Every connection presents a **per box token**, minted at box creation and
@@ -456,9 +474,9 @@ What that buys us, beyond not writing it:
 
 What stays ours, and it is not small:
 
-1. **The boundary.** The stream port and the CDP port never leave pod loopback.
-   The viewer is reached through an h5i-owned forward with a per box token
-   (5.9). agent-browser assumes a friendly localhost; we do not.
+1. **The boundary.** The stream port and the CDP port never leave the box's
+   network namespace. The viewer is reached through an h5i-owned forward with a
+   per box token (5.9). agent-browser assumes a friendly localhost; we do not.
 2. **The control lock** (5.4). Two clients can dispatch input at once and
    nothing upstream arbitrates. That is ours to enforce.
 3. **Policy.** Fresh profile, proxy settings, `--allowed-domains` derived from
@@ -512,18 +530,23 @@ and tested; the read-only mount and therefore `refresh` are not (5.8).
 verb set instead of a token in the box), and the credential-seed audit, each
 verified by a test that asserts denial rather than by inspection.
 
-**M4. Browser — not started.** Browser sidecar container (headless Chrome +
-pinned agent-browser), profile isolation, proxy and `--allowed-domains` wiring
-from `net.egress`, AI chat refused, browser commands plus console and network
-errors into the receipt. No viewer yet. Needs Podman **pod** support, which
-`container.rs` does not have today (it runs a single container). Exit: an agent
-fixes a real UI bug using only agent-browser output as its feedback.
+**M4. Browser — not started, and cheaper than it looked.** A `browser` profile
+at the **supervised** tier: grants for Chrome and the agent-browser binary,
+headless Chrome in the same box as the agent and its dev server, egress from
+the existing nftables allowlist, `--allowed-domains` from the same policy, AI
+chat refused, and browser commands plus console and network errors into the
+receipt. **No pod, no second image, no Podman requirement** (5.2). The
+container tier follows later as the portability path, and that is when pod
+support in `container.rs` is worth building. Exit: an agent fixes a real UI bug
+using only agent-browser output as its feedback.
 
 **M5. Viewer — not started.** `h5i dev view` and `h5i browser url`: an h5i-owned
 forward of the agent-browser stream to loopback with a per box token, a minimal
 viewer page, the control lock and its pause and resume protocol, session
-recording into the export. Exit: a human takes over mid run, finishes a form,
-hands control back, and the agent continues from a fresh snapshot.
+recording into the export. The forward has to cross the box's private netns;
+h5i is the supervisor and holds the pid, so it joins the namespace rather than
+punching a hole in it. Exit: a human takes over mid run, finishes a form, hands
+control back, and the agent continues from a fresh snapshot.
 
 **M6. Skill and story — partly done.** `skills/h5i/` is written against the
 real surface (five pages) and the binary carries it; the README is rewritten
@@ -556,8 +579,14 @@ Being explicit about these is a feature, since the claim is a security claim.
   against a runaway agent and against careless dependency code. Not a claim
   against a targeted kernel exploit. A microVM backend is the answer, and it is
   post M6.
-- **L7 egress scoping.** The allowlist proxy blocks proxy respecting tooling.
-  Airtight L3 or L4 belongs to the hardened tier.
+- **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
+  it binds proxy respecting tooling only. The `supervised` tier enforces at
+  L3/L4 with nftables and does not have that hole, which is why M4 starts
+  there.
+- **Chrome runs with its own sandbox off.** Our seccomp deny list blocks the
+  namespace syscalls Chrome's sandbox needs, at every tier. h5i's box is the
+  boundary; Chrome's is not available inside it. That is one layer fewer than a
+  browser on the host has.
 - **Linux first.** Rootless Podman on Linux and WSL2. macOS needs a VM layer,
   and it is not in these six phases.
 - **Cost.** A Chrome sidecar is still real RAM and CPU, even headless. Headless

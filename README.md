@@ -39,9 +39,9 @@ Or build from source:
 cargo install --path .
 ```
 
-Linux only for now, and rootless [Podman](https://podman.io/) is what unlocks
-the strongest tier. `h5i dev probe` tells you what your host can actually
-enforce.
+Linux only for now. `h5i dev probe` tells you what your host can actually
+enforce; rootless [Podman](https://podman.io/) adds the container tier on top
+of what the kernel already gives you.
 
 ## Use it
 
@@ -78,8 +78,14 @@ downgrades: an unsatisfiable request fails closed.
 | Tier | What enforces it |
 | --- | --- |
 | `workspace` | a separate git worktree, no confinement |
-| `process` / `supervised` | Landlock filesystem allowlist, seccomp deny-list, namespaces, rlimits |
-| `container` | rootless Podman, read-only rootfs, dropped capabilities, and the only tier with a **network egress allowlist** |
+| `process` | Landlock filesystem allowlist, seccomp deny-list, namespaces, rlimits |
+| `supervised` | all of the above, plus a private network namespace with an **nftables egress allowlist pinned to resolved IPs**, DNS pinned by hosts file, and a seccomp-notify socket gate |
+| `container` | rootless Podman, read-only rootfs, dropped capabilities, a portable image, and an HTTP/HTTPS proxy allowlist |
+
+Note which way round that goes. The container tier buys **portability** (any
+image, any host with Podman). The strongest *network* scoping is `supervised`,
+because it enforces at L3/L4 in the kernel; the container tier's allowlist is a
+proxy, so it only binds tooling that respects a proxy.
 
 Credentials are the part people get wrong, so h5i is explicit about it. No SSH
 key, cloud credential or Docker socket enters a box. Model API calls are
@@ -115,8 +121,9 @@ says which, and the rewrite is tracked there.
 - **The kernel is shared.** Podman and the kernel tiers are good against a
   runaway agent and careless dependency code, not against a targeted kernel
   exploit. A microVM backend is the answer to that, and it does not exist yet.
-- **Egress scoping is L7.** The allowlist proxy blocks proxy-respecting
-  tooling. Airtight L3/L4 belongs to a tier that is not built.
+- **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
+  it binds proxy-respecting tooling only. The `supervised` tier enforces at
+  L3/L4 and does not have that hole.
 
 ## Acknowledgements
 

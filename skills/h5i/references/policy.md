@@ -18,8 +18,9 @@ same name as a built-in overlays it. An omitted `net.egress` inherits the
 built-in's allowlist; an explicit `egress = []` opts out.
 
 Keys: `fs.read` / `fs.write` / `fs.deny`, `net.mode` (`deny` | `host`),
-`net.egress` (domain allowlist, container tier only), `resources.{mem,procs,
-wall,fsize,cpu}`, `env.pass`, `tools`, `container.image`, `[shell] rcfile`.
+`net.egress` (host allowlist; enforced differently per tier, see below),
+`resources.{mem,procs,wall,fsize,cpu}`, `env.pass`, `tools`, `container.image`,
+`[shell] rcfile`.
 
 ## Credentials
 
@@ -37,10 +38,19 @@ h5i dev run <name> --secret DEPLOY_KEY -- ./deploy.sh
 
 ## Egress
 
-Only the `container` tier has a real allowlist: a host-side DNS-pinned
-HTTP/HTTPS CONNECT proxy, fail-closed with `403`. Exact hosts, `.wildcard`, and
-`:port` forms. It blocks proxy-respecting tooling; airtight L3/L4 is a stronger
-tier that does not exist yet, and the docs say so rather than implying more.
+Two tiers enforce `net.egress`, and they are not equivalent:
+
+- **`supervised`** puts the box in a private network namespace and enforces the
+  allowlist with **nftables rules pinned to resolved IPs**, with DNS pinned by
+  a hosts file and a seccomp-notify gate on `socket()`. This is L3/L4: a
+  program that ignores proxy settings still cannot reach an off-list address.
+- **`container`** routes through a host-side DNS-pinned HTTP/HTTPS CONNECT
+  proxy, fail-closed with `403`. This is L7: it binds proxy-respecting tooling
+  and buys portability, not airtight scoping.
+
+Both accept exact hosts, `.wildcard`, and `:port` forms. `process` has no
+egress enforcement, so a non-empty `net.egress` is refused there rather than
+silently ignored.
 
 ```bash
 h5i dev allow api.example.com      # persistent user allowlist entry
