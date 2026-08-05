@@ -73,11 +73,25 @@ jobs:
           test -x /usr/bin/sandbox-exec
           /usr/bin/sandbox-exec -p '(version 1)(deny default)(allow file-read*)(allow process-exec*)(allow process-fork)(allow sysctl-read)(allow mach-lookup)(allow signal (target self))' /usr/bin/true
 
+      # --all-targets so the integration tests are *compiled* here even though
+      # they are not run below: compile breakage on macOS should fail loudly.
       - name: cargo clippy (deny warnings)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: cargo test
-        run: cargo test --verbose --workspace
+      # Unit tests only, deliberately. `tests/env_integration.rs` asserts Linux
+      # kernel behaviour directly — that `unshare` is refused by the seccomp
+      # deny-list, that `/proc/<pid>/environ` of a host process is unreachable
+      # from the PID namespace, that Landlock is what denied a write. None of
+      # those mechanisms exist on Darwin, so running that suite here would
+      # report failures that mean nothing about the macOS backend. The Seatbelt
+      # tier's own behaviour is covered by the h5i-sandbox unit tests (the
+      # `seatbelt` module), which do run.
+      #
+      # Porting the integration suite to assert per-platform is real work and
+      # wants someone iterating on a Mac; it is not silently skipped, it is
+      # scoped out here on purpose.
+      - name: cargo test (unit)
+        run: cargo test --verbose --workspace --lib
 
   # The man page (man/man1/h5i.1) and the /manual/ HTML (docs/manual/index.html)
   # are GENERATED, not hand-edited: the man page from the clap CLI via

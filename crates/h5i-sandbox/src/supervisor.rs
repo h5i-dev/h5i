@@ -482,11 +482,16 @@ fn preflight(policy: &crate::sandbox::ResolvedPolicy) -> Result<(), H5iError> {
             caps.missing().join(", ")
         )));
     }
-    // The egress uplink is per-platform: Linux runs the allowlist inside the
-    // box's network namespace (slirp4netns + nftables), macOS leaves the box no
-    // outbound route but h5i's own loopback proxy. Only the Linux shape has an
-    // external binary to be missing.
-    #[cfg(not(target_os = "macos"))]
+    egress_preflight(policy)
+}
+
+/// The egress uplink is per-platform, so its admission check is too.
+///
+/// Linux runs the allowlist *inside* the box's network namespace, which needs
+/// `slirp4netns` to provide that namespace's uplink — an external binary that
+/// can be missing, hence a check.
+#[cfg(not(target_os = "macos"))]
+fn egress_preflight(policy: &crate::sandbox::ResolvedPolicy) -> Result<(), H5iError> {
     if !policy.profile.net_egress.is_empty() && slirp4netns_path().is_none() {
         return Err(H5iError::Metadata(
             "isolation=supervised net.egress requires `slirp4netns` on PATH (it provides the \
@@ -495,6 +500,16 @@ fn preflight(policy: &crate::sandbox::ResolvedPolicy) -> Result<(), H5iError> {
                 .into(),
         ));
     }
+    Ok(())
+}
+
+/// macOS has no namespace to uplink and therefore no external binary to
+/// require: the box keeps the host's network stack and the Seatbelt profile
+/// leaves it no outbound route except h5i's own loopback proxy. Readiness for
+/// that is already covered by [`probe`] (Seatbelt usable + loopback bindable),
+/// which `preflight` checked above, so there is nothing further to assert.
+#[cfg(target_os = "macos")]
+fn egress_preflight(_policy: &crate::sandbox::ResolvedPolicy) -> Result<(), H5iError> {
     Ok(())
 }
 
@@ -1314,6 +1329,11 @@ mod tests {
         );
     }
 
+    /// The netns uplink is Linux-only machinery (`slirp_args`, `SLIRP_GATEWAY`
+    /// are `cfg(target_os = "linux")`), so its test is too. macOS reaches the
+    /// same guarantee through the loopback proxy instead — see
+    /// `seatbelt::tests::egress_allows_only_the_proxy_port`.
+    #[cfg(target_os = "linux")]
     #[test]
     fn slirp_args_toggle_host_loopback() {
         // Airtight default: host-loopback disabled.
@@ -1332,6 +1352,11 @@ mod tests {
         }
     }
 
+    /// The netns uplink is Linux-only machinery (`slirp_args`, `SLIRP_GATEWAY`
+    /// are `cfg(target_os = "linux")`), so its test is too. macOS reaches the
+    /// same guarantee through the loopback proxy instead — see
+    /// `seatbelt::tests::egress_allows_only_the_proxy_port`.
+    #[cfg(target_os = "linux")]
     #[test]
     fn proxy_only_egress_ruleset_allows_just_the_gateway_port() {
         assert_eq!(SLIRP_GATEWAY, "10.0.2.2".parse::<IpAddr>().unwrap());

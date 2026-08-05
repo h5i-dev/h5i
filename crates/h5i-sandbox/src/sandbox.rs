@@ -1087,6 +1087,23 @@ fn probe_userns() -> bool {
 
 // `AuditCapture`, `AuditPolicy`, `ResolvedPolicy` moved to src/sandbox_policy.rs.
 
+/// Why Seatbelt is unusable, for the macOS refusal message.
+///
+/// `resolve` is platform-independent code that branches on `caps.os` at
+/// *runtime*, so it is compiled for every target — including ones where the
+/// `seatbelt` module does not exist (it is `cfg(unix)`, since it needs
+/// `std::os::unix`). This wrapper is what keeps that runtime branch from
+/// becoming a compile-time dependency on a Unix-only module.
+#[cfg(unix)]
+fn seatbelt_detail() -> Option<String> {
+    crate::seatbelt::probe().detail
+}
+
+#[cfg(not(unix))]
+fn seatbelt_detail() -> Option<String> {
+    None
+}
+
 /// Resolve `profile` against what `caps` says the host supports. Refuses —
 /// never silently downgrades — when the requested minimum claim cannot be
 /// satisfied (§5 "Capability probing + fail-closed").
@@ -1104,9 +1121,8 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
                 // unusable Seatbelt refuses here exactly as a missing Landlock
                 // does on Linux.
                 if !caps.seatbelt {
-                    let detail = crate::seatbelt::probe()
-                        .detail
-                        .unwrap_or_else(|| "Seatbelt unavailable".into());
+                    let detail =
+                        seatbelt_detail().unwrap_or_else(|| "Seatbelt unavailable".into());
                     missing.push(format!("macOS Seatbelt is not usable: {detail}"));
                 }
                 // `net.mode = deny` needs no namespace here: the profile simply
