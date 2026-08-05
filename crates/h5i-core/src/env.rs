@@ -2090,8 +2090,57 @@ const HOME_SEED_SKIP: &[&str] = &[
     "tmp",  // Codex temp cache
 ];
 
+/// Entries the HOME seed **must not** carry into a box, by shape rather than by
+/// size.
+///
+/// The seed exists so each box gets its own copy of the agent's session state
+/// instead of racing the real files. It is not a reason to hand a box every
+/// credential the runtime happens to keep next to that state. These are dropped
+/// even though the runtime wrote them under its own directory: a box that needs
+/// to authenticate does it through the host-side proxy, which never lets the
+/// credential into the box at all (roadmap 5.5).
+///
+/// Deliberately *not* dropped: the runtime's own API token, where the runtime
+/// cannot function without it and the profile already scopes egress to that
+/// runtime's API. That trade is stated in `Profile::builtin_agent`.
+const HOME_SEED_CREDENTIAL_SKIP: &[&str] = &[
+    // Cloud and VCS credentials that tools drop into an agent's config dir.
+    "credentials",
+    "credentials.json",
+    "credentials.toml",
+    ".netrc",
+    "netrc",
+    // SSH material, wherever it turns up.
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+    "known_hosts",
+    // Generic secret stores.
+    ".env",
+    "secrets.json",
+    "secrets.toml",
+    "keyring",
+    "gh_token",
+    "github_token",
+];
+
+/// Is `name` credential-shaped, and therefore not something to seed?
+///
+/// Matches the exact names above plus anything ending in a private-key
+/// extension, so a key the runtime named after its host is still caught.
+fn is_credential_shaped(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    HOME_SEED_CREDENTIAL_SKIP.iter().any(|s| *s == lower)
+        || lower.ends_with(".pem")
+        || lower.ends_with(".key")
+        || lower.ends_with(".p12")
+        || lower.ends_with("_rsa")
+        || lower.ends_with("_ed25519")
+}
+
 /// Seed a per-env HOME copy from the real HOME, pruning the known-large,
-/// non-credential top-level entries in [`HOME_SEED_SKIP`]. A single file (e.g.
+/// non-credential top-level entries in [`HOME_SEED_SKIP`] and every
+/// credential-shaped entry ([`is_credential_shaped`]). A single file (e.g.
 /// `~/.claude.json`) is copied whole; a directory (e.g. `~/.claude`) is copied
 /// entry-by-entry so the skip set can drop its immediate children before the
 /// expensive recursion. Everything not skipped is copied via [`copy_tree`]
@@ -2109,6 +2158,12 @@ fn seed_home_copy(src: &Path, dst: &Path) -> Result<(), H5iError> {
             .iter()
             .any(|s| std::ffi::OsStr::new(s) == name)
         {
+            continue;
+        }
+        // Credential-shaped entries are dropped wherever they appear in the
+        // seed, not just at the top level: the box authenticates through the
+        // host-side proxy, so it has no use for a key it can read.
+        if is_credential_shaped(&name.to_string_lossy()) {
             continue;
         }
         copy_tree(&entry.path(), &dst.join(&name))?;
@@ -2131,6 +2186,11 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<(), H5iError> {
         for entry in std::fs::read_dir(src).map_err(|e| H5iError::with_path(e, src))? {
             let entry = entry.map_err(|e| H5iError::with_path(e, src))?;
             let name = entry.file_name();
+            // Deep in the tree too: a key under `~/.claude/plugins/…` is still
+            // a key.
+            if is_credential_shaped(&name.to_string_lossy()) {
+                continue;
+            }
             copy_tree(&src.join(&name), &dst.join(&name))?;
         }
     } else if ft.is_file() {
@@ -2476,6 +2536,46 @@ fn inbox_pending_context_path_from(
         return None;
     }
     Some(PathBuf::from(capture_spool?).join(SPOOL_PENDING_CONTEXT))
+}
+
+/// Environment a `browser` box needs, derived from the policy that is actually
+/// enforced.
+///
+/// Two things are being done here, and both are policy decisions rather than
+/// convenience:
+///
+/// * **`--allowed-domains` from `net.egress`.** The tier's own enforcement is
+///   the boundary (nftables at `supervised`, the proxy at `container`); this is
+///   a second, in-process layer, so a page that tries to pull from an off-list
+///   host fails in the browser with a clear message instead of dying at the
+///   packet level. Loopback is always added: the dev server under test is the
+///   whole point, and it never appears in an egress allowlist.
+/// * **AI features off.** `agent-browser chat` and the dashboard's AI panel
+///   send page content to an external gateway. Inside a box that is an
+///   exfiltration path with a friendly name, so the gateway variables are
+///   pinned empty rather than merely left unset — an unset variable is
+///   something the box can set for itself.
+pub fn browser_env(policy: &ResolvedPolicy) -> Vec<(String, String)> {
+    let mut allowed: Vec<String> = vec!["localhost".into(), "127.0.0.1".into(), "[::1]".into()];
+    for host in &policy.profile.net_egress {
+        // `net.egress` entries may carry a `:port`; the browser wants hosts.
+        let host = match host.rsplit_once(':') {
+            Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => h,
+            _ => host.as_str(),
+        };
+        if !host.is_empty() && !allowed.iter().any(|a| a == host) {
+            allowed.push(host.to_string());
+        }
+    }
+    vec![
+        ("AGENT_BROWSER_ALLOWED_DOMAINS".to_string(), allowed.join(",")),
+        // Headless: a viewer watches the CDP screencast, so nothing wants an X
+        // server and a box that tried to start one would fail confusingly.
+        ("AGENT_BROWSER_HEADLESS".to_string(), "1".to_string()),
+        // Refused, not merely absent.
+        ("AI_GATEWAY_API_KEY".to_string(), String::new()),
+        ("AGENT_BROWSER_DISABLE_CHAT".to_string(), "1".to_string()),
+    ]
 }
 
 fn merged_env(a: &[(String, String)], b: &[(String, String)]) -> Vec<(String, String)> {
@@ -3048,7 +3148,14 @@ pub fn run(
             &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
             &env_inbox_env,
         ),
-        &team_identity_env(m, h5i_root),
+        &merged_env(
+            &team_identity_env(m, h5i_root),
+            &if policy.profile.name == "browser" {
+                browser_env(&policy)
+            } else {
+                Vec::new()
+            },
+        ),
     );
 
     set_status(
@@ -3371,7 +3478,14 @@ pub fn shell(
             &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
             &env_inbox_env,
         ),
-        &team_identity_env(m, h5i_root),
+        &merged_env(
+            &team_identity_env(m, h5i_root),
+            &if policy.profile.name == "browser" {
+                browser_env(&policy)
+            } else {
+                Vec::new()
+            },
+        ),
     );
     // Host-side `h5i dev allow` extras + the explained-egress line.
     apply_user_egress(&mut policy);
@@ -7620,6 +7734,100 @@ mod tests {
         assert_eq!(granted, dir.join("spool"));
         assert!(!dir.join("receipt.jsonl").starts_with(granted));
         assert!(!dir.join("receipts").starts_with(granted));
+    }
+
+    #[test]
+    fn browser_env_allows_loopback_and_the_policy_egress_only() {
+        let mut policy = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            crate::sandbox::Profile::builtin("browser", IsolationClaim::Supervised),
+        );
+        policy.profile.net_egress = vec!["api.anthropic.com".into(), "example.com:8443".into()];
+
+        let env: std::collections::HashMap<String, String> =
+            browser_env(&policy).into_iter().collect();
+        let allowed = &env["AGENT_BROWSER_ALLOWED_DOMAINS"];
+
+        // The dev server under test never appears in an egress allowlist, so
+        // loopback is always added.
+        assert!(allowed.contains("localhost"), "{allowed}");
+        assert!(allowed.contains("127.0.0.1"), "{allowed}");
+        // Policy hosts carry over, with any :port stripped.
+        assert!(allowed.contains("api.anthropic.com"), "{allowed}");
+        assert!(allowed.contains("example.com"), "{allowed}");
+        assert!(!allowed.contains("8443"), "ports are not domains: {allowed}");
+        // Nothing else.
+        assert!(!allowed.contains("github.com"), "{allowed}");
+    }
+
+    #[test]
+    fn browser_env_refuses_the_ai_gateway_rather_than_omitting_it() {
+        let policy = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            crate::sandbox::Profile::builtin("browser", IsolationClaim::Supervised),
+        );
+        let env: std::collections::HashMap<String, String> =
+            browser_env(&policy).into_iter().collect();
+
+        // Pinned empty, not absent: an unset variable is one the box can set
+        // for itself, and `agent-browser chat` ships page content to a third
+        // party gateway.
+        assert_eq!(env.get("AI_GATEWAY_API_KEY").map(String::as_str), Some(""));
+        assert_eq!(
+            env.get("AGENT_BROWSER_DISABLE_CHAT").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(env.get("AGENT_BROWSER_HEADLESS").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn the_home_seed_leaves_credentials_behind() {
+        let td = tempfile::tempdir().unwrap();
+        let real = td.path().join("real");
+        let copy = td.path().join("copy");
+        std::fs::create_dir_all(real.join("plugins/inner")).unwrap();
+
+        // State the box legitimately needs …
+        std::fs::write(real.join("settings.json"), b"{}").unwrap();
+        // … and credentials it does not, at the top level and buried.
+        std::fs::write(real.join("credentials.json"), b"secret").unwrap();
+        std::fs::write(real.join(".netrc"), b"machine x").unwrap();
+        std::fs::write(real.join("deploy.pem"), b"-----BEGIN").unwrap();
+        std::fs::write(real.join("plugins/inner/id_ed25519"), b"key").unwrap();
+
+        seed_home_copy(&real, &copy).unwrap();
+
+        assert!(copy.join("settings.json").is_file(), "state is seeded");
+        for gone in [
+            "credentials.json",
+            ".netrc",
+            "deploy.pem",
+            "plugins/inner/id_ed25519",
+        ] {
+            assert!(
+                !copy.join(gone).exists(),
+                "credential-shaped entry was seeded into the box: {gone}"
+            );
+        }
+    }
+
+    #[test]
+    fn credential_shapes_are_matched_by_name_and_extension() {
+        for yes in [
+            "credentials",
+            "CREDENTIALS.TOML",
+            ".netrc",
+            "id_rsa",
+            "server.pem",
+            "tls.key",
+            "bundle.p12",
+            "backup_ed25519",
+        ] {
+            assert!(is_credential_shaped(yes), "should be refused: {yes}");
+        }
+        for no in ["settings.json", "config.toml", "history.jsonl", "notes.md"] {
+            assert!(!is_credential_shaped(no), "should be seeded: {no}");
+        }
     }
 
     #[test]

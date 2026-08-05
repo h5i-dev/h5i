@@ -194,6 +194,11 @@ impl AgentRuntime {
         match name {
             "agent-claude" => Some(AgentRuntime::Claude),
             "agent-codex" => Some(AgentRuntime::Codex),
+            // A `browser` box is an agent box with a browser in it, and it is
+            // built from whoever is driving it — so it engages the credential
+            // proxy exactly like `agent` does. Without this it would be the one
+            // agent profile that quietly had no brokered credential.
+            "browser" | "agent" => Some(AgentRuntime::detect()),
             _ => None,
         }
     }

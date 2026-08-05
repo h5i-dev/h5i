@@ -558,10 +558,14 @@ for, and it holds on every tier rather than only under a container volume.
 **M3. Agent in box hardening — partly done.** Warm caches: the store, the
 lockfile keying, the staleness rule, `h5i dev cache ls|mounts|rm` and the
 **read-only mount** on every tier are built and tested; `refresh` is not (5.8).
-**Remaining**: broker default on, generalizing `auth_proxy` from the model API
-to any allowlisted host with a host-side credential (5.5 — no vendor-specific
-code), and the credential-seed audit, each verified by a test that asserts
-denial rather than by inspection.
+Also done: the credential-seed audit (the per-box HOME copy now drops
+credential-shaped entries at any depth — `credentials*`, `.netrc`, ssh keys,
+`*.pem`/`*.key`/`*.p12` — keeping only the runtime's own token, which it cannot
+function without), and the credential proxy, which was already default-on but
+did not engage for a `browser` box.
+**Remaining**: generalizing `auth_proxy` from the model API to any allowlisted
+host with a host-side credential (5.5 — no vendor-specific code), and `cache
+refresh`.
 
 **M4. Browser — profile landed, live loop not yet.** Done: the `browser`
 built-in profile (the agent profile plus the browser surface, runtime scoping
@@ -570,10 +574,13 @@ kernel tiers with a fail-closed create that names what to install,
 `containers/Containerfile.browser` for the container tier, and `/dev/shm` sized
 from the policy so a renderer does not die on Podman's 64 MiB default. **No
 pod, no second image, no Podman requirement** (5.2).
-**Remaining**: `--allowed-domains` wired from `net.egress`, AI chat refused by
-policy rather than by omission, and browser commands plus console and network
-errors folded into the receipt. Exit: an agent fixes a real UI bug using only
-agent-browser output as its feedback.
+Also done: `--allowed-domains` derived from the enforced `net.egress` (plus
+loopback, which never appears in an allowlist but is the whole point of a dev
+server), headless pinned, and the AI gateway **refused rather than omitted** —
+an unset variable is one the box can set for itself, so it is pinned empty.
+**Remaining**: browser commands plus console and network errors folded into the
+receipt. Exit: an agent fixes a real UI bug using only agent-browser output as
+its feedback.
 
 **M5. Viewer — not started.** `h5i dev view` and `h5i browser url`: an h5i-owned
 forward of the agent-browser stream to loopback with a per box token, a minimal
