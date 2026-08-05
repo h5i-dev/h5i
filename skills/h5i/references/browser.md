@@ -80,11 +80,12 @@ A human can watch the box's browser, and take over inside it:
 
 ```bash
 h5i box view <box>           # serves the viewer on loopback, prints the URL
+h5i box view <box> --term    # draws the page in the terminal instead
 h5i browser url <box>        # the URL again, without starting a forward
 ```
 
 The box has to be running (a live `h5i box shell` or `h5i box run` session), and
-its browser has to be streaming — inside the box, `agent-browser stream enable`.
+its browser has to be streaming. Inside the box, `agent-browser stream enable`.
 
 What the forward is, since it is a security boundary rather than a convenience:
 the box's stream port is never published. It stays in the box's private network
@@ -92,6 +93,12 @@ namespace, and h5i enters that namespace to reach it. Every connection carries a
 per-box token minted at creation and never written anywhere the box can read,
 cross-origin handshakes are refused, and input reaches the page only while the
 human holds the control lock.
+
+`--term` renders the same stream in the human's terminal, on a terminal that
+speaks the Kitty graphics protocol. It binds no port and mints no token, because
+it runs in the command the human typed rather than serving anything. What
+matters to you is unchanged: they take the control lock to drive, so the rules
+above apply exactly as they do to the browser viewer.
 
 ## What lands in the receipt
 

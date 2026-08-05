@@ -5,13 +5,19 @@ provenance" positioning for the product surface. Design docs under `roadmap/`
 stay as history for the parts we keep. Decisions already taken are in section
 10, what is still open is in section 11.
 
-**M0 through M5 are built. M6 is mostly built.** What is not done, stated
-plainly so it is not read as finished: neither M4's nor M5's exit criterion has
-been demonstrated with a real agent or a real person in the loop (every piece
-each needs is built and verified by hand); the control lock is not enforced on
-the agent's side (section 11.1); `npx skills add` is unverified for lack of a
-Node 22 runtime; there is no demo video; and `/blog/` and `/pitch/` still argue
-the old positioning.
+**M0 through M5 are built. M6 is mostly built. M7 (the terminal viewer) is
+built but undriven.** What is not done, stated plainly so it is not read as
+finished: the exit criteria for M4, M5 and M7 have none of them been
+demonstrated with a real agent or a real person in the loop (every piece each
+needs is built and tested); the control lock is not enforced on the agent's
+side (section 11.1); `npx skills add` is unverified for lack of a Node 22
+runtime; there is no demo video; and `/blog/` and `/pitch/` still argue the old
+positioning.
+
+One thing M7 is worth reading for beyond its own feature: it found that **every
+human takeover through the web viewer had been silently doing nothing** since
+M5, for the same reason two of M4's findings existed — a message the other side
+never dispatches looks exactly like enforcement and enforces nothing (5.10.1).
 
 ---
 
@@ -443,6 +449,134 @@ than by opening a hole in the netns:
 That is the whole trusted surface between the human and the box, and it is
 about as small as this can be made.
 
+### 5.10 The terminal viewer
+
+**Built** (`crates/h5i-core/src/termview/`, `h5i box view --term`). The web
+viewer reaches the human through their host browser, which leaves one awkward
+beat in the story: everything runs in the box, except the watching, which
+happens in the most credential-laden program on the host. The terminal viewer
+closes that beat. It renders the boxed viewport in the terminal itself, in a
+split pane next to the agent, and over SSH when the box host is remote. It is
+also the demo the launch needs: one recording showing agent, dev server, and
+boxed browser in a single terminal frame.
+
+The line for the story is: **the browser is untrusted, the terminal is the
+trusted path.**
+
+**It is not a client of the forward, and that changed during the build.** The
+first plan had the TUI connect to `h5i box view` over loopback with the per-box
+token. That is a listener and a credential bought for nothing: the viewer runs
+in the same process as the CLI the human typed, so it can do what the forward
+does — fork, enter the box's user and network namespaces by pid, connect, and
+take the socket back over `SCM_RIGHTS`. So `--term` binds no port, mints no
+token, and serves no page. There is nothing for another local process to
+connect to, so there is nothing to authenticate. The forward keeps its token
+because it must listen; this does not.
+
+What it is made of, and what each part is for:
+
+- **`ws.rs`** — a WebSocket client, roughly the RFC 6455 subset one connection
+  to one server needs. Everything the box sends is untrusted: reserved opcodes
+  and reserved bits are refused, a masked server frame is refused, lengths are
+  capped before they become allocations, and fragmented messages cannot grow
+  past the cap across frames.
+- **`proto.rs`** — the stream's messages. Pinned to what agent-browser actually
+  dispatches (`input_mouse` / `input_keyboard` / `input_touch`) rather than to
+  what the DOM calls them, for reasons in the bug note below.
+- **`image.rs`** — `zune-jpeg`, which forbids unsafe code, with dimensions
+  capped before decode. Frames are scaled to the pixel size they will actually
+  be displayed at, because every byte crosses a PTY and over SSH that is the
+  whole cost of the viewer.
+- **`kitty.rs`** — the graphics protocol, generated **by the viewer and only by
+  the viewer**. `q=2` on every render command, so the terminal's replies never
+  land in the middle of the keystrokes being translated into page input. Direct
+  transmission only: the file and shared-memory mediums are faster and only
+  work when the terminal is on this machine.
+- **`input.rs`** — terminal bytes to CDP events, including the two places a
+  terminal and a browser genuinely disagree: a terminal reports presses with no
+  releases (so the pair is synthesized, and press-and-hold does not work), and
+  it reports cells rather than pixels (so clicks map through the placement, at
+  cell resolution).
+- **`status.rs`** — the row the page cannot reach.
+- **`term.rs`** — raw mode, alternate screen, mouse and bracketed paste, all
+  behind an RAII guard that restores on every path out.
+
+Three properties worth stating plainly:
+
+- **The viewer generates every escape sequence.** The box supplies compressed
+  pixels inside a WebSocket message and nothing else. Terminal output is an
+  escape surface (OSC 52 clipboard writes, title and hyperlink control, the
+  graphics protocol's own file-reading mediums, parser bugs), and no byte from
+  the box reaches the PTY. This is `sanitize_display` applied to pixels instead
+  of strings.
+- **A trusted status line.** Row one is the viewer's: box, mode, lock holder,
+  origin, egress, console errors. A page cannot draw there, and it cannot be
+  clicked through into the page either. The origin is sanitized on the way in
+  (escape sequences *and* bidi overrides, which needed a fix in `redact.rs` —
+  they are not control characters, so the existing pass let them through) and
+  it is never the field that gets truncated: a URL too long for the row loses
+  its path, and an origin too long for the row is cut from the **left**, since
+  shortening `bank.example.evil.test` from the right is the spoof itself.
+- **Two modes, because a terminal makes them natural.** VIEW is read-only and
+  leaves the mouse to the terminal, so selection and scrollback still work.
+  INTERACT takes the control lock — reaching for the controls *is* taking them,
+  which is the lock's own rule and the only sensible one here, since the
+  terminal is busy being the viewer and there is no other window to run
+  `h5i browser take` in. `Ctrl-]` is reserved to get back out, because raw mode
+  hands the viewer every other key.
+
+**Still open, and deliberately not built yet.** LOGIN mode — withholding frames
+and snapshots from the agent while a human types a credential — rests on the
+agent-side enforcement decision in 11.1, and shipping it as advisory would
+overstate it. Pixel-resolution mouse reporting (`?1016`) would place clicks
+better, but a terminal that does not support it keeps reporting cells with no
+way to tell, which is the quiet-wrong-answer shape this codebase keeps getting
+bitten by. The file and shared-memory transmission mediums are the local
+fast path. tmux passthrough is untested.
+
+And the claim, at its real size: this shrinks the TCB of *watching*, it does
+not add a boundary. "The box cannot send escape sequences to your terminal"
+already held for the web viewer, because the box cannot reach the PTY at all.
+The delta is that a small Rust module plus a memory-safe JPEG decoder replaces
+a host Chrome tab as the thing doing the watching, plus the status line and the
+mode model that only a terminal makes possible. The stronger "entirely
+untrusted guest" framing waits for the microVM backend, like every other claim
+of that shape.
+
+**terminal-browser (zenbu-labs, MIT) is the reference, not the base.** Its
+architecture runs Chromium *on the host* (Electron offscreen rendering, a
+native input helper, macOS only today), which is the trust inversion of ours,
+and its hard problems are the ones h5i has already solved on the other side of
+the boundary. What we took is the Kitty graphics rendering technique and the UX
+patterns; what we did not take is Electron on the host, a host Chromium, or an
+input helper.
+
+#### 5.10.1 The bug this work found in the web viewer
+
+`viewer.html` sent `mousedown`, `keydown`, `wheel` — the DOM event names.
+agent-browser's stream server dispatches on `input_mouse`, `input_keyboard` and
+`input_touch`, and falls through to `_ => {}` for everything else. So **every
+human takeover through the web viewer was a no-op**, and silently: the socket
+stayed healthy, frames kept arriving, and the forward counted the input frames
+as forwarded — the receipt would have recorded "a human drove this box" for a
+session in which nothing a human did reached the page.
+
+M5 verified the *gate* (input dropped without the lock, forwarded with it) and
+that is exactly what it verified; nothing checked that a forwarded frame moved
+anything. It is the same class as the M4 findings: a variable the tool never
+reads, a message the server never dispatches. Both look like enforcement and
+enforce nothing.
+
+Fixed, with the correct message names, CDP's string button names, a
+`clickCount` (a press with zero is not a click as far as Chrome is concerned),
+and `text` omitted rather than nulled on key-up. Pinned by a test that reads the
+page and refuses a DOM event name. The stale control indicator was fixed at the
+same time and for a related reason: with input working, a display permanently
+reading "agent" would tell someone who had just taken the lock that it had
+failed. There is no channel to push updates on — the stream is a straight relay
+— so the holder is stamped into the page at serve time and the page says that
+is what it is.
+
 ## 6. Distribution: the CLI is the product, the skill is the interface
 
 `h5i` is a single Rust binary with no server, no daemon, and no SaaS. That makes
@@ -624,8 +758,8 @@ Each phase ends with a green `cargo test` and a demo that runs on a stock
 rootless Podman host.
 
 > **Suite status, 2026-08-05.** `cargo test --lib` is green across the
-> workspace (289 tests) and clippy is clean with `--all-targets
-> --all-features`. Three `env_integration` tests fail on this WSL2 host with a
+> workspace (391 tests, of which 66 are the terminal viewer's) and clippy is
+> clean with `--all-targets --all-features` and with `--no-default-features`. Three `env_integration` tests fail on this WSL2 host with a
 > worktree-stat error (`box_git_grants_stay_fail_closed_outside_env_namespace`,
 > `box_git_status_and_commit_work_inside_process_tier`,
 > `process_tier_confines_fs_and_network`). They fail identically at
@@ -826,9 +960,17 @@ layout and frontmatter were checked against what the CLI discovers. There is no
 demo video. `/blog/` and `/pitch/` still argue the old positioning, and
 rewriting them means choosing the launch message, which is open question 2.
 
-**Post M6.** A full-desktop tier when something needs more than a page
-viewport (X plus streaming, Neko as the reference design), microVM backend,
-macOS.
+**M7. Terminal viewer — built, not yet driven by a human.** `h5i box view
+--term` (5.10). The whole module is unit tested (the WebSocket client also
+round-trips over a real socket), clippy is clean in both feature
+configurations, and the web viewer's silent input bug is fixed and pinned
+(5.10.1). Exit criterion **not demonstrated**: nobody has watched a real box in
+a real Kitty-protocol terminal, taken control, and driven a page with it. Every
+piece is tested in isolation; the loop has not been run, and on this host it
+cannot be — a tool shell is not a TTY.
+
+**Post M7.** A full-desktop tier when something needs more than a page viewport
+(X plus streaming, Neko as the reference design), microVM backend, macOS.
 
 Full loop the demo has to show:
 
@@ -910,6 +1052,16 @@ Being explicit about these is a feature, since the claim is a security claim.
   shape, about 1,200 lines), published only after the first buyer workflow is
   demonstrated. `create`/`run`/`export` gained `--json` on 2026-08-05, which
   closes the loop the contract needs (6.2).
+- **The terminal viewer is an in-process client of the box's stream, and
+  terminal-browser is a reference, not a base** (5.10). It enters the box's
+  namespaces the way the forward does and takes the socket over `SCM_RIGHTS`,
+  so it binds no port and needs no token — the forward's token exists because
+  the forward has to listen, and this does not. The host gains one module and
+  three small dependencies: no Electron, no host Chromium, no input helper.
+  The box side is unchanged, so nothing in the boundary or the policy moved.
+  Both viewers write one receipt lane through one function, because two
+  near-identical formats is how an export ends up describing the same session
+  two different ways.
 - **No MCP.** `mcp.rs` and the `h5i_env_*` tools go with the rest. The premise
   of MCP here was a host side agent reaching into a box, which is the shape this
   product exists to eliminate. The agent is inside the box, and inside the box

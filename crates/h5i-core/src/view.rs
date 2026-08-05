@@ -756,7 +756,8 @@ impl Forward {
         if !req.upgrade {
             // The viewer page itself. Served from here rather than from the box
             // so the box never supplies markup the human's browser will run.
-            let _ = respond_html(&mut client, &viewer_page());
+            let holder = crate::control::read(&self.env_dir).holder;
+            let _ = respond_html(&mut client, &viewer_page(holder));
             return Ok(());
         }
 
@@ -785,29 +786,83 @@ impl Forward {
         let _ = upstream_out.shutdown(std::net::Shutdown::Both);
         let bytes_out = out.join().unwrap_or(0);
 
-        self.record_session(opened, holder_at_open, bytes_out, &pumped);
+        record_session(
+            &Session {
+                env_dir: self.env_dir.clone(),
+                env_id: self.env_id.clone(),
+                policy_digest: self.policy_digest.clone(),
+                transport: Transport::Web,
+            },
+            opened,
+            holder_at_open,
+            bytes_out,
+            &pumped,
+        );
         Ok(())
     }
+}
 
-    /// Record the viewer session in the box's receipt log, so it reaches the
-    /// export like any other observation.
-    ///
-    /// This lane is **host observed** in the strongest sense available: h5i owns
-    /// the forward, so the box does not supply any of it and cannot suppress it.
-    /// What it answers is the question an export otherwise cannot: was a human
-    /// watching, did they take the controls, and for how long. A patch produced
-    /// with a human driving is a different artifact from one an agent produced
-    /// alone, and the receipt should not be silent about which it is.
-    fn record_session(
-        &self,
-        opened: chrono::DateTime<chrono::Utc>,
-        holder_at_open: crate::control::Holder,
-        bytes_out: u64,
-        pumped: &Pump,
-    ) {
+/// Which viewer a session was watched through.
+///
+/// Both write the same lane, because both are h5i watching on a human's behalf
+/// and an export should not have to care which one was used. The label is
+/// recorded rather than dropped for the one question it does answer: a terminal
+/// session is one where the frames never reached a host browser at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    /// The loopback forward, watched in the host's browser.
+    Web,
+    /// The in-process terminal viewer. No listener, no token, no host browser.
+    Terminal,
+}
+
+impl Transport {
+    fn as_str(self) -> &'static str {
+        match self {
+            Transport::Web => "web",
+            Transport::Terminal => "terminal",
+        }
+    }
+}
+
+/// Which box a viewer session belongs to.
+pub struct Session {
+    pub env_dir: PathBuf,
+    pub env_id: String,
+    pub policy_digest: String,
+    pub transport: Transport,
+}
+
+/// Record a viewer session in the box's receipt log, so it reaches the export
+/// like any other observation.
+///
+/// This lane is **host observed** in the strongest sense available: h5i owns
+/// both viewers, so the box supplies none of it and cannot suppress it. What it
+/// answers is the question an export otherwise cannot: was a human watching,
+/// did they take the controls, and for how long. A patch produced with a human
+/// driving is a different artifact from one an agent produced alone, and the
+/// receipt should not be silent about which it is.
+///
+/// Shared by the web forward and the terminal viewer deliberately. Two viewers
+/// writing two nearly-identical formats is how an export ends up reporting the
+/// same session two different ways depending on which one a person happened to
+/// open.
+pub fn record_session(
+    session: &Session,
+    opened: chrono::DateTime<chrono::Utc>,
+    holder_at_open: crate::control::Holder,
+    bytes_out: u64,
+    pumped: &Pump,
+) {
+    {
+        let (env_dir, env_id, policy_digest) = (
+            &session.env_dir,
+            &session.env_id,
+            &session.policy_digest,
+        );
         let input_frames = pumped.input_frames;
         let closed = chrono::Utc::now();
-        let holder_at_close = crate::control::read(&self.env_dir).holder;
+        let holder_at_close = crate::control::read(env_dir).holder;
         // Ground truth, not inference: input frames were forwarded, which the
         // forward only does for the lock holder. Comparing the holder at open
         // and close would miss the ordinary shape — take control, do the thing,
@@ -817,7 +872,10 @@ impl Forward {
         let seconds = (closed - opened).num_seconds().max(0);
 
         let mut body = String::new();
-        body.push_str(&format!("viewer session, {seconds}s\n"));
+        body.push_str(&format!(
+            "viewer session, {seconds}s ({} viewer)\n",
+            session.transport.as_str()
+        ));
         body.push_str(&format!("opened   {}\n", opened.to_rfc3339()));
         body.push_str(&format!("closed   {}\n", closed.to_rfc3339()));
         body.push_str(&format!(
@@ -839,13 +897,19 @@ impl Forward {
         }
 
         let input = crate::receipt::RecordInput {
-            env_id: self.env_id.clone(),
-            policy_digest: Some(self.policy_digest.clone()),
+            env_id: env_id.clone(),
+            policy_digest: Some(policy_digest.clone()),
             // Its own lane: neither a command the box ran nor anything the box
             // claimed, but something h5i itself did on the human's behalf.
             source: "viewer".into(),
             cmd: Some(format!(
-                "h5i dev view ({}, {seconds}s)",
+                // The command as it was actually invoked. A receipt naming a
+                // flag that does not exist is a receipt nobody can retrace.
+                "h5i box view{} ({}, {seconds}s)",
+                match session.transport {
+                    Transport::Web => "",
+                    Transport::Terminal => " --term",
+                },
                 if took_control {
                     "human took control"
                 } else {
@@ -855,7 +919,7 @@ impl Forward {
             wall_ms: u64::try_from(seconds * 1000).ok(),
             ..Default::default()
         };
-        if let Err(e) = crate::receipt::append(&self.env_dir, input, body.as_bytes()) {
+        if let Err(e) = crate::receipt::append(env_dir, input, body.as_bytes()) {
             eprintln!("viewer: could not record the session: {e}");
         }
     }
@@ -933,8 +997,17 @@ fn respond_html(s: &mut TcpStream, body: &str) -> std::io::Result<()> {
 /// Deliberately one self-contained file with no external asset, because it is
 /// served by a security boundary and every byte it can fetch is a byte someone
 /// has to reason about.
-fn viewer_page() -> String {
-    include_str!("viewer.html").to_string()
+///
+/// The lock holder is stamped in at serve time rather than pushed to the page
+/// later. The stream is a straight relay of the box's own messages, so there is
+/// no channel on which h5i could send the page an update, and a control display
+/// that never changes is worse than none: someone who takes the lock and still
+/// reads "agent" concludes that taking it failed. Stamping it makes the page
+/// honest about what it knows — the state at load, and a reload to refresh it.
+fn viewer_page(holder: crate::control::Holder) -> String {
+    // The substituted value is one of two fixed strings from h5i's own enum, so
+    // this cannot become an injection point regardless of what the box does.
+    include_str!("viewer.html").replace("__H5I_HOLDER__", holder.as_str())
 }
 
 #[cfg(test)]
@@ -1154,6 +1227,45 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("default.stream"), "37505\n").unwrap();
         assert_eq!(stream_port(td.path()), Some(37505));
+    }
+
+    #[test]
+    fn the_web_viewer_speaks_the_message_names_the_box_dispatches() {
+        // This shipped broken. The page sent `mousedown` / `keydown` — the DOM
+        // event names — and agent-browser's stream server dispatches only on
+        // `input_mouse`, `input_keyboard` and `input_touch`, falling through to
+        // a no-op for anything else. Nothing reports it: the socket stays open,
+        // frames keep arriving, the forward counts the input frames as
+        // forwarded, and the page never moves. A human taking control saw a
+        // working viewer that ignored them.
+        let page = viewer_page(crate::control::Holder::Agent);
+        assert!(page.contains("input_mouse"), "the mouse path must use input_mouse");
+        assert!(page.contains("input_keyboard"), "the key path must use input_keyboard");
+        for dom_name in ["\"mousedown\"", "\"mouseup\"", "\"keydown\"", "\"keyup\"", "\"wheel\""] {
+            assert!(
+                !page.contains(&format!("type: {dom_name}")),
+                "a DOM event name is being sent as a message type: {dom_name}"
+            );
+        }
+        // The fields CDP will not do without: a *named* button, and a click
+        // count, because a press with zero is not a click.
+        assert!(page.contains("clickCount"), "{}", "a press needs a click count");
+        assert!(page.contains("mousePressed") && page.contains("mouseReleased"));
+        assert!(page.contains("windowsVirtualKeyCode"));
+    }
+
+    #[test]
+    fn the_pages_control_display_is_stamped_with_the_state_it_can_actually_know() {
+        // There is no channel for h5i to update the page, so the value is
+        // stamped at serve time and the page says so. A display that silently
+        // never changed would read as "taking the lock did not work".
+        let agent = viewer_page(crate::control::Holder::Agent);
+        assert!(!agent.contains("__H5I_HOLDER__"), "the placeholder survived");
+        assert!(agent.contains(">agent</span>"), "holder not stamped");
+
+        let human = viewer_page(crate::control::Holder::Human);
+        assert!(human.contains(">human</span>"));
+        assert!(human.contains("control at page load"), "and it says what it knows");
     }
 
     #[test]

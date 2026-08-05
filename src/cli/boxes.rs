@@ -165,11 +165,24 @@ pub enum BoxCommands {
     /// never published, every connection carries the box's own token,
     /// cross-origin handshakes are refused, and your input reaches the page only
     /// while you hold the control lock (`h5i browser take`). Runs until Ctrl-C.
+    ///
+    /// With `--term`, the page is drawn in this terminal instead, and nothing is
+    /// bound or served at all: no port, no token, and no host browser. Needs a
+    /// terminal that speaks the Kitty graphics protocol.
     View {
         name: String,
         /// Loopback port to bind. 0 picks a free one and prints it.
         #[arg(long, default_value_t = 7331)]
         port: u16,
+        /// Draw the page in this terminal instead of serving it to a browser
+        #[arg(long)]
+        term: bool,
+        /// Frame-rate ceiling asked of the box, for `--term`
+        #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u32).range(1..=60))]
+        fps: u32,
+        /// Skip the graphics probe and render anyway, for `--term`
+        #[arg(long)]
+        assume_graphics: bool,
     },
 
     /// Check one environment's enforcement readiness and structural health
@@ -389,6 +402,23 @@ pub fn looks_like_repo_url(source: &str) -> bool {
             host.contains('@') && host.contains('.') && !path.is_empty() && !path.starts_with('/')
         }
         None => false,
+    }
+}
+
+/// What the box may reach, short enough for the terminal viewer's status line.
+///
+/// An empty allowlist reads as "localhost", not as "none": loopback is always
+/// open — it is how the dev server is reachable at all — so a box with no
+/// egress entries can still talk to itself, and saying "none" would overstate
+/// the confinement in the one place a human is looking for a quick answer.
+pub fn egress_summary(hosts: &[String]) -> String {
+    match hosts {
+        [] => "localhost".into(),
+        // Two fit; beyond that the count is more useful than a truncated list,
+        // and `h5i box status` prints them in full.
+        [one] => one.clone(),
+        [a, b] => format!("{a},{b}"),
+        many => format!("{} hosts", many.len()),
     }
 }
 
@@ -1132,17 +1162,40 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                BoxCommands::View { name, port } => {
+                BoxCommands::View {
+                    name,
+                    port,
+                    term,
+                    fps,
+                    assume_graphics,
+                } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     let dir = h5i_core::env::env_dir(&h5i_root, &m.agent, &m.slug);
-                    let forward =
-                        h5i_core::view::Forward::bind(&dir, &m.id, &m.policy_digest, port)?;
-                    let holder = h5i_core::control::read(&dir).holder;
-                    println!("{} viewer for {}", SUCCESS, m.id);
-                    println!("   open     {}", forward.url()?);
-                    println!("   control  {holder:?} — `h5i browser take {name}` to drive");
-                    println!("   stop     Ctrl-C");
-                    forward.serve()?;
+                    if term {
+                        // The status line reports what the box may reach. It is
+                        // read from the *enforced* policy, not from the profile
+                        // as written, so it describes the box that is running.
+                        let egress = h5i_core::env::load_policy(&h5i_root, &m)
+                            .map(|p| egress_summary(&p.profile.net_egress))
+                            .unwrap_or_default();
+                        h5i_core::termview::run(h5i_core::termview::Options {
+                            env_dir: dir,
+                            env_id: m.id.clone(),
+                            policy_digest: m.policy_digest.clone(),
+                            egress,
+                            max_fps: fps,
+                            assume_graphics,
+                        })?;
+                    } else {
+                        let forward =
+                            h5i_core::view::Forward::bind(&dir, &m.id, &m.policy_digest, port)?;
+                        let holder = h5i_core::control::read(&dir).holder;
+                        println!("{} viewer for {}", SUCCESS, m.id);
+                        println!("   open     {}", forward.url()?);
+                        println!("   control  {holder:?} — `h5i browser take {name}` to drive");
+                        println!("   stop     Ctrl-C");
+                        forward.serve()?;
+                    }
                 }
 
                 BoxCommands::Doctor { name, json } => {
