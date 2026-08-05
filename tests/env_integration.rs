@@ -1391,6 +1391,139 @@ fn supervised_egress_allowlist_confines_to_pinned_hosts() {
     );
 }
 
+// ─── 3d. agent-family profiles at the supervised tier ───────────────────────
+
+/// Set up a repo pinning `<profile>` to `supervised` and create env `slug` with
+/// it. `None` (skip) when the host cannot satisfy the claim or lacks the
+/// profile's tooling — same gate style as [`supervised_env`].
+fn supervised_profile_env(slug: &str, profile: &str) -> Option<Repo> {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        format!("[profile.{profile}]\nisolation = \"supervised\"\n"),
+    )
+    .unwrap();
+    git(&r.dir, &["add", ".h5i/env.toml"]);
+    git(&r.dir, &["commit", "-m", "supervised agent profile"]);
+    let out = r.h5i(&[
+        "env", "create", slug, "--profile", profile, "--isolation", "supervised",
+    ]);
+    if out.status.success() {
+        Some(r)
+    } else {
+        // Create is fail-closed for this profile on hosts without the stack or
+        // without Chrome/agent-browser, and says which. Skipping is correct;
+        // silently passing would not be.
+        eprintln!(
+            "skipping supervised `{profile}`: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+        None
+    }
+}
+
+/// The private `/tmp` bind must not hide the box's own workspace when the
+/// repository itself lives under `/tmp` — which every `tempfile` repo in this
+/// suite does, and which is the common case for CI.
+///
+/// This is the M4 write-up's first finding, and the write-up is wrong: it
+/// recorded the `supervised` + agent-profile `EINVAL` as "the workspace is
+/// under `/tmp`, so the private-`/tmp` redirect shadows the worktree", and
+/// called it an unfixed footgun that `create` should refuse. It is not one. The
+/// bind-ordering fix (`home_binds_in_mount_order`, which mounts `/tmp` last)
+/// already made this work, and a `create`-time refusal would have rejected a
+/// configuration that runs correctly — including this suite's own fixtures.
+///
+/// So the test pins the working behaviour instead of guarding a phantom: the
+/// workspace is visible from inside, and `/tmp` is still the empty per-env
+/// scratch rather than the host's.
+#[test]
+fn a_workspace_under_tmp_survives_the_private_tmp_bind() {
+    let _serial = supervised_guard();
+    let Some(r) = supervised_env("tmpwork", "") else {
+        return;
+    };
+    // `Repo::new()` builds under the system temp dir, so this only means
+    // something where that is genuinely `/tmp`.
+    if !r.dir.starts_with("/tmp") {
+        eprintln!("skipping: fixtures are not under /tmp on this host ({:?})", r.dir);
+        return;
+    }
+    std::fs::write(r.work("tmpwork").join("marker.txt"), "visible\n").unwrap();
+
+    let raw = supervised_run_raw(
+        &r,
+        "tmpwork",
+        &["sh", "-c", "cat marker.txt; echo TMPLIST; ls -A /tmp"],
+    )
+    .expect("run");
+    assert!(
+        raw.contains("visible"),
+        "the workspace must still resolve inside the box:\n{raw}"
+    );
+    // And the reason it is worth a test: `/tmp` really is shadowed. The
+    // workspace surviving is the mount *order*, not the absence of the bind.
+    let after = raw.split("TMPLIST").nth(1).unwrap_or("");
+    assert!(
+        after.trim().is_empty(),
+        "/tmp must still be the empty per-env scratch:\n{raw}"
+    );
+}
+
+/// The gap the M4 live run exposed: **no test ran an agent-family profile at
+/// `supervised`**, and `supervised` is the only kernel tier that can host one
+/// (`process` refuses the egress these profiles need). Both M4 surprises lived
+/// in that gap, including the one this asserts.
+///
+/// The property under test is the socket gate's `AF_UNIX` verdict, because that
+/// is what silently bricked the browser box: the `agent-browser` daemon's
+/// control socket is a filesystem-bound `AF_UNIX` listener, the gate denied the
+/// family for every profile, and the daemon died before writing a word. A
+/// profile-scoped grant is the fix, so the test that guards it has to be
+/// per-profile — `browser` gets `AF_UNIX`, and the neighbouring profile that
+/// did not ask for it still does not.
+#[test]
+fn a_browser_box_at_supervised_gets_af_unix_and_its_neighbours_do_not() {
+    let _serial = supervised_guard();
+    if !have_python3() {
+        eprintln!("skipping: python3 unavailable");
+        return;
+    }
+    let Some(r) = supervised_profile_env("bbox", "browser") else {
+        return;
+    };
+
+    // Bind a real filesystem-bound listener, which is what the daemon does —
+    // not just socket(), so a gate that allowed the family but a Landlock grant
+    // that refused MAKE_SOCK would still be caught.
+    let script = "import socket,os,errno\n\
+        d='/tmp/gate-probe'\n\
+        os.makedirs(d,exist_ok=True)\n\
+        try:\n\
+        \x20s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\n\
+        \x20s.bind(d+'/x.sock'); s.listen(1); s.close(); print('UNIXBIND OK')\n\
+        except OSError as e:\n\
+        \x20print('UNIXBIND FAIL',errno.errorcode.get(e.errno,e.errno))\n";
+    let raw = supervised_run_raw(&r, "bbox", &["python3", "-c", script]).expect("browser box run");
+    assert!(
+        raw.contains("UNIXBIND OK"),
+        "the browser profile grants AF_UNIX, so its daemon's control socket must bind:\n{raw}"
+    );
+
+    // The grant is per-profile, not a tier-wide loosening. A `default` box on
+    // the same host, same tier, still gets EPERM — otherwise the fix would have
+    // widened every box to buy one.
+    let Some(plain) = supervised_env("plainbox", "") else {
+        return;
+    };
+    let raw = supervised_run_raw(&plain, "plainbox", &["python3", "-c", script]).expect("plain run");
+    assert!(
+        raw.contains("UNIXBIND FAIL EPERM"),
+        "AF_UNIX stays denied for a profile that did not ask for it:\n{raw}"
+    );
+}
+
 // ─── 4. parallel envs (the arena) ───────────────────────────────────────────
 
 #[test]
