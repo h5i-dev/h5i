@@ -44,9 +44,9 @@ use crate::error::H5iError;
 // imports them from `sandbox_policy` directly, breaking the `sandbox →
 // container → sandbox` dispatch cycle.
 pub use crate::sandbox_policy::{
-    AgentRuntime, AuditCapture, AuditPolicy, BoxGitPath, ExecOutcome, HomeBind,
-    InteractiveOutcome, IsolationClaim, NetMode, PrivateBind, PrivatePath, Profile,
-    ResolvedPolicy, SecretGrant, DEFAULT_WALL,
+    browser_read_grants, browser_tooling_present, AgentRuntime, AuditCapture, AuditPolicy,
+    BoxGitPath, ExecOutcome, HomeBind, InteractiveOutcome, IsolationClaim, NetMode, PrivateBind,
+    PrivatePath, Profile, ResolvedPolicy, SecretGrant, DEFAULT_WALL,
 };
 
 /// Repo-relative path of the checked-in policy file.
@@ -279,19 +279,25 @@ fn builtin_named(name: &str, isolation: IsolationClaim) -> Profile {
         "agent" => Profile::builtin_agent(isolation, AgentRuntime::detect()),
         "agent-claude" => Profile::builtin_agent(isolation, AgentRuntime::Claude),
         "agent-codex" => Profile::builtin_agent(isolation, AgentRuntime::Codex),
+        // A browser box is an agent box plus the browser surface; it scopes to
+        // the creating runtime exactly like `agent` does.
+        "browser" => Profile::builtin_browser(isolation, AgentRuntime::detect()),
         _ => Profile::builtin(name, isolation),
     }
 }
 
 /// Is `name` backed by a built-in profile (usable without `.h5i/env.toml`)?
 fn is_builtin_name(name: &str) -> bool {
-    matches!(name, "default" | "agent" | "agent-claude" | "agent-codex")
+    matches!(
+        name,
+        "default" | "agent" | "agent-claude" | "agent-codex" | "browser"
+    )
 }
 
 /// Is `name` an agent-in-box profile (the family that grants claude/codex HOME
 /// state + API egress)? Used to decide whether a box can actually run an agent.
 pub fn is_agent_profile(name: &str) -> bool {
-    matches!(name, "agent" | "agent-claude" | "agent-codex")
+    matches!(name, "agent" | "agent-claude" | "agent-codex" | "browser")
 }
 
 /// Load profile `name` from `<repo>/.h5i/env.toml`, falling back to the

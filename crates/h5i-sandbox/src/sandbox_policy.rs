@@ -507,8 +507,197 @@ impl Profile {
         p
     }
 
+    /// Built-in **`browser`** profile (`--profile browser`): the agent-in-box
+    /// profile plus the surface a headless Chrome and the `agent-browser`
+    /// daemon need, so the agent can drive a real browser against the dev
+    /// server it just started.
+    ///
+    /// The browser runs in the **same box** as the agent. The dev server is
+    /// then on `localhost:3000` for both of them with no namespace sharing, no
+    /// pod and no second image: at the kernel tiers the "image" is the host
+    /// filesystem under Landlock grants, so a browser box is a profile, not an
+    /// architecture (roadmap 5.2).
+    ///
+    /// What is added, and why each piece:
+    ///
+    /// - **read**: the discovered Chrome and `agent-browser` binaries and their
+    ///   resource trees, plus fontconfig and the system fonts — Chrome exits
+    ///   rather than rendering without them.
+    /// - **write**: `/dev/shm` (Chrome's shared-memory transport; without it
+    ///   the renderer dies unless every caller remembers
+    ///   `--disable-dev-shm-usage`).
+    /// - Loopback is reachable inside the box's own network namespace, so the
+    ///   dev server needs no grant at all. External egress stays whatever the
+    ///   agent profile allows: the browser gets no wider reach than the agent.
+    ///
+    /// Chrome's *own* sandbox does not run here. Our seccomp deny-list blocks
+    /// the namespace syscalls it needs, at every tier, so Chrome is launched
+    /// with `--no-sandbox` and h5i's box is the boundary. That is one layer
+    /// fewer than a browser on the host has, and it is stated in the roadmap's
+    /// limits rather than hidden.
+    pub fn builtin_browser(isolation: IsolationClaim, runtime: AgentRuntime) -> Profile {
+        let mut p = Profile::builtin_agent(isolation, runtime);
+        p.name = "browser".to_string();
+        // Host paths are how the kernel tiers get a browser: the "image" there
+        // is the host filesystem under Landlock grants. A container brings its
+        // own Chrome and agent-browser, so granting host paths would be noise
+        // in a digest and a lie in the policy — the box cannot see them.
+        if isolation < IsolationClaim::Container {
+            for path in browser_read_grants() {
+                if !p.fs_read.contains(&path) {
+                    p.fs_read.push(path);
+                }
+            }
+        }
+        // Chrome's shared-memory transport. Granting it is better than relying
+        // on every caller to pass --disable-dev-shm-usage.
+        p.fs_write.push("/dev/shm".into());
+        // A browser is heavier than a build: renderers are processes and tabs
+        // are memory.
+        p.mem_bytes = Some(12 * 1024 * 1024 * 1024);
+        p.max_procs = Some(1024);
+        p
+    }
+
     pub fn wall(&self) -> Duration {
         Duration::from_secs(self.wall_secs)
+    }
+}
+
+
+// ─── browser discovery ──────────────────────────────────────────────────────
+
+/// Candidate Chrome/Chromium binaries, in preference order. `agent-browser
+/// install` downloads Chrome for Testing under the user's cache, and a
+/// Playwright install is a common existing source; a system Chrome is used when
+/// neither is present.
+const CHROME_CANDIDATES: &[&str] = &[
+    "~/.cache/agent-browser",
+    "~/.local/share/agent-browser",
+    "~/.cache/ms-playwright",
+    "/opt/google/chrome",
+    "/usr/lib/chromium",
+    "/usr/lib/chromium-browser",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+];
+
+/// Candidate `agent-browser` binaries: cargo install, a user-local npm bin, a
+/// system install.
+const AGENT_BROWSER_CANDIDATES: &[&str] = &[
+    "~/.cargo/bin/agent-browser",
+    "~/.local/bin/agent-browser",
+    "/usr/local/bin/agent-browser",
+    "/usr/bin/agent-browser",
+];
+
+/// Font and rendering support Chrome needs to start at all.
+const BROWSER_SUPPORT_PATHS: &[&str] = &[
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+    "~/.fonts",
+    "~/.local/share/fonts",
+    "/etc/fonts",
+    "~/.config/fontconfig",
+    "~/.cache/fontconfig",
+];
+
+/// Expand `~` against `$HOME`, leaving other paths untouched.
+fn expand_home(path: &str) -> Option<std::path::PathBuf> {
+    match path.strip_prefix("~/") {
+        Some(rest) => std::env::var("HOME")
+            .ok()
+            .filter(|h| !h.is_empty())
+            .map(|h| std::path::PathBuf::from(h).join(rest)),
+        None => Some(std::path::PathBuf::from(path)),
+    }
+}
+
+/// Every candidate browser path that exists on this host, as profile grants.
+///
+/// Only existing paths are granted: a Landlock allowlist naming a path that is
+/// not there is noise, and it makes the resolved policy (which is digested)
+/// depend on wishful thinking rather than on what the box can actually reach.
+pub fn browser_read_grants() -> Vec<String> {
+    CHROME_CANDIDATES
+        .iter()
+        .chain(AGENT_BROWSER_CANDIDATES)
+        .chain(BROWSER_SUPPORT_PATHS)
+        .filter(|c| expand_home(c).map(|p| p.exists()).unwrap_or(false))
+        .map(|c| c.to_string())
+        .collect()
+}
+
+/// Did we find anything that could actually run a browser **on this host**?
+///
+/// Only meaningful for the kernel tiers, where the box reaches the host
+/// filesystem. A container box gets its browser from the image, so `create`
+/// does not consult this there.
+pub fn browser_tooling_present() -> (bool, bool) {
+    let any = |list: &[&str]| {
+        list.iter()
+            .any(|c| expand_home(c).map(|p| p.exists()).unwrap_or(false))
+    };
+    (any(CHROME_CANDIDATES), any(AGENT_BROWSER_CANDIDATES))
+}
+
+#[cfg(test)]
+mod browser_profile_tests {
+    use super::*;
+
+    #[test]
+    fn browser_is_the_agent_surface_plus_the_browser_surface() {
+        let agent = Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude);
+        let browser = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
+
+        assert_eq!(browser.name, "browser");
+        // Everything the agent could reach, the browser box can still reach …
+        for r in &agent.fs_read {
+            assert!(browser.fs_read.contains(r), "lost an agent read grant: {r}");
+        }
+        // … and the browser's own egress is exactly the agent's, never wider.
+        assert_eq!(browser.net_egress, agent.net_egress);
+        // Chrome's shared-memory transport.
+        assert!(browser.fs_write.iter().any(|w| w == "/dev/shm"));
+        // Room for renderers.
+        assert!(browser.mem_bytes > agent.mem_bytes);
+        assert!(browser.max_procs > agent.max_procs);
+    }
+
+    #[test]
+    fn browser_stays_runtime_scoped() {
+        let claude = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
+        let codex = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Codex);
+        // A browser box must not become a way around the runtime scoping: a
+        // Claude browser box still cannot reach Codex state or the OpenAI API.
+        assert_ne!(claude.net_egress, codex.net_egress);
+        assert!(!claude.fs_write.iter().any(|w| w.contains(".codex")));
+        assert!(!codex.fs_write.iter().any(|w| w.contains(".claude")));
+    }
+
+    #[test]
+    fn only_paths_that_exist_are_granted() {
+        // The resolved policy is digested, so a grant naming a path that is not
+        // there would make the digest depend on wishful thinking.
+        for g in browser_read_grants() {
+            let p = expand_home(&g).expect("expandable");
+            assert!(p.exists(), "granted a path that does not exist: {g}");
+        }
+    }
+
+    #[test]
+    fn expand_home_only_touches_tilde_paths() {
+        std::env::set_var("HOME", "/home/example");
+        assert_eq!(
+            expand_home("~/.cache/x").unwrap(),
+            std::path::PathBuf::from("/home/example/.cache/x")
+        );
+        assert_eq!(
+            expand_home("/usr/bin/chromium").unwrap(),
+            std::path::PathBuf::from("/usr/bin/chromium")
+        );
     }
 }
 

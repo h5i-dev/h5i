@@ -199,9 +199,12 @@ box (supervised)   private netns, nftables egress allowlist, Landlock, seccomp
 └── the agent-browser daemon, driven over the CLI
 ```
 
-The container tier stays the **portability** path, and it comes back when the
-work needs an arbitrary image or a host without the kernel stack. That is when
-the pod split earns its cost, not before.
+The container tier is the **portability** path, and once the browser lives in
+the same box it costs almost nothing: an image with Chrome and agent-browser
+(`containers/Containerfile.browser`), a `/dev/shm` big enough for a renderer,
+and the host-path grants skipped because the image provides them. All three are
+built. The pod split was the expensive part, and dropping it took the cost with
+it.
 
 One thing this costs, and it should be stated: our seccomp deny-list blocks the
 namespace syscalls Chrome's own sandbox needs, so Chrome runs with
@@ -530,15 +533,17 @@ and tested; the read-only mount and therefore `refresh` are not (5.8).
 verb set instead of a token in the box), and the credential-seed audit, each
 verified by a test that asserts denial rather than by inspection.
 
-**M4. Browser — not started, and cheaper than it looked.** A `browser` profile
-at the **supervised** tier: grants for Chrome and the agent-browser binary,
-headless Chrome in the same box as the agent and its dev server, egress from
-the existing nftables allowlist, `--allowed-domains` from the same policy, AI
-chat refused, and browser commands plus console and network errors into the
-receipt. **No pod, no second image, no Podman requirement** (5.2). The
-container tier follows later as the portability path, and that is when pod
-support in `container.rs` is worth building. Exit: an agent fixes a real UI bug
-using only agent-browser output as its feedback.
+**M4. Browser — profile landed, live loop not yet.** Done: the `browser`
+built-in profile (the agent profile plus the browser surface, runtime scoping
+intact, egress never wider than the agent's), host-path discovery for the
+kernel tiers with a fail-closed create that names what to install,
+`containers/Containerfile.browser` for the container tier, and `/dev/shm` sized
+from the policy so a renderer does not die on Podman's 64 MiB default. **No
+pod, no second image, no Podman requirement** (5.2).
+**Remaining**: `--allowed-domains` wired from `net.egress`, AI chat refused by
+policy rather than by omission, and browser commands plus console and network
+errors folded into the receipt. Exit: an agent fixes a real UI bug using only
+agent-browser output as its feedback.
 
 **M5. Viewer — not started.** `h5i dev view` and `h5i browser url`: an h5i-owned
 forward of the agent-browser stream to loopback with a per box token, a minimal

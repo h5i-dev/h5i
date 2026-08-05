@@ -6,12 +6,17 @@ for.
 
 ## Profiles
 
-Two built-ins need no file:
+Three built-ins need no file:
 
 - `default` — fail-closed build/test confinement. No home access, no network.
 - `agent` — agent-in-box, and **runtime-scoped**: `agent-claude` grants only
   `~/.claude*` state and Anthropic egress, `agent-codex` only `~/.codex` and
   OpenAI. A Claude box cannot read Codex's credentials or reach its API.
+- `browser` — the agent profile plus a headless Chrome and the `agent-browser`
+  binary, in the **same box**, so the dev server the agent just started is on
+  `localhost:3000` for the browser too. Egress is exactly the agent profile's,
+  never wider. Create refuses on a host without the tooling rather than handing
+  back a box whose first `agent-browser open` fails.
 
 Repo profiles live in `.h5i/env.toml` as `[profile.<name>]`. A profile of the
 same name as a built-in overlays it. An omitted `net.egress` inherits the

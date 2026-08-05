@@ -717,6 +717,43 @@ fn prepare_managed_settings(work: &Path, content: &str) -> Option<PathBuf> {
     Some(path)
 }
 
+
+/// `/dev/shm` size in MiB for this profile: an eighth of the memory limit,
+/// floored at Podman's own 64 MiB default and capped at 1 GiB. Derived from
+/// existing policy rather than a new field, so the resolved policy's digest
+/// (and every pinned box) is unchanged.
+fn shm_size_mb(profile: &Profile) -> u64 {
+    const DEFAULT_MB: u64 = 64;
+    const CAP_MB: u64 = 1024;
+    match profile.mem_bytes {
+        Some(bytes) => (bytes / 8 / (1024 * 1024)).clamp(DEFAULT_MB, CAP_MB),
+        None => DEFAULT_MB,
+    }
+}
+
+#[cfg(test)]
+mod shm_tests {
+    use super::*;
+    use crate::sandbox::IsolationClaim;
+
+    fn profile_with_mem(bytes: Option<u64>) -> Profile {
+        let mut p = Profile::builtin("default", IsolationClaim::Container);
+        p.mem_bytes = bytes;
+        p
+    }
+
+    #[test]
+    fn shm_scales_with_the_memory_limit_but_stays_bounded() {
+        // A browser profile's 12 GiB gives it room; the cap keeps a generous
+        // limit from handing the box a gigabyte-plus of shared memory.
+        assert_eq!(shm_size_mb(&profile_with_mem(Some(12 * 1024 * 1024 * 1024))), 1024);
+        assert_eq!(shm_size_mb(&profile_with_mem(Some(4 * 1024 * 1024 * 1024))), 512);
+        // Small limits floor at Podman's own default rather than going below it.
+        assert_eq!(shm_size_mb(&profile_with_mem(Some(64 * 1024 * 1024))), 64);
+        assert_eq!(shm_size_mb(&profile_with_mem(None)), 64);
+    }
+}
+
 /// Build the `podman run` argv for `argv` under `policy`, fully
 /// hardened. `image` is the resolved base image; `name` is the (unique)
 /// container name used for cleanup. Pure — no process is spawned, so this is
@@ -772,6 +809,13 @@ pub fn build_run_argv(
         "--read-only".into(),
         "--tmpfs".into(),
         "/tmp:rw,nosuid,nodev,size=256m".into(),
+        // Podman's default /dev/shm is 64 MiB, which a browser renderer eats
+        // through in one heavy page and then dies with a message that blames
+        // everything except the shared-memory segment. Size it from the
+        // policy's own memory limit (deterministic, so the argv stays pure and
+        // testable) and cap it at 1 GiB.
+        "--shm-size".into(),
+        format!("{}m", shm_size_mb(profile)),
         // The env workspace, mounted at /work (the in-box git plumbing below
         // adds the only other writable host paths — the env's own .git
         // surface). Use --mount rather than -v so ':' in a repository path

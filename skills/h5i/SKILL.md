@@ -47,6 +47,26 @@ h5i dev log <name>                          # the box's event log
 h5i dev inspect <name> --capture <id>       # one receipt, rendered
 ```
 
+## Driving a browser
+
+A `browser` box runs headless Chrome and the `agent-browser` daemon alongside
+the agent, so the app under test is reachable at `localhost`:
+
+```bash
+h5i dev --profile browser --name ui
+h5i dev shell ui
+# inside the box:
+agent-browser open http://localhost:3000
+agent-browser snapshot          # accessibility tree with @refs — read this, not HTML
+agent-browser click @e2
+agent-browser fill @e3 "test@example.com"
+agent-browser screenshot shot.png
+```
+
+Chrome runs with its own sandbox off (h5i's box is the boundary), its profile
+is created fresh inside the box, and its network reach is the box's egress
+allowlist. `agent-browser --help` is the full verb table.
+
 ## The output gate
 
 A box cannot write to the host. Getting work out is one command, and it is

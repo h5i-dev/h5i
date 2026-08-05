@@ -4490,3 +4490,34 @@ fn an_empty_box_exports_everything_the_agent_wrote() {
     assert!(patch.contains("main.py"), "{patch}");
     assert!(patch.contains("+def main(): pass"), "{patch}");
 }
+
+// ─── the browser profile (M4) ───────────────────────────────────────────────
+
+/// A `browser` box either gets a browser or is refused at create with a
+/// message naming what to install. What it must never be is a box whose first
+/// `agent-browser open` fails with "not found".
+#[test]
+fn the_browser_profile_fails_closed_without_the_tooling() {
+    let r = Repo::new();
+    let out = r.h5i(&["dev", "--name", "br", "--profile", "browser"]);
+
+    let text = out_str(&out);
+    if out.status.success() {
+        // This host has Chrome and agent-browser: the box exists and says so.
+        let status = out_str(&r.h5i_ok(&["dev", "status", "br"]));
+        assert!(status.contains("profile=browser"), "{status}");
+    } else {
+        assert!(
+            text.contains("agent-browser") || text.contains("Chrome"),
+            "the refusal must name what is missing: {text}"
+        );
+        assert!(
+            text.contains("install"),
+            "and how to get it: {text}"
+        );
+        assert!(
+            !r.env_dir("br").exists(),
+            "a refused create must leave nothing behind"
+        );
+    }
+}

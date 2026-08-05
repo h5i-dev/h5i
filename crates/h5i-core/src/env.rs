@@ -1498,6 +1498,31 @@ pub fn create(
         None => sandbox::effective_auto(workdir, profile_name, false, opts.image.as_deref())?,
     };
 
+    // A browser box with no browser is a box whose first `agent-browser open`
+    // fails with a confusing "not found". Refuse at create, where the message
+    // can say what to install.
+    if profile_name == "browser" && claim < sandbox::IsolationClaim::Container {
+        // Kernel tiers reach the host filesystem, so the browser has to be
+        // there. A container box brings its own in the image, and is checked by
+        // the image existing at all.
+        let (chrome, driver) = sandbox::browser_tooling_present();
+        if !chrome || !driver {
+            let mut missing = Vec::new();
+            if !chrome {
+                missing.push("a Chrome/Chromium build");
+            }
+            if !driver {
+                missing.push("the `agent-browser` binary");
+            }
+            return Err(H5iError::Metadata(format!(
+                "the `browser` profile needs {} on this host, and it is not there.\n  \
+                 Install both with:  npm install -g agent-browser && agent-browser install\n  \
+                 (or `cargo install agent-browser`), then create the box again.",
+                missing.join(" and ")
+            )));
+        }
+    }
+
     // Policy first (fail closed BEFORE any state is created on disk).
     let mut profile = sandbox::load_profile(workdir, profile_name, Some(claim))?;
     // `--image` has the strongest precedence; it lands in the profile before

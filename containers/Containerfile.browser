@@ -1,0 +1,54 @@
+# Browser-in-box image for `h5i dev --profile browser` at the container tier:
+# the Claude agent image plus headless Chrome and the agent-browser daemon, so
+# the agent can drive a real browser against the dev server it just started.
+#
+# One image, one box. The agent, its dev server and the browser share a network
+# namespace by simply being in the same container, so `localhost:3000` is
+# reachable from the browser with no pod, no port publishing and no second
+# image (roadmap 5.2).
+#
+# Build (context = repo root):
+#   podman build -f containers/Containerfile.agent-claude -t h5i-agent-claude .
+#   podman build -f containers/Containerfile.browser      -t h5i-browser .
+#
+# Wire it up:
+#   printf '[container]\nimage = "localhost/h5i-browser:latest"\n' >> .h5i/env.toml
+#   h5i dev --profile browser --isolation container --name ui
+#
+# Inside the box:
+#   agent-browser open http://localhost:3000
+#   agent-browser snapshot
+#
+# Chrome's own sandbox does not run here: h5i's seccomp deny-list blocks the
+# namespace syscalls it needs, so Chrome is launched with --no-sandbox and the
+# box is the boundary. Same at the kernel tiers. See the roadmap's limits.
+
+ARG BASE=localhost/h5i-agent-claude:latest
+FROM ${BASE}
+
+# Chromium plus the shared libraries a headless render needs, and fonts —
+# Chrome exits rather than rendering without them. `chromium` from Debian
+# rather than a downloaded Chrome for Testing: it is patched by the distro and
+# it is what `--pull=never` boxes can rely on being present in the image.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      chromium \
+      fonts-liberation fonts-dejavu-core fontconfig \
+      libnss3 libatk-bridge2.0-0 libgtk-3-0 libasound2 libxshmfence1 \
+ && rm -rf /var/lib/apt/lists/*
+
+# The automation CLI. It speaks CDP directly, so nothing here needs Playwright
+# or a second Node runtime at run time.
+RUN npm install -g agent-browser && npm cache clean --force
+
+# Point agent-browser at the distro Chromium instead of letting it download
+# Chrome for Testing: the box has no egress to fetch one, and a read-only
+# rootfs to fetch it into.
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+# Headless by default. A viewer watches the CDP screencast (roadmap 7), so
+# there is no X server in this image and nothing wants one.
+ENV AGENT_BROWSER_HEADLESS=1
+
+# No USER switch: the base image does not set one either, and `--userns=keep-id`
+# already maps the box's root to your unprivileged host uid. Changing it here
+# would break the entrypoint's HOME repointing.
