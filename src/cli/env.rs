@@ -1,5 +1,10 @@
 //! `h5i env` — CLI handlers (migrated from main.rs).
-use crate::*;
+use clap::Subcommand;
+use console::style;
+
+use h5i_core::msg;
+use h5i_core::repository::H5iRepository;
+use h5i_core::ui::{LOOKING, SUCCESS};
 
 #[derive(Subcommand)]
 pub enum EnvCommands {
@@ -173,22 +178,6 @@ pub enum EnvCommands {
         /// Emit the event records as JSON instead of the human view
         #[arg(long)]
         json: bool,
-    },
-
-    /// Show the environment's reasoning/context branch
-    /// (`refs/h5i/context/env/<agent>/<slug>`) — a convenience alias for
-    /// `h5i context show --branch <that-branch>`.
-    Context {
-        name: String,
-        /// Number of recent context commits to show (window K)
-        #[arg(long, default_value_t = 3)]
-        window: usize,
-        /// Include the full reasoning trace (equivalent to --depth 3)
-        #[arg(long)]
-        trace: bool,
-        /// Progressive disclosure depth: 1=compact index, 2=timeline (default), 3=full trace
-        #[arg(long, default_value_t = 2)]
-        depth: u8,
     },
 
     /// Diff the environment's work against its pinned base
@@ -874,28 +863,6 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                             );
                         }
                     }
-                }
-
-                EnvCommands::Context {
-                    name,
-                    window,
-                    trace,
-                    depth,
-                } => {
-                    let m = h5i_core::env::find(&h5i_root, &name)?;
-                    // --trace is shorthand for --depth 3 (mirrors `context show`).
-                    let effective_depth = if trace { 3 } else { depth };
-                    let opts = ctx::ContextOpts {
-                        branch: Some(m.context_branch.clone()),
-                        commit_hash: None,
-                        show_log: effective_depth >= 3,
-                        log_offset: 0,
-                        metadata_segment: None,
-                        window,
-                        depth: effective_depth,
-                    };
-                    let snapshot = ctx::gcc_context(&workdir, &opts)?;
-                    ctx::print_context_depth(&snapshot, effective_depth);
                 }
 
                 EnvCommands::Diff { name, stat, json } => {
