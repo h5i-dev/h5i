@@ -71,7 +71,7 @@ allowlist. `agent-browser --help` is the full verb table.
 
 ```bash
 h5i browser status <name>    # who holds control, and whether your @refs are stale
-h5i box view <name>          # (human, on the host) watch this box and take over
+h5i box view <name> [--term] # (human, on the host) watch this box and take over
 ```
 
 If status says a human holds control, wait — do not retry in a loop. When

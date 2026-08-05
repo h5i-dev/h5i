@@ -18,27 +18,25 @@
   #holder { font-weight: 600; }
   #holder.agent { color: #6fb3f2; }
   #holder.human { color: #78d18c; }
-  button {
-    font: inherit; padding: .25rem .7rem; border-radius: 5px;
-    border: 1px solid #3a3f47; background: #23272d; color: inherit; cursor: pointer;
-  }
-  button:hover { background: #2c3138; }
+  #url { color: #9aa3ad; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   main { flex: 1; display: grid; place-items: center; overflow: hidden; background: #0e1013; }
-  canvas { max-width: 100%; max-height: 100%; cursor: not-allowed; }
-  canvas.live { cursor: crosshair; }
+  canvas { max-width: 100%; max-height: 100%; cursor: crosshair; }
   #hint { padding: .4rem .75rem; color: #9aa3ad; background: #1c1f24; border-top: 1px solid #2a2e35; }
 </style>
 </head>
 <body>
 <header>
   <strong>h5i viewer</strong>
-  <span>control: <span id="holder" class="agent">agent</span></span>
+  <!-- Substituted by the forward when it serves this page. The value is one of
+       two fixed strings from h5i's own enum, never anything the box supplies. -->
+  <span>control at page load: <span id="holder" class="__H5I_HOLDER__">__H5I_HOLDER__</span></span>
   <span id="status">connecting…</span>
+  <span id="url"></span>
 </header>
-<main><canvas id="screen" width="1280" height="800"></canvas></main>
+<main><canvas id="screen" width="1280" height="800" tabindex="0"></canvas></main>
 <div id="hint">
-  The agent is driving. Run <code>h5i browser take &lt;box&gt;</code> to take control;
-  until then your clicks and keys are not forwarded.
+  Input reaches the page only while you hold the control lock. Take it with
+  <code>h5i browser take &lt;box&gt;</code>, then reload to see the state above update.
 </div>
 <script>
 // The viewer is served by the forward, so same-origin is the only origin that
@@ -48,13 +46,23 @@ const token = params.get("token") || "";
 const canvas = document.getElementById("screen");
 const ctx = canvas.getContext("2d");
 const statusEl = document.getElementById("status");
-const holderEl = document.getElementById("holder");
+const urlEl = document.getElementById("url");
+
+// The page's own viewport, which is what input coordinates are expressed in.
+// It is not necessarily the frame's pixel size: the stream may scale frames
+// down, and mapping a click through the frame's dimensions would then land it
+// somewhere plausible and wrong.
+let viewport = { w: 1280, h: 800 };
 
 let ws;
 function connect() {
   ws = new WebSocket(`ws://${location.host}/?token=${encodeURIComponent(token)}`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { statusEl.textContent = "connected"; };
+  ws.onopen = () => {
+    statusEl.textContent = "connected";
+    // Ask for a frame rate rather than taking whatever the box produces.
+    send({ type: "config", maxFps: 30, pacing: "push" });
+  };
   ws.onclose = () => { statusEl.textContent = "disconnected"; setTimeout(connect, 1500); };
   ws.onerror = () => { statusEl.textContent = "error"; };
   ws.onmessage = (ev) => {
@@ -65,7 +73,15 @@ function connect() {
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.type === "frame" && msg.data) draw("data:image/jpeg;base64," + msg.data);
-      else if (msg.type === "control" && msg.holder) setHolder(msg.holder);
+      else if (msg.type === "status") {
+        if (msg.viewportWidth) viewport = { w: msg.viewportWidth, h: msg.viewportHeight };
+        statusEl.textContent = msg.screencasting ? "connected" : "not streaming";
+      }
+      else if (msg.type === "url") setUrl(msg.url);
+      else if (msg.type === "tabs") {
+        const active = (msg.tabs || []).find((t) => t.active);
+        if (active) setUrl(active.url);
+      }
       return;
     }
     const blob = new Blob([ev.data], { type: "image/jpeg" });
@@ -86,31 +102,90 @@ function draw(src, done) {
   img.src = src;
 }
 
-function setHolder(who) {
-  holderEl.textContent = who;
-  holderEl.className = who;
-  canvas.classList.toggle("live", who === "human");
-}
+// The URL comes from the page inside the box, so it is untrusted text. It is
+// written as a text node rather than as markup, and never as a link.
+function setUrl(u) { urlEl.textContent = u || ""; }
 
 // Input is sent optimistically. The forward drops it while the agent holds the
-// lock, so nothing here has to be trusted to enforce that — this only avoids
-// the pointless traffic and gives the human an honest cursor.
+// lock, so nothing here has to be trusted to enforce that.
 function send(msg) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
+
+// The message names below are the ones agent-browser's stream server actually
+// dispatches on. It matches `input_mouse`, `input_keyboard` and `input_touch`,
+// and falls through to a no-op for anything else — including the DOM event
+// names an earlier version of this file sent. That failure is completely
+// silent: the socket stays healthy, the frames keep coming, and the page never
+// moves. Do not rename these to match the DOM.
 function at(e) {
   const r = canvas.getBoundingClientRect();
   return {
-    x: Math.round((e.clientX - r.left) * (canvas.width / r.width)),
-    y: Math.round((e.clientY - r.top) * (canvas.height / r.height)),
+    x: Math.round((e.clientX - r.left) * (viewport.w / r.width)),
+    y: Math.round((e.clientY - r.top) * (viewport.h / r.height)),
   };
 }
-canvas.addEventListener("mousedown", (e) => send({ type: "mousedown", button: e.button, ...at(e) }));
-canvas.addEventListener("mouseup", (e) => send({ type: "mouseup", button: e.button, ...at(e) }));
-canvas.addEventListener("mousemove", (e) => send({ type: "mousemove", ...at(e) }));
-canvas.addEventListener("wheel", (e) => send({ type: "wheel", deltaX: e.deltaX, deltaY: e.deltaY, ...at(e) }), { passive: true });
-window.addEventListener("keydown", (e) => send({ type: "keydown", key: e.key, code: e.code }));
-window.addEventListener("keyup", (e) => send({ type: "keyup", key: e.key, code: e.code }));
+// CDP wants a button *name*; a numeric DOM index is ignored.
+const BUTTONS = ["left", "middle", "right"];
+function button(e) { return BUTTONS[e.button] || "none"; }
+function mods(e) {
+  return (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
+}
+function mouse(e, eventType, extra) {
+  send(Object.assign({
+    type: "input_mouse",
+    eventType,
+    button: button(e),
+    // A press with clickCount 0 is not a click as far as Chrome is concerned,
+    // so anything wired to `click` would never fire.
+    clickCount: eventType === "mousePressed" || eventType === "mouseReleased" ? 1 : 0,
+    deltaX: 0, deltaY: 0,
+    modifiers: mods(e),
+  }, at(e), extra || {}));
+}
+
+canvas.addEventListener("mousedown", (e) => { canvas.focus(); mouse(e, "mousePressed"); });
+canvas.addEventListener("mouseup", (e) => mouse(e, "mouseReleased"));
+canvas.addEventListener("mousemove", (e) => mouse(e, "mouseMoved"));
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+canvas.addEventListener("wheel", (e) => {
+  mouse(e, "mouseWheel", { deltaX: e.deltaX, deltaY: e.deltaY });
+}, { passive: true });
+
+function key(e, eventType) {
+  // Only while the canvas has focus, or the browser's own shortcuts stop
+  // working anywhere on the page.
+  if (document.activeElement !== canvas) return;
+  e.preventDefault();
+  const m = mods(e);
+  // A modified keystroke is a command, not typing: Ctrl-A selects all, it does
+  // not type "a". Shift is the exception, since shifted characters arrive
+  // already shifted.
+  const commanding = m & (1 | 2 | 4);
+  let text;
+  if (eventType === "keyDown" && !commanding) {
+    if (e.key.length === 1) text = e.key;
+    else if (e.key === "Enter") text = "\r";
+    else if (e.key === "Tab") text = "\t";
+  }
+  const msg = {
+    type: "input_keyboard",
+    eventType,
+    key: e.key,
+    code: e.code,
+    // `keyCode` is deprecated in the DOM but it is exactly the Windows virtual
+    // key code CDP is asking for, which is why it is used here rather than
+    // rebuilt from a lookup table.
+    windowsVirtualKeyCode: e.keyCode || 0,
+    modifiers: m,
+  };
+  // Omitted rather than sent as null: CDP rejects the whole command on a null
+  // string, and the box discards the error, so one null drops the keystroke.
+  if (text !== undefined) msg.text = text;
+  send(msg);
+}
+window.addEventListener("keydown", (e) => key(e, "keyDown"), true);
+window.addEventListener("keyup", (e) => key(e, "keyUp"), true);
 
 connect();
 </script>

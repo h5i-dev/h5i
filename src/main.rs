@@ -448,4 +448,48 @@ mod tests {
         assert_eq!((pr, clone), (None, None));
         assert_eq!(name, "scratch");
     }
+
+    #[test]
+    fn view_defaults_to_the_browser_and_term_opts_into_the_terminal() {
+        // The default must stay the web viewer: it works in every terminal,
+        // and `--term` needs one that can draw images.
+        match dispatch(&["h5i", "box", "view", "web-box"]) {
+            Ok(cli::boxes::BoxCommands::View { term, fps, .. }) => {
+                assert!(!term);
+                assert_eq!(fps, 10, "a modest default: every frame crosses a PTY");
+            }
+            Ok(_) => panic!("expected View"),
+            Err(e) => panic!("dispatch failed: {e}"),
+        }
+        match dispatch(&["h5i", "box", "view", "tty-box", "--term", "--fps", "24"]) {
+            Ok(cli::boxes::BoxCommands::View { term, fps, .. }) => {
+                assert!(term);
+                assert_eq!(fps, 24);
+            }
+            Ok(_) => panic!("expected View"),
+            Err(e) => panic!("dispatch failed: {e}"),
+        }
+        // A frame rate the box cannot honour is refused at the boundary rather
+        // than clamped somewhere the user cannot see.
+        assert!(dispatch(&["h5i", "box", "view", "b", "--fps", "0"]).is_err());
+        assert!(dispatch(&["h5i", "box", "view", "b", "--fps", "600"]).is_err());
+    }
+
+    #[test]
+    fn the_status_lines_egress_summary_says_localhost_rather_than_none() {
+        // An empty allowlist still leaves loopback open — that is how the dev
+        // server is reachable — so "none" would overstate the confinement in
+        // the one place a human wants a one-word answer.
+        use cli::boxes::egress_summary;
+        assert_eq!(egress_summary(&[]), "localhost");
+        assert_eq!(egress_summary(&["api.example".to_string()]), "api.example");
+        assert_eq!(
+            egress_summary(&["a.example".to_string(), "b.example".to_string()]),
+            "a.example,b.example"
+        );
+        assert_eq!(
+            egress_summary(&["a".to_string(), "b".to_string(), "c".to_string()]),
+            "3 hosts"
+        );
+    }
 }

@@ -253,13 +253,22 @@ Watch this box's browser from the host, and take over when you want to
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBview\fR [\fB\-\-port\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBview\fR [\fB\-\-port\fR] [\fB\-\-term\fR] [\fB\-\-fps\fR] [\fB\-\-assume\-graphics\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-\-port\fR \fI<PORT>\fR [default: 7331]
 Loopback port to bind. 0 picks a free one and prints it
+.TP
+\fB\-\-term\fR
+Draw the page in this terminal instead of serving it to a browser
+.TP
+\fB\-\-fps\fR \fI<FPS>\fR [default: 10]
+Frame\-rate ceiling asked of the box, for `\-\-term`
+.TP
+\fB\-\-assume\-graphics\fR
+Skip the graphics probe and render anyway, for `\-\-term`
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
