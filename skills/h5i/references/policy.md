@@ -1,7 +1,7 @@
 # Policy: what a box is allowed to do
 
 Policy comes from a **profile**, resolved at creation and pinned by digest. The
-digest in `h5i dev status` is what was actually enforced, not what was asked
+digest in `h5i box status` is what was actually enforced, not what was asked
 for.
 
 ## Profiles
@@ -38,7 +38,7 @@ Explicit secrets go through the broker and are recorded by id and fingerprint,
 never by value:
 
 ```bash
-h5i dev run <name> --secret DEPLOY_KEY -- ./deploy.sh
+h5i box run <name> --secret DEPLOY_KEY -- ./deploy.sh
 ```
 
 ## Egress
@@ -58,8 +58,8 @@ egress enforcement, so a non-empty `net.egress` is refused there rather than
 silently ignored.
 
 ```bash
-h5i dev allow api.example.com      # persistent user allowlist entry
-h5i dev allow api.example.com --remove
+h5i box allow api.example.com      # persistent user allowlist entry
+h5i box allow api.example.com --remove
 ```
 
 Denied hosts become searchable `egress-denied` findings on the receipt.

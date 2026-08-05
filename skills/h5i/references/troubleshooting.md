@@ -1,6 +1,6 @@
 # Troubleshooting
 
-## `h5i dev probe`
+## `h5i box probe`
 
 Reports what this host can enforce: Landlock ABI, user namespaces, seccomp, and
 rootless Podman. Bits being present is not the same as confinement working —
@@ -24,12 +24,12 @@ the path or host. Usually one of: a path outside `$WORK`, a host not in
 `refs/h5i/env` meta, hooks and the policy directory is sealed: a box that could
 rewrite its own manifest could widen its own policy.
 
-**A box is "busy"** — another read-write session holds its lock. `h5i dev
+**A box is "busy"** — another read-write session holds its lock. `h5i box
 status` shows which. Teardown refuses while a read-only observer is attached.
 
 ## Interactive sessions
 
-`h5i dev shell` keeps the controlling tty (job control and TUIs work) and has no
+`h5i box shell` keeps the controlling tty (job control and TUIs work) and has no
 wall-clock kill. It uses a generated plain rcfile rather than your `~/.bashrc`,
 which under confinement routinely calls tools the sandbox blocks. Pin your own
 with `[shell] rcfile = "<path-relative-to-$WORK>"` in the profile.

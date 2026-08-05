@@ -118,7 +118,7 @@
           {
             "@type": "Question",
             "name": "Does h5i need root, or a VM?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Neither. h5i uses Landlock, seccomp and unprivileged user namespaces, adding rootless Podman if available. h5i dev probe reports what the host can actually enforce, and an explicitly requested tier the host cannot satisfy fails closed rather than silently downgrading."}
+            "acceptedAnswer": {"@type": "Answer", "text": "Neither. h5i uses Landlock, seccomp and unprivileged user namespaces, adding rootless Podman if available. h5i box probe reports what the host can actually enforce, and an explicitly requested tier the host cannot satisfy fails closed rather than silently downgrading."}
           },
           {
             "@type": "Question",
@@ -977,15 +977,15 @@
     <div class="feat-grid reveal">
       <div class="feat-card">
         <div class="feat-name">1 · Fill it</div>
-        <div class="feat-desc"><code>h5i dev .</code> for this repository, <code>h5i dev --pr 1234</code> for a pull request, <code>h5i dev &lt;url&gt;</code> to clone something you do not trust, <code>h5i dev --new</code> to start from nothing. External code always arrives detached: your repository is never touched.</div>
+        <div class="feat-desc"><code>h5i box .</code> for this repository, <code>h5i box --pr 1234</code> for a pull request, <code>h5i box &lt;url&gt;</code> to clone something you do not trust, <code>h5i box --new</code> to start from nothing. External code always arrives detached: your repository is never touched.</div>
       </div>
       <div class="feat-card">
         <div class="feat-name">2 · Work in it</div>
-        <div class="feat-desc"><code>h5i dev shell &lt;name&gt;</code> is the agent-in-box. Everything the session spawns is contained by the box, not by the agent choosing to wrap each call. <code>h5i dev status</code> tells you the policy that was actually enforced, never the one that was requested.</div>
+        <div class="feat-desc"><code>h5i box shell &lt;name&gt;</code> is the agent-in-box. Everything the session spawns is contained by the box, not by the agent choosing to wrap each call. <code>h5i box status</code> tells you the policy that was actually enforced, never the one that was requested.</div>
       </div>
       <div class="feat-card">
         <div class="feat-name">3 · Get it out</div>
-        <div class="feat-desc"><code>h5i dev export &lt;name&gt;</code> writes <code>patch.diff</code>, <code>report.md</code> and <code>receipt.json</code> for a human to read. Nothing reaches your repository without that step. Apply it wherever you want with <code>git apply --3way</code>.</div>
+        <div class="feat-desc"><code>h5i box export &lt;name&gt;</code> writes <code>patch.diff</code>, <code>report.md</code> and <code>receipt.json</code> for a human to read. Nothing reaches your repository without that step. Apply it wherever you want with <code>git apply --3way</code>.</div>
       </div>
     </div>
   </div>
@@ -1003,7 +1003,7 @@
     <div class="feat-grid reveal">
       <div class="feat-card">
         <div class="feat-name">Watch it, then take over</div>
-        <div class="feat-desc"><code>h5i dev view &lt;name&gt;</code> streams the viewport to loopback and lets you drive. The box's port is never published: h5i reaches into its private network namespace instead, behind a per-box token, refusing cross-origin connections.</div>
+        <div class="feat-desc"><code>h5i box view &lt;name&gt;</code> streams the viewport to loopback and lets you drive. The box's port is never published: h5i reaches into its private network namespace instead, behind a per-box token, refusing cross-origin connections.</div>
       </div>
       <div class="feat-card">
         <div class="feat-name">One driver at a time</div>
@@ -1049,7 +1049,7 @@
       </details>
       <details class="faq-item">
         <summary>Does it need root, or a VM?</summary>
-        <div class="faq-answer">Neither. h5i uses Landlock, seccomp and unprivileged user namespaces, adding rootless Podman if you have it. <code>h5i dev probe</code> reports what your host can actually enforce. An explicitly requested tier that the host cannot satisfy <strong>fails closed</strong> — h5i never silently downgrades.</div>
+        <div class="faq-answer">Neither. h5i uses Landlock, seccomp and unprivileged user namespaces, adding rootless Podman if you have it. <code>h5i box probe</code> reports what your host can actually enforce. An explicitly requested tier that the host cannot satisfy <strong>fails closed</strong> — h5i never silently downgrades.</div>
       </details>
       <details class="faq-item">
         <summary>What are the limits?</summary>

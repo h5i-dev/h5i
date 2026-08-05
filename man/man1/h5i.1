@@ -16,8 +16,8 @@ Print help
 Print version
 .SH SUBCOMMANDS
 .TP
-h5i\-dev(1)
-Disposable, confined development boxes. `h5i dev` with no verb creates one from the current repository; `h5i dev \-\-help` has the verb table
+h5i\-box(1)
+Disposable, confined development boxes. `h5i box` with no verb creates one from the current repository; `h5i box \-\-help` has the verb table
 .TP
 h5i\-browser(1)
 The browser control lock: who is driving the browser in a box
@@ -35,12 +35,12 @@ h5i\-help(1)
 Print this message or the help of the given subcommand(s)
 .SH VERSION
 v0.3.1
-.SH "H5I DEV"
-Disposable, confined development boxes. `h5i dev` with no verb creates one from the current repository; `h5i dev --help` has the verb table
+.SH "H5I BOX"
+Disposable, confined development boxes. `h5i box` with no verb creates one from the current repository; `h5i box --help` has the verb table
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBdev\fR [\fB\-\-pr\fR] [\fB\-\-new\fR] [\fB\-\-name\fR] [\fB\-\-from\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISOURCE\fR] [\fIsubcommands\fR]
+\fBbox\fR [\fB\-\-pr\fR] [\fB\-\-new\fR] [\fB\-\-name\fR] [\fB\-\-from\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISOURCE\fR] [\fIsubcommands\fR]
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -61,7 +61,7 @@ Base revision, when the source is this repository. Pinned immutably
 Remote to fetch a pull request head from
 .TP
 \fB\-\-profile\fR \fI<PROFILE>\fR
-Policy profile from .h5i/env.toml (see `h5i dev create \-\-help`)
+Policy profile from .h5i/env.toml (see `h5i box create \-\-help`)
 .TP
 \fB\-\-isolation\fR \fI<ISOLATION>\fR
 Isolation tier: auto (default) | workspace | process | supervised | container | ...
@@ -70,12 +70,12 @@ Isolation tier: auto (default) | workspace | process | supervised | container | 
 Container base image for isolation=container
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 [\fISOURCE\fR]
 Where the code comes from: `.` for this repository (the default), or a repository URL to copy into the box. A pull request is `\-\-pr`
-.SH "H5I DEV CREATE"
-Create a box explicitly. `h5i dev [SOURCE]` is the short form and takes the same flags; this is what it dispatches to
+.SH "H5I BOX CREATE"
+Create a box explicitly. `h5i box [SOURCE]` is the short form and takes the same flags; this is what it dispatches to
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -91,7 +91,7 @@ Base revision (default: HEAD). Pinned immutably
 Base the env on a GitHub pull request (number, #number, or URL): fetches refs/pull/<n>/head from the remote, pins it as the immutable base, and points the env\*(Aqs parent branch at a local `pr/<n>` tracking branch \(em so propose/apply review the PR head, and apply prints the push\-back command. Needs only `git`; `gh` (optional) enriches the push\-back hint with the PR\*(Aqs head branch name
 .TP
 \fB\-\-clone\fR \fI<URL>\fR
-Copy an external repository into the box instead of taking a worktree of this one. The box is **detached**: this repository is never touched, and `h5i dev export` is the only way out
+Copy an external repository into the box instead of taking a worktree of this one. The box is **detached**: this repository is never touched, and `h5i box export` is the only way out
 .TP
 \fB\-\-new\fR
 Start from an empty box (a fresh repository with one empty commit), for letting an agent build something from nothing. Also detached
@@ -119,7 +119,7 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fINAME\fR>
 Environment name (lowercase slug, e.g. `fix\-auth`)
-.SH "H5I DEV RUN"
+.SH "H5I BOX RUN"
 Run one command inside a box, policy-enforced: the exit code passes through and the run is recorded as a receipt tagged with the box id and the policy digest that was actually enforced
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -137,7 +137,7 @@ Environment name (slug, `agent/slug`, or full `env/agent/slug`)
 .TP
 [\fICOMMAND\fR]
 The command to run, after `\-\-`
-.SH "H5I DEV SHELL"
+.SH "H5I BOX SHELL"
 Open an interactive, confined session INSIDE the environment \(em the "agent-in-box". stdio is inherited (a real terminal), so every command the session spawns is contained by the box, not by the agent choosing to wrap each call. Defaults to a login shell when no command is given
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -158,7 +158,7 @@ Environment name (slug, `agent/slug`, or full `env/agent/slug`)
 .TP
 [\fICOMMAND\fR]
 Command to run inside the box (after `\-\-`); default: an interactive shell
-.SH "H5I DEV ALLOW"
+.SH "H5I BOX ALLOW"
 Manage the persistent user-level egress allowlist: extra hosts merged into every container-tier env whose profile already sets net.egress (a deny-all profile is never widened). Stored host-side under ~/.config/h5i/, outside every box-granted path; takes effect at the next `env run`/`env shell`. With no rule, lists the current entries
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -179,7 +179,7 @@ Print help
 .TP
 [\fIRULE\fR]
 Host rule: exact `api.example.com`, wildcard `.example.com` / `*.example.com`, optionally with a `:port` suffix
-.SH "H5I DEV PROBE"
+.SH "H5I BOX PROBE"
 Probe what isolation this host can actually provide (Landlock, user namespaces, seccomp) and which claims are satisfiable
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -191,7 +191,7 @@ Probe what isolation this host can actually provide (Landlock, user namespaces, 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I DEV CAPABILITIES"
+.SH "H5I BOX CAPABILITIES"
 Machine-readable host enforcement report: isolation tier, egress-enforced yes/no, resource-limit support, and per-claim satisfiable/runnable \(em so a product can adapt to the real host without scraping `env probe` text
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -206,7 +206,7 @@ Emit the structured report as JSON instead of the human view
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I DEV LIST"
+.SH "H5I BOX LIST"
 List environments on this clone (the fleet view)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -221,7 +221,7 @@ Emit a machine\-readable JSON array (manifest + base drift per env)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I DEV STATUS"
+.SH "H5I BOX STATUS"
 Show one environment's status: lifecycle, enforced policy, evidence, and base drift
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -239,7 +239,7 @@ Print help
 .TP
 <\fINAME\fR>
 
-.SH "H5I DEV VIEW"
+.SH "H5I BOX VIEW"
 Watch this box's browser from the host, and take over when you want to
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -257,7 +257,7 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fINAME\fR>
 
-.SH "H5I DEV DOCTOR"
+.SH "H5I BOX DOCTOR"
 Check one environment's enforcement readiness and structural health (can it actually enforce its isolation claim here? are its refs intact?)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -275,7 +275,7 @@ Print help
 .TP
 <\fINAME\fR>
 
-.SH "H5I DEV SECRETS"
+.SH "H5I BOX SECRETS"
 List the secret grants an environment's policy declares, with a dry-run resolution status (never the value \(em only a fingerprint when resolvable)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -293,7 +293,7 @@ Print help
 .TP
 <\fINAME\fR>
 
-.SH "H5I DEV SERVICE"
+.SH "H5I BOX SERVICE"
 Manage long-lived services declared in the env's `.h5i/env.toml` (`[service.<name>]`), confined and pid-tracked \(em no daemon
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -305,7 +305,7 @@ Manage long-lived services declared in the env's `.h5i/env.toml` (`[service.<nam
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I DEV SERVICE START"
+.SH "H5I BOX SERVICE START"
 Start a declared service as a confined background process
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -323,7 +323,7 @@ Environment name (slug, `agent/slug`, or full `env/agent/slug`)
 .TP
 <\fISERVICE\fR>
 Service name (a `[service.<name>]` in the env\*(Aqs `.h5i/env.toml`)
-.SH "H5I DEV SERVICE STOP"
+.SH "H5I BOX SERVICE STOP"
 Stop a running service (and capture its log as evidence)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -341,7 +341,7 @@ Print help
 .TP
 <\fISERVICE\fR>
 
-.SH "H5I DEV SERVICE STATUS"
+.SH "H5I BOX SERVICE STATUS"
 Show every recorded service for an env and its liveness
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -359,7 +359,7 @@ Print help
 .TP
 <\fIENV\fR>
 
-.SH "H5I DEV SERVICE LOGS"
+.SH "H5I BOX SERVICE LOGS"
 Tail a running service's log
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -380,7 +380,7 @@ Print help
 .TP
 <\fISERVICE\fR>
 
-.SH "H5I DEV PORTS"
+.SH "H5I BOX PORTS"
 Show the per-env dynamic port map (services with a declared port)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -398,7 +398,7 @@ Print help
 .TP
 <\fINAME\fR>
 
-.SH "H5I DEV REBASE"
+.SH "H5I BOX REBASE"
 Rebase the environment onto its parent branch's current tip, re-pinning the base (use when `status` reports the parent has advanced)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -413,7 +413,7 @@ Print help
 .TP
 <\fINAME\fR>
 
-.SH "H5I DEV LOG"
+.SH "H5I BOX LOG"
 Show the event log (refs/h5i/env) for one environment
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -434,7 +434,7 @@ Print help
 .TP
 <\fINAME\fR>
 
-.SH "H5I DEV DIFF"
+.SH "H5I BOX DIFF"
 Diff the environment's work against its pinned base
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -455,7 +455,7 @@ Print help
 .TP
 <\fINAME\fR>
 
-.SH "H5I DEV INSPECT"
+.SH "H5I BOX INSPECT"
 Inspect one of an environment's evidence captures (structured findings, exit code, policy digest, redactions)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -466,7 +466,7 @@ Inspect one of an environment's evidence captures (structured findings, exit cod
 .SS OPTIONS
 .TP
 \fB\-\-capture\fR \fI<CAPTURE>\fR
-Capture id (from `h5i dev status`/`log`)
+Capture id (from `h5i box status`/`log`)
 .TP
 \fB\-\-json\fR
 Emit the stored capture manifest as JSON instead of the human view
@@ -476,7 +476,7 @@ Print help
 .TP
 <\fINAME\fR>
 
-.SH "H5I DEV COMPARE"
+.SH "H5I BOX COMPARE"
 Compare environments side by side \(em changes + latest run results (the "arena" reviewer comparison). Best on envs sharing one base
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -494,7 +494,7 @@ Print help
 .TP
 <\fINAMES\fR>
 Two or more environment names
-.SH "H5I DEV EXPORT"
+.SH "H5I BOX EXPORT"
 The output gate: freeze the box and write an inspectable bundle (patch.diff, report.md, receipt.json) for a human to review and apply. Nothing reaches the host repository without that human step
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -515,7 +515,7 @@ Print help
 .TP
 <\fINAME\fR>
 
-.SH "H5I DEV APPLY"
+.SH "H5I BOX APPLY"
 Apply a proposed environment onto its parent branch (reviewer-selected, never automatic). Default is a merge (fast-forward when possible)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -533,7 +533,7 @@ Print help
 .TP
 <\fINAME\fR>
 
-.SH "H5I DEV ABORT"
+.SH "H5I BOX ABORT"
 Abort an environment \(em manifest and workspace preserved for forensics
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -548,7 +548,7 @@ Print help
 .TP
 <\fINAME\fR>
 
-.SH "H5I DEV CACHE"
+.SH "H5I BOX CACHE"
 Warm dependency caches: one per project and ecosystem, keyed by that ecosystem's lockfiles, mounted read-only into a box
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -560,7 +560,7 @@ Warm dependency caches: one per project and ecosystem, keyed by that ecosystem's
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I DEV CACHE LIST"
+.SH "H5I BOX CACHE LIST"
 List the caches on this clone
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -575,7 +575,7 @@ List the caches on this clone
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I DEV CACHE MOUNTS"
+.SH "H5I BOX CACHE MOUNTS"
 Show which caches a box created right now would be given, and where they would appear inside it
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -590,7 +590,7 @@ Show which caches a box created right now would be given, and where they would a
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I DEV CACHE REFRESH"
+.SH "H5I BOX CACHE REFRESH"
 Populate a cache by fetching this project's dependencies
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -605,7 +605,7 @@ Print help
 .TP
 <\fIECO\fR>
 Ecosystem to refresh (cargo, npm, uv, go)
-.SH "H5I DEV CACHE RM"
+.SH "H5I BOX CACHE RM"
 Remove a cache. Without --key, removes every cache for the ecosystem
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -623,7 +623,7 @@ Print help
 .TP
 <\fIECO\fR>
 
-.SH "H5I DEV RM"
+.SH "H5I BOX RM"
 Permanently remove one or more environments from this clone: prune their worktrees, delete their code + reasoning branches, and erase their manifests. Destroys local provenance (only the `removed` event in refs/h5i/env survives). A still-live env (created/running/proposed) needs --force. Multiple names are processed in order; a failure for one env is reported but does not abort the rest
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -641,7 +641,7 @@ Print help
 .TP
 <\fINAMES\fR>
 One or more environment names (slug, `agent/slug`, or full `env/agent/slug`)
-.SH "H5I DEV GC"
+.SH "H5I BOX GC"
 Reclaim workspaces of applied/aborted environments (worktree prune). Manifests, branches, and captures are retained
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -714,7 +714,7 @@ Print help
 <\fINAME\fR>
 
 .SH "H5I BROWSER URL"
-Print the loopback viewer URL for a box, token included. `h5i dev view` is what actually serves it; this is for pasting into a browser when a forward is already running
+Print the loopback viewer URL for a box, token included. `h5i box view` is what actually serves it; this is for pasting into a browser when a forward is already running
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -724,7 +724,7 @@ Print the loopback viewer URL for a box, token included. `h5i dev view` is what 
 .SS OPTIONS
 .TP
 \fB\-\-port\fR \fI<PORT>\fR [default: 7331]
-The loopback port `h5i dev view` was given. Defaults to the one it picks when unspecified
+The loopback port `h5i box view` was given. Defaults to the one it picks when unspecified
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

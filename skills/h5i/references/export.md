@@ -1,7 +1,7 @@
 # The output gate
 
 ```bash
-h5i dev export <name> [--out <dir>] [--force]
+h5i box export <name> [--out <dir>] [--force]
 ```
 
 Writes three files, after freezing the box with a mediated commit:

@@ -41,30 +41,30 @@ Or build from source:
 cargo install --path .
 ```
 
-Linux only for now. `h5i dev probe` tells you what your host can actually
+Linux only for now. `h5i box probe` tells you what your host can actually
 enforce; rootless [Podman](https://podman.io/) adds the container tier on top
 of what the kernel already gives you.
 
 ## Use it
 
 ```bash
-h5i dev                          # a box from this repository
-h5i dev --pr 1234                # a box from pull request #1234
+h5i box                          # a box from this repository
+h5i box --pr 1234                # a box from pull request #1234
 ```
 
 Work in it. Every command is policy-enforced and recorded:
 
 ```bash
-h5i dev run <name> -- cargo test # one command; the exit code passes through
-h5i dev shell <name>             # an interactive confined session
-h5i dev status <name>            # the policy that was actually enforced
-h5i dev diff <name>              # what changed against the pinned base
+h5i box run <name> -- cargo test # one command; the exit code passes through
+h5i box shell <name>             # an interactive confined session
+h5i box status <name>            # the policy that was actually enforced
+h5i box diff <name>              # what changed against the pinned base
 ```
 
 Get the work out through the gate, which is deliberately a human step:
 
 ```bash
-h5i dev export <name>
+h5i box export <name>
 # → h5i-export/<name>/patch.diff    the change, path-validated
 #   h5i-export/<name>/report.md     what ran, what was denied, what was redacted
 #   h5i-export/<name>/receipt.json  the records, with the enforced policy digest
@@ -74,7 +74,7 @@ Nothing writes into your repository until you apply that patch.
 
 ## What confinement means here
 
-`h5i dev probe` reports the tiers your host can run. h5i never silently
+`h5i box probe` reports the tiers your host can run. h5i never silently
 downgrades: an unsatisfiable request fails closed.
 
 | Tier | What enforces it |

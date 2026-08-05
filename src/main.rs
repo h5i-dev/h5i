@@ -19,19 +19,24 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-// `Dev`'s clap enum is much larger than the two generator commands; boxing it
+// `Box`'s clap enum is much larger than the two generator commands; boxing it
 // would break clap's derive, and the enum is constructed once per process.
 #[allow(clippy::large_enum_variant)]
 enum Commands {
-    /// Disposable, confined development boxes. `h5i dev` with no verb creates
-    /// one from the current repository; `h5i dev --help` has the verb table.
-    Dev(DevArgs),
+    /// Disposable, confined development boxes. `h5i box` with no verb creates
+    /// one from the current repository; `h5i box --help` has the verb table.
+    ///
+    /// `box` is the noun the whole product uses — the docs, the skill and the
+    /// errors all say "a box" — so the command says it too. `dev` is kept as a
+    /// hidden alias for one release, like `env` before it.
+    #[command(alias = "dev")]
+    Box(BoxArgs),
 
-    /// Deprecated alias for `h5i dev`. Kept for one release.
+    /// Deprecated alias for `h5i box`. Kept for one release.
     #[command(hide = true)]
     Env {
         #[command(subcommand)]
-        action: cli::dev::DevCommands,
+        action: cli::boxes::BoxCommands,
     },
 
     /// The browser control lock: who is driving the browser in a box.
@@ -59,14 +64,14 @@ enum Commands {
     Man,
 }
 
-/// `h5i dev` with no verb is "make me a box from this source". With a verb it
+/// `h5i box` with no verb is "make me a box from this source". With a verb it
 /// is the lifecycle surface. clap resolves the verb first, so a source that
-/// happens to be spelled like a verb needs the explicit `h5i dev create` form.
+/// happens to be spelled like a verb needs the explicit `h5i box create` form.
 #[derive(clap::Args)]
 #[command(args_conflicts_with_subcommands = true)]
-pub struct DevArgs {
+pub struct BoxArgs {
     #[command(subcommand)]
-    action: Option<cli::dev::DevCommands>,
+    action: Option<cli::boxes::BoxCommands>,
 
     /// Where the code comes from: `.` for this repository (the default), or a
     /// repository URL to copy into the box. A pull request is `--pr`.
@@ -93,7 +98,7 @@ pub struct DevArgs {
     #[arg(long, default_value = "origin")]
     remote: String,
 
-    /// Policy profile from .h5i/env.toml (see `h5i dev create --help`).
+    /// Policy profile from .h5i/env.toml (see `h5i box create --help`).
     #[arg(long)]
     profile: Option<String>,
 
@@ -106,10 +111,10 @@ pub struct DevArgs {
     image: Option<String>,
 }
 
-impl DevArgs {
+impl BoxArgs {
     /// Fold the short form into the same `Create` the explicit verb builds, so
     /// there is exactly one create path to reason about.
-    fn into_command(self) -> anyhow::Result<cli::dev::DevCommands> {
+    fn into_command(self) -> anyhow::Result<cli::boxes::BoxCommands> {
         if let Some(action) = self.action {
             return Ok(action);
         }
@@ -127,11 +132,11 @@ impl DevArgs {
             // A pull request used to be spellable as a bare positional and
             // people will still type it, so say where it went rather than
             // "unrecognized source", which would read as "h5i cannot do this".
-            (None, false) if cli::dev::pr_spec(&source).is_some() => anyhow::bail!(
+            (None, false) if cli::boxes::pr_spec(&source).is_some() => anyhow::bail!(
                 "'{source}' looks like a pull request — pass it as a flag:\n  \
-                 h5i dev --pr {source}"
+                 h5i box --pr {source}"
             ),
-            (None, false) if cli::dev::looks_like_repo_url(&source) => {
+            (None, false) if cli::boxes::looks_like_repo_url(&source) => {
                 (None, Some(source.clone()))
             }
             (None, false) => anyhow::bail!(
@@ -145,11 +150,11 @@ impl DevArgs {
             // From the PR *number*, not the spec: a URL spec would otherwise
             // become a box named `pr-https://github.com/o/r/pull/42`.
             (None, Some(spec), _) => format!("pr-{}", h5i_core::source::parse_pr_spec(spec)?),
-            (None, None, Some(url)) => cli::dev::name_from_url(url)?,
-            (None, None, None) if self.new => cli::dev::free_box_name("new")?,
-            (None, None, None) => cli::dev::default_box_name()?,
+            (None, None, Some(url)) => cli::boxes::name_from_url(url)?,
+            (None, None, None) if self.new => cli::boxes::free_box_name("new")?,
+            (None, None, None) => cli::boxes::default_box_name()?,
         };
-        Ok(cli::dev::DevCommands::Create {
+        Ok(cli::boxes::BoxCommands::Create {
             name,
             from: self.from,
             pr,
@@ -172,8 +177,8 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse_from(argv);
 
     match cli.command {
-        Commands::Dev(args) => cli::dev::run(args.into_command()?)?,
-        Commands::Env { action } => cli::dev::run(action)?,
+        Commands::Box(args) => cli::boxes::run(args.into_command()?)?,
+        Commands::Env { action } => cli::boxes::run(action)?,
         Commands::Browser { action } => cli::browser::run(action)?,
         Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,
@@ -327,14 +332,17 @@ mod tests {
     use super::*;
 
     /// Route `argv` through clap and the short-form fold, exactly as `main`
-    /// does. The error is flattened to a string because `DevCommands` has no
+    /// does. The error is flattened to a string because `BoxCommands` has no
     /// `Debug`, and deriving one on a public enum purely for tests would be
     /// the tail wagging the dog.
-    fn dispatch(argv: &[&str]) -> Result<cli::dev::DevCommands, String> {
+    fn dispatch(argv: &[&str]) -> Result<cli::boxes::BoxCommands, String> {
         let parsed = Cli::try_parse_from(argv).map_err(|e| e.to_string())?;
         match parsed.command {
-            Commands::Dev(args) => args.into_command().map_err(|e| e.to_string()),
-            _ => panic!("not a dev command"),
+            Commands::Box(args) => args.into_command().map_err(|e| e.to_string()),
+            // `env` is the older alias and carries only the verb form, so it
+            // lands on its own variant with nothing to fold.
+            Commands::Env { action } => Ok(action),
+            _ => panic!("not a box command"),
         }
     }
 
@@ -342,7 +350,7 @@ mod tests {
     /// anything but a `Create`, which is the only thing the short form builds.
     fn create_parts(argv: &[&str]) -> (String, Option<String>, Option<String>, bool) {
         match dispatch(argv) {
-            Ok(cli::dev::DevCommands::Create {
+            Ok(cli::boxes::BoxCommands::Create {
                 name, pr, clone, new, ..
             }) => (name, pr, clone, new),
             Ok(_) => panic!("expected Create"),
@@ -352,7 +360,7 @@ mod tests {
 
     #[test]
     fn a_pull_request_is_a_flag_not_a_positional() {
-        let (name, pr, clone, _) = create_parts(&["h5i", "dev", "--pr", "1234"]);
+        let (name, pr, clone, _) = create_parts(&["h5i", "box", "--pr", "1234"]);
         assert_eq!(pr.as_deref(), Some("1234"));
         assert_eq!(clone, None);
         assert_eq!(name, "pr-1234");
@@ -360,18 +368,18 @@ mod tests {
         // A URL spec names the box from the *number*. Naming it from the spec
         // would produce `pr-https://github.com/o/r/pull/42`.
         let (name, pr, _, _) =
-            create_parts(&["h5i", "dev", "--pr", "https://github.com/o/r/pull/42"]);
+            create_parts(&["h5i", "box", "--pr", "https://github.com/o/r/pull/42"]);
         assert_eq!(pr.as_deref(), Some("https://github.com/o/r/pull/42"));
         assert_eq!(name, "pr-42");
     }
 
     #[test]
     fn the_old_positional_spelling_says_where_it_went() {
-        // `h5i dev 1234` used to mean a pull request. People will still type
+        // `h5i box 1234` used to mean a pull request. People will still type
         // it, so it has to point at the flag rather than read as "h5i cannot
         // do this".
         for spec in ["1234", "#7", "https://github.com/o/r/pull/42"] {
-            let err = dispatch(&["h5i", "dev", spec]).err().expect("must be refused");
+            let err = dispatch(&["h5i", "box", spec]).err().expect("must be refused");
             assert!(err.contains("--pr"), "{spec}: {err}");
             assert!(err.contains("pull request"), "{spec}: {err}");
         }
@@ -383,7 +391,7 @@ mod tests {
         // repository URL has no `/pull/<n>`, so it is unaffected.
         let (_, pr, clone, _) = create_parts(&[
             "h5i",
-            "dev",
+            "box",
             "https://github.com/o/r.git",
             "--name",
             "r",
@@ -394,7 +402,7 @@ mod tests {
 
     #[test]
     fn an_unrecognized_source_names_every_way_in() {
-        let err = dispatch(&["h5i", "dev", "wat"]).err().expect("must be refused");
+        let err = dispatch(&["h5i", "box", "wat"]).err().expect("must be refused");
         for hint in ["--pr", "--new", "repository URL"] {
             assert!(err.contains(hint), "{err}");
         }
@@ -403,14 +411,25 @@ mod tests {
     #[test]
     fn the_sources_are_mutually_exclusive() {
         // Caught by clap, before any of the fold runs.
-        assert!(dispatch(&["h5i", "dev", ".", "--pr", "12"]).is_err());
-        assert!(dispatch(&["h5i", "dev", "--pr", "12", "--new"]).is_err());
-        assert!(dispatch(&["h5i", "dev", ".", "--new"]).is_err());
+        assert!(dispatch(&["h5i", "box", ".", "--pr", "12"]).is_err());
+        assert!(dispatch(&["h5i", "box", "--pr", "12", "--new"]).is_err());
+        assert!(dispatch(&["h5i", "box", ".", "--new"]).is_err());
+    }
+
+    #[test]
+    fn the_old_command_names_still_resolve() {
+        // `env` was renamed to `dev`, then `dev` to `box`. Two renames in one
+        // release cycle is exactly when a muscle-memory alias earns its keep,
+        // so both still route to the same place.
+        let (name, ..) = create_parts(&["h5i", "dev", "--new", "--name", "viadev"]);
+        assert_eq!(name, "viadev");
+        // `env` keeps only the verb form (it never had the source short form).
+        assert!(dispatch(&["h5i", "env", "ls"]).is_ok());
     }
 
     #[test]
     fn an_empty_box_needs_no_source() {
-        let (name, pr, clone, new) = create_parts(&["h5i", "dev", "--new", "--name", "scratch"]);
+        let (name, pr, clone, new) = create_parts(&["h5i", "box", "--new", "--name", "scratch"]);
         assert!(new);
         assert_eq!((pr, clone), (None, None));
         assert_eq!(name, "scratch");

@@ -116,19 +116,19 @@ path unchanged.
 ## 4. Command surface
 
 ```
-h5i dev .                    # snapshot the current repo into a box
-h5i dev <repo-url>           # clone an external repo into a box
-h5i dev --pr <N|url>         # review a PR in a box
-h5i dev --new                # empty box, agent builds from zero
+h5i box .                    # snapshot the current repo into a box
+h5i box <repo-url>           # clone an external repo into a box
+h5i box --pr <N|url>         # review a PR in a box
+h5i box --new                # empty box, agent builds from zero
 
-h5i dev ls | status <name> | rm <name> | gc
-h5i dev shell <name>         # attach a confined interactive session
-h5i dev run <name> -- <cmd>  # one policy enforced command
-h5i dev view <name>          # open the human viewer for this box
-h5i dev export <name>        # inspect and emit patch, report, receipt
-h5i dev probe                # host capability report
-h5i dev allow <host>         # persistent egress allowlist entry
-h5i dev cache ls|refresh|rm  # per project warm dependency caches
+h5i box ls | status <name> | rm <name> | gc
+h5i box shell <name>         # attach a confined interactive session
+h5i box run <name> -- <cmd>  # one policy enforced command
+h5i box view <name>          # open the human viewer for this box
+h5i box export <name>        # inspect and emit patch, report, receipt
+h5i box probe                # host capability report
+h5i box allow <host>         # persistent egress allowlist entry
+h5i box cache ls|refresh|rm  # per project warm dependency caches
 
 h5i browser status|take|release   # the control lock, and who holds it
 h5i browser url                  # the viewer URL for this box
@@ -136,7 +136,8 @@ h5i browser url                  # the viewer URL for this box
 h5i skill install|show|path      # write or print the embedded agent skill
 ```
 
-`h5i env *` stays as a hidden alias through one release, then is removed.
+`h5i dev *` and `h5i env *` stay as hidden aliases through one release, then
+are removed. The command is `box` because that is the noun everything else uses.
 
 **Driving the browser is `agent-browser`, not `h5i`** (7.). Inside the box the
 agent runs it directly:
@@ -174,7 +175,7 @@ Consequences to design for:
   caches. Warm caches across boxes are a committed feature, designed in 5.8.
 - The kernel tiers (`process`, `supervised`) keep the worktree backend, since
   they have no volume abstraction. `container` becomes the default tier for
-  `h5i dev`, and the copy in model is container only at first.
+  `h5i box`, and the copy in model is container only at first.
 
 ### 5.2 Where the browser runs
 
@@ -314,7 +315,7 @@ model we copy.
   is a method/path condition on the proxy — still policy data, not vendor code.
   Vendor ergonomics (a friendly `gh`-shaped CLI) belong in a separate tool.
 
-  Worth noting how little is left after that: `h5i dev <pr>` already fetches
+  Worth noting how little is left after that: `h5i box <pr>` already fetches
   the PR head **host side, before the box exists**, so the demo workflow needs
   no credential in the box at all.
 - Everything else routes through `secrets_broker.rs` with a per grant record.
@@ -325,7 +326,7 @@ model we copy.
 
 ### 5.6 Output gate
 
-`h5i dev export` produces, after showing a summary and asking:
+`h5i box export` produces, after showing a summary and asking:
 
 - `patch.diff`: the tree diff, path allowlisted to `$WORK`, no nested `.git`, no
   symlink escapes, no agent introduced gitlinks. Reuses today's mediated commit
@@ -380,7 +381,7 @@ Cold dependency install is the difference between a 20 second box and a four
 minute box, so caches are in scope rather than deferred.
 
 - One cache per project and ecosystem, keyed by a digest of that ecosystem's
-  lockfile set, under `.git/.h5i/cache/<eco>/<key>/`. **Built** (`h5i dev cache
+  lockfile set, under `.git/.h5i/cache/<eco>/<key>/`. **Built** (`h5i box cache
   ls|mounts|rm`, `crates/h5i-core/src/cache.rs`, unit tested). A cache whose
   key no longer matches the project is listed as stale and never handed to a
   box: packages resolved for a different dependency set are a silent, hard to
@@ -391,12 +392,12 @@ minute box, so caches are in scope rather than deferred.
   what it cannot find. **Built**: `ResolvedPolicy::ro_binds` (runtime-only, never
   serialized, so it cannot move a pinned digest) is applied as `MS_BIND` then
   `MS_REMOUNT | MS_RDONLY` on the kernel tiers and as `--mount ...,ro` at the
-  container tier. `h5i dev cache mounts` prints exactly what a box would get.
-- Writing to a cache happens only in a dedicated `h5i dev cache refresh` box,
+  container tier. `h5i box cache mounts` prints exactly what a box would get.
+- Writing to a cache happens only in a dedicated `h5i box cache refresh` box,
   which runs the install step alone, with egress narrowed to the registry hosts
   and no agent inside it. The cache is populated by a build, never by an agent
   session. **Built**: `ResolvedPolicy::cache_write` is a single optional
-  writable bind, produced only by `h5i dev cache refresh` and reachable from no
+  writable bind, produced only by `h5i box cache refresh` and reachable from no
   profile, so an agent box cannot make its own cache writable. The bind targets
   the same path the read-only mount later exposes, so what is fetched is
   exactly what a later box sees, and the throwaway box is removed whether the
@@ -408,7 +409,7 @@ minute box, so caches are in scope rather than deferred.
   egress is the registry hosts and nothing else. `refresh` refuses with that
   profile written out, ready to paste, rather than creating a box whose fetch
   could not have worked.
-- `h5i dev cache ls|refresh|rm` are the whole surface. A box records which cache
+- `h5i box cache ls|refresh|rm` are the whole surface. A box records which cache
   volume and which digest it used, in the receipt.
 
 This keeps the property that matters: no mutable surface is shared between an
@@ -421,7 +422,7 @@ WebSocket and you can both watch and type. Inside a pod that is fine, because
 nothing else is in the pod. It is not fine on a developer machine with a
 browser on it.
 
-So the port is never published. `h5i dev view` starts a small forward the host
+So the port is never published. `h5i box view` starts a small forward the host
 owns. It reaches into the box's private network namespace the same way the
 supervisor already does (h5i is the parent process and holds the pid), rather
 than by opening a hole in the netns:
@@ -587,7 +588,7 @@ roadmap is on it.
 with no git notes and no context refs, clippy is clean over the workspace, and
 the `web` feature is gone rather than off.
 
-**M2. `h5i dev` and copy in — done.** New command surface with `env` aliased
+**M2. `h5i box` and copy in — done.** New command surface with `env` aliased
 (short form, `ls`, hidden alias). Export gate replacing `propose`/`apply`
 (patch + report + receipt bundle, refuses to overwrite). `h5i skill install`
 from the embedded skill. Receipt integrity by sealing, with the test that pins
@@ -602,7 +603,7 @@ and `rebase` refuse and point at `export`. That is the boundary the phase was
 for, and it holds on every tier rather than only under a container volume.
 
 **M3. Agent in box hardening — done.** Warm caches in full: the store, the
-lockfile keying, the staleness rule, `h5i dev cache ls|mounts|rm|refresh` and
+lockfile keying, the staleness rule, `h5i box cache ls|mounts|rm|refresh` and
 the **read-only mount** on every tier are built and tested (5.8). (An earlier
 revision of this line said `refresh` was not built; it landed in e75020358,
 with the writable bind reachable from no profile and the refusal that names the
@@ -722,7 +723,7 @@ action until it re-snapshots — read-only verbs stay available throughout,
 because watching never collides. Nothing upstream arbitrates this, which is
 why it is ours.
 
-The forward (`crates/h5i-core/src/view.rs`, `h5i dev view`, `h5i browser url`)
+The forward (`crates/h5i-core/src/view.rs`, `h5i box view`, `h5i browser url`)
 serves the agent-browser stream to loopback. The box's port is never published:
 h5i enters the box's user and network namespaces by pid, connects from inside,
 and hands the socket back over `SCM_RIGHTS` — the fd-handoff the supervisor

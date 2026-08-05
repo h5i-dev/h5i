@@ -9,7 +9,7 @@ A **box** is a disposable development environment: a git worktree on its own
 branch, confined by a pinned, fail-closed policy. Code, toolchain, dev server
 and agent run inside it. Nothing reaches the host except what you export.
 
-`h5i dev <command> --help` is the authoritative flag reference and cannot go
+`h5i box <command> --help` is the authoritative flag reference and cannot go
 stale. Reach for it before guessing at a flag.
 
 ## Are you inside a box?
@@ -23,19 +23,19 @@ stale. Reach for it before guessing at a flag.
 ## From outside: make a box and use it
 
 ```bash
-h5i dev                      # a box from this repository's HEAD
-h5i dev --pr 1234            # a box from pull request #1234 (number, #n, or URL)
-h5i dev --name fix-auth      # name it yourself; otherwise the branch name is used
+h5i box                      # a box from this repository's HEAD
+h5i box --pr 1234            # a box from pull request #1234 (number, #n, or URL)
+h5i box --name fix-auth      # name it yourself; otherwise the branch name is used
 ```
 
 Then work with it:
 
 ```bash
-h5i dev ls                       # every box on this clone
-h5i dev status <name>            # policy actually enforced, evidence, base drift
-h5i dev run <name> -- cargo test # one command, policy-enforced, exit code passes through
-h5i dev shell <name>             # interactive confined session (this is where an agent runs)
-h5i dev diff <name>              # what changed against the pinned base
+h5i box ls                       # every box on this clone
+h5i box status <name>            # policy actually enforced, evidence, base drift
+h5i box run <name> -- cargo test # one command, policy-enforced, exit code passes through
+h5i box shell <name>             # interactive confined session (this is where an agent runs)
+h5i box diff <name>              # what changed against the pinned base
 ```
 
 Every `run` is recorded as a **receipt**: the command, its exit code, wall/cpu/
@@ -43,8 +43,8 @@ rss, the egress verdicts, and the policy digest that was in force. Secrets are
 redacted before anything is written.
 
 ```bash
-h5i dev log <name>                          # the box's event log
-h5i dev inspect <name> --capture <id>       # one receipt, rendered
+h5i box log <name>                          # the box's event log
+h5i box inspect <name> --capture <id>       # one receipt, rendered
 ```
 
 ## Driving a browser
@@ -53,8 +53,8 @@ A `browser` box runs headless Chrome and the `agent-browser` daemon alongside
 the agent, so the app under test is reachable at `localhost`:
 
 ```bash
-h5i dev --profile browser --name ui
-h5i dev shell ui
+h5i box --profile browser --name ui
+h5i box shell ui
 # inside the box:
 agent-browser open http://localhost:3000
 agent-browser snapshot          # accessibility tree with @refs — read this, not HTML
@@ -71,7 +71,7 @@ allowlist. `agent-browser --help` is the full verb table.
 
 ```bash
 h5i browser status <name>    # who holds control, and whether your @refs are stale
-h5i dev view <name>          # (human, on the host) watch this box and take over
+h5i box view <name>          # (human, on the host) watch this box and take over
 ```
 
 If status says a human holds control, wait — do not retry in a loop. When
@@ -92,14 +92,14 @@ A box cannot write to the host. Getting work out is one command, and it is
 deliberately a human step:
 
 ```bash
-h5i dev export <name>        # → h5i-export/<name>/{patch.diff,report.md,receipt.json}
+h5i box export <name>        # → h5i-export/<name>/{patch.diff,report.md,receipt.json}
 ```
 
 Read `report.md` before applying anything: it lists every command that ran, any
 **denied egress attempts**, and which secret rules fired. Then apply the patch
 where you want it (`git apply --3way patch.diff`).
 
-`h5i dev apply <name>` still lands a proposed box onto its parent branch in this
+`h5i box apply <name>` still lands a proposed box onto its parent branch in this
 repository, for the local case where that is what you want.
 
 ## Know what is actually enforced
@@ -107,8 +107,8 @@ repository, for the local case where that is what you want.
 Never assume a tier. Ask:
 
 ```bash
-h5i dev probe                    # what this host can enforce at all
-h5i dev capabilities <name> --json   # what this box got: tier, egress, limits
+h5i box probe                    # what this host can enforce at all
+h5i box capabilities <name> --json   # what this box got: tier, egress, limits
 ```
 
 Tiers: `workspace` (no confinement, just a separate worktree), `process`
@@ -126,7 +126,7 @@ names the path or host and the profile that refused it.
 
 - Filesystem denial → the path is outside `$WORK` and the profile's grants.
 - Network denial → the host is not in `net.egress`. Add it deliberately with
-  `h5i dev allow <host>` (host-side only; it refuses inside a box).
+  `h5i box allow <host>` (host-side only; it refuses inside a box).
 - A missing tool → the profile's `tools` allowlist does not include it.
 
 Do not disable hooks, edit the policy from inside the box, or reach for a way

@@ -160,18 +160,18 @@
 <a class="t2" href="#the-loop">The loop</a>
 <a class="t2" href="#install">Install</a>
 <a class="t2" href="#command-groups">Command groups</a>
-<a class="t2" href="#h5i-dev">h5i dev</a>
+<a class="t2" href="#h5i-box">h5i box</a>
 <div class="t3group">
 <a class="t3" href="#making-a-box">Making a box</a>
-<a class="t3" href="#h5i-dev-create">h5i dev create</a>
+<a class="t3" href="#h5i-box-create">h5i box create</a>
 <a class="t3" href="#working-in-a-box">Working in a box</a>
 <a class="t3" href="#services-and-ports">Services and ports</a>
-<a class="t3" href="#h5i-dev-export">h5i dev export</a>
-<a class="t3" href="#h5i-dev-cache">h5i dev cache</a>
-<a class="t3" href="#h5i-dev-view">h5i dev view</a>
+<a class="t3" href="#h5i-box-export">h5i box export</a>
+<a class="t3" href="#h5i-box-cache">h5i box cache</a>
+<a class="t3" href="#h5i-box-view">h5i box view</a>
 <a class="t3" href="#inspecting-what-happened">Inspecting what happened</a>
 <a class="t3" href="#lifecycle">Lifecycle</a>
-<a class="t3" href="#h5i-dev-allow">h5i dev allow</a>
+<a class="t3" href="#h5i-box-allow">h5i box allow</a>
 </div>
 <a class="t2" href="#h5i-browser">h5i browser</a>
 <div class="t3group">
@@ -250,10 +250,10 @@ operate.</p>
 </ul>
 <hr />
 <h2 id="the-loop">The loop</h2>
-<pre><code class="language-bash">h5i dev .                                  # a box from this repository
-h5i dev shell mybox                        # work in it (this is where an agent runs)
+<pre><code class="language-bash">h5i box .                                  # a box from this repository
+h5i box shell mybox                        # work in it (this is where an agent runs)
 # inside: edit, build, start the dev server, drive the browser
-h5i dev export mybox --out ./review        # patch + report + receipt, for a human
+h5i box export mybox --out ./review        # patch + report + receipt, for a human
 git apply --3way ./review/patch.diff       # apply it where you want
 </code></pre>
 <p>The full loop the browser makes possible:</p>
@@ -282,7 +282,7 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 </thead>
 <tbody>
 <tr>
-<td><a href="#h5i-dev"><code>h5i dev</code></a></td>
+<td><a href="#h5i-box"><code>h5i box</code></a></td>
 <td>Create, run, inspect and export boxes. Almost everything.</td>
 </tr>
 <tr>
@@ -299,31 +299,33 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 </tr>
 </tbody>
 </table>
-<p><code>h5i env *</code> remains as a hidden alias for <code>h5i dev *</code> through one release.</p>
+<p><code>h5i dev *</code> and <code>h5i env *</code> both remain as hidden aliases for <code>h5i box *</code>
+through one release. The noun the product uses everywhere else is <em>box</em>, so the
+command is too.</p>
 <hr />
-<h2 id="h5i-dev">h5i dev</h2>
+<h2 id="h5i-box">h5i box</h2>
 <h3 id="making-a-box">Making a box</h3>
-<pre><code class="language-bash">h5i dev .                       # snapshot this repository at HEAD
-h5i dev --pr 1234               # a pull request (number, #number, or URL)
-h5i dev https://github.com/o/r  # clone an external repository
-h5i dev --new                   # an empty box; the agent builds from nothing
+<pre><code class="language-bash">h5i box .                       # snapshot this repository at HEAD
+h5i box --pr 1234               # a pull request (number, #number, or URL)
+h5i box https://github.com/o/r  # clone an external repository
+h5i box --new                   # an empty box; the agent builds from nothing
 </code></pre>
-<p><code>h5i dev [SOURCE]</code> is shorthand for <a href="#h5i-dev-create"><code>h5i dev create</code></a>, and
+<p><code>h5i box [SOURCE]</code> is shorthand for <a href="#h5i-box-create"><code>h5i box create</code></a>, and
 takes the same flags. A pull request is <code>--pr</code>, not a positional: a bare number
-is ambiguous with everything else a source could be, and <code>h5i dev create</code>
+is ambiguous with everything else a source could be, and <code>h5i box create</code>
 already spelled it as a flag.</p>
 <p>Where the code comes from decides the shape of the box:</p>
 <ul>
 <li><strong>This repository</strong> → a real git worktree on its own branch, sharing the
-  object store, so <code>h5i dev apply</code> can land it back locally.</li>
+  object store, so <code>h5i box apply</code> can land it back locally.</li>
 <li><strong>A URL, a PR, or <code>--new</code></strong> → a <strong>detached</strong> box. It gets a repository of its
   own inside its directory, this repository is neither read nor written after
   creation, and the inherited <code>origin</code> remote is dropped so the box cannot reach
   a network handle nobody granted it. <code>apply</code> and <code>rebase</code> refuse and point at
   <code>export</code>. This is the shape external code should always arrive in.</li>
 </ul>
-<h3 id="h5i-dev-create">h5i dev create</h3>
-<pre><code>h5i dev create &lt;NAME&gt; [--from &lt;rev&gt;] [--pr &lt;n&gt;] [--clone &lt;url&gt;] [--new]
+<h3 id="h5i-box-create">h5i box create</h3>
+<pre><code>h5i box create &lt;NAME&gt; [--from &lt;rev&gt;] [--pr &lt;n&gt;] [--clone &lt;url&gt;] [--new]
                       [--profile &lt;p&gt;] [--isolation &lt;tier&gt;] [--image &lt;img&gt;]
 </code></pre>
 <p>The base revision is frozen at creation and pinned immutably. The policy is
@@ -368,21 +370,21 @@ unsatisfiable request fails closed rather than leaving half a box behind.</p>
 </tbody>
 </table>
 <h3 id="working-in-a-box">Working in a box</h3>
-<pre><code class="language-bash">h5i dev ls                            # every box on this clone
-h5i dev status &lt;name&gt;                 # policy actually enforced, evidence, base drift
-h5i dev run &lt;name&gt; -- cargo test      # one command; the exit code passes through
-h5i dev shell &lt;name&gt;                  # interactive confined session
-h5i dev diff &lt;name&gt;                   # what changed against the pinned base
-h5i dev log &lt;name&gt;                    # the box's event log
+<pre><code class="language-bash">h5i box ls                            # every box on this clone
+h5i box status &lt;name&gt;                 # policy actually enforced, evidence, base drift
+h5i box run &lt;name&gt; -- cargo test      # one command; the exit code passes through
+h5i box shell &lt;name&gt;                  # interactive confined session
+h5i box diff &lt;name&gt;                   # what changed against the pinned base
+h5i box log &lt;name&gt;                    # the box's event log
 </code></pre>
-<p><code>h5i dev shell</code> is the agent-in-box: stdio is inherited, so every command the
+<p><code>h5i box shell</code> is the agent-in-box: stdio is inherited, so every command the
 session spawns is contained by the box rather than by the agent choosing to wrap
 each call.</p>
 <h3 id="services-and-ports">Services and ports</h3>
-<pre><code class="language-bash">h5i dev service start &lt;name&gt; &lt;service&gt;   # a declared long-lived process
-h5i dev service status &lt;name&gt;
-h5i dev service logs &lt;name&gt; &lt;service&gt;
-h5i dev ports &lt;name&gt;                     # the per-box dynamic port map
+<pre><code class="language-bash">h5i box service start &lt;name&gt; &lt;service&gt;   # a declared long-lived process
+h5i box service status &lt;name&gt;
+h5i box service logs &lt;name&gt; &lt;service&gt;
+h5i box ports &lt;name&gt;                     # the per-box dynamic port map
 </code></pre>
 <p>Services are declared in <code>.h5i/env.toml</code>:</p>
 <pre><code class="language-toml">[service.web]
@@ -391,11 +393,11 @@ port = 3000
 </code></pre>
 <p>Supported at the <code>workspace</code> and <code>process</code> tiers in v1. At <code>supervised</code> and
 <code>container</code> the network namespace belongs to a single session, so run the dev
-server inside the same <code>h5i dev shell</code> as everything else.</p>
-<h3 id="h5i-dev-export">h5i dev export</h3>
+server inside the same <code>h5i box shell</code> as everything else.</p>
+<h3 id="h5i-box-export">h5i box export</h3>
 <p>The output gate. A box has no write access to anything outside itself; this is
 the only way out, and it is deliberately a human step.</p>
-<pre><code class="language-bash">h5i dev export &lt;name&gt; --out ./review
+<pre><code class="language-bash">h5i box export &lt;name&gt; --out ./review
 </code></pre>
 <p>Produces:</p>
 <table>
@@ -434,16 +436,16 @@ replace). Secret redaction and size caps apply to all three.</p>
 <p>Then apply it where you want:</p>
 <pre><code class="language-bash">git apply --3way ./review/patch.diff
 </code></pre>
-<p><code>h5i dev apply &lt;name&gt;</code> still lands a proposed box onto its parent branch in this
+<p><code>h5i box apply &lt;name&gt;</code> still lands a proposed box onto its parent branch in this
 repository, for the local case where that is what you want. It refuses for a
 detached box.</p>
-<h3 id="h5i-dev-cache">h5i dev cache</h3>
+<h3 id="h5i-box-cache">h5i box cache</h3>
 <p>Cold dependency install is the difference between a 20-second box and a
 four-minute one, so warm caches are in scope.</p>
-<pre><code class="language-bash">h5i dev cache ls              # caches for this project, and whether they are stale
-h5i dev cache mounts          # exactly what a box would get
-h5i dev cache refresh &lt;eco&gt;   # populate one, in a dedicated box with no agent in it
-h5i dev cache rm &lt;eco&gt;
+<pre><code class="language-bash">h5i box cache ls              # caches for this project, and whether they are stale
+h5i box cache mounts          # exactly what a box would get
+h5i box cache refresh &lt;eco&gt;   # populate one, in a dedicated box with no agent in it
+h5i box cache rm &lt;eco&gt;
 </code></pre>
 <p>Rules that make this safe rather than merely fast:</p>
 <ul>
@@ -453,18 +455,18 @@ h5i dev cache rm &lt;eco&gt;
   silent, hard-to-explain wrong answer.</li>
 <li>Mounted <strong>read-only</strong> into an agent box. That costs nothing in correctness —
   every package manager falls back to fetching what it cannot find.</li>
-<li>Written <strong>only</strong> by <code>h5i dev cache refresh</code>, which runs the install step alone,
+<li>Written <strong>only</strong> by <code>h5i box cache refresh</code>, which runs the install step alone,
   with egress narrowed to the registry hosts and no agent inside. <code>refresh</code>
   needs a project-declared profile whose egress is the registry hosts and
   nothing else, and it refuses with that profile written out ready to paste
   rather than creating a box whose fetch could not have worked.</li>
 </ul>
 <p>No mutable surface is ever shared between an agent box and anything else.</p>
-<h3 id="h5i-dev-view">h5i dev view</h3>
+<h3 id="h5i-box-view">h5i box view</h3>
 <p>Watch a box's browser from the host, and take over when you want to.</p>
-<pre><code class="language-bash">h5i dev view &lt;name&gt; [--port 7331]
+<pre><code class="language-bash">h5i box view &lt;name&gt; [--port 7331]
 </code></pre>
-<p>The box has to be running (a live <code>h5i dev shell</code> or <code>h5i dev run</code>), and its
+<p>The box has to be running (a live <code>h5i box shell</code> or <code>h5i box run</code>), and its
 browser has to be streaming (<code>agent-browser stream enable</code>, inside the box).</p>
 <p>This is a security boundary, not a convenience, so it is worth knowing what it
 is. The box's stream port is <strong>never published</strong>: it stays inside the box's
@@ -479,22 +481,22 @@ inside, and hands the socket back out. Then:</p>
 <li><strong>frames flow out always; input flows in only for the control-lock holder</strong></li>
 </ul>
 <h3 id="inspecting-what-happened">Inspecting what happened</h3>
-<pre><code class="language-bash">h5i dev probe                       # what this host can enforce at all
-h5i dev capabilities &lt;name&gt; --json  # what this box actually got
-h5i dev doctor &lt;name&gt;               # can it still enforce its claim? are its refs intact?
-h5i dev secrets &lt;name&gt;              # declared grants, dry-run resolution, never values
-h5i dev inspect &lt;name&gt; --capture &lt;id&gt;
-h5i dev compare &lt;a&gt; &lt;b&gt;             # boxes side by side
+<pre><code class="language-bash">h5i box probe                       # what this host can enforce at all
+h5i box capabilities &lt;name&gt; --json  # what this box actually got
+h5i box doctor &lt;name&gt;               # can it still enforce its claim? are its refs intact?
+h5i box secrets &lt;name&gt;              # declared grants, dry-run resolution, never values
+h5i box inspect &lt;name&gt; --capture &lt;id&gt;
+h5i box compare &lt;a&gt; &lt;b&gt;             # boxes side by side
 </code></pre>
 <h3 id="lifecycle">Lifecycle</h3>
-<pre><code class="language-bash">h5i dev rebase &lt;name&gt;       # re-pin onto the parent branch's current tip
-h5i dev abort &lt;name&gt;        # stop; manifest and workspace preserved for forensics
-h5i dev rm &lt;name&gt; [--force] # remove entirely
-h5i dev gc                  # reclaim applied/aborted workspaces
+<pre><code class="language-bash">h5i box rebase &lt;name&gt;       # re-pin onto the parent branch's current tip
+h5i box abort &lt;name&gt;        # stop; manifest and workspace preserved for forensics
+h5i box rm &lt;name&gt; [--force] # remove entirely
+h5i box gc                  # reclaim applied/aborted workspaces
 </code></pre>
-<h3 id="h5i-dev-allow">h5i dev allow</h3>
-<pre><code class="language-bash">h5i dev allow                 # list the current entries
-h5i dev allow api.example.com
+<h3 id="h5i-box-allow">h5i box allow</h3>
+<pre><code class="language-bash">h5i box allow                 # list the current entries
+h5i box allow api.example.com
 </code></pre>
 <p>A persistent, user-level egress allowlist merged into every container-tier box
 whose profile <em>already</em> sets <code>net.egress</code>. A deny-all profile is never widened.
@@ -531,7 +533,7 @@ agent-browser snapshot                  # accessibility tree with @refs
 agent-browser click @e2
 agent-browser fill @e3 &quot;test@example.com&quot;
 agent-browser screenshot shot.png
-agent-browser stream enable             # so `h5i dev view` has something to show
+agent-browser stream enable             # so `h5i box view` has something to show
 </code></pre>
 <p>What the <code>browser</code> profile does to Chrome, and why:</p>
 <ul>
@@ -693,7 +695,7 @@ secrets = [&quot;DEPLOY_KEY&quot;]
 source = &quot;env:H5I_SECRET_DEPLOY_KEY&quot;   # the default for a bare name
 inject = &quot;env&quot;                          # `file` is workspace-tier only in v1
 </code></pre>
-<p>The value never appears in the policy, the digest, or any receipt. <code>h5i dev
+<p>The value never appears in the policy, the digest, or any receipt. <code>h5i box
 secrets &lt;name&gt;</code> dry-runs the resolution and reports a fingerprint, never a
 value. A grant that cannot be resolved fails the run closed rather than starting
 a box that will fail confusingly later.</p>

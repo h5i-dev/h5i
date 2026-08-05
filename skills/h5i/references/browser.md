@@ -7,8 +7,8 @@ under test is reachable at loopback with no port publishing and no second
 container.
 
 ```bash
-h5i dev --profile browser --name ui
-h5i dev shell ui
+h5i box --profile browser --name ui
+h5i box shell ui
 ```
 
 ## Driving it
@@ -79,11 +79,11 @@ they do:
 A human can watch the box's browser, and take over inside it:
 
 ```bash
-h5i dev view <box>           # serves the viewer on loopback, prints the URL
+h5i box view <box>           # serves the viewer on loopback, prints the URL
 h5i browser url <box>        # the URL again, without starting a forward
 ```
 
-The box has to be running (a live `h5i dev shell` or `h5i dev run` session), and
+The box has to be running (a live `h5i box shell` or `h5i box run` session), and
 its browser has to be streaming — inside the box, `agent-browser stream enable`.
 
 What the forward is, since it is a security boundary rather than a convenience:
@@ -101,7 +101,7 @@ command rather than reported by you. Each record carries only what is new since
 the last one.
 
 ```bash
-h5i dev inspect <box> --capture <id>    # includes a `browser :` line
+h5i box inspect <box> --capture <id>    # includes a `browser :` line
 ```
 
 This is why "I clicked Submit and it worked" is not worth writing in a report:

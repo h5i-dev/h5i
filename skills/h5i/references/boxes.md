@@ -4,12 +4,12 @@
 
 | Command | Base |
 | --- | --- |
-| `h5i dev` | HEAD of this repository |
-| `h5i dev --from <rev>` | any revision in this repository |
-| `h5i dev <n>` / `#<n>` / PR URL | `refs/pull/<n>/head`, fetched and pinned to a local `pr/<n>` branch |
+| `h5i box` | HEAD of this repository |
+| `h5i box --from <rev>` | any revision in this repository |
+| `h5i box <n>` / `#<n>` / PR URL | `refs/pull/<n>/head`, fetched and pinned to a local `pr/<n>` branch |
 
 The base is **frozen at creation**. The parent branch moving afterwards is
-*drift*, reported by `h5i dev status`; `h5i dev rebase <name>` is the sanctioned
+*drift*, reported by `h5i box status`; `h5i box rebase <name>` is the sanctioned
 re-pin (3-way, refuses conflicts).
 
 Cloning an external repo URL and starting from an empty box are on the roadmap
@@ -26,14 +26,14 @@ Codex, `human` on a bare shell).
 
 `created → running/idle → proposed → applied`, plus `aborted`.
 
-- `h5i dev propose` freezes the worktree with a **mediated commit**: h5i stages
+- `h5i box propose` freezes the worktree with a **mediated commit**: h5i stages
   and commits, never the agent, and every path is validated against the
   canonicalized `$WORK` allowlist. Symlink escapes, nested `.git` directories
   and agent-introduced gitlinks are refused, and the whole commit fails closed.
-- `h5i dev export` runs that freeze and then writes the bundle.
-- `h5i dev abort` marks a box abandoned but keeps it for forensics.
-- `h5i dev gc` reclaims the worktrees of applied/aborted boxes.
-- `h5i dev rm <name>` removes a box permanently: worktree, branch, manifest and
+- `h5i box export` runs that freeze and then writes the bundle.
+- `h5i box abort` marks a box abandoned but keeps it for forensics.
+- `h5i box gc` reclaims the worktrees of applied/aborted boxes.
+- `h5i box rm <name>` removes a box permanently: worktree, branch, manifest and
   its lines in `refs/h5i/env/meta`. Only the append-only `removed` event
   survives. `--force` for a box that is still live.
 
@@ -41,5 +41,5 @@ Codex, `human` on a bare shell).
 
 One read-write session per box (`run`, read-write `shell`, `propose`, `apply`,
 `rebase`, `abort` serialize against each other), and any number of read-only
-observers (`h5i dev shell --readonly`). A teardown (`gc`, `rm`) refuses while an
+observers (`h5i box shell --readonly`). A teardown (`gc`, `rm`) refuses while an
 observer is attached rather than pulling the directory out from under it.
