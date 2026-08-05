@@ -39,6 +39,59 @@ const RAW_CAP: usize = 4 * 1024 * 1024;
 /// Length of the short handle used on the CLI.
 const ID_LEN: usize = 16;
 
+/// What the page said back, for a run that drove the browser.
+///
+/// The agent's own account of a UI check is the least trustworthy part of an
+/// export: "I clicked Submit and it worked" is a sentence, not evidence. This is
+/// the observed half — the verb that ran, and the console messages, page errors
+/// and failed requests that followed it.
+///
+/// **Lane.** This is box-claimed, like `tee-shim`: the numbers come out of the
+/// browser inside the box. What makes it useful anyway is that h5i decides
+/// *when* to collect it (right after the browser command, in the same policy)
+/// rather than the agent choosing what to report. An agent can still close the
+/// browser to stop the record — and a run with a browser verb and no evidence
+/// block is itself visible.
+///
+/// **Only what is new.** The browser's buffers accumulate for the life of a
+/// session, so every field here is the slice since the previous drain, tracked
+/// by a host-side cursor outside the box's write grants. Repeating the whole
+/// buffer on every record would bury the one error that just appeared.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserEvidence {
+    /// The agent-browser verb this run invoked (`open`, `click`, `snapshot`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verb: Option<String>,
+    /// Console messages at `error`/`warning` level, newest last. Ordinary
+    /// `log`/`info` chatter is not evidence and is not carried.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub console: Vec<String>,
+    /// Uncaught exceptions and page errors.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+    /// Requests that failed: HTTP >= 400, or no status at all (blocked, refused,
+    /// or denied by the egress allowlist — which is the interesting case in a
+    /// box).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed_requests: Vec<String>,
+    /// Entries dropped by the per-record cap, so a flood is never silently
+    /// rendered as a clean page.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    /// Set when the drain could not reach a browser (no daemon, or the run
+    /// closed it). Distinguishes "nothing happened" from "nothing was looked
+    /// at", which a reviewer must be able to tell apart.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unavailable: bool,
+}
+
+impl BrowserEvidence {
+    /// Did the page complain at all? Drives the one-line summary.
+    pub fn is_clean(&self) -> bool {
+        self.console.is_empty() && self.errors.is_empty() && self.failed_requests.is_empty()
+    }
+}
+
 /// One observed execution inside an environment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecRecord {
@@ -80,6 +133,10 @@ pub struct ExecRecord {
     /// observed: the box never supplies this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<EgressSummary>,
+    /// What the browser observed, when this run drove one. See
+    /// [`BrowserEvidence`] for the lane and the cursor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser: Option<BrowserEvidence>,
     /// Secret rules that fired while redacting, by rule id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub redactions: Vec<String>,
@@ -110,6 +167,23 @@ pub struct RecordInput {
     pub git_tree: Option<String>,
     pub files: Vec<String>,
     pub egress: Option<EgressSummary>,
+    pub browser: Option<BrowserEvidence>,
+}
+
+/// Scrub every string a page supplied. A console line is a place a token turns
+/// up routinely — a fetch that logs the request it just made, a framework
+/// dumping config on error — and the whole point of the receipt is that it can
+/// be handed to a reviewer.
+fn redact_browser_evidence(mut b: BrowserEvidence) -> BrowserEvidence {
+    let scrub = |v: &mut Vec<String>| {
+        for s in v.iter_mut() {
+            *s = crate::secrets::redact_text(s);
+        }
+    };
+    scrub(&mut b.console);
+    scrub(&mut b.errors);
+    scrub(&mut b.failed_requests);
+    b
 }
 
 fn log_path(env_dir: &Path) -> PathBuf {
@@ -175,6 +249,9 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
         git_tree: input.git_tree,
         files: input.files,
         egress: input.egress,
+        // Box-claimed strings from a page the box just visited, so they go
+        // through the same scrub as everything else before they are stored.
+        browser: input.browser.map(redact_browser_evidence),
         redactions,
         raw_oid: format!("sha256:{digest}"),
         raw_size: stored.len() as u64,
@@ -291,6 +368,32 @@ pub fn render(rec: &ExecRecord, raw: &[u8]) -> String {
             "  egress   : {} allowed, {} denied\n",
             eg.allowed, eg.denied
         ));
+    }
+    if let Some(b) = &rec.browser {
+        let verb = b.verb.as_deref().unwrap_or("browser");
+        if b.unavailable {
+            out.push_str(&format!("  browser  : {verb} (no browser to observe)\n"));
+        } else if b.is_clean() {
+            out.push_str(&format!("  browser  : {verb}, page clean\n"));
+        } else {
+            out.push_str(&format!(
+                "  browser  : {verb} — {} console, {} page error(s), {} failed request(s){}\n",
+                b.console.len(),
+                b.errors.len(),
+                b.failed_requests.len(),
+                if b.truncated { ", capped" } else { "" }
+            ));
+            // The detail is the point: a count tells a reviewer something
+            // happened, the line tells them what.
+            for line in b
+                .errors
+                .iter()
+                .chain(b.console.iter())
+                .chain(b.failed_requests.iter())
+            {
+                out.push_str(&format!("           · {line}\n"));
+            }
+        }
     }
     if !rec.redactions.is_empty() {
         out.push_str(&format!("  redacted : {}\n", rec.redactions.join(", ")));

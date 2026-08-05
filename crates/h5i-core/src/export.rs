@@ -13,7 +13,12 @@
 //! The patch is produced by the same mediated commit that `propose` runs, so
 //! the `$WORK` allowlist invariants (no symlink escape, no nested `.git`, no
 //! agent-introduced gitlink) hold for anything that reaches this directory.
-//! Screenshots join the bundle when the browser layer lands (roadmap M4).
+//!
+//! `report.md` carries a **What the browser saw** section built from the
+//! per-run browser evidence ([`crate::browser`]) rather than from the agent's
+//! account of its own testing — the case it exists for is a report that says
+//! "verified in the browser" over a page that threw an uncaught exception.
+//! Screenshots join the bundle with the viewer (roadmap M5).
 
 use git2::Repository;
 use serde::Serialize;
@@ -192,6 +197,62 @@ fn report(
         }
     }
 
+    // What the page said, gathered separately from what the agent said about
+    // it. A UI change whose report claims "verified in the browser" and whose
+    // evidence section lists an uncaught TypeError is the case this exists for,
+    // so it goes above the agent-authored proposal rather than below it.
+    let browser: Vec<(&crate::receipt::ExecRecord, &crate::receipt::BrowserEvidence)> = records
+        .iter()
+        .filter_map(|r| r.browser.as_ref().map(|b| (r, b)))
+        .collect();
+    if !browser.is_empty() {
+        out.push_str("\n## What the browser saw\n\n");
+        let findings: Vec<_> = browser.iter().filter(|(_, b)| !b.is_clean()).collect();
+        if findings.is_empty() {
+            out.push_str(&format!(
+                "{} browser command(s) ran and the page reported no console errors, \
+                 no uncaught exceptions and no failed requests.\n",
+                browser.len()
+            ));
+        } else {
+            out.push_str(
+                "Observed in the box's own browser, not reported by the agent. \
+                 Each line is a console error, an uncaught exception, or a request \
+                 that failed.\n\n",
+            );
+            for (r, b) in findings {
+                out.push_str(&format!(
+                    "- `{}` ({})\n",
+                    crate::redact::sanitize_display(b.verb.as_deref().unwrap_or("browser")),
+                    r.timestamp
+                ));
+                for line in b
+                    .errors
+                    .iter()
+                    .chain(b.console.iter())
+                    .chain(b.failed_requests.iter())
+                {
+                    out.push_str(&format!(
+                        "  - {}\n",
+                        crate::redact::sanitize_display(line)
+                    ));
+                }
+                if b.truncated {
+                    out.push_str("  - _(more findings than the per-record cap; list truncated)_\n");
+                }
+            }
+        }
+        // "Nothing was looked at" is a different claim from "nothing was
+        // wrong", and a reviewer has to be able to tell them apart.
+        let blind = browser.iter().filter(|(_, b)| b.unavailable).count();
+        if blind > 0 {
+            out.push_str(&format!(
+                "\n_{blind} browser command(s) ran with no browser available to observe, \
+                 so nothing was collected for them._\n"
+            ));
+        }
+    }
+
     out.push_str("\n## Proposal\n\n```\n");
     out.push_str(brief);
     out.push_str("\n```\n");
@@ -200,4 +261,126 @@ fn report(
          ```bash\ngit apply --3way patch.diff\n```\n",
     );
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::receipt::{BrowserEvidence, ExecRecord};
+
+    fn manifest() -> EnvManifest {
+        EnvManifest {
+            id: "env/tester/ui".into(),
+            agent: "tester".into(),
+            slug: "ui".into(),
+            base_commit: "a".repeat(40),
+            base_tree: "b".repeat(40),
+            parent_branch: "main".into(),
+            branch: "refs/heads/h5i/env/tester/ui".into(),
+            source: "repo".into(),
+            profile: "browser".into(),
+            policy_digest: "d".repeat(64),
+            isolation_claim: "supervised".into(),
+            backend: "worktree".into(),
+            created_at: "2026-08-05T00:00:00.000000Z".into(),
+            updated_at: "2026-08-05T00:00:00.000000Z".into(),
+            status: "proposed".into(),
+            captures: Vec::new(),
+            service_digest: None,
+            persona_digest: None,
+            pr: None,
+            pr_head_ref: None,
+        }
+    }
+
+    fn summary() -> ExportSummary {
+        ExportSummary {
+            env_id: "env/tester/ui".into(),
+            dir: PathBuf::from("/out"),
+            files_changed: 1,
+            insertions: 2,
+            deletions: 0,
+            patch_bytes: 10,
+            receipts: 1,
+            egress_denied: 0,
+            redactions: Vec::new(),
+        }
+    }
+
+    fn record(browser: Option<BrowserEvidence>) -> ExecRecord {
+        ExecRecord {
+            id: "0123456789abcdef".into(),
+            timestamp: "2026-08-05T00:00:01.000000Z".into(),
+            env_id: "env/tester/ui".into(),
+            policy_digest: None,
+            source: "host-env-run".into(),
+            cmd: Some("agent-browser click @e2".into()),
+            cwd: None,
+            exit_code: Some(0),
+            timed_out: false,
+            wall_ms: None,
+            cpu_ms: None,
+            max_rss_kb: None,
+            git_tree: None,
+            files: Vec::new(),
+            egress: None,
+            browser,
+            redactions: Vec::new(),
+            raw_oid: "sha256:0".into(),
+            raw_size: 0,
+            raw_lines: 0,
+            raw_truncated: false,
+        }
+    }
+
+    #[test]
+    fn the_report_shows_what_the_page_said_not_what_the_agent_said() {
+        let ev = BrowserEvidence {
+            verb: Some("click".into()),
+            console: vec!["[error] widget failed to mount".into()],
+            errors: vec!["TypeError: cannot read 'boom' of null".into()],
+            failed_requests: vec!["500 POST /api/save".into()],
+            ..Default::default()
+        };
+        let text = report(&manifest(), &summary(), &[record(Some(ev))], "brief");
+
+        assert!(text.contains("## What the browser saw"), "{text}");
+        assert!(text.contains("TypeError: cannot read 'boom' of null"), "{text}");
+        assert!(text.contains("widget failed to mount"), "{text}");
+        assert!(text.contains("500 POST /api/save"), "{text}");
+        // Above the agent's own proposal: a reviewer should meet the observed
+        // failures before the account that may not mention them.
+        assert!(
+            text.find("What the browser saw") < text.find("## Proposal"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_clean_page_and_an_unobserved_one_read_differently() {
+        let clean = BrowserEvidence {
+            verb: Some("snapshot".into()),
+            ..Default::default()
+        };
+        let text = report(&manifest(), &summary(), &[record(Some(clean))], "brief");
+        assert!(text.contains("no console errors"), "{text}");
+
+        // The distinction that matters: this one was never looked at, and the
+        // report must not let it read as a page that came back clean.
+        let blind = BrowserEvidence {
+            verb: Some("click".into()),
+            unavailable: true,
+            ..Default::default()
+        };
+        let text = report(&manifest(), &summary(), &[record(Some(blind))], "brief");
+        assert!(text.contains("no browser available to observe"), "{text}");
+    }
+
+    #[test]
+    fn a_run_that_never_touched_a_browser_gets_no_section() {
+        // Most boxes are not browser boxes; they should not carry an empty
+        // heading implying an inspection that never happened.
+        let text = report(&manifest(), &summary(), &[record(None)], "brief");
+        assert!(!text.contains("What the browser saw"), "{text}");
+    }
 }

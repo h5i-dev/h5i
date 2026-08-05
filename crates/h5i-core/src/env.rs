@@ -3307,6 +3307,33 @@ fn run_inner(
         raw = text.into_bytes();
     }
 
+    // Browser evidence: when this run drove the browser, ask the page what
+    // happened before recording the run. The drain executes in the same box
+    // under the same policy, so it is confined like anything else, and it runs
+    // at a moment h5i picks rather than one the agent picks.
+    //
+    // Two gates, and both matter. The run has to have touched the browser, and
+    // a browser has to still be live — the drain command would otherwise *start*
+    // one, so a `cargo test` in a browser box would launch Chrome just to be
+    // told the console was empty, and report a clean page it never looked at.
+    //
+    // The drain reuses this run's already-prepared policy rather than going
+    // through `dev run` again, which is what makes it see the run's own browser:
+    // a fresh `dev run` re-runs `prepare_private_tmp`, wiping the scratch that
+    // holds the daemon's socket, and would get a new session with empty buffers.
+    let env_dir_path = m.dir(h5i_root);
+    let browser_evidence = crate::browser::run_touched_browser(argv)
+        .filter(|verb| crate::browser::verb_wants_drain(verb))
+        .filter(|_| crate::browser::browser_is_live(&env_dir_path))
+        .map(|verb| {
+            crate::browser::collect(&env_dir_path, &verb, |drain_argv| {
+                let out = sandbox::run_with_env(&policy, &work, drain_argv, &injected_env).ok()?;
+                // A non-zero drain is a browser that is gone or wedged. Report
+                // that as `unavailable`, never as a clean page.
+                (out.exit_code == Some(0)).then_some(out.stdout)
+            })
+        });
+
     // Read HEAD from the WORKTREE repo so the tree recorded is the env's.
     let wt_repo = Repository::open(&work)?;
     let head_tree = wt_repo
@@ -3330,6 +3357,7 @@ fn run_inner(
         // Network egress verdicts (container tier's allowlist proxy); `None` for
         // workspace/process. Host observed: the box never supplies this.
         egress: outcome.egress.clone(),
+        browser: browser_evidence,
     };
     let captured = crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, &raw)?;
     let capture_id = captured.id.clone();
