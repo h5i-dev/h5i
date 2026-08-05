@@ -1601,69 +1601,83 @@ mod tests {
         }
     }
 
-    /// When the real profile is rejected, say *which part*.
+    /// When a run under the real profile dies, say what would have saved it.
     ///
-    /// Checking hand-written constructs was not enough: they all passed while
-    /// the real document still aborted, which means the fault is in the actual
-    /// content (a specific path, a large filter list, the comments, the
-    /// multi-line layout) or in an interaction between forms. So bisect the
-    /// generated text itself — cumulative prefixes to find the first form that
-    /// breaks it in context, then each form alone to separate "invalid by
-    /// itself" from "invalid only in combination".
+    /// Bisecting *forms* was the wrong tool and gave a misleading answer, for a
+    /// reason worth recording: macOS **kills** a process whose exec or library
+    /// mapping the profile denies, so "died on a signal" does not distinguish
+    /// "the profile is invalid" from "the profile compiled and forbade
+    /// something the program needed". A prefix carrying `(allow process-exec*)`
+    /// but no read grants dies exactly like a malformed profile does, which is
+    /// how `(allow process-exec*)` — plainly valid, and accepted on its own by
+    /// the construct check — got fingered as the culprit.
     ///
-    /// Does nothing when the profile is fine, so it costs one `sandbox-exec`
-    /// call in the healthy case and is worth keeping for the next time.
+    /// So probe from the other side. Append a candidate permission to the real
+    /// profile and see whether the run starts working. Whatever repairs it names
+    /// what the profile is missing, which is the actual question.
     #[test]
     #[cfg(target_os = "macos")]
-    fn locate_the_rejected_part_of_the_real_profile() {
+    fn locate_what_the_real_profile_is_missing() {
         if !probe().usable() {
-            eprintln!("SKIP locate_the_rejected_part_of_the_real_profile: Seatbelt unusable");
+            eprintln!("SKIP locate_what_the_real_profile_is_missing: Seatbelt unusable");
             return;
         }
         let (_tmp, work, pol) = functional_env();
         let plan = plan(&pol, &work, &SeatbeltOptions::default());
-        if sbpl_document_is_valid(&plan.profile) {
+        if runs_under(&plan.profile) {
             return; // healthy: nothing to locate
         }
-        let forms = split_forms(&plan.profile);
-        let header = "(version 1)\n(deny default)\n";
-
-        let mut first_bad_prefix: Option<(usize, String)> = None;
-        let mut acc = String::from(header);
-        for (i, f) in forms.iter().enumerate() {
-            if f.trim_start().starts_with(';') || f.contains("(version 1)") || f.contains("(deny default)") {
-                continue;
-            }
-            acc.push_str(f);
-            acc.push('\n');
-            if !sbpl_document_is_valid(&acc) {
-                first_bad_prefix = Some((i, f.clone()));
-                break;
-            }
-        }
-        let alone: Vec<String> = forms
+        // Each candidate is appended to the real profile; SBPL is last-match-wins
+        // so an appended allow overrides the restriction under test.
+        let candidates = [
+            "(allow file-read*)",
+            "(allow file-map-executable)",
+            "(allow file-read* file-map-executable)",
+            "(allow process-exec* (subpath \"/\"))",
+            "(allow file-read* (subpath \"/System/Volumes\"))",
+            "(allow file-read* (subpath \"/private/var/db\"))",
+            "(allow sysctl-read)",
+            "(allow mach-lookup)(allow mach-priv-task-port)",
+            "(allow file-read-metadata)",
+            "(allow process-info*)",
+            "(allow file-issue-extension file-map-executable)",
+        ];
+        let repairs: Vec<&str> = candidates
             .iter()
-            .filter(|f| {
-                !f.trim_start().starts_with(';')
-                    && !f.contains("(version 1)")
-                    && !f.contains("(deny default)")
-            })
-            .filter(|f| !sbpl_document_is_valid(&format!("{header}{f}\n")))
-            .cloned()
+            .copied()
+            .filter(|c| runs_under(&format!("{}\n{c}\n", plan.profile)))
             .collect();
-
         panic!(
-            "the generated profile is rejected by libsandbox.\n\
-             forms: {}\n\
-             first form that breaks a cumulative prefix: {:?}\n\
-             forms invalid on their own ({}):\n{}\n\
-             --- full profile ---\n{}",
-            forms.len(),
-            first_bad_prefix,
-            alone.len(),
-            alone.join("\n  ---\n"),
+            "a command cannot run under the real profile.\n\
+             candidates that repair it ({}):\n  {}\n\
+             --- profile ---\n{}",
+            repairs.len(),
+            if repairs.is_empty() {
+                "(none — the document itself is likely malformed)".to_string()
+            } else {
+                repairs.join("\n  ")
+            },
             plan.profile
         );
+    }
+
+    /// Can `/usr/bin/true` actually run to a clean exit under `profile`?
+    /// Deliberately not "did it die on a signal": macOS kills on a denied exec,
+    /// so only a successful exit distinguishes a working profile.
+    #[cfg(target_os = "macos")]
+    fn runs_under(profile: &str) -> bool {
+        let Ok(file) = ProfileFile::write(profile) else {
+            return false;
+        };
+        std::process::Command::new(SANDBOX_EXEC)
+            .arg("-f")
+            .arg(file.path())
+            .arg("/usr/bin/true")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     }
 
     /// Does `sandbox-exec` accept the known-good base profile plus `extra`?
