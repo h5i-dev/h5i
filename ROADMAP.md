@@ -279,6 +279,27 @@ model we copy.
   header = "Authorization: Bearer ${GITHUB_TOKEN}"   # resolved on the host
   ```
 
+  **The shape this has to take is a decision, not a detail.** `auth_proxy.rs`
+  today is a *reverse* proxy: the box is handed a base-URL override
+  (`ANTHROPIC_BASE_URL`) pointing at a loopback listener that injects the real
+  credential and forwards to one pinned upstream host. Generalizing it has two
+  candidate shapes, and they are not equivalent:
+
+  1. **Reverse proxy per grant** (small, honest, limited). The profile names a
+     host, the env var holding the credential host side, and the base-URL
+     variable the client respects. Nothing new is invented: it is the existing
+     mechanism with the hard-coded runtime table replaced by profile data. The
+     limit is real and must be stated — it only works for clients you can point
+     at a different origin, so `curl https://api.github.com` still goes nowhere.
+  2. **Forward proxy with header injection** (general, expensive). `HTTPS_PROXY`
+     plus per-host injection means terminating TLS in the proxy, which means a
+     CA the box trusts. That is a substantially larger security surface: a box
+     that trusts an h5i CA is a box whose TLS you have taken responsibility for.
+
+  Option 1 is the one to build first, precisely because its limit is legible.
+  Option 2 should not be reached for until something concrete needs it, and
+  when it is, it needs its own design note rather than an afternoon.
+
   Restricting *what* the box may do with that credential is authorization, and
   it belongs where it is already solved: a fine-grained token, scoped to one
   repository and the operations you meant. If a generic rule is wanted later it
@@ -571,8 +592,10 @@ credential-shaped entries at any depth — `credentials*`, `.netrc`, ssh keys,
 function without), and the credential proxy, which was already default-on but
 did not engage for a `browser` box.
 **Remaining**: generalizing `auth_proxy` from the model API to any allowlisted
-host with a host-side credential (5.5 — no vendor-specific code). That is the
-last M3 item.
+host with a host-side credential — the last M3 item. 5.5 now names the two
+shapes it could take and why the reverse-proxy-per-grant one is the one to
+build; it wants a deliberate start rather than a tail-end improvisation,
+because the alternative involves trusting an h5i CA inside the box.
 
 **M4. Browser — profile landed, live loop not yet.** Done: the `browser`
 built-in profile (the agent profile plus the browser surface, runtime scoping
