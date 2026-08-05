@@ -2572,6 +2572,16 @@ pub fn browser_env(policy: &ResolvedPolicy) -> Vec<(String, String)> {
         // Headless: a viewer watches the CDP screencast, so nothing wants an X
         // server and a box that tried to start one would fail confusingly.
         ("AGENT_BROWSER_HEADLESS".to_string(), "1".to_string()),
+        // The daemon's control socket. Its default is `$XDG_RUNTIME_DIR`
+        // (`/run/user/<uid>`), which no box has a write grant for — and the
+        // failure is an opaque "Failed to create socket directory: Permission
+        // denied" long after create said everything was fine. Point it at the
+        // box's own `/tmp`, which every tier grants (and which the kernel tiers
+        // redirect to a per-env scratch, so two boxes never share a socket).
+        (
+            "AGENT_BROWSER_SOCKET_DIR".to_string(),
+            "/tmp/agent-browser".to_string(),
+        ),
         // Refused, not merely absent.
         ("AI_GATEWAY_API_KEY".to_string(), String::new()),
         ("AGENT_BROWSER_DISABLE_CHAT".to_string(), "1".to_string()),
@@ -7829,6 +7839,12 @@ mod tests {
             Some("1")
         );
         assert_eq!(env.get("AGENT_BROWSER_HEADLESS").map(String::as_str), Some("1"));
+        // The daemon socket must land somewhere the box can write; its default
+        // ($XDG_RUNTIME_DIR) is not granted on any tier.
+        assert_eq!(
+            env.get("AGENT_BROWSER_SOCKET_DIR").map(String::as_str),
+            Some("/tmp/agent-browser")
+        );
     }
 
     #[test]

@@ -597,23 +597,38 @@ part of the pinned digest, and fail-closed when the host-side variable is
 unset. GitHub is a policy entry, not a feature. Option 2 (a TLS-terminating
 forward proxy) stays unbuilt and unneeded.
 
-**M4. Browser — profile landed, live loop unverified.**
+**M4. Browser — running a real box, two layers in.**
 
-A first attempt to run a real browser box hit `supervised spawn failed:
-Invalid argument` on every agent-family profile, while `default` boxes ran
-fine. That turned out to be an artifact of the assistant's sandboxed shell, not
-this host: run from an ordinary terminal, `supervised` + `agent-claude` creates
-and executes normally.
+The first live run was worth more than the code around it. What it found, in
+order:
 
-Two things worth keeping from it. First, **agent-family boxes cannot be
-exercised from a sandboxed tool environment**, so anything that needs one has
-to be run by a human at a real terminal — that includes the whole browser loop.
-Second, the gap the false alarm exposed is real: **no test in the suite runs an
-agent-family profile at `supervised`**, and `supervised` is the only kernel
-tier that can host an agent or a browser box (`process` refuses the egress the
-profile needs). That test is worth adding regardless.
+1. **The `supervised` + agent-profile `EINVAL` was neither a host bug nor a
+   permission problem.** It happens when the box's workspace is under `/tmp`,
+   because the agent profile redirects `/tmp` to a per-env scratch and that
+   shadows the worktree itself. A repo anywhere else works. The error message
+   is useless and should name this — a real footgun, worth fixing at create
+   time.
+2. With that out of the way, a `browser` box at `supervised` creates and runs,
+   and `agent-browser --version` answers from inside it.
+3. `agent-browser`'s daemon put its control socket in `$XDG_RUNTIME_DIR`
+   (`/run/user/<uid>`), which no box has a write grant for, and failed with
+   "Failed to create socket directory: Permission denied" long after create
+   said everything was fine. **Fixed**: `AGENT_BROWSER_SOCKET_DIR` now points at
+   the box's own `/tmp`, which every tier grants and the kernel tiers make
+   per-env.
+4. Next layer, still open: the daemon now starts and exits during startup with
+   no output. `agent-browser open --debug` from inside a box is the next step,
+   and this is where Chrome under Landlock + seccomp gets interesting.
 
-Done so far:Done so far: Done: the `browser`
+Nothing here could have been found by reading the code, which is the argument
+for driving the loop before building more on top of it.
+
+Also worth keeping: **no test in the suite runs an agent-family profile at
+`supervised`**, and `supervised` is the only kernel tier that can host an agent
+or browser box (`process` refuses the egress the profile needs). That gap is
+why both surprises above were available to find.
+
+Done so far:Done so far:Done so far: Done: the `browser`
 built-in profile (the agent profile plus the browser surface, runtime scoping
 intact, egress never wider than the agent's), host-path discovery for the
 kernel tiers with a fail-closed create that names what to install,
