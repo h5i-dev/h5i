@@ -19,6 +19,9 @@ Print version
 h5i\-dev(1)
 Disposable, confined development boxes. `h5i dev` with no verb creates one from the current repository; `h5i dev \-\-help` has the verb table
 .TP
+h5i\-browser(1)
+The browser control lock: who is driving the browser in a box
+.TP
 h5i\-skill(1)
 Write or print the agent skill this binary carries
 .TP
@@ -37,10 +40,13 @@ Disposable, confined development boxes. `h5i dev` with no verb creates one from 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBdev\fR [\fB\-\-name\fR] [\fB\-\-from\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISOURCE\fR] [\fIsubcommands\fR]
+\fBdev\fR [\fB\-\-new\fR] [\fB\-\-name\fR] [\fB\-\-from\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISOURCE\fR] [\fIsubcommands\fR]
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
+.TP
+\fB\-\-new\fR
+Start from an empty box instead of any source
 .TP
 \fB\-\-name\fR \fI<NAME>\fR
 Name for the box. Derived from the source when omitted
@@ -64,13 +70,13 @@ Container base image for isolation=container
 Print help
 .TP
 [\fISOURCE\fR]
-Where the code comes from: `.` for this repository (the default), or a GitHub pull request (number, #number, or URL)
+Where the code comes from: `.` for this repository (the default), a GitHub pull request (number, #number, or URL), or a repository URL to copy into the box
 .SH "H5I DEV CREATE"
 Create a box explicitly. `h5i dev [SOURCE]` is the short form and takes the same flags; this is what it dispatches to
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-pr\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-pr\fR] [\fB\-\-clone\fR] [\fB\-\-new\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -81,11 +87,17 @@ Base revision (default: HEAD). Pinned immutably
 \fB\-\-pr\fR \fI<NUMBER|URL>\fR
 Base the env on a GitHub pull request (number, #number, or URL): fetches refs/pull/<n>/head from the remote, pins it as the immutable base, and points the env\*(Aqs parent branch at a local `pr/<n>` tracking branch \(em so propose/apply review the PR head, and apply prints the push\-back command. Needs only `git`; `gh` (optional) enriches the push\-back hint with the PR\*(Aqs head branch name
 .TP
+\fB\-\-clone\fR \fI<URL>\fR
+Copy an external repository into the box instead of taking a worktree of this one. The box is **detached**: this repository is never touched, and `h5i dev export` is the only way out
+.TP
+\fB\-\-new\fR
+Start from an empty box (a fresh repository with one empty commit), for letting an agent build something from nothing. Also detached
+.TP
 \fB\-\-remote\fR \fI<REMOTE>\fR [default: origin]
 Remote to fetch the PR head from (with \-\-pr)
 .TP
 \fB\-\-profile\fR \fI<PROFILE>\fR
-Policy profile from .h5i/env.toml. Built\-ins need no file: `agent` (agent\-in\-box, scoped to $H5I_AGENT\*(Aqs runtime), `agent\-claude` / `agent\-codex` (pin one runtime: only that agent\*(Aqs HOME state + API egress), and `default` (fail\-closed build/test confinement). Unset auto\-picks the creating runtime\*(Aqs agent profile when this host can enforce it, else `default`
+Policy profile from .h5i/env.toml. Built\-ins need no file: `agent` (agent\-in\-box, scoped to $H5I_AGENT\*(Aqs runtime), `agent\-claude` / `agent\-codex` (pin one runtime: only that agent\*(Aqs HOME state + API egress), `browser` (the agent profile plus headless Chrome and the agent\-browser daemon, so the agent can drive a real browser against the dev server it just started), and `default` (fail\-closed build/test confinement). Unset auto\-picks the creating runtime\*(Aqs agent profile when this host can enforce it, else `default`
 .TP
 \fB\-\-isolation\fR \fI<ISOLATION>\fR
 Isolation: auto (default) | workspace | process | supervised | container | hardened\-container | microvm. `auto` (or unset) picks the strongest tier the host can run; an explicit tier fails closed if the host cannot satisfy it (never silently downgrades)
@@ -221,6 +233,24 @@ Emit the raw manifest JSON instead of the human view
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I DEV VIEW"
+Watch this box's browser from the host, and take over when you want to
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBview\fR [\fB\-\-port\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 7331]
+Loopback port to bind. 0 picks a free one and prints it
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fINAME\fR>
 
@@ -515,6 +545,81 @@ Print help
 .TP
 <\fINAME\fR>
 
+.SH "H5I DEV CACHE"
+Warm dependency caches: one per project and ecosystem, keyed by that ecosystem's lockfiles, mounted read-only into a box
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBcache\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I DEV CACHE LIST"
+List the caches on this clone
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I DEV CACHE MOUNTS"
+Show which caches a box created right now would be given, and where they would appear inside it
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBmounts\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I DEV CACHE REFRESH"
+Populate a cache by fetching this project's dependencies
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrefresh\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIECO\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIECO\fR>
+Ecosystem to refresh (cargo, npm, uv, go)
+.SH "H5I DEV CACHE RM"
+Remove a cache. Without --key, removes every cache for the ecosystem
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrm\fR [\fB\-\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIECO\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-key\fR \fI<KEY>\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIECO\fR>
+
 .SH "H5I DEV RM"
 Permanently remove one or more environments from this clone: prune their worktrees, delete their code + reasoning branches, and erase their manifests. Destroys local provenance (only the `removed` event in refs/h5i/env survives). A still-live env (created/running/proposed) needs --force. Multiple names are processed in order; a failure for one env is reported but does not abort the rest
 .ie \n(.g .ds Aq \(aq
@@ -545,6 +650,84 @@ Reclaim workspaces of applied/aborted environments (worktree prune). Manifests, 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.SH "H5I BROWSER"
+The browser control lock: who is driving the browser in a box
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBbrowser\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BROWSER STATUS"
+Who holds control of this box's browser, and whether the agent's snapshot handles are stale
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstatus\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BROWSER TAKE"
+Take control as a human. The agent's automation pauses at its next command boundary
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBtake\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BROWSER RELEASE"
+Hand control back to the agent. It must re-snapshot before acting, because the page moved while you were driving
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrelease\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BROWSER URL"
+Print the loopback viewer URL for a box, token included. `h5i dev view` is what actually serves it; this is for pasting into a browser when a forward is already running
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBurl\fR [\fB\-\-port\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 7331]
+The loopback port `h5i dev view` was given. Defaults to the one it picks when unspecified
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
 .SH "H5I SKILL"
 Write or print the agent skill this binary carries
 .ie \n(.g .ds Aq \(aq

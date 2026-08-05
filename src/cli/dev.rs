@@ -44,9 +44,11 @@ pub enum DevCommands {
         /// Policy profile from .h5i/env.toml. Built-ins need no file: `agent`
         /// (agent-in-box, scoped to $H5I_AGENT's runtime), `agent-claude` /
         /// `agent-codex` (pin one runtime: only that agent's HOME state + API
-        /// egress), and `default` (fail-closed build/test confinement). Unset
-        /// auto-picks the creating runtime's agent profile when this host can
-        /// enforce it, else `default`.
+        /// egress), `browser` (the agent profile plus headless Chrome and the
+        /// agent-browser daemon, so the agent can drive a real browser against
+        /// the dev server it just started), and `default` (fail-closed
+        /// build/test confinement). Unset auto-picks the creating runtime's
+        /// agent profile when this host can enforce it, else `default`.
         #[arg(long)]
         profile: Option<String>,
         /// Isolation: auto (default) | workspace | process | supervised | container | hardened-container | microvm.
