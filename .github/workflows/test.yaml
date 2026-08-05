@@ -57,6 +57,10 @@ jobs:
       # package-lock.json disagrees with package.json, so a dependency bump that
       # forgot the lockfile fails here instead of resolving to something nobody
       # reviewed.
+      - name: The lockfile covers this runner's platform
+        working-directory: web
+        run: node ../scripts/check-lockfile-platforms.mjs
+
       - name: Build the console bundle
         working-directory: web
         run: |

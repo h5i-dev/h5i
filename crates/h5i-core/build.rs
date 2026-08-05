@@ -63,7 +63,17 @@ fn main() {
     }
 
     if !web.join("node_modules").exists() {
-        run_npm(&web, &["install", "--no-audit", "--no-fund"]);
+        // `ci`, not `install`, whenever a lockfile is committed: `npm install`
+        // rewrites package-lock.json, so an ordinary `cargo build` could edit a
+        // tracked file as a side effect — and on a machine whose npm records
+        // only its own platform's optional binaries, the rewrite it leaves
+        // behind is one that fails on every other platform's CI runner. `ci`
+        // installs exactly the lockfile and never writes it.
+        if web.join("package-lock.json").exists() {
+            run_npm(&web, &["ci", "--no-audit", "--no-fund"]);
+        } else {
+            run_npm(&web, &["install", "--no-audit", "--no-fund"]);
+        }
     }
     run_npm(&web, &["run", "build"]);
 }

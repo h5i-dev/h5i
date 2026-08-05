@@ -38,6 +38,10 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      - name: The lockfile covers this runner's platform
+        working-directory: web
+        run: node ../scripts/check-lockfile-platforms.mjs
+
       - name: Build web/dist
         working-directory: web
         run: |
