@@ -10,10 +10,21 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
+# One in-flight run per branch. Pushing a fix ten seconds after a typo should
+# not leave the first run burning a macOS runner for twenty minutes; `main` is
+# exempt so a merge is never cancelled by the merge behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   test:
     name: build · test · clippy · fmt
     runs-on: ubuntu-latest
+    # Every job is bounded. A test that deadlocks (this repo spawns sandboxed
+    # children, servers and worktrees) would otherwise hold a runner for the
+    # six-hour default before anyone learns anything.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -32,14 +43,51 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # The one job that builds the `h5i ui` console for real. Done as its own
+      # step rather than left to h5i-core's build script so a TypeScript error
+      # is reported as a frontend failure instead of a confusing cargo one —
+      # and so every cargo step below finds a fresh web/dist and skips npm.
+      # `npm ci` (not `install`) is itself a gate: it refuses to run when
+      # package-lock.json disagrees with package.json, so a dependency bump that
+      # forgot the lockfile fails here instead of resolving to something nobody
+      # reviewed.
+      - name: The lockfile covers this runner's platform
+        working-directory: web
+        run: node ../scripts/check-lockfile-platforms.mjs
+
+      - name: Build the console bundle
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      # `--locked` throughout: Cargo.lock is committed and the release build
+      # uses it, so a manifest change that never updated the lockfile has to
+      # fail on a PR rather than surface at tag time.
       - name: cargo clippy (deny warnings)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: cargo build
-        run: cargo build --verbose --workspace --all-targets
+        run: cargo build --locked --verbose --workspace --all-targets
 
+      # Includes tests/console_api.rs, which spawns the binary and speaks HTTP
+      # to it — the only place CI finds out whether the console's routes, gate
+      # and embedded bundle actually work.
       - name: cargo test
-        run: cargo test --verbose --workspace
+        run: cargo test --locked --verbose --workspace
+
+      # The library must still compile without the console: `web` is a default
+      # feature, so nothing else in CI would notice it rotting.
+      - name: cargo clippy (no console)
+        env:
+          H5I_SKIP_WEB_BUILD: "1"
+        run: cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
 
   # macOS confines with Seatbelt, not Landlock/seccomp, so the kernel tiers there
   # are a genuinely different code path (crates/h5i-sandbox/src/seatbelt.rs). The
@@ -50,6 +98,7 @@ jobs:
   macos:
     name: build · test · clippy (macOS / Seatbelt)
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -75,8 +124,15 @@ jobs:
 
       # --all-targets so the integration tests are *compiled* here even though
       # they are not run below: compile breakage on macOS should fail loudly.
+      #
+      # H5I_SKIP_WEB_BUILD: this job proves the Rust compiles on Darwin, and the
+      # console bundle is byte-identical whatever host built it. The build
+      # script leaves a stub behind so `rust-embed` still resolves; the Linux
+      # job above is where the real bundle is built.
       - name: cargo clippy (deny warnings)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        env:
+          H5I_SKIP_WEB_BUILD: "1"
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       # Unit tests only, deliberately. `tests/env_integration.rs` asserts Linux
       # kernel behaviour directly — that `unshare` is refused by the seccomp
@@ -91,7 +147,9 @@ jobs:
       # wants someone iterating on a Mac; it is not silently skipped, it is
       # scoped out here on purpose.
       - name: cargo test (unit)
-        run: cargo test --verbose --workspace --lib
+        env:
+          H5I_SKIP_WEB_BUILD: "1"
+        run: cargo test --locked --verbose --workspace --lib
 
   # The man page (man/man1/h5i.1) and the /manual/ HTML (docs/manual/index.html)
   # are GENERATED, not hand-edited: the man page from the clap CLI via
@@ -104,6 +162,7 @@ jobs:
   docs:
     name: manuals fresh (man + html)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -111,10 +170,26 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # An explicit interpreter rather than the runner's system Python. Two
+      # reasons, both about this job's byte-exact diff: a distro Python marked
+      # externally-managed (PEP 668) makes `pip install` fail outright, and a
+      # runner-image Python bump would silently become an input to generated
+      # HTML that is compared byte for byte. 3.12 matches what the committed
+      # page was generated with.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Install manual-generator deps (pinned)
         run: python3 -m pip install --quiet -r scripts/requirements.txt
 
+      # Default features stay ON so the page lists `h5i ui`, matching the
+      # committed one. The man page derives from the clap command tree alone,
+      # so the bundle's contents cannot affect it — skip the npm build and let
+      # the build script leave its stub.
       - name: Regenerate the man page (from the clap CLI)
+        env:
+          H5I_SKIP_WEB_BUILD: "1"
         run: ./scripts/gen_man.sh
 
       - name: Regenerate the /manual/ HTML (from MANUAL.md)
@@ -144,6 +219,7 @@ jobs:
   cross-check:
     name: cross-check ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -181,14 +257,20 @@ jobs:
         if: matrix.use_cross
         uses: taiki-e/install-action@cross
 
+      # Compile-only, so the console bundle is irrelevant: skip the npm build
+      # (the build script stubs web/dist so `rust-embed` still resolves) rather
+      # than put Node on four more runners.
       - name: cargo check (native)
         if: "!matrix.use_cross"
+        env:
+          H5I_SKIP_WEB_BUILD: "1"
         run: cargo check --locked --target ${{ matrix.target }}
 
       - name: cross check (container)
         if: matrix.use_cross
         env:
-          # Keep the `-D warnings` RUSTFLAGS from the workflow env inside
-          # cross's Docker container.
-          CROSS_CONTAINER_OPTS: '-e RUSTFLAGS'
+          H5I_SKIP_WEB_BUILD: "1"
+          # Forward both into cross's Docker container: no Node in there, and
+          # keep the `-D warnings` RUSTFLAGS from the workflow env.
+          CROSS_CONTAINER_OPTS: '-e H5I_SKIP_WEB_BUILD -e RUSTFLAGS'
         run: cross check --locked --target ${{ matrix.target }}

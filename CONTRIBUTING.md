@@ -195,8 +195,10 @@ names in docs, screenshots, fixtures, or examples.
 
 ## Web Workbench
 
-The web dashboard is optional at the Rust feature level but included in default
-builds. If you touch `web/` or release packaging:
+`web/` is the box console served by `h5i ui`. It is optional at the Rust feature
+level (`--no-default-features` drops it, and with it the build script's need for
+Node) but included in default builds, where `crates/h5i-core/build.rs` builds
+the bundle and embeds it. If you touch `web/` or release packaging:
 
 - Use Node.js 20.
 - Keep generated build output out of source diffs unless the repository already
@@ -204,8 +206,26 @@ builds. If you touch `web/` or release packaging:
 - Verify the Rust build path that embeds or serves web assets.
 - Check responsive behavior for user-facing UI changes.
 
-Avoid turning the dashboard into a remotely exposed service without an explicit
-security design and review.
+**Regenerating `package-lock.json` needs npm 10 or newer.** Rollup ships its
+native code as per-platform optional packages, and npm 9 records only the ones
+matching the machine it ran on — a lockfile regenerated from scratch on an
+arm64 laptop installs fine there and then fails on an x64 CI runner with a
+`Cannot find module @rollup/rollup-linux-x64-gnu` stack trace that names
+nothing useful. If you need to rebuild it:
+
+```bash
+cd web && rm -rf node_modules package-lock.json && npx npm@10 install
+```
+
+`scripts/check-lockfile-platforms.mjs` runs in CI and fails with that
+instruction if the lockfile is missing a platform. Installing from a correct
+lockfile is safe with any npm version, and the build script uses `npm ci` so an
+ordinary `cargo build` never rewrites the committed file.
+
+Avoid turning the console into a remotely exposed service without an explicit
+security design and review. Today it binds loopback only, every route is a GET,
+and access needs a per-session token that is never written to disk — see the
+module docs in `crates/h5i-core/src/server.rs`.
 
 ## Commit and Pull Request Guidance
 

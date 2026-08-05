@@ -25,12 +25,21 @@ description = "h5i — disposable, confined development environments for AI codi
 name = "h5i"
 path = "src/main.rs"
 
+[features]
+# `web` adds the `h5i ui` box console and, through h5i-core, the axum server
+# and the embedded React bundle it serves. On by default; drop it with
+# `--no-default-features` for a build that needs no Node toolchain.
+default = ["web"]
+web = ["h5i-core/web"]
+
 [dependencies]
-h5i-core = { path = "crates/h5i-core" }
+# `default-features = false` so this package's own `web` flag is the single
+# switch: without it, h5i-core is built lean rather than pulling axum in
+# through its own defaults.
+h5i-core = { path = "crates/h5i-core", default-features = false }
 git2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5.60", features = ["derive"] }

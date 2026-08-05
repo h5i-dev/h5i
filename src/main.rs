@@ -39,6 +39,24 @@ enum Commands {
         action: cli::boxes::BoxCommands,
     },
 
+    /// Open the box console in a browser: one read-only screen over the whole
+    /// fleet — what each box is, what its policy actually allows, what ran
+    /// inside it, and what pressed on a boundary.
+    ///
+    /// The server is loopback-only and every route is a GET, so the console can
+    /// watch boxes but never drive them: `shell`, `run`, `export` and `apply`
+    /// stay here in the CLI. The URL carries a token minted for this session
+    /// and held in memory only — no box can read it.
+    #[cfg(feature = "web")]
+    Ui {
+        /// Port to bind on 127.0.0.1. `0` asks the OS for a free one.
+        #[arg(long, default_value = "8765")]
+        port: u16,
+        /// Also hand the URL to this desktop's browser.
+        #[arg(long)]
+        open: bool,
+    },
+
     /// The browser control lock: who is driving the browser in a box.
     Browser {
         #[command(subcommand)]
@@ -184,6 +202,8 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Box(args) => cli::boxes::run(args.into_command()?)?,
         Commands::Env { action } => cli::boxes::run(action)?,
+        #[cfg(feature = "web")]
+        Commands::Ui { port, open } => cli::ui::run(port, open)?,
         Commands::Browser { action } => cli::browser::run(action)?,
         Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,

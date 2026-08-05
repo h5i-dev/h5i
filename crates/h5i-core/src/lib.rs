@@ -10,6 +10,11 @@ pub mod export;
 pub mod receipt;
 pub mod redact;
 pub mod refstore;
+// The box console (`h5i ui`) — a read-only HTTP view of the fleet. Optional:
+// `--no-default-features` drops it, and with it axum, tokio, the embedded
+// bundle, and the build script's dependency on Node.
+#[cfg(feature = "web")]
+pub mod server;
 pub mod skill;
 pub mod source;
 pub mod storage;

@@ -10,3 +10,7 @@ pub mod browser;
 pub mod completion;
 pub mod man;
 pub mod skill;
+// The box console. Gated with the `web` feature it drives, so a
+// `--no-default-features` binary has no `ui` verb rather than a broken one.
+#[cfg(feature = "web")]
+pub mod ui;

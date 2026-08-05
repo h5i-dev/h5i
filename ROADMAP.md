@@ -95,6 +95,15 @@ execution:
 - The whole `crates/h5i-orchestra/` crate.
 - The embedded web dashboard `web/`, the `plugin/` directory, the `web` cargo
   feature, and the axum dependency.
+
+  **Partly reversed, 2026-08-05.** The dashboard's twelve provenance views are
+  gone for good, but its *Sandbox* view was the one screen that described boxes
+  rather than commits, and losing it left no way to see the fleet at a glance.
+  `web/`, the `web` feature and axum are back, scoped to that one screen and
+  nothing else: `h5i ui`, read-only (every route is a GET), loopback-only and
+  token-gated, built on manifests, the resolved policy, the env event log and
+  `receipt.rs`. `risk.rs` is *not* back — the badges are arithmetic over
+  receipts, so nothing on the screen is a score. See `crates/h5i-core/src/server.rs`.
 - Git notes, `refs/h5i/{notes,context,memory,msg,team}`, and the sharing
   machinery over them.
 
@@ -140,6 +149,8 @@ h5i browser status|take|release   # the control lock, and who holds it
 h5i browser url                  # the viewer URL for this box
 
 h5i skill install|show|path      # write or print the embedded agent skill
+
+h5i ui                           # the box console: the whole fleet, read-only
 ```
 
 `h5i dev *` and `h5i env *` stay as hidden aliases through one release, then

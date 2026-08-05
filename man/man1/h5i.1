@@ -19,6 +19,9 @@ Print version
 h5i\-box(1)
 Disposable, confined development boxes. `h5i box` with no verb creates one from the current repository; `h5i box \-\-help` has the verb table
 .TP
+h5i\-ui(1)
+Open the box console in a browser: one read\-only screen over the whole fleet \(em what each box is, what its policy actually allows, what ran inside it, and what pressed on a boundary
+.TP
 h5i\-browser(1)
 The browser control lock: who is driving the browser in a box
 .TP
@@ -674,6 +677,24 @@ Reclaim workspaces of applied/aborted environments (worktree prune). Manifests, 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.SH "H5I UI"
+Open the box console in a browser: one read-only screen over the whole fleet \(em what each box is, what its policy actually allows, what ran inside it, and what pressed on a boundary
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBui\fR [\fB\-\-port\fR] [\fB\-\-open\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 8765]
+Port to bind on 127.0.0.1. `0` asks the OS for a free one
+.TP
+\fB\-\-open\fR
+Also hand the URL to this desktop\*(Aqs browser
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I BROWSER"
 The browser control lock: who is driving the browser in a box
 .ie \n(.g .ds Aq \(aq

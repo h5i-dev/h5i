@@ -95,6 +95,7 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 | Group | What it is for |
 |---|---|
 | [`h5i box`](#h5i-box) | Create, run, inspect and export boxes. Almost everything. |
+| [`h5i ui`](#h5i-ui) | The box console: one read-only screen over the whole fleet. |
 | [`h5i browser`](#h5i-browser) | The control lock: who is driving a box's browser. |
 | [`h5i skill`](#h5i-skill) | Write or print the agent skill this binary carries. |
 | `h5i completion` / `h5i man` | Shell completions and the man page. |
@@ -354,6 +355,46 @@ A persistent, user-level egress allowlist merged into every container-tier box
 whose profile *already* sets `net.egress`. A deny-all profile is never widened.
 Stored under `~/.config/h5i/`, outside every box-granted path, and it refuses to
 run inside a box.
+
+---
+
+## h5i ui
+
+```bash
+h5i ui                  # http://127.0.0.1:8765/?token=…
+h5i ui --port 0         # let the OS pick the port
+h5i ui --open           # hand the URL to this desktop's browser too
+```
+
+The box console: the same fleet the commands above report on, drawn as one
+screen. Left is every box with its tier, status and one signal; right is the box
+you picked — the policy that was actually enforced, the services it declares,
+its diffstat against the pinned base, and a flight recorder with one row per
+receipt across five lanes (FS, NET, PROC, RES, PAGE). Click a row for the
+rendered receipt, the same text `h5i box inspect` prints.
+
+**It cannot drive anything.** Every route is a `GET`. `shell`, `run`, `export`,
+`propose`, `apply` and `rm` stay in the CLI, where a human types them, so there
+is no mutating surface to guard and no way to turn the console into a remote
+control for someone's boxes.
+
+**What guards it.** The server binds `127.0.0.1` and nothing else. The URL
+carries a token minted for this session and kept in memory — never written to
+disk, so no box can read it — which the page trades for a `SameSite=Strict`
+cookie on first load. Requests from another origin are refused outright.
+
+**What the colours mean.** Red is the only one that makes a claim about the
+boundary: the egress allowlist *refused* a destination, host-observed by the
+proxy. Amber is something to look at — a run exited non-zero, the wall-clock
+limit killed one, or the in-box browser reported errors — and says nothing about
+containment. Grey means the evidence is weak: either the tier is `workspace` and
+nothing was confined, or every receipt came from the in-box shim and so is the
+box's own account. Each run row is labelled `host-observed` or `box-claimed` for
+the same reason. Nothing on the screen is a score.
+
+The console is a default-on cargo feature. `cargo build --no-default-features`
+drops it, along with axum, tokio and the build script's need for Node — and the
+`h5i ui` command with it.
 
 ---
 
