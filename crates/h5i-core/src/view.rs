@@ -104,7 +104,18 @@ pub fn stream_port(env_dir: &Path) -> Option<u16> {
         .ok()?
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().ends_with(".stream"))
-        .filter_map(|e| std::fs::read_to_string(e.path()).ok()?.trim().parse().ok())
+        // The turbofish is load-bearing on Windows, not decoration. Inferring
+        // the parse target through `collect()` needs `Vec<u16>: FromIterator`
+        // to be unique, and it is not there: `encode_unicode` (via `console`)
+        // adds a second impl, so the whole chain becomes ambiguous and only
+        // that target fails to compile.
+        .filter_map(|e| {
+            std::fs::read_to_string(e.path())
+                .ok()?
+                .trim()
+                .parse::<u16>()
+                .ok()
+        })
         .collect();
     ports.sort_unstable();
     ports.into_iter().next()
@@ -221,6 +232,12 @@ fn pid_alive(pid: u32) -> bool {
 
 /// Connect to `port` on loopback **inside** the namespaces of `pid`.
 ///
+/// Gated on Linux **and** x86_64/aarch64, matching `h5i_sandbox::seccomp_notify`
+/// — this borrows that module's `SCM_RIGHTS` helper, so a narrower gate here
+/// than there is a build break waiting for the first Linux target outside those
+/// two arches. CI's matrix has none, which is exactly why it is worth pinning
+/// by construction rather than by coverage.
+///
 /// Done in a forked child, and it has to be: joining a user namespace is
 /// refused for a multi-threaded process, and `setns` on a network namespace
 /// rebinds the calling thread rather than the process. The child enters both,
@@ -230,7 +247,7 @@ fn pid_alive(pid: u32) -> bool {
 /// The user namespace comes first and is not optional: the box's netns was
 /// created by an unprivileged `unshare`, so it is owned by that userns and
 /// joining it requires being in it.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub fn connect_in_netns(pid: u32, port: u16) -> Result<TcpStream, H5iError> {
     use h5i_sandbox::seccomp_notify::recv_fd;
     use std::os::fd::FromRawFd;
@@ -307,13 +324,20 @@ pub fn connect_in_netns(pid: u32, port: u16) -> Result<TcpStream, H5iError> {
 
 /// Exit codes the forked child uses to say which step failed. A forked child
 /// has no safe way to format an error, but it can always pick a number.
+///
+/// Gated with the code that uses them: everything here is `setns`-specific, so
+/// on a non-Linux target they are dead code, and `-D warnings` in CI is right
+/// to say so.
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 const EXIT_NO_NS: i32 = 2;
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 const EXIT_SETNS: i32 = 3;
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 const EXIT_CONNECT: i32 = 4;
 
 /// The child half of [`connect_in_netns`]. Returns the exit code the parent
 /// turns back into a message, since a forked child cannot safely format one.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn enter_and_connect(pid: u32, port: u16, sock: i32) -> i32 {
     use h5i_sandbox::seccomp_notify::send_fd;
     use std::os::fd::AsRawFd;
@@ -347,7 +371,7 @@ fn enter_and_connect(pid: u32, port: u16, sock: i32) -> i32 {
     0
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
 pub fn connect_in_netns(_pid: u32, _port: u16) -> Result<TcpStream, H5iError> {
     Err(H5iError::Metadata(
         "the viewer forward needs Linux namespaces; it is not available on this platform".into(),
