@@ -69,12 +69,16 @@ execution:
 
 - CLI surfaces: `capture`, `recall` (log, blame, objects, search, context,
   memory), `audit`, `compliance`, `maturity`, `vibe`, `team`, `orchestra`,
-  `msg`, `pr`, `notes`, `push`/`pull`/`share`, `serve`, `resume`, `status`,
-  `doctor`, `migrate-remote`, `setup-remote`.
+  `msg`, `pr`, `notes`, `push`/`pull`/`share`, `serve`, `mcp`, `resume`,
+  `status`, `doctor`, `migrate-remote`, `setup-remote`.
 - Modules: `repository.rs`, `blame.rs`, `metadata.rs`, `ctx.rs`, `msg.rs`,
   `team.rs`, `memory.rs`, `prompt_score.rs`, `attention.rs`, `recap.rs`,
   `review.rs`, `risk.rs`, `rules.rs`, `compliance.rs`, `radio.rs`, `pr.rs`,
-  `lfs.rs`, `session_log.rs`, `ui.rs`, `server.rs`, `vibe.rs`, `resume.rs`.
+  `lfs.rs`, `session_log.rs`, `ui.rs`, `server.rs`, `vibe.rs`, `resume.rs`,
+  `mcp.rs`.
+- The MCP server in full, including the `h5i_env_*` tool family. 3.0k lines in
+  `mcp.rs` plus its CLI entry point, and with it the `#![recursion_limit =
+  "512"]` in `lib.rs`, which exists only for that file's `json!` literal.
 - The whole `crates/h5i-orchestra/` crate.
 - The embedded web dashboard `web/`, the `plugin/` directory, the `web` cargo
   feature, and the axum dependency.
@@ -510,18 +514,18 @@ Being explicit about these is a feature, since the claim is a security claim.
 - **The receipt may be generated in the box**, provided the agent cannot rewrite
   it. That is bought with an inherited fd instead of a file, plus two host
   observed fields for cross checking (5.7).
+- **No MCP.** `mcp.rs` and the `h5i_env_*` tools go with the rest. The premise
+  of MCP here was a host side agent reaching into a box, which is the shape this
+  product exists to eliminate. The agent is inside the box, and inside the box
+  the interface is the CLI plus the skill. There is no second interface to keep
+  in sync, and no tool schema to drift from the flags.
 
 ## 11. Still open
 
-1. **MCP.** Drop `mcp.rs` entirely, or keep a slim server exposing exactly
-   `h5i_dev_*` plus `h5i_browser_*`? A host side agent driving a box contradicts
-   "the agent is in the box", so the default answer is drop, and the skill is
-   the interface instead. Revisit only if the browser verbs prove awkward over
-   plain CLI.
-2. **Snapshot handle stability.** Handles invalidate on navigation, but SPAs
+1. **Snapshot handle stability.** Handles invalidate on navigation, but SPAs
    mutate the DOM without navigating. Re snapshot on every verb is safe and
    chatty. A cheap DOM revision counter is better and needs a design.
-3. **First buyer workflow.** The positioning is broad enough to become a
+2. **First buyer workflow.** The positioning is broad enough to become a
    platform pitch, which sells to nobody. The launch message should be one
    workflow: run untrusted or AI generated code, see it in a real browser, keep
    it off your machine.
