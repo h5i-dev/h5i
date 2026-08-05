@@ -67,15 +67,24 @@ Chrome runs with its own sandbox off (h5i's box is the boundary), its profile
 is created fresh inside the box, and its network reach is the box's egress
 allowlist. `agent-browser --help` is the full verb table.
 
-**Control.** A human at the viewer can take the browser from you:
+**A human can take the browser from you**, and watch while you use it:
 
 ```bash
 h5i browser status <name>    # who holds control, and whether your @refs are stale
+h5i dev view <name>          # (human, on the host) watch this box and take over
 ```
 
-If it says a human holds control, wait — do not retry in a loop. When control
-comes back, your `@ref` handles are stale because the page moved: run
+If status says a human holds control, wait — do not retry in a loop. When
+control comes back your `@ref` handles are stale because the page moved: run
 `agent-browser snapshot` before acting, or the click lands somewhere else.
+
+**The page's own answer is already recorded.** After every browser command h5i
+collects the console errors, uncaught exceptions and failed requests and puts
+them in the receipt, so the export carries what the page did next to what you
+say you did. Write reports accordingly: claiming a UI fix was verified while the
+receipt shows an uncaught exception is worse than saying it threw.
+
+See [references/browser.md](references/browser.md) for the whole surface.
 
 ## The output gate
 
@@ -126,6 +135,7 @@ around the boundary. Report what was denied and why you needed it.
 ## References
 
 - [references/boxes.md](references/boxes.md) — lifecycle, sources, naming, gc
+- [references/browser.md](references/browser.md) — driving the browser, the control lock, the viewer
 - [references/policy.md](references/policy.md) — profiles, tiers, egress, secrets
 - [references/export.md](references/export.md) — the gate and reading a receipt
 - [references/troubleshooting.md](references/troubleshooting.md) — probe output, common denials

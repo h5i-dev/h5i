@@ -30,6 +30,10 @@ pub const PAGES: &[Page] = &[
         text: include_str!("../../../skills/h5i/references/boxes.md"),
     },
     Page {
+        path: "references/browser.md",
+        text: include_str!("../../../skills/h5i/references/browser.md"),
+    },
+    Page {
         path: "references/policy.md",
         text: include_str!("../../../skills/h5i/references/policy.md"),
     },
