@@ -1310,14 +1310,18 @@ mod tests {
     #[test]
     fn run_egress_fails_closed_when_unsupported() {
         // With a net.egress allowlist, run() still fails closed when the host
-        // can't satisfy the supervised stack OR slirp4netns is absent — never a
-        // silent partial run. (On a fully-capable host the e2e test in
-        // tests/env_integration.rs proves real enforcement.)
+        // cannot satisfy the supervised stack — never a silent partial run.
+        // (On a fully-capable host the e2e test in tests/env_integration.rs
+        // proves real enforcement.)
         let mut p = crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);
         p.net_egress = vec!["example.com".into()];
         let pol = crate::sandbox::ResolvedPolicy::new(p.isolation, p);
-        let usable = probe().usable && slirp4netns_path().is_some();
-        if usable {
+        // Ask the admission check itself whether this host is capable, rather
+        // than re-deriving it from `slirp4netns`. What makes a host ready is
+        // per-platform now — macOS needs no uplink binary at all — so a
+        // hand-rolled predicate here would drift from the code it guards, which
+        // is exactly what it did.
+        if preflight(&pol).is_ok() {
             // Can't assert a refusal on a capable host; that path is the e2e test.
             return;
         }

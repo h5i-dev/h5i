@@ -3661,8 +3661,39 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
             let c = r.claims.iter().find(|c| c.claim == name).unwrap();
             assert!(!c.satisfiable && c.runnable.is_none());
         }
-        // Egress allowlist enforcement tracks the container runtime exactly.
-        assert_eq!(r.egress_enforced, r.container_runtime.is_some());
+        // A domain allowlist is enforced by the container tier's DNS-pinned
+        // proxy, and on macOS also by the supervised tier — whose Seatbelt
+        // profile leaves the box no outbound route except that same proxy. The
+        // Linux kernel tiers can deny all but never allowlist, so they do not
+        // count towards this.
+        let supervised_runs = r
+            .claims
+            .iter()
+            .any(|c| c.claim == "supervised" && c.runnable == Some(true));
+        assert_eq!(
+            r.egress_enforced,
+            r.container_runtime.is_some() || (r.os == "macos" && supervised_runs)
+        );
+        // The two honesty flags, which exist so a caller never infers a
+        // guarantee from a tier name that means different things per platform.
+        assert!(
+            !r.syscall_filter || r.os == "linux",
+            "only Linux has a syscall deny-list; macOS must never claim one"
+        );
+        assert!(
+            !(r.memory_limit && r.os == "macos" && r.container_runtime.is_none()),
+            "Darwin cannot cap memory without the container tier"
+        );
+        assert!(
+            !r.memory_limit || r.resource_limits,
+            "a memory cap implies some resource limit is enforced"
+        );
+        let expected_mechanism = match r.os.as_str() {
+            "linux" => "landlock+seccomp",
+            "macos" => "seatbelt",
+            _ => "none",
+        };
+        assert_eq!(r.mechanism, expected_mechanism);
         // strongest_tier is one of the known claims.
         assert!(claims.contains(&r.strongest_tier));
     }
