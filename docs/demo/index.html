@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>h5i — demo film</title>
+<meta name="description" content="An 80-second film: an AI-written pull request runs with full autonomy inside a disposable h5i box, and your machine has nothing to lose.">
+<link rel="canonical" href="https://h5i.dev/demo/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="h5i">
+<meta property="og:title" content="h5i demo film">
+<meta property="og:description" content="Run code you don't trust. Keep it off your machine. An 80-second tour of the disposable box: agent, toolchain, dev server and browser inside one boundary.">
+<meta property="og:url" content="https://h5i.dev/demo/">
 <style>
   @font-face{font-family:'Space Grotesk';src:url('assets/SpaceGrotesk-400.woff2') format('woff2');font-weight:300 700;font-style:normal;font-display:block}
   @font-face{font-family:'Space Mono';src:url('assets/SpaceMono-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:block}
@@ -31,7 +38,6 @@
   #hdr .mark b{color:var(--claude);font-weight:700}
   #eyebrow{font-family:var(--mono);font-size:19px;font-weight:700;color:var(--claude);
     letter-spacing:.16em;text-transform:uppercase;text-shadow:0 0 22px rgba(255,122,89,.45)}
-  #eyebrow em{font-style:normal;color:var(--danger)}
   #rail{position:absolute;left:0;right:0;bottom:0;height:96px;display:flex;align-items:center;
     gap:18px;padding:0 72px;border-top:1px solid var(--border);
     background:linear-gradient(180deg, rgba(11,11,15,.4), rgba(11,11,15,.9));z-index:5}
@@ -45,7 +51,6 @@
   .chip.c-ctx::before{background:var(--ctx)} .chip.c-ok::before{background:var(--ok)}
   .chip.c-git::before{background:var(--git)} .chip.c-deny::before{background:var(--danger)}
   .chip.c-warn::before{background:var(--warn)} .chip.c-claude::before{background:var(--claude)}
-  .chip.c-codex::before{background:var(--codex)}
   .chip.c-deny{color:#ffb3ac;border-color:rgba(255,98,88,.35)}
   #railnote{position:absolute;left:0;right:0;bottom:112px;text-align:center;font-size:27px;
     color:var(--dim);opacity:0;z-index:6}
@@ -77,7 +82,7 @@
   #m0 .l1{font-size:64px;font-weight:700;letter-spacing:-.02em;opacity:0}
   #m0 .l2{margin-top:18px;font-size:40px;font-weight:300;color:var(--dim);opacity:0}
   #m0 .l2 b{color:var(--text);font-weight:500}
-  #m0 .term{width:920px;height:308px;margin-top:36px;border-color:rgba(255,98,88,.4);opacity:0}
+  #m0 .term{width:960px;height:308px;margin-top:36px;border-color:rgba(255,98,88,.4);opacity:0}
   #m0 .q{margin-top:26px;font-size:34px;font-weight:300;color:var(--dim);opacity:0}
   #m0 .q b{color:var(--text);font-weight:500}
   #m0 .q + .q{margin-top:10px}
@@ -89,11 +94,11 @@
   .titlecard p{margin-top:24px;font-family:var(--mono);font-size:25px;color:var(--dim)}
   .titlecard p b{color:var(--codex);font-weight:400}
 
-  /* ---- m1 sandbox ---- */
+  /* ---- m1 the box ---- */
   #m1 .cols{position:absolute;inset:0;display:flex;gap:36px}
   #m1 .diag{width:700px;position:relative;flex:none}
   #m1 .term{flex:1;height:868px}
-  .sealed{position:absolute;left:20px;top:60px;width:640px;height:430px;border-radius:20px;
+  .sealed{position:absolute;left:20px;top:60px;width:640px;height:470px;border-radius:20px;
     border:2px solid rgba(255,122,89,.5);background:rgba(255,122,89,.03)}
   .sealed::before{content:'';position:absolute;inset:0;border-radius:18px;pointer-events:none;
     background:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='26'%20height='22'%3E%3Crect%20width='26'%20height='22'%20fill='rgb(24,15,13)'/%3E%3Cg%20fill='rgb(138,64,44)'%3E%3Crect%20width='24'%20height='9'%20rx='1'/%3E%3Crect%20x='13'%20y='11'%20width='24'%20height='9'%20rx='1'/%3E%3Crect%20x='-13'%20y='11'%20width='24'%20height='9'%20rx='1'/%3E%3C/g%3E%3Cg%20fill='rgb(170,92,68)'%3E%3Crect%20width='24'%20height='2'/%3E%3Crect%20x='13'%20y='11'%20width='24'%20height='2'/%3E%3Crect%20x='-13'%20y='11'%20width='24'%20height='2'/%3E%3C/g%3E%3C/svg%3E");
@@ -103,9 +108,10 @@
     mask-composite:exclude}
   .sealed .slabel{position:absolute;top:-15px;left:26px;padding:2px 12px;background:var(--bg);
     font-family:var(--mono);font-size:16px;color:var(--claude);letter-spacing:.08em}
-  .wkcard{position:absolute;left:34px;top:38px;right:34px;padding:18px 20px;border-radius:12px;
+  .wkcard{position:absolute;left:34px;top:38px;right:34px;padding:16px 20px;border-radius:12px;
     background:var(--term);border:1px solid var(--border2);font-family:var(--mono)}
   .wkcard .t{font-size:18px;color:var(--text)} .wkcard .s{font-size:15px;color:var(--faint);margin-top:5px}
+  .wkcard.row2{top:128px}
   .polcard{position:absolute;left:34px;bottom:34px;right:34px;padding:16px 20px;border-radius:12px;
     background:var(--term);border:1px solid var(--border2);font-family:var(--mono);font-size:16.5px;line-height:1.85}
   .polcard .pt{color:var(--warn);font-size:15px;letter-spacing:.12em;margin-bottom:4px}
@@ -114,7 +120,7 @@
   .wall{position:absolute;padding:8px 16px;border-radius:999px;background:var(--bg);
     border:1px solid var(--border2);font-family:var(--mono);font-size:16px;color:var(--dim)}
   #wall-fs{left:-52px;top:190px} #wall-net{left:470px;top:-19px}
-  .blockcard{position:absolute;left:50px;top:200px;width:580px;padding:22px 30px;border-radius:16px;z-index:5;
+  .blockcard{position:absolute;left:50px;top:230px;width:580px;padding:22px 30px;border-radius:16px;z-index:5;
     background:rgba(38,10,10,.97);border:2px solid var(--danger);opacity:0;
     box-shadow:0 24px 70px rgba(0,0,0,.65);font-family:var(--mono)}
   .blockcard .bl{font-size:15px;letter-spacing:.18em;color:var(--danger);margin-bottom:8px}
@@ -130,33 +136,53 @@
     box-shadow:0 18px 50px rgba(0,0,0,.55);font-size:23px;line-height:1.45;color:var(--dim);opacity:0;z-index:4}
   .callout b{color:var(--text);font-weight:500}
 
-  /* ---- m2 receipt ---- */
-  #m2 h2{position:absolute;left:0;right:0;top:8px;text-align:center;font-size:56px;font-weight:700;
+  /* ---- m2 viewport · m3 gate shared ---- */
+  .scene h2{position:absolute;left:0;right:0;top:8px;text-align:center;font-size:56px;font-weight:700;
     letter-spacing:-.02em;opacity:0}
-  #m2 h2 em{font-style:normal;color:var(--git)}
-  #m2 .term{position:absolute;left:40px;top:130px;width:860px;height:520px}
-  .checklist{position:absolute;right:110px;top:150px;display:flex;flex-direction:column;gap:26px}
-  .ck{display:flex;align-items:center;gap:20px;font-size:34px;color:var(--dim);opacity:0}
-  .ck .box{width:40px;height:40px;border-radius:10px;border:2px solid var(--border2);
+  .scene h2 em{font-style:normal;color:var(--git)}
+  .subline{position:absolute;left:0;right:0;top:740px;text-align:center;font-size:33px;
+    font-weight:300;color:var(--dim);opacity:0}
+  .subline b{color:var(--text);font-weight:500}
+  .subline code{font-family:var(--mono);font-size:29px;color:var(--codex)}
+
+  /* ---- m2 viewport ---- */
+  #m2 .cols2{position:absolute;left:0;right:0;top:130px;display:flex;gap:36px;justify-content:center}
+  #m2 .term{width:840px;height:560px}
+  .bwin{width:720px;height:560px;flex:none;display:flex;flex-direction:column;background:var(--term);
+    border:1px solid var(--border);border-radius:16px;overflow:hidden;
+    box-shadow:0 24px 60px rgba(0,0,0,.5);opacity:0}
+  .bwin.held{border-color:rgba(122,162,255,.65);box-shadow:0 0 0 3px rgba(122,162,255,.22),0 24px 60px rgba(0,0,0,.5)}
+  .bbar{display:flex;align-items:center;gap:12px;padding:13px 18px;border-bottom:1px solid var(--border);
+    background:rgba(255,255,255,.02);flex:none}
+  .bbar .d{width:12px;height:12px;border-radius:50%;background:#2a2d36}
+  .burl{flex:1;font-family:var(--mono);font-size:16px;color:var(--dim);
+    background:rgba(255,255,255,.04);border-radius:8px;padding:6px 16px;margin-left:6px}
+  .bctl{font-family:var(--mono);font-size:15px;padding:6px 14px;border-radius:999px;white-space:nowrap;
+    border:1px solid rgba(255,122,89,.5);color:var(--claude)}
+  .bctl.you{border-color:rgba(122,162,255,.6);color:var(--git)}
+  .bpage{flex:1;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(180deg,#101017,#0b0b10)}
+  .appcard{width:400px;background:#13131b;border:1px solid var(--border2);border-radius:14px;
+    padding:34px 38px;text-align:center}
+  .appcard h3{font-size:26px;font-weight:700;margin-bottom:22px}
+  .appcard .fld{font-family:var(--mono);font-size:17px;color:var(--text);text-align:left;
+    background:#0b0b0f;border:1px solid var(--border2);border-radius:9px;padding:12px 16px}
+  .appcard .btn{position:relative;margin-top:16px;font-size:19px;font-weight:700;color:#fff;
+    background:var(--claude);border-radius:9px;padding:13px 16px}
+  .appcard .done{margin-top:18px;font-family:var(--mono);font-size:17px;color:var(--ok);opacity:0}
+  .ripple{position:absolute;left:50%;top:50%;width:14px;height:14px;border-radius:50%;
+    border:3px solid #fff;transform:translate(-50%,-50%);opacity:0;pointer-events:none}
+
+  /* ---- m3 gate ---- */
+  #m3 .term{position:absolute;left:40px;top:150px;width:900px;height:470px}
+  .checklist{position:absolute;right:110px;top:170px;display:flex;flex-direction:column;gap:26px}
+  .ck{display:flex;align-items:center;gap:20px;font-size:32px;color:var(--dim);opacity:0}
+  .ck code{font-family:var(--mono);font-size:29px}
+  .ck .box{width:40px;height:40px;border-radius:10px;border:2px solid var(--border2);flex:none;
     display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--ok)}
   .ck.on{color:var(--text)} .ck.on .box{border-color:rgba(52,211,153,.6);background:rgba(52,211,153,.1)}
-  #m2 .sub{position:absolute;left:0;right:0;top:700px;text-align:center;font-size:33px;
-    font-weight:300;color:var(--dim);opacity:0}
-  #m2 .sub b{color:var(--text);font-weight:500}
-
-  /* ---- m3 scale ---- */
-  #m3 .agents{position:absolute;left:80px;right:80px;top:110px;height:420px;display:flex;gap:32px}
-  #m3 .agents .term{flex:1}
-  #m3 .l1{position:absolute;left:0;right:0;top:0;text-align:center;font-size:52px;font-weight:700;opacity:0}
-  #m3 .l1 b{color:var(--codex)} #m3 .l1 i{font-style:normal;color:var(--claude)}
-  #m3 .l2{position:absolute;left:0;right:0;top:600px;text-align:center;font-size:32px;
-    color:var(--dim);opacity:0}
-  #m3 .l2 b{color:var(--ok);font-weight:500} #m3 .l2 em{font-style:normal;color:var(--text);font-weight:500}
-  .bub{position:absolute;padding:14px 20px;border-radius:14px;font-size:19px;line-height:1.4;
-    max-width:520px;opacity:0;z-index:4;background:var(--panel);box-shadow:0 16px 44px rgba(0,0,0,.55)}
-  .bub.from-claude{border:1px solid rgba(255,122,89,.5)} .bub.from-codex{border:1px solid rgba(45,212,191,.5)}
-  .bub .who{font-family:var(--mono);font-size:15px;margin-bottom:4px}
-  .bub.from-claude .who{color:var(--claude)} .bub.from-codex .who{color:var(--codex)}
+  .ck.deny{color:#ffb3ac} .ck.deny .box{color:var(--danger)}
+  .ck.deny.on .box{border-color:rgba(255,98,88,.6);background:rgba(255,98,88,.1)}
 
   /* ---- m4 close ---- */
   #m4 .wrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
@@ -192,130 +218,130 @@
   <!-- m0 : hook -->
   <div class="scene" id="m0">
     <div class="wrap" id="m0g1">
-      <div class="l1" id="h-l1">Your AI agent is editing production code.</div>
-      <div class="l2" id="h-l2">Git shows the <b>final diff</b>.</div>
+      <div class="l1" id="h-l1">A pull request just landed.</div>
+      <div class="l2" id="h-l2">2,400 lines. <b>Written by an AI.</b> Someone has to run it.</div>
       <div class="term" id="h-term">
         <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
-          <span class="tt">an agent, no box</span>
+          <span class="tt">no box</span>
           <span class="tr">your real $HOME</span><span class="agdot" style="background:var(--danger)"></span></div>
         <div class="tbody" id="t-hookm"></div>
       </div>
-      <div class="q" id="h-q1">What <b>prompt</b> produced this diff?</div>
-      <div class="q" id="h-q2">Did the agent run <b>unsafe tools</b>?</div>
-      <div class="blockcard hookalert" id="ha1" style="left:1130px;top:438px;width:450px">
-        <div class="bt">credentials <b>leaked</b></div>
+      <div class="q" id="h-q1">The diff looked fine.</div>
+      <div class="q" id="h-q2"><b>Running it</b> did the damage.</div>
+      <div class="blockcard hookalert" id="ha1" style="left:1180px;top:430px;width:460px">
+        <div class="bt">credentials <b>exfiltrated</b></div>
       </div>
-      <div class="blockcard hookalert" id="ha2" style="left:1168px;top:545px;width:450px">
-        <div class="bt">important files <b>deleted</b></div>
+      <div class="blockcard hookalert" id="ha2" style="left:1218px;top:537px;width:460px">
+        <div class="bt">on your <b>real machine</b></div>
       </div>
     </div>
     <div class="titlecard" id="m0title">
       <img src="assets/logo.png" alt="h5i">
-      <h1>h5i gives every agent a <em>sealed, auditable</em> workspace.</h1>
-      <p>Sealed worktrees. Recorded evidence. <b>Native Git.</b></p>
+      <h1>h5i runs it in a <em>disposable box</em> instead.</h1>
+      <p>The code, the agent, the toolchain, the dev server and a real browser: <b>one boundary</b>.</p>
     </div>
   </div>
 
-  <!-- m1 : sandbox -->
+  <!-- m1 : the box -->
   <div class="scene" id="m1">
     <div class="cols">
       <div class="diag">
         <div class="sealed" id="d-box">
-          <div class="slabel">🛡️ env/worker-env — sealed</div>
-          <div class="wkcard"><div class="t">$WORK — private worktree</div>
-            <div class="s">.git/.h5i/env/you/worker-env/work</div></div>
+          <div class="slabel">📦 env/you/pr-214 · sealed</div>
+          <div class="wkcard"><div class="t">PR #214, copied in</div>
+            <div class="s">.git/.h5i/env/you/pr-214/work</div></div>
+          <div class="wkcard row2"><div class="t">Claude Code · Chrome · dev server</div>
+            <div class="s">all inside the same boundary</div></div>
           <div class="polcard" id="d-pol">
-            <div class="pt">POLICY MANIFEST</div>
+            <div class="pt">POLICY, PINNED AT CREATION</div>
             <div class="row"><span>fs.write</span><b>$WORK only</b></div>
-            <div class="row"><span>net.egress</span><b>api.anthropic.com</b></div>
+            <div class="row"><span>net.egress</span><b>registry.npmjs.org · api.anthropic.com</b></div>
+            <div class="row"><span>secrets</span><b>none enter the box</b></div>
           </div>
           <div class="wall" id="wall-fs">✋ fs</div>
           <div class="wall" id="wall-net">✋ net</div>
         </div>
         <div class="blockcard" id="bcard">
-          <div class="bl">BLOCKED BY POLICY</div>
+          <div class="bl" id="bcard-l">BLOCKED BY POLICY</div>
           <div class="bt" id="bcard-t"></div>
         </div>
-        <div class="bigline" id="big1">A safe workspace for agents.</div>
-        <div class="bigline" id="big2" style="top:762px">Dangerous operations are <em>blocked</em>.</div>
+        <div class="bigline" id="big1">Full autonomy for the agent.</div>
+        <div class="bigline" id="big2" style="top:762px"><em>Nothing to lose</em> for your machine.</div>
       </div>
       <div class="term">
         <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
-          <span class="tt">terminal — you</span><span class="tr">host</span></div>
-        <div class="tbody" id="t-envm"></div>
+          <span class="tt">terminal · you</span><span class="tr">host</span></div>
+        <div class="tbody" id="t-boxm"></div>
       </div>
     </div>
-    <div class="callout" id="cm1" style="left:20px;top:560px;max-width:640px">
-      <b>Turn off agent prompts. Keep the guardrails.</b> The box is the permission.
+    <div class="callout" id="cm1" style="left:20px;top:600px;max-width:640px">
+      <b>Turn off the permission prompts.</b> The box is the permission.
     </div>
   </div>
 
-  <!-- m2 : receipt -->
+  <!-- m2 : the viewport -->
   <div class="scene" id="m2">
-    <h2 id="r-h">Every diff gets a <em>receipt</em>.</h2>
+    <h2 id="v-h">Watch the <em>same browser</em>. Take over anytime.</h2>
+    <div class="cols2">
+      <div class="term">
+        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+          <span class="tt">terminal · you</span><span class="tr">host</span></div>
+        <div class="tbody" id="t-viewm"></div>
+      </div>
+      <div class="bwin" id="bwin">
+        <div class="bbar"><span class="d"></span><span class="d"></span><span class="d"></span>
+          <span class="burl">localhost:3000 · inside the box</span>
+          <span class="bctl" id="bctl">control: agent</span></div>
+        <div class="bpage">
+          <div class="appcard">
+            <h3>Create your account</h3>
+            <div class="fld">test@example.com</div>
+            <div class="btn" id="v-btn">Sign up<span class="ripple" id="v-rip"></span></div>
+            <div class="done" id="v-done">✓ Account created</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="subline" id="v-sub">Your host browser never connects to the app. <b>The box's Chrome does.</b></div>
+  </div>
+
+  <!-- m3 : the output gate -->
+  <div class="scene" id="m3">
+    <h2 id="g-h">Nothing leaves <em>without your review</em>.</h2>
     <div class="term">
       <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
-        <span class="tt">you — a week later, any clone</span><span class="tr">main</span></div>
-      <div class="tbody" id="t-recm"></div>
+        <span class="tt">terminal · you</span><span class="tr">host</span></div>
+      <div class="tbody" id="t-gatem"></div>
     </div>
     <div class="checklist" id="cklist">
-      <div class="ck" id="ck0"><span class="box"></span>Prompt Quality</div>
-      <div class="ck" id="ck1"><span class="box"></span>Commands</div>
-      <div class="ck" id="ck2"><span class="box"></span>Test output</div>
-      <div class="ck" id="ck3"><span class="box"></span>Denied actions</div>
-      <div class="ck" id="ck4"><span class="box"></span>Final diff</div>
+      <div class="ck" id="ck0"><span class="box"></span><code>patch.diff</code>&nbsp;· 9 files</div>
+      <div class="ck" id="ck1"><span class="box"></span><code>report.md</code></div>
+      <div class="ck" id="ck2"><span class="box"></span><code>signup.png</code></div>
+      <div class="ck" id="ck3"><span class="box"></span><code>receipt.json</code></div>
+      <div class="ck deny" id="ck4"><span class="box"></span>2 denials, listed</div>
     </div>
-    <div class="sub" id="r-sub">One week later, you can still answer:<br>
-      <b>why did this diff happen? · was it built safely?</b></div>
-  </div>
-
-  <!-- m3 : scale -->
-  <div class="scene" id="m3">
-    <div class="agents">
-      <div class="term" id="w-clm">
-        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
-          <span class="tt">claude · env/worker-demo-claude</span>
-          <span class="tr">sealed</span><span class="agdot" style="background:var(--claude)"></span></div>
-        <div class="tbody small" id="t-clm"></div>
-      </div>
-      <div class="term" id="w-cxm">
-        <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
-          <span class="tt">codex · env/worker-demo-codex</span>
-          <span class="tr">sealed</span><span class="agdot" style="background:var(--codex)"></span></div>
-        <div class="tbody small" id="t-cxm"></div>
-      </div>
-    </div>
-    <div class="l1" id="s-l1">Works for one agent. Scales to many.</div>
-    <div class="bub from-claude" id="s-b1" style="left:620px;top:405px">
-      <div class="who">claude → codex · h5i msg review</div>
-      jitter=0 shrinks to a flake — added a regression seed, please check
-    </div>
-    <div class="bub from-codex" id="s-b2" style="right:620px;top:478px">
-      <div class="who">codex → claude · h5i msg review</div>
-      backoff can overflow past 2^31 ms — clamp the upper bound too?
-    </div>
-    <div class="l2" id="s-l2">A <em>conflict-free multi-agent orchestra</em> — agents <b>peer-review</b> each other's work.</div>
+    <div class="subline" id="g-sub">Like it? <b>git apply</b> the patch. Either way: <code>h5i box rm pr-214</code></div>
   </div>
 
   <!-- m4 : close -->
   <div class="scene" id="m4">
     <div class="wrap">
-      <div class="t1" id="c-t1">Git tracks the <b>diff</b>.</div>
-      <div class="t2" id="c-t2">h5i tracks the <em>run</em>.</div>
+      <div class="t1" id="c-t1">Run code you <b>don't trust</b>.</div>
+      <div class="t2" id="c-t2">Keep it <em>off your machine</em>.</div>
       <div class="links" id="c-links">github.com/h5i-dev/h5i<span>&nbsp;&nbsp;·&nbsp;&nbsp;</span>h5i.dev</div>
       <div class="fin" id="c-fin">
         <img src="assets/logo.png" alt="h5i">
-        <div class="fs">Auditable workspaces for AI coding agents</div>
-        <div class="fr">refs/h5i/* — the audit trail, in your repo</div>
+        <div class="fs">Disposable development environments for AI coding agents</div>
+        <div class="fr">h5i box --pr &lt;url&gt; · one command, one boundary</div>
       </div>
     </div>
   </div>
 
   <div id="rail">
-    <span class="rlabel">evidence · <b>refs/h5i/</b></span>
+    <span class="rlabel">receipts · <b>what actually ran</b></span>
     <div id="chips"></div>
   </div>
-  <div id="railnote">Every action becomes <b>reviewable evidence</b>.</div>
+  <div id="railnote">A denial is not a crash. <b>The agent keeps going.</b></div>
   <div id="fade"></div>
 </div>
 
@@ -367,119 +393,100 @@ function renderTerm(el, ev, t, opts={}) {
   if (el._h !== html) { el._h = html; el.innerHTML = html; el.scrollTop = el.scrollHeight; }
 }
 
-/* ---- m0 hook (0–13) ---- */
+/* ---- m0 hook (0–15.2) ---- */
 const evHookM = [
-  {at:3.0, cmd:'Refactor the billing sync worker.', prompt:'›', pcls:'box', cps:40},
-  {at:4.8, out:[`<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(src/payment.py)</span>  <span class="ok">✓</span>`]},
-  {at:5.7, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(./upload.sh ~/.aws/credentials)</span>`]},
-  {at:6.3, out:[`  <span class="dim">⎿</span> aws_secret_access_key → <span class="wr">uploaded</span>`]},
-  {at:7.5, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(rm -rf ~/.ssh)</span>`]},
-  {at:8.1, out:[`  <span class="dim">⎿</span> <span class="wr">id_rsa · known_hosts · config — gone</span>`]},
+  {at:3.0, cmd:'git fetch origin pull/214/head && git checkout FETCH_HEAD', cps:44},
+  {at:4.4, cmd:'npm install', cps:30},
+  {at:5.3, out:[`<span class="dim">added 212 packages in 9s</span>`]},
+  {at:6.0, out:[`<span class="co">●</span> <span class="tool">postinstall</span><span class="dim">(node scripts/telemetry.js)</span>`]},
+  {at:6.7, out:[`  <span class="dim">⎿</span> read <span class="wr">~/.ssh/id_rsa</span> · <span class="wr">~/.aws/credentials</span>`]},
+  {at:7.6, out:[`  <span class="dim">⎿</span> POST https://cdn-metrics.dev/collect → <span class="wr">uploaded</span>`]},
 ];
 
-/* ---- m1 sandbox (15.5–41.9) ---- */
-const evEnvM = [
-  {at:.3,  cmd:'h5i env create worker-env --profile agent-claude', cps:34},
-  {at:1.8, out:[
-    `<span class="ok">✔</span> worktree  <span class="dim">.git/.h5i/env/you/worker-env/work</span>`,
-    `<span class="ok">✔</span> policy    agent-claude · isolation: <span class="wt">process</span> <span class="faint">(Landlock + seccomp)</span>`], stagger:.3},
-  {at:3.4, cmd:'h5i env shell worker-env', cps:34},
-  {at:4.4, out:[`<span class="dim">entering confined session — walls up: fs · net</span>`]},
-  {at:5.2, cmd:'claude --dangerously-skip-permissions', prompt:'h5i:worker-env$', pcls:'box', cps:34},
-  {at:6.5, out:[`<span class="co">✻</span> Claude Code <span class="dim">— permissions off</span>`]},
-  {at:7.9, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(cat ~/.ssh/id_rsa)</span>`]},
-  {at:8.5, out:[`  <span class="err">⛔ Permission denied — outside fs.read</span>`]},
-  {at:10.9,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(curl https://internal-billing.corp/api)</span>`]},
-  {at:11.5,out:[`  <span class="err">⛔ 403 — not on the net.egress allowlist</span>`]},
-  {at:14.0,out:[
-    `<span class="co">●</span> <span class="tool">Edit</span><span class="dim">(sync/worker.py)</span> <span class="ok">✓</span>   <span class="co">●</span> <span class="tool">Bash</span><span class="dim">(pytest -q)</span> → <span class="ok">241 passed</span>`,
-    `<span class="faint">task finished inside $WORK — every command captured</span>`], stagger:.4},
-  {at:15.8, cmd:'exit', prompt:'h5i:worker-env$', pcls:'box', cps:20},
-  {at:16.8, cmd:'h5i env diff worker-env --stat', cps:34},
-  {at:18.0, out:[
-    ` sync/worker.py       | 14 <span class="ok">++++++</span><span class="err">--</span>`,
-    ` tests/test_worker.py |  9 <span class="ok">+++++</span>`], stagger:.25},
-  {at:19.6, cmd:'h5i env propose worker-env', cps:34},
-  {at:20.8, out:[`<span class="ok">✔</span> review brief — 2 files · <span class="err">2 denials logged</span> · 6 captures`]},
-  {at:22.4, cmd:'h5i env apply worker-env', cps:34},
-  {at:23.6, out:[`<span class="ok">✔</span> merged onto main — <span class="wt">after your review, never before</span>`]},
+/* ---- m1 the box (15.2–44.4) ---- */
+const evBoxM = [
+  {at:.3,  cmd:'h5i box --pr 214', cps:30},
+  {at:1.5, out:[
+    `<span class="ok">✔</span> Created environment <span class="wt">env/you/pr-214</span> (isolation: <span class="wt">container</span>, profile: <span class="wt">browser</span>)`,
+    `   <span class="dim">pr</span>       #214 head <span class="wr">9c41f2ab</span> pinned · base frozen at creation`,
+    `   <span class="dim">work</span>     .git/.h5i/env/you/pr-214/work · <span class="faint">nothing of the host inside</span>`], stagger:.3},
+  {at:3.9, cmd:'h5i box shell pr-214', cps:30},
+  {at:4.9, out:[`<span class="dim">entering confined session · walls up: fs · net · secrets</span>`]},
+  {at:5.9, cmd:'claude --dangerously-skip-permissions', prompt:'h5i:pr-214$', pcls:'box', cps:34},
+  {at:7.1, out:[`<span class="co">✻</span> Claude Code <span class="dim">· permissions off</span>`]},
+  {at:8.3, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(npm install)</span>`]},
+  {at:9.1, out:[`  <span class="dim">⎿</span> postinstall → node scripts/telemetry.js`]},
+  {at:9.9, out:[`  <span class="err">⛔ ~/.ssh/id_rsa: not in this box · its HOME is fresh</span>`]},
+  {at:11.4,out:[`  <span class="err">⛔ cdn-metrics.dev: refused · not on the egress allowlist</span>`]},
+  {at:13.7,out:[`  <span class="dim">⎿</span> added 212 packages · <span class="faint">nothing to steal, nowhere to send it</span>`]},
+  {at:15.6,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(npm run dev)</span> → <span class="ok">ready</span> <span class="blu">http://localhost:3000</span>`]},
+  {at:17.4,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(agent-browser open http://localhost:3000)</span> <span class="ok">✓</span>`]},
+  {at:18.8,out:[
+    `<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(agent-browser snapshot -i)</span>`,
+    `  <span class="dim">⎿</span> <span class="vio">@e1</span> heading "Sign up" · <span class="vio">@e2</span> input email · <span class="vio">@e3</span> button`], stagger:.3},
+  {at:20.9,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(agent-browser fill @e2 test@example.com)</span> <span class="ok">✓</span> · <span class="dim">(click @e3)</span> <span class="ok">✓</span>`]},
+  {at:22.7,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(agent-browser screenshot signup.png)</span> <span class="ok">✓</span>`]},
+  {at:24.1,out:[`<span class="faint">the PR builds, the flow works, the evidence is on disk</span>`]},
 ];
 const BLOCKS = [
-  {at:8.5,  wall:'wall-fs',   txt:'<b>~/.ssh/id_rsa</b> → BLOCKED'},
-  {at:11.5, wall:'wall-net',  txt:'<b>internal-billing.corp</b> → BLOCKED'},
+  {at:9.9,  wall:'wall-fs',  label:'NOT IN THE BOX',    txt:'<b>~/.ssh/id_rsa</b> → nothing there'},
+  {at:11.4, wall:'wall-net', label:'BLOCKED BY POLICY', txt:'<b>cdn-metrics.dev</b> → refused'},
 ];
 
-/* ---- m2 receipt (41.9–55.9) ---- */
-const evRecM = [
-  {at:1.0, cmd:'h5i recall log --limit 1', cps:34},
-  {at:2.4, out:[
-    `commit <span class="wr">4f2c9e1</span>  fix: clamp retry jitter`,
-    `  <span class="dim">agent</span>    claude-code · claude-sonnet`,
-    `  <span class="dim">prompt</span>   <span class="vio">"Fix the flaky retry test in tests/test_worker.py"</span>`,
-    `  <span class="dim">tests</span>    <span class="ok">241 passed</span> · coverage +1`,
-    `  <span class="dim">denials</span>  <span class="err">2 blocked</span> · logged`,
-    `  <span class="dim">tokens</span>   −97% (412 → 9 lines, raw recoverable)`], stagger:.22},
-  {at:5.8, cmd:'h5i audit', cps:34},
-  {at:6.8, out:[
-    `  <span class="dim">prompt maturity</span>   <span class="ok">A−</span> <span class="faint">· clear goal, scoped files</span>`,
-    `  <span class="dim">prompt injection</span>  <span class="ok">none detected</span>`,
-    `  <span class="dim">secret leaks</span>      <span class="ok">none detected</span> <span class="faint">(2 candidates redacted)</span>`], stagger:.25},
+/* ---- m2 the viewport (44.4–58.4) ---- */
+const evViewM = [
+  {at:1.0, cmd:'h5i box view pr-214', cps:30},
+  {at:2.1, out:[`<span class="ok">✔</span> viewer <span class="blu">http://127.0.0.1:7331</span> · control: <span class="co">agent</span>`]},
+  {at:4.4, cmd:'h5i browser take pr-214', cps:30},
+  {at:5.4, out:[`<span class="ok">✔</span> you hold control · <span class="wt">your clicks reach the page now</span>`]},
+  {at:8.6, cmd:'h5i browser release pr-214', cps:30},
+  {at:9.6, out:[`<span class="ok">✔</span> handed back · stale <span class="vio">@refs</span> force a fresh snapshot`]},
 ];
 
-/* ---- m3 scale (55.9–65.9) ---- */
-const evClM = [
-  {at:.1, out:[
-    `<span class="co"> ▐▛███▜▌</span>   <span class="wt">Claude Code</span> <span class="faint">v2.1.201</span>`,
-    `<span class="co">▝▜█████▛▘</span>  <span class="dim">Opus · Claude Max</span>`,
-    `<span class="co">  ▘▘ ▝▝</span>    <span class="faint">~/Dev/h5i</span>`], stagger:0},
-  {at:1.4, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
-  {at:2.4, out:[`<span class="co">●</span> <span class="tool">Write</span><span class="dim">(tests/test_worker_props.py)</span>  <span class="ok">✓</span>`]},
-  {at:3.4, out:[`<span class="te">◂ peer review from codex</span> · <span class="faint">revised & resealed</span>`]},
-];
-const evCxM = [
-  {at:.1, out:[
-    `<span class="te">╭────────────────────────────────╮</span>`,
-    `<span class="te">│ <span class="wt">&gt;_ OpenAI Codex</span> · <span class="wt">gpt-5.5 high</span>                     │</span>`,
-    `<span class="te">╰────────────────────────────────╯</span>`], stagger:0},
-  {at:1.8, out:[`<span class="faint">▸ task received — property tests for retry backoff</span>`]},
-  {at:2.8, out:[`<span class="te">●</span> <span class="tool">Write</span><span class="dim">(tests/test_retry_props.py)</span>  <span class="ok">✓</span>`]},
-  {at:3.8, out:[`<span class="co">◂ peer review from claude</span> · <span class="faint">revised & resealed</span>`]},
+/* ---- m3 the output gate (58.4–70.4) ---- */
+const evGateM = [
+  {at:1.0, cmd:'h5i box export pr-214', cps:30},
+  {at:2.2, out:[
+    `<span class="ok">✔</span> exported <span class="wt">env/you/pr-214</span> → <span class="blu">h5i-export/pr-214</span>`,
+    `   <span class="dim">changes</span>  9 file(s), <span class="ok">+214</span> <span class="err">-38</span>`,
+    `   <span class="dim">receipts</span> 23 recorded`,
+    `   <span class="wr">egress</span>   2 denied attempt(s) · read report.md before applying`], stagger:.26},
+  {at:5.4, out:[`<span class="faint">the agent has no write path to your repo · this is the exit</span>`]},
 ];
 
-/* ---- evidence rail (absolute seconds) ---- */
+/* ---- receipts rail (absolute seconds) ---- */
 const RAIL = [
-  {t:17.7, cls:'c-warn',  label:'policy'},
-  {t:24.1, cls:'c-deny',  label:'deny:fs'},
-  {t:27.1, cls:'c-deny',  label:'deny:net'},
-  {t:36.5, cls:'c-ok',    label:'brief'},
-  {t:39.3, cls:'c-ok',    label:'apply'},
-  {t:44.5, cls:'c-ctx',   label:'prompt'},
-  {t:46.3, cls:'c-git',   label:'receipt'},
-  {t:49.7, cls:'c-ok',    label:'audit'},
-  {t:58.7, cls:'c-claude',label:'review'},
-  {t:60.1, cls:'c-codex', label:'review'},
-  {t:62.7, cls:'c-ok',    label:'merge'},
+  {t:17.4, cls:'c-warn',  label:'policy'},
+  {t:25.2, cls:'c-deny',  label:'deny:fs'},
+  {t:26.7, cls:'c-deny',  label:'deny:net'},
+  {t:31.0, cls:'c-ok',    label:'dev server'},
+  {t:33.0, cls:'c-claude',label:'browser'},
+  {t:38.0, cls:'c-ok',    label:'screenshot'},
+  {t:46.6, cls:'c-git',   label:'viewer'},
+  {t:49.9, cls:'c-warn',  label:'take'},
+  {t:54.1, cls:'c-ok',    label:'release'},
+  {t:61.0, cls:'c-ok',    label:'patch'},
+  {t:62.4, cls:'c-git',   label:'receipt'},
 ];
 
 const SCENES = [
-  { id:'m0', start:0, end:15.5, eyebrow:'',
+  { id:'m0', start:0, end:15.2, eyebrow:'',
     update(t){
       pop($('h-l1'), t, .4, {d:.7, dy:22});
       pop($('h-l2'), t, 1.4, {d:.7});
       pop($('h-term'), t, 2.4);
       renderTerm($('t-hookm'), evHookM, t);
-      // incident alert cards — the hook's mirror of the sandbox's BLOCKED cards; they stay
-      pop($('ha1'), t, 6.4, {d:.4, dy:10});
+      pop($('ha1'), t, 7.2, {d:.4, dy:10});
       pop($('ha2'), t, 8.2, {d:.4, dy:10});
-      pop($('h-q1'), t, 8.9, {d:.6});
+      pop($('h-q1'), t, 9.0, {d:.6});
       pop($('h-q2'), t, 9.9, {d:.6});
-      $('m0g1').style.opacity = Math.min(1, 1 - ramp(t, 11.4, .5));
-      pop($('m0title'), t, 11.8, {d:.8, dy:26});
+      $('m0g1').style.opacity = Math.min(1, 1 - ramp(t, 11.5, .5));
+      pop($('m0title'), t, 11.9, {d:.8, dy:26});
     }},
-  { id:'m1', start:15.5, end:41.9, eyebrow:'the sandboxed worktree',
+  { id:'m1', start:15.2, end:44.4, eyebrow:'the box',
     update(t){
-      renderTerm($('t-envm'), evEnvM, t, {cursor:'$'});
-      const bp = eo(ramp(t, 1.8, .9));
+      renderTerm($('t-boxm'), evBoxM, t, {cursor:'$'});
+      const bp = eo(ramp(t, 1.5, .9));
       const box = $('d-box');
       box.style.opacity = bp; box.style.transform = `scale(${.94 + .06*bp})`;
       ['wall-fs','wall-net'].forEach(w => { $(w).style.opacity = ramp(t, 3.0, .5); });
@@ -497,42 +504,53 @@ const SCENES = [
       }
       const bc = $('bcard');
       if (card) {
+        $('bcard-l').textContent = card.label;
         $('bcard-t').innerHTML = card.txt;
         bc.style.opacity = Math.min(eo(ramp(t, card.at, .3)), 1 - ramp(t, card.at + 2.1, .4));
         bc.style.transform = `scale(${.94 + .06*eo(ramp(t, card.at, .3))})`;
       } else bc.style.opacity = 0;
       // callout, then the two big closing lines
-      const con = Math.min(pop($('cm1'), t, 6.2), 1 - ramp(t, 14.4, .45));
+      const con = Math.min(pop($('cm1'), t, 6.0), 1 - ramp(t, 14.6, .45));
       $('cm1').style.opacity = Math.max(0, con);
-      pop($('big1'), t, 23.4, {d:.6});
-      pop($('big2'), t, 24.6, {d:.6});
+      pop($('big1'), t, 25.4, {d:.6});
+      pop($('big2'), t, 26.6, {d:.6});
     }},
-  { id:'m2', start:41.9, end:55.9, eyebrow:'the receipt',
+  { id:'m2', start:44.4, end:58.4, eyebrow:'the viewport',
     update(t){
-      pop($('r-h'), t, .3, {d:.6, dy:20});
-      renderTerm($('t-recm'), evRecM, t, {cursor:'$'});
+      pop($('v-h'), t, .3, {d:.6, dy:20});
+      renderTerm($('t-viewm'), evViewM, t, {cursor:'$'});
+      pop($('bwin'), t, .8);
+      const held = t >= 5.4 && t < 9.6;
+      const bw = $('bwin'), bc = $('bctl');
+      if (bw._held !== held) {
+        bw._held = held;
+        bw.classList.toggle('held', held);
+        bc.classList.toggle('you', held);
+        bc.textContent = held ? 'control: you' : 'control: agent';
+      }
+      // the human's click, while they hold control
+      const rp = ramp(t, 6.8, .7);
+      const rip = $('v-rip');
+      rip.style.opacity = rp > 0 && rp < 1 ? 1 - rp : 0;
+      rip.style.transform = `translate(-50%,-50%) scale(${1 + rp*4})`;
+      $('v-done').style.opacity = eo(ramp(t, 7.3, .5));
+      pop($('v-sub'), t, 11.2, {d:.7});
+    }},
+  { id:'m3', start:58.4, end:70.4, eyebrow:'the output gate',
+    update(t){
+      pop($('g-h'), t, .3, {d:.6, dy:20});
+      renderTerm($('t-gatem'), evGateM, t, {cursor:'$'});
       for (let i = 0; i < 5; i++) {
-        const at = 2.0 + i*.9;
+        const at = 3.0 + i*.85;
         const el = $('ck' + i);
         pop(el, t, at);
         const on = t >= at + .35;
         if (el._on !== on) { el._on = on; el.classList.toggle('on', on);
-          el.querySelector('.box').textContent = on ? '✓' : ''; }
+          el.querySelector('.box').textContent = on ? (i === 4 ? '!' : '✓') : ''; }
       }
-      pop($('r-sub'), t, 8.8, {d:.7});
+      pop($('g-sub'), t, 8.8, {d:.7});
     }},
-  { id:'m3', start:55.9, end:65.9, eyebrow:'scale to multi agents',
-    update(t){
-      renderTerm($('t-clm'), evClM, t);
-      renderTerm($('t-cxm'), evCxM, t);
-      $('w-clm').style.opacity = .35 + .65*eo(ramp(t, .3, .5));
-      $('w-cxm').style.opacity = .35 + .65*eo(ramp(t, .7, .5));
-      pop($('s-l1'), t, .3, {d:.6, dy:20});
-      hold($('s-b1'), t, 3.0, 9.3);
-      hold($('s-b2'), t, 4.4, 9.3);
-      pop($('s-l2'), t, 5.8, {d:.6});
-    }},
-  { id:'m4', start:65.9, end:73.9, eyebrow:'refs/h5i/*',
+  { id:'m4', start:70.4, end:78.4, eyebrow:'',
     update(t){
       pop($('c-t1'), t, .4, {d:.6, dy:20});
       pop($('c-t2'), t, 1.4, {d:.6, dy:20});
@@ -540,7 +558,7 @@ const SCENES = [
       pop($('c-fin'), t, 4.8, {d:.8});
     }},
 ];
-const TOTAL = 73900;
+const TOTAL = 78400;
 
 const chipsEl = $('chips');
 function draw(ms){
@@ -565,13 +583,13 @@ function draw(ms){
   if (vis.length > 12) ch += `<span class="chip" style="opacity:.8">⋯ ${vis.length - 11} more</span>`;
   for (const r of vis.slice(vis.length > 12 ? -11 : 0)) {
     const p = eo(ramp(ts, r.t, .45));
-    const glow = ts > 69.4 && ts < 72.9 ? 'border-color:rgba(122,162,255,.6);' : '';
+    const glow = ts > 61.6 && ts < 65.4 ? 'border-color:rgba(122,162,255,.6);' : '';
     ch += `<span class="chip ${r.cls}" style="opacity:${p};transform:scale(${.6+.4*p});${glow}">${r.label}</span>`;
   }
   if (chipsEl._h !== ch) { chipsEl._h = ch; chipsEl.innerHTML = ch; }
   // the one-time rail introduction (during the denial run)
   const rn = $('railnote');
-  rn.style.opacity = Math.min(eo(ramp(ts, 23.3, .5)), 1 - ramp(ts, 28.5, .6));
+  rn.style.opacity = Math.min(eo(ramp(ts, 26.6, .5)), 1 - ramp(ts, 31.6, .6));
   $('fade').style.opacity = Math.max(ramp(ms, TOTAL-1100, 1100), 1 - ramp(ms, 0, 600));
 }
 
@@ -599,7 +617,7 @@ if (RENDER) {
     if (ms >= TOTAL) { if (EMBED) { acc = 0; t0 = performance.now(); ms = 0; } else { ms = TOTAL; playing = false; acc = TOTAL; pb.textContent = '↺'; } }
     draw(ms);
     scrub.value = Math.round(ms/TOTAL*1000);
-    tm.textContent = `${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')} / 1:14`;
+    tm.textContent = `${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')} / 1:18`;
     requestAnimationFrame(loop);
   }
   const setT = ms => { acc = clamp(ms,0,TOTAL); t0 = performance.now(); };
