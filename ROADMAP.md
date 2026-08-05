@@ -482,14 +482,14 @@ the boundary, the lock or the receipt changes when it does.
 Each phase ends with a green `cargo test` and a demo that runs on a stock
 rootless Podman host.
 
-**M0. Freeze and branch.** Tag the last provenance release. Open `dev` as the
-integration branch. Land this roadmap.
+**M0. Freeze and branch — done.** `dev` is the integration branch and this
+roadmap is on it.
 
-**M1. Amputation.** Delete section 3.2. Extract `receipt.rs` and `redact.rs`,
-cut `env.rs` free of `objects`, `ctx`, `msg`, `team`, `repository`. Exit: `h5i
-env create/run/shell/status/diff/propose/apply/rm/gc` all work with no git notes
-and no context refs, clippy clean with `--all-targets --all-features`, the
-binary builds without the `web` feature because the feature is gone.
+**M1. Amputation — done.** Section 3.2 is deleted (~77k lines). `receipt.rs`,
+`refstore.rs`, `redact.rs`, `source.rs` extracted; `env.rs` is free of
+`objects`, `ctx`, `msg`, `team` and `repository`. The whole lifecycle works
+with no git notes and no context refs, clippy is clean over the workspace, and
+the `web` feature is gone rather than off.
 
 **M2. `h5i dev` and copy in — done.** New command surface with `env` aliased
 (short form, `ls`, hidden alias). Export gate replacing `propose`/`apply`
@@ -505,31 +505,31 @@ dropped so the box cannot reach a network handle nobody granted it, and `apply`
 and `rebase` refuse and point at `export`. That is the boundary the phase was
 for, and it holds on every tier rather than only under a container volume.
 
-**M3. Agent in box hardening.** Broker default on, GitHub capability helper,
-credential seed audit, no host creds reachable from a box, verified by a test
-that asserts denial rather than by inspection. Warm cache volumes and `h5i dev
-cache` land here, since a slow box is what makes people mount their host repo
-instead.
+**M3. Agent in box hardening — partly done.** Warm caches: the store, the
+lockfile keying, the staleness rule and `h5i dev cache ls|mounts|rm` are built
+and tested; the read-only mount and therefore `refresh` are not (5.8).
+**Remaining**: broker default on, the GitHub capability helper (a host-side
+verb set instead of a token in the box), and the credential-seed audit, each
+verified by a test that asserts denial rather than by inspection.
 
-**M4. Browser.** Browser sidecar container (headless Chrome + pinned
-agent-browser), profile isolation, proxy and `--allowed-domains` wiring from
-`net.egress`, AI chat refused, browser commands plus console and network errors
-into the receipt. No viewer yet. Exit: an agent fixes a real UI bug using only
-agent-browser output as its feedback.
+**M4. Browser — not started.** Browser sidecar container (headless Chrome +
+pinned agent-browser), profile isolation, proxy and `--allowed-domains` wiring
+from `net.egress`, AI chat refused, browser commands plus console and network
+errors into the receipt. No viewer yet. Needs Podman **pod** support, which
+`container.rs` does not have today (it runs a single container). Exit: an agent
+fixes a real UI bug using only agent-browser output as its feedback.
 
-**M5. Viewer.** `h5i dev view` and `h5i browser url`: an h5i-owned forward of
-the agent-browser stream to loopback with a per box token, a minimal viewer
-page, the control lock and its pause and resume protocol, session recording
-into the export. Exit: a human takes over mid run, finishes a form, hands
-control back, and the agent continues from a fresh snapshot.
+**M5. Viewer — not started.** `h5i dev view` and `h5i browser url`: an h5i-owned
+forward of the agent-browser stream to loopback with a per box token, a minimal
+viewer page, the control lock and its pause and resume protocol, session
+recording into the export. Exit: a human takes over mid run, finishes a form,
+hands control back, and the agent continues from a fresh snapshot.
 
-**M6. Skill and story.** `skills/h5i/` written against the real surface, `h5i
-skill install` and its embedded copy, `npx skills add h5i-dev/h5i`, docs site
-rewrite, one demo video of the full loop, an install that assumes nothing but
-rootless Podman.
-
-A stub `h5i skill install` lands earlier, in M2, because from M2 on every box
-bootstrap wants to call it. M6 is when the content is written for real.
+**M6. Skill and story — partly done.** `skills/h5i/` is written against the
+real surface (five pages) and the binary carries it; the README is rewritten
+around the boundary. **Remaining**: MANUAL.md and the docs site still describe
+the previous product, `npx skills add h5i-dev/h5i` is untested, and there is no
+demo video.
 
 **Post M6.** A full-desktop tier when something needs more than a page
 viewport (X plus streaming, Neko as the reference design), microVM backend,
