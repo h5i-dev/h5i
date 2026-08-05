@@ -1629,40 +1629,73 @@ mod tests {
         }
         // Each candidate is appended to the real profile; SBPL is last-match-wins
         // so an appended allow overrides the restriction under test.
-        // A blanket `(allow file-read*)` is already known to repair it while
-        // `(allow file-map-executable)` alone does not, so the fault is a
-        // missing **read path**. Narrow it: grant one filesystem root at a time
-        // and see which single root is enough. Roots already in the profile are
-        // included deliberately — if granting `/System` again repairs the run,
-        // then what the program needs resolves somewhere the existing narrower
-        // `/System/...` entries do not reach.
-        let roots = [
-            "/System", "/usr", "/bin", "/sbin", "/private", "/Library",
-            "/Applications", "/opt", "/dev", "/Users", "/Volumes", "/cores",
-            "/net", "/home", "/.vol", "/var", "/etc", "/tmp",
-        ];
-        let repairing_roots: Vec<&str> = roots
-            .iter()
-            .copied()
-            .filter(|r| {
-                runs_under(
-                    &format!("{}\n(allow file-read* (subpath \"{r}\"))\n", plan.profile),
-                    &work,
-                )
-            })
-            .collect();
+        // Guessing roots did not converge: a blanket `(allow file-read*)`
+        // repairs the run but no single root does, so either several paths are
+        // missing or the denied operation is not subpath-expressible. Stop
+        // guessing and read the denial out of the system log — macOS records
+        // every one of them, it just does not put them on stderr, which is the
+        // whole reason this has been so opaque.
+        let denials = recent_sandbox_denials();
+        // Control: does a path-shaped blanket behave like the unfiltered one? If
+        // `(subpath "/")` repairs it too, the gap is genuinely a set of paths.
+        // If only the unfiltered form works, it is an operation with no path.
+        let root_subpath_repairs = runs_under(
+            &format!("{}\n(allow file-read* (subpath \"/\"))\n", plan.profile),
+            &work,
+        );
         panic!(
             "a command cannot run under the real profile.\n\
-             single filesystem roots that repair it ({}):\n  {}\n\
+             `(allow file-read* (subpath \"/\"))` repairs it: {root_subpath_repairs}\n\
+             --- sandbox denials from the system log ---\n{denials}\n\
              --- profile ---\n{}",
-            repairing_roots.len(),
-            if repairing_roots.is_empty() {
-                "(none individually — more than one path is missing)".to_string()
-            } else {
-                repairing_roots.join("\n  ")
-            },
             plan.profile
         );
+    }
+
+    /// Sandbox denials macOS recorded in the last minute.
+    ///
+    /// This is the diagnostic that was missing all along. A Seatbelt denial is
+    /// reported to the unified log as `deny(1) <operation> <path>` and to
+    /// nowhere else — not stderr, not an exit code — so a confined program that
+    /// dies gives no clue on its own. Reading the log turns "it died silently"
+    /// into the exact operation and file.
+    #[cfg(target_os = "macos")]
+    fn recent_sandbox_denials() -> String {
+        let out = std::process::Command::new("/usr/bin/log")
+            .args([
+                "show",
+                "--last",
+                "1m",
+                "--style",
+                "compact",
+                "--predicate",
+                "eventMessage CONTAINS \"deny(\"",
+            ])
+            .output();
+        match out {
+            Ok(o) => {
+                let text = String::from_utf8_lossy(&o.stdout);
+                let lines: Vec<&str> = text.lines().filter(|l| l.contains("deny(")).collect();
+                if lines.is_empty() {
+                    format!(
+                        "(no deny( lines; log exited {:?}, stderr: {})",
+                        o.status.code(),
+                        String::from_utf8_lossy(&o.stderr).chars().take(300).collect::<String>()
+                    )
+                } else {
+                    // Newest last; keep the tail, which is our run.
+                    lines
+                        .iter()
+                        .rev()
+                        .take(40)
+                        .rev()
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+            }
+            Err(e) => format!("(could not run `log show`: {e})"),
+        }
     }
 
     /// Can `/usr/bin/true` actually run to a clean exit under `profile`?
