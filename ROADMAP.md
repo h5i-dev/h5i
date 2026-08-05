@@ -305,16 +305,25 @@ the common path, not before: the sealing argument above already covers the
 Cold dependency install is the difference between a 20 second box and a four
 minute box, so caches are in scope rather than deferred.
 
-- One named volume per project and ecosystem, keyed by a hash of the lockfile
-  set: `h5i-cache-<project>-<eco>`.
+- One cache per project and ecosystem, keyed by a digest of that ecosystem's
+  lockfile set, under `.git/.h5i/cache/<eco>/<key>/`. **Built** (`h5i dev cache
+  ls|mounts|rm`, `crates/h5i-core/src/cache.rs`, unit tested). A cache whose
+  key no longer matches the project is listed as stale and never handed to a
+  box: packages resolved for a different dependency set are a silent, hard to
+  explain wrong answer.
 - Mounted **read only** into the agent box at the ecosystem's cache path
   (`~/.cargo/registry`, `~/.npm`, `~/.cache/uv`, …). A read only cache is a
   correctness problem for nothing: every package manager falls back to fetching
-  what it cannot find.
+  what it cannot find. **Not built**: this needs a read-only variant of the
+  existing bind plumbing (`HomeBind` is read-write by construction) plus the
+  container `--mount ...,ro`. `h5i dev cache mounts` already resolves and prints
+  exactly what would be mounted where.
 - Writing to a cache happens only in a dedicated `h5i dev cache refresh` box,
   which runs the install step alone, with egress narrowed to the registry hosts
   and no agent inside it. The cache is populated by a build, never by an agent
-  session.
+  session. **Not built**: it depends on the mount above, so `refresh` refuses
+  and says exactly what it would do rather than quietly populating a cache from
+  the host, which would be the wrong boundary.
 - `h5i dev cache ls|refresh|rm` are the whole surface. A box records which cache
   volume and which digest it used, in the receipt.
 

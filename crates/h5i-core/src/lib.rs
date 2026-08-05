@@ -2,6 +2,7 @@
 // The domain: an environment is a confined worktree with a pinned policy, and
 // a receipt is the record of what actually ran inside it. (`error` stays public
 // because `H5iError` appears in the signatures of most of them.)
+pub mod cache;
 pub mod env;
 pub mod export;
 pub mod receipt;

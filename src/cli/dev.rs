@@ -259,6 +259,13 @@ pub enum DevCommands {
     /// Abort an environment — manifest and workspace preserved for forensics
     Abort { name: String },
 
+    /// Warm dependency caches: one per project and ecosystem, keyed by that
+    /// ecosystem's lockfiles, mounted read-only into a box.
+    Cache {
+        #[command(subcommand)]
+        action: CacheCommands,
+    },
+
     /// Permanently remove one or more environments from this clone: prune
     /// their worktrees, delete their code + reasoning branches, and erase
     /// their manifests. Destroys local provenance (only the `removed` event
@@ -414,6 +421,129 @@ pub fn free_box_name(base: &str) -> anyhow::Result<String> {
         }
     }
     anyhow::bail!("could not derive a free box name from '{base}' — pass --name")
+}
+
+#[derive(Subcommand)]
+pub enum CacheCommands {
+    /// List the caches on this clone.
+    #[command(visible_alias = "ls")]
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show which caches a box created right now would be given, and where
+    /// they would appear inside it.
+    Mounts {
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Populate a cache by fetching this project's dependencies.
+    Refresh {
+        /// Ecosystem to refresh (cargo, npm, uv, go).
+        eco: String,
+    },
+
+    /// Remove a cache. Without --key, removes every cache for the ecosystem.
+    Rm {
+        eco: String,
+        #[arg(long)]
+        key: Option<String>,
+    },
+}
+
+fn run_cache(action: CacheCommands, h5i_root: &std::path::Path, workdir: &std::path::Path) -> anyhow::Result<()> {
+    match action {
+        CacheCommands::List { json } => {
+            let entries = h5i_core::cache::list(h5i_root, workdir);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+                return Ok(());
+            }
+            if entries.is_empty() {
+                println!("no caches yet — `h5i dev cache refresh <ecosystem>` builds one");
+                return Ok(());
+            }
+            for e in entries {
+                println!(
+                    "  {:<8} {:<18} {:>10}  {}",
+                    e.ecosystem,
+                    e.key,
+                    h5i_core::cache::human_bytes(e.bytes),
+                    if e.current {
+                        style("current").green().to_string()
+                    } else {
+                        style("stale (lockfiles moved on)").yellow().to_string()
+                    }
+                );
+            }
+        }
+        CacheCommands::Mounts { json } => {
+            let mounts = h5i_core::cache::mounts_for(h5i_root, workdir);
+            if json {
+                let rows: Vec<serde_json::Value> = mounts
+                    .iter()
+                    .map(|(host, target)| {
+                        serde_json::json!({
+                            "host": host.display().to_string(),
+                            "box": target,
+                            "mode": "ro",
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+                return Ok(());
+            }
+            if mounts.is_empty() {
+                println!("no cache matches this project's lockfiles — a box would start cold");
+                return Ok(());
+            }
+            for (host, target) in mounts {
+                println!("  {} → {} (read-only)", host.display(), target);
+            }
+        }
+        CacheCommands::Refresh { eco } => {
+            let eco = h5i_core::cache::ecosystem(&eco).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unknown ecosystem '{eco}' — known: {}",
+                    h5i_core::cache::ECOSYSTEMS
+                        .iter()
+                        .map(|e| e.name)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
+            let key = h5i_core::cache::lock_key(workdir, eco).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "this project has no {} lockfile ({}), so there is nothing to cache",
+                    eco.name,
+                    eco.lockfiles.join(" or ")
+                )
+            })?;
+            // Refusing beats faking it. Populating a cache means running the
+            // ecosystem's fetch step with the cache writable, and the design
+            // says that happens inside a box with no agent in it — which needs
+            // the read-only cache mount that is not wired up yet.
+            anyhow::bail!(
+                "not wired up yet.\n  \
+                 The cache for {} would be {} (key {key}), populated by `{}` in a box with \
+                 no agent in it.\n  \
+                 That needs the read-only cache mount, which is the remaining piece; see \
+                 ROADMAP.md 5.8. `h5i dev cache mounts` shows what is already resolved.",
+                eco.name,
+                h5i_core::cache::cache_dir(h5i_root, eco, &key).display(),
+                eco.fetch.join(" "),
+            );
+        }
+        CacheCommands::Rm { eco, key } => {
+            let eco = h5i_core::cache::ecosystem(&eco)
+                .ok_or_else(|| anyhow::anyhow!("unknown ecosystem '{eco}'"))?;
+            let n = h5i_core::cache::remove(h5i_root, eco, key.as_deref())?;
+            println!("{} removed {} cache(s) for {}", SUCCESS, n, eco.name);
+        }
+    }
+    Ok(())
 }
 
 pub fn run(action: DevCommands) -> anyhow::Result<()> {
@@ -1047,6 +1177,8 @@ pub fn run(action: DevCommands) -> anyhow::Result<()> {
                         print!("{}", h5i_core::env::render_compare(&rows));
                     }
                 }
+
+                DevCommands::Cache { action } => run_cache(action, &h5i_root, &workdir)?,
 
                 DevCommands::Export { name, out, force } => {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
