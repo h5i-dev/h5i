@@ -366,12 +366,19 @@ minute box, so caches are in scope rather than deferred.
 - Writing to a cache happens only in a dedicated `h5i dev cache refresh` box,
   which runs the install step alone, with egress narrowed to the registry hosts
   and no agent inside it. The cache is populated by a build, never by an agent
-  session. **Not built**: the mount it depends on now exists, but the fetch step
-  still needs the ecosystem's cache path redirected into a writable location
-  for that one run (`CARGO_HOME` and friends), and the layout has to match what
-  the read-only mount later exposes. `refresh` refuses and prints the box it
-  would build rather than quietly populating a cache from the host, which would
-  be the wrong boundary.
+  session. **Built**: `ResolvedPolicy::cache_write` is a single optional
+  writable bind, produced only by `h5i dev cache refresh` and reachable from no
+  profile, so an agent box cannot make its own cache writable. The bind targets
+  the same path the read-only mount later exposes, so what is fetched is
+  exactly what a later box sees, and the throwaway box is removed whether the
+  fetch succeeded or not.
+
+  One thing refresh cannot do for you: no built-in profile fits it. `default`
+  denies network (it is the build/test profile) and the agent profiles grant a
+  model API instead, so a refresh box needs a project-declared profile whose
+  egress is the registry hosts and nothing else. `refresh` refuses with that
+  profile written out, ready to paste, rather than creating a box whose fetch
+  could not have worked.
 - `h5i dev cache ls|refresh|rm` are the whole surface. A box records which cache
   volume and which digest it used, in the receipt.
 
@@ -564,8 +571,8 @@ credential-shaped entries at any depth — `credentials*`, `.netrc`, ssh keys,
 function without), and the credential proxy, which was already default-on but
 did not engage for a `browser` box.
 **Remaining**: generalizing `auth_proxy` from the model API to any allowlisted
-host with a host-side credential (5.5 — no vendor-specific code), and `cache
-refresh`.
+host with a host-side credential (5.5 — no vendor-specific code). That is the
+last M3 item.
 
 **M4. Browser — profile landed, live loop not yet.** Done: the `browser`
 built-in profile (the agent profile plus the browser surface, runtime scoping

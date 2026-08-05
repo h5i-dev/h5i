@@ -13,12 +13,9 @@
 //! * Caches are mounted **read only** into a box. Every package manager falls
 //!   back to fetching what it cannot find, so a read-only cache is a speed
 //!   feature with no correctness cost.
-//! * Writing to a cache happens only in `h5i dev cache refresh`, which runs the
-//!   ecosystem's fetch step alone, in a box with no agent in it. That command
-//!   is **not built yet**: the read-only mount below is, so a cache that exists
-//!   is used, but nothing here populates one. `refresh` refuses and says so
-//!   rather than filling the cache from the host, which would be the wrong
-//!   boundary.
+//! * Writing to a cache happens only in [`refresh`], which runs the ecosystem's
+//!   fetch step alone, in a throwaway box with no agent in it, with the cache
+//!   bound writable at the same path the read-only mount later exposes.
 //!
 //! The result is that no mutable surface is ever shared between an agent box
 //! and anything else.
@@ -43,30 +40,38 @@ pub struct Ecosystem {
     /// The command `refresh` runs to populate the cache. It must fetch and not
     /// build, so nothing project-specific executes while the cache is writable.
     pub fetch: &'static [&'static str],
+    /// Hosts the fetch step must reach. A refresh box gets these and nothing
+    /// else: it is the one box that talks to a package registry, so its reach
+    /// is spelled out here rather than inherited from a profile.
+    pub registries: &'static [&'static str],
 }
 
 /// Every ecosystem, in a fixed order so listings are stable.
 pub const ECOSYSTEMS: &[Ecosystem] = &[
     Ecosystem {
         name: "cargo",
+        registries: &["static.crates.io", "index.crates.io", "crates.io"],
         lockfiles: &["Cargo.lock"],
         box_path: "~/.cargo/registry",
         fetch: &["cargo", "fetch", "--locked"],
     },
     Ecosystem {
         name: "npm",
+        registries: &["registry.npmjs.org"],
         lockfiles: &["package-lock.json", "pnpm-lock.yaml", "yarn.lock"],
         box_path: "~/.npm",
         fetch: &["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
     },
     Ecosystem {
         name: "uv",
+        registries: &["pypi.org", "files.pythonhosted.org"],
         lockfiles: &["uv.lock", "requirements.txt"],
         box_path: "~/.cache/uv",
         fetch: &["uv", "sync", "--frozen", "--no-install-project"],
     },
     Ecosystem {
         name: "go",
+        registries: &["proxy.golang.org", "sum.golang.org"],
         lockfiles: &["go.sum"],
         box_path: "~/go/pkg/mod",
         fetch: &["go", "mod", "download"],
@@ -195,6 +200,100 @@ pub fn prepare(h5i_root: &Path, eco: &Ecosystem, key: &str) -> Result<PathBuf, H
     let dir = cache_dir(h5i_root, eco, key);
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
     Ok(dir)
+}
+
+/// Populate `eco`'s cache by running its fetch step in a box with **no agent
+/// in it**, with that one cache writable and nothing else changed.
+///
+/// This is the only writer. An agent session never gets a cache read-write, so
+/// a cache can never become a channel between boxes or a place one leaves
+/// something for the next to pick up. The box is removed whether the fetch
+/// worked or not: a failed refresh must not leave a box behind.
+///
+/// Returns the cache directory and the fetch's exit code — a non-zero exit is
+/// reported rather than swallowed, because a half-populated cache that claims
+/// success is worse than a cold one.
+pub fn refresh(
+    repo: &git2::Repository,
+    h5i_root: &Path,
+    workdir: &Path,
+    eco: &Ecosystem,
+) -> Result<(PathBuf, i32), H5iError> {
+    let key = lock_key(workdir, eco).ok_or_else(|| {
+        H5iError::Metadata(format!(
+            "this project has no {} lockfile ({}), so there is nothing to cache",
+            eco.name,
+            eco.lockfiles.join(" or ")
+        ))
+    })?;
+    let dir = prepare(h5i_root, eco, &key)?;
+    let target = box_target(eco).ok_or_else(|| {
+        H5iError::Metadata("cannot resolve HOME to place the cache in the box".to_string())
+    })?;
+    std::fs::create_dir_all(&target).map_err(|e| H5iError::with_path(e, &target))?;
+
+    // A throwaway box on the `default` profile: build/test confinement, no
+    // agent surface, no HOME state. Named for the ecosystem and key so a second
+    // refresh of the same set collides loudly instead of racing.
+    let slug = format!("cache-{}-{}", eco.name, &key[..8]);
+    if crate::env::find(h5i_root, &slug).is_ok() {
+        return Err(H5iError::Metadata(format!(
+            "a refresh box for {} already exists ({slug}) — another refresh is running, or one              was interrupted: `h5i dev rm {slug} --force` clears it",
+            eco.name
+        )));
+    }
+    // The refresh box is the one box that talks to a package registry, and no
+    // built-in profile fits: `default` denies network (it is the build/test
+    // profile) and the agent profiles grant a model API instead. So the project
+    // declares the one it wants, and we refuse rather than create a box whose
+    // fetch cannot possibly succeed.
+    let profile_name = format!("cache-{}", eco.name);
+    if crate::sandbox::load_profile(workdir, &profile_name, None).is_err() {
+        return Err(H5iError::Metadata(format!(
+        "`cache refresh` needs a profile that grants egress to {} and nothing else, and no \
+         built-in does: `default` denies network (it is the build/test profile) and the agent \
+         profiles grant a model API instead.\n  \
+         Declare one in .h5i/env.toml and this becomes a one-liner:\n  \
+         \n  \
+           [profile.cache-{}]\n  \
+           isolation = \"supervised\"\n  \
+           net.egress = [{}]\n  \
+         \n  \
+         The cache directory is prepared at {} and the box would run `{}` with it writable \
+         there.",
+        eco.registries.join(", "),
+        eco.name,
+        eco.registries
+            .iter()
+            .map(|r| format!("\"{r}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+        dir.display(),
+            eco.fetch.join(" "),
+        )));
+    }
+
+    let opts = crate::env::CreateOpts {
+        profile: Some(profile_name),
+        ..Default::default()
+    };
+    let mut m = crate::env::create(repo, h5i_root, workdir, "cache", &slug, opts)?;
+
+    let argv: Vec<String> = eco.fetch.iter().map(|s| s.to_string()).collect();
+    let outcome = crate::env::run_with_cache_write(repo, h5i_root, &mut m, &argv, (&dir, &target));
+    let _ = crate::env::rm(repo, h5i_root, &m, true);
+    Ok((dir, outcome?.exit_code.unwrap_or(1)))
+}
+
+/// Absolute path `eco`'s cache appears at inside a box, with `~` expanded.
+fn box_target(eco: &Ecosystem) -> Option<PathBuf> {
+    match eco.box_path.strip_prefix("~/") {
+        Some(rest) => std::env::var("HOME")
+            .ok()
+            .filter(|h| !h.is_empty())
+            .map(|h| PathBuf::from(h).join(rest)),
+        None => Some(PathBuf::from(eco.box_path)),
+    }
 }
 
 fn dir_bytes(path: &Path) -> u64 {

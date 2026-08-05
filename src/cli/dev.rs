@@ -453,7 +453,12 @@ pub enum CacheCommands {
     },
 }
 
-fn run_cache(action: CacheCommands, h5i_root: &std::path::Path, workdir: &std::path::Path) -> anyhow::Result<()> {
+fn run_cache(
+    action: CacheCommands,
+    repo_handle: &git2::Repository,
+    h5i_root: &std::path::Path,
+    workdir: &std::path::Path,
+) -> anyhow::Result<()> {
     match action {
         CacheCommands::List { json } => {
             let entries = h5i_core::cache::list(h5i_root, workdir);
@@ -514,28 +519,25 @@ fn run_cache(action: CacheCommands, h5i_root: &std::path::Path, workdir: &std::p
                         .join(", ")
                 )
             })?;
-            let key = h5i_core::cache::lock_key(workdir, eco).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "this project has no {} lockfile ({}), so there is nothing to cache",
+            let (dir, exit) = h5i_core::cache::refresh(repo_handle, h5i_root, workdir, eco)?;
+            if exit == 0 {
+                println!(
+                    "{} refreshed the {} cache → {}",
+                    SUCCESS,
                     eco.name,
-                    eco.lockfiles.join(" or ")
-                )
-            })?;
-            // Refusing beats faking it. Populating a cache means running the
-            // ecosystem's fetch step with the cache writable, and the design
-            // says that happens inside a box with no agent in it — which needs
-            // the read-only cache mount that is not wired up yet.
-            anyhow::bail!(
-                "not wired up yet.\n  \
-                 The cache for {} would be {} (key {key}), populated by `{}` in a box with \
-                 no agent in it.\n  \
-                 That needs the read-only cache mount, which is the remaining piece; see \
-                 ROADMAP.md 5.8. `h5i dev cache mounts` shows what is already resolved.",
-                eco.name,
-                h5i_core::cache::cache_dir(h5i_root, eco, &key).display(),
-                eco.fetch.join(" "),
-            );
+                    style(dir.display()).cyan()
+                );
+            } else {
+                anyhow::bail!(
+                    "`{}` exited {exit} in the refresh box — the cache at {} may be incomplete. \
+                     A half-populated cache that claims success is worse than a cold one, so \
+                     this is a failure.",
+                    eco.fetch.join(" "),
+                    dir.display()
+                );
+            }
         }
+
         CacheCommands::Rm { eco, key } => {
             let eco = h5i_core::cache::ecosystem(&eco)
                 .ok_or_else(|| anyhow::anyhow!("unknown ecosystem '{eco}'"))?;
@@ -1178,7 +1180,7 @@ pub fn run(action: DevCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                DevCommands::Cache { action } => run_cache(action, &h5i_root, &workdir)?,
+                DevCommands::Cache { action } => run_cache(action, git, &h5i_root, &workdir)?,
 
                 DevCommands::Export { name, out, force } => {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;

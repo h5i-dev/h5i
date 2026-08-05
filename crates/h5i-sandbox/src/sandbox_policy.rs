@@ -803,6 +803,14 @@ pub struct ResolvedPolicy {
     /// Landlock, exactly like the interactive config lockdown.
     #[serde(skip)]
     pub ro_binds: Vec<RoBind>,
+    /// The one **writable** bind, and the only way a cache is ever written.
+    ///
+    /// Runtime-only and serde-skipped, like `ro_binds`. Deliberately an
+    /// `Option` of one rather than a list: `h5i dev cache refresh` is the sole
+    /// producer, it populates exactly one ecosystem's cache, and a policy that
+    /// cannot express "several writable binds" cannot grow one by accident.
+    #[serde(skip)]
+    pub cache_write: Option<RoBind>,
     /// Runtime-only: enforce the worktree (`$WORK`) as **read-only** — a
     /// read-only observer session (`env shell --readonly`). Never serialized (it
     /// is a per-invocation enforcement mode, not policy): a readonly session and
@@ -836,6 +844,7 @@ impl ResolvedPolicy {
             private_binds: Vec::new(),
             home_binds: Vec::new(),
             ro_binds: Vec::new(),
+            cache_write: None,
             work_readonly: false,
             user_egress_allow: Vec::new(),
         }

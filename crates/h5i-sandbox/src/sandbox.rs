@@ -1653,6 +1653,15 @@ pub(crate) fn build_confined_command(
         })
         .collect();
 
+    // The writable cache bind, if this is a refresh box. Same shape as the
+    // read-only ones, minus the remount.
+    let cache_write_c: Option<(std::ffi::CString, std::ffi::CString)> =
+        policy.cache_write.as_ref().and_then(|b| {
+            let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
+            let tc = std::ffi::CString::new(b.target.as_os_str().as_encoded_bytes()).ok()?;
+            Some((bc, tc))
+        });
+
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(&work);
 
@@ -1712,6 +1721,7 @@ pub(crate) fn build_confined_command(
                 || !private_bind_c.is_empty()
                 || !home_bind_c.is_empty()
                 || !ro_bind_c.is_empty()
+                || cache_write_c.is_some()
             {
                 flags |= libc::CLONE_NEWNS;
             }
@@ -1978,6 +1988,25 @@ pub(crate) fn build_confined_command(
                 {
                     return Err(Error::other(format!(
                         "cache remount-ro failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
+            }
+
+            // 1h. The writable cache bind (refresh only). Its target is created
+            //     by the caller host-side; a failure here is fatal rather than
+            //     silently producing an empty cache.
+            if let Some((backing, target)) = &cache_write_c {
+                if libc::mount(
+                    backing.as_ptr(),
+                    target.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_BIND,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    return Err(Error::other(format!(
+                        "cache write bind failed: {}",
                         Error::last_os_error()
                     )));
                 }

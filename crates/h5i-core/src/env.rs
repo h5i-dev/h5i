@@ -3082,6 +3082,34 @@ pub fn run(
     m: &mut EnvManifest,
     argv: &[String],
 ) -> Result<RunOutcome, H5iError> {
+    run_inner(repo, h5i_root, m, argv, None)
+}
+
+/// [`run`], plus one **writable** cache bind.
+///
+/// The only caller is `h5i dev cache refresh`, which runs an ecosystem's fetch
+/// step in a box with no agent in it. Keeping it a separate entry point rather
+/// than a policy field an ordinary profile could set means an agent session can
+/// never reach this path: there is nothing it could write in `.h5i/env.toml` to
+/// make its own cache writable.
+pub fn run_with_cache_write(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &mut EnvManifest,
+    argv: &[String],
+    // `(host cache dir, path inside the box)`.
+    cache_write: (&Path, &Path),
+) -> Result<RunOutcome, H5iError> {
+    run_inner(repo, h5i_root, m, argv, Some(cache_write))
+}
+
+fn run_inner(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &mut EnvManifest,
+    argv: &[String],
+    cache_write: Option<(&Path, &Path)>,
+) -> Result<RunOutcome, H5iError> {
     match m.status.as_str() {
         ST_CREATED | ST_RUNNING | ST_IDLE => {}
         other => {
@@ -3124,7 +3152,19 @@ pub fn run(
         None,
     )?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
-    prepare_cache_mounts(h5i_root, &work, &mut policy);
+    match cache_write {
+        // A refresh box: this one cache is writable, at the same path the
+        // read-only mount will later expose, so what is fetched is exactly what
+        // a later box sees.
+        Some((host, target)) => {
+            policy.profile.fs_write.push(host.display().to_string());
+            policy.cache_write = Some(sandbox::RoBind {
+                backing: host.to_path_buf(),
+                target: target.to_path_buf(),
+            });
+        }
+        None => prepare_cache_mounts(h5i_root, &work, &mut policy),
+    }
     let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
     // Host-side `h5i dev allow` extras + the explained-egress line.

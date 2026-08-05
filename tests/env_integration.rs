@@ -4546,12 +4546,16 @@ fn a_matching_cache_is_mounted_read_only() {
     assert!(out.contains("cold"), "{out}");
 
     // Materialize one by hand (refresh is not built yet) and it is offered.
-    let key_line = out_str(&r.h5i(&["dev", "cache", "refresh", "cargo"]));
-    let key = key_line
-        .split("(key ")
+    let refusal = out_str(&r.h5i(&["dev", "cache", "refresh", "cargo"]));
+    assert!(
+        refusal.contains("[profile.cache-cargo]") && refusal.contains("net.egress"),
+        "the refusal must hand over the profile it needs: {refusal}"
+    );
+    let key = refusal
+        .split("/cache/cargo/")
         .nth(1)
-        .and_then(|s| s.split(')').next())
-        .expect("the refusal names the key it would use")
+        .and_then(|s| s.split_whitespace().next())
+        .expect("the refusal names the cache directory it prepared")
         .to_string();
     let cache = r.dir.join(".git/.h5i/cache/cargo").join(&key);
     std::fs::create_dir_all(cache.join("cache")).unwrap();

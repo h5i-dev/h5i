@@ -765,6 +765,8 @@ pub fn build_run_argv(
     // Warm dependency caches to expose read-only (roadmap 5.8). Separate from
     // the profile because they are runtime state, never part of the digest.
     ro_binds: &[crate::sandbox_policy::RoBind],
+    // The one writable cache bind, set only by `cache refresh`.
+    cache_write: Option<&crate::sandbox_policy::RoBind>,
     work: &Path,
     image: &str,
     name: &str,
@@ -836,6 +838,14 @@ pub fn build_run_argv(
         a.push("--mount".into());
         a.push(format!(
             "type=bind,source={},target={},ro",
+            b.backing.display(),
+            b.target.display()
+        ));
+    }
+    if let Some(b) = cache_write {
+        a.push("--mount".into());
+        a.push(format!(
+            "type=bind,source={},target={},rw",
             b.backing.display(),
             b.target.display()
         ));
@@ -1121,6 +1131,7 @@ pub fn run(
         &rt,
         p,
         &policy.ro_binds,
+        policy.cache_write.as_ref(),
         work,
         &image,
         &name,
@@ -1249,6 +1260,7 @@ pub fn run_interactive(
         &rt,
         p,
         &policy.ro_binds,
+        policy.cache_write.as_ref(),
         work,
         &image,
         &name,
@@ -1525,6 +1537,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             Path::new("/work/dir"),
             "docker.io/library/debian:stable-slim",
             "h5i-test",
@@ -1574,6 +1587,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             work,
             "img",
             "n",
@@ -1625,6 +1639,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1668,6 +1683,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1706,6 +1722,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             Path::new("/work/dir"),
             "img",
             "n",
@@ -1739,6 +1756,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1767,6 +1785,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1804,6 +1823,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1833,6 +1853,7 @@ mod tests {
                 &rt(),
                 &p,
                 &[],
+                None,
                 Path::new("/w"),
                 "img",
                 "n",
@@ -1873,6 +1894,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1900,6 +1922,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1924,6 +1947,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1951,6 +1975,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -2200,6 +2225,7 @@ mod tests {
             &rt(),
             &p,
             &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
