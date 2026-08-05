@@ -717,6 +717,43 @@ fn prepare_managed_settings(work: &Path, content: &str) -> Option<PathBuf> {
     Some(path)
 }
 
+
+/// `/dev/shm` size in MiB for this profile: an eighth of the memory limit,
+/// floored at Podman's own 64 MiB default and capped at 1 GiB. Derived from
+/// existing policy rather than a new field, so the resolved policy's digest
+/// (and every pinned box) is unchanged.
+fn shm_size_mb(profile: &Profile) -> u64 {
+    const DEFAULT_MB: u64 = 64;
+    const CAP_MB: u64 = 1024;
+    match profile.mem_bytes {
+        Some(bytes) => (bytes / 8 / (1024 * 1024)).clamp(DEFAULT_MB, CAP_MB),
+        None => DEFAULT_MB,
+    }
+}
+
+#[cfg(test)]
+mod shm_tests {
+    use super::*;
+    use crate::sandbox::IsolationClaim;
+
+    fn profile_with_mem(bytes: Option<u64>) -> Profile {
+        let mut p = Profile::builtin("default", IsolationClaim::Container);
+        p.mem_bytes = bytes;
+        p
+    }
+
+    #[test]
+    fn shm_scales_with_the_memory_limit_but_stays_bounded() {
+        // A browser profile's 12 GiB gives it room; the cap keeps a generous
+        // limit from handing the box a gigabyte-plus of shared memory.
+        assert_eq!(shm_size_mb(&profile_with_mem(Some(12 * 1024 * 1024 * 1024))), 1024);
+        assert_eq!(shm_size_mb(&profile_with_mem(Some(4 * 1024 * 1024 * 1024))), 512);
+        // Small limits floor at Podman's own default rather than going below it.
+        assert_eq!(shm_size_mb(&profile_with_mem(Some(64 * 1024 * 1024))), 64);
+        assert_eq!(shm_size_mb(&profile_with_mem(None)), 64);
+    }
+}
+
 /// Build the `podman run` argv for `argv` under `policy`, fully
 /// hardened. `image` is the resolved base image; `name` is the (unique)
 /// container name used for cleanup. Pure — no process is spawned, so this is
@@ -725,6 +762,11 @@ fn prepare_managed_settings(work: &Path, content: &str) -> Option<PathBuf> {
 pub fn build_run_argv(
     rt: &Runtime,
     profile: &Profile,
+    // Warm dependency caches to expose read-only (roadmap 5.8). Separate from
+    // the profile because they are runtime state, never part of the digest.
+    ro_binds: &[crate::sandbox_policy::RoBind],
+    // The one writable cache bind, set only by `cache refresh`.
+    cache_write: Option<&crate::sandbox_policy::RoBind>,
     work: &Path,
     image: &str,
     name: &str,
@@ -772,6 +814,13 @@ pub fn build_run_argv(
         "--read-only".into(),
         "--tmpfs".into(),
         "/tmp:rw,nosuid,nodev,size=256m".into(),
+        // Podman's default /dev/shm is 64 MiB, which a browser renderer eats
+        // through in one heavy page and then dies with a message that blames
+        // everything except the shared-memory segment. Size it from the
+        // policy's own memory limit (deterministic, so the argv stays pure and
+        // testable) and cap it at 1 GiB.
+        "--shm-size".into(),
+        format!("{}m", shm_size_mb(profile)),
         // The env workspace, mounted at /work (the in-box git plumbing below
         // adds the only other writable host paths — the env's own .git
         // surface). Use --mount rather than -v so ':' in a repository path
@@ -782,6 +831,25 @@ pub fn build_run_argv(
         "/work".into(),
         "--ipc=private".into(),
     ];
+    // Warm dependency caches, read-only at the package manager's own path. A
+    // cache a box could write is a mutable surface shared between boxes, which
+    // is the thing the design refuses.
+    for b in ro_binds {
+        a.push("--mount".into());
+        a.push(format!(
+            "type=bind,source={},target={},ro",
+            b.backing.display(),
+            b.target.display()
+        ));
+    }
+    if let Some(b) = cache_write {
+        a.push("--mount".into());
+        a.push(format!(
+            "type=bind,source={},target={},rw",
+            b.backing.display(),
+            b.target.display()
+        ));
+    }
     for rel in [".claude/settings.json", ".codex/config.toml"] {
         let source = work.join(rel);
         if source.exists() && !source.display().to_string().contains(',') {
@@ -986,6 +1054,30 @@ fn maybe_auth_proxy(
     Some((e.handle, e.box_env))
 }
 
+/// Live proxies for a box's authenticated-egress grants, and the env the box
+/// is given to reach them.
+pub type AuthGrantEngagement = (Vec<crate::auth_proxy::AuthProxyHandle>, Vec<(String, String)>);
+
+/// Engage every profile-declared authenticated-egress grant.
+///
+/// Returns the live handles (held for the box's lifetime) and the env the box
+/// is given. Fail-closed: a grant whose host-side credential is missing is an
+/// error, never a box that reaches the upstream unauthenticated.
+pub fn engage_auth_grants(
+    profile: &Profile,
+    tier_ok: bool,
+) -> Result<AuthGrantEngagement, H5iError> {
+    let mut handles = Vec::new();
+    let mut env = Vec::new();
+    for grant in &profile.auth {
+        if let Some(e) = crate::auth_proxy::engage_grant(grant, tier_ok)? {
+            handles.push(e.handle);
+            env.extend(e.box_env);
+        }
+    }
+    Ok((handles, env))
+}
+
 // ─── run ─────────────────────────────────────────────────────────────────────
 
 /// Run `argv` for `policy` inside a hardened rootless container. Spawns the
@@ -1062,6 +1154,8 @@ pub fn run(
     let full = build_run_argv(
         &rt,
         p,
+        &policy.ro_binds,
+        policy.cache_write.as_ref(),
         work,
         &image,
         &name,
@@ -1189,6 +1283,8 @@ pub fn run_interactive(
     let full = build_run_argv(
         &rt,
         p,
+        &policy.ro_binds,
+        policy.cache_write.as_ref(),
         work,
         &image,
         &name,
@@ -1464,6 +1560,8 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             Path::new("/work/dir"),
             "docker.io/library/debian:stable-slim",
             "h5i-test",
@@ -1512,6 +1610,8 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             work,
             "img",
             "n",
@@ -1562,6 +1662,8 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1604,6 +1706,8 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1641,6 +1745,8 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             Path::new("/work/dir"),
             "img",
             "n",
@@ -1673,6 +1779,8 @@ mod tests {
         let with = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1700,6 +1808,8 @@ mod tests {
         let without = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1736,6 +1846,8 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1764,6 +1876,8 @@ mod tests {
             build_run_argv(
                 &rt(),
                 &p,
+                &[],
+                None,
                 Path::new("/w"),
                 "img",
                 "n",
@@ -1803,6 +1917,8 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1829,6 +1945,8 @@ mod tests {
         let plain = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1852,6 +1970,8 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -1878,6 +1998,8 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             Path::new("/w"),
             "img",
             "n",
@@ -2126,6 +2248,8 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
+            None,
             Path::new("/w"),
             "img",
             "n",

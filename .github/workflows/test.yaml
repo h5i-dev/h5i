@@ -33,13 +33,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: cargo clippy (deny warnings)
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: cargo build
-        run: cargo build --verbose --all-targets
+        run: cargo build --verbose --workspace --all-targets
 
       - name: cargo test
-        run: cargo test --verbose
+        run: cargo test --verbose --workspace
 
   # The man page (man/man1/h5i.1) and the /manual/ HTML (docs/manual/index.html)
   # are GENERATED, not hand-edited: the man page from the clap CLI via
@@ -59,22 +59,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # rust-embed's `#[folder = "web/dist/"]` must resolve at derive time, but
-      # the man page derives only from the clap command tree — web/dist contents
-      # don't affect it. Keep DEFAULT features on (so `serve` and other
-      # web-gated subcommands appear, matching the committed page), stub the
-      # bundle, and skip the npm build (no Node on this runner).
-      - name: Stub web/dist for rust-embed
-        run: |
-          mkdir -p web/dist
-          echo '<!doctype html><title>stub</title>' > web/dist/index.html
-
       - name: Install manual-generator deps (pinned)
         run: python3 -m pip install --quiet -r scripts/requirements.txt
 
       - name: Regenerate the man page (from the clap CLI)
-        env:
-          H5I_SKIP_WEB_BUILD: '1'
         run: ./scripts/gen_man.sh
 
       - name: Regenerate the /manual/ HTML (from MANUAL.md)
@@ -132,16 +120,6 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      # Compile-only gate: we don't need the real React bundle, only a `web/dist/`
-      # so rust-embed's `#[folder = "web/dist/"]` resolves at derive time. Stub it
-      # and skip the npm build (H5I_SKIP_WEB_BUILD=1) — much cheaper than Node on
-      # every runner, and the bundle is irrelevant to whether the crate compiles.
-      - name: Stub web/dist for rust-embed
-        shell: bash
-        run: |
-          mkdir -p web/dist
-          echo '<!doctype html><title>stub</title>' > web/dist/index.html
-
       # musl linker/compiler for the native musl target; OpenSSL is vendored.
       - name: Install musl-tools (Linux, native)
         if: runner.os == 'Linux' && !matrix.use_cross
@@ -153,15 +131,12 @@ jobs:
 
       - name: cargo check (native)
         if: "!matrix.use_cross"
-        env:
-          H5I_SKIP_WEB_BUILD: '1'
         run: cargo check --locked --target ${{ matrix.target }}
 
       - name: cross check (container)
         if: matrix.use_cross
         env:
-          H5I_SKIP_WEB_BUILD: '1'
-          # Forward both into cross's Docker container (no Node there → skip web
-          # build; keep the `-D warnings` RUSTFLAGS from the workflow env).
-          CROSS_CONTAINER_OPTS: '-e H5I_SKIP_WEB_BUILD -e RUSTFLAGS'
+          # Keep the `-D warnings` RUSTFLAGS from the workflow env inside
+          # cross's Docker container.
+          CROSS_CONTAINER_OPTS: '-e RUSTFLAGS'
         run: cross check --locked --target ${{ matrix.target }}

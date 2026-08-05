@@ -83,7 +83,7 @@ struct Repo {
 }
 
 impl Repo {
-    /// A fresh repo with one seed commit, `h5i init`-ed, git identity set.
+    /// A fresh repo with one seed commit and a git identity set.
     fn new() -> Repo {
         let root = TempDir::new().expect("tempdir");
         let dir = root.path().join("repo");
@@ -94,9 +94,7 @@ impl Repo {
         std::fs::write(dir.join("lib.py"), "def hello():\n    return 1\n").unwrap();
         git(&dir, &["add", "."]);
         git(&dir, &["commit", "-m", "seed"]);
-        let r = Repo { dir, _root: root };
-        r.h5i_ok(&["init"]);
-        r
+        Repo { dir, _root: root }
     }
 
     fn h5i(&self, args: &[&str]) -> Output {
@@ -140,32 +138,35 @@ impl Repo {
         serde_json::from_str(&text).expect("manifest json")
     }
 
-    /// The **latest** capture manifest in refs/h5i/objects tagged for env
-    /// `<slug>`. Manifests are appended chronologically, so the last matching
-    /// line is the newest capture — important when an env has several runs.
+    /// The **latest** receipt recorded for env `<slug>`. Records are appended
+    /// chronologically, so the last line is the newest — important when an env
+    /// has several runs.
     fn capture_manifest(&self, slug: &str) -> serde_json::Value {
-        let blob = out_str(&git(
-            &self.dir,
-            &["show", "refs/h5i/objects:manifests.jsonl"],
-        ));
-        let id = format!("env/tester/{slug}");
+        let log = self.env_dir(slug).join("receipt.jsonl");
+        let blob = std::fs::read_to_string(&log)
+            .unwrap_or_else(|_| panic!("no receipt log at {}", log.display()));
         let line = blob
             .lines()
-            .rfind(|l| l.contains(&id))
-            .expect("an env-tagged capture");
-        serde_json::from_str(line).expect("capture manifest json")
+            .rfind(|l| !l.trim().is_empty())
+            .expect("a receipt");
+        serde_json::from_str(line).expect("receipt json")
     }
 
-    /// The raw content-addressed blob bytes for a capture's `raw_oid`.
-    fn capture_raw(&self, raw_oid: &str) -> Vec<u8> {
-        let hex = raw_oid.strip_prefix("sha256:").unwrap_or(raw_oid);
-        let path = self
-            .dir
-            .join(".git/.h5i/objects")
-            .join(&hex[0..2])
-            .join(&hex[2..4])
-            .join(hex);
-        std::fs::read(&path).unwrap_or_else(|_| panic!("raw blob {hex} missing"))
+    /// Every receipt recorded for env `<slug>`, oldest first.
+    fn receipts(&self, slug: &str) -> Vec<serde_json::Value> {
+        let log = self.env_dir(slug).join("receipt.jsonl");
+        std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).expect("receipt json"))
+            .collect()
+    }
+
+    /// The stored raw payload of a receipt.
+    fn capture_raw_for(&self, slug: &str, id: &str) -> Vec<u8> {
+        let path = self.env_dir(slug).join("receipts").join(format!("{id}.raw"));
+        std::fs::read(&path).unwrap_or_else(|_| panic!("raw payload {id} missing"))
     }
 }
 
@@ -184,8 +185,7 @@ fn synthetic_env_manifest(
         base_tree: tree.id().to_string(),
         parent_branch: "main".into(),
         branch: format!("refs/heads/h5i/env/{agent}/{slug}"),
-        parent_context_branch: "main".into(),
-        context_branch: format!("env/{agent}/{slug}"),
+        source: "repo".into(),
         profile: "default".into(),
         policy_digest: "d".repeat(64),
         isolation_claim: "workspace".into(),
@@ -221,7 +221,7 @@ fn append_synthetic_env_manifest(repo: &git2::Repository, m: &h5i_core::env::Env
 // ─── 1. create: the triple fusion ───────────────────────────────────────────
 
 #[test]
-fn create_builds_worktree_branch_context_policy_and_event() {
+fn create_builds_worktree_branch_policy_and_event() {
     let r = Repo::new();
     // `h5i init` drops its own untracked scaffolding (CLAUDE.md, .claude/…) —
     // snapshot the status BEFORE create so we assert create adds nothing.
@@ -251,25 +251,17 @@ fn create_builds_worktree_branch_context_policy_and_event() {
         "env branch starts at the frozen base"
     );
 
-    // Manifest pins base/branch/context/policy.
+    // Manifest pins base/branch/policy.
     let m = r.manifest("fix-auth");
     assert_eq!(m["status"], "created");
     assert_eq!(m["agent"], "tester");
     assert_eq!(m["parent_branch"], "main");
     assert_eq!(m["base_commit"].as_str().unwrap(), head.trim());
     assert_eq!(m["branch"], "refs/heads/h5i/env/tester/fix-auth");
-    assert_eq!(m["context_branch"], "env/tester/fix-auth");
     assert_eq!(m["backend"], "worktree");
     assert_eq!(m["isolation_claim"], "workspace");
     assert_eq!(m["policy_digest"].as_str().unwrap().len(), 64);
     assert!(r.env_dir("fix-auth").join("policy.resolved.toml").is_file());
-
-    // Reasoning branch forked under refs/h5i/context/.
-    run_ok(
-        Command::new("git")
-            .args(["rev-parse", "refs/h5i/context/env/tester/fix-auth"])
-            .current_dir(&r.dir),
-    );
 
     // Event log: refs/h5i/env carries the created event.
     let log = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:events.jsonl"]));
@@ -462,20 +454,20 @@ fn run_captures_evidence_with_env_id_and_policy_digest() {
         "echo out-line; echo err-line >&2",
     ]);
 
-    // The capture manifest in refs/h5i/objects carries the env tags.
-    let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/objects:manifests.jsonl"]));
-    let line = manifests
-        .lines()
-        .find(|l| l.contains("env/tester/evidence"))
-        .expect("an env-tagged capture");
-    let m: serde_json::Value = serde_json::from_str(line).unwrap();
+    // The receipt carries the env tags: which env, which enforced policy, and
+    // which lane observed it.
+    let m = r.capture_manifest("evidence");
     assert_eq!(m["env_id"], "env/tester/evidence");
     let env_manifest = r.manifest("evidence");
     assert_eq!(m["policy_digest"], env_manifest["policy_digest"]);
-    assert_eq!(m["evidence_source"], "host-env-run");
+    assert_eq!(m["source"], "host-env-run");
     assert_eq!(m["exit_code"], 0);
-    // Captured against the env branch, not the parent.
-    assert_eq!(m["branch"], "h5i/env/tester/evidence");
+    // Both streams reached the stored payload.
+    let payload =
+        String::from_utf8_lossy(&r.capture_raw_for("evidence", m["id"].as_str().unwrap()))
+            .into_owned();
+    assert!(payload.contains("out-line"), "{payload}");
+    assert!(payload.contains("err-line"), "{payload}");
 
     // The env manifest references the capture; status advanced to idle.
     assert_eq!(env_manifest["status"], "idle");
@@ -489,797 +481,6 @@ fn run_captures_evidence_with_env_id_and_policy_digest() {
     assert!(log.contains(m["id"].as_str().unwrap()), "{log}");
 }
 
-#[test]
-fn capture_run_inside_env_stages_for_host_ingest() {
-    if !process_tier_runnable() {
-        eprintln!("SKIP capture_run_inside_env_stages_for_host_ingest: process tier not runnable");
-        return;
-    }
-
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "inbox", "--isolation", "process"]);
-    let inbox_h5i = r.work("inbox").join("h5i-test-bin");
-    std::fs::copy(H5I, &inbox_h5i).expect("copy h5i into env worktree");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&inbox_h5i).unwrap().permissions();
-        perms.set_mode(perms.mode() | 0o755);
-        std::fs::set_permissions(&inbox_h5i, perms).unwrap();
-    }
-    r.h5i_ok(&[
-        "env",
-        "run",
-        "inbox",
-        "--",
-        "./h5i-test-bin",
-        "capture",
-        "run",
-        "--min-bytes",
-        "0",
-        "--",
-        "sh",
-        "-c",
-        "echo inbox-line",
-    ]);
-
-    let env_manifest = r.manifest("inbox");
-    let caps = env_manifest["captures"].as_array().unwrap();
-    assert_eq!(caps.len(), 2, "host env-run + staged inbox capture");
-
-    let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/objects:manifests.jsonl"]));
-    let inbox_caps: Vec<serde_json::Value> = manifests
-        .lines()
-        .filter(|l| l.contains("env/tester/inbox"))
-        .map(|l| serde_json::from_str(l).unwrap())
-        .collect();
-    assert_eq!(inbox_caps.len(), 2, "{manifests}");
-    assert!(
-        inbox_caps
-            .iter()
-            .any(|m| m["evidence_source"] == "host-env-run"),
-        "{inbox_caps:#?}"
-    );
-    let staged = inbox_caps
-        .iter()
-        .find(|m| m["evidence_source"] == "inbox-capture")
-        .expect("inbox-capture manifest");
-    assert_eq!(staged["env_id"], "env/tester/inbox");
-    assert_eq!(staged["policy_digest"], env_manifest["policy_digest"]);
-    assert_eq!(staged["exit_code"], 0);
-    let raw = r.capture_raw(staged["raw_oid"].as_str().unwrap());
-    assert!(String::from_utf8_lossy(&raw).contains("inbox-line"));
-
-    let status = out_str(&r.h5i_ok(&["env", "status", "inbox"]));
-    assert!(status.contains("host-env-run=1"), "{status}");
-    assert!(status.contains("inbox-capture=1"), "{status}");
-}
-
-/// In-box `h5i commit` doesn't fail on the sealed sidecar store: the git commit
-/// lands on the env branch, the note is STAGED to the spool, and the host
-/// applies it (to the env's own commit) on ingest — no info lost, no mid-commit
-/// crash.
-#[test]
-fn inbox_commit_stages_note_and_host_applies_it() {
-    if !process_tier_runnable() {
-        eprintln!("SKIP inbox_commit_stages_note_and_host_applies_it: process tier not runnable");
-        return;
-    }
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "ibc", "--isolation", "process"]);
-    let bin = r.work("ibc").join("h5i-bin");
-    std::fs::copy(H5I, &bin).expect("copy h5i into worktree");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut p = std::fs::metadata(&bin).unwrap().permissions();
-        p.set_mode(p.mode() | 0o755);
-        std::fs::set_permissions(&bin, p).unwrap();
-    }
-    let base = out_str(&git(
-        &r.dir,
-        &["rev-parse", "refs/heads/h5i/env/tester/ibc"],
-    ));
-    let base = base.trim().to_string();
-
-    // In-box: stage + commit. The output must report the commit landing AND the
-    // note being staged (not a Permission-denied crash).
-    let out = r.h5i_ok(&[
-        "env",
-        "run",
-        "ibc",
-        "--",
-        "sh",
-        "-c",
-        "echo hi > f.txt && git add f.txt && \
-         ./h5i-bin commit -m 'in-box change' --model claude-fable-5 --agent claude-code",
-    ]);
-    let raw = {
-        let m = r.capture_manifest("ibc");
-        String::from_utf8_lossy(&r.capture_raw(m["raw_oid"].as_str().unwrap())).to_string()
-    };
-    assert!(
-        raw.contains("h5i Commit Created") && raw.contains("staged for host ingest"),
-        "in-box commit must land + stage the note: {raw}"
-    );
-    let _ = out;
-
-    // The commit advanced the env branch, and the host applied the note to it.
-    let env_tip = out_str(&git(
-        &r.dir,
-        &["rev-parse", "refs/heads/h5i/env/tester/ibc"],
-    ));
-    let env_tip = env_tip.trim();
-    assert_ne!(env_tip, base, "in-box commit must advance the env branch");
-    let note = out_str(&git(
-        &r.dir,
-        &["show", &format!("refs/h5i/notes:{env_tip}")],
-    ));
-    let rec: serde_json::Value =
-        serde_json::from_str(note.trim()).expect("note applied + valid JSON");
-    assert_eq!(rec["ai_metadata"]["model_name"], "claude-fable-5", "{rec}");
-    assert_eq!(rec["ai_metadata"]["agent_id"], "claude-code");
-
-    let log = out_str(&r.h5i_ok(&["env", "log", "ibc"]));
-    assert!(log.contains("in-box commit note applied"), "{log}");
-}
-
-/// The host applies in-box notes only to the env's OWN commits: a staged note
-/// for a commit outside `base..env_tip` (e.g. the inherited base / `main`) is
-/// rejected, so a box can't attach provenance to arbitrary history.
-#[test]
-fn inbox_commit_note_off_env_range_is_rejected() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "rej"]);
-    // The env branch sits at the base (no in-box commits) → base == main tip.
-    let main_oid = out_str(&git(&r.dir, &["rev-parse", "main"]));
-    let main_oid = main_oid.trim().to_string();
-
-    // Forge a note for an inherited commit (main/base) into the spool.
-    let spool = r.env_dir("rej").join("spool");
-    std::fs::create_dir_all(&spool).unwrap();
-    let forged = format!(
-        "{{\"git_oid\":\"{main_oid}\",\"parent_oid\":null,\"ai_metadata\":null,\
-         \"test_metrics\":null,\"ast_hashes\":null,\"timestamp\":\"2026-01-01T00:00:00Z\"}}"
-    );
-    std::fs::write(spool.join(format!("note-{main_oid}.json")), forged).unwrap();
-
-    // An env run triggers ingest, which must reject the forged note.
-    r.h5i_ok(&["env", "run", "rej", "--", "sh", "-c", "echo trigger"]);
-
-    // No note was attached to main, and the rejection is logged.
-    let log = out_str(&r.h5i_ok(&["env", "log", "rej"]));
-    assert!(
-        log.contains("rejected in-box commit note"),
-        "must log rejection: {log}"
-    );
-    // Non-asserting git (the note ref may not exist at all → command fails).
-    let note = Command::new("git")
-        .args(["show", &format!("refs/h5i/notes:{main_oid}")])
-        .current_dir(&r.dir)
-        .output()
-        .expect("git show");
-    assert!(
-        !note.status.success(),
-        "no note may be attached to the inherited commit"
-    );
-}
-
-/// In-box `h5i commit` can't write `refs/h5i/context-snapshots/*` (sealed ro in
-/// the box), so it builds the anchor commit *object* (objects/ is rw) and stages
-/// the ref creation to the spool. The host applies it on the next env run —
-/// scoped to the env's own commits — re-creating the snapshot ref. This is the
-/// host half of the round-trip; the box half (object build + staging) is covered
-/// by ctx::snapshot_for_commit's gate.
-#[test]
-fn inbox_context_snapshot_stages_and_host_applies_it() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "csok"]);
-
-    // Advance the env branch with an env-owned commit so its sha is in
-    // base..env_tip (the snapshot's `git_sha` is range-guarded on ingest).
-    let wt = r.work("csok");
-    std::fs::write(wt.join("g.txt"), b"hi\n").unwrap();
-    git(&wt, &["add", "g.txt"]);
-    git(&wt, &["commit", "-m", "env-owned change"]);
-    let env_tip = out_str(&git(
-        &r.dir,
-        &["rev-parse", "refs/heads/h5i/env/tester/csok"],
-    ));
-    let env_tip = env_tip.trim().to_string();
-    let short = env_tip[..8].to_string();
-
-    // Build the parentless anchor commit object the box would have written.
-    let tree = out_str(&git(&r.dir, &["rev-parse", &format!("{env_tip}^{{tree}}")]));
-    let anchor = out_str(&git(&r.dir, &["commit-tree", tree.trim(), "-m", "anchor"]));
-    let anchor = anchor.trim().to_string();
-
-    // Stage the ref-creation request, exactly as ctx::snapshot_for_commit does.
-    let spool = r.env_dir("csok").join("spool");
-    std::fs::create_dir_all(&spool).unwrap();
-    std::fs::write(
-        spool.join(format!("ctxsnap-{short}.json")),
-        format!("{{\"git_sha\":\"{env_tip}\",\"short_sha\":\"{short}\",\"anchor_oid\":\"{anchor}\"}}"),
-    )
-    .unwrap();
-
-    // An env run triggers the host ingest.
-    r.h5i_ok(&["env", "run", "csok", "--", "sh", "-c", "echo trigger"]);
-
-    // The host created the snapshot ref, pointing at the staged anchor.
-    let got = out_str(&git(
-        &r.dir,
-        &["rev-parse", &format!("refs/h5i/context-snapshots/{short}")],
-    ));
-    assert_eq!(
-        got.trim(),
-        anchor,
-        "snapshot ref must be created pointing at the staged anchor"
-    );
-    let log = out_str(&r.h5i_ok(&["env", "log", "csok"]));
-    assert!(log.contains("in-box context snapshot applied"), "{log}");
-}
-
-/// The host applies in-box snapshots only for the env's OWN commits: a staged
-/// snapshot whose `git_sha` is outside `base..env_tip` (e.g. the inherited
-/// `main`) is rejected, so a box can't plant a snapshot anchor for arbitrary
-/// history. Mirrors the note-spool scope guard.
-#[test]
-fn inbox_context_snapshot_off_env_range_is_rejected() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "csrej"]);
-    // Fresh env: branch == base == main tip, so main is inherited (off-range).
-    let main_oid = out_str(&git(&r.dir, &["rev-parse", "main"]));
-    let main_oid = main_oid.trim().to_string();
-    let short = main_oid[..8].to_string();
-    let tree = out_str(&git(&r.dir, &["rev-parse", &format!("{main_oid}^{{tree}}")]));
-    let anchor = out_str(&git(&r.dir, &["commit-tree", tree.trim(), "-m", "forged-anchor"]));
-    let anchor = anchor.trim().to_string();
-
-    let spool = r.env_dir("csrej").join("spool");
-    std::fs::create_dir_all(&spool).unwrap();
-    std::fs::write(
-        spool.join(format!("ctxsnap-{short}.json")),
-        format!("{{\"git_sha\":\"{main_oid}\",\"short_sha\":\"{short}\",\"anchor_oid\":\"{anchor}\"}}"),
-    )
-    .unwrap();
-
-    r.h5i_ok(&["env", "run", "csrej", "--", "sh", "-c", "echo trigger"]);
-
-    let log = out_str(&r.h5i_ok(&["env", "log", "csrej"]));
-    assert!(
-        log.contains("rejected in-box context snapshot"),
-        "must log rejection: {log}"
-    );
-    let got = Command::new("git")
-        .args(["rev-parse", &format!("refs/h5i/context-snapshots/{short}")])
-        .current_dir(&r.dir)
-        .output()
-        .expect("git rev-parse");
-    assert!(
-        !got.status.success(),
-        "no snapshot ref may be created for an off-range commit"
-    );
-}
-
-/// `h5i capture run -- h5i recall object|objects|search / team artifact …` must
-/// PASS THROUGH verbatim — never summarize or re-capture a read whose whole point
-/// is to emit content in full. Otherwise a boxed agent (whose harness wraps every
-/// command in `capture run`) gets a teammate's diff re-compacted and has to reach
-/// for `--min-bytes 999999`, plus the audit-all box stages a pointless
-/// capture-of-a-recall.
-#[test]
-fn capture_run_passes_read_through_h5i_commands_through() {
-    let r = Repo::new();
-    let spool = r.dir.join("rtspool");
-    std::fs::create_dir_all(&spool).unwrap();
-    let run = |inner: &[&str]| -> Output {
-        let mut args = vec!["capture", "run", "--"];
-        args.extend_from_slice(inner);
-        Command::new(H5I)
-            .args(&args)
-            .env("H5I_AGENT", "tester")
-            // Audit-all box context: without the fix, EVERY command is staged + compacted.
-            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
-            .env(h5i_core::env::H5I_ENV_ID_VAR, "env/tester/x")
-            .env(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR, "deadbeef")
-            .current_dir(&r.dir)
-            .output()
-            .expect("capture run")
-    };
-    let cap_files = || {
-        std::fs::read_dir(&spool)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("cap-"))
-            .count()
-    };
-
-    // Read-through: `capture run -- <h5i> recall objects` (the inner binary's
-    // basename is `h5i`) passes through — full output, no "staged" line, no spool.
-    let out = run(&[H5I, "recall", "objects"]);
-    let s = out_str(&out);
-    assert!(out.status.success(), "read-through must succeed: {s}");
-    assert!(
-        !s.contains("staged for host ingest"),
-        "a read-through h5i command must not be captured: {s}"
-    );
-    assert_eq!(cap_files(), 0, "read-through must not stage a spool capture");
-
-    // Control: a normal command in an audit-all box IS still captured.
-    let _ = run(&["echo", "hello-world"]);
-    assert!(
-        cap_files() >= 1,
-        "a non-read-through command should still be captured in an audit-all box"
-    );
-}
-
-/// Container-box regression: in-box, `.git/.h5i` is a bare READ-ONLY overlay
-/// dir (Podman auto-creates it as the intermediate dir of the `work/`
-/// dual-mount; the store itself is sealed — never mounted). `capture run`
-/// must not try to initialize the host store layout there: with the wrap-bash
-/// hook rewriting every Bash command, an EROFS in `ensure_layout` bricked the
-/// whole agent session (`/bin/ls`, even `true`, all exited 1 with
-/// "Read-only file system"). In-box h5i is a read-only client of the store;
-/// its writes go to the spool.
-#[test]
-fn capture_run_in_box_survives_a_sealed_readonly_store() {
-    use std::os::unix::fs::PermissionsExt;
-    let r = Repo::new();
-    // Recreate the box's view: .git/.h5i exists but is empty (no metadata/,
-    // no schema file) and read-only.
-    let store = r.dir.join(".git/.h5i");
-    std::fs::remove_dir_all(&store).unwrap();
-    std::fs::create_dir(&store).unwrap();
-    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o555)).unwrap();
-    // The spool lives outside the sealed store (a dedicated rw mount in a box).
-    let spool = r.dir.join("boxspool");
-    std::fs::create_dir_all(&spool).unwrap();
-
-    let run = |inner: &[&str]| -> Output {
-        let mut args = vec!["capture", "run", "--"];
-        args.extend_from_slice(inner);
-        Command::new(H5I)
-            .args(&args)
-            .env("H5I_AGENT", "tester")
-            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
-            .env(h5i_core::env::H5I_ENV_ID_VAR, "env/tester/box")
-            .env(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR, "deadbeef")
-            .current_dir(&r.dir)
-            .output()
-            .expect("capture run")
-    };
-
-    // The wrapped command must run and its exit code pass through untouched.
-    let out = run(&["echo", "boxed-ok"]);
-    assert!(
-        out.status.success(),
-        "in-box capture run must not die on the sealed store: {}",
-        out_str(&out)
-    );
-    let staged = std::fs::read_dir(&spool)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .any(|e| e.file_name().to_string_lossy().starts_with("cap-"));
-    assert!(staged, "the capture must be staged in the spool");
-    // Failing commands keep their exit code (transparent wrapper).
-    let out = run(&["sh", "-c", "exit 7"]);
-    assert_eq!(out.status.code(), Some(7), "exit code must pass through: {}", out_str(&out));
-
-    // Restore write permission so TempDir cleanup can remove the tree.
-    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-/// Fail-open, layer 2: even when the h5i side of an in-box `capture run` is
-/// wholly unusable, the wrapped command must still run with its output and
-/// exit code passed through — the wrap-bash hook is unremovable in a box, so
-/// failing closed would brick every Bash call. Two shapes:
-/// (a) repo open fails (not a git repository at all) → passthrough exec;
-/// (b) the spool write fails after the command ran → raw output emitted,
-///     exit code preserved, never a fabricated failure.
-#[test]
-fn capture_run_in_box_fails_open_when_h5i_is_unusable() {
-    let box_env: [(&str, &str); 3] = [
-        (h5i_core::env::H5I_ENV_ID_VAR, "env/tester/box"),
-        (h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR, "deadbeef"),
-        (h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, "/nonexistent/spool"),
-    ];
-
-    // (a) Not a git repo: open fails → run unrecorded, warn, pass everything through.
-    let plain = TempDir::new().unwrap();
-    let out = Command::new(H5I)
-        .args(["capture", "run", "--", "sh", "-c", "echo through; exit 3"])
-        .envs(box_env)
-        .current_dir(plain.path())
-        .output()
-        .expect("capture run");
-    let s = out_str(&out);
-    assert_eq!(out.status.code(), Some(3), "exit code must pass through: {s}");
-    assert!(s.contains("through"), "command output must pass through: {s}");
-    assert!(s.contains("unrecorded"), "must warn that the run was unrecorded: {s}");
-
-    // (b) Spool unwritable (points at a FILE): the command already ran — its
-    // raw output must be emitted and its exit code kept.
-    let r = Repo::new();
-    let bogus_spool = r.dir.join("not-a-dir");
-    std::fs::write(&bogus_spool, b"file, not a spool dir").unwrap();
-    let out = Command::new(H5I)
-        .args(["capture", "run", "--", "sh", "-c", "echo spooled-through; exit 5"])
-        .env("H5I_AGENT", "tester")
-        .env(h5i_core::env::H5I_ENV_ID_VAR, "env/tester/box")
-        .env(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR, "deadbeef")
-        .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &bogus_spool)
-        .current_dir(&r.dir)
-        .output()
-        .expect("capture run");
-    let s = out_str(&out);
-    assert_eq!(out.status.code(), Some(5), "exit code must pass through: {s}");
-    assert!(s.contains("spooled-through"), "raw output must pass through: {s}");
-    assert!(s.contains("unrecorded"), "must warn about the lost capture: {s}");
-}
-
-/// In a box, `h5i recall object <cap-id>` must rehydrate a capture that is still
-/// STAGED in the spool (not yet ingested into refs/h5i/objects) — so an agent can
-/// read the full raw output `capture run` compacted, instead of the misleading
-/// "no object matches". This is the rehydrate hint `capture run` itself prints.
-#[test]
-fn recall_object_rehydrates_a_staged_inbox_capture() {
-    let r = Repo::new();
-    let spool = r.dir.join("capspool");
-    std::fs::create_dir_all(&spool).unwrap();
-    // Mimic what an in-box `h5i capture run` stages: a `cap-*.raw` + `.json`.
-    std::fs::write(spool.join("cap-99-12345.raw"), b"FULL DIFF LINE 1\nFULL DIFF LINE 2\n")
-        .unwrap();
-    std::fs::write(
-        spool.join("cap-99-12345.json"),
-        br#"{"cmd":"h5i team artifact show x --diff","cwd":null,"exit_code":0,"files":[],"cmd_argv":[]}"#,
-    )
-    .unwrap();
-
-    let recall = |args: &[&str]| -> Output {
-        Command::new(H5I)
-            .args(args)
-            .env("H5I_AGENT", "tester")
-            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
-            .current_dir(&r.dir)
-            .output()
-            .expect("recall object")
-    };
-
-    // Default rehydrate prints the full raw output.
-    let out = recall(&["recall", "object", "cap-99-12345"]);
-    let s = out_str(&out);
-    assert!(out.status.success(), "staged rehydrate must succeed: {s}");
-    assert!(
-        s.contains("FULL DIFF LINE 1") && s.contains("FULL DIFF LINE 2"),
-        "must print the full staged raw: {s}"
-    );
-
-    // --summary gives a clear staged note (not a crash / not "no object matches").
-    let sum = out_str(&recall(&["recall", "object", "cap-99-12345", "--summary"]));
-    assert!(sum.contains("staged capture") && sum.contains("not yet ingested"), "{sum}");
-
-    // Host-side (no spool env), an unknown id still fails clearly — no false hit.
-    let host = Command::new(H5I)
-        .args(["recall", "object", "cap-99-12345"])
-        .current_dir(&r.dir)
-        .output()
-        .expect("recall object host");
-    assert!(!host.status.success(), "host-side unknown id must still error");
-}
-
-/// `h5i team artifact show <id>` must parse as a real subcommand — the form the
-/// peer-review prompt and the docs tell agents to run. (A prior version wired it
-/// flat as `team artifact <id>`, so the documented `show` form failed with a clap
-/// usage error and agents had to guess the right shape.)
-#[test]
-fn team_artifact_show_is_a_subcommand() {
-    let r = Repo::new();
-    // The documented form must get PAST clap into the logic. With a nonexistent
-    // team it errors on resolution — but specifically NOT a clap usage error.
-    let out = r.h5i(&["team", "artifact", "show", "sub-nobody-r1-deadbeef", "--team", "nope"]);
-    let s = out_str(&out);
-    assert!(!out.status.success(), "unknown team must still fail: {s}");
-    assert!(
-        !s.contains("unexpected argument") && !s.contains("Usage: h5i team artifact <ID>"),
-        "`artifact show <id>` must parse as a subcommand, not a clap usage error: {s}"
-    );
-    // The bare flat form (no `show`) must NOT parse — `show` is the required verb.
-    let flat = r.h5i(&["team", "artifact", "sub-nobody-r1-deadbeef"]);
-    assert!(!flat.status.success(), "bare `artifact <id>` (no `show`) must not parse");
-}
-
-/// The team Stop hook, in a box, must stop re-surfacing a round's standing
-/// review messages once the agent has submitted for that round — even when the
-/// host re-fans the *same* round under a fresh message id (which defeats the
-/// seen-cursor). A genuinely newer round still breaks through. Also covers that
-/// the inbox surfaces the granted artifact kinds (so a boxed reviewer never
-/// needs the host-only `team compare`).
-#[test]
-fn box_team_hook_releases_after_submit_until_a_new_round_opens() {
-    let r = Repo::new();
-    let inbox = r.dir.join("ibox");
-    let spool = r.dir.join("ispool");
-    std::fs::create_dir_all(&inbox).unwrap();
-    std::fs::create_dir_all(&spool).unwrap();
-
-    // Drop a REVIEW_REQUEST into the box's read-only mailbox. The round + granted
-    // kinds ride in i5h `links`, the artifact id in `focus`.
-    let write_msg = |file: &str, id: &str, round: u64, body: &str| {
-        let m = h5i_core::msg::Message {
-            id: id.into(),
-            ts: "2026-06-24T00:00:00Z".into(),
-            from: "human".into(),
-            to: "hana".into(),
-            body: body.into(),
-            kind: Some("REVIEW_REQUEST".into()),
-            focus: vec!["sub-rohan-r1-aaaaaaaaaaaa".into()],
-            links: Some(serde_json::json!({
-                "team": "demo",
-                "round": round,
-                "artifact_kinds": ["diff", "summary", "tests"],
-            })),
-            ..Default::default()
-        };
-        std::fs::write(inbox.join(file), serde_json::to_vec(&m).unwrap()).unwrap();
-    };
-
-    // The hook in a box: H5I_ENV_INBOX picks the box path; --quiet prints the
-    // framed text directly. Returns combined output.
-    let run_hook = || -> String {
-        let out = Command::new(H5I)
-            .args(["team", "agent", "hook", "--quiet"])
-            .env("H5I_AGENT", "hana")
-            .env(h5i_core::env::H5I_ENV_INBOX_VAR, &inbox)
-            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
-            .current_dir(&r.dir)
-            .output()
-            .expect("run team agent hook");
-        out_str(&out)
-    };
-
-    // Round 1 arrives → surfaced, WITH the grant + artifact id (the #3 fix), so a
-    // boxed reviewer can act without `team compare`.
-    write_msg("m1.json", "rev-round1-id-0001", 1, "Review rohan's submission for demo");
-    let first = run_hook();
-    assert!(first.contains("Review rohan's submission"), "round 1 must surface: {first}");
-    assert!(first.contains("granted diff,summary,tests"), "must show the grant: {first}");
-    assert!(first.contains("sub-rohan-r1-aaaaaaaaaaaa"), "must show the artifact id: {first}");
-
-    // The host re-fans the SAME round under a NEW id (fresh file + fresh id) —
-    // this is what looped the agent before the fix, since the seen-cursor can't
-    // catch a new id.
-    write_msg("m2.json", "rev-round1-id-0002", 1, "Review rohan's submission for demo");
-    // The agent has now submitted for round 1 (recorded box-side by submit).
-    h5i_core::env::write_submitted_round(&spool, 1).unwrap();
-    let after_submit = run_hook();
-    assert!(
-        !after_submit.contains("Review rohan's submission"),
-        "after submitting for round 1, the re-fanned round-1 request must NOT re-surface: {after_submit}"
-    );
-
-    // A genuinely newer round (round 2) still breaks through.
-    write_msg("m3.json", "rev-round2-id-0003", 2, "Round two review opened");
-    let round_two = run_hook();
-    assert!(
-        round_two.contains("Round two review opened"),
-        "a newer round must still surface: {round_two}"
-    );
-}
-
-/// An orchestra data request (`links.turn == "ask"`) must break through the
-/// hook's round filter even after the box submitted for that round. Asks are
-/// fresh, targeted, deliver-once turns (the seen cursor dedupes them) — the
-/// round filter exists only to mute *re-fanned* standing review requests, and
-/// swallowing a same-round ask would consume it unseen and lose the turn.
-/// The blocking instruction must also steer to `team agent reply`, not to a
-/// (doomed, no-diff) `team agent submit`.
-#[test]
-fn box_team_hook_surfaces_ask_turns_and_steers_to_reply() {
-    let r = Repo::new();
-    let inbox = r.dir.join("ibox");
-    let spool = r.dir.join("ispool");
-    std::fs::create_dir_all(&inbox).unwrap();
-    std::fs::create_dir_all(&spool).unwrap();
-
-    // The box already submitted for round 1…
-    h5i_core::env::write_submitted_round(&spool, 1).unwrap();
-
-    // …and a round-1 data request arrives after that submit.
-    let m = h5i_core::msg::Message {
-        id: "ask-round1-id-0001".into(),
-        ts: "2026-07-14T00:00:00Z".into(),
-        from: "host".into(),
-        to: "hana".into(),
-        body: "List the 3 biggest risks as a JSON array".into(),
-        kind: Some("ASK".into()),
-        links: Some(serde_json::json!({
-            "team": "demo",
-            "round": 1,
-            "agent_id": "hana",
-            "turn": "ask",
-        })),
-        ..Default::default()
-    };
-    std::fs::write(inbox.join("a1.json"), serde_json::to_vec(&m).unwrap()).unwrap();
-
-    // --block is the Claude Stop-hook shape: the surfaced turn arrives as a
-    // {"decision":"block","reason":…} JSON with the standing instruction.
-    let out = Command::new(H5I)
-        .args(["team", "agent", "hook", "--block", "--timeout", "1"])
-        .env("H5I_AGENT", "hana")
-        .env(h5i_core::env::H5I_ENV_INBOX_VAR, &inbox)
-        .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
-        .current_dir(&r.dir)
-        .output()
-        .expect("run team agent hook");
-    let s = out_str(&out);
-    assert!(
-        s.contains("List the 3 biggest risks"),
-        "a same-round ask must surface after submit: {s}"
-    );
-    assert!(
-        s.contains("team agent reply"),
-        "an ask-only block must steer to the reply channel: {s}"
-    );
-    assert!(
-        !s.contains("improve and re-submit"),
-        "an ask-only block must not instruct a submit: {s}"
-    );
-}
-
-/// The classic in-round sequence is work → submit → REVIEW_REQUEST → review →
-/// (revise →) re-submit: the round's review request reaches the box AFTER its
-/// own work submit. The hook's "submit == done for this round" filter must not
-/// swallow that first delivery (a regression consumed it unseen — the cursor
-/// advanced before the filter ran — and the blocking hook hung every boxed
-/// agent at the review phase). Same for an orchestra revise turn. A host
-/// *re-fan* of the identical request under a fresh id is still muted, now by
-/// content fingerprint rather than by round.
-#[test]
-fn box_team_hook_delivers_review_and_revise_turns_after_submit() {
-    let r = Repo::new();
-    let inbox = r.dir.join("ibox");
-    let spool = r.dir.join("ispool");
-    std::fs::create_dir_all(&inbox).unwrap();
-    std::fs::create_dir_all(&spool).unwrap();
-
-    // The box already submitted its round-1 work…
-    h5i_core::env::write_submitted_round(&spool, 1).unwrap();
-
-    let review_req = |id: &str| h5i_core::msg::Message {
-        id: id.into(),
-        ts: "2026-07-15T00:00:00Z".into(),
-        from: "human".into(),
-        to: "hana".into(),
-        body: "Review rohan's team submission for demo".into(),
-        kind: Some("REVIEW_REQUEST".into()),
-        focus: vec!["sub-rohan-r1-aaaaaaaaaaaa".into()],
-        links: Some(serde_json::json!({
-            "team": "demo",
-            "round": 1,
-            "reviewer": "hana",
-            "target": "rohan",
-            "artifact_kinds": ["diff", "summary"],
-        })),
-        ..Default::default()
-    };
-    let run_hook = || -> String {
-        let out = Command::new(H5I)
-            .args(["team", "agent", "hook", "--quiet"])
-            .env("H5I_AGENT", "hana")
-            .env(h5i_core::env::H5I_ENV_INBOX_VAR, &inbox)
-            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
-            .current_dir(&r.dir)
-            .output()
-            .expect("run team agent hook");
-        out_str(&out)
-    };
-
-    // …then the round-1 review request arrives. It must surface.
-    let m = review_req("rev-after-submit-0001");
-    std::fs::write(inbox.join("m1.json"), serde_json::to_vec(&m).unwrap()).unwrap();
-    let first = run_hook();
-    assert!(
-        first.contains("Review rohan's team submission"),
-        "a round-1 REVIEW_REQUEST arriving after the round-1 submit must surface: {first}"
-    );
-
-    // A host re-fan of the SAME request under a fresh id stays muted
-    // (content-duplicate), so a resumed run can't loop the reviewer.
-    let m = review_req("rev-after-submit-0002");
-    std::fs::write(inbox.join("m2.json"), serde_json::to_vec(&m).unwrap()).unwrap();
-    let refan = run_hook();
-    assert!(
-        !refan.contains("Review rohan's team submission"),
-        "an identical re-fanned request must not re-surface: {refan}"
-    );
-
-    // An orchestra revise turn is also same-round-after-submit by design.
-    let m = h5i_core::msg::Message {
-        id: "revise-after-submit-0001".into(),
-        ts: "2026-07-15T00:01:00Z".into(),
-        from: "human".into(),
-        to: "hana".into(),
-        body: "Your teammate reviewed your submission; address the feedback".into(),
-        kind: Some("ASK".into()),
-        links: Some(serde_json::json!({
-            "team": "demo",
-            "round": 1,
-            "agent_id": "hana",
-            "turn": "revise",
-        })),
-        ..Default::default()
-    };
-    std::fs::write(inbox.join("m3.json"), serde_json::to_vec(&m).unwrap()).unwrap();
-    let revise = run_hook();
-    assert!(
-        revise.contains("address the feedback"),
-        "a round-1 revise turn arriving after the round-1 submit must surface: {revise}"
-    );
-}
-
-/// In-box `team agent submit` with provably nothing to submit — clean worktree
-/// AND branch tip identical to the exported `$H5I_ENV_BASE_TREE` — must refuse
-/// in front of the agent (steering an ask turn to `team agent reply`) instead
-/// of staging a spool request the host is guaranteed to reject out of the
-/// agent's sight. A worktree with real changes still stages.
-#[test]
-fn in_box_submit_refuses_provably_empty_submission() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "askbox"]);
-    let work = r.work("askbox");
-    let spool = r.env_dir("askbox").join("spool");
-    std::fs::create_dir_all(&spool).unwrap();
-    let base_tree = r.manifest("askbox")["base_tree"]
-        .as_str()
-        .expect("manifest base_tree")
-        .to_string();
-
-    let submit = || -> Output {
-        Command::new(H5I)
-            .args(["team", "agent", "submit"])
-            .env("H5I_AGENT", "tester")
-            // Simulate the box: the in-box path triggers on these vars.
-            .env(h5i_core::env::H5I_ENV_ID_VAR, "env/tester/askbox")
-            .env(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR, "test-digest")
-            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
-            .env(h5i_core::env::H5I_ENV_BASE_TREE_VAR, &base_tree)
-            .current_dir(&work)
-            .output()
-            .expect("run team agent submit")
-    };
-    let staged_count = || -> usize {
-        std::fs::read_dir(&spool)
-            .unwrap()
-            .flatten()
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with("team-submit-")
-            })
-            .count()
-    };
-
-    // Clean worktree at base → refuse with the reply steering; nothing staged.
-    let out = submit();
-    let s = out_str(&out);
-    assert!(!out.status.success(), "empty submission must refuse: {s}");
-    assert!(s.contains("nothing to submit"), "actionable refusal: {s}");
-    assert!(
-        s.contains("team agent reply"),
-        "the refusal must steer to the reply channel: {s}"
-    );
-    assert_eq!(staged_count(), 0, "no doomed request may be staged: {s}");
-
-    // Real work breaks the tree match → submit snapshots in-box and stages.
-    std::fs::write(work.join("feature.py"), "x = 1\n").unwrap();
-    let out = submit();
-    let s = out_str(&out);
-    assert!(out.status.success(), "a real change must stage: {s}");
-    assert_eq!(staged_count(), 1, "the request must stage for host ingest: {s}");
-}
-
 /// `env status` surfaces evidence STAGED in the spool but not yet ingested
 /// (visible mid-session, before the host materializes it at run/shell end) —
 /// staged captures, notes, and tee-shim records, with the pending commands.
@@ -1290,37 +491,23 @@ fn env_status_shows_pending_spool_evidence() {
     let spool = r.env_dir("pend").join("spool");
     std::fs::create_dir_all(&spool).unwrap();
 
-    // A staged in-box capture (+ its raw), a staged commit note, a shim record.
+    // A staged in-box capture (+ its raw) and a tee-shim record.
     std::fs::write(
         spool.join("cap-1-0.json"),
         r#"{"cmd":"pytest -q","cwd":null,"exit_code":0,"files":[],"cmd_argv":["pytest","-q"]}"#,
     )
     .unwrap();
     std::fs::write(spool.join("cap-1-0.raw"), b"...output...").unwrap();
-    std::fs::write(
-        spool.join("note-f3a1b2c4d5e6.json"),
-        r#"{"git_oid":"f3a1b2c4d5e6f7a8","parent_oid":null,"ai_metadata":null,"test_metrics":null,"ast_hashes":null,"timestamp":"2026-01-01T00:00:00Z"}"#,
-    )
-    .unwrap();
     std::fs::write(spool.join("cmd-9-0.cmd"), b"ls").unwrap();
-    std::fs::write(
-        spool.join("codex-hook-1-0.json"),
-        r#"{"session_id":"sess","prompts":["inspect"],"events":[{"kind":"OBSERVE","message":"read src/main.rs"}]}"#,
-    )
-    .unwrap();
 
     let status = out_str(&r.h5i_ok(&["env", "status", "pend"]));
     assert!(status.contains("pending"), "{status}");
     assert!(
-        status.contains("1 capture")
-            && status.contains("1 note")
-            && status.contains("1 shim")
-            && status.contains("1 codex"),
+        status.contains("1 capture") && status.contains("1 shim"),
         "breakdown by lane: {status}"
     );
-    // The pending command + note oid are listed (the useful detail).
+    // The pending command is listed (the useful detail).
     assert!(status.contains("pytest -q"), "{status}");
-    assert!(status.contains("note for f3a1b2c4d5e6"), "{status}");
 
     // No spool → no pending line at all.
     std::fs::remove_dir_all(&spool).unwrap();
@@ -1328,76 +515,6 @@ fn env_status_shows_pending_spool_evidence() {
     assert!(
         !status.contains("pending"),
         "no pending line when spool empty: {status}"
-    );
-}
-
-#[test]
-fn env_run_ingests_codex_hook_spool_into_context() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "codexspool"]);
-    let spool = r.env_dir("codexspool").join("spool");
-    std::fs::create_dir_all(&spool).unwrap();
-    std::fs::write(
-        spool.join("codex-hook-1-0.json"),
-        r#"{"session_id":"sess","prompts":["inspect"],"events":[{"kind":"OBSERVE","message":"read src/main.rs"}]}"#,
-    )
-    .unwrap();
-
-    r.h5i_ok(&["env", "run", "codexspool", "--", "true"]);
-
-    let out = out_str(&r.h5i_ok(&["env", "context", "codexspool", "--trace"]));
-    assert!(out.contains("read src/main.rs"), "{out}");
-    assert!(
-        !spool.join("codex-hook-1-0.json").exists(),
-        "ingested codex hook spool record should be removed"
-    );
-}
-
-/// End-to-end integrity property: an in-box `h5i capture run` (the
-/// `inbox-capture`, box-claimed lane) and the env run itself (`host-env-run`,
-/// host-verified lane) BOTH survive `apply` as distinct lanes in the applied
-/// commit's provenance note — box-claimed evidence is never laundered into
-/// host-verified.
-#[test]
-fn apply_provenance_preserves_inbox_and_host_lanes() {
-    if !process_tier_runnable() {
-        eprintln!(
-            "SKIP apply_provenance_preserves_inbox_and_host_lanes: process tier not runnable"
-        );
-        return;
-    }
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "lanes", "--isolation", "process"]);
-    let bin = r.work("lanes").join("h5i-bin");
-    std::fs::copy(H5I, &bin).expect("copy h5i");
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut p = std::fs::metadata(&bin).unwrap().permissions();
-        p.set_mode(p.mode() | 0o755);
-        std::fs::set_permissions(&bin, p).unwrap();
-    }
-    // One env run: makes a change (so propose/apply has content) AND fires an
-    // in-box capture → host-env-run + inbox-capture lanes on the env.
-    r.h5i_ok(&[
-        "env", "run", "lanes", "--", "sh", "-c",
-        "echo changed > lib.py && ./h5i-bin capture run --min-bytes 0 -- sh -c 'echo inbox-evidence'",
-    ]);
-    r.h5i_ok(&["env", "propose", "lanes"]);
-    r.h5i_ok(&["env", "apply", "lanes"]);
-
-    let applied = out_str(&git(&r.dir, &["rev-parse", "main"]));
-    let applied = applied.trim();
-    let note = out_str(&git(
-        &r.dir,
-        &["show", &format!("refs/h5i/notes:{applied}")],
-    ));
-    let rec: serde_json::Value = serde_json::from_str(note.trim()).expect("apply note JSON");
-    let sources = &rec["env_provenance"]["evidence_sources"];
-    // Both lanes are present and distinct — not collapsed into one.
-    assert_eq!(sources["host-env-run"], 1, "host lane preserved: {rec}");
-    assert_eq!(
-        sources["inbox-capture"], 1,
-        "box-claimed lane preserved + labeled: {rec}"
     );
 }
 
@@ -1500,179 +617,6 @@ fn full_lifecycle_create_run_propose_apply() {
     for ev in ["created", "exec", "proposed", "applied"] {
         assert!(log.contains(ev), "missing event {ev}: {log}");
     }
-}
-
-/// `apply` stamps the commit it lands on the parent with an h5i note that links
-/// it back to the env and summarizes the (lane-labeled) evidence — so a reviewer
-/// of the parent branch can see the provenance without trusting the box.
-#[test]
-fn apply_stamps_commit_with_env_provenance_note() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "prov"]);
-    // An `env run` leaves a host-verified capture on the env.
-    r.h5i_ok(&[
-        "env",
-        "run",
-        "prov",
-        "--",
-        "sh",
-        "-c",
-        "printf 'def hello():\\n    return 9\\n' > lib.py && echo done",
-    ]);
-    r.h5i_ok(&["env", "propose", "prov"]);
-    let out = out_str(&r.h5i_ok(&["env", "apply", "prov"]));
-    assert!(out.contains("applied onto main"), "{out}");
-    assert!(
-        out.contains("provenance note on"),
-        "apply must report the note: {out}"
-    );
-
-    // The applied commit (now main's tip) carries an h5i note whose
-    // `env_provenance` links to the env and labels the evidence by lane.
-    let applied = out_str(&git(&r.dir, &["rev-parse", "main"]));
-    let applied = applied.trim();
-    // The note ref lives at refs/h5i/notes (outside refs/notes/, read via git2 by
-    // h5i) — read the note blob directly at its commit-oid path.
-    let note = out_str(&git(
-        &r.dir,
-        &["show", &format!("refs/h5i/notes:{applied}")],
-    ));
-    let rec: serde_json::Value =
-        serde_json::from_str(note.trim()).expect("note must be H5iCommitRecord JSON");
-    let prov = &rec["env_provenance"];
-    assert_eq!(prov["env_id"], "env/tester/prov", "{rec}");
-    assert_eq!(prov["agent"], "tester");
-    assert_eq!(prov["base_commit"], r.manifest("prov")["base_commit"]);
-    assert_eq!(prov["evidence_sources"]["host-env-run"], 1, "{rec}");
-    assert!(prov["captures_total"].as_u64().unwrap() >= 1, "{rec}");
-    // The inlined capture ids are exactly the env manifest's captures.
-    assert_eq!(prov["captures"], r.manifest("prov")["captures"], "{rec}");
-
-    // The `applied` event also carries the evidence summary.
-    let log = out_str(&r.h5i_ok(&["env", "log", "prov"]));
-    assert!(
-        log.contains("evidence=") && log.contains("host-env-run="),
-        "applied event must summarize evidence: {log}"
-    );
-
-    // `h5i log` renders the provenance so the applied commit is self-describing.
-    let clog = out_str(&r.h5i_ok(&["recall", "log", "--limit", "1"]));
-    assert!(
-        clog.contains("From env:") && clog.contains("env/tester/prov"),
-        "{clog}"
-    );
-    assert!(
-        clog.contains("Evidence:") && clog.contains("host-env-run=1"),
-        "{clog}"
-    );
-}
-
-/// A `--patch` (squash) apply squashes the env commits into one commit whose
-/// only parent is the parent tip — so those commits, and their per-commit
-/// prompt notes, leave the parent's ancestry. Apply must fold the prompts
-/// forward onto the squash commit's provenance note so the prompt that drove
-/// the work is still tracked on the parent branch (and survives gc). Regression
-/// guard for the squash path silently dropping prompt provenance.
-#[test]
-fn apply_patch_folds_env_prompts_into_provenance() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "sq"]);
-
-    // A genuine in-box `capture commit` carrying an --intent (the prompt), just
-    // as an agent working inside the box would produce.
-    let wt = r.work("sq");
-    std::fs::write(wt.join("lib.py"), "def f():\n    return 2\n").unwrap();
-    git(&wt, &["add", "lib.py"]);
-    let cc = Command::new(H5I)
-        .args([
-            "capture",
-            "commit",
-            "-m",
-            "impl f",
-            "--intent",
-            "Implement lib.f() to return the computed value and add a unit test \
-             for the empty case; keep the public signature stable.",
-            "--model",
-            "claude",
-            "--agent",
-            "tester",
-        ])
-        .env("H5I_AGENT", "tester")
-        .current_dir(&wt)
-        .output()
-        .expect("in-box capture commit");
-    assert!(
-        cc.status.success(),
-        "in-box capture commit failed: {}",
-        String::from_utf8_lossy(&cc.stderr)
-    );
-
-    r.h5i_ok(&["env", "propose", "sq"]);
-    let applied = r.h5i_ok(&["env", "apply", "sq", "--patch"]);
-    assert!(out_str(&applied).contains("applied onto main"));
-
-    // The applied commit is a squash: exactly one parent.
-    let parents = out_str(&git(&r.dir, &["rev-list", "--parents", "-n", "1", "main"]));
-    assert_eq!(
-        parents.split_whitespace().count(),
-        2, // <commit> <one-parent>
-        "squash apply must produce a single-parent commit: {parents}"
-    );
-
-    // Its provenance note carries the folded prompt as a LIST entry — the prompt
-    // is now tracked on the parent branch even though the env commit is gone.
-    let tip = out_str(&git(&r.dir, &["rev-parse", "main"]));
-    let note = out_str(&git(
-        &r.dir,
-        &["show", &format!("refs/h5i/notes:{}", tip.trim())],
-    ));
-    let rec: serde_json::Value =
-        serde_json::from_str(note.trim()).expect("note must be H5iCommitRecord JSON");
-    let prompts = rec["env_provenance"]["prompts"]
-        .as_array()
-        .expect("folded prompts array");
-    assert!(
-        prompts
-            .iter()
-            .any(|p| p.as_str().unwrap_or("").contains("Implement lib.f()")),
-        "the driving prompt must be folded onto the squash commit: {rec}"
-    );
-
-    // The squash message lists the collapsed env commit subjects.
-    let msg = out_str(&git(&r.dir, &["log", "-1", "--format=%B", "main"]));
-    assert!(msg.contains("Squashed env commits:"), "squash message: {msg}");
-}
-
-/// The provenance note is attached in the merge path too (parent advanced →
-/// a fresh merge commit gets the note, not just the fast-forward case).
-#[test]
-fn apply_stamps_provenance_on_merge_commit() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "mp"]);
-    r.h5i_ok(&["env", "run", "mp", "--", "sh", "-c", "echo x > envfile.txt"]);
-    r.h5i_ok(&["env", "propose", "mp"]);
-
-    // Advance the parent on an unrelated file so apply must MERGE (no FF).
-    std::fs::write(r.dir.join("parentfile.txt"), "p\n").unwrap();
-    git(&r.dir, &["add", "parentfile.txt"]);
-    git(&r.dir, &["commit", "-m", "advance parent"]);
-
-    let out = out_str(&r.h5i_ok(&["env", "apply", "mp"]));
-    assert!(out.contains("provenance note on"), "{out}");
-    let applied = out_str(&git(&r.dir, &["rev-parse", "main"]));
-    let applied = applied.trim();
-    // It's a real merge commit (two parents), and it carries the note.
-    let parents = out_str(&git(&r.dir, &["rev-list", "--parents", "-n", "1", applied]));
-    assert!(
-        parents.split_whitespace().count() >= 3,
-        "expected a merge commit: {parents}"
-    );
-    let note = out_str(&git(
-        &r.dir,
-        &["show", &format!("refs/h5i/notes:{applied}")],
-    ));
-    let rec: serde_json::Value = serde_json::from_str(note.trim()).unwrap();
-    assert_eq!(rec["env_provenance"]["env_id"], "env/tester/mp");
 }
 
 #[test]
@@ -2088,21 +1032,18 @@ fn secret_grant_is_injected_then_redacted_and_audited() {
     // The injected value must NOT appear in the capture — but the surrounding
     // text must, proving the secret was actually injected (then redacted).
     let cap = r.capture_manifest("needs-secret");
-    let summary = cap["summary"].as_str().unwrap_or("");
-    assert!(
-        !summary.contains("supersecret-xyz"),
-        "secret value leaked into the capture summary:\n{summary}"
-    );
-    assert!(
-        summary.contains("[redacted secret]"),
-        "expected the injected secret to be redacted (proves it was injected):\n{summary}"
-    );
-    // And the raw blob is scrubbed too, not just the summary.
-    let raw =
-        String::from_utf8_lossy(&r.capture_raw(cap["raw_oid"].as_str().unwrap())).into_owned();
+    let raw = String::from_utf8_lossy(&r.capture_raw_for(
+        "needs-secret",
+        cap["id"].as_str().unwrap(),
+    ))
+    .into_owned();
     assert!(
         !raw.contains("supersecret-xyz"),
-        "secret leaked into the raw blob:\n{raw}"
+        "secret value leaked into the stored payload:\n{raw}"
+    );
+    assert!(
+        raw.contains("[redacted secret]"),
+        "expected the injected secret to be redacted (proves it was injected):\n{raw}"
     );
 
     // A `secret` event records the grant id + fingerprint, never the value.
@@ -2152,14 +1093,12 @@ fn secret_file_injection_writes_a_file_and_redacts() {
     // The file-injected value must be redacted from the capture (proves it was
     // delivered via the file and then scrubbed).
     let cap = r.capture_manifest("filesec");
-    let summary = cap["summary"].as_str().unwrap_or("");
+    let raw = String::from_utf8_lossy(&r.capture_raw_for("filesec", cap["id"].as_str().unwrap()))
+        .into_owned();
+    assert!(!raw.contains("topsecret-deploy"), "secret leaked: {raw}");
     assert!(
-        !summary.contains("topsecret-deploy"),
-        "secret leaked: {summary}"
-    );
-    assert!(
-        summary.contains("[redacted secret]"),
-        "expected redaction marker: {summary}"
+        raw.contains("[redacted secret]"),
+        "expected redaction marker: {raw}"
     );
 
     // The audit event records the grant with inject=file, never the value.
@@ -2274,7 +1213,7 @@ fn supervised_run_raw(r: &Repo, slug: &str, argv: &[&str]) -> Option<String> {
         .output()
         .expect("run");
     let cap = r.capture_manifest(slug);
-    Some(String::from_utf8_lossy(&r.capture_raw(cap["raw_oid"].as_str()?)).into_owned())
+    Some(String::from_utf8_lossy(&r.capture_raw_for(slug, cap["id"].as_str()?)).into_owned())
 }
 
 /// Comprehensive live proof of the supervised tier's runtime enforcement, in a
@@ -2377,58 +1316,6 @@ fn supervised_enforces_runtime_confinement() {
     );
 }
 
-/// In-box `h5i commit` on the **supervised** tier (the agent-in-box tier):
-/// the git commit lands on the env branch, the note is spooled, and the host
-/// applies it on ingest — the same graceful-degrade as process, on the tier the
-/// original report came from.
-#[test]
-fn inbox_commit_on_supervised_stages_and_applies_note() {
-    let _serial = supervised_guard();
-    let Some(r) = supervised_env("ibs", "") else {
-        return;
-    };
-    let bin = r.work("ibs").join("h5i-bin");
-    std::fs::copy(H5I, &bin).expect("copy h5i into worktree");
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut p = std::fs::metadata(&bin).unwrap().permissions();
-        p.set_mode(p.mode() | 0o755);
-        std::fs::set_permissions(&bin, p).unwrap();
-    }
-    let base = out_str(&git(
-        &r.dir,
-        &["rev-parse", "refs/heads/h5i/env/tester/ibs"],
-    ));
-    let base = base.trim().to_string();
-
-    r.h5i_ok(&[
-        "env",
-        "run",
-        "ibs",
-        "--",
-        "sh",
-        "-c",
-        "echo hi > f.txt && git add f.txt && \
-         ./h5i-bin commit -m 'in-box change' --model claude-fable-5 --agent claude-code",
-    ]);
-
-    let env_tip = out_str(&git(
-        &r.dir,
-        &["rev-parse", "refs/heads/h5i/env/tester/ibs"],
-    ));
-    let env_tip = env_tip.trim();
-    assert_ne!(env_tip, base, "in-box commit must advance the env branch");
-    let note = out_str(&git(
-        &r.dir,
-        &["show", &format!("refs/h5i/notes:{env_tip}")],
-    ));
-    let rec: serde_json::Value =
-        serde_json::from_str(note.trim()).expect("note applied + valid JSON");
-    assert_eq!(rec["ai_metadata"]["model_name"], "claude-fable-5", "{rec}");
-    let log = out_str(&r.h5i_ok(&["env", "log", "ibs"]));
-    assert!(log.contains("in-box commit note applied"), "{log}");
-}
-
 /// A memory limit is enforced for a supervised run: a large allocation under a
 /// tight cap does not complete (cgroup memory.max / RLIMIT_DATA). Separate env
 /// because it needs a `resources.mem` profile.
@@ -2501,6 +1388,139 @@ fn supervised_egress_allowlist_confines_to_pinned_hosts() {
     assert!(
         raw.contains("www.cloudflare.com BLOCKED") && !raw.contains("www.cloudflare.com CONNECTED"),
         "a non-allowlisted host must be blocked (fail-closed):\n{raw}"
+    );
+}
+
+// ─── 3d. agent-family profiles at the supervised tier ───────────────────────
+
+/// Set up a repo pinning `<profile>` to `supervised` and create env `slug` with
+/// it. `None` (skip) when the host cannot satisfy the claim or lacks the
+/// profile's tooling — same gate style as [`supervised_env`].
+fn supervised_profile_env(slug: &str, profile: &str) -> Option<Repo> {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        format!("[profile.{profile}]\nisolation = \"supervised\"\n"),
+    )
+    .unwrap();
+    git(&r.dir, &["add", ".h5i/env.toml"]);
+    git(&r.dir, &["commit", "-m", "supervised agent profile"]);
+    let out = r.h5i(&[
+        "env", "create", slug, "--profile", profile, "--isolation", "supervised",
+    ]);
+    if out.status.success() {
+        Some(r)
+    } else {
+        // Create is fail-closed for this profile on hosts without the stack or
+        // without Chrome/agent-browser, and says which. Skipping is correct;
+        // silently passing would not be.
+        eprintln!(
+            "skipping supervised `{profile}`: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+        None
+    }
+}
+
+/// The private `/tmp` bind must not hide the box's own workspace when the
+/// repository itself lives under `/tmp` — which every `tempfile` repo in this
+/// suite does, and which is the common case for CI.
+///
+/// This is the M4 write-up's first finding, and the write-up is wrong: it
+/// recorded the `supervised` + agent-profile `EINVAL` as "the workspace is
+/// under `/tmp`, so the private-`/tmp` redirect shadows the worktree", and
+/// called it an unfixed footgun that `create` should refuse. It is not one. The
+/// bind-ordering fix (`home_binds_in_mount_order`, which mounts `/tmp` last)
+/// already made this work, and a `create`-time refusal would have rejected a
+/// configuration that runs correctly — including this suite's own fixtures.
+///
+/// So the test pins the working behaviour instead of guarding a phantom: the
+/// workspace is visible from inside, and `/tmp` is still the empty per-env
+/// scratch rather than the host's.
+#[test]
+fn a_workspace_under_tmp_survives_the_private_tmp_bind() {
+    let _serial = supervised_guard();
+    let Some(r) = supervised_env("tmpwork", "") else {
+        return;
+    };
+    // `Repo::new()` builds under the system temp dir, so this only means
+    // something where that is genuinely `/tmp`.
+    if !r.dir.starts_with("/tmp") {
+        eprintln!("skipping: fixtures are not under /tmp on this host ({:?})", r.dir);
+        return;
+    }
+    std::fs::write(r.work("tmpwork").join("marker.txt"), "visible\n").unwrap();
+
+    let raw = supervised_run_raw(
+        &r,
+        "tmpwork",
+        &["sh", "-c", "cat marker.txt; echo TMPLIST; ls -A /tmp"],
+    )
+    .expect("run");
+    assert!(
+        raw.contains("visible"),
+        "the workspace must still resolve inside the box:\n{raw}"
+    );
+    // And the reason it is worth a test: `/tmp` really is shadowed. The
+    // workspace surviving is the mount *order*, not the absence of the bind.
+    let after = raw.split("TMPLIST").nth(1).unwrap_or("");
+    assert!(
+        after.trim().is_empty(),
+        "/tmp must still be the empty per-env scratch:\n{raw}"
+    );
+}
+
+/// The gap the M4 live run exposed: **no test ran an agent-family profile at
+/// `supervised`**, and `supervised` is the only kernel tier that can host one
+/// (`process` refuses the egress these profiles need). Both M4 surprises lived
+/// in that gap, including the one this asserts.
+///
+/// The property under test is the socket gate's `AF_UNIX` verdict, because that
+/// is what silently bricked the browser box: the `agent-browser` daemon's
+/// control socket is a filesystem-bound `AF_UNIX` listener, the gate denied the
+/// family for every profile, and the daemon died before writing a word. A
+/// profile-scoped grant is the fix, so the test that guards it has to be
+/// per-profile — `browser` gets `AF_UNIX`, and the neighbouring profile that
+/// did not ask for it still does not.
+#[test]
+fn a_browser_box_at_supervised_gets_af_unix_and_its_neighbours_do_not() {
+    let _serial = supervised_guard();
+    if !have_python3() {
+        eprintln!("skipping: python3 unavailable");
+        return;
+    }
+    let Some(r) = supervised_profile_env("bbox", "browser") else {
+        return;
+    };
+
+    // Bind a real filesystem-bound listener, which is what the daemon does —
+    // not just socket(), so a gate that allowed the family but a Landlock grant
+    // that refused MAKE_SOCK would still be caught.
+    let script = "import socket,os,errno\n\
+        d='/tmp/gate-probe'\n\
+        os.makedirs(d,exist_ok=True)\n\
+        try:\n\
+        \x20s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\n\
+        \x20s.bind(d+'/x.sock'); s.listen(1); s.close(); print('UNIXBIND OK')\n\
+        except OSError as e:\n\
+        \x20print('UNIXBIND FAIL',errno.errorcode.get(e.errno,e.errno))\n";
+    let raw = supervised_run_raw(&r, "bbox", &["python3", "-c", script]).expect("browser box run");
+    assert!(
+        raw.contains("UNIXBIND OK"),
+        "the browser profile grants AF_UNIX, so its daemon's control socket must bind:\n{raw}"
+    );
+
+    // The grant is per-profile, not a tier-wide loosening. A `default` box on
+    // the same host, same tier, still gets EPERM — otherwise the fix would have
+    // widened every box to buy one.
+    let Some(plain) = supervised_env("plainbox", "") else {
+        return;
+    };
+    let raw = supervised_run_raw(&plain, "plainbox", &["python3", "-c", script]).expect("plain run");
+    assert!(
+        raw.contains("UNIXBIND FAIL EPERM"),
+        "AF_UNIX stays denied for a profile that did not ask for it:\n{raw}"
     );
 }
 
@@ -2605,73 +1625,6 @@ fn rm_erases_workspace_branches_and_manifest() {
     assert!(
         !r.env_dir("done").exists(),
         "aborted env removed without --force"
-    );
-}
-
-#[test]
-fn recall_objects_filters_by_env() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "alpha"]);
-    r.h5i_ok(&["env", "create", "beta"]);
-    r.h5i_ok(&["env", "run", "alpha", "--", "sh", "-c", "echo alpha-out"]);
-    r.h5i_ok(&["env", "run", "beta", "--", "sh", "-c", "echo beta-out"]);
-
-    // Bare slug selects exactly that env's capture (and not the other's).
-    let a = out_str(&r.h5i_ok(&["recall", "objects", "--env", "alpha"]));
-    assert!(a.contains("alpha-out"), "alpha capture shown:\n{a}");
-    assert!(
-        !a.contains("beta-out"),
-        "beta capture must be excluded:\n{a}"
-    );
-
-    // The <agent>/<slug> and full-id forms resolve the same env.
-    assert!(
-        out_str(&r.h5i_ok(&["recall", "objects", "--env", "tester/beta"])).contains("beta-out")
-    );
-    assert!(
-        out_str(&r.h5i_ok(&["recall", "objects", "--env", "env/tester/beta"])).contains("beta-out")
-    );
-
-    // An unknown env matches nothing (filter message, not the empty-store one).
-    let none = out_str(&r.h5i_ok(&["recall", "objects", "--env", "ghost"]));
-    assert!(none.contains("match that filter"), "{none}");
-
-    // search --env composes with the query and is env-scoped.
-    let s = out_str(&r.h5i_ok(&["recall", "search", "alpha-out", "--env", "alpha"]));
-    assert!(s.contains("alpha-out"), "{s}");
-    assert!(
-        out_str(&r.h5i_ok(&["recall", "search", "alpha-out", "--env", "beta"]))
-            .contains("No captured findings"),
-        "alpha-out must not match in beta"
-    );
-
-    // Captures survive their env's removal and stay queryable by env id.
-    r.h5i_ok(&["env", "rm", "alpha", "--force"]);
-    assert!(
-        out_str(&r.h5i_ok(&["recall", "objects", "--env", "alpha"])).contains("alpha-out"),
-        "captures of a removed env remain searchable by env id"
-    );
-}
-
-#[test]
-fn env_context_shows_the_reasoning_branch() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "scout"]);
-
-    let out = out_str(&r.h5i_ok(&["env", "context", "scout"]));
-    // Renders the env's reasoning branch (name under refs/h5i/context/).
-    assert!(
-        out.contains("env/tester/scout"),
-        "shows the env context branch:\n{out}"
-    );
-
-    // --trace deepens to the full trace (depth 3) without erroring.
-    r.h5i_ok(&["env", "context", "scout", "--trace"]);
-
-    // An unknown env name is a clean error, not a panic.
-    assert!(
-        !r.h5i(&["env", "context", "ghost"]).status.success(),
-        "unknown env must fail"
     );
 }
 
@@ -3098,65 +2051,6 @@ fn box_git_grants_stay_fail_closed_outside_env_namespace() {
     assert!(
         !work.join(".codex/config.toml").exists(),
         "Codex hook config must be removed after tamper"
-    );
-}
-
-/// In-box `h5i context` — the exact flow from the bug report: a boxed agent
-/// runs `context status` (honest output), `context init`, and
-/// `context commit`; the reasoning lands in `refs/h5i/context/*` where the
-/// host can see it.
-#[test]
-fn box_h5i_context_flow_works_inside_process_tier() {
-    if !process_tier_runnable() {
-        eprintln!("SKIP box_h5i_context_flow_works_inside_process_tier: process tier not runnable");
-        return;
-    }
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "boxctx", "--isolation", "process"]);
-
-    // The host build dir is (correctly) not granted — stage the binary into
-    // $WORK, the box's own rw+exec mount.
-    std::fs::copy(H5I, r.work("boxctx").join("h5i")).unwrap();
-
-    // Before init: a clean "not initialized" (exit 0), not an EACCES disguise.
-    r.h5i_ok(&["env", "run", "boxctx", "--", "./h5i", "context", "status"]);
-
-    r.h5i_ok(&[
-        "env",
-        "run",
-        "boxctx",
-        "--",
-        "./h5i",
-        "context",
-        "init",
-        "--goal",
-        "boxed goal",
-    ]);
-    r.h5i_ok(&[
-        "env",
-        "run",
-        "boxctx",
-        "--",
-        "./h5i",
-        "context",
-        "commit",
-        "milestone from the box",
-    ]);
-
-    // The reasoning is real git state, visible to the host.
-    let refs = out_str(&git(&r.dir, &["show-ref"]));
-    assert!(
-        refs.contains("refs/h5i/context/"),
-        "context refs must exist: {refs}"
-    );
-
-    // And the box can read its own milestone back (via the run's capture).
-    r.h5i_ok(&["env", "run", "boxctx", "--", "./h5i", "context", "status"]);
-    let cap = r.capture_manifest("boxctx");
-    let raw = String::from_utf8_lossy(&r.capture_raw(cap["raw_oid"].as_str().unwrap())).to_string();
-    assert!(
-        raw.contains("boxed goal") || raw.contains("milestone from the box"),
-        "in-box context status must show the recorded reasoning: {raw}"
     );
 }
 
@@ -3952,14 +2846,12 @@ fn container_env_capture_spool_is_mounted_and_ingested() {
         env_manifest["captures"].as_array().unwrap().len() >= 2,
         "host-env-run + ingested inbox-capture: {env_manifest}"
     );
-    let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/objects:manifests.jsonl"]));
-    let inbox = manifests
-        .lines()
-        .filter(|l| l.contains("env/tester/cspool"))
-        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
-        .find(|m| m["evidence_source"] == "inbox-capture")
-        .expect("an inbox-capture manifest");
-    let raw = r.capture_raw(inbox["raw_oid"].as_str().unwrap());
+    let inbox = r
+        .receipts("cspool")
+        .into_iter()
+        .find(|m| m["source"] == "inbox-capture")
+        .expect("an inbox-capture receipt");
+    let raw = r.capture_raw_for("cspool", inbox["id"].as_str().unwrap());
     assert!(
         String::from_utf8_lossy(&raw).contains("boxed-output"),
         "{inbox}"
@@ -4043,11 +2935,11 @@ fn run_redacts_secrets_from_evidence_blob_summary_and_command() {
         redactions.iter().any(|v| v == "GITHUB_PAT"),
         "expected GITHUB_PAT in redactions: {m}"
     );
-    // The secret must not survive ANYWHERE in the manifest line …
-    let manifest_line = serde_json::to_string(&m).unwrap();
+    // The secret must not survive ANYWHERE in the record …
+    let record_line = serde_json::to_string(&m).unwrap();
     assert!(
-        !manifest_line.contains(PLANTED_SECRET),
-        "secret leaked into manifest: {manifest_line}"
+        !record_line.contains(PLANTED_SECRET),
+        "secret leaked into the receipt: {record_line}"
     );
     // … including the command field (it was passed as an argument).
     assert!(
@@ -4055,8 +2947,8 @@ fn run_redacts_secrets_from_evidence_blob_summary_and_command() {
         "secret leaked into cmd"
     );
 
-    // … and not in the content-addressed raw blob (which travels via push).
-    let raw = r.capture_raw(m["raw_oid"].as_str().unwrap());
+    // … and not in the stored payload.
+    let raw = r.capture_raw_for("leaky", m["id"].as_str().unwrap());
     let raw_str = String::from_utf8_lossy(&raw);
     assert!(
         !raw_str.contains(PLANTED_SECRET),
@@ -4189,12 +3081,10 @@ fn inspect_json_renders_the_capture_manifest() {
             .is_some_and(|oid| oid.starts_with("sha256:")),
         "{v:#}"
     );
-    assert!(
-        v["summary"]
-            .as_str()
-            .is_some_and(|summary| summary.contains("json-body")),
-        "{v:#}"
-    );
+    assert_eq!(v["source"].as_str(), Some("host-env-run"), "{v:#}");
+    // The command's output rides in the stored payload, not in the record.
+    let payload = String::from_utf8_lossy(&r.capture_raw_for("json", &cap)).into_owned();
+    assert!(payload.contains("json-body"), "{payload}");
 
     let out = r.h5i(&["env", "inspect", "other", "--capture", &cap, "--json"]);
     assert!(!out.status.success(), "cross-env JSON inspect must be refused");
@@ -4782,7 +3672,7 @@ fn rebase_records_a_two_parent_provenance_commit() {
     );
     let subject = out_str(&git(&r.dir, &["log", "-1", "--format=%s", branch]));
     assert!(
-        subject.contains("h5i env rebase: env/tester/prov onto main"),
+        subject.contains("h5i dev rebase: env/tester/prov onto main"),
         "provenance subject: {subject}"
     );
 }
@@ -4896,170 +3786,6 @@ fn env_log_limit_returns_the_newest_events() {
 
 // ─── 14. shareable environments across clones (the multi-agent review loop) ──
 
-/// A clone addressed through the h5i binary under a fixed agent identity.
-struct Clone {
-    dir: PathBuf,
-    agent: &'static str,
-}
-
-impl Clone {
-    fn h5i(&self, args: &[&str]) -> Output {
-        Command::new(H5I)
-            .args(args)
-            .env("H5I_AGENT", self.agent)
-            .env("H5I_DEFAULT_ISOLATION", "workspace")
-            .current_dir(&self.dir)
-            .output()
-            .expect("run h5i")
-    }
-    fn ok(&self, args: &[&str]) -> Output {
-        let out = self.h5i(args);
-        assert!(
-            out.status.success(),
-            "h5i {} failed:\n{}",
-            args.join(" "),
-            out_str(&out)
-        );
-        out
-    }
-}
-
-/// Build a bare origin and two h5i-init'd clones (agents `claude` and `codex`).
-fn two_clones() -> (TempDir, Clone, Clone) {
-    let root = TempDir::new().expect("tempdir");
-    let bare = root.path().join("origin.git");
-    run_ok(
-        Command::new("git")
-            .args(["init", "-q", "--bare", "-b", "main"])
-            .arg(&bare),
-    );
-
-    let a = root.path().join("A");
-    run_ok(Command::new("git").args(["clone", "-q"]).arg(&bare).arg(&a));
-    git(&a, &["config", "user.email", "a@h5i.test"]);
-    git(&a, &["config", "user.name", "A"]);
-    std::fs::write(a.join("lib.py"), "def f():\n    return 1\n").unwrap();
-    git(&a, &["add", "."]);
-    git(&a, &["commit", "-m", "seed"]);
-    git(&a, &["push", "-q", "origin", "main"]);
-    let ca = Clone {
-        dir: a,
-        agent: "claude",
-    };
-    ca.ok(&["init"]);
-
-    let b = root.path().join("B");
-    run_ok(Command::new("git").args(["clone", "-q"]).arg(&bare).arg(&b));
-    git(&b, &["config", "user.email", "b@h5i.test"]);
-    git(&b, &["config", "user.name", "B"]);
-    let cb = Clone {
-        dir: b,
-        agent: "codex",
-    };
-    cb.ok(&["init"]);
-
-    (root, ca, cb)
-}
-
-#[test]
-fn env_travels_to_another_clone_for_review_and_apply() {
-    let (_root, a, b) = two_clones();
-
-    // Clone A (claude): create, run, edit, propose, push.
-    a.ok(&["env", "create", "fix-auth"]);
-    a.ok(&[
-        "env",
-        "run",
-        "fix-auth",
-        "--",
-        "sh",
-        "-c",
-        "echo running-tests",
-    ]);
-    std::fs::write(
-        a.dir.join(".git/.h5i/env/claude/fix-auth/work/lib.py"),
-        "def f():\n    return 2  # fixed\n",
-    )
-    .unwrap();
-    a.ok(&["env", "propose", "fix-auth"]);
-    a.ok(&["push"]);
-
-    // Clone B (codex) cannot see it yet.
-    assert!(!out_str(&b.ok(&["env", "list"])).contains("fix-auth"));
-
-    // After pull, the env is materialized locally.
-    let pulled = out_str(&b.ok(&["pull"]));
-    assert!(
-        pulled.contains("materialized") || pulled.contains("refs/h5i/env"),
-        "{pulled}"
-    );
-    let list = out_str(&b.ok(&["env", "list"]));
-    assert!(
-        list.contains("env/claude/fix-auth"),
-        "B sees the env: {list}"
-    );
-    assert!(list.contains("proposed"), "{list}");
-
-    // B reviews the diff — from the pushed code branch (B has no worktree).
-    let diff = out_str(&b.ok(&["env", "diff", "fix-auth"]));
-    assert!(
-        diff.contains("return 2"),
-        "B reviews the proposed diff: {diff}"
-    );
-    let diff_json = out_str(&b.ok(&["env", "diff", "fix-auth", "--json"]));
-    let diffstat: serde_json::Value =
-        serde_json::from_str(&diff_json).expect("remote env diff --json is valid JSON");
-    assert_eq!(diffstat["files_changed"], 1, "{diff_json}");
-    assert_eq!(diffstat["files"][0]["path"], "lib.py");
-
-    // B sees the policy digest + evidence in status, and the manifest via JSON.
-    let json = out_str(&b.ok(&["env", "status", "fix-auth", "--json"]));
-    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(
-        v["agent"], "claude",
-        "manifest authorship preserved across clones"
-    );
-    let cap = v["captures"][0].as_str().expect("a capture id").to_string();
-
-    // B inspects the evidence (it travelled via refs/h5i/objects).
-    let insp = out_str(&b.ok(&["env", "inspect", "fix-auth", "--capture", &cap]));
-    assert!(
-        insp.contains("running-tests") || insp.contains("sh"),
-        "B inspects evidence: {insp}"
-    );
-
-    // Workspace-mutating ops on B refuse clearly — the worktree is on A.
-    // (propose passes the status guard, then the mediated commit needs work/.)
-    let no_ws = b.h5i(&["env", "propose", "fix-auth"]);
-    assert!(!no_ws.status.success());
-    assert!(
-        out_str(&no_ws).contains("another clone"),
-        "{}",
-        out_str(&no_ws)
-    );
-
-    // B applies onto main (the code branch was fetched).
-    git(&b.dir, &["checkout", "-q", "main"]);
-    let applied = out_str(&b.ok(&["env", "apply", "fix-auth"]));
-    assert!(applied.contains("applied onto main"), "{applied}");
-    let lib = std::fs::read_to_string(b.dir.join("lib.py")).unwrap();
-    assert!(
-        lib.contains("return 2"),
-        "apply updated B's working tree: {lib}"
-    );
-
-    // The applied status round-trips back: B pushes, A pulls, A sees applied.
-    git(&b.dir, &["push", "-q", "origin", "main"]);
-    b.ok(&["push"]);
-    a.ok(&["pull"]);
-    let a_status = out_str(&a.ok(&["env", "status", "fix-auth", "--json"]));
-    let av: serde_json::Value = serde_json::from_str(&a_status).unwrap();
-    assert_eq!(
-        av["status"], "applied",
-        "applied status propagated back to A: {a_status}"
-    );
-}
-
 #[test]
 fn materialize_skips_poisoned_shared_manifest_but_keeps_valid_ones() {
     let r = Repo::new();
@@ -5103,68 +3829,6 @@ fn materialize_skips_poisoned_shared_manifest_but_keeps_valid_ones() {
             .join(".git/.h5i/env/peer/spoof/manifest.json")
             .exists(),
         "identity-tampered manifest must not be materialized"
-    );
-}
-
-/// Option A: the env code branch travels under the hidden `refs/h5i/env/code/*`
-/// namespace (beside the `refs/h5i/env/meta` state ref, under one `refs/h5i/env/`
-/// namespace), so a host like GitHub (which lists only `refs/heads/*`) never
-/// shows env sandboxes as branches. Any env branch that does land under
-/// `refs/heads/` on the remote is removed on push.
-#[test]
-fn push_keeps_env_refs_out_of_refs_heads() {
-    let (_root, a, _b) = two_clones();
-    a.ok(&["env", "create", "scopecheck"]);
-    a.ok(&["env", "run", "scopecheck", "--", "sh", "-c", "echo hi"]);
-    a.ok(&["push"]);
-
-    let remote_refs = |c: &Clone| -> String {
-        String::from_utf8_lossy(&git(&c.dir, &["ls-remote", "origin"]).stdout)
-            .lines()
-            .filter_map(|l| l.split_whitespace().nth(1).map(str::to_owned))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-
-    let refs = remote_refs(&a);
-    assert!(
-        refs.lines().any(|r| r == "refs/h5i/env/meta"),
-        "state ref present:\n{refs}"
-    );
-    assert!(
-        refs.contains("refs/h5i/env/code/claude/scopecheck"),
-        "code branch under hidden ns:\n{refs}"
-    );
-    assert!(
-        !refs.lines().any(|r| r.starts_with("refs/heads/h5i/env/")),
-        "NO env branch may appear under refs/heads/ (GitHub clutter):\n{refs}"
-    );
-
-    // A stray env branch on the remote's head namespace (e.g. left by an older
-    // h5i) is deleted on the next push.
-    git(
-        &a.dir,
-        &[
-            "push",
-            "-q",
-            "origin",
-            "refs/heads/h5i/env/claude/scopecheck:refs/heads/h5i/env/claude/oldone",
-        ],
-    );
-    assert!(
-        remote_refs(&a).contains("refs/heads/h5i/env/claude/oldone"),
-        "stray head branch staged"
-    );
-
-    a.ok(&["push"]);
-    let after = remote_refs(&a);
-    assert!(
-        !after.lines().any(|r| r.starts_with("refs/heads/h5i/env/")),
-        "stray head branches cleaned:\n{after}"
-    );
-    assert!(
-        after.lines().any(|r| r == "refs/h5i/env/meta"),
-        "state ref still present:\n{after}"
     );
 }
 
@@ -5676,4 +4340,372 @@ fn env_rm_partial_failure_continues_and_exits_nonzero() {
         stdout.contains("good"),
         "expected 'good' removal confirmation in stdout:\n{stdout}"
     );
+}
+
+// ─── `h5i dev`: the box surface ─────────────────────────────────────────────
+
+/// The short form creates a box with no verb and no name: source defaults to
+/// this repository, the name to the checked-out branch. This is the first
+/// command a new user runs, so it must work with zero arguments.
+#[test]
+fn dev_with_no_arguments_creates_a_box_named_for_the_branch() {
+    let r = Repo::new();
+    let out = out_str(&r.h5i_ok(&["dev"]));
+    assert!(out.contains("env/tester/main"), "{out}");
+    assert!(r.env_dir("main").join("manifest.json").is_file());
+
+    // A second one cannot take the same name, so it is suffixed rather than
+    // colliding or overwriting.
+    let out = out_str(&r.h5i_ok(&["dev"]));
+    assert!(out.contains("env/tester/main-2"), "{out}");
+}
+
+/// `dev` and `env` are the same surface; the old noun stays hidden for one
+/// release so existing scripts keep working.
+#[test]
+fn env_is_a_hidden_alias_for_dev() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "aliased"]);
+    let via_dev = out_str(&r.h5i_ok(&["dev", "status", "aliased"]));
+    let via_env = out_str(&r.h5i_ok(&["env", "status", "aliased"]));
+    assert!(via_dev.contains("env/tester/aliased"), "{via_dev}");
+    assert_eq!(via_dev, via_env);
+
+    // `ls` is the short form of `list`.
+    let ls = out_str(&r.h5i_ok(&["dev", "ls"]));
+    assert!(ls.contains("env/tester/aliased"), "{ls}");
+}
+
+/// An unrecognized source fails loudly and names the forms that do work,
+/// rather than silently creating a box from HEAD.
+#[test]
+fn dev_refuses_an_unrecognized_source() {
+    let r = Repo::new();
+    // A bare word is neither `.`, a PR spec, nor a repository URL.
+    let out = r.h5i(&["dev", "wat"]);
+    assert!(!out.status.success(), "unknown source must be refused");
+    let err = out_str(&out);
+    assert!(err.contains("unrecognized source"), "{err}");
+    assert!(err.contains("pull request"), "{err}");
+    assert!(err.contains("--new"), "{err}");
+}
+
+// ─── the output gate ────────────────────────────────────────────────────────
+
+/// `dev export` freezes the box and writes the three-file bundle. The patch is
+/// the box's diff, the report names every command that ran, and the receipt
+/// carries the policy digest that was actually enforced.
+#[test]
+fn export_writes_patch_report_and_receipt() {
+    let r = Repo::new();
+    r.h5i_ok(&["dev", "--name", "gate"]);
+    r.h5i_ok(&[
+        "dev",
+        "run",
+        "gate",
+        "--",
+        "sh",
+        "-c",
+        "echo generated > new.txt; echo built",
+    ]);
+    let out = out_str(&r.h5i_ok(&["dev", "export", "gate"]));
+    assert!(out.contains("exported env/tester/gate"), "{out}");
+
+    let bundle = r.dir.join("h5i-export/gate");
+    let patch = std::fs::read_to_string(bundle.join("patch.diff")).expect("patch.diff");
+    assert!(patch.contains("new.txt"), "{patch}");
+    assert!(patch.contains("+generated"), "{patch}");
+
+    let report = std::fs::read_to_string(bundle.join("report.md")).expect("report.md");
+    assert!(report.contains("# Export: env/tester/gate"), "{report}");
+    assert!(report.contains("echo built"), "the report lists what ran: {report}");
+    assert!(report.contains("isolation enforced"), "{report}");
+
+    let receipt: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(bundle.join("receipt.json")).unwrap())
+            .expect("receipt.json is valid JSON");
+    let env_manifest = r.manifest("gate");
+    assert_eq!(receipt["env_id"], "env/tester/gate");
+    assert_eq!(receipt["policy_digest"], env_manifest["policy_digest"]);
+    let records = receipt["records"].as_array().expect("records array");
+    assert!(!records.is_empty(), "{receipt}");
+    assert_eq!(records[0]["source"], "host-env-run");
+}
+
+/// An export never silently replaces an earlier one: evidence that can be
+/// overwritten without a word is evidence that can go missing.
+#[test]
+fn export_refuses_to_overwrite_without_force() {
+    let r = Repo::new();
+    r.h5i_ok(&["dev", "--name", "twice"]);
+    r.h5i_ok(&["dev", "run", "twice", "--", "sh", "-c", "echo one > f.txt"]);
+    r.h5i_ok(&["dev", "export", "twice"]);
+
+    let out = r.h5i(&["dev", "export", "twice"]);
+    assert!(!out.status.success(), "second export must refuse");
+    assert!(out_str(&out).contains("--force"), "{}", out_str(&out));
+
+    r.h5i_ok(&["dev", "export", "twice", "--force"]);
+}
+
+/// The bundle goes where you ask it to.
+#[test]
+fn export_honours_an_explicit_out_dir() {
+    let r = Repo::new();
+    r.h5i_ok(&["dev", "--name", "outdir"]);
+    let dest = r.dir.join("somewhere/else");
+    r.h5i_ok(&[
+        "dev",
+        "export",
+        "outdir",
+        "--out",
+        dest.to_str().unwrap(),
+    ]);
+    assert!(dest.join("patch.diff").is_file());
+    assert!(dest.join("report.md").is_file());
+    assert!(dest.join("receipt.json").is_file());
+}
+
+// ─── the embedded skill ─────────────────────────────────────────────────────
+
+/// The binary carries the skill, so it can be installed with no network, no
+/// npm, and no host-to-box file path — which is how it reaches the inside of a
+/// box.
+#[test]
+fn skill_install_writes_the_embedded_pages() {
+    let r = Repo::new();
+    let target = r.dir.join("skills-out");
+    let out = out_str(&r.h5i_ok(&[
+        "skill",
+        "install",
+        "--target",
+        target.to_str().unwrap(),
+    ]));
+    assert!(out.contains("installed the h5i skill"), "{out}");
+
+    let skill = std::fs::read_to_string(target.join("SKILL.md")).expect("SKILL.md");
+    assert!(skill.starts_with("---\nname: h5i\n"), "frontmatter: {skill}");
+    assert!(target.join("references/policy.md").is_file());
+
+    // `show` prints the same bytes without touching the filesystem.
+    let shown = out_str(&r.h5i_ok(&["skill", "show"]));
+    assert_eq!(shown, skill);
+    let page = out_str(&r.h5i_ok(&["skill", "show", "policy"]));
+    assert!(page.contains("Profiles"), "{page}");
+}
+
+/// Receipt integrity: the persisted policy grants the box `$WORK` and nothing
+/// else under its env directory, so the receipt log and its payloads — which
+/// live one level up from the worktree — are unreachable for writing from
+/// inside. A box can stage a new record in its spool; it cannot edit one the
+/// host already recorded.
+#[test]
+fn the_receipt_log_is_outside_the_boxs_write_grants() {
+    if !process_tier_runnable() {
+        eprintln!("skipping: this host cannot run process-tier confinement");
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["dev", "--name", "sealed", "--isolation", "process"]);
+    r.h5i_ok(&["dev", "run", "sealed", "--", "sh", "-c", "echo recorded"]);
+
+    let env_dir = r.env_dir("sealed");
+    assert!(env_dir.join("receipt.jsonl").is_file(), "a receipt was written");
+
+    let policy =
+        std::fs::read_to_string(env_dir.join("policy.resolved.toml")).expect("resolved policy");
+    let writes = policy
+        .lines()
+        .find(|l| l.trim_start().starts_with("fs_write"))
+        .expect("the resolved policy states its write grants");
+
+    // `$WORK` is the worktree — a subdirectory of the env dir. Nothing may
+    // grant the env dir itself, which is where receipt.jsonl and receipts/ are.
+    for grant in ["receipt", "receipts"] {
+        assert!(
+            !writes.contains(grant),
+            "the receipt store must never appear in a write grant: {writes}"
+        );
+    }
+    assert!(writes.contains("$WORK"), "the worktree is the write window: {writes}");
+    assert!(
+        !writes.contains(&env_dir.display().to_string()),
+        "no grant names the env directory itself: {writes}"
+    );
+}
+
+// ─── detached boxes: code copied in, host repository untouched ──────────────
+
+/// `h5i dev <url>` copies an external repository into the box. The host
+/// repository gets no branch, no worktree and no objects from it: the boundary
+/// the product claims only holds if outside code never lands here.
+#[test]
+fn a_cloned_box_never_touches_the_host_repository() {
+    let r = Repo::new();
+
+    // A separate repository to stand in for "somebody else's code".
+    let external = r.dir.parent().unwrap().join("external");
+    run_ok(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&external));
+    git(&external, &["config", "user.email", "x@h5i.test"]);
+    git(&external, &["config", "user.name", "X"]);
+    std::fs::write(external.join("app.py"), "print('external')\n").unwrap();
+    git(&external, &["add", "."]);
+    git(&external, &["commit", "-m", "external code"]);
+
+    let url = format!("file://{}", external.display());
+    let out = out_str(&r.h5i_ok(&["dev", &url]));
+    assert!(out.contains("env/tester/external"), "named for the repo: {out}");
+
+    // The code is in the box …
+    assert!(r.env_dir("external").join("work/app.py").is_file());
+
+    // … and nothing of it is in the host repository.
+    let branches = out_str(&git(&r.dir, &["branch", "--list"]));
+    assert!(
+        !branches.contains("external"),
+        "no branch for a detached box: {branches}"
+    );
+    let worktrees = out_str(&git(&r.dir, &["worktree", "list"]));
+    assert!(
+        !worktrees.contains("external"),
+        "no worktree registered in the host repo: {worktrees}"
+    );
+
+    // The manifest records where it came from, and status says so.
+    let m = r.manifest("external");
+    assert_eq!(m["source"].as_str(), Some(url.as_str()).map(|u| format!("clone:{u}")).as_deref());
+    let status = out_str(&r.h5i_ok(&["dev", "status", "external"]));
+    assert!(status.contains("detached"), "{status}");
+
+    // A shallow clone keeps an origin remote pointing at the source; a box must
+    // not inherit a network handle nobody granted it.
+    let remotes = out_str(&git(&r.env_dir("external").join("work"), &["remote"]));
+    assert!(remotes.trim().is_empty(), "origin must be dropped: {remotes}");
+}
+
+/// A detached box has no parent branch here, so `apply` and `rebase` refuse and
+/// point at the export gate instead of half-working.
+#[test]
+fn a_detached_box_refuses_apply_and_rebase() {
+    let r = Repo::new();
+    r.h5i_ok(&["dev", "--new", "--name", "scratch"]);
+    r.h5i_ok(&["dev", "run", "scratch", "--", "sh", "-c", "echo hi > f.txt"]);
+    r.h5i_ok(&["dev", "propose", "scratch"]);
+
+    for verb in ["apply", "rebase"] {
+        let out = r.h5i(&["dev", verb, "scratch"]);
+        assert!(!out.status.success(), "{verb} must refuse on a detached box");
+        let err = out_str(&out);
+        assert!(err.contains("detached"), "{verb}: {err}");
+        assert!(err.contains("export"), "{verb} names the way out: {err}");
+    }
+}
+
+/// An empty box still has an immutable base, so `export` produces everything
+/// the agent wrote rather than an empty patch.
+#[test]
+fn an_empty_box_exports_everything_the_agent_wrote() {
+    let r = Repo::new();
+    r.h5i_ok(&["dev", "--new", "--name", "fromzero"]);
+    r.h5i_ok(&[
+        "dev",
+        "run",
+        "fromzero",
+        "--",
+        "sh",
+        "-c",
+        "echo 'def main(): pass' > main.py",
+    ]);
+    r.h5i_ok(&["dev", "export", "fromzero"]);
+
+    let patch =
+        std::fs::read_to_string(r.dir.join("h5i-export/fromzero/patch.diff")).expect("patch");
+    assert!(patch.contains("main.py"), "{patch}");
+    assert!(patch.contains("+def main(): pass"), "{patch}");
+}
+
+// ─── the browser profile (M4) ───────────────────────────────────────────────
+
+/// A `browser` box either gets a browser or is refused at create with a
+/// message naming what to install. What it must never be is a box whose first
+/// `agent-browser open` fails with "not found".
+#[test]
+fn the_browser_profile_fails_closed_without_the_tooling() {
+    let r = Repo::new();
+    let out = r.h5i(&["dev", "--name", "br", "--profile", "browser"]);
+
+    let text = out_str(&out);
+    if out.status.success() {
+        // This host has Chrome and agent-browser: the box exists and says so.
+        let status = out_str(&r.h5i_ok(&["dev", "status", "br"]));
+        assert!(status.contains("profile=browser"), "{status}");
+    } else {
+        // Two ways a browser box is legitimately refused, and both must say
+        // which one it is: the host has no browser to grant, or the tier cannot
+        // enforce the egress allowlist the profile carries (it is a
+        // supervised/container profile, like `agent`).
+        let names_tooling = text.contains("agent-browser") || text.contains("Chrome");
+        let names_tier = text.contains("net.egress") && text.contains("cannot enforce");
+        assert!(
+            names_tooling || names_tier,
+            "the refusal must name what is missing: {text}"
+        );
+        if names_tooling {
+            assert!(text.contains("install"), "and how to get it: {text}");
+        }
+        assert!(
+            !r.env_dir("br").exists(),
+            "a refused create must leave nothing behind"
+        );
+    }
+}
+
+/// A cache that matches the project's lockfiles is offered to a box, and it is
+/// offered **read-only**: a cache a box could write would be a mutable surface
+/// shared between boxes, which is the thing the design refuses.
+#[test]
+fn a_matching_cache_is_mounted_read_only() {
+    if !process_tier_runnable() {
+        eprintln!("skipping: this host cannot run process-tier confinement");
+        return;
+    }
+    let r = Repo::new();
+    std::fs::write(r.dir.join("Cargo.lock"), "# pinned deps\n").unwrap();
+    git(&r.dir, &["add", "."]);
+    git(&r.dir, &["commit", "-m", "lockfile"]);
+
+    // No cache yet: a box would start cold, and `mounts` says so.
+    let out = out_str(&r.h5i_ok(&["dev", "cache", "mounts"]));
+    assert!(out.contains("cold"), "{out}");
+
+    // Materialize one by hand (refresh is not built yet) and it is offered.
+    let refusal = out_str(&r.h5i(&["dev", "cache", "refresh", "cargo"]));
+    assert!(
+        refusal.contains("[profile.cache-cargo]") && refusal.contains("net.egress"),
+        "the refusal must hand over the profile it needs: {refusal}"
+    );
+    let key = refusal
+        .split("/cache/cargo/")
+        .nth(1)
+        .and_then(|s| s.split_whitespace().next())
+        .expect("the refusal names the cache directory it prepared")
+        .to_string();
+    let cache = r.dir.join(".git/.h5i/cache/cargo").join(&key);
+    std::fs::create_dir_all(cache.join("cache")).unwrap();
+    std::fs::write(cache.join("marker"), b"cached").unwrap();
+
+    let out = out_str(&r.h5i_ok(&["dev", "cache", "mounts"]));
+    assert!(out.contains("~/.cargo/registry"), "{out}");
+    assert!(out.contains("read-only"), "{out}");
+
+    let listed = out_str(&r.h5i_ok(&["dev", "cache", "ls"]));
+    assert!(listed.contains("current"), "{listed}");
+
+    // Change the lockfile: the cache is still on disk but no longer matches, so
+    // it is listed as stale and no box is given it.
+    std::fs::write(r.dir.join("Cargo.lock"), "# different deps\n").unwrap();
+    let listed = out_str(&r.h5i_ok(&["dev", "cache", "ls"]));
+    assert!(listed.contains("stale"), "{listed}");
+    let out = out_str(&r.h5i_ok(&["dev", "cache", "mounts"]));
+    assert!(out.contains("cold"), "{out}");
 }

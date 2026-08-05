@@ -889,8 +889,12 @@ fn run_supervised(
         })
     });
 
-    // AF_UNIX is not granted by default (SCM_RIGHTS authority passing).
-    let unix_granted = false;
+    // AF_UNIX is not granted by default (SCM_RIGHTS authority passing) — a
+    // profile has to ask for it. What that grant does and does not widen is on
+    // `Profile::unix_sockets`; the short version is that abstract sockets stay
+    // inside the box's private netns and filesystem-bound ones stay inside its
+    // Landlock grants, so the residual is a host socket under a granted path.
+    let unix_granted = policy.profile.unix_sockets;
     let serve_h = std::thread::spawn(move || serve_with_pidfd(listener, pidfd, unix_granted));
 
     // Wall-clock kill + rusage (the child called setsid → killpg reaps the tree).

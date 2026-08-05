@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>h5i viewer</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; font: 13px/1.5 ui-sans-serif, system-ui, sans-serif;
+    background: #14161a; color: #e6e8eb;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; gap: .75rem;
+    padding: .5rem .75rem; background: #1c1f24; border-bottom: 1px solid #2a2e35;
+  }
+  #status { font-variant-numeric: tabular-nums; color: #9aa3ad; }
+  #holder { font-weight: 600; }
+  #holder.agent { color: #6fb3f2; }
+  #holder.human { color: #78d18c; }
+  button {
+    font: inherit; padding: .25rem .7rem; border-radius: 5px;
+    border: 1px solid #3a3f47; background: #23272d; color: inherit; cursor: pointer;
+  }
+  button:hover { background: #2c3138; }
+  main { flex: 1; display: grid; place-items: center; overflow: hidden; background: #0e1013; }
+  canvas { max-width: 100%; max-height: 100%; cursor: not-allowed; }
+  canvas.live { cursor: crosshair; }
+  #hint { padding: .4rem .75rem; color: #9aa3ad; background: #1c1f24; border-top: 1px solid #2a2e35; }
+</style>
+</head>
+<body>
+<header>
+  <strong>h5i viewer</strong>
+  <span>control: <span id="holder" class="agent">agent</span></span>
+  <span id="status">connecting…</span>
+</header>
+<main><canvas id="screen" width="1280" height="800"></canvas></main>
+<div id="hint">
+  The agent is driving. Run <code>h5i browser take &lt;box&gt;</code> to take control;
+  until then your clicks and keys are not forwarded.
+</div>
+<script>
+// The viewer is served by the forward, so same-origin is the only origin that
+// works: the forward refuses a WebSocket whose Origin is anything else.
+const params = new URLSearchParams(location.search);
+const token = params.get("token") || "";
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d");
+const statusEl = document.getElementById("status");
+const holderEl = document.getElementById("holder");
+
+let ws;
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/?token=${encodeURIComponent(token)}`);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { statusEl.textContent = "connected"; };
+  ws.onclose = () => { statusEl.textContent = "disconnected"; setTimeout(connect, 1500); };
+  ws.onerror = () => { statusEl.textContent = "error"; };
+  ws.onmessage = (ev) => {
+    // Frames arrive either as a JSON envelope carrying a base64 JPEG or as raw
+    // binary, depending on the stream server's mode. Handle both rather than
+    // pinning one and breaking on an upstream change.
+    if (typeof ev.data === "string") {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.type === "frame" && msg.data) draw("data:image/jpeg;base64," + msg.data);
+      else if (msg.type === "control" && msg.holder) setHolder(msg.holder);
+      return;
+    }
+    const blob = new Blob([ev.data], { type: "image/jpeg" });
+    const url = URL.createObjectURL(blob);
+    draw(url, () => URL.revokeObjectURL(url));
+  };
+}
+
+function draw(src, done) {
+  const img = new Image();
+  img.onload = () => {
+    if (canvas.width !== img.width || canvas.height !== img.height) {
+      canvas.width = img.width; canvas.height = img.height;
+    }
+    ctx.drawImage(img, 0, 0);
+    if (done) done();
+  };
+  img.src = src;
+}
+
+function setHolder(who) {
+  holderEl.textContent = who;
+  holderEl.className = who;
+  canvas.classList.toggle("live", who === "human");
+}
+
+// Input is sent optimistically. The forward drops it while the agent holds the
+// lock, so nothing here has to be trusted to enforce that — this only avoids
+// the pointless traffic and gives the human an honest cursor.
+function send(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+function at(e) {
+  const r = canvas.getBoundingClientRect();
+  return {
+    x: Math.round((e.clientX - r.left) * (canvas.width / r.width)),
+    y: Math.round((e.clientY - r.top) * (canvas.height / r.height)),
+  };
+}
+canvas.addEventListener("mousedown", (e) => send({ type: "mousedown", button: e.button, ...at(e) }));
+canvas.addEventListener("mouseup", (e) => send({ type: "mouseup", button: e.button, ...at(e) }));
+canvas.addEventListener("mousemove", (e) => send({ type: "mousemove", ...at(e) }));
+canvas.addEventListener("wheel", (e) => send({ type: "wheel", deltaX: e.deltaX, deltaY: e.deltaY, ...at(e) }), { passive: true });
+window.addEventListener("keydown", (e) => send({ type: "keydown", key: e.key, code: e.code }));
+window.addEventListener("keyup", (e) => send({ type: "keyup", key: e.key, code: e.code }));
+
+connect();
+</script>
+</body>
+</html>

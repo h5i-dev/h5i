@@ -14,26 +14,19 @@ toml = { version = "0.8", features = ["parse", "display"] }
 
 # The repo's primary product is the `h5i` binary, so it lives at the root
 # (`cargo install --path .` / `cargo run` do the obvious thing). The library it
-# drives is `crates/h5i-core`; the eDSL is `crates/h5i-orchestra`.
+# drives is `crates/h5i-core`.
 [package]
 name = "h5i"
 version = "0.3.1"
 edition = "2021"
-description = "h5i — auditable, sandboxed workspaces and programmable orchestration for AI coding agents (CLI)."
+description = "h5i — disposable, confined development environments for AI coding agents (CLI)."
 
 [[bin]]
 name = "h5i"
 path = "src/main.rs"
 
-[features]
-# Mirror the core `web` feature so `cargo build` / `--no-default-features`
-# toggle the dashboard exactly as before.
-default = ["web"]
-web = ["h5i-core/web"]
-
 [dependencies]
 h5i-core = { path = "crates/h5i-core" }
-h5i-orchestra = { path = "crates/h5i-orchestra" }
 git2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -49,9 +42,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 [dev-dependencies]
 tempfile = "3.8"
 serde_json = { workspace = true }
-# For the web-gated sandbox_api integration test (boots the real axum router).
-axum = "0.7"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 [profile.dev]
 debug = false

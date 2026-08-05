@@ -1,57 +1,28 @@
-// The MCP `tool_definitions()` builds a large `json!` literal; the default
-// macro recursion limit (128) is not enough to expand it.
-#![recursion_limit = "512"]
-
 // ─── public surface ─────────────────────────────────────────────────────────
-// Modules consumed by the `h5i` binary, the integration tests, or the MCP
-// surface. These form the crate's de-facto public API. (`error` stays public
-// because `H5iError` appears in the signatures of many of them.)
-pub mod attention;
-pub mod blame;
-pub mod claude;
-pub mod cli_routing;
-pub mod codex;
-pub mod compliance;
-pub mod ctx;
-/// Deprecated alias — use `ctx` instead.
-pub use ctx as gcc;
+// The domain: an environment is a confined worktree with a pinned policy, and
+// a receipt is the record of what actually ran inside it. (`error` stays public
+// because `H5iError` appears in the signatures of most of them.)
+pub mod browser;
+pub mod cache;
+pub mod control;
 pub mod env;
-// The error type now lives in its own leaf crate (`h5i-error`) so extracted
-// crates can depend on it without depending on `h5i-core`. Re-exported as
+pub mod export;
+pub mod receipt;
+pub mod redact;
+pub mod refstore;
+pub mod skill;
+pub mod source;
+pub mod storage;
+pub mod ui;
+pub mod view;
+// The error type lives in its own leaf crate (`h5i-error`) so extracted crates
+// can depend on it without depending on `h5i-core`. Re-exported as
 // `crate::error` so every existing `crate::error::*` path resolves unchanged.
 pub use h5i_error as error;
-pub mod filter_rules;
-pub mod hooks;
-pub mod injection;
-pub mod lfs;
-pub mod mcp;
-pub mod memory;
-pub mod metadata;
-pub mod msg;
-pub mod objects;
-pub mod policy;
-pub mod pr;
-pub mod prompt_score;
-pub mod radio;
-pub mod recap;
-pub mod repository;
-pub mod resume;
-pub mod review;
-pub mod rules;
-pub mod session_log;
-pub mod storage;
-pub mod structured;
-pub mod team;
-pub mod token_filter;
-pub mod ui;
-pub mod vibe;
-#[cfg(feature = "web")]
-pub mod server;
 
-// The confinement layer now lives in its own crate (`h5i-sandbox`). Re-exported
-// so every existing `crate::sandbox::*` / `crate::container::*` / … path
-// resolves unchanged. `idents` stays here (a core identity constant table).
-pub(crate) mod idents;
+// The confinement layer lives in its own crate (`h5i-sandbox`). Re-exported so
+// every `crate::sandbox::*` / `crate::container::*` / … path resolves inside
+// this crate unchanged.
 pub use h5i_sandbox::{
     auth_proxy, cgroup, container, sandbox, sandbox_policy, secrets, secrets_broker, supervisor,
 };
@@ -60,9 +31,3 @@ pub use h5i_sandbox::{
 // on macOS/other targets in the cross-check job.
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub use h5i_sandbox::seccomp_notify;
-/// Deterministic risk classification. Once web-dashboard-only, now also
-/// feeding the `attention` triage (`h5i status` + `/api/attention`), so it is
-/// unconditional — it is a pure classifier with no web dependencies.
-pub(crate) mod risk;
-
-pub use repository::H5iRepository;

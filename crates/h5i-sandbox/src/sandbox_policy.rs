@@ -194,6 +194,11 @@ impl AgentRuntime {
         match name {
             "agent-claude" => Some(AgentRuntime::Claude),
             "agent-codex" => Some(AgentRuntime::Codex),
+            // A `browser` box is an agent box with a browser in it, and it is
+            // built from whoever is driving it — so it engages the credential
+            // proxy exactly like `agent` does. Without this it would be the one
+            // agent profile that quietly had no brokered credential.
+            "browser" | "agent" => Some(AgentRuntime::detect()),
             _ => None,
         }
     }
@@ -278,6 +283,39 @@ pub struct PrivateBind {
 /// the real `~/.claude.json` is never raced by concurrent boxes. Unlike
 /// [`PrivateBind`] the target is an absolute host path (the real `$HOME/…`), not a
 /// workspace-relative one. Computed at run time in `env::prepare_home_state`.
+/// Authenticated egress to one host, with the credential staying on the host.
+///
+/// The shape is deliberately the one `auth_proxy` already implements: a reverse
+/// proxy the box is pointed at, not a forward proxy that would have to
+/// terminate TLS. The limit that follows is real and worth knowing before you
+/// declare one — it binds clients you can point at another origin (anything
+/// with a base-URL setting), and a plain `curl https://<host>` still goes
+/// nowhere.
+///
+/// ```toml
+/// [[profile.review.auth]]
+/// host = "api.github.com"
+/// credential_env = "GITHUB_TOKEN"   # read on the host, never in the box
+/// base_url_var = "GH_HOST"          # what the client reads
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthGrant {
+    /// Upstream host the proxy will ever connect to (an SSRF pin).
+    pub host: String,
+    /// Host-side environment variable holding the credential.
+    pub credential_env: String,
+    /// Environment variable the box is given, pointing at the proxy.
+    pub base_url_var: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RoBind {
+    /// Host directory the box reads through the bind.
+    pub backing: PathBuf,
+    /// Absolute path inside the box the backing shadows.
+    pub target: PathBuf,
+}
+
 #[derive(Debug, Clone)]
 pub struct HomeBind {
     /// Host backing copy under the env's `home/` tree (distinct inode per env).
@@ -317,6 +355,11 @@ pub struct Profile {
     /// non-secret policies, so their digest is unchanged.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub secret_grants: Vec<SecretGrant>,
+    /// Authenticated egress grants (see [`AuthGrant`]). Part of the profile and
+    /// therefore of the pinned digest: which hosts a box may authenticate
+    /// against is exactly the kind of thing a reviewer must see.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auth: Vec<AuthGrant>,
     pub mem_bytes: Option<u64>,
     pub max_procs: Option<u64>,
     pub wall_secs: u64,
@@ -365,6 +408,35 @@ pub struct Profile {
     /// digests are unchanged (serialized only when non-empty).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub persona: Vec<String>,
+    /// Allow `AF_UNIX` sockets (`[profile.X.net] unix = true`). Off by default:
+    /// `SCM_RIGHTS` passes file descriptors, which is authority smuggling, so
+    /// the supervised tier's `socket()` gate denies the family unless a profile
+    /// asks for it.
+    ///
+    /// What the grant does *not* open, and this is why it can be granted at all:
+    ///
+    /// - **Abstract-namespace sockets** (leading NUL) are scoped by the network
+    ///   namespace, and a supervised box has a private one. They cannot name
+    ///   anything the host is listening on.
+    /// - **Filesystem-bound sockets** are scoped by Landlock, so a `connect()`
+    ///   can only name a path the profile already granted. The usual host
+    ///   sockets — `/tmp/.X11-unix`, `tmux-*`, an `ssh-agent` — live under
+    ///   `/tmp`, which the kernel tiers redirect to a per-env scratch.
+    ///
+    /// What is left is a host socket sitting inside a granted path, and that is
+    /// a real residual: granting this widens the box by exactly the IPC
+    /// endpoints its own filesystem grants can reach. It is opt-in per profile
+    /// and pinned in the digest for that reason.
+    ///
+    /// The `browser` profile sets it because the `agent-browser` daemon's
+    /// control socket is a filesystem-bound `AF_UNIX` listener; without the
+    /// grant the daemon dies at startup with `Failed to bind socket:
+    /// Operation not permitted`.
+    ///
+    /// Appended last, and serialized only when `true`, so every existing
+    /// profile's canonical serialization — and its pinned digest — is unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unix_sockets: bool,
 }
 
 /// Read-only system paths granted by default at the `process` tier — enough to
@@ -402,6 +474,7 @@ impl Profile {
             net_egress: Vec::new(),
             secrets: Vec::new(),
             secret_grants: Vec::new(),
+            auth: Vec::new(),
             mem_bytes: Some(4 * 1024 * 1024 * 1024),
             max_procs: Some(256),
             wall_secs: DEFAULT_WALL.as_secs(),
@@ -422,6 +495,7 @@ impl Profile {
             allow_command_extractors: false,
             shell_rcfile: None,
             persona: Vec::new(),
+            unix_sockets: false,
         }
     }
 
@@ -507,8 +581,231 @@ impl Profile {
         p
     }
 
+    /// Built-in **`browser`** profile (`--profile browser`): the agent-in-box
+    /// profile plus the surface a headless Chrome and the `agent-browser`
+    /// daemon need, so the agent can drive a real browser against the dev
+    /// server it just started.
+    ///
+    /// The browser runs in the **same box** as the agent. The dev server is
+    /// then on `localhost:3000` for both of them with no namespace sharing, no
+    /// pod and no second image: at the kernel tiers the "image" is the host
+    /// filesystem under Landlock grants, so a browser box is a profile, not an
+    /// architecture (roadmap 5.2).
+    ///
+    /// What is added, and why each piece:
+    ///
+    /// - **read**: the discovered Chrome and `agent-browser` binaries and their
+    ///   resource trees, plus fontconfig and the system fonts — Chrome exits
+    ///   rather than rendering without them.
+    /// - **write**: `/dev/shm` (Chrome's shared-memory transport; without it
+    ///   the renderer dies unless every caller remembers
+    ///   `--disable-dev-shm-usage`).
+    /// - Loopback is reachable inside the box's own network namespace, so the
+    ///   dev server needs no grant at all. External egress stays whatever the
+    ///   agent profile allows: the browser gets no wider reach than the agent.
+    ///
+    /// Chrome's *own* sandbox does not run here. Our seccomp deny-list blocks
+    /// the namespace syscalls it needs, at every tier, so Chrome is launched
+    /// with `--no-sandbox` and h5i's box is the boundary. That is one layer
+    /// fewer than a browser on the host has, and it is stated in the roadmap's
+    /// limits rather than hidden.
+    pub fn builtin_browser(isolation: IsolationClaim, runtime: AgentRuntime) -> Profile {
+        let mut p = Profile::builtin_agent(isolation, runtime);
+        p.name = "browser".to_string();
+        // Host paths are how the kernel tiers get a browser: the "image" there
+        // is the host filesystem under Landlock grants. A container brings its
+        // own Chrome and agent-browser, so granting host paths would be noise
+        // in a digest and a lie in the policy — the box cannot see them.
+        if isolation < IsolationClaim::Container {
+            for path in browser_read_grants() {
+                if !p.fs_read.contains(&path) {
+                    p.fs_read.push(path);
+                }
+            }
+        }
+        // Chrome's shared-memory transport. Granting it is better than relying
+        // on every caller to pass --disable-dev-shm-usage.
+        p.fs_write.push("/dev/shm".into());
+        // The agent-browser daemon's control socket is a filesystem-bound
+        // AF_UNIX listener under `AGENT_BROWSER_SOCKET_DIR`, and the supervised
+        // tier's socket() gate denies that family by default. Without this the
+        // daemon exits at startup with "Failed to bind socket: Operation not
+        // permitted" — and, because it redirects its own stderr to /dev/null
+        // before failing, the caller sees "exited during startup with no error
+        // output". See `Profile::unix_sockets` for what the grant does and does
+        // not widen.
+        p.unix_sockets = true;
+        // A browser is heavier than a build: renderers are processes and tabs
+        // are memory.
+        p.mem_bytes = Some(12 * 1024 * 1024 * 1024);
+        p.max_procs = Some(1024);
+        p
+    }
+
     pub fn wall(&self) -> Duration {
         Duration::from_secs(self.wall_secs)
+    }
+}
+
+
+// ─── browser discovery ──────────────────────────────────────────────────────
+
+/// Candidate Chrome/Chromium binaries, in preference order. `agent-browser
+/// install` downloads Chrome for Testing under the user's cache, and a
+/// Playwright install is a common existing source; a system Chrome is used when
+/// neither is present.
+const CHROME_CANDIDATES: &[&str] = &[
+    "~/.cache/agent-browser",
+    "~/.local/share/agent-browser",
+    "~/.cache/ms-playwright",
+    "/opt/google/chrome",
+    "/usr/lib/chromium",
+    "/usr/lib/chromium-browser",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+];
+
+/// Candidate `agent-browser` binaries: cargo install, a user-local npm bin, a
+/// system install.
+const AGENT_BROWSER_CANDIDATES: &[&str] = &[
+    "~/.cargo/bin/agent-browser",
+    "~/.local/bin/agent-browser",
+    "/usr/local/bin/agent-browser",
+    "/usr/bin/agent-browser",
+];
+
+/// Font and rendering support Chrome needs to start at all.
+const BROWSER_SUPPORT_PATHS: &[&str] = &[
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+    "~/.fonts",
+    "~/.local/share/fonts",
+    "/etc/fonts",
+    "~/.config/fontconfig",
+    "~/.cache/fontconfig",
+];
+
+/// Expand `~` against `$HOME`, leaving other paths untouched.
+fn expand_home(path: &str) -> Option<std::path::PathBuf> {
+    match path.strip_prefix("~/") {
+        Some(rest) => std::env::var("HOME")
+            .ok()
+            .filter(|h| !h.is_empty())
+            .map(|h| std::path::PathBuf::from(h).join(rest)),
+        None => Some(std::path::PathBuf::from(path)),
+    }
+}
+
+/// Every candidate browser path that exists on this host, as profile grants.
+///
+/// Only existing paths are granted: a Landlock allowlist naming a path that is
+/// not there is noise, and it makes the resolved policy (which is digested)
+/// depend on wishful thinking rather than on what the box can actually reach.
+pub fn browser_read_grants() -> Vec<String> {
+    CHROME_CANDIDATES
+        .iter()
+        .chain(AGENT_BROWSER_CANDIDATES)
+        .chain(BROWSER_SUPPORT_PATHS)
+        .filter(|c| expand_home(c).map(|p| p.exists()).unwrap_or(false))
+        .map(|c| c.to_string())
+        .collect()
+}
+
+/// Did we find anything that could actually run a browser **on this host**?
+///
+/// Only meaningful for the kernel tiers, where the box reaches the host
+/// filesystem. A container box gets its browser from the image, so `create`
+/// does not consult this there.
+pub fn browser_tooling_present() -> (bool, bool) {
+    let any = |list: &[&str]| {
+        list.iter()
+            .any(|c| expand_home(c).map(|p| p.exists()).unwrap_or(false))
+    };
+    (any(CHROME_CANDIDATES), any(AGENT_BROWSER_CANDIDATES))
+}
+
+#[cfg(test)]
+mod browser_profile_tests {
+    use super::*;
+
+    #[test]
+    fn browser_is_the_agent_surface_plus_the_browser_surface() {
+        let agent = Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude);
+        let browser = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
+
+        assert_eq!(browser.name, "browser");
+        // Everything the agent could reach, the browser box can still reach …
+        for r in &agent.fs_read {
+            assert!(browser.fs_read.contains(r), "lost an agent read grant: {r}");
+        }
+        // … and the browser's own egress is exactly the agent's, never wider.
+        assert_eq!(browser.net_egress, agent.net_egress);
+        // Chrome's shared-memory transport.
+        assert!(browser.fs_write.iter().any(|w| w == "/dev/shm"));
+        // Room for renderers.
+        assert!(browser.mem_bytes > agent.mem_bytes);
+        assert!(browser.max_procs > agent.max_procs);
+    }
+
+    #[test]
+    fn only_the_browser_profile_gets_af_unix() {
+        // The agent-browser daemon's control socket is a filesystem-bound
+        // AF_UNIX listener, and the supervised tier's socket() gate denies that
+        // family by default — so the daemon exits at startup without this.
+        assert!(Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude).unix_sockets);
+        // Nothing else asks for it. SCM_RIGHTS passes file descriptors, so the
+        // grant widens a box by the IPC endpoints its filesystem grants can
+        // reach, and it stays opt-in for that reason.
+        assert!(!Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude).unix_sockets);
+        assert!(!Profile::builtin("default", IsolationClaim::Supervised).unix_sockets);
+    }
+
+    #[test]
+    fn the_af_unix_grant_is_in_the_digest_and_only_when_asked_for() {
+        // It is appended last and skipped when false, so every profile that
+        // does not ask for it keeps the exact serialization — and therefore the
+        // pinned digest — it had before the field existed.
+        let plain = Profile::builtin("default", IsolationClaim::Supervised);
+        assert!(!toml::to_string(&plain).unwrap().contains("unix_sockets"));
+        // And a profile that does ask for it says so where a reviewer looks.
+        let browser = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
+        assert!(toml::to_string(&browser).unwrap().contains("unix_sockets = true"));
+    }
+
+    #[test]
+    fn browser_stays_runtime_scoped() {
+        let claude = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
+        let codex = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Codex);
+        // A browser box must not become a way around the runtime scoping: a
+        // Claude browser box still cannot reach Codex state or the OpenAI API.
+        assert_ne!(claude.net_egress, codex.net_egress);
+        assert!(!claude.fs_write.iter().any(|w| w.contains(".codex")));
+        assert!(!codex.fs_write.iter().any(|w| w.contains(".claude")));
+    }
+
+    #[test]
+    fn only_paths_that_exist_are_granted() {
+        // The resolved policy is digested, so a grant naming a path that is not
+        // there would make the digest depend on wishful thinking.
+        for g in browser_read_grants() {
+            let p = expand_home(&g).expect("expandable");
+            assert!(p.exists(), "granted a path that does not exist: {g}");
+        }
+    }
+
+    #[test]
+    fn expand_home_only_touches_tilde_paths() {
+        std::env::set_var("HOME", "/home/example");
+        assert_eq!(
+            expand_home("~/.cache/x").unwrap(),
+            std::path::PathBuf::from("/home/example/.cache/x")
+        );
+        assert_eq!(
+            expand_home("/usr/bin/chromium").unwrap(),
+            std::path::PathBuf::from("/usr/bin/chromium")
+        );
     }
 }
 
@@ -593,6 +890,22 @@ pub struct ResolvedPolicy {
     /// read-only rootfs never mounts host HOME, so there is no race to close there).
     #[serde(skip)]
     pub home_binds: Vec<HomeBind>,
+    /// Runtime-only **read-only** binds — never serialized, so they cannot move
+    /// a pinned policy digest. Each shadows a path inside the box with a host
+    /// directory the box may read and never write: today the warm dependency
+    /// caches (roadmap 5.8). Applied as `MS_BIND` followed by a
+    /// `MS_REMOUNT | MS_RDONLY`, in the same private mount namespace and before
+    /// Landlock, exactly like the interactive config lockdown.
+    #[serde(skip)]
+    pub ro_binds: Vec<RoBind>,
+    /// The one **writable** bind, and the only way a cache is ever written.
+    ///
+    /// Runtime-only and serde-skipped, like `ro_binds`. Deliberately an
+    /// `Option` of one rather than a list: `h5i dev cache refresh` is the sole
+    /// producer, it populates exactly one ecosystem's cache, and a policy that
+    /// cannot express "several writable binds" cannot grow one by accident.
+    #[serde(skip)]
+    pub cache_write: Option<RoBind>,
     /// Runtime-only: enforce the worktree (`$WORK`) as **read-only** — a
     /// read-only observer session (`env shell --readonly`). Never serialized (it
     /// is a per-invocation enforcement mode, not policy): a readonly session and
@@ -625,6 +938,8 @@ impl ResolvedPolicy {
             env_inbox: None,
             private_binds: Vec::new(),
             home_binds: Vec::new(),
+            ro_binds: Vec::new(),
+            cache_write: None,
             work_readonly: false,
             user_egress_allow: Vec::new(),
         }

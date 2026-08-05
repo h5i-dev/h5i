@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i: Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)</title>
-  <meta name="description" content="h5i is an auditable workspace layer for AI coding agents: Claude Code, Codex, and agent teams. Run many coding agents in isolated workspaces, seal independent attempts, verify neutrally, and merge one auditable result, versioned in refs/h5i/*, no SaaS.">
-  <meta name="keywords" content="ai agent teams, agent ensembles, multi-agent coding, auditable workspace, neutral verifier, sealed submissions, ai agent audit, agent provenance, confined agent sandbox, ai code governance, prompt injection detection, claude code, codex, git sidecar, h5i">
+  <title>h5i: Disposable Development Environments for AI Coding Agents (Claude Code &amp; Codex)</title>
+  <meta name="description" content="h5i gives a coding agent full autonomy inside a disposable, confined box holding the code, the toolchain, the dev server and a real browser. Your credentials never enter it; a reviewed patch and an execution receipt are the only things that come out.">
+  <meta name="keywords" content="ai agent sandbox, disposable development environment, confined coding agent, agent container, landlock seccomp sandbox, network egress allowlist, headless browser for agents, agent browser automation, untrusted code review, claude code, codex, h5i">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -27,14 +27,14 @@
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="og:image:width" content="2257">
   <meta property="og:image:height" content="1222">
-  <meta property="og:image:alt" content="h5i serve workbench: an attention rail showing what needs a human beside sealed agent lanes, every claim badged by its authority (enforced, verified, observed)">
+  <meta property="og:image:alt" content="h5i: a coding agent working inside a disposable, confined box, with a reviewed patch and an execution receipt as the only way out">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i: Auditable Workspaces for AI Coding Agents (Claude Code &amp; Codex)">
   <meta name="twitter:description" content="Auditable workspaces for AI coding agents. Run Claude Code, Codex, or whole agent teams in sandboxed Git worktrees. Prompts, commands, logs, policies, reviews, and verifier results versioned beside your code. Start with one, scale to many. No SaaS.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta name="twitter:image:alt" content="h5i serve workbench: an attention rail showing what needs a human beside sealed agent lanes, every claim badged by its authority (enforced, verified, observed)">
+  <meta name="twitter:image:alt" content="h5i: a coding agent working inside a disposable, confined box, with a reviewed patch and an execution receipt as the only way out">
 
   <!-- Structured data -->
   <script type="application/ld+json">
@@ -55,7 +55,7 @@
         "name": "h5i",
         "alternateName": "high-five",
         "url": "https://h5i.dev/",
-        "description": "An auditable workspace layer for AI coding agents: run many coding agents in isolated workspaces, seal independent attempts, verify neutrally, and merge one auditable result.",
+        "description": "A contained agentic development environment: a disposable box holding the code, the agent, the toolchain, the dev server and a real browser, with a reviewed patch as the only way out.",
         "publisher": {"@id": "https://h5i.dev/#org"},
         "inLanguage": "en"
       },
@@ -65,8 +65,8 @@
         "name": "h5i",
         "alternateName": "high-five",
         "applicationCategory": "DeveloperApplication",
-        "operatingSystem": "Linux, macOS, Windows",
-        "description": "An auditable workspace layer for AI coding agents. It runs Claude Code, Codex, and other agents in isolated, sandboxed Git workspaces (tiered isolation + a network egress allowlist) and records the prompts, commands, reasoning traces, logs, sandbox policy, reviews, and verifier results behind every change as Git-native sidecar refs under refs/h5i/*, with no SaaS.",
+        "operatingSystem": "Linux",
+        "description": "A contained agentic development environment. h5i gives Claude Code, Codex and other coding agents full autonomy inside a disposable box: the code is copied in, the toolchain, tests, dev server and a real headless browser run inside one boundary enforced by Landlock, seccomp, namespaces and a network egress allowlist, credentials stay on the host behind a proxy, and the only way out is a reviewed patch with an execution receipt.",
         "url": "https://h5i.dev/",
         "downloadUrl": "https://github.com/h5i-dev/h5i",
         "softwareHelp": "/manual/",
@@ -93,47 +93,42 @@
           {
             "@type": "Question",
             "name": "What is h5i?",
-            "acceptedAnswer": {"@type": "Answer", "text": "h5i (pronounced high-five) is an open-source auditable workspace layer for AI coding agents. It runs Claude Code, Codex, and other agents in isolated Git workspaces and records the prompt, model, agent, reasoning, commands, logs, sandbox policy, reviews, and verifier results behind every change, then lets teams merge one evidence-backed result. Technically, h5i stores this evidence as Git-native sidecar refs under refs/h5i/*, so it travels with your repo with no hosted control plane."}
+            "acceptedAnswer": {"@type": "Answer", "text": "h5i (pronounced high-five) is an open-source contained agentic development environment. It gives a coding agent a disposable box holding the code, the toolchain, the dev server and a real browser, confined by a pinned, fail-closed policy, and gives you back a reviewed patch plus a receipt of everything that ran. One Rust binary, Apache 2.0, no hosted control plane."}
           },
           {
             "@type": "Question",
-            "name": "How does h5i run an agent team?",
-            "acceptedAnswer": {"@type": "Answer", "text": "h5i team runs several agents on the same task, each in its own isolated h5i env, through a phased protocol: create a roster of personas (runtime, model, role), dispatch the task to all, let each agent work sealed and independently, freeze immutable submissions, run permissioned peer review, verify each candidate with a neutral sandboxed verifier, then apply one winner. State is an append-only event log in refs/h5i/team that travels with the repo. It is a thin coordination layer, not a group chat and not a daemon."}
+            "name": "How is h5i different from just running the agent in a container?",
+            "acceptedAnswer": {"@type": "Answer", "text": "A container is one of the four tiers h5i can use, and on its own it is the weakest at the thing that matters most here: its egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. The supervised tier puts the box in a private network namespace and enforces the allowlist with nftables rules pinned to resolved IPs, plus a seccomp gate on socket(), so a program that ignores proxy settings still cannot reach an off-list address. On top of that you get the copy-in workspace, the credential broker, the browser and the output gate."}
           },
           {
             "@type": "Question",
-            "name": "How is the winning patch chosen in an agent team?",
-            "acceptedAnswer": {"@type": "Answer", "text": "A neutral verifier, not the agents. h5i team verify replays each frozen candidate at the shared base in a fresh sandboxed worktree and runs the declared command itself, so finalization never trusts an agent's own captures. Hard gates (tests pass, applies cleanly) come only from that run; smallest-diff breaks ties only among gate-passers, so no candidate wins by deleting tests or stubbing features. The verdict is explainable, apply is gated, and if nothing clears the gates it records no_verdict instead of applying a loser."}
+            "name": "Do my credentials go into the box?",
+            "acceptedAnswer": {"@type": "Answer", "text": "No. The model API key stays on the host and a reverse proxy injects it into outbound requests, scoped per runtime, so a Claude box cannot reach an OpenAI credential. Any other service works the same way as a policy entry. The per-box copy of the agent HOME config has credential-shaped entries stripped at any depth, keeping only the runtime's own token."}
           },
           {
             "@type": "Question",
-            "name": "Does h5i work with Claude Code and Codex?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i is built for teams where AI agents write code alongside humans. Claude Code integrates via hooks and MCP; Codex uses explicit prelude, sync, and finish commands. Both agents restore the same shared context when a session starts and check their work back in when it ends."}
+            "name": "Can the agent tamper with the receipt?",
+            "acceptedAnswer": {"@type": "Answer", "text": "It cannot rewrite what is already recorded. The box's only write window under its own directory is a staging spool; the receipt log and stored payloads sit outside every grant it has. The box stages a record, the host ingests it, and ordering and timestamps are the host's. An agent can still stage extra records or stop writing, and both are visible as a gap between host-observed exits and box-reported commands."}
           },
           {
             "@type": "Question",
-            "name": "How is h5i different from plain Git?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Git versions code. h5i adds four semantic dimensions on top: temporal (history), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging). It stores this metadata in dedicated refs/h5i/* refs so it travels with the repo without touching your commit history."}
+            "name": "Can h5i stop an agent leaking my source code?",
+            "acceptedAnswer": {"@type": "Answer", "text": "No. Containment stops the agent touching your host. It does not stop it putting private code in a prompt to the model API. That is a separate control: a self-hosted model, or a profile with no model egress at all."}
           },
           {
             "@type": "Question",
-            "name": "Can h5i reduce AI token costs?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i keeps raw tool output out of the agent's context with content-addressed capture and snapshots agent memory, so the next session skips re-grounding. In a reproducible benchmark, capture cut tool-output tokens by ~95% with full task fidelity."}
+            "name": "Does h5i need root, or a VM?",
+            "acceptedAnswer": {"@type": "Answer", "text": "Neither. h5i uses Landlock, seccomp and unprivileged user namespaces, adding rootless Podman if available. h5i box probe reports what the host can actually enforce, and an explicitly requested tier the host cannot satisfy fails closed rather than silently downgrading."}
+          },
+          {
+            "@type": "Question",
+            "name": "Can h5i give an AI agent a real browser?",
+            "acceptedAnswer": {"@type": "Answer", "text": "Yes. A browser box runs headless Chrome and the agent-browser daemon alongside the agent, so the dev server is on localhost for both. The agent reads an accessibility tree rather than HTML and clicks by handle. A human can watch the same viewport over a loopback forward and take control, and the page's console errors and failed requests land in the receipt."}
           },
           {
             "@type": "Question",
             "name": "Is h5i free and open source?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i is free and open source under the Apache 2.0 license, with no lock-in. It is written in Rust and runs on Linux, macOS, and Windows."}
-          },
-          {
-            "@type": "Question",
-            "name": "Can h5i detect prompt injection in AI-generated code?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i audit scan applies deterministic regex rules to every OBSERVE/THINK/ACT entry in an agent's reasoning trace to flag prompt-injection signals, with no model in the audit path, and can rank which commits most need human review."}
-          },
-          {
-            "@type": "Question",
-            "name": "Can h5i sandbox an AI agent's commands?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i env gives an agent a disposable, confined environment: a git worktree plus a policy that limits what code can read, write, and reach over the network. It picks the strongest isolation the host can enforce (Landlock, seccomp, and namespaces, up to a rootless network egress allowlist), records every command and blocked access, and nothing reaches your branch until you apply. No root and no VM required."}
+            "acceptedAnswer": {"@type": "Answer", "text": "Yes. Apache 2.0, written in Rust, no lock-in and no hosted service. Linux first: rootless Podman on Linux and WSL2."}
           }
         ]
       }
@@ -416,343 +411,6 @@
     }
     .hero-shot-caption code { font-family: var(--mono); color: var(--red-text); font-size: 0.92em; }
 
-    /* ── Embedded workbench dashboard (real h5i serve DOM, scoped dark) ───────
-       The markup mirrors web/src/BoardView.tsx (and the other workbench
-       lenses) and the rules below are ported from web/src/theme.css,
-       namespaced under .ee so the dark palette never bleeds into the light
-       page. It is live HTML+CSS, not a screenshot — crisp at any zoom. */
-    /* The workbench is a fixed 980px scene inside .ee-fit; below that width the
-       JS scaler shrinks it like a video frame (same behavior as the hero film)
-       instead of reflowing it, which corrupted the layout on phones. */
-    .ee-fit { margin: 3.6rem auto 0; max-width: 980px; }
-    .ensemble-embed {
-      --bp-bg: #0a0c10; --bp-surface: #12161c; --bp-surface-2: #1a1f26;
-      --bp-elev: #232931; --bp-border: #2a3138; --bp-border-strong: #3a424b;
-      --bp-text: #f6f7f9; --bp-text-muted: #abb3bf; --bp-text-dim: #6b7785;
-      --h5-accent: #42e2d0; --h5-accent-hi: #7cefe0;
-      --h5-accent-bg: rgba(66,226,208,0.14); --h5-accent-glow: rgba(66,226,208,0.32);
-      --h5-pass: #5ee2a0; --h5-fail: #ff6b6b; --h5-run: #f0a050; --h5-model: #b48bd9;
-      --fd: var(--sans); --fm: var(--mono);
-      border: 1px solid #20262e; border-radius: var(--radius-lg); overflow: hidden;
-      box-shadow: 0 40px 90px rgba(0,0,0,0.55); text-align: left;
-      color: var(--bp-text);
-    }
-    /* Browser-window chrome */
-    .ee-bar { display: flex; align-items: center; gap: 11px; padding: 9px 14px;
-      background: #0d1117; border-bottom: 1px solid var(--bp-border); }
-    .ee-dots { display: flex; gap: 7px; }
-    .ee-dot { width: 11px; height: 11px; border-radius: 50%; background: #2a3138; }
-    .ee-dot.r { background: #e06c75; } .ee-dot.y { background: #e5c07b; } .ee-dot.g { background: #98c379; }
-    .ee-addr { font-family: var(--fm); font-size: 0.72rem; color: var(--bp-text-dim); }
-    .ee-addr b { color: var(--bp-text-muted); font-weight: 400; }
-    .ee-tabs { margin-left: auto; display: flex; gap: 2px; }
-    .ee-tab { font: inherit; border: 0; background: transparent; font-family: var(--fm); font-size: 0.62rem; text-transform: uppercase;
-      letter-spacing: 0.1em; color: var(--bp-text-dim); padding: 4px 9px; border-radius: 5px; transition: color 0.12s, background 0.12s; }
-    button.ee-tab { cursor: pointer; }
-    button.ee-tab:hover { color: var(--bp-text-muted); background: var(--bp-surface-2); }
-    .ee-tab.active, button.ee-tab.active:hover { color: #04201d; background: var(--h5-accent); font-weight: 700; }
-    .ee-panel[hidden] { display: none; }
-    /* Workbench layout: bar spans the top; the attention rail is a persistent
-       left column; the three lens panels share the right cell (one visible). */
-    .ensemble-embed { display: grid; grid-template-columns: 158px 1fr; }
-    .ee-bar { grid-column: 1 / -1; }
-    .ee-rail { grid-column: 1; grid-row: 2; border-right: 1px solid var(--bp-border);
-      background: var(--bp-surface); padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; }
-    .ee-panel { grid-column: 2; grid-row: 2; min-width: 0; }
-    .ee-rail-head { font-family: var(--fm); font-size: 0.56rem; letter-spacing: 0.12em;
-      text-transform: uppercase; color: var(--bp-text-dim); margin-top: 6px; }
-    .ee-rail-head:first-child { margin-top: 0; }
-    .ee-rail-head.urgent { color: #ff6b6b; }
-    .ee-rail-row { display: flex; align-items: center; gap: 5px; font-size: 0.66rem;
-      color: var(--bp-text); line-height: 1.3; }
-    .ee-rtitle { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ee-rdot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
-    .ee-rdot.crit { background: #ff6b6b; }
-    .ee-rdot.dec { background: var(--h5-accent); }
-    .ee-rdot.act { background: #5ee2a0; }
-    /* Authority badges — the epistemic vocabulary: how each claim is known. */
-    .ee-abadge { font-family: var(--fm); font-size: 0.5rem; border: 1px solid currentColor;
-      border-radius: 3px; padding: 0 3px; line-height: 12px; flex: none; }
-    .ab-enf { color: #ff6b6b; }
-    .ab-ver { color: #5ee2a0; }
-    .ab-obs { color: var(--h5-accent); }
-    .ab-inf { color: #f0a050; }
-    .ab-rep { color: #b48bd9; }
-    .ee-rail-foot { margin-top: auto; padding-top: 8px; font-family: var(--fm); font-size: 0.52rem;
-      color: var(--bp-text-dim); display: flex; align-items: center; gap: 4px; }
-    .ee-live { width: 5px; height: 5px; border-radius: 50%; background: #5ee2a0;
-      box-shadow: 0 0 5px #5ee2a0; flex: none; }
-    /* Auto-tour: the embed demonstrates itself (demo-film style) until the
-       viewer interacts, then the real tabs take over. */
-    .ensemble-embed { position: relative; }
-    .ee-cursor { position: absolute; top: 0; left: 0; width: 14px; height: 14px;
-      border-radius: 50%; background: rgba(255,255,255,0.9);
-      box-shadow: 0 0 0 2px rgba(0,0,0,0.35), 0 1px 6px rgba(0,0,0,0.5);
-      z-index: 6; pointer-events: none; transform: translate(46px, 46px);
-      transition: transform 0.85s cubic-bezier(0.4, 0, 0.2, 1); }
-    .ee-cursor.click { animation: eeClick 0.35s; }
-    @keyframes eeClick { 40% { transform: var(--ee-pos) scale(0.6); } }
-    .ee-bubble { position: absolute; left: 172px; bottom: 44px; max-width: 360px;
-      z-index: 6; pointer-events: none; background: var(--h5-accent); color: #04201d;
-      font-size: 0.72rem; font-weight: 600; line-height: 1.4; padding: 7px 11px;
-      border-radius: 9px 9px 9px 2px; opacity: 0; transition: opacity 0.4s; }
-    .ee-bubble.show { opacity: 1; }
-    /* Film overlays: notification toast, Why drawer, terminal. All part of the
-       deterministic timeline; removed the moment the viewer takes over. */
-    .ee-toast { position: absolute; top: 44px; right: 12px; z-index: 7; background: var(--bp-elev);
-      border: 1px solid var(--h5-accent); border-radius: 7px; padding: 8px 12px; max-width: 250px;
-      font-size: 0.66rem; color: var(--bp-text); box-shadow: 0 6px 22px rgba(0,0,0,0.5);
-      animation: eeSlideIn 0.45s ease-out; }
-    .ee-toast b { color: var(--h5-accent); }
-    .ee-why { position: absolute; left: 168px; top: 78px; z-index: 7; width: 270px;
-      background: var(--bp-elev); border: 1px solid var(--bp-border); border-left: 3px solid var(--h5-accent);
-      border-radius: 6px; padding: 9px 11px; font-size: 0.64rem; color: var(--bp-text);
-      box-shadow: 0 8px 26px rgba(0,0,0,0.55); animation: eeSlideIn 0.4s ease-out; }
-    .ee-why-h { font-size: 0.52rem; letter-spacing: 0.12em; text-transform: uppercase;
-      color: var(--bp-text-dim); margin: 7px 0 3px; font-family: var(--fm); }
-    .ee-why-h:first-child { margin-top: 0; }
-    .ee-why-ev { display: flex; align-items: center; gap: 5px; margin: 2px 0; }
-    .ee-why-ev code { font-family: var(--fm); font-size: 0.56rem; color: var(--bp-text-muted); }
-    .ee-why-cmd { font-family: var(--fm); font-size: 0.58rem; color: var(--h5-accent);
-      background: var(--bp-surface); border: 1px solid var(--bp-border); border-radius: 4px;
-      padding: 3px 7px; margin-top: 3px; }
-    .ee-term { position: absolute; right: 14px; bottom: 14px; z-index: 7; min-width: 250px;
-      background: #0a0e12; border: 1px solid var(--bp-border-strong); border-radius: 7px;
-      padding: 9px 12px; font-family: var(--fm); font-size: 0.62rem; color: var(--bp-text);
-      box-shadow: 0 8px 26px rgba(0,0,0,0.55); animation: eeSlideIn 0.4s ease-out; }
-    .ee-term .ok { color: #5ee2a0; }
-    .ee-panel { min-height: 600px; max-height: 600px; overflow-y: auto; }
-    .dc-head { font-family: var(--fm); font-size: 0.6rem; letter-spacing: 0.12em;
-      text-transform: uppercase; color: var(--bp-text-dim); margin-bottom: 12px; }
-    .dc-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px;
-      border: 1px solid var(--bp-border); border-radius: 7px; margin-bottom: 8px; }
-    .dc-row.dc-top { border-color: var(--h5-accent); box-shadow: 0 0 14px -6px var(--h5-accent); }
-    .dc-rank { font-family: var(--fm); font-size: 0.8rem; color: var(--bp-text-dim); width: 1.2em; }
-    .dc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 0.74rem; }
-    .dc-sub { font-family: var(--fm); font-size: 0.6rem; color: var(--bp-text-dim); }
-    .dc-score { display: flex; flex-direction: column; gap: 2px; width: 74px; font-size: 0.7rem; }
-    .dc-score i { font-family: var(--fm); font-style: normal; font-size: 0.52rem;
-      text-transform: uppercase; letter-spacing: 0.1em; color: var(--bp-text-dim); }
-    .dc-meter { height: 3px; background: var(--bp-surface-2); border-radius: 2px; }
-    .dc-meter > span { display: block; height: 100%; background: var(--h5-accent); border-radius: 2px; }
-    .dc-meter.dc-warn > span { background: #f0a050; }
-    .dc-note { font-family: var(--fm); font-size: 0.58rem; color: var(--bp-text-dim); margin-top: 10px; }
-    .dcx { display: flex; gap: 14px; }
-    .dcx-list { flex: 0 0 240px; display: flex; flex-direction: column; gap: 4px; }
-    .dcx-item { display: flex; align-items: center; gap: 7px; padding: 7px 9px;
-      border: 1px solid var(--bp-border); border-radius: 6px; font-size: 0.68rem; }
-    .dcx-item.dcx-on { border-color: var(--h5-accent); }
-    .dcx-oid { font-family: var(--fm); font-size: 0.6rem; color: var(--bp-text-dim); }
-    .dcx-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .dc-pip { width: 8px; height: 8px; border-radius: 50%; background: var(--bp-surface-2); flex: none; }
-    .dc-pip-hi { background: #ff6b6b; }
-    .dc-pip-md { background: #f0a050; }
-    .dcx-detail { flex: 1; min-width: 0; border: 1px solid var(--bp-border); border-radius: 7px; padding: 12px 14px; }
-    .dcx-title { font-weight: 700; font-size: 0.85rem; margin-bottom: 3px; }
-    .dcx-gap { margin-top: 14px; margin-bottom: 6px; }
-    .dcx-conf { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
-    .dcx-conf b { font-size: 1.15rem; }
-    .dcx-conf .dc-meter { flex: 1; max-width: 220px; }
-    .dcx-rf { display: flex; align-items: baseline; gap: 8px; margin: 4px 0; font-size: 0.66rem; }
-    .dcx-rf code { font-family: var(--fm); font-size: 0.62rem; color: var(--bp-text); }
-    .pmx { display: flex; flex-direction: column; gap: 5px; margin-bottom: 7px; max-width: 400px; }
-    .pmx-row { display: flex; align-items: center; gap: 9px; }
-    .pmx-l { font-family: var(--fm); font-size: 0.58rem; color: var(--bp-text-muted); width: 82px; }
-    .pmx-row .dc-meter { flex: 1; }
-    .pmx-p { font-family: var(--fm); font-size: 0.58rem; color: var(--bp-text-dim); width: 44px; text-align: right; }
-    /* Full window: the content row takes all remaining viewport height and
-       every panel fills it, so switching tabs never changes the frame. */
-    html.workbench-only .ensemble-embed { grid-template-rows: auto 1fr; }
-    html.workbench-only .ee-panel { min-height: 0; max-height: none; height: 100%; }
-    html.workbench-only .ee-rail { height: 100%; }
-    .ee-ctrl { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 9px;
-      padding: 6px 12px; border-top: 1px solid var(--bp-border); background: var(--bp-surface); }
-    .ee-ctrl-btn { background: none; border: 1px solid var(--bp-border); border-radius: 4px;
-      color: var(--bp-text-muted); font-size: 0.68rem; line-height: 1; padding: 3px 8px; cursor: pointer; }
-    .ee-ctrl-btn:hover { color: var(--h5-accent); border-color: var(--h5-accent); }
-    .ee-ctrl-track { flex: 1; height: 4px; background: var(--bp-surface-2); border-radius: 2px; cursor: pointer; }
-    .ee-ctrl-fill { height: 100%; width: 0; background: var(--h5-accent); border-radius: 2px;
-      transition: width 0.1s linear; }
-    .ee-row-new { animation: eeSlideIn 0.5s ease-out; }
-    .ee-row-drained { opacity: 0.35; }
-    .ee-rail-empty { font-size: 0.62rem; color: var(--bp-text-dim); padding: 1px 0 3px; }
-    @keyframes eeSlideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
-    /* Full-screen mode (/?workbench=1): the page becomes the film, demo-style.
-       visibility (not display) so the fixed embed still renders inside its
-       hidden ancestors. */
-    .ee-full { margin-left: 8px; font-size: 0.8rem; color: var(--bp-text-dim); text-decoration: none; line-height: 1; }
-    .ee-full:hover { color: var(--h5-accent); }
-    .ee-full-close { display: none; }
-    html.workbench-only body { overflow: hidden; }
-    html.workbench-only body > * { visibility: hidden; }
-    html.workbench-only .ensemble-embed, html.workbench-only .ensemble-embed * { visibility: visible; }
-    html.workbench-only .ensemble-embed { position: fixed; inset: 0; z-index: 999; margin: 0;
-      width: 100vw; max-width: none; height: 100vh; border-radius: 0; border: 0; overflow-y: auto; }
-    /* Full window: controls pin to the viewport bottom; the caption bubble
-       sits fixed just above them, so they can never overlap while scrolling. */
-    html.workbench-only .ee-ctrl { position: fixed; left: 0; right: 0; bottom: 0; z-index: 8; }
-    html.workbench-only .ee-bubble { position: fixed; left: 172px; bottom: 46px; z-index: 8; }
-    html.workbench-only .ensemble-embed { padding-bottom: 34px; }
-    html.workbench-only .ee-full-open { display: none; }
-    html.workbench-only .ee-full-close { display: inline; }
-    .ee-body { padding: 18px 22px 24px;
-      background: radial-gradient(120% 80% at 50% -10%, rgba(66,226,208,0.05), transparent 60%), var(--bp-bg); }
-
-    /* ── Board panel — the env kanban, ported from web/src/theme.css .brd-* ── */
-    .ee .brd-columns { display: flex; gap: 8px; align-items: stretch; min-height: 552px; }
-    .ee .brd-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; background: var(--bp-surface); border: 1px solid var(--bp-border); border-radius: 8px; }
-    .ee .brd-col-header { display: flex; align-items: baseline; justify-content: space-between; padding: 8px 10px 6px; border-bottom: 1px solid var(--bp-border); }
-    .ee .brd-col-title { font-family: var(--fm); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-muted); }
-    .ee .brd-col-count { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); }
-    .ee .brd-col-body { flex: 1; padding: 7px; display: flex; flex-direction: column; gap: 7px; }
-    .ee .brd-col-empty { color: var(--bp-text-dim); text-align: center; padding: 14px 0; font-size: 11px; }
-    .ee .brd-card { background: var(--bp-surface-2); border: 1px solid var(--bp-border); border-radius: 6px; padding: 7px 9px; display: flex; flex-direction: column; gap: 6px; }
-    .ee .brd-card-live { border-color: var(--h5-pass); box-shadow: 0 0 0 1px rgba(94,226,160,0.35); }
-    .ee .brd-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
-    .ee .brd-card-slug { font-size: 12px; font-weight: 600; color: var(--bp-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ee .brd-card-agent { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); flex: none; }
-    .ee .brd-card-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-    .ee .brd-card-meta { display: flex; flex-wrap: wrap; gap: 7px; font-family: var(--fm); font-size: 10px; font-variant-numeric: tabular-nums; color: var(--bp-text-muted); }
-    .ee .brd-ins { color: var(--h5-pass); }
-    .ee .brd-del { color: var(--h5-fail); }
-    .ee .brd-card-when { margin-left: auto; color: var(--bp-text-dim); }
-    .ee .brd-card-foot { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--bp-border); padding-top: 6px; }
-    .ee .brd-card-parent { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ee .brd-copy { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; align-self: flex-start;
-      font-family: var(--fm); font-size: 10px; color: var(--h5-accent-hi); background: var(--bp-elev); border-radius: 4px; padding: 2px 6px; }
-    .ee .brd-copy::before { content: "⧉"; opacity: 0.7; }
-    .ee .brd-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-    /* ── Sandbox panel — ported from web/src/theme.css .sbx-* block ───────── */
-    .ee-tag { display: inline-flex; align-items: center; font-family: var(--fm); font-size: 10px;
-      padding: 1px 7px; border-radius: 3px; background: var(--bp-elev); color: var(--bp-text-muted); white-space: nowrap; }
-    .ee-tag.round { border-radius: 10px; }
-    .ee-tag.ok { background: rgba(94,226,160,0.14); color: var(--h5-pass); }
-    .ee-tag.pri { background: var(--h5-accent-bg); color: var(--h5-accent-hi); }
-    .ee-tag.warn { background: rgba(240,160,80,0.14); color: var(--h5-run); }
-    .ee-tag.bad { background: rgba(255,107,107,0.12); color: var(--h5-fail); }
-    .ee-code { font-family: var(--fm); font-size: 10px; color: var(--h5-accent-hi); background: var(--bp-elev); border-radius: 3px; padding: 1px 5px; }
-
-    .ee .sbx-shell { display: flex; flex-direction: column; }
-    .ee .sbx-strip { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 14px; background: var(--bp-surface); border: 1px solid var(--bp-border); border-radius: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-    .ee .sbx-strip-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-    .ee .sbx-strip-label { font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); margin-right: 4px; }
-    .ee .sbx-strip-vitals { display: flex; align-items: center; gap: 18px; }
-    .ee .sbx-vital { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
-    .ee .sbx-vital-num { font-family: var(--fm); font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--bp-text); }
-    .ee .sbx-vital-label { font-family: var(--fm); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--bp-text-dim); }
-
-    .ee .sbx-body { display: grid; grid-template-columns: minmax(300px, 38%) 1fr; gap: 14px; }
-    .ee .sbx-fleet { display: flex; flex-direction: column; border: 1px solid var(--bp-border); border-radius: 8px; overflow: hidden; }
-    .ee .sbx-fleet-header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-family: var(--fd); font-weight: 600; font-size: 13px; color: var(--bp-text); border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
-    .ee .sbx-filters { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 10px; border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
-    .ee .sbx-chip { font: inherit; font-family: var(--fm); font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--bp-border); background: transparent; color: var(--bp-text-muted); cursor: pointer; }
-    .ee .sbx-chip:hover { background: var(--bp-surface-2); }
-    .ee .sbx-chip.active { background: var(--h5-accent-hi); border-color: var(--h5-accent-hi); color: #0b0e12; font-weight: 600; }
-    .ee .sbx-fleet-body { flex: 1; overflow: auto; }
-    .ee .sbx-fleet-table { width: 100%; min-width: 380px; border-collapse: collapse; }
-    .ee .sbx-fleet-table th { text-align: left; font-family: var(--fm); font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--bp-text-dim); padding: 6px 10px; border-bottom: 1px solid var(--bp-border); }
-    .ee .sbx-fleet-table td { padding: 8px 10px; border-bottom: 1px solid var(--bp-border); vertical-align: middle; }
-    /* Pin the three right columns so the Env column takes the remaining width. */
-    .ee .sbx-fleet-table tbody tr:last-child td { border-bottom: none; }
-    .ee .sbx-fleet-table tr.selected td { background: var(--bp-surface-2); }
-    .ee .sbx-env-id { font-family: var(--fd); font-weight: 600; font-size: 13px; color: var(--bp-text); white-space: nowrap; }
-    .ee .sbx-env-sub { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); }
-    .ee .sbx-drift { color: var(--h5-run); }
-    .ee .sbx-status { font-size: 12px; color: var(--bp-text-muted); font-family: var(--fm); }
-
-    .ee .sbx-pressure { display: inline-flex; align-items: center; gap: 6px; font-family: var(--fm); font-size: 12px; }
-    .ee .sbx-pressure.clean { color: var(--h5-pass); font-size: 11px; }
-    .ee .sbx-pressure-score { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 18px; }
-    .ee .sbx-pressure.warning .sbx-pressure-score { color: var(--h5-run); }
-    .ee .sbx-pressure.critical .sbx-pressure-score { color: var(--h5-fail); }
-    .ee .sbx-pressure-bar { width: 56px; height: 6px; border-radius: 3px; background: var(--bp-surface-2); overflow: hidden; }
-    .ee .sbx-pressure-fill { display: block; height: 100%; background: var(--bp-text-dim); }
-    .ee .sbx-pressure.warning .sbx-pressure-fill { background: var(--h5-run); }
-    .ee .sbx-pressure.critical .sbx-pressure-fill { background: var(--h5-fail); }
-
-    .ee .sbx-detail { display: flex; flex-direction: column; border: 1px solid var(--bp-border); border-radius: 8px; overflow: hidden; }
-    .ee .sbx-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
-    .ee .sbx-detail-title { font-family: var(--fd); font-size: 15px; font-weight: 600; color: var(--bp-text); margin-right: 10px; }
-    .ee .sbx-detail-digest { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); margin-left: 8px; }
-    .ee .sbx-detail-body { padding: 13px 14px; display: flex; flex-direction: column; gap: 14px; }
-    .ee .sbx-findings { display: flex; flex-direction: column; gap: 6px; }
-    .ee .sbx-finding { display: flex; align-items: baseline; gap: 8px; padding: 7px 10px; border-radius: 4px; font-size: 12px; background: var(--bp-surface); border-left: 3px solid var(--bp-border); }
-    .ee .sbx-finding.warning { border-left-color: var(--h5-run); }
-    .ee .sbx-finding.critical { border-left-color: var(--h5-fail); }
-    .ee .sbx-finding-title { font-family: var(--fd); font-weight: 600; white-space: nowrap; color: var(--bp-text); }
-    .ee .sbx-finding-detail { color: var(--bp-text-muted); flex: 1; }
-    .ee .sbx-lane-chip { font-family: var(--fm); font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 3px; color: #0b0e12; }
-    .ee .lane-net { background: #f0a050; } .ee .lane-fs { background: #7dd3fc; } .ee .lane-proc { background: #b48bd9; } .ee .lane-resource { background: #5ee2a0; } .ee .lane-provenance { background: #ff8da1; }
-
-    .ee .sbx-timeline { border: 1px solid var(--bp-border); border-radius: 6px; overflow: hidden; }
-    .ee .sbx-timeline-head { padding: 6px 10px; font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); background: var(--bp-surface); border-bottom: 1px solid var(--bp-border); }
-    .ee .sbx-lane-grid { display: flex; flex-direction: column; }
-    .ee .sbx-lane-row { display: grid; grid-template-columns: minmax(200px, 1.4fr) repeat(3, 1fr); border-bottom: 1px solid var(--bp-border); }
-    .ee .sbx-lane-row:last-child { border-bottom: none; }
-    .ee .sbx-lane-policy { background: var(--bp-surface); }
-    .ee .sbx-run-cell { padding: 6px 10px; border-right: 1px solid var(--bp-border); min-width: 0; }
-    .ee .sbx-run-policy { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); display: flex; align-items: center; }
-    .ee .sbx-run-cmd { font-family: var(--fm); font-size: 12px; color: var(--bp-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .ee .sbx-run-meta { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); }
-    .ee .sbx-lane-cell { padding: 6px 8px; border-right: 1px solid var(--bp-border); display: flex; flex-direction: column; gap: 2px; align-items: flex-start; justify-content: center; min-width: 0; }
-    .ee .sbx-lane-cell:last-child { border-right: none; }
-    .ee .sbx-lane-name { font-family: var(--fm); font-size: 10px; font-weight: 700; color: var(--bp-text-dim); }
-    .ee .sbx-lane-allow { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-    .ee .sbx-verdict { font-family: var(--fm); font-size: 11px; white-space: nowrap; }
-    .ee .sbx-verdict.none { color: var(--bp-border-strong); }
-    .ee .sbx-verdict.ok { color: var(--h5-pass); }
-    .ee .sbx-verdict.warning { color: var(--h5-run); font-weight: 600; }
-    .ee .sbx-verdict.critical { color: var(--h5-fail); font-weight: 700; }
-
-    .ee .sbx-policy { border: 1px solid var(--bp-border); border-radius: 6px; overflow: hidden; }
-    .ee .sbx-policy-head { padding: 6px 10px; font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); background: var(--bp-surface); border-bottom: 1px solid var(--bp-border); }
-    .ee .sbx-policy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1px; background: var(--bp-border); }
-    .ee .sbx-policy-row { display: flex; gap: 8px; padding: 5px 10px; background: var(--bp-bg); font-size: 12px; }
-    .ee .sbx-policy-key { color: var(--bp-text-dim); min-width: 66px; font-family: var(--fm); }
-    .ee .sbx-policy-val { color: var(--bp-text); font-family: var(--fm); word-break: break-word; flex: 1; }
-    @media (max-width: 720px) {
-      .ee .sbx-body { grid-template-columns: 1fr; }
-      .ee .sbx-lane-row { grid-template-columns: minmax(120px, 1.3fr) repeat(3, 1fr); }
-    }
-
-    /* ── Context panel — ported from web/src/theme.css .ctx-* block ───────── */
-    .ee .ctx-view { display: flex; flex-direction: column; gap: 14px; }
-    .ee .ctx-hero { display: grid; grid-template-columns: 1fr auto; gap: 28px; padding: 20px 22px; align-items: center; border-radius: 6px;
-      background: linear-gradient(135deg, rgba(180,139,217,0.08), rgba(66,226,208,0.06)); }
-    .ee .ctx-hero-goal { min-width: 0; }
-    .ee .ctx-eyebrow { font-family: var(--fm); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--h5-model); margin-bottom: 6px; }
-    .ee .ctx-hero-text { font-family: var(--fd); font-size: 18px; font-weight: 500; color: var(--bp-text); line-height: 1.45; max-width: 60ch; word-break: break-word; }
-    .ee .ctx-hero-purpose { font-size: 13px; color: var(--bp-text-muted); margin-top: 8px; line-height: 1.5; max-width: 80ch; }
-    .ee .ctx-purpose-key { font-family: var(--fm); color: var(--bp-text-dim); font-size: 11px; margin-right: 6px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
-    .ee .ctx-kpis { display: flex; gap: 18px; flex-shrink: 0; }
-    .ee .ctx-kpi { text-align: right; min-width: 50px; }
-    .ee .ctx-kpi-val { font-family: var(--fm); font-size: 27px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--bp-text); line-height: 1; }
-    .ee .ctx-kpi-label { font-family: var(--fm); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--bp-text-dim); font-weight: 600; margin-top: 5px; }
-    .ee .ctx-kpi-sub { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); margin-top: 2px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .ee .ctx-section { background: var(--bp-surface); border-radius: 6px; padding: 14px 18px; }
-    .ee .ctx-section-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--bp-border); }
-    .ee .ctx-section-title { font-family: var(--fm); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--bp-text-dim); }
-    .ee .ctx-section-sub { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); font-weight: 400; margin-left: auto; }
-    .ee .ctx-milestones { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
-    .ee .ctx-milestones li { position: relative; padding: 8px 0; font-size: 13px; color: var(--bp-text); line-height: 1.5; border-top: 1px solid var(--bp-border); }
-    .ee .ctx-milestones li:first-child { border-top: none; }
-    .ee .ctx-milestone-sha { display: inline-block; font-family: var(--fm); font-size: 10px; font-weight: 600; color: var(--h5-accent-hi); background: var(--h5-accent-bg); padding: 1px 6px; border-radius: 3px; margin-right: 8px; letter-spacing: 0.04em; }
-    .ee .ctx-ota-bar { display: flex; height: 10px; background: var(--bp-elev); border-radius: 3px; overflow: hidden; }
-    .ee .ctx-ota-segment { height: 100%; }
-    .ee .ctx-ota-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 11px; }
-    .ee .ctx-ota-legend-item { display: inline-flex; align-items: center; gap: 6px; }
-    .ee .ctx-ota-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
-    .ee .ctx-ota-legend-label { font-family: var(--fm); color: var(--bp-text-muted); text-transform: uppercase; font-size: 9.5px; letter-spacing: 0.06em; font-weight: 600; }
-    .ee .ctx-ota-legend-val { font-family: var(--fm); font-size: 12px; color: var(--bp-text); font-variant-numeric: tabular-nums; font-weight: 600; }
-    .ee .ctx-ota-legend-pct { font-family: var(--fm); font-variant-numeric: tabular-nums; font-size: 10px; color: var(--bp-text-dim); }
-
-    /* Caption + value-prop chips beneath the window */
-    .ee-caption { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem 1.4rem;
-      max-width: 980px; margin: 1.1rem auto 0; }
-    .ee-caption span { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.04em; color: var(--text-faint); }
-    .ee-caption span b { color: var(--text-dim); font-weight: 700; }
-
     /* ── Section heading ───────────────────────────────────── */
     .section-head { max-width: 720px; margin: 0 auto 4rem; }
     .section-tag {
@@ -888,7 +546,7 @@
 
     /* ── Deck-derived sections: even spacing + separator line ── */
     #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with,
-    #whatis, #primitives, #in-git, #team {
+    #whatis, #loop, #browser, #problem {
       padding: 120px 0; border-top: 1px solid var(--border);
     }
 
@@ -1051,7 +709,7 @@
       .usecase-header { flex-direction: column; gap: 1rem; }
       .works-inner { gap: 0.8rem 1.6rem; }
       #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with,
-      #whatis, #primitives, #in-git, #team,
+      #whatis, #loop, #browser, #problem,
       #faq, #cta { padding: 80px 0; }
     }
     @media (max-width: 460px) {
@@ -1223,7 +881,8 @@
   </a>
   <ul class="nav-links" id="nav-links">
     <li><a href="#quickstart">Install</a></li>
-    <!-- <li><a href="#team">Teams</a></li> -->
+    <li><a href="#loop">The loop</a></li>
+    <li><a href="#browser">Browser</a></li>
     <li><a href="/guides/">Guides</a></li>
     <li><a href="/manual/">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
@@ -1235,34 +894,24 @@
     <span></span><span></span><span></span>
   </div>
 </nav>
-
 <!-- ── Hero ─────────────────────────────────────────────────── -->
 <section id="hero" tabindex="-1">
   <div class="hero-glow"></div>
   <div class="hero-inner">
-    <!-- <div class="hero-logo-wrap">
-      <img src="/_static/logo.png" width="1280" height="640" alt="h5i logo" fetchpriority="high">
-    </div> -->
-    <div class="hero-badge">SANDBOXED GIT WORKTREES · AI-AWARE VERSIONING · PERSISTENT MEMORY</div>
+    <div class="hero-badge">DISPOSABLE BOXES · CONFINED AGENTS · A BROWSER INSIDE · A REVIEWED PATCH OUT</div>
     <h1 class="hero-title">
-      <span class="shine-text"><span class="hl">Auditable Workspaces</span><br><span class="hl">for AI Coding Agents</span></span>
+      <span class="shine-text"><span class="hl">Disposable Development</span><br><span class="hl">Environments for AI Agents</span></span>
     </h1>
     <p class="hero-sub">
-      Run <strong>Claude Code, Codex, or whole agent teams</strong> inside sandboxes. h5i records the prompts, commands, and reviews behind every change.
+      Give a coding agent <strong>full autonomy</strong> inside a throwaway box, and give your machine nothing to lose. The code, the toolchain, the tests, the dev server and the agent all run inside one boundary.
     </p>
     <div class="hero-actions">
-      <a href="/workflows/" class="btn btn-primary">See Workflows</a>
+      <a href="/manual/" class="btn btn-primary">Read the Manual</a>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-ghost">View on GitHub</a>
     </div>
     <div class="hero-install" id="quickstart">
       <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</code>
       <button class="copy-btn" onclick="copyInstall()">copy</button>
-    </div>
-    <div class="hero-film">
-      <div class="hero-film-frame">
-        <iframe src="/demo/?embed=1" title="h5i demo film — a sealed, auditable workspace for every AI coding agent" loading="lazy" allow="fullscreen"></iframe>
-      </div>
-      <a href="/demo/" class="hero-film-fs">Watch full-screen</a>
     </div>
   </div>
 </section>
@@ -1272,485 +921,101 @@
   <div class="container">
     <div class="section-head reveal">
       <span class="section-tag">What h5i is</span>
-      <h2 class="section-title">A sandboxed, auditable workspace for AI coding agents.</h2>
-      <p class="section-sub">h5i (pronounced <em>high-five</em>) gives every AI coding agent a sandboxed Git worktree, and records the prompts, commands, logs, policies, and reviews behind every change. Run one agent safely, scale to many via a conflict-free multi-agent orchestra, then merge one auditable result. It all lives in your repo, carried by Git, with no SaaS.</p>
+      <h2 class="section-title">A contained agentic development environment.</h2>
+      <p class="section-sub">h5i (pronounced <em>high-five</em>) is a throwaway box that holds the code, the agent, the toolchain, the dev server and a real browser. Your host directories are not mounted into it, your credentials never enter it, and the only thing that comes out is a patch you reviewed, next to a receipt of everything that ran. One Rust binary. No server, no daemon, no SaaS.</p>
       <div class="divider"></div>
     </div>
     <div class="feat-grid reveal">
       <div class="feat-card">
-        <div class="feat-name">Prompt versioning</div>
-        <div class="feat-desc">Every commit carries the prompt, model, and agent that produced it, versioned beside the code.</div>
+        <div class="feat-name">A disposable workspace</div>
+        <div class="feat-desc">The code is copied in: a pull request, a repository, or nothing at all. No host directory is mounted read-write into the agent's reach.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Persistent context and memory</div>
-        <div class="feat-desc">Goals, reasoning traces, and memory snapshots restore across sessions, so the next run skips re-grounding.</div>
+        <div class="feat-name">A sandboxed coding agent</div>
+        <div class="feat-desc">Claude Code or Codex, its child processes, package managers, builds, tests and dev server all inside the same boundary. A runaway agent stays in the box.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Supervised sandboxed environment</div>
-        <div class="feat-desc">Landlock, seccomp, and namespaces confine each run, up to a network egress allowlist. Nothing lands until you <code>apply</code>.</div>
+        <div class="feat-name">Credentials that stay outside</div>
+        <div class="feat-desc">No SSH key, API key or browser profile enters the box. A host-side proxy authenticates the calls the policy allows, and egress is an allowlist.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Token reduction up to 95%</div>
-        <div class="feat-desc">Raw tool output stays out-of-band; agents see compact summaries of failures, counts, and paths.</div>
+        <div class="feat-name">A browser in the box</div>
+        <div class="feat-desc">Chrome and a fresh profile live inside. The agent drives it through a CLI and reads the accessibility tree; you can watch the same viewport and take over.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Conflict-free multi-agent orchestra</div>
-        <div class="feat-desc">Each agent works sealed in its own worktree, so files, branches, and ports never collide.</div>
+        <div class="feat-name">An output gate</div>
+        <div class="feat-desc">A patch, a report and an execution receipt, after inspection. The agent has no direct write path to your repository.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Fully automated audit of AI code</div>
-        <div class="feat-desc">Deterministic risk scan and review ranking flag prompt-injection and the riskiest commits, with no model in the loop.</div>
+        <div class="feat-name">Receipts, not testimony</div>
+        <div class="feat-desc">Exit codes and resource use come from the supervisor. Denied egress comes from the proxy. Console errors come from the page. None of it is the agent's account of itself.</div>
       </div>
     </div>
-    <!-- Embedded workbench — the real `h5i serve` dashboard, as live HTML:
-         attention rail (what needs you, with authority badges) + Now / Board / Context lenses -->
-    <div class="ee-fit reveal">
-    <div class="ensemble-embed ee" role="group" aria-label="A static preview of the h5i serve workbench: an attention rail showing what needs a human (each claim badged by how it is known), beside the fleet (Now), the environment kanban (Board), the deterministic review ranking (Decide), and the reasoning workspace (Context).">
-      <div class="ee-bar">
-        <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
-        <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span><a class="ee-full ee-full-open" href="/?workbench=1" title="Open full screen">⛶</a><a class="ee-full ee-full-close" href="/" title="Back to the front page">✕</a>
-        <div class="ee-tabs" role="tablist">
-          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Now</button>
-          <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="board">Board</button>
-          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="context">Context</button>
-          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="decide">Decide</button>
-        </div>
-      </div>
-      <aside class="ee-rail" aria-label="Attention rail: what needs a human, each claim badged by its authority">
-        <div class="ee-rail-head urgent">needs you (2)</div>
-        <div class="ee-rail-row"><span class="ee-rdot dec"></span><span class="ee-rtitle">fix-auth: 3 candidates, no verdict</span><span class="ee-abadge ab-ver">verified</span></div>
-        <div class="ee-rail-row"><span class="ee-rdot crit"></span><span class="ee-rtitle">payments: egress denied</span><span class="ee-abadge ab-enf">enforced</span></div>
-        <div class="ee-rail-head">active (1)</div>
-        <div class="ee-rail-row"><span class="ee-rdot act"></span><span class="ee-rtitle">claude · session live</span><span class="ee-abadge ab-obs">observed</span></div>
-        <div class="ee-rail-foot"><span class="ee-live"></span>live · event feed</div>
-      </aside>
-      <!-- Board tab — the env kanban (web/src/BoardView.tsx): every environment
-           as a card flowing through the lifecycle, each offering its next command -->
-      <div class="ee-body ee-panel" data-panel="board">
-        <div class="brd-columns">
-          <section class="brd-col" aria-label="Created">
-            <header class="brd-col-header" title="fresh worktrees, nothing run yet"><span class="brd-col-title">Created</span><span class="brd-col-count">1</span></header>
-            <div class="brd-col-body">
-              <article class="brd-card">
-                <div class="brd-card-head"><span class="brd-card-slug">docs-refresh</span><span class="brd-card-agent">claude-1</span></div>
-                <div class="brd-card-tags"><span class="ee-tag">workspace</span></div>
-                <div class="brd-card-meta"><span>0 files</span><span class="brd-ins">+0</span><span class="brd-del">−0</span><span>0 cap</span><span class="brd-card-when">3h ago</span></div>
-                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env shell docs-refresh</span></span></div>
-              </article>
-            </div>
-          </section>
-          <section class="brd-col" aria-label="Working">
-            <header class="brd-col-header" title="runs/sessions happening (or idle between them)"><span class="brd-col-title">Working</span><span class="brd-col-count">3</span></header>
-            <div class="brd-col-body">
-              <article class="brd-card brd-card-live">
-                <div class="brd-card-head"><span class="brd-card-slug">fix-auth</span><span class="brd-card-agent">claude-1</span></div>
-                <div class="brd-card-tags"><span class="ee-tag">container</span><span class="ee-tag ok">● shell pid 41213</span></div>
-                <div class="brd-card-meta"><span>3 files</span><span class="brd-ins">+91</span><span class="brd-del">−20</span><span>4 cap</span><span class="brd-card-when">2m ago</span></div>
-                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env propose fix-auth</span></span></div>
-              </article>
-              <article class="brd-card">
-                <div class="brd-card-head"><span class="brd-card-slug">fix-auth</span><span class="brd-card-agent">claude-2</span></div>
-                <div class="brd-card-tags"><span class="ee-tag">process</span><span class="ee-tag warn">behind 2</span></div>
-                <div class="brd-card-meta"><span>1 file</span><span class="brd-ins">+12</span><span class="brd-del">−3</span><span>3 cap</span><span class="brd-card-when">18m ago</span></div>
-                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env propose fix-auth</span></span></div>
-              </article>
-              <article class="brd-card">
-                <div class="brd-card-head"><span class="brd-card-slug">payments</span><span class="brd-card-agent">codex-2</span></div>
-                <div class="brd-card-tags"><span class="ee-tag">container</span><span class="ee-tag bad">risk 3</span></div>
-                <div class="brd-card-meta"><span>2 files</span><span class="brd-ins">+36</span><span class="brd-del">−8</span><span>7 cap</span><span class="brd-card-when">5m ago</span></div>
-                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env propose payments</span></span></div>
-              </article>
-            </div>
-          </section>
-          <section class="brd-col" aria-label="Proposed">
-            <header class="brd-col-header" title="mediated commit ready — waiting on a reviewer"><span class="brd-col-title">Proposed</span><span class="brd-col-count">1</span></header>
-            <div class="brd-col-body">
-              <article class="brd-card">
-                <div class="brd-card-head"><span class="brd-card-slug">fix-auth</span><span class="brd-card-agent">codex-1</span></div>
-                <div class="brd-card-tags"><span class="ee-tag">container</span><span class="ee-tag warn">risk 1</span></div>
-                <div class="brd-card-meta"><span>4 files</span><span class="brd-ins">+272</span><span class="brd-del">−31</span><span>5 cap</span><span class="brd-card-when">9m ago</span></div>
-                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env apply fix-auth</span></span></div>
-              </article>
-            </div>
-          </section>
-          <section class="brd-col" aria-label="Applied">
-            <header class="brd-col-header" title="merged onto the parent branch"><span class="brd-col-title">Applied</span><span class="brd-col-count">1</span></header>
-            <div class="brd-col-body">
-              <article class="brd-card">
-                <div class="brd-card-head"><span class="brd-card-slug">session-retry</span><span class="brd-card-agent">codex-1</span></div>
-                <div class="brd-card-tags"><span class="ee-tag">container</span><span class="ee-tag pri">PR #212</span></div>
-                <div class="brd-card-meta"><span>2 files</span><span class="brd-ins">+48</span><span class="brd-del">−9</span><span>6 cap</span><span class="brd-card-when">1d ago</span></div>
-                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env gc</span></span></div>
-              </article>
-            </div>
-          </section>
-          <section class="brd-col" aria-label="Aborted">
-            <header class="brd-col-header" title="discarded (manifest kept for forensics)"><span class="brd-col-title">Aborted</span><span class="brd-col-count">1</span></header>
-            <div class="brd-col-body">
-              <article class="brd-card">
-                <div class="brd-card-head"><span class="brd-card-slug">net-probe</span><span class="brd-card-agent">claude-1</span></div>
-                <div class="brd-card-tags"><span class="ee-tag">process</span></div>
-                <div class="brd-card-meta"><span>0 files</span><span class="brd-ins">+0</span><span class="brd-del">−0</span><span>2 cap</span><span class="brd-card-when">3d ago</span></div>
-                <div class="brd-card-foot"><span class="brd-card-parent">→ main</span><span class="brd-copy"><span>h5i env gc</span></span></div>
-              </article>
-            </div>
-          </section>
-        </div>
-      </div>
-
-      <!-- Sandbox tab — the read-only flight recorder over h5i environments -->
-      <div class="ee-body ee-panel" data-panel="sandbox" hidden>
-        <div class="sbx-shell">
-          <div class="sbx-strip">
-            <div class="sbx-strip-group">
-              <span class="sbx-strip-label">host</span>
-              <span class="ee-tag ok">workspace ✓</span>
-              <span class="ee-tag ok">process ✓</span>
-              <span class="ee-tag ok">supervised ✓</span>
-              <span class="ee-tag ok">container ✓</span>
-              <span class="ee-tag ok">cgroups ✓</span>
-            </div>
-            <div class="sbx-strip-vitals">
-              <span class="sbx-vital"><span class="sbx-vital-num">3</span><span class="sbx-vital-label">active</span></span>
-              <span class="sbx-vital"><span class="sbx-vital-num" style="color:var(--h5-accent-hi)">1</span><span class="sbx-vital-label">proposed</span></span>
-              <span class="sbx-vital"><span class="sbx-vital-num" style="color:var(--h5-fail)">1</span><span class="sbx-vital-label">boundary trips</span></span>
-              <span class="sbx-vital"><span class="sbx-vital-num">12</span><span class="sbx-vital-label">captures</span></span>
-            </div>
-          </div>
-          <div class="sbx-body">
-            <div class="sbx-fleet">
-              <div class="sbx-fleet-header"><span>Environments</span><span class="ee-tag round">3</span></div>
-              <div class="sbx-filters">
-                <button class="sbx-chip active" type="button">all</button>
-                <button class="sbx-chip" type="button">running</button>
-                <button class="sbx-chip" type="button">proposed</button>
-                <button class="sbx-chip" type="button">pressure</button>
-                <button class="sbx-chip" type="button">container</button>
-              </div>
-              <div class="sbx-fleet-body">
-                <table class="sbx-fleet-table">
-                  <thead><tr><th>Env</th><th>Isolation</th><th>Status</th><th>Pressure</th></tr></thead>
-                  <tbody>
-                    <tr class="selected">
-			    <td><div class="sbx-env-id">codex-1/<br>fix-auth</div><div class="sbx-env-sub">5 caps</div></td>
-                      <td><span class="ee-tag ok">container</span></td>
-                      <td><span class="sbx-status">proposed</span></td>
-                      <td><span class="sbx-pressure warning"><span class="sbx-pressure-score">38</span><span class="sbx-pressure-bar"><span class="sbx-pressure-fill" style="width:38%"></span></span></span></td>
-                    </tr>
-                    <tr>
-			    <td><div class="sbx-env-id">claude-1/<br>fix-auth</div><div class="sbx-env-sub">4 caps</div></td>
-                      <td><span class="ee-tag ok">container</span></td>
-                      <td><span class="sbx-status">idle</span></td>
-                      <td><span class="sbx-pressure clean">clean</span></td>
-                    </tr>
-                    <tr>
-			    <td><div class="sbx-env-id">claude-2/<br>fix-auth</div><div class="sbx-env-sub">3 caps<span class="sbx-drift"><br>behind 2</span></div></td>
-                      <td><span class="ee-tag pri">process</span></td>
-                      <td><span class="sbx-status">idle</span></td>
-                      <td><span class="sbx-pressure clean">clean</span></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div class="sbx-detail">
-              <div class="sbx-detail-head">
-                <div><span class="sbx-detail-title">codex-1/fix-auth</span><span class="ee-tag ok">container</span><span class="sbx-detail-digest">a3f1c0d8e7b4</span></div>
-                <span class="sbx-pressure warning"><span class="sbx-pressure-score">38</span><span class="sbx-pressure-bar"><span class="sbx-pressure-fill" style="width:38%"></span></span></span>
-              </div>
-              <div class="sbx-detail-body">
-                <div class="sbx-findings">
-                  <div class="sbx-finding warning">
-                    <span class="sbx-lane-chip lane-net">NET</span>
-                    <span class="sbx-finding-title">egress denied</span>
-                    <span class="sbx-finding-detail">CONNECT pypi.org:443 blocked: not in the net.egress allowlist (fail-closed)</span>
-                    <code class="ee-code">cap-7f3a</code>
-                  </div>
-                </div>
-
-                <div class="sbx-timeline">
-                  <div class="sbx-timeline-head">Flight recorder · 2 runs</div>
-                  <div class="sbx-lane-grid">
-                    <div class="sbx-lane-row sbx-lane-policy">
-                      <div class="sbx-run-cell sbx-run-policy">policy allows →</div>
-                      <div class="sbx-lane-cell"><div class="sbx-lane-name">FS</div><div class="sbx-lane-allow">$WORK rw</div></div>
-                      <div class="sbx-lane-cell"><div class="sbx-lane-name">NET</div><div class="sbx-lane-allow">allow 2</div></div>
-                      <div class="sbx-lane-cell"><div class="sbx-lane-name">PROC</div><div class="sbx-lane-allow">any tool</div></div>
-                    </div>
-                    <div class="sbx-lane-row">
-                      <div class="sbx-run-cell"><div class="sbx-run-cmd">cargo test --workspace</div><div class="sbx-run-meta">exit 0 · 14:32:01</div></div>
-                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
-                      <div class="sbx-lane-cell"><span class="sbx-verdict ok">✓</span></div>
-                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
-                    </div>
-                    <div class="sbx-lane-row">
-                      <div class="sbx-run-cell"><div class="sbx-run-cmd">pip install requests</div><div class="sbx-run-meta">exit 1 · 14:33:18</div></div>
-                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
-                      <div class="sbx-lane-cell"><span class="sbx-verdict warning">⚠ pressure</span></div>
-                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="sbx-policy">
-                  <div class="sbx-policy-head">Enforced policy · what was actually allowed</div>
-                  <div class="sbx-policy-grid">
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">isolation</span><span class="sbx-policy-val">container</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">net.mode</span><span class="sbx-policy-val">deny</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">net.egress</span><span class="sbx-policy-val">github.com, crates.io</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">fs.write</span><span class="sbx-policy-val">$WORK</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">tools</span><span class="sbx-policy-val">(unrestricted)</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">env.pass</span><span class="sbx-policy-val">CARGO_HOME, PATH</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">wall</span><span class="sbx-policy-val">900s</span></div>
-                    <div class="sbx-policy-row"><span class="sbx-policy-key">mem</span><span class="sbx-policy-val">2G</span></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Context tab — the reasoning/context workspace (refs/h5i/context) -->
-      <div class="ee-body ee-panel" data-panel="decide" hidden>
-        <div class="dc-head">decide · should this merge? · deterministic, no model in the loop</div>
-        <div class="dcx">
-          <div class="dcx-list">
-            <div class="dcx-item dcx-on"><span class="dcx-oid">c34f11d</span><span class="dcx-msg">fix token refresh race</span><span class="dc-pip dc-pip-hi"></span></div>
-            <div class="dcx-item"><span class="dcx-oid">9b02e77</span><span class="dcx-msg">auth: retry backoff</span><span class="dc-pip dc-pip-md"></span></div>
-            <div class="dcx-item"><span class="dcx-oid">51aa310</span><span class="dcx-msg">docs touchup</span><span class="dc-pip"></span></div>
-          </div>
-          <div class="dcx-detail">
-            <div class="dcx-title">fix token refresh race</div>
-            <div class="dc-sub">codex-1 · 4 files · +272 −31 · verifier ✓ · independent ✓</div>
-            <div class="dc-head dcx-gap">merge confidence</div>
-            <div class="dcx-conf"><b>78</b><span class="dc-meter"><span style="width:78%"></span></span><span class="ee-abadge ab-inf">inferred</span></div>
-            <div class="dc-head dcx-gap">prompt maturity · 82 · mature</div>
-            <div class="pmx">
-              <div class="pmx-row"><span class="pmx-l">intent</span><span class="dc-meter"><span style="width:93%"></span></span><span class="pmx-p">2.8 / 3</span></div>
-              <div class="pmx-row"><span class="pmx-l">constraints</span><span class="dc-meter"><span style="width:80%"></span></span><span class="pmx-p">2.4 / 3</span></div>
-              <div class="pmx-row"><span class="pmx-l">tests named</span><span class="dc-meter"><span style="width:100%"></span></span><span class="pmx-p">3.0 / 3</span></div>
-              <div class="pmx-row"><span class="pmx-l">grounding</span><span class="dc-meter dc-warn"><span style="width:53%"></span></span><span class="pmx-p">1.6 / 3</span></div>
-              <div class="pmx-row"><span class="pmx-l">scope</span><span class="dc-meter dc-warn"><span style="width:57%"></span></span><span class="pmx-p">1.7 / 3</span></div>
-            </div>
-            <div class="dc-sub">boundary risk 38 · pressure, no denial · scores the delegation, not the dev</div>
-            <div class="dc-head dcx-gap">review first</div>
-            <div class="dcx-rf"><span class="dc-rank">1</span><code>src/auth/refresh.rs</code><span class="dc-sub">touches token state · largest hunk</span></div>
-            <div class="dcx-rf"><span class="dc-rank">2</span><code>src/auth/session.rs</code><span class="dc-sub">expiry check rewritten</span></div>
-          </div>
-        </div>
-      </div>
-      <div class="ee-body ee-panel" data-panel="context" hidden>
-        <div class="ctx-view">
-          <div class="ctx-hero">
-            <div class="ctx-hero-goal">
-              <div class="ctx-eyebrow">Git branch goal · improve-website</div>
-              <div class="ctx-hero-text">Embed the live h5i serve dashboard into the docs landing hero</div>
-              <div class="ctx-hero-purpose">
-                <span class="ctx-purpose-key">Context</span><span class="ee-tag round">main</span>
-                show, don't tell: replace the abstract stat-cards with the real UI
-              </div>
-            </div>
-            <div class="ctx-kpis">
-              <div class="ctx-kpi"><div class="ctx-kpi-val">18</div><div class="ctx-kpi-label">milestones</div><div class="ctx-kpi-sub">5 branches</div></div>
-              <div class="ctx-kpi"><div class="ctx-kpi-val">1,240</div><div class="ctx-kpi-label">trace lines</div><div class="ctx-kpi-sub">412 stable · 828 live</div></div>
-              <div class="ctx-kpi"><div class="ctx-kpi-val">32</div><div class="ctx-kpi-label">snapshots</div><div class="ctx-kpi-sub">last 3h ago</div></div>
-              <div class="ctx-kpi"><div class="ctx-kpi-val" style="color:var(--h5-run)">2</div><div class="ctx-kpi-label">todos</div><div class="ctx-kpi-sub">1 branch</div></div>
-              <div class="ctx-kpi"><div class="ctx-kpi-val">5</div><div class="ctx-kpi-label">branches</div><div class="ctx-kpi-sub">1 stale</div></div>
-            </div>
-          </div>
-
-          <div class="ctx-section">
-            <div class="ctx-section-head"><span class="ctx-section-title">Recent milestones</span><span class="ctx-section-sub">refs/h5i/context</span></div>
-            <ol class="ctx-milestones">
-              <li><span class="ctx-milestone-sha">c80adf9</span><span class="ctx-milestone-text">Widen the Env column in the embedded Sandbox fleet table</span></li>
-              <li><span class="ctx-milestone-sha">3a8f359</span><span class="ctx-milestone-text">Make the embedded dashboard tabs switchable (Ensemble / Sandbox)</span></li>
-              <li><span class="ctx-milestone-sha">04c9f5c</span><span class="ctx-milestone-text">Embed the live ENSEMBLE dashboard in the hero, replacing the stat-cards</span></li>
-            </ol>
-          </div>
-
-          <div class="ctx-section">
-            <div class="ctx-section-head"><span class="ctx-section-title">OTA balance</span><span class="ctx-section-sub">observe / think / act / note / merge across 801 entries</span></div>
-            <div class="ctx-ota-bar">
-              <div class="ctx-ota-segment" style="width:39%;background:var(--h5-accent)"></div>
-              <div class="ctx-ota-segment" style="width:31%;background:var(--h5-model)"></div>
-              <div class="ctx-ota-segment" style="width:24%;background:var(--h5-pass)"></div>
-              <div class="ctx-ota-segment" style="width:5%;background:var(--h5-run)"></div>
-              <div class="ctx-ota-segment" style="width:1%;background:#ff7bff"></div>
-            </div>
-            <div class="ctx-ota-legend">
-              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:var(--h5-accent)"></span><span class="ctx-ota-legend-label">OBSERVE</span><span class="ctx-ota-legend-val">312</span><span class="ctx-ota-legend-pct">39%</span></span>
-              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:var(--h5-model)"></span><span class="ctx-ota-legend-label">THINK</span><span class="ctx-ota-legend-val">248</span><span class="ctx-ota-legend-pct">31%</span></span>
-              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:var(--h5-pass)"></span><span class="ctx-ota-legend-label">ACT</span><span class="ctx-ota-legend-val">196</span><span class="ctx-ota-legend-pct">24%</span></span>
-              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:var(--h5-run)"></span><span class="ctx-ota-legend-label">NOTE</span><span class="ctx-ota-legend-val">38</span><span class="ctx-ota-legend-pct">5%</span></span>
-              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:#ff7bff"></span><span class="ctx-ota-legend-label">MERGE</span><span class="ctx-ota-legend-val">7</span><span class="ctx-ota-legend-pct">1%</span></span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    </div>
-    <div class="ee-caption" aria-hidden="true">
-      <span><b>Isolated</b> per agent</span>
-      <span><b>Sealed</b> attempts</span>
-      <span><b>Neutral</b> verifier</span>
-      <span>Lives in your Git · <b>refs/h5i/*</b></span>
-    </div>
-    <p style="max-width:640px;margin:1.5rem auto 0;font-size:0.98rem;color:var(--text-dim);line-height:1.6;">A live record of what each agent did, why it changed the code, and what evidence supports merging it.</p>
   </div>
 </section>
 
-<!-- ── Works With ───────────────────────────────────────────── -->
-<aside class="works" aria-label="Works with">
-  <div class="works-inner">
-    <span class="works-label">Designed for</span>
-    <span class="works-item">Claude Code</span>
-    <span class="works-item">Codex</span>
-    <span class="works-item">Git</span>
-    <span class="works-item">GitHub</span>
-    <span class="works-item">MCP</span>
-    <span class="works-item">Skill</span>
-    <span class="works-item">Apache&nbsp;2.0</span>
-  </div>
-</aside>
-
-<!-- ── Problem ───────────────────────────────────────────────── -->
+<!-- ── The problem ───────────────────────────────────────────── -->
 <section id="problem">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">The bottleneck changed</span>
-      <h2 class="section-title">Code generation got cheap.<br> Code acceptance got risky.</h2>
-      <p class="section-sub">Agents now produce more patches than any team can safely review. Git shows you the diff, but not the prompt, the commands, the sandbox policy, the failed attempts, the peer reviews, or the verifier evidence behind it. The scarce resource is no longer writing code. It is accepting it, whether you run one agent or many:</p>
+      <span class="section-tag">The problem</span>
+      <h2 class="section-title">Full autonomy is the point.<br> Your laptop is the risk.</h2>
+      <p class="section-sub">An agent that has to ask permission for every command is an agent you are babysitting. An agent that does not is one running with your SSH keys, your cloud credentials, your browser session and write access to everything you own. The usual answer is to narrow what the agent may do. h5i narrows <em>where it is</em> instead, so it can have the run of the place.</p>
       <div class="divider"></div>
-    </div>
-    <div class="fm-split reveal">
-      <div class="fm">
-        <div class="fm-row head"><div class="fm-cell">One agent, unaudited</div><div class="fm-cell">What happens</div></div>
-        <div class="fm-row"><div class="fm-cell">Opaque provenance</div><div class="fm-cell">The diff lands, but the prompt, model, and commands behind it are gone.</div></div>
-        <div class="fm-row"><div class="fm-cell">Token explosion</div><div class="fm-cell">Every run re-reads the whole repo and drags raw logs into context.</div></div>
-        <div class="fm-row"><div class="fm-cell">Unsafe autonomy</div><div class="fm-cell">An agent can run destructive commands without enough containment.</div></div>
-        <div class="fm-row"><div class="fm-cell">Review overload</div><div class="fm-cell">Humans can't reconstruct every prompt, command, retry, and failure.</div></div>
-      </div>
-      <div class="fm">
-        <div class="fm-row head"><div class="fm-cell">Many agents, uncoordinated</div><div class="fm-cell">What happens</div></div>
-        <div class="fm-row"><div class="fm-cell">Environment conflict</div><div class="fm-cell">Agents overwrite each other's files, ports, caches, credentials, and branches.</div></div>
-        <div class="fm-row"><div class="fm-cell">Context contamination</div><div class="fm-cell">Agents see each other's output before an independent attempt, and diversity collapses.</div></div>
-        <div class="fm-row"><div class="fm-cell">No fair winner</div><div class="fm-cell">You get many patches but no neutral evidence for which one to merge.</div></div>
-      </div>
     </div>
   </div>
 </section>
 
-<!-- ── Three primitives ──────────────────────────────────────── -->
-<section id="primitives">
+<!-- ── The loop ──────────────────────────────────────────────── -->
+<section id="loop">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">How it works</span>
-      <h2 class="section-title">Three primitives.</h2>
-      <p class="section-sub">Isolate the run, record the evidence, then review it before anything merges. It works the same for one Claude Code session or a whole team, and everything writes to Git-native sidecar refs under <code>refs/h5i/*</code> that travel with your repo.</p>
+      <span class="section-tag">The loop</span>
+      <h2 class="section-title">Fill a box, let it work, read what came out.</h2>
       <div class="divider"></div>
     </div>
-    <div class="cards3 reveal">
+    <div class="feat-grid reveal">
       <div class="feat-card">
-        <span class="feat-cmd">01 · Isolate</span>
-        <div class="feat-name">Every agent runs in a sandbox</div>
-        <div class="feat-desc">A disposable, confined worktree per agent: fail-closed Landlock, seccomp, and namespaces, up to a network egress allowlist. Files, branches, and ports never collide, and nothing lands until you <code>apply</code>.</div>
+        <div class="feat-name">1 · Fill it</div>
+        <div class="feat-desc"><code>h5i box .</code> for this repository, <code>h5i box --pr 1234</code> for a pull request, <code>h5i box &lt;url&gt;</code> to clone something you do not trust, <code>h5i box --new</code> to start from nothing. External code always arrives detached: your repository is never touched.</div>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">02 · Record</span>
-        <div class="feat-name">The evidence travels with the repo</div>
-        <div class="feat-desc">Prompts, commands, logs, policies, and reviews are stored beside the code in <code>refs/h5i/*</code>. Raw logs stay out-of-band, so agents see compact summaries and context stays lean, up to <strong>95% less</strong> token waste.</div>
+        <div class="feat-name">2 · Work in it</div>
+        <div class="feat-desc"><code>h5i box shell &lt;name&gt;</code> is the agent-in-box. Everything the session spawns is contained by the box, not by the agent choosing to wrap each call. <code>h5i box status</code> tells you the policy that was actually enforced, never the one that was requested.</div>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">03 · Audit &amp; Accept</span>
-        <div class="feat-name">Review the diff before merge</div>
-        <div class="feat-desc">Read back the prompt, commands, and risk signals behind any change with <code>audit review</code>, then merge one evidence-backed result. For agent teams, sealed candidates can also be replayed by a neutral verifier.</div>
+        <div class="feat-name">3 · Get it out</div>
+        <div class="feat-desc"><code>h5i box export &lt;name&gt;</code> writes <code>patch.diff</code>, <code>report.md</code> and <code>receipt.json</code> for a human to read. Nothing reaches your repository without that step. Apply it wherever you want with <code>git apply --3way</code>.</div>
       </div>
     </div>
-    <p class="reveal" style="margin:1.5rem 0 0;text-align:center;font-family:var(--mono);font-size:0.8rem;color:var(--text-faint);">Powered by <code style="color:var(--red-text)">h5i env</code>, <code style="color:var(--red-text)">h5i capture</code>, <code style="color:var(--red-text)">h5i audit</code>, <code style="color:var(--red-text)">h5i team</code>, and <code style="color:var(--red-text)">refs/h5i/*</code>.</p>
   </div>
 </section>
 
-<!-- ── Programmable Multi-Agent Orchestration (centerpiece) ──── -->
-<section id="team">
+<!-- ── The browser ───────────────────────────────────────────── -->
+<section id="browser">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">Run many coding agents. Merge one auditable result.</span>
-      <h2 class="section-title">Programmable Multi-Agent Orchestration</h2>
+      <span class="section-tag">The browser</span>
+      <h2 class="section-title">The agent can see the app it just changed.</h2>
+      <p class="section-sub">A <code>browser</code> box runs headless Chrome and the <a href="https://github.com/vercel-labs/agent-browser" style="color:var(--red-text)">agent-browser</a> daemon alongside the agent, so the dev server is on <code>localhost</code> for both of them. The agent reads an accessibility tree rather than HTML, clicks and fills by handle, and screenshots what it sees.</p>
       <div class="divider"></div>
     </div>
-
-    <div class="split2 reveal" style="margin-bottom:2.5rem;">
-      <div class="terminal" style="margin:0;">
-        <div class="terminal-bar">
-          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
-          <span class="terminal-path">ensemble.py</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">import</span> asyncio
-<span class="t-prompt">from</span> h5i.orchestra <span class="t-prompt">import</span> Conductor
-
-<span class="t-prompt">async def</span> main():
-    <span class="t-prompt">async with</span> Conductor(<span class="t-ai">"."</span>, <span class="t-ai">"fix-auth"</span>) <span class="t-prompt">as</span> c:
-        claude = <span class="t-prompt">await</span> c.hire(<span class="t-ai">"claude-agent"</span>, runtime=<span class="t-ai">"claude"</span>)
-        codex  = <span class="t-prompt">await</span> c.hire(<span class="t-ai">"codex-agent"</span>,  runtime=<span class="t-ai">"codex"</span>)
-
-        <span class="t-cmt"># Both agents implement the task in parallel</span>
-        claude_work, codex_work = <span class="t-prompt">await</span> asyncio.gather(
-            claude.work(task), codex.work(task))
-
-        <span class="t-cmt"># Seal the round: no agent saw a peer's attempt</span>
-        <span class="t-prompt">await</span> c.freeze()
-
-        <span class="t-cmt"># Each agent reviews the other's work</span>
-        <span class="t-prompt">await</span> asyncio.gather(
-            codex.review(claude_work), claude.review(codex_work))
-
-        <span class="t-cmt"># Replay each submission in a fresh, neutral sandbox</span>
-        <span class="t-prompt">await</span> c.verify(claude_work, [<span class="t-ai">"pytest"</span>, <span class="t-ai">"--quiet"</span>])
-        <span class="t-prompt">await</span> c.verify(codex_work, [<span class="t-ai">"pytest"</span>, <span class="t-ai">"--quiet"</span>])
-
-        <span class="t-cmt"># Smallest diff among submissions that pass all tests</span>
-        verdict = <span class="t-prompt">await</span> c.judge()
-        <span class="t-prompt">print</span>(<span class="t-ai">"winner:"</span>, verdict.selected_submission)
-
-asyncio.run(main(<span class="t-ai">"implement quicksort in python with unit test"</span>))</pre></div>
+    <div class="feat-grid reveal">
+      <div class="feat-card">
+        <div class="feat-name">Watch it, then take over</div>
+        <div class="feat-desc"><code>h5i box view &lt;name&gt;</code> streams the viewport to loopback and lets you drive. The box's port is never published: h5i reaches into its private network namespace instead, behind a per-box token, refusing cross-origin connections.</div>
       </div>
-      <div class="stack">
-        <p style="color:var(--text-dim);line-height:1.7;margin:0;">The same auditable workspace that contains one agent scales to a whole ensemble, and the workflow itself is <strong>a program you write</strong>. With <code>h5i-orchestra</code>, parallel fan-out, loops, and conditionals are ordinary control flow in Python or Rust: hire a roster of personas, let them work sealed and in parallel, cross-review, verify in a neutral sandbox, and let an explainable verdict pick the winner. Every step is journaled to <code>refs/h5i/team</code>, so an interrupted run resumes instead of re-paying agent turns.</p>
-        <div class="hero-install" style="align-self:flex-start;">
-          <code>pip3 install h5i-orchestra</code>
-          <button class="copy-btn" onclick="copyCmd(this)">copy</button>
-        </div>
-        <p style="color:var(--text-faint);font-size:0.85rem;line-height:1.7;margin:0;">The Python SDK lives at <a href="https://github.com/h5i-dev/h5i-python" style="color:var(--red-text)">github.com/h5i-dev/h5i-python</a>. Prefer Rust? The same define-by-run eDSL ships in the main repo as <code>h5i-orchestra</code>.</p>
+      <div class="feat-card">
+        <div class="feat-name">One driver at a time</div>
+        <div class="feat-desc">Nothing upstream arbitrates between an agent and a human clicking at the same moment, so h5i does. You take control rather than asking for it; the agent waits, then re-snapshots, because the page moved underneath it.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">The page's own answer</div>
+        <div class="feat-desc">Console errors, uncaught exceptions and failed requests land in the receipt, collected right after each command. "I clicked Submit and it worked" is a sentence; the export carries what actually happened next to it.</div>
       </div>
     </div>
-
   </div>
 </section>
-
-<!-- ── What lives in Git (commented out) ─────────────────────── -->
-<!-- What lives in Git section intentionally hidden from the front page. -->
-
-<!-- ── Review Evidence (commented out) ───────────────────────── -->
-<!-- Review Evidence section intentionally hidden from the front page. -->
-
-<!-- ── Token Reduction (commented out) ───────────────────────── -->
-<!-- Token Reduction section intentionally hidden from the front page. -->
-
-<!-- ── Coordination (commented out) ──────────────────────────── -->
-<!-- Coordination section intentionally hidden from the front page. -->
-
-<!-- ── Risk Triage (commented out) ───────────────────────────── -->
-<!-- Risk Triage section intentionally hidden from the front page. -->
-
-<!-- ── Reviewer Brief (commented out) ────────────────────────── -->
-<!-- Reviewer Brief section intentionally hidden from the front page. -->
-
-<!-- ── Built with h5i (commented out) ────────────────────────── -->
-<!-- Built with h5i (dogfood proof) section intentionally hidden from the front page. -->
-
-
 
 <!-- ── FAQ ────────────────────────────────────────────────────── -->
 <section id="faq">
@@ -1758,49 +1023,45 @@ asyncio.run(main(<span class="t-ai">"implement quicksort in python with unit tes
     <div class="section-head reveal">
       <span class="section-tag">FAQ</span>
       <h2 class="section-title">Frequently asked questions</h2>
-      <p class="section-sub">The short answers. The <a href="/blog/" style="color:var(--red-text)">blog</a> and <a href="/manual/" style="color:var(--red-text)">manual</a> have the long ones.</p>
+      <p class="section-sub">The short answers. The <a href="/manual/" style="color:var(--red-text)">manual</a> has the long ones.</p>
       <div class="divider"></div>
     </div>
     <div class="faq-list reveal">
       <details class="faq-item" open>
         <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an open-source <strong>auditable workspace layer for AI coding agents</strong>. It runs Claude Code, Codex, and other agents in isolated Git workspaces and records the prompt, model, agent, reasoning, commands, logs, sandbox policy, reviews, and verifier results behind every change, then lets teams merge one evidence-backed result. Technically, h5i stores this evidence as Git-native sidecar refs under <code>refs/h5i/*</code>, so it travels with your repo with no hosted control plane.</div>
+        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an open-source <strong>contained agentic development environment</strong>. It gives a coding agent a disposable box holding the code, the toolchain, the dev server and a real browser, confined by a pinned, fail-closed policy, and gives you back a reviewed patch plus a receipt of everything that ran. One Rust binary, Apache 2.0, no hosted control plane.</div>
       </details>
       <details class="faq-item">
-        <summary>How does h5i run an agent team?</summary>
-        <div class="faq-answer"><code>h5i team</code> runs several agents on the <em>same</em> task, each in its own isolated <code>h5i env</code>, through a phased protocol: <strong>create</strong> a roster of personas (runtime, model, role) → <strong>dispatch</strong> the task to all → each agent works <strong>sealed and independently</strong> → <strong>freeze</strong> immutable submissions → permissioned <strong>review</strong> → a neutral sandboxed <strong>verify</strong> → <strong>apply</strong> one winner. Run state is an append-only event log in <code>refs/h5i/team</code> that travels with the repo. It's a thin coordination layer, not a group chat, not a daemon.</div>
+        <summary>How is this different from just running the agent in a container?</summary>
+        <div class="faq-answer">A container is one of the four tiers h5i can use, and on its own it is the <em>weakest</em> at the thing that matters most here. Its egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. h5i's <code>supervised</code> tier puts the box in a private network namespace and enforces the allowlist with nftables rules pinned to resolved IPs, plus a seccomp gate on <code>socket()</code>: a program that ignores proxy settings still cannot reach an off-list address. On top of that you get the copy-in workspace, the credential broker, the browser, and the output gate, which a bare container does not give you.</div>
       </details>
       <details class="faq-item">
-        <summary>How is the winning patch chosen?</summary>
-        <div class="faq-answer">By a <strong>neutral verifier</strong>, not by the agents. <code>h5i team verify</code> replays each frozen candidate at the shared base in a fresh, sandboxed worktree and runs the declared command itself, so finalization never trusts an agent's own captures. Hard gates (tests pass, applies cleanly) come only from that run; <em>smallest-diff</em> breaks ties only among gate-passers, so nothing wins by deleting tests or stubbing features. The verdict is explainable, <code>apply</code> is gated, and if nothing clears the gates it records <code>no_verdict</code> instead of merging a loser.</div>
+        <summary>Do my credentials go into the box?</summary>
+        <div class="faq-answer">No. The model API key stays on the host; a reverse proxy injects it into outbound requests, scoped per runtime, so a Claude box cannot reach an OpenAI credential. Any other service works the same way as a policy entry rather than a feature. The per-box copy of your agent's HOME config has credential-shaped entries stripped at any depth, keeping only the runtime's own token, which it cannot function without.</div>
       </details>
       <details class="faq-item">
-        <summary>Does h5i work with Claude Code and Codex?</summary>
-        <div class="faq-answer">Yes. h5i is built for teams where AI agents write code alongside humans. Claude Code integrates via hooks and MCP; Codex uses explicit <code>prelude</code>, <code>sync</code>, and <code>finish</code> commands. Both agents restore the same shared context when a session starts and check their work back in when it ends.</div>
+        <summary>Can the agent tamper with the receipt?</summary>
+        <div class="faq-answer">It cannot rewrite what is already recorded. The box's only write window under its own directory is a staging spool; the receipt log and the stored payloads are siblings of that spool, outside every grant it has. The box stages a record, the host ingests it, and ordering and timestamps are the host's. What an agent can still do is stage extra records or stop writing, and both are visible: a gap between host-observed exits and box-reported commands is itself a finding. We do not claim more than that.</div>
       </details>
       <details class="faq-item">
-        <summary>How is h5i different from plain Git?</summary>
-        <div class="faq-answer">Git versions code. h5i versions the <em>workspace</em> around it, the sandboxed worktree the agent ran in, the prompt and model behind each commit, the compressed command logs, the cross-agent handoffs, and the audit signals, stored in dedicated <code>refs/h5i/*</code> refs that travel with the repo without touching your commit history.</div>
+        <summary>Can it stop the agent leaking my source code?</summary>
+        <div class="faq-answer">No, and we will not imply otherwise. Containment stops the agent from touching your host. It does not stop it putting private code in a prompt to the model API. That is a separate control: a self-hosted model, or a profile with no model egress at all.</div>
       </details>
       <details class="faq-item">
-        <summary>Who is h5i for?</summary>
-        <div class="faq-answer">The first adopters are <strong>platform, security, and DevEx leads</strong> at engineering orgs rolling out Claude Code and Codex: the people who have to keep PR review and audit defensible while agents write a growing share of production diffs. h5i is the <strong>audit trail for AI coding sessions</strong>: every change carries who/which-model authored it, how well it was prompted, what commands ran, whether tests passed, and what risks were flagged, all versioned in your own Git repo, shareable with <code>push</code>/<code>pull</code>, no SaaS. It makes agent work reproducible, reviewable, and accountable without adding a new system of record.</div>
+        <summary>Does it need root, or a VM?</summary>
+        <div class="faq-answer">Neither. h5i uses Landlock, seccomp and unprivileged user namespaces, adding rootless Podman if you have it. <code>h5i box probe</code> reports what your host can actually enforce. An explicitly requested tier that the host cannot satisfy <strong>fails closed</strong> — h5i never silently downgrades.</div>
       </details>
       <details class="faq-item">
-        <summary>Can h5i reduce AI token costs?</summary>
-        <div class="faq-answer">Yes. h5i keeps raw tool output out of the agent's context with content-addressed capture and snapshots agent memory, so the next session skips re-grounding. In a reproducible benchmark, capture cut <strong>tool-output tokens by ~95%</strong> with full task fidelity.</div>
+        <summary>What are the limits?</summary>
+        <div class="faq-answer">The kernel is shared, so this is good against a runaway agent and careless dependency code, and is not a claim against a targeted kernel exploit. Chrome runs with its own sandbox off, because h5i's seccomp policy denies the namespace syscalls it needs — the box is the boundary, not Chrome. The viewport is a page, not a desktop. And it is Linux first: rootless Podman on Linux and WSL2, with macOS needing a VM layer. The <a href="/manual/#limits" style="color:var(--red-text)">manual</a> keeps the full list.</div>
       </details>
       <details class="faq-item">
         <summary>Is h5i free and open source?</summary>
-        <div class="faq-answer">Yes. h5i is free and open source under the <strong>Apache 2.0</strong> license, with no lock-in. It is written in Rust and runs on Linux, macOS, and Windows.</div>
+        <div class="faq-answer">Yes. Apache 2.0, written in Rust, no lock-in and no hosted service.</div>
       </details>
       <details class="faq-item">
-        <summary>Can h5i detect prompt injection in AI-generated code?</summary>
-        <div class="faq-answer"><code>h5i audit scan</code> applies deterministic regex rules to every OBSERVE/THINK/ACT entry in an agent's reasoning trace to flag prompt-injection signals, with no model in the audit path, and can rank which commits most need human review.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Can h5i sandbox an AI agent's commands?</summary>
-        <div class="faq-answer">Yes. <code>h5i env</code> gives an agent a disposable, confined environment, a git worktree plus a policy that limits what code can read, write, and reach over the network. It picks the strongest isolation the host can enforce (Landlock + seccomp + namespaces, up to a rootless network egress allowlist), records every command and blocked access, and nothing reaches your branch until you <code>apply</code>. No root and no VM required.</div>
+        <summary>What happened to the provenance features?</summary>
+        <div class="faq-answer">h5i began as a provenance system: prompt versioning, AI-aware blame, an audit scan, a multi-agent orchestra, a dashboard. Those are gone. The boundary was always the part worth having, and the product is being rebuilt around it. <a href="https://github.com/h5i-dev/h5i/blob/main/ROADMAP.md" style="color:var(--red-text)">ROADMAP.md</a> is the plan of record: what stays, what was cut, and what is still coming.</div>
       </details>
     </div>
   </div>
@@ -1811,19 +1072,16 @@ asyncio.run(main(<span class="t-ai">"implement quicksort in python with unit tes
   <div class="cta-glow"></div>
   <div class="container">
     <div class="cta-inner">
-      <h2 class="cta-title">Give every agent an auditable workspace.</h2>
-      <p class="cta-sub">Spin up a roster of agents, seal their independent attempts, let a neutral verifier pick the winner, and merge one auditable result. Versioned in your Git. Apache 2.0. No SaaS, no lock-in.</p>
+      <h2 class="cta-title">Let the agent off the leash. Somewhere else.</h2>
+      <p class="cta-sub">Full autonomy inside a box that holds nothing of yours, and a reviewed patch on the way out. Apache 2.0. No SaaS, no lock-in.</p>
       <div class="hero-actions">
         <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
-        <a href="/features/" class="btn btn-ghost">Features &amp; Use Cases</a>
-        <a href="/workflows/" class="btn btn-ghost">Read Workflows</a>
         <a href="/manual/" class="btn btn-ghost">Read the Manual</a>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ── Footer ─────────────────────────────────────────────────── -->
 <footer>
   <div class="footer-inner">
     <div class="footer-brand">
@@ -1870,178 +1128,6 @@ asyncio.run(main(<span class="t-ai">"implement quicksort in python with unit tes
       setTimeout(() => { btn.textContent = 'copy'; }, 2000);
     });
   }
-
-  /* ── Embedded workbench lens switch (Now / Board / Context / Decide) ──── */
-  document.querySelectorAll('.ensemble-embed').forEach(embed => {
-    const tabs = embed.querySelectorAll('.ee-tab[data-tab]');
-    const panels = embed.querySelectorAll('.ee-panel[data-panel]');
-    tabs.forEach(tab => tab.addEventListener('click', () => {
-      const name = tab.getAttribute('data-tab');
-      tabs.forEach(t => {
-        const on = t === tab;
-        t.classList.toggle('active', on);
-        t.setAttribute('aria-selected', on ? 'true' : 'false');
-      });
-      panels.forEach(p => { p.hidden = p.getAttribute('data-panel') !== name; });
-    }));
-  });
-
-  /* ── Scale-to-fit: the workbench is a fixed 980px scene shrunk like a
-     video frame (same behavior as the hero film iframe) instead of reflowed.
-     Embedded, the .ee-fit wrapper's height is pinned to the scaled height to
-     keep the page flow tight (transform doesn't affect layout). Full-window
-     mode scales to the viewport width and stretches the layout height so the
-     scaled scene fills it exactly; the fixed ctrl/bubble stay correct because
-     the transformed embed becomes their containing block. ── */
-  (() => {
-    const fit = document.querySelector('.ee-fit');
-    const embed = document.querySelector('.ensemble-embed');
-    if (!fit || !embed) return;
-    const DESIGN = 980;
-    const wb = document.documentElement.classList.contains('workbench-only');
-    const apply = () => {
-      const avail = wb ? window.innerWidth : fit.clientWidth;
-      if (avail >= DESIGN) {
-        embed.style.width = ''; embed.style.height = ''; embed.style.transform = '';
-        if (!wb) fit.style.height = '';
-      } else {
-        const s = avail / DESIGN;
-        embed.style.width = DESIGN + 'px';
-        embed.style.transformOrigin = 'top left';
-        embed.style.transform = 'scale(' + s + ')';
-        if (wb) embed.style.height = Math.round(window.innerHeight / s) + 'px';
-        else fit.style.height = Math.round(embed.offsetHeight * s) + 'px';
-      }
-    };
-    apply();
-    if (wb) window.addEventListener('resize', apply);
-    else {
-      // Re-fit on column changes and on embed height changes (the film
-      // appends its control bar as an extra grid row).
-      const ro = new ResizeObserver(apply);
-      ro.observe(fit); ro.observe(embed);
-    }
-  })();
-
-  /* ── The embed film: "a decision, with receipts". A deterministic
-     scene timeline over the embed DOM (the set). Scenes are idempotent, so
-     window.EE_SEEK(t) can rebuild any moment for rendering. Any real
-     interaction stops the film and hands the live tabs to the viewer.
-     Reduced motion gets the densest still (the Why drawer) with no timers. ── */
-  (() => {
-    const embed = document.querySelector('.ensemble-embed');
-    if (!embed) return;
-    // Full-screen mode: reparent to <body> so no transformed ancestor (the
-    // scroll-reveal) becomes the fixed embed's containing block.
-    if (document.documentElement.classList.contains('workbench-only')) document.body.appendChild(embed);
-    const rail = embed.querySelector('.ee-rail');
-    const tabs = [...embed.querySelectorAll('.ee-tab[data-tab]')];
-    const panels = [...embed.querySelectorAll('.ee-panel[data-panel]')];
-    const railHome = rail.innerHTML; // restored on takeover
-    const cursor = document.createElement('div'); cursor.className = 'ee-cursor';
-    const bubble = document.createElement('div'); bubble.className = 'ee-bubble';
-    const badge = (k, t) => '<span class="ee-abadge ab-' + k + '">' + t + '</span>';
-    const row = (dot, title, b, cls) =>
-      '<div class="ee-rail-row ' + (cls || '') + '"><span class="ee-rdot ' + dot + '"></span>' +
-      '<span class="ee-rtitle">' + title + '</span>' + b + '</div>';
-    const ACTIVE = '<div class="ee-rail-head">active (2)</div>' +
-      row('act', 'claude · session live', badge('obs', 'observed')) +
-      row('act', 'codex · session live', badge('obs', 'observed'));
-    const FOOT = '<div class="ee-rail-foot"><span class="ee-live"></span>live · event feed</div>';
-    const DECIDE = row('dec', 'fix-auth: 3 candidates, no verdict', badge('ver', 'verified'), 'ee-row-new');
-    const rails = {
-      quiet: '<div class="ee-rail-head urgent">needs you</div><div class="ee-rail-empty">nothing blocked on you</div>' + ACTIVE + FOOT,
-      called: '<div class="ee-rail-head urgent">needs you (1)</div>' + DECIDE + ACTIVE + FOOT,
-      drained: '<div class="ee-rail-head urgent">needs you</div>' +
-        row('dec', 'fix-auth: applied', badge('ver', 'verified'), 'ee-row-drained') + ACTIVE + FOOT,
-    };
-    const showPanel = (name) => {
-      tabs.forEach(t => {
-        const on = t.getAttribute('data-tab') === name;
-        t.classList.toggle('active', on); t.setAttribute('aria-selected', on ? 'true' : 'false');
-      });
-      panels.forEach(p => { p.hidden = p.getAttribute('data-panel') !== name; });
-    };
-    const overlay = (cls, html) => {
-      const el = document.createElement('div'); el.className = cls; el.innerHTML = html;
-      el.dataset.film = '1'; embed.append(el); return el;
-    };
-    const clearOverlays = () => embed.querySelectorAll('[data-film]').forEach(e => e.remove());
-    const say = (text) => { bubble.classList.remove('show'); setTimeout(() => { bubble.textContent = text; bubble.classList.add('show'); }, 200); };
-    const point = (sel) => {
-      const el = embed.querySelector(sel); if (!el) return;
-      const er = embed.getBoundingClientRect(), r = el.getBoundingClientRect();
-      // Rects are in scaled (visual) px but the cursor lives inside the
-      // scaled scene, so convert back to layout px via the current scale.
-      const s = er.width / embed.offsetWidth || 1;
-      cursor.style.transform = 'translate(' + ((r.left - er.left + r.width / 2) / s - 7) + 'px,' + ((r.top - er.top + r.height / 2) / s - 7) + 'px)';
-    };
-    const SCENES = [
-      { t: 0, fn: () => { showPanel('sandbox'); rail.innerHTML = rails.quiet; clearOverlays();
-          point('.ee-tab[data-tab="sandbox"]');
-          say('Your agents work in sealed sandboxes. Nothing needs you yet.'); } },
-      { t: 2, fn: () => { point('.ee-panel[data-panel="sandbox"]');
-          say('Every run is captured. The sandbox blocks what policy forbids: enforced, not promised.'); } },
-      { t: 4.5, fn: () => { rail.innerHTML = rails.called;
-          overlay('ee-toast', '<b>h5i</b> · fix-auth: 3 candidates ready<br>no verdict yet');
-          point('.ee-rail-row.ee-row-new');
-          say('When a decision is yours, the dashboard says so. Until then, walk away.'); } },
-      { t: 7, fn: () => { clearOverlays();
-          overlay('ee-why', '<div class="ee-why-h">why</div>3 sealed candidates await a verdict. Finalize records it.' +
-            '<div class="ee-why-h">evidence</div>' +
-            '<div class="ee-why-ev">' + badge('ver', 'verified') + '<code>verify: cargo test · 3 pass</code></div>' +
-            '<div class="ee-why-ev">' + badge('enf', 'enforced') + '<code>egress denial · cap-7f3a</code></div>' +
-            '<div class="ee-why-ev">' + badge('obs', 'observed') + '<code>sessions live · pid</code></div>' +
-            '<div class="ee-why-h">act in your terminal</div><div class="ee-why-cmd">$ h5i team compare fix-auth</div>');
-          say('Every claim shows how it is known. No score without its reasons.'); } },
-      { t: 9.5, fn: () => { clearOverlays(); showPanel('board'); point('.ee-tab[data-tab="board"]');
-          say('One board, the whole fleet: created → working → proposed → applied, each card offering its next command.'); } },
-      { t: 12, fn: () => { showPanel('context'); point('.ee-tab[data-tab="context"]');
-          say('The reasoning behind every change, versioned beside your code in refs/h5i/*.'); } },
-      { t: 14.5, fn: () => { showPanel('decide'); point('.ee-tab[data-tab="decide"]');
-          say('Deterministic scores, no model in the loop: prompt maturity and boundary risk.'); } },
-    ];
-    const LOOP = 17;
-    const seek = (t) => { SCENES.filter(sc => sc.t <= t).forEach(sc => sc.fn()); };
-    window.EE_SEEK = (t) => { clearOverlays(); seek(t); clock = t; last = t; };
-    // Controls: pause and a clickable progress track, like the product film.
-    const ctrl = document.createElement('div'); ctrl.className = 'ee-ctrl';
-    ctrl.innerHTML = '<button class="ee-ctrl-btn" type="button" aria-label="Pause">⏸</button>' +
-      '<div class="ee-ctrl-track"><div class="ee-ctrl-fill"></div></div>';
-    const btn = ctrl.querySelector('.ee-ctrl-btn');
-    const track = ctrl.querySelector('.ee-ctrl-track');
-    const fill = ctrl.querySelector('.ee-ctrl-fill');
-    let stopped = false, playing = false, paused = false, clock = 0, last = -1, timer = null;
-    const stop = (ev) => {
-      if (ev && ctrl.contains(ev.target)) return; // the controls are not a takeover
-      stopped = true; clearInterval(timer); cursor.remove(); bubble.remove(); ctrl.remove();
-      clearOverlays(); rail.innerHTML = railHome;
-    };
-    embed.addEventListener('pointerdown', stop, { capture: true });
-    btn.addEventListener('click', () => { paused = !paused; btn.textContent = paused ? '▶' : '⏸'; });
-    track.addEventListener('click', (e) => {
-      const r = track.getBoundingClientRect();
-      window.EE_SEEK(Math.max(0, Math.min(LOOP - 0.01, ((e.clientX - r.left) / r.width) * LOOP)));
-      fill.style.width = ((clock / LOOP) * 100) + '%';
-    });
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { seek(7); return; }
-    const start = () => {
-      if (playing || stopped) return; playing = true;
-      embed.append(cursor, bubble, ctrl);
-      timer = setInterval(() => {
-        if (paused || stopped) return;
-        clock += 0.1;
-        if (clock >= LOOP) { clock = 0; last = -1; clearOverlays(); }
-        SCENES.forEach(sc => { if (sc.t > last && sc.t <= clock) sc.fn(); });
-        last = clock;
-        fill.style.width = ((clock / LOOP) * 100) + '%';
-      }, 100);
-    };
-    new IntersectionObserver((entries, obs) => {
-      if (entries.some(e => e.isIntersecting)) { obs.disconnect(); start(); }
-    }, { threshold: 0.1 }).observe(embed);
-    setTimeout(start, 2500);
-  })();
 
   /* ── Scroll-reveal ────────────────────────── */
   const observer = new IntersectionObserver(entries => {

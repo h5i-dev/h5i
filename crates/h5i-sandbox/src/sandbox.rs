@@ -44,9 +44,9 @@ use crate::error::H5iError;
 // imports them from `sandbox_policy` directly, breaking the `sandbox →
 // container → sandbox` dispatch cycle.
 pub use crate::sandbox_policy::{
-    AgentRuntime, AuditCapture, AuditPolicy, BoxGitPath, ExecOutcome, HomeBind,
-    InteractiveOutcome, IsolationClaim, NetMode, PrivateBind, PrivatePath, Profile,
-    ResolvedPolicy, SecretGrant, DEFAULT_WALL,
+    browser_read_grants, browser_tooling_present, AgentRuntime, AuditCapture, AuditPolicy,
+    BoxGitPath, ExecOutcome, HomeBind, InteractiveOutcome, IsolationClaim, NetMode, PrivateBind,
+    PrivatePath, Profile, ResolvedPolicy, RoBind, SecretGrant, DEFAULT_WALL,
 };
 
 /// Repo-relative path of the checked-in policy file.
@@ -106,6 +106,16 @@ fn config_lock_paths(work: &Path, home: Option<&Path>) -> Vec<PathBuf> {
     out
 }
 
+/// Apply the private `/tmp` bind last. Its backing and the agent HOME-state
+/// copies can live below a repository in `/tmp`; mounting it first hides those
+/// sources before their own binds run.
+#[cfg(target_os = "linux")]
+fn home_binds_in_mount_order(binds: &[HomeBind]) -> Vec<&HomeBind> {
+    let mut ordered: Vec<_> = binds.iter().collect();
+    ordered.sort_by_key(|bind| bind.target == Path::new("/tmp"));
+    ordered
+}
+
 // ── raw TOML schema (what users write; everything optional) ────────────────
 
 #[derive(Debug, Default, Deserialize)]
@@ -134,6 +144,9 @@ struct ProfileToml {
     /// Rich per-grant config: `[profile.X.secret.NAME] source=… inject=… ttl=…`.
     #[serde(default)]
     secret: BTreeMap<String, SecretGrantToml>,
+    /// Authenticated egress: `[[profile.X.auth]] host=… credential_env=… base_url_var=…`.
+    #[serde(default)]
+    auth: Vec<crate::sandbox_policy::AuthGrant>,
     resources: Option<ResourcesToml>,
     #[serde(default)]
     tools: Vec<String>,
@@ -183,6 +196,10 @@ struct NetToml {
     /// `[profile.agent-claude]` overlay keeps its API allowlist. An explicit
     /// `egress = []` opts out (deny).
     egress: Option<Vec<String>>,
+    /// `unix = true` allows `AF_UNIX` sockets past the supervised tier's
+    /// `socket()` gate (see [`crate::sandbox_policy::Profile::unix_sockets`]).
+    /// `None` inherits the base, so a partial overlay on `browser` keeps it.
+    unix: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -279,19 +296,25 @@ fn builtin_named(name: &str, isolation: IsolationClaim) -> Profile {
         "agent" => Profile::builtin_agent(isolation, AgentRuntime::detect()),
         "agent-claude" => Profile::builtin_agent(isolation, AgentRuntime::Claude),
         "agent-codex" => Profile::builtin_agent(isolation, AgentRuntime::Codex),
+        // A browser box is an agent box plus the browser surface; it scopes to
+        // the creating runtime exactly like `agent` does.
+        "browser" => Profile::builtin_browser(isolation, AgentRuntime::detect()),
         _ => Profile::builtin(name, isolation),
     }
 }
 
 /// Is `name` backed by a built-in profile (usable without `.h5i/env.toml`)?
 fn is_builtin_name(name: &str) -> bool {
-    matches!(name, "default" | "agent" | "agent-claude" | "agent-codex")
+    matches!(
+        name,
+        "default" | "agent" | "agent-claude" | "agent-codex" | "browser"
+    )
 }
 
 /// Is `name` an agent-in-box profile (the family that grants claude/codex HOME
 /// state + API egress)? Used to decide whether a box can actually run an agent.
 pub fn is_agent_profile(name: &str) -> bool {
-    matches!(name, "agent" | "agent-claude" | "agent-codex")
+    matches!(name, "agent" | "agent-claude" | "agent-codex" | "browser")
 }
 
 /// Load profile `name` from `<repo>/.h5i/env.toml`, falling back to the
@@ -356,6 +379,10 @@ pub fn load_profile(
                 // (fail-closed) rather than left egressless.
                 net_egress: t.net.egress.unwrap_or(base.net_egress),
                 secret_grants: merge_secret_grants(&t.secrets, &t.secret),
+                // Omitted → inherit the built-in's (none today). An explicitly
+                // declared list replaces it: authenticated egress is never
+                // additive by accident.
+                auth: if t.auth.is_empty() { base.auth } else { t.auth },
                 secrets: t.secrets,
                 mem_bytes: match t.resources.as_ref().and_then(|r| r.mem.as_deref()) {
                     Some(s) => Some(parse_mem(s)?),
@@ -386,6 +413,10 @@ pub fn load_profile(
                     || base.allow_command_extractors,
                 shell_rcfile: t.shell.rcfile.or(base.shell_rcfile),
                 persona: if t.persona.is_empty() { base.persona } else { t.persona },
+                // Omitted → inherit the base, so a partial `[profile.browser]`
+                // overlay keeps the grant its daemon cannot start without.
+                // Explicit `unix = false` takes it away.
+                unix_sockets: t.net.unix.unwrap_or(base.unix_sockets),
             }
         }
     };
@@ -1624,8 +1655,21 @@ pub(crate) fn build_confined_command(
     // over the real absolute path so the box's writes land in its own copy and
     // never race the shared real files. Like the private binds these force a mount
     // namespace and are applied before Landlock, in the (egress-)private ns.
-    let home_bind_c: Vec<(std::ffi::CString, std::ffi::CString)> = policy
-        .home_binds
+    let home_bind_c: Vec<(std::ffi::CString, std::ffi::CString)> =
+        home_binds_in_mount_order(&policy.home_binds)
+        .into_iter()
+        .filter_map(|b| {
+            let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
+            let tc = std::ffi::CString::new(b.target.as_os_str().as_encoded_bytes()).ok()?;
+            Some((bc, tc))
+        })
+        .collect();
+
+    // Read-only binds (warm dependency caches): the box sees the cache at the
+    // package manager's own path and cannot write it. Same private ns, before
+    // Landlock, bind then remount-ro.
+    let ro_bind_c: Vec<(std::ffi::CString, std::ffi::CString)> = policy
+        .ro_binds
         .iter()
         .filter_map(|b| {
             let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
@@ -1633,6 +1677,15 @@ pub(crate) fn build_confined_command(
             Some((bc, tc))
         })
         .collect();
+
+    // The writable cache bind, if this is a refresh box. Same shape as the
+    // read-only ones, minus the remount.
+    let cache_write_c: Option<(std::ffi::CString, std::ffi::CString)> =
+        policy.cache_write.as_ref().and_then(|b| {
+            let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
+            let tc = std::ffi::CString::new(b.target.as_os_str().as_encoded_bytes()).ok()?;
+            Some((bc, tc))
+        });
 
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(&work);
@@ -1689,7 +1742,12 @@ pub(crate) fn build_confined_command(
             // (supervised is pidns=false, so it would otherwise have none). The
             // bind is contained: a mount ns under a fresh userns reduces shared
             // mounts to slave, so it never propagates to the host.
-            if !config_lock_c.is_empty() || !private_bind_c.is_empty() || !home_bind_c.is_empty() {
+            if !config_lock_c.is_empty()
+                || !private_bind_c.is_empty()
+                || !home_bind_c.is_empty()
+                || !ro_bind_c.is_empty()
+                || cache_write_c.is_some()
+            {
                 flags |= libc::CLONE_NEWNS;
             }
             if libc::unshare(flags) != 0 {
@@ -1921,6 +1979,59 @@ pub(crate) fn build_confined_command(
                 {
                     return Err(Error::other(format!(
                         "home-state bind failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
+            }
+
+            // 1g. Read-only cache binds. A cache the box could write is a
+            //     mutable surface shared between boxes, which is exactly what
+            //     the design refuses; bind it, then remount read-only while we
+            //     still hold CAP_SYS_ADMIN in the userns. Fail-closed: a cache
+            //     we could bind but not seal is not offered at all.
+            for (backing, target) in &ro_bind_c {
+                if libc::mount(
+                    backing.as_ptr(),
+                    target.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_BIND,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    return Err(Error::other(format!(
+                        "cache bind failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
+                if libc::mount(
+                    std::ptr::null(),
+                    target.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    return Err(Error::other(format!(
+                        "cache remount-ro failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
+            }
+
+            // 1h. The writable cache bind (refresh only). Its target is created
+            //     by the caller host-side; a failure here is fatal rather than
+            //     silently producing an empty cache.
+            if let Some((backing, target)) = &cache_write_c {
+                if libc::mount(
+                    backing.as_ptr(),
+                    target.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_BIND,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    return Err(Error::other(format!(
+                        "cache write bind failed: {}",
                         Error::last_os_error()
                     )));
                 }
@@ -2354,6 +2465,30 @@ pub(crate) fn wait_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn home_bind_mount_order_places_private_tmp_last() {
+        let binds = vec![
+            HomeBind {
+                backing: PathBuf::from("/tmp/repo/env/tmp"),
+                target: PathBuf::from("/tmp"),
+            },
+            HomeBind {
+                backing: PathBuf::from("/tmp/repo/env/home/claude"),
+                target: PathBuf::from("/home/test/.claude"),
+            },
+            HomeBind {
+                backing: PathBuf::from("/tmp/repo/env/home/claude.json"),
+                target: PathBuf::from("/home/test/.claude.json"),
+            },
+        ];
+
+        let ordered = home_binds_in_mount_order(&binds);
+        assert_eq!(ordered[0].target, Path::new("/home/test/.claude"));
+        assert_eq!(ordered[1].target, Path::new("/home/test/.claude.json"));
+        assert_eq!(ordered[2].target, Path::new("/tmp"));
+    }
 
     /// Functional, real-kernel proof that `policy.home_binds` shadows the target
     /// path inside the confined child (the in-box half of per-env credential
