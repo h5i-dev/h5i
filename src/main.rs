@@ -19,6 +19,9 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+// `Env`'s clap enum is much larger than the two generator commands; boxing it
+// would break clap's derive, and the enum is constructed once per process.
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Isolated agent environments: a confined worktree with a pinned,
     /// fail-closed policy. Run `h5i env --help` for the verb table.

@@ -2,8 +2,6 @@
 use clap::Subcommand;
 use console::style;
 
-use h5i_core::msg;
-use h5i_core::repository::H5iRepository;
 use h5i_core::ui::{LOOKING, SUCCESS};
 
 #[derive(Subcommand)]
@@ -278,11 +276,27 @@ pub enum EnvServiceCommands {
     },
 }
 
+/// Who is creating this env. `$H5I_AGENT` is injected per host (Claude Code
+/// sets `claude`, Codex sets `codex`); a human on a bare shell gets `human`.
+/// The identity scopes the env's branch namespace and the agent-in-box profile.
+fn agent_identity() -> String {
+    std::env::var("H5I_AGENT")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| {
+            !s.is_empty()
+                && s.len() <= 64
+                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .unwrap_or_else(|| "human".to_string())
+}
+
 pub fn run(action: EnvCommands) -> anyhow::Result<()> {
     {
-            let repo = H5iRepository::open(".")?;
-            let h5i_root = repo.h5i_root.clone();
-            let git = repo.git();
+            let git_repo = git2::Repository::discover(".")?;
+            let h5i_root = h5i_core::storage::h5i_root_for_repo(&git_repo)?;
+            h5i_core::storage::ensure_layout(&h5i_root)?;
+            let git = &git_repo;
             let workdir = git
                 .workdir()
                 .ok_or_else(|| anyhow::anyhow!("h5i env requires a non-bare repository"))?
@@ -324,8 +338,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     backend,
                     audit,
                 } => {
-                    let agent = msg::resolve_identity(&h5i_root, None)
-                        .unwrap_or_else(|_| "human".to_string());
+                    let agent = agent_identity();
                     use h5i_core::sandbox::{IsolationClaim, IsolationRequest};
                     let isolation = match isolation.as_deref() {
                         None => None,
@@ -340,7 +353,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     // head, pin the local pr/<n> tracking branch, then create pins
                     // the immutable base from it like any other rev.
                     let pr_base = match &pr {
-                        Some(spec) => Some(h5i_core::pr::resolve_pr_base(&workdir, spec, &remote)?),
+                        Some(spec) => Some(h5i_core::source::resolve_pr_base(&workdir, spec, &remote)?),
                         None => None,
                     };
                     let opts = h5i_core::env::CreateOpts {
@@ -388,7 +401,6 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                         m.parent_branch
                     );
                     println!("   branch   {}", m.branch);
-                    println!("   context  {}", m.context_branch);
                     println!("   work     {}", m.work_dir(&h5i_root).display());
                     // Discoverability: when we auto-picked a kernel tier and the host
                     // has no rootless Podman, tell the user the `container` tier
@@ -420,10 +432,21 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
                     let outcome = h5i_core::env::run(git, &h5i_root, &mut m, &command)?;
-                    match &outcome.manifest.structured {
-                        Some(s) => println!("{}", h5i_core::structured::render_compact(s)),
-                        None => println!("{}", outcome.manifest.summary),
+                    // The command's own output, as recorded (secret-redacted).
+                    let dir = h5i_core::env::env_dir(&h5i_root, &m.agent, &m.slug);
+                    if let Ok(raw) = h5i_core::receipt::raw_bytes(&dir, &outcome.receipt.id) {
+                        print!("{}", String::from_utf8_lossy(&raw));
                     }
+                    eprintln!(
+                        "{} receipt {} · exit {} · wall {}ms",
+                        LOOKING,
+                        outcome.receipt.id,
+                        outcome
+                            .exit_code
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "signal".into()),
+                        outcome.wall_ms
+                    );
                     if outcome.timed_out {
                         eprintln!(
                             "{} run killed by the policy wall-clock limit",
@@ -882,10 +905,10 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                 } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     if json {
-                        let manifest = h5i_core::env::inspect_manifest(git, &m, &capture)?;
-                        println!("{}", serde_json::to_string_pretty(&manifest)?);
+                        let rec = h5i_core::env::inspect_manifest(&h5i_root, &m, &capture)?;
+                        println!("{}", serde_json::to_string_pretty(&rec)?);
                     } else {
-                        print!("{}", h5i_core::env::inspect(git, &m, &capture)?);
+                        print!("{}", h5i_core::env::inspect(&h5i_root, &m, &capture)?);
                     }
                 }
 
@@ -906,7 +929,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
 
                 EnvCommands::Apply { name, patch } => {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
-                    let msg_out = h5i_core::env::apply(git, &h5i_root, &workdir, &mut m, patch)?;
+                    let msg_out = h5i_core::env::apply(git, &h5i_root, &mut m, patch)?;
                     println!("{} {}", SUCCESS, msg_out);
                     // A PR env applied onto its local pr/<n> branch: tell the
                     // reviewer exactly how to send the result back to the PR.

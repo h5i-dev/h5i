@@ -138,32 +138,35 @@ impl Repo {
         serde_json::from_str(&text).expect("manifest json")
     }
 
-    /// The **latest** capture manifest in refs/h5i/objects tagged for env
-    /// `<slug>`. Manifests are appended chronologically, so the last matching
-    /// line is the newest capture — important when an env has several runs.
+    /// The **latest** receipt recorded for env `<slug>`. Records are appended
+    /// chronologically, so the last line is the newest — important when an env
+    /// has several runs.
     fn capture_manifest(&self, slug: &str) -> serde_json::Value {
-        let blob = out_str(&git(
-            &self.dir,
-            &["show", "refs/h5i/objects:manifests.jsonl"],
-        ));
-        let id = format!("env/tester/{slug}");
+        let log = self.env_dir(slug).join("receipt.jsonl");
+        let blob = std::fs::read_to_string(&log)
+            .unwrap_or_else(|_| panic!("no receipt log at {}", log.display()));
         let line = blob
             .lines()
-            .rfind(|l| l.contains(&id))
-            .expect("an env-tagged capture");
-        serde_json::from_str(line).expect("capture manifest json")
+            .rfind(|l| !l.trim().is_empty())
+            .expect("a receipt");
+        serde_json::from_str(line).expect("receipt json")
     }
 
-    /// The raw content-addressed blob bytes for a capture's `raw_oid`.
-    fn capture_raw(&self, raw_oid: &str) -> Vec<u8> {
-        let hex = raw_oid.strip_prefix("sha256:").unwrap_or(raw_oid);
-        let path = self
-            .dir
-            .join(".git/.h5i/objects")
-            .join(&hex[0..2])
-            .join(&hex[2..4])
-            .join(hex);
-        std::fs::read(&path).unwrap_or_else(|_| panic!("raw blob {hex} missing"))
+    /// Every receipt recorded for env `<slug>`, oldest first.
+    fn receipts(&self, slug: &str) -> Vec<serde_json::Value> {
+        let log = self.env_dir(slug).join("receipt.jsonl");
+        std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).expect("receipt json"))
+            .collect()
+    }
+
+    /// The stored raw payload of a receipt.
+    fn capture_raw_for(&self, slug: &str, id: &str) -> Vec<u8> {
+        let path = self.env_dir(slug).join("receipts").join(format!("{id}.raw"));
+        std::fs::read(&path).unwrap_or_else(|_| panic!("raw payload {id} missing"))
     }
 }
 
@@ -182,8 +185,6 @@ fn synthetic_env_manifest(
         base_tree: tree.id().to_string(),
         parent_branch: "main".into(),
         branch: format!("refs/heads/h5i/env/{agent}/{slug}"),
-        parent_context_branch: "main".into(),
-        context_branch: format!("env/{agent}/{slug}"),
         profile: "default".into(),
         policy_digest: "d".repeat(64),
         isolation_claim: "workspace".into(),
@@ -219,7 +220,7 @@ fn append_synthetic_env_manifest(repo: &git2::Repository, m: &h5i_core::env::Env
 // ─── 1. create: the triple fusion ───────────────────────────────────────────
 
 #[test]
-fn create_builds_worktree_branch_context_policy_and_event() {
+fn create_builds_worktree_branch_policy_and_event() {
     let r = Repo::new();
     // `h5i init` drops its own untracked scaffolding (CLAUDE.md, .claude/…) —
     // snapshot the status BEFORE create so we assert create adds nothing.
@@ -249,25 +250,17 @@ fn create_builds_worktree_branch_context_policy_and_event() {
         "env branch starts at the frozen base"
     );
 
-    // Manifest pins base/branch/context/policy.
+    // Manifest pins base/branch/policy.
     let m = r.manifest("fix-auth");
     assert_eq!(m["status"], "created");
     assert_eq!(m["agent"], "tester");
     assert_eq!(m["parent_branch"], "main");
     assert_eq!(m["base_commit"].as_str().unwrap(), head.trim());
     assert_eq!(m["branch"], "refs/heads/h5i/env/tester/fix-auth");
-    assert_eq!(m["context_branch"], "env/tester/fix-auth");
     assert_eq!(m["backend"], "worktree");
     assert_eq!(m["isolation_claim"], "workspace");
     assert_eq!(m["policy_digest"].as_str().unwrap().len(), 64);
     assert!(r.env_dir("fix-auth").join("policy.resolved.toml").is_file());
-
-    // Reasoning branch forked under refs/h5i/context/.
-    run_ok(
-        Command::new("git")
-            .args(["rev-parse", "refs/h5i/context/env/tester/fix-auth"])
-            .current_dir(&r.dir),
-    );
 
     // Event log: refs/h5i/env carries the created event.
     let log = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:events.jsonl"]));
@@ -460,20 +453,20 @@ fn run_captures_evidence_with_env_id_and_policy_digest() {
         "echo out-line; echo err-line >&2",
     ]);
 
-    // The capture manifest in refs/h5i/objects carries the env tags.
-    let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/objects:manifests.jsonl"]));
-    let line = manifests
-        .lines()
-        .find(|l| l.contains("env/tester/evidence"))
-        .expect("an env-tagged capture");
-    let m: serde_json::Value = serde_json::from_str(line).unwrap();
+    // The receipt carries the env tags: which env, which enforced policy, and
+    // which lane observed it.
+    let m = r.capture_manifest("evidence");
     assert_eq!(m["env_id"], "env/tester/evidence");
     let env_manifest = r.manifest("evidence");
     assert_eq!(m["policy_digest"], env_manifest["policy_digest"]);
-    assert_eq!(m["evidence_source"], "host-env-run");
+    assert_eq!(m["source"], "host-env-run");
     assert_eq!(m["exit_code"], 0);
-    // Captured against the env branch, not the parent.
-    assert_eq!(m["branch"], "h5i/env/tester/evidence");
+    // Both streams reached the stored payload.
+    let payload =
+        String::from_utf8_lossy(&r.capture_raw_for("evidence", m["id"].as_str().unwrap()))
+            .into_owned();
+    assert!(payload.contains("out-line"), "{payload}");
+    assert!(payload.contains("err-line"), "{payload}");
 
     // The env manifest references the capture; status advanced to idle.
     assert_eq!(env_manifest["status"], "idle");
@@ -487,165 +480,6 @@ fn run_captures_evidence_with_env_id_and_policy_digest() {
     assert!(log.contains(m["id"].as_str().unwrap()), "{log}");
 }
 
-/// The host applies in-box notes only to the env's OWN commits: a staged note
-/// for a commit outside `base..env_tip` (e.g. the inherited base / `main`) is
-/// rejected, so a box can't attach provenance to arbitrary history.
-#[test]
-fn inbox_commit_note_off_env_range_is_rejected() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "rej"]);
-    // The env branch sits at the base (no in-box commits) → base == main tip.
-    let main_oid = out_str(&git(&r.dir, &["rev-parse", "main"]));
-    let main_oid = main_oid.trim().to_string();
-
-    // Forge a note for an inherited commit (main/base) into the spool.
-    let spool = r.env_dir("rej").join("spool");
-    std::fs::create_dir_all(&spool).unwrap();
-    let forged = format!(
-        "{{\"git_oid\":\"{main_oid}\",\"parent_oid\":null,\"ai_metadata\":null,\
-         \"test_metrics\":null,\"ast_hashes\":null,\"timestamp\":\"2026-01-01T00:00:00Z\"}}"
-    );
-    std::fs::write(spool.join(format!("note-{main_oid}.json")), forged).unwrap();
-
-    // An env run triggers ingest, which must reject the forged note.
-    r.h5i_ok(&["env", "run", "rej", "--", "sh", "-c", "echo trigger"]);
-
-    // No note was attached to main, and the rejection is logged.
-    let log = out_str(&r.h5i_ok(&["env", "log", "rej"]));
-    assert!(
-        log.contains("rejected in-box commit note"),
-        "must log rejection: {log}"
-    );
-    // Non-asserting git (the note ref may not exist at all → command fails).
-    let note = Command::new("git")
-        .args(["show", &format!("refs/h5i/notes:{main_oid}")])
-        .current_dir(&r.dir)
-        .output()
-        .expect("git show");
-    assert!(
-        !note.status.success(),
-        "no note may be attached to the inherited commit"
-    );
-}
-
-/// In-box `h5i commit` can't write `refs/h5i/context-snapshots/*` (sealed ro in
-/// the box), so it builds the anchor commit *object* (objects/ is rw) and stages
-/// the ref creation to the spool. The host applies it on the next env run —
-/// scoped to the env's own commits — re-creating the snapshot ref. This is the
-/// host half of the round-trip; the box half (object build + staging) is covered
-/// by ctx::snapshot_for_commit's gate.
-#[test]
-fn inbox_context_snapshot_stages_and_host_applies_it() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "csok"]);
-
-    // Advance the env branch with an env-owned commit so its sha is in
-    // base..env_tip (the snapshot's `git_sha` is range-guarded on ingest).
-    let wt = r.work("csok");
-    std::fs::write(wt.join("g.txt"), b"hi\n").unwrap();
-    git(&wt, &["add", "g.txt"]);
-    git(&wt, &["commit", "-m", "env-owned change"]);
-    let env_tip = out_str(&git(
-        &r.dir,
-        &["rev-parse", "refs/heads/h5i/env/tester/csok"],
-    ));
-    let env_tip = env_tip.trim().to_string();
-    let short = env_tip[..8].to_string();
-
-    // Build the parentless anchor commit object the box would have written.
-    let tree = out_str(&git(&r.dir, &["rev-parse", &format!("{env_tip}^{{tree}}")]));
-    let anchor = out_str(&git(&r.dir, &["commit-tree", tree.trim(), "-m", "anchor"]));
-    let anchor = anchor.trim().to_string();
-
-    // Stage the ref-creation request, exactly as ctx::snapshot_for_commit does.
-    let spool = r.env_dir("csok").join("spool");
-    std::fs::create_dir_all(&spool).unwrap();
-    std::fs::write(
-        spool.join(format!("ctxsnap-{short}.json")),
-        format!("{{\"git_sha\":\"{env_tip}\",\"short_sha\":\"{short}\",\"anchor_oid\":\"{anchor}\"}}"),
-    )
-    .unwrap();
-
-    // An env run triggers the host ingest.
-    r.h5i_ok(&["env", "run", "csok", "--", "sh", "-c", "echo trigger"]);
-
-    // The host created the snapshot ref, pointing at the staged anchor.
-    let got = out_str(&git(
-        &r.dir,
-        &["rev-parse", &format!("refs/h5i/context-snapshots/{short}")],
-    ));
-    assert_eq!(
-        got.trim(),
-        anchor,
-        "snapshot ref must be created pointing at the staged anchor"
-    );
-    let log = out_str(&r.h5i_ok(&["env", "log", "csok"]));
-    assert!(log.contains("in-box context snapshot applied"), "{log}");
-}
-
-/// The host applies in-box snapshots only for the env's OWN commits: a staged
-/// snapshot whose `git_sha` is outside `base..env_tip` (e.g. the inherited
-/// `main`) is rejected, so a box can't plant a snapshot anchor for arbitrary
-/// history. Mirrors the note-spool scope guard.
-#[test]
-fn inbox_context_snapshot_off_env_range_is_rejected() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "csrej"]);
-    // Fresh env: branch == base == main tip, so main is inherited (off-range).
-    let main_oid = out_str(&git(&r.dir, &["rev-parse", "main"]));
-    let main_oid = main_oid.trim().to_string();
-    let short = main_oid[..8].to_string();
-    let tree = out_str(&git(&r.dir, &["rev-parse", &format!("{main_oid}^{{tree}}")]));
-    let anchor = out_str(&git(&r.dir, &["commit-tree", tree.trim(), "-m", "forged-anchor"]));
-    let anchor = anchor.trim().to_string();
-
-    let spool = r.env_dir("csrej").join("spool");
-    std::fs::create_dir_all(&spool).unwrap();
-    std::fs::write(
-        spool.join(format!("ctxsnap-{short}.json")),
-        format!("{{\"git_sha\":\"{main_oid}\",\"short_sha\":\"{short}\",\"anchor_oid\":\"{anchor}\"}}"),
-    )
-    .unwrap();
-
-    r.h5i_ok(&["env", "run", "csrej", "--", "sh", "-c", "echo trigger"]);
-
-    let log = out_str(&r.h5i_ok(&["env", "log", "csrej"]));
-    assert!(
-        log.contains("rejected in-box context snapshot"),
-        "must log rejection: {log}"
-    );
-    let got = Command::new("git")
-        .args(["rev-parse", &format!("refs/h5i/context-snapshots/{short}")])
-        .current_dir(&r.dir)
-        .output()
-        .expect("git rev-parse");
-    assert!(
-        !got.status.success(),
-        "no snapshot ref may be created for an off-range commit"
-    );
-}
-
-/// `h5i team artifact show <id>` must parse as a real subcommand — the form the
-/// peer-review prompt and the docs tell agents to run. (A prior version wired it
-/// flat as `team artifact <id>`, so the documented `show` form failed with a clap
-/// usage error and agents had to guess the right shape.)
-#[test]
-fn team_artifact_show_is_a_subcommand() {
-    let r = Repo::new();
-    // The documented form must get PAST clap into the logic. With a nonexistent
-    // team it errors on resolution — but specifically NOT a clap usage error.
-    let out = r.h5i(&["team", "artifact", "show", "sub-nobody-r1-deadbeef", "--team", "nope"]);
-    let s = out_str(&out);
-    assert!(!out.status.success(), "unknown team must still fail: {s}");
-    assert!(
-        !s.contains("unexpected argument") && !s.contains("Usage: h5i team artifact <ID>"),
-        "`artifact show <id>` must parse as a subcommand, not a clap usage error: {s}"
-    );
-    // The bare flat form (no `show`) must NOT parse — `show` is the required verb.
-    let flat = r.h5i(&["team", "artifact", "sub-nobody-r1-deadbeef"]);
-    assert!(!flat.status.success(), "bare `artifact <id>` (no `show`) must not parse");
-}
-
 /// `env status` surfaces evidence STAGED in the spool but not yet ingested
 /// (visible mid-session, before the host materializes it at run/shell end) —
 /// staged captures, notes, and tee-shim records, with the pending commands.
@@ -656,37 +490,23 @@ fn env_status_shows_pending_spool_evidence() {
     let spool = r.env_dir("pend").join("spool");
     std::fs::create_dir_all(&spool).unwrap();
 
-    // A staged in-box capture (+ its raw), a staged commit note, a shim record.
+    // A staged in-box capture (+ its raw) and a tee-shim record.
     std::fs::write(
         spool.join("cap-1-0.json"),
         r#"{"cmd":"pytest -q","cwd":null,"exit_code":0,"files":[],"cmd_argv":["pytest","-q"]}"#,
     )
     .unwrap();
     std::fs::write(spool.join("cap-1-0.raw"), b"...output...").unwrap();
-    std::fs::write(
-        spool.join("note-f3a1b2c4d5e6.json"),
-        r#"{"git_oid":"f3a1b2c4d5e6f7a8","parent_oid":null,"ai_metadata":null,"test_metrics":null,"ast_hashes":null,"timestamp":"2026-01-01T00:00:00Z"}"#,
-    )
-    .unwrap();
     std::fs::write(spool.join("cmd-9-0.cmd"), b"ls").unwrap();
-    std::fs::write(
-        spool.join("codex-hook-1-0.json"),
-        r#"{"session_id":"sess","prompts":["inspect"],"events":[{"kind":"OBSERVE","message":"read src/main.rs"}]}"#,
-    )
-    .unwrap();
 
     let status = out_str(&r.h5i_ok(&["env", "status", "pend"]));
     assert!(status.contains("pending"), "{status}");
     assert!(
-        status.contains("1 capture")
-            && status.contains("1 note")
-            && status.contains("1 shim")
-            && status.contains("1 codex"),
+        status.contains("1 capture") && status.contains("1 shim"),
         "breakdown by lane: {status}"
     );
-    // The pending command + note oid are listed (the useful detail).
+    // The pending command is listed (the useful detail).
     assert!(status.contains("pytest -q"), "{status}");
-    assert!(status.contains("note for f3a1b2c4d5e6"), "{status}");
 
     // No spool → no pending line at all.
     std::fs::remove_dir_all(&spool).unwrap();
@@ -796,38 +616,6 @@ fn full_lifecycle_create_run_propose_apply() {
     for ev in ["created", "exec", "proposed", "applied"] {
         assert!(log.contains(ev), "missing event {ev}: {log}");
     }
-}
-
-/// The provenance note is attached in the merge path too (parent advanced →
-/// a fresh merge commit gets the note, not just the fast-forward case).
-#[test]
-fn apply_stamps_provenance_on_merge_commit() {
-    let r = Repo::new();
-    r.h5i_ok(&["env", "create", "mp"]);
-    r.h5i_ok(&["env", "run", "mp", "--", "sh", "-c", "echo x > envfile.txt"]);
-    r.h5i_ok(&["env", "propose", "mp"]);
-
-    // Advance the parent on an unrelated file so apply must MERGE (no FF).
-    std::fs::write(r.dir.join("parentfile.txt"), "p\n").unwrap();
-    git(&r.dir, &["add", "parentfile.txt"]);
-    git(&r.dir, &["commit", "-m", "advance parent"]);
-
-    let out = out_str(&r.h5i_ok(&["env", "apply", "mp"]));
-    assert!(out.contains("provenance note on"), "{out}");
-    let applied = out_str(&git(&r.dir, &["rev-parse", "main"]));
-    let applied = applied.trim();
-    // It's a real merge commit (two parents), and it carries the note.
-    let parents = out_str(&git(&r.dir, &["rev-list", "--parents", "-n", "1", applied]));
-    assert!(
-        parents.split_whitespace().count() >= 3,
-        "expected a merge commit: {parents}"
-    );
-    let note = out_str(&git(
-        &r.dir,
-        &["show", &format!("refs/h5i/notes:{applied}")],
-    ));
-    let rec: serde_json::Value = serde_json::from_str(note.trim()).unwrap();
-    assert_eq!(rec["env_provenance"]["env_id"], "env/tester/mp");
 }
 
 #[test]
@@ -1243,21 +1031,18 @@ fn secret_grant_is_injected_then_redacted_and_audited() {
     // The injected value must NOT appear in the capture — but the surrounding
     // text must, proving the secret was actually injected (then redacted).
     let cap = r.capture_manifest("needs-secret");
-    let summary = cap["summary"].as_str().unwrap_or("");
-    assert!(
-        !summary.contains("supersecret-xyz"),
-        "secret value leaked into the capture summary:\n{summary}"
-    );
-    assert!(
-        summary.contains("[redacted secret]"),
-        "expected the injected secret to be redacted (proves it was injected):\n{summary}"
-    );
-    // And the raw blob is scrubbed too, not just the summary.
-    let raw =
-        String::from_utf8_lossy(&r.capture_raw(cap["raw_oid"].as_str().unwrap())).into_owned();
+    let raw = String::from_utf8_lossy(&r.capture_raw_for(
+        "needs-secret",
+        cap["id"].as_str().unwrap(),
+    ))
+    .into_owned();
     assert!(
         !raw.contains("supersecret-xyz"),
-        "secret leaked into the raw blob:\n{raw}"
+        "secret value leaked into the stored payload:\n{raw}"
+    );
+    assert!(
+        raw.contains("[redacted secret]"),
+        "expected the injected secret to be redacted (proves it was injected):\n{raw}"
     );
 
     // A `secret` event records the grant id + fingerprint, never the value.
@@ -1307,14 +1092,12 @@ fn secret_file_injection_writes_a_file_and_redacts() {
     // The file-injected value must be redacted from the capture (proves it was
     // delivered via the file and then scrubbed).
     let cap = r.capture_manifest("filesec");
-    let summary = cap["summary"].as_str().unwrap_or("");
+    let raw = String::from_utf8_lossy(&r.capture_raw_for("filesec", cap["id"].as_str().unwrap()))
+        .into_owned();
+    assert!(!raw.contains("topsecret-deploy"), "secret leaked: {raw}");
     assert!(
-        !summary.contains("topsecret-deploy"),
-        "secret leaked: {summary}"
-    );
-    assert!(
-        summary.contains("[redacted secret]"),
-        "expected redaction marker: {summary}"
+        raw.contains("[redacted secret]"),
+        "expected redaction marker: {raw}"
     );
 
     // The audit event records the grant with inject=file, never the value.
@@ -1429,7 +1212,7 @@ fn supervised_run_raw(r: &Repo, slug: &str, argv: &[&str]) -> Option<String> {
         .output()
         .expect("run");
     let cap = r.capture_manifest(slug);
-    Some(String::from_utf8_lossy(&r.capture_raw(cap["raw_oid"].as_str()?)).into_owned())
+    Some(String::from_utf8_lossy(&r.capture_raw_for(slug, cap["id"].as_str()?)).into_owned())
 }
 
 /// Comprehensive live proof of the supervised tier's runtime enforcement, in a
@@ -2929,14 +2712,12 @@ fn container_env_capture_spool_is_mounted_and_ingested() {
         env_manifest["captures"].as_array().unwrap().len() >= 2,
         "host-env-run + ingested inbox-capture: {env_manifest}"
     );
-    let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/objects:manifests.jsonl"]));
-    let inbox = manifests
-        .lines()
-        .filter(|l| l.contains("env/tester/cspool"))
-        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
-        .find(|m| m["evidence_source"] == "inbox-capture")
-        .expect("an inbox-capture manifest");
-    let raw = r.capture_raw(inbox["raw_oid"].as_str().unwrap());
+    let inbox = r
+        .receipts("cspool")
+        .into_iter()
+        .find(|m| m["source"] == "inbox-capture")
+        .expect("an inbox-capture receipt");
+    let raw = r.capture_raw_for("cspool", inbox["id"].as_str().unwrap());
     assert!(
         String::from_utf8_lossy(&raw).contains("boxed-output"),
         "{inbox}"
@@ -3020,11 +2801,11 @@ fn run_redacts_secrets_from_evidence_blob_summary_and_command() {
         redactions.iter().any(|v| v == "GITHUB_PAT"),
         "expected GITHUB_PAT in redactions: {m}"
     );
-    // The secret must not survive ANYWHERE in the manifest line …
-    let manifest_line = serde_json::to_string(&m).unwrap();
+    // The secret must not survive ANYWHERE in the record …
+    let record_line = serde_json::to_string(&m).unwrap();
     assert!(
-        !manifest_line.contains(PLANTED_SECRET),
-        "secret leaked into manifest: {manifest_line}"
+        !record_line.contains(PLANTED_SECRET),
+        "secret leaked into the receipt: {record_line}"
     );
     // … including the command field (it was passed as an argument).
     assert!(
@@ -3032,8 +2813,8 @@ fn run_redacts_secrets_from_evidence_blob_summary_and_command() {
         "secret leaked into cmd"
     );
 
-    // … and not in the content-addressed raw blob (which travels via push).
-    let raw = r.capture_raw(m["raw_oid"].as_str().unwrap());
+    // … and not in the stored payload.
+    let raw = r.capture_raw_for("leaky", m["id"].as_str().unwrap());
     let raw_str = String::from_utf8_lossy(&raw);
     assert!(
         !raw_str.contains(PLANTED_SECRET),
@@ -3166,12 +2947,10 @@ fn inspect_json_renders_the_capture_manifest() {
             .is_some_and(|oid| oid.starts_with("sha256:")),
         "{v:#}"
     );
-    assert!(
-        v["summary"]
-            .as_str()
-            .is_some_and(|summary| summary.contains("json-body")),
-        "{v:#}"
-    );
+    assert_eq!(v["source"].as_str(), Some("host-env-run"), "{v:#}");
+    // The command's output rides in the stored payload, not in the record.
+    let payload = String::from_utf8_lossy(&r.capture_raw_for("json", &cap)).into_owned();
+    assert!(payload.contains("json-body"), "{payload}");
 
     let out = r.h5i(&["env", "inspect", "other", "--capture", &cap, "--json"]);
     assert!(!out.status.success(), "cross-env JSON inspect must be refused");
