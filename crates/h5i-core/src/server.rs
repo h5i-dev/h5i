@@ -1,0 +1,816 @@
+//! The box console: `h5i ui`.
+//!
+//! One screen for the question the CLI answers a box at a time — *what is the
+//! fleet doing, and what has pressed on a boundary?* It is the sandbox half of
+//! the old workbench dashboard, rebuilt on what the contained-environment
+//! product actually keeps: manifests, the resolved policy, the env event log,
+//! and [`crate::receipt`] — the append-only record of everything that ran.
+//!
+//! # Read-only, and structurally so
+//!
+//! Every route is a `GET`. There is no mutating handler to guard, so the
+//! console needs no CSRF story and cannot be turned into a remote control for
+//! someone's boxes: `shell`, `run`, `export`, `apply` and `rm` stay in the CLI,
+//! where a human types them. That was the original dashboard's rule and it is
+//! worth keeping — a monitoring surface that cannot act is a much smaller thing
+//! to get wrong.
+//!
+//! # What guards it
+//!
+//! The old `h5i serve` bound loopback and trusted everyone who could reach it,
+//! which on a developer machine means every process and every page. This one
+//! follows [`crate::view`]'s discipline instead:
+//!
+//! * **Loopback only**, on a port h5i chose.
+//! * **A per-session token**, minted at `bind` and printed once in the URL.
+//!   It lives in this process's memory — nothing on disk, so nothing a box can
+//!   read. The page trades it for a `SameSite=Strict` cookie, which a
+//!   cross-site request never carries.
+//! * **Foreign origins refused.** A page on another origin cannot read these
+//!   responses anyway, but saying no at the door is cheaper than reasoning
+//!   about it.
+//!
+//! # Honesty
+//!
+//! The dashboard this replaces had a risk classifier behind its red/amber/grey
+//! badges. That module was cut with the provenance surface, and nothing here
+//! invents a score to replace it. [`Signals`] is arithmetic over receipts and
+//! nothing else: red means **enforcement fired** (the egress proxy refused a
+//! destination), amber means a run failed or timed out or the page reported
+//! errors, and grey means the evidence is weak — either nothing was confined
+//! (`workspace` tier) or every record came from inside the box. None of those
+//! is an accusation, and the UI never renders a number the receipts don't hold.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use axum::{
+    extract::{Path, Request, State},
+    http::{header, StatusCode},
+    middleware::Next,
+    response::{IntoResponse, Json, Response},
+    routing::get,
+    Router,
+};
+use serde::Serialize;
+
+use crate::env::{self, EnvEvent, EnvManifest, LiveSession, ServiceStatus};
+use crate::error::H5iError;
+use crate::receipt::ExecRecord;
+use crate::sandbox::Profile;
+
+/// The cookie the page uses after it has spent the token in the URL.
+const COOKIE: &str = "h5i_console";
+
+/// 128 bits, hex — the same budget [`crate::view`] mints for a box viewer.
+const TOKEN_BYTES: usize = 16;
+
+/// Newest-first cap on the receipts carried in one box's detail payload. A
+/// long-lived box accumulates thousands; the console shows the working set and
+/// says how many it folded rather than paging silently.
+const RECEIPT_CAP: usize = 400;
+
+/// Distinct refused destinations carried in a fleet row.
+const DENIED_HOSTS_CAP: usize = 8;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub repo_path: PathBuf,
+    /// This session's token. Never written to disk.
+    pub token: String,
+}
+
+// ── the gate ─────────────────────────────────────────────────────────────────
+
+/// Why a request was turned away. Distinct variants because they mean very
+/// different things to whoever is reading the logs: one is a missing token, the
+/// other is a page that should not have been asking at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// No token, or the wrong one.
+    Unauthorized,
+    /// An `Origin` header naming somewhere other than this console.
+    ForeignOrigin,
+}
+
+impl Refusal {
+    pub fn status(self) -> (StatusCode, &'static str) {
+        match self {
+            Refusal::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "h5i console: missing or wrong token — open the URL `h5i ui` printed",
+            ),
+            Refusal::ForeignOrigin => (
+                StatusCode::FORBIDDEN,
+                "h5i console: refused a cross-origin request",
+            ),
+        }
+    }
+}
+
+/// The whole authorization decision, as a pure function of the four things it
+/// depends on — so it can be tested without a socket.
+///
+/// `Origin` is checked first: a request from another origin is refused even
+/// when it somehow carries the right token, because at that point the token is
+/// the thing that has leaked and honouring it would be the bug.
+pub fn authorize(
+    query: Option<&str>,
+    cookie_header: Option<&str>,
+    origin: Option<&str>,
+    expected: &str,
+    self_origin: &str,
+) -> Result<(), Refusal> {
+    if let Some(o) = origin {
+        if o != self_origin {
+            return Err(Refusal::ForeignOrigin);
+        }
+    }
+    let presented = query
+        .and_then(|q| param(q, "token"))
+        .or_else(|| cookie_header.and_then(|c| cookie(c, COOKIE)));
+    match presented {
+        Some(t) if token_matches(expected, &t) => Ok(()),
+        _ => Err(Refusal::Unauthorized),
+    }
+}
+
+/// Compare in constant time w.r.t. content. The lengths are public (both are
+/// fixed-width hex), so only the bytes are hidden.
+fn token_matches(expected: &str, given: &str) -> bool {
+    if expected.len() != given.len() {
+        return false;
+    }
+    expected
+        .bytes()
+        .zip(given.bytes())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
+}
+
+/// First value of `key` in a `a=b&c=d` query string.
+fn param(query: &str, key: &str) -> Option<String> {
+    query.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        (k == key).then(|| v.to_string())
+    })
+}
+
+/// Value of `name` in a `Cookie:` header.
+fn cookie(header: &str, name: &str) -> Option<String> {
+    header.split(';').find_map(|kv| {
+        let (k, v) = kv.trim().split_once('=')?;
+        (k == name).then(|| v.to_string())
+    })
+}
+
+async fn gate(State(state): State<Arc<AppState>>, req: Request, next: Next) -> Response {
+    let self_origin = format!(
+        "http://{}",
+        req.headers()
+            .get(header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("127.0.0.1")
+    );
+    let verdict = authorize(
+        req.uri().query(),
+        req.headers()
+            .get(header::COOKIE)
+            .and_then(|h| h.to_str().ok()),
+        req.headers()
+            .get(header::ORIGIN)
+            .and_then(|h| h.to_str().ok()),
+        &state.token,
+        &self_origin,
+    );
+    match verdict {
+        Ok(()) => next.run(req).await,
+        Err(r) => r.status().into_response(),
+    }
+}
+
+// ── the bundle ───────────────────────────────────────────────────────────────
+
+#[derive(rust_embed::Embed)]
+// The frontend project and its build output live at the workspace root; this
+// crate is one level down. `build.rs` guarantees the directory exists.
+#[folder = "../../web/dist/"]
+struct Asset;
+
+fn embedded(path: &str) -> Response {
+    match Asset::get(path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
+        }
+        None => (StatusCode::NOT_FOUND, format!("no such asset: {path}")).into_response(),
+    }
+}
+
+/// `/` — the console page, plus the cookie that lets its `fetch` calls back in.
+///
+/// Reaching this handler means [`gate`] already accepted the request, so the
+/// cookie is only ever handed to someone who proved they had the token.
+async fn index(State(state): State<Arc<AppState>>) -> Response {
+    let mut resp = embedded("index.html");
+    let cookie = format!(
+        "{COOKIE}={}; Path=/; HttpOnly; SameSite=Strict",
+        state.token
+    );
+    if let Ok(v) = header::HeaderValue::from_str(&cookie) {
+        resp.headers_mut().insert(header::SET_COOKIE, v);
+    }
+    resp
+}
+
+async fn asset(Path(path): Path<String>) -> Response {
+    // The `/assets/*path` route strips the prefix; rust-embed indexes by the
+    // full path under web/dist/, so it goes back on.
+    embedded(&format!("assets/{path}"))
+}
+
+// ── API types ────────────────────────────────────────────────────────────────
+
+/// Boundary activity for one box, as arithmetic over its receipts.
+///
+/// Every field is a count of something recorded. Nothing here is a model of
+/// intent, and the two `..._observed` counters exist so a reader can tell
+/// evidence h5i collected from evidence the box handed it.
+#[derive(Serialize, Default, Debug, Clone, PartialEq, Eq)]
+pub struct Signals {
+    /// Receipts on this box's log.
+    pub runs: usize,
+    /// Runs that exited non-zero.
+    pub failed: usize,
+    /// Runs the wall-clock limit killed.
+    pub timed_out: usize,
+    /// Egress the allowlist proxy permitted. Host-observed (container tier).
+    pub egress_allowed: u64,
+    /// Egress the proxy refused — the single highest-fidelity signal here,
+    /// and the only thing that turns a row red.
+    pub egress_denied: u64,
+    /// Distinct refused `host:port` destinations, capped.
+    pub denied_hosts: Vec<String>,
+    /// Console errors, page errors and failed requests the in-box browser
+    /// reported, summed over runs that drove it.
+    pub browser_issues: usize,
+    /// Runs h5i observed from the host (`host-env-run`, `shell-egress`).
+    pub host_observed: usize,
+    /// Runs recorded by the in-box tee shim — the box's own account.
+    pub box_claimed: usize,
+    /// Timestamp of the newest receipt.
+    pub last_run_ts: Option<String>,
+    /// `denial` | `attention` | `clean`.
+    pub verdict: &'static str,
+    /// The box runs at `workspace` tier: nothing was confined. Reported beside
+    /// the verdict rather than folded into it — it is a standing property of
+    /// the box, not something a run did.
+    pub weak_isolation: bool,
+    /// Runs exist and none of them was host-observed.
+    pub box_claimed_only: bool,
+}
+
+fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
+    let mut s = Signals {
+        runs: receipts.len(),
+        weak_isolation: m.isolation_claim == "workspace",
+        ..Default::default()
+    };
+    let mut denied_hosts: Vec<String> = Vec::new();
+    for r in receipts {
+        if r.exit_code.is_some_and(|c| c != 0) {
+            s.failed += 1;
+        }
+        if r.timed_out {
+            s.timed_out += 1;
+        }
+        match r.source.as_str() {
+            "tee-shim" => s.box_claimed += 1,
+            _ => s.host_observed += 1,
+        }
+        if let Some(e) = &r.egress {
+            s.egress_allowed += e.allowed;
+            s.egress_denied += e.denied;
+            for h in e.hosts.iter().filter(|h| h.denied > 0) {
+                let label = format!("{}:{}", h.host, h.port);
+                if !denied_hosts.contains(&label) {
+                    denied_hosts.push(label);
+                }
+            }
+        }
+        if let Some(b) = &r.browser {
+            s.browser_issues += b.console.len() + b.errors.len() + b.failed_requests.len();
+        }
+    }
+    denied_hosts.truncate(DENIED_HOSTS_CAP);
+    s.denied_hosts = denied_hosts;
+    // Receipts are appended in order and their timestamps sort lexically.
+    s.last_run_ts = receipts.last().map(|r| r.timestamp.clone());
+    s.box_claimed_only = s.runs > 0 && s.host_observed == 0;
+    s.verdict = if s.egress_denied > 0 {
+        "denial"
+    } else if s.failed > 0 || s.timed_out > 0 || s.browser_issues > 0 {
+        "attention"
+    } else {
+        "clean"
+    };
+    s
+}
+
+/// Sort key: most pressing first. `denial` outranks `attention` outranks
+/// everything else, and within a rank the most recently touched box wins.
+fn rank(s: &Signals) -> u8 {
+    match s.verdict {
+        "denial" => 2,
+        "attention" => 1,
+        _ => 0,
+    }
+}
+
+/// One row in the fleet.
+///
+/// The manifest is flattened in, so this payload is a superset of
+/// `h5i box list --json` — the console and the scriptable CLI describe a box
+/// with the same field names, and there is no second shape to keep in step.
+#[derive(Serialize)]
+pub struct BoxRow {
+    #[serde(flatten)]
+    pub manifest: EnvManifest,
+    /// Stable kind (`up-to-date`, `parent-ahead`, …) plus its one-line summary.
+    pub drift: String,
+    pub drift_summary: String,
+    /// PID-verified sessions from the live registry.
+    pub live: Vec<LiveSession>,
+    /// The durable status says `running` but no live writer holds the box — a
+    /// crash leftover to flag, never to trust.
+    pub stale_running: bool,
+    /// Is the workspace materialized here (false = pulled from another clone)?
+    pub has_workspace: bool,
+    pub files_changed: usize,
+    pub insertions: usize,
+    pub deletions: usize,
+    pub last_event: Option<EnvEvent>,
+    pub signals: Signals,
+}
+
+fn build_row(
+    git: &git2::Repository,
+    h5i_root: &std::path::Path,
+    m: &EnvManifest,
+    events: &[EnvEvent],
+    receipts: &[ExecRecord],
+) -> BoxRow {
+    let drift = env::drift(git, m);
+    let live = env::live_sessions(&m.dir(h5i_root));
+    let stale_running =
+        m.status == "running" && !live.iter().any(|s| env::live_is_writer(&s.kind));
+    let (files_changed, insertions, deletions) =
+        env::diffstat_numbers(git, h5i_root, m).unwrap_or((0, 0, 0));
+    BoxRow {
+        drift: drift.kind_str().to_string(),
+        drift_summary: drift.summary(),
+        live,
+        stale_running,
+        has_workspace: env::has_workspace(m, h5i_root),
+        files_changed,
+        insertions,
+        deletions,
+        last_event: events.last().cloned(),
+        signals: signals(m, receipts),
+        manifest: m.clone(),
+    }
+}
+
+/// The resolved policy, flattened for the console's allowance panel: what was
+/// actually enforced, not what the profile asked for.
+#[derive(Serialize)]
+pub struct EnforcedPolicy {
+    pub isolation: String,
+    pub net_mode: String,
+    pub net_egress: Vec<String>,
+    pub fs_read: Vec<String>,
+    pub fs_write: Vec<String>,
+    pub fs_deny: Vec<String>,
+    pub tools: Vec<String>,
+    pub env_pass: Vec<String>,
+    pub image: Option<String>,
+    pub mem_bytes: Option<u64>,
+    pub max_procs: Option<u64>,
+    pub wall_secs: u64,
+    pub cpu_secs: Option<u64>,
+    pub fsize_bytes: Option<u64>,
+}
+
+impl From<&Profile> for EnforcedPolicy {
+    fn from(p: &Profile) -> Self {
+        EnforcedPolicy {
+            isolation: p.isolation.as_str().to_string(),
+            net_mode: match p.net_mode {
+                crate::sandbox::NetMode::Deny => "deny".into(),
+                crate::sandbox::NetMode::Host => "host".into(),
+            },
+            net_egress: p.net_egress.clone(),
+            fs_read: p.fs_read.clone(),
+            fs_write: p.fs_write.clone(),
+            fs_deny: p.fs_deny.clone(),
+            tools: p.tools.clone(),
+            env_pass: p.env_pass.clone(),
+            image: p.image.clone(),
+            mem_bytes: p.mem_bytes,
+            max_procs: p.max_procs,
+            wall_secs: p.wall_secs,
+            cpu_secs: p.cpu_secs,
+            fsize_bytes: p.fsize_bytes,
+        }
+    }
+}
+
+/// Everything the detail pane draws for one box.
+#[derive(Serialize)]
+pub struct BoxDetail {
+    pub item: BoxRow,
+    /// `None` when `policy.resolved.toml` is unreadable — a pulled or gc'd box.
+    pub policy: Option<EnforcedPolicy>,
+    pub events: Vec<EnvEvent>,
+    /// Newest last, capped at [`RECEIPT_CAP`].
+    pub receipts: Vec<ExecRecord>,
+    /// How many older receipts the cap folded, so a clamped list never reads
+    /// as the whole history.
+    pub receipts_folded: usize,
+    /// Declared long-lived services and their liveness.
+    pub services: Vec<ServiceStatus>,
+    /// `base..worktree` diffstat, as `h5i box diff --stat` prints it.
+    pub diffstat: Option<String>,
+}
+
+// ── handlers ─────────────────────────────────────────────────────────────────
+
+/// Run a blocking domain call off the async runtime, folding "the task died"
+/// and "the work found nothing" into one `None`.
+///
+/// Everything in `env` is synchronous git and filesystem work, so every handler
+/// goes through here. `Option` rather than a `Result`: these are read-only
+/// lookups whose only two outcomes on the wire are a payload and a 404, so
+/// carrying an error type would be carrying something no caller can use.
+async fn blocking<T, F>(f: F) -> Option<T>
+where
+    F: FnOnce() -> Option<T> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f).await.ok().flatten()
+}
+
+/// Open the repository the console was pointed at, and its h5i root.
+fn open(repo_path: &std::path::Path) -> Option<(git2::Repository, PathBuf)> {
+    let git = git2::Repository::discover(repo_path).ok()?;
+    let root = crate::storage::h5i_root_for_repo(&git).ok()?;
+    Some((git, root))
+}
+
+fn receipts_of(h5i_root: &std::path::Path, m: &EnvManifest) -> Vec<ExecRecord> {
+    crate::receipt::list(&env::env_dir(h5i_root, &m.agent, &m.slug)).unwrap_or_default()
+}
+
+/// `GET /api/boxes` — the fleet, most pressing first.
+async fn api_boxes(State(state): State<Arc<AppState>>) -> Json<Vec<BoxRow>> {
+    let path = state.repo_path.clone();
+    let rows = blocking(move || {
+        let (git, h5i_root) = open(&path)?;
+        let mut rows: Vec<BoxRow> = env::list(&h5i_root)
+            .iter()
+            .map(|m| {
+                let events = env::read_events(&git, Some(&m.id));
+                let receipts = receipts_of(&h5i_root, m);
+                build_row(&git, &h5i_root, m, &events, &receipts)
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            rank(&b.signals)
+                .cmp(&rank(&a.signals))
+                .then(b.manifest.updated_at.cmp(&a.manifest.updated_at))
+        });
+        Some(rows)
+    })
+    .await;
+    Json(rows.unwrap_or_default())
+}
+
+/// `GET /api/box/:agent/:slug` — one box in full.
+async fn api_box(
+    State(state): State<Arc<AppState>>,
+    Path((agent, slug)): Path<(String, String)>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let detail = blocking(move || {
+        let (git, h5i_root) = open(&path)?;
+        let id = format!("env/{agent}/{slug}");
+        let m = env::list(&h5i_root).into_iter().find(|m| m.id == id)?;
+        let events = env::read_events(&git, Some(&m.id));
+        let mut receipts = receipts_of(&h5i_root, &m);
+        let receipts_folded = receipts.len().saturating_sub(RECEIPT_CAP);
+        if receipts_folded > 0 {
+            receipts.drain(..receipts_folded);
+        }
+        let policy = env::load_policy(&h5i_root, &m).ok().map(|rp| rp.profile);
+        let item = build_row(&git, &h5i_root, &m, &events, &receipts);
+        Some(BoxDetail {
+            item,
+            policy: policy.as_ref().map(EnforcedPolicy::from),
+            events,
+            receipts,
+            receipts_folded,
+            services: env::service_status(&h5i_root, &m),
+            diffstat: env::diff(&git, &h5i_root, &m, true).ok(),
+        })
+    })
+    .await;
+    match detail {
+        Some(d) => Json(d).into_response(),
+        None => (StatusCode::NOT_FOUND, "no such box").into_response(),
+    }
+}
+
+/// `GET /api/box/:agent/:slug/receipts/:id` — one receipt, rendered exactly as
+/// `h5i box inspect` renders it (which refuses ids belonging to another box).
+async fn api_receipt(
+    State(state): State<Arc<AppState>>,
+    Path((agent, slug, id)): Path<(String, String, String)>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let render = blocking(move || {
+        let (_git, h5i_root) = open(&path)?;
+        let want = format!("env/{agent}/{slug}");
+        let m = env::list(&h5i_root).into_iter().find(|m| m.id == want)?;
+        env::inspect(&h5i_root, &m, &id).ok()
+    })
+    .await;
+    match render {
+        Some(text) => Json(serde_json::json!({ "render": text })).into_response(),
+        None => (StatusCode::NOT_FOUND, "no such receipt for this box").into_response(),
+    }
+}
+
+/// `GET /api/probe` — what this host can actually enforce. The same report
+/// `h5i box capabilities --json` prints, so the console's top strip and the
+/// CLI can never disagree.
+async fn api_probe() -> Json<crate::sandbox::CapabilitiesReport> {
+    let report = tokio::task::spawn_blocking(|| {
+        // A capability report is a diagnostic: never serve it from the
+        // per-boot podman probe cache, exactly as `box probe` does.
+        std::env::set_var("H5I_NO_PROBE_CACHE", "1");
+        crate::sandbox::capabilities_report()
+    })
+    .await;
+    Json(report.unwrap_or_else(|_| crate::sandbox::capabilities_report()))
+}
+
+/// Every route, wired to `state`. Extracted so tests can drive the surface
+/// without a socket — and so the "all of them are GETs" claim is checkable.
+pub fn router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/", get(index))
+        .route("/assets/*path", get(asset))
+        .route("/api/probe", get(api_probe))
+        .route("/api/boxes", get(api_boxes))
+        .route("/api/box/:agent/:slug", get(api_box))
+        .route("/api/box/:agent/:slug/receipts/:id", get(api_receipt))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), gate))
+        .with_state(state)
+}
+
+// ── entry point ──────────────────────────────────────────────────────────────
+
+/// A bound console, before it starts serving.
+///
+/// Split from [`Console::serve`] the way [`crate::view`] splits its forward:
+/// binding can fail (a port in use is the common case) and the caller wants to
+/// print the URL — token and all — before blocking forever.
+pub struct Console {
+    listener: std::net::TcpListener,
+    state: Arc<AppState>,
+}
+
+impl Console {
+    /// Bind loopback and mint this session's token. `port` 0 asks the OS for a
+    /// free one, which [`Console::url`] then reports.
+    pub fn bind(repo_path: PathBuf, port: u16) -> Result<Console, H5iError> {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", port)).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                H5iError::Metadata(format!(
+                    "port {port} is already in use — pick another with `h5i ui --port <N>`"
+                ))
+            } else {
+                H5iError::Io(e)
+            }
+        })?;
+        let token: String = (0..TOKEN_BYTES)
+            .map(|_| format!("{:02x}", fastrand::u8(..)))
+            .collect();
+        Ok(Console {
+            listener,
+            state: Arc::new(AppState { repo_path, token }),
+        })
+    }
+
+    /// The one URL that works. The token is in the query string because that
+    /// is the only channel a terminal has to a browser; the page trades it for
+    /// a cookie on first load.
+    pub fn url(&self) -> Result<String, H5iError> {
+        let addr = self.listener.local_addr().map_err(H5iError::Io)?;
+        Ok(format!("http://{}/?token={}", addr, self.state.token))
+    }
+
+    /// Serve until the process is interrupted. Builds its own runtime, so
+    /// nothing above this module needs to know the console is async.
+    pub fn serve(self) -> Result<(), H5iError> {
+        self.listener
+            .set_nonblocking(true)
+            .map_err(H5iError::Io)?;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(H5iError::Io)?;
+        rt.block_on(async move {
+            let listener = tokio::net::TcpListener::from_std(self.listener).map_err(H5iError::Io)?;
+            axum::serve(listener, router(self.state))
+                .await
+                .map_err(H5iError::Io)
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::receipt::BrowserEvidence;
+    use crate::sandbox_policy::{EgressHost, EgressSummary};
+
+    fn manifest(isolation: &str) -> EnvManifest {
+        EnvManifest {
+            id: "env/claude/fix-auth".into(),
+            agent: "claude".into(),
+            slug: "fix-auth".into(),
+            base_commit: "a".repeat(40),
+            base_tree: "b".repeat(40),
+            parent_branch: "main".into(),
+            branch: "refs/heads/h5i/env/claude/fix-auth".into(),
+            source: "repo".into(),
+            profile: "default".into(),
+            policy_digest: "c".repeat(64),
+            isolation_claim: isolation.into(),
+            backend: "worktree".into(),
+            created_at: "2026-08-05T00:00:00Z".into(),
+            updated_at: "2026-08-05T00:00:00Z".into(),
+            status: "idle".into(),
+            captures: vec![],
+            service_digest: None,
+            persona_digest: None,
+            pr: None,
+            pr_head_ref: None,
+        }
+    }
+
+    fn receipt(source: &str, exit: i32) -> ExecRecord {
+        ExecRecord {
+            id: "r0".into(),
+            timestamp: "2026-08-05T01:00:00Z".into(),
+            env_id: "env/claude/fix-auth".into(),
+            policy_digest: None,
+            source: source.into(),
+            cmd: Some("cargo test".into()),
+            cwd: None,
+            exit_code: Some(exit),
+            timed_out: false,
+            wall_ms: None,
+            cpu_ms: None,
+            max_rss_kb: None,
+            git_tree: None,
+            files: vec![],
+            egress: None,
+            browser: None,
+            redactions: vec![],
+            raw_oid: "d".repeat(64),
+            raw_size: 0,
+            raw_lines: 0,
+            raw_truncated: false,
+        }
+    }
+
+    #[test]
+    fn a_refused_destination_is_the_only_thing_that_turns_a_box_red() {
+        let m = manifest("container");
+        // A failing test run is worth attention, but it is not the boundary
+        // saying no — the distinction the old dashboard's red/amber split
+        // existed to preserve.
+        let noisy = signals(&m, &[receipt("host-env-run", 1)]);
+        assert_eq!(noisy.verdict, "attention");
+        assert_eq!(noisy.failed, 1);
+
+        let mut denied = receipt("host-env-run", 0);
+        denied.egress = Some(EgressSummary {
+            allowed: 3,
+            denied: 2,
+            hosts: vec![EgressHost {
+                host: "evil.test".into(),
+                port: 443,
+                allowed: 0,
+                denied: 2,
+            }],
+            hosts_truncated: false,
+            log: None,
+        });
+        let red = signals(&m, &[denied]);
+        assert_eq!(red.verdict, "denial");
+        assert_eq!(red.egress_denied, 2);
+        assert_eq!(red.denied_hosts, vec!["evil.test:443".to_string()]);
+    }
+
+    #[test]
+    fn weak_evidence_is_reported_beside_the_verdict_not_folded_into_it() {
+        // Workspace tier confines nothing, and a box that only ever saw its
+        // own tee shim has no host-observed record. Both are properties of the
+        // evidence, so neither is allowed to masquerade as a clean run or as a
+        // boundary trip.
+        let clean = signals(&manifest("workspace"), &[receipt("tee-shim", 0)]);
+        assert_eq!(clean.verdict, "clean");
+        assert!(clean.weak_isolation);
+        assert!(clean.box_claimed_only);
+        assert_eq!(clean.box_claimed, 1);
+        assert_eq!(clean.host_observed, 0);
+
+        let observed = signals(&manifest("container"), &[receipt("host-env-run", 0)]);
+        assert!(!observed.weak_isolation);
+        assert!(!observed.box_claimed_only);
+    }
+
+    #[test]
+    fn what_the_page_reported_counts_as_something_to_look_at() {
+        let mut r = receipt("host-env-run", 0);
+        r.browser = Some(BrowserEvidence {
+            verb: Some("click".into()),
+            console: vec!["TypeError: x is not a function".into()],
+            errors: vec![],
+            failed_requests: vec!["GET /api/me → (blocked)".into()],
+            truncated: false,
+            unavailable: false,
+        });
+        let s = signals(&manifest("container"), &[r]);
+        assert_eq!(s.browser_issues, 2);
+        assert_eq!(s.verdict, "attention");
+    }
+
+    #[test]
+    fn the_most_pressing_box_sorts_first() {
+        let m = manifest("container");
+        let mut denied = receipt("host-env-run", 0);
+        denied.egress = Some(EgressSummary {
+            allowed: 0,
+            denied: 1,
+            hosts: vec![],
+            hosts_truncated: false,
+            log: None,
+        });
+        assert!(rank(&signals(&m, &[denied])) > rank(&signals(&m, &[receipt("host-env-run", 1)])));
+        assert!(
+            rank(&signals(&m, &[receipt("host-env-run", 1)]))
+                > rank(&signals(&m, &[receipt("host-env-run", 0)]))
+        );
+    }
+
+    #[test]
+    fn nothing_gets_in_without_the_token() {
+        let tok = "0123456789abcdef";
+        let ok = |q: Option<&str>, c: Option<&str>| {
+            authorize(q, c, None, tok, "http://127.0.0.1:8765").is_ok()
+        };
+        assert!(ok(Some("token=0123456789abcdef"), None));
+        assert!(ok(None, Some("h5i_console=0123456789abcdef")));
+        assert!(ok(Some("fps=10&token=0123456789abcdef"), None));
+        assert!(!ok(None, None));
+        assert!(!ok(Some("token=0123456789abcdee"), None));
+        assert!(!ok(None, Some("h5i_console=nope")));
+        // A cookie for something else on loopback is not this console's token.
+        assert!(!ok(None, Some("jupyter=0123456789abcdef")));
+    }
+
+    #[test]
+    fn a_page_on_another_origin_is_refused_even_holding_the_token() {
+        let tok = "0123456789abcdef";
+        let me = "http://127.0.0.1:8765";
+        assert_eq!(
+            authorize(Some("token=0123456789abcdef"), None, Some("http://evil.test"), tok, me),
+            Err(Refusal::ForeignOrigin)
+        );
+        // Same-origin XHR sends Origin too, and must still work.
+        assert!(authorize(None, Some("h5i_console=0123456789abcdef"), Some(me), tok, me).is_ok());
+    }
+
+    #[test]
+    fn the_console_binds_loopback_and_puts_the_token_in_the_url() {
+        let c = Console::bind(PathBuf::from("."), 0).expect("bind an ephemeral port");
+        let url = c.url().expect("a bound listener has an address");
+        assert!(url.starts_with("http://127.0.0.1:"), "{url}");
+        assert!(url.contains("?token="), "{url}");
+        assert_eq!(c.state.token.len(), TOKEN_BYTES * 2);
+    }
+}

@@ -4,6 +4,15 @@ version = "0.2.8"
 edition = "2021"
 description = "h5i core domain library: disposable, confined development environments and their execution receipts."
 
+[features]
+# `web` compiles the `h5i ui` box console: a read-only, loopback-only HTTP
+# surface over the fleet (axum) plus the embedded React bundle from `web/`.
+# On by default so `cargo install --path .` gives a working `h5i ui`; build
+# with `--no-default-features` for a lean library that never pulls in axum,
+# tokio or the asset embedder — and never needs Node to compile.
+default = ["web"]
+web = ["dep:axum", "dep:tokio", "dep:rust-embed", "dep:mime_guess"]
+
 [dependencies]
 h5i-error = { path = "../h5i-error" }
 h5i-sandbox = { path = "../h5i-sandbox" }
@@ -32,6 +41,19 @@ libc = "0.2.186"
 sha1 = "0.10"
 base64 = "0.22"
 zune-jpeg = "0.5"
+
+# The box console (`server`), all optional behind the `web` feature. Only
+# `tokio`'s listener and multi-thread runtime are used — the domain calls stay
+# blocking and are pushed onto `spawn_blocking`, so nothing in this crate
+# outside `server.rs` becomes async.
+axum = { version = "0.7", optional = true }
+tokio = { version = "1.0", features = [
+    "rt-multi-thread",
+    "net",
+    "signal",
+], optional = true }
+rust-embed = { version = "8.5", optional = true }
+mime_guess = { version = "2.0", optional = true }
 
 # When targeting musl, vendor OpenSSL so the build doesn't require a musl-linked
 # system libssl (libgit2-sys → libssh2-sys → openssl-sys pulls this in).

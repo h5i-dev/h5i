@@ -14,7 +14,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-cargo build --quiet --bin h5i
+# `--locked`: the committed page has to be reproducible from the committed
+# lockfile, which is the claim the CI freshness gate makes. Resolving a newer
+# clap here could change the rendering and turn the gate into noise.
+cargo build --quiet --locked --bin h5i
 ./target/debug/h5i man > man/man1/h5i.1
 
 version="$(./target/debug/h5i --version | awk '{print $NF}')"

@@ -12,10 +12,49 @@ env:
 permissions:
   contents: write
 
+# Never cancel a release mid-flight: a half-uploaded set of assets is worse
+# than a duplicated run. Declared explicitly so it does not inherit a
+# cancelling default if one is ever added at the repository level.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  # The `h5i ui` console is a React bundle embedded into the binary at compile
+  # time. Built once here and fanned out to every target job, because two of
+  # them run under `cross` — a Docker image with no Node in it, where the build
+  # script could not produce the bundle even if it wanted to. Every build job
+  # therefore sets H5I_SKIP_WEB_BUILD=1 and consumes this artifact.
+  bundle:
+    name: Build the console bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web/dist
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+
   build:
     name: Build ${{ matrix.target }}
+    needs: bundle
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +86,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Placed before the build so `rust-embed` finds a real bundle. With
+      # H5I_SKIP_WEB_BUILD set the build script leaves an existing web/dist
+      # alone and never reaches for npm.
+      - name: Fetch the console bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+      # The one failure this pipeline cannot afford to be quiet about. Because
+      # every build below sets H5I_SKIP_WEB_BUILD, a bundle that failed to land
+      # does not stop the build — the build script writes a placeholder page and
+      # the release ships a binary whose `h5i ui` serves "console bundle not
+      # built" with a 200. Assert the real thing is here while it is still a
+      # build failure rather than a download someone installs.
+      - name: The bundle is real, not the build-script stub
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f web/dist/index.html || { echo "::error::web/dist/index.html is missing"; exit 1; }
+          if grep -q "console bundle not built" web/dist/index.html; then
+            echo "::error::web/dist holds the build-script stub, not the console bundle."
+            exit 1
+          fi
+          grep -q '/assets/' web/dist/index.html || {
+            echo "::error::web/dist/index.html references no bundled asset."
+            cat web/dist/index.html
+            exit 1
+          }
+          test -d web/dist/assets
+          echo "bundle ok: $(find web/dist/assets -type f | wc -l) asset(s)"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -73,10 +144,16 @@ jobs:
 
       - name: Build (native)
         if: "!matrix.use_cross"
+        env:
+          H5I_SKIP_WEB_BUILD: "1"
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Build (cross)
         if: matrix.use_cross
+        env:
+          H5I_SKIP_WEB_BUILD: "1"
+          # Forward it into cross's Docker container, which has no Node.
+          CROSS_CONTAINER_OPTS: "-e H5I_SKIP_WEB_BUILD"
         run: cross build --release --locked --target ${{ matrix.target }}
 
       # ── Package ───────────────────────────────────────────────────────────
@@ -115,6 +192,7 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 

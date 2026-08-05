@@ -68,6 +68,7 @@ h5i box run <name> -- cargo test # one command; the exit code passes through
 h5i box shell <name>             # an interactive confined session
 h5i box status <name>            # the policy that was actually enforced
 h5i box diff <name>              # what changed against the pinned base
+h5i ui                           # the whole fleet on one screen, read-only
 ```
 
 Get the work out through the gate, which is deliberately a human step:

@@ -173,6 +173,7 @@
 <a class="t3" href="#lifecycle">Lifecycle</a>
 <a class="t3" href="#h5i-box-allow">h5i box allow</a>
 </div>
+<a class="t2" href="#h5i-ui">h5i ui</a>
 <a class="t2" href="#h5i-browser">h5i browser</a>
 <div class="t3group">
 <a class="t3" href="#driving-the-browser-itself">Driving the browser itself</a>
@@ -284,6 +285,10 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 <tr>
 <td><a href="#h5i-box"><code>h5i box</code></a></td>
 <td>Create, run, inspect and export boxes. Almost everything.</td>
+</tr>
+<tr>
+<td><a href="#h5i-ui"><code>h5i ui</code></a></td>
+<td>The box console: one read-only screen over the whole fleet.</td>
 </tr>
 <tr>
 <td><a href="#h5i-browser"><code>h5i browser</code></a></td>
@@ -555,6 +560,37 @@ h5i box allow api.example.com
 whose profile <em>already</em> sets <code>net.egress</code>. A deny-all profile is never widened.
 Stored under <code>~/.config/h5i/</code>, outside every box-granted path, and it refuses to
 run inside a box.</p>
+<hr />
+<h2 id="h5i-ui">h5i ui</h2>
+<pre><code class="language-bash">h5i ui                  # http://127.0.0.1:8765/?token=…
+h5i ui --port 0         # let the OS pick the port
+h5i ui --open           # hand the URL to this desktop's browser too
+</code></pre>
+<p>The box console: the same fleet the commands above report on, drawn as one
+screen. Left is every box with its tier, status and one signal; right is the box
+you picked — the policy that was actually enforced, the services it declares,
+its diffstat against the pinned base, and a flight recorder with one row per
+receipt across five lanes (FS, NET, PROC, RES, PAGE). Click a row for the
+rendered receipt, the same text <code>h5i box inspect</code> prints.</p>
+<p><strong>It cannot drive anything.</strong> Every route is a <code>GET</code>. <code>shell</code>, <code>run</code>, <code>export</code>,
+<code>propose</code>, <code>apply</code> and <code>rm</code> stay in the CLI, where a human types them, so there
+is no mutating surface to guard and no way to turn the console into a remote
+control for someone's boxes.</p>
+<p><strong>What guards it.</strong> The server binds <code>127.0.0.1</code> and nothing else. The URL
+carries a token minted for this session and kept in memory — never written to
+disk, so no box can read it — which the page trades for a <code>SameSite=Strict</code>
+cookie on first load. Requests from another origin are refused outright.</p>
+<p><strong>What the colours mean.</strong> Red is the only one that makes a claim about the
+boundary: the egress allowlist <em>refused</em> a destination, host-observed by the
+proxy. Amber is something to look at — a run exited non-zero, the wall-clock
+limit killed one, or the in-box browser reported errors — and says nothing about
+containment. Grey means the evidence is weak: either the tier is <code>workspace</code> and
+nothing was confined, or every receipt came from the in-box shim and so is the
+box's own account. Each run row is labelled <code>host-observed</code> or <code>box-claimed</code> for
+the same reason. Nothing on the screen is a score.</p>
+<p>The console is a default-on cargo feature. <code>cargo build --no-default-features</code>
+drops it, along with axum, tokio and the build script's need for Node — and the
+<code>h5i ui</code> command with it.</p>
 <hr />
 <h2 id="h5i-browser">h5i browser</h2>
 <p>Deliberately four verbs. Driving the browser is <code>agent-browser</code>'s job; what h5i
