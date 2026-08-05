@@ -781,8 +781,10 @@ not claim more than that.</p>
   policy on every platform, so what is left is already outside every grant.
   Two things are genuinely absent on macOS: there is
   no syscall filter, because Darwin has no seccomp equivalent; and there is no
-  memory cap, because Darwin has no cgroups and does not enforce <code>RLIMIT_AS</code>
-  against an mmap'd heap. <code>h5i box probe</code> names the mechanism and both gaps.
+  memory or process-count cap, because Darwin has no cgroups, does not enforce
+  <code>RLIMIT_AS</code> against an mmap'd heap, and scopes <code>RLIMIT_NPROC</code> to the whole
+  user rather than to one box (applying it would cap your machine, not the
+  box). <code>h5i box probe</code> names the mechanism and the gaps.
   Rootless Podman runs on Linux and WSL2 natively, and on macOS through a
   <code>podman machine</code> VM.</li>
 <li><strong>A macOS box shares the host's loopback.</strong> A Linux box gets its own network

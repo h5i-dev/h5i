@@ -48,10 +48,11 @@ has and what it can enforce, rather than a tier name that means different things
 in different places. Rootless [Podman](https://podman.io/) adds the container
 tier on top of either.
 
-The one gap worth knowing before you pick a host: macOS has no per process
-memory cap (Darwin has no cgroups, and it does not enforce `RLIMIT_AS` against
-the mmap'd heap every modern runtime uses), and no syscall filter. Use the
-container tier if you need either.
+The gaps worth knowing before you pick a host: macOS has no per box memory or
+process-count cap (Darwin has no cgroups, does not enforce `RLIMIT_AS` against
+the mmap'd heap every modern runtime uses, and scopes `RLIMIT_NPROC` to the
+whole user rather than to one box), and no syscall filter. Use the container
+tier if you need any of those.
 
 ## Use it
 

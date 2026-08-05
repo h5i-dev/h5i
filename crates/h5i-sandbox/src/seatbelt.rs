@@ -82,9 +82,11 @@ pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 /// so setting it would produce a limit that silently does nothing. A real
 /// memory cap on macOS needs the container tier (the VM has cgroups).
 pub const RESOURCE_NOTE: &str =
-    "memory caps are not enforceable at the macOS kernel tiers (Darwin has no cgroups and does \
-     not enforce RLIMIT_AS against mmap); cpu/fsize/procs rlimits and the wall clock still apply. \
-     Use isolation=container for a memory cap.";
+    "memory and process-count caps are not enforceable at the macOS kernel tiers: Darwin has no \
+     cgroups, does not enforce RLIMIT_AS against mmap, and scopes RLIMIT_NPROC to the whole uid \
+     rather than to one process tree (so applying it would cap the operator's machine, not the \
+     box). cpu and fsize rlimits and the wall clock still apply. Use isolation=container for \
+     memory or process limits.";
 
 // ─── capability probe ────────────────────────────────────────────────────────
 
@@ -890,15 +892,16 @@ pub fn build_confined_command(
             if !interactive && libc::setsid() == -1 {
                 return Err(Error::last_os_error());
             }
-            if let Some(n) = nproc {
-                let lim = libc::rlimit {
-                    rlim_cur: n,
-                    rlim_max: n,
-                };
-                if libc::setrlimit(libc::RLIMIT_NPROC, &lim) != 0 {
-                    return Err(Error::last_os_error());
-                }
-            }
+            // Deliberately NOT setting RLIMIT_NPROC. On Darwin it caps
+            // processes per **real uid**, not per process tree, so a per-box
+            // `max_procs` of 256 is really a cap on everything the operator is
+            // running. On any Mac with a browser open the box then cannot fork
+            // at all, and the failure surfaces as `fork: Resource temporarily
+            // unavailable` from the shell — a confusing error a long way from
+            // its cause. A limit that constrains the host instead of the box is
+            // worse than no limit, so `max_procs` is reported as unenforceable
+            // here (see RESOURCE_NOTE) rather than applied.
+            let _ = nproc;
             if let Some(bytes) = fsize {
                 let lim = libc::rlimit {
                     rlim_cur: bytes,
@@ -1855,6 +1858,30 @@ mod tests {
             String::from_utf8_lossy(&out.stdout).contains("alive"),
             "no output from the confined shell"
         );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn a_confined_command_can_fork_and_exec_a_child() {
+        // Distinct from the exec test above, which only runs shell builtins and
+        // so never forks. `max_procs` used to be applied as RLIMIT_NPROC, which
+        // on Darwin is scoped to the whole uid rather than to this process
+        // tree — so on a machine where the operator already had a few hundred
+        // processes the box could not fork at all, and said so only as
+        // `fork: Resource temporarily unavailable`. Anything real the box does
+        // (a compiler, a test runner, a package manager) forks constantly.
+        if !probe().usable() {
+            eprintln!("SKIP a_confined_command_can_fork_and_exec_a_child: Seatbelt unusable");
+            return;
+        }
+        let (_tmp, work, pol) = functional_env();
+        assert!(
+            pol.profile.max_procs.is_some(),
+            "the built-in profile should carry a max_procs for this to be a real check"
+        );
+        let (code, text) = run_confined_sh(&pol, &work, "/usr/bin/true && echo FORKED");
+        assert_eq!(code, Some(0), "forking a child failed: {text}");
+        assert!(text.contains("FORKED"), "child did not run: {text}");
     }
 
     #[test]
