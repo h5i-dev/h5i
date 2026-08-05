@@ -3854,14 +3854,18 @@ fn env_ref_holds_manifest_and_policy_blobs() {
 fn probe_reports_all_capability_lines() {
     let r = Repo::new();
     let out = out_str(&r.h5i_ok(&["env", "probe"]));
-    for key in [
-        "os",
-        "landlock_abi",
-        "userns",
-        "seccomp",
-        "workspace",
-        "process",
-    ] {
+    for key in ["os", "mechanism", "workspace", "process"] {
+        assert!(out.contains(key), "probe output missing {key}: {out}");
+    }
+    // The primitive lines are per-OS: reporting `landlock_abi = none` on a Mac
+    // would read as a broken host when macOS simply confines with Seatbelt.
+    // Assert the lines this platform actually owes the operator.
+    let primitives: &[&str] = if cfg!(target_os = "macos") {
+        &["seatbelt"]
+    } else {
+        &["landlock_abi", "userns", "seccomp"]
+    };
+    for key in primitives {
         assert!(out.contains(key), "probe output missing {key}: {out}");
     }
     // Workspace is satisfiable everywhere.

@@ -17,16 +17,18 @@
 //!     seccomp-notify supervisor or a container backend and therefore **fail
 //!     closed** under the static `process` tier.
 //!
-//! Cross-platform honesty: the `process` tier is Linux-only in this build;
-//! macOS (Seatbelt) and Windows are explicitly not claimed (§5).
+//! Cross-platform honesty: the kernel tiers run on Linux (this module) and on
+//! macOS via Seatbelt ([`crate::seatbelt`]), which is a *different* mechanism
+//! with a different residual set — [`capabilities_report`] states which one a
+//! given host actually gets. Windows is explicitly not claimed (§5).
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
-// PathBuf is only referenced from the `#[cfg(target_os = "linux")]` confinement
-// paths (Landlock grants, config-lock); gate the import so non-Linux targets
-// don't see it as unused under `-D warnings`.
-#[cfg(target_os = "linux")]
+// PathBuf is only referenced from the confinement paths (Landlock grants,
+// config-lock, the Seatbelt plan); gate the import so targets with neither
+// backend don't see it as unused under `-D warnings`.
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -86,8 +88,12 @@ pub const POLICY_FILE: &str = ".h5i/env.toml";
 /// absent project config dir is a documented residual: the agent could create
 /// `$WORK/.claude` and a local-scope `disableAllHooks`. Closing that would mean
 /// shadowing the (possibly absent) dir, which the tee-shim floor covers instead.
-#[cfg(target_os = "linux")]
-fn config_lock_paths(work: &Path, home: Option<&Path>) -> Vec<PathBuf> {
+///
+/// macOS reaches the same end by a different route: [`crate::seatbelt`] turns
+/// this list into `(deny file-write* (subpath …))` rules, which need no mount
+/// namespace and also cover the create-a-`settings.local.json` bypass.
+#[cfg(unix)]
+pub(crate) fn config_lock_paths(work: &Path, home: Option<&Path>) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for dir in [".claude", ".codex"] {
         let p = work.join(dir);
@@ -742,9 +748,39 @@ pub struct HostCaps {
     pub userns: bool,
     /// seccomp-bpf filters.
     pub seccomp: bool,
+    /// macOS **Seatbelt** is present and functionally applying profiles — the
+    /// kernel-tier mechanism on Darwin, where Landlock/seccomp/userns are all
+    /// absent. Always `false` on Linux, so the two mechanisms are never confused
+    /// for one another in a manifest or a capability report.
+    #[serde(default)]
+    pub seatbelt: bool,
     /// Detected rootless Podman binary for `isolation=container`; `None` when
     /// Podman is absent, broken, or rootful.
     pub container_runtime: Option<String>,
+}
+
+impl HostCaps {
+    /// Does this host have *a* kernel-tier confinement mechanism, whichever one
+    /// its OS provides? Callers that only need "can we confine at all" should
+    /// ask this rather than testing `landlock_abi`, which is Linux's answer to a
+    /// question macOS answers with Seatbelt.
+    pub fn kernel_confinement(&self) -> bool {
+        match self.os.as_str() {
+            "linux" => self.landlock_abi.is_some() && self.seccomp,
+            "macos" => self.seatbelt,
+            _ => false,
+        }
+    }
+
+    /// The name of the mechanism behind [`HostCaps::kernel_confinement`], for
+    /// diagnostics that must not imply Landlock on a Mac.
+    pub fn confinement_mechanism(&self) -> &'static str {
+        match self.os.as_str() {
+            "linux" => "landlock+seccomp",
+            "macos" => "seatbelt",
+            _ => "none",
+        }
+    }
 }
 
 /// Process-wide memoization of the host capability probe. Kernel features
@@ -831,6 +867,21 @@ pub struct CapabilitiesReport {
     pub landlock_abi: Option<i32>,
     pub userns: bool,
     pub seccomp: bool,
+    /// macOS Seatbelt is present and functionally applying profiles.
+    #[serde(default)]
+    pub seatbelt: bool,
+    /// Which mechanism backs the kernel tiers here: `landlock+seccomp`,
+    /// `seatbelt`, or `none`. Read this rather than inferring from
+    /// `landlock_abi` — a Mac confines with neither Landlock nor seccomp.
+    pub mechanism: &'static str,
+    /// A syscall-level deny-list is enforced (Linux seccomp-bpf). macOS has no
+    /// equivalent, so the tiers there rest on the filesystem/network policy
+    /// alone; a caller reasoning about untrusted *native* code needs to know.
+    pub syscall_filter: bool,
+    /// A **memory** cap is enforceable. Distinguished from `resource_limits`
+    /// because Darwin enforces cpu/fsize/procs rlimits but no memory cap at all
+    /// (see `seatbelt::RESOURCE_NOTE`).
+    pub memory_limit: bool,
     pub container_runtime: Option<String>,
     /// A **domain allowlist** for egress can be *enforced* here. Only the
     /// container tier's DNS-pinned proxy enforces it; the kernel tiers can
@@ -878,7 +929,18 @@ pub fn capabilities_report() -> CapabilitiesReport {
             claim: claim.as_str(),
             satisfiable,
             runnable: Some(runnable),
-            note: None,
+            // Naming the mechanism matters most where the tier name is the same
+            // but the guarantee is not: a supervised Mac box has a real egress
+            // allowlist and no syscall filter.
+            note: match (caps.os.as_str(), claim) {
+                ("macos", IsolationClaim::Process) => {
+                    Some("Seatbelt (no syscall filter, no memory cap)")
+                }
+                ("macos", IsolationClaim::Supervised) => {
+                    Some("Seatbelt + host allowlist proxy (no syscall filter)")
+                }
+                _ => None,
+            },
         });
     }
 
@@ -903,18 +965,33 @@ pub fn capabilities_report() -> CapabilitiesReport {
         });
     }
 
-    let resource_limits = container_ok
-        || claims
-            .iter()
-            .any(|c| c.claim != "workspace" && c.runnable == Some(true));
+    let confined_tier_runs = claims
+        .iter()
+        .any(|c| c.claim != "workspace" && c.runnable == Some(true));
+    let resource_limits = container_ok || confined_tier_runs;
+    // Darwin has no cgroups and does not enforce RLIMIT_AS against mmap, so a
+    // memory cap at the kernel tiers there would be a limit in name only. Say
+    // so rather than let `resource_limits` imply it.
+    let memory_limit = container_ok || (caps.os != "macos" && confined_tier_runs);
+    // A domain allowlist is enforced by the container tier's DNS-pinned proxy
+    // and — on macOS — by the supervised tier, whose Seatbelt profile leaves the
+    // box no outbound route except that same proxy on loopback.
+    let supervised_runs = claims
+        .iter()
+        .any(|c| c.claim == "supervised" && c.runnable == Some(true));
+    let egress_enforced = container_ok || (caps.os == "macos" && supervised_runs);
 
     CapabilitiesReport {
+        mechanism: caps.confinement_mechanism(),
+        syscall_filter: caps.os == "linux" && caps.seccomp,
         os: caps.os,
         landlock_abi: caps.landlock_abi,
         userns: caps.userns,
         seccomp: caps.seccomp,
+        seatbelt: caps.seatbelt,
+        memory_limit,
         container_runtime: caps.container_runtime,
-        egress_enforced: container_ok,
+        egress_enforced,
         resource_limits,
         claims,
         strongest_tier: strongest.as_str(),
@@ -928,17 +1005,34 @@ fn probe_host_kernel_uncached() -> HostCaps {
         landlock_abi: probe_landlock_abi(),
         userns: probe_userns(),
         seccomp: probe_seccomp(),
+        seatbelt: false,
         container_runtime: None,
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS: none of the Linux primitives exist, and none are faked. The kernel
+/// tier rests entirely on Seatbelt, whose probe is functional (it runs a command
+/// under a deny-default profile) rather than a feature bit.
+#[cfg(target_os = "macos")]
+fn probe_host_kernel_uncached() -> HostCaps {
+    HostCaps {
+        os: "macos".into(),
+        landlock_abi: None,
+        userns: false,
+        seccomp: false,
+        seatbelt: crate::seatbelt::probe().usable(),
+        container_runtime: None,
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn probe_host_kernel_uncached() -> HostCaps {
     HostCaps {
         os: std::env::consts::OS.to_string(),
         landlock_abi: None,
         userns: false,
         seccomp: false,
+        seatbelt: false,
         container_runtime: None,
     }
 }
@@ -993,6 +1087,23 @@ fn probe_userns() -> bool {
 
 // `AuditCapture`, `AuditPolicy`, `ResolvedPolicy` moved to src/sandbox_policy.rs.
 
+/// Why Seatbelt is unusable, for the macOS refusal message.
+///
+/// `resolve` is platform-independent code that branches on `caps.os` at
+/// *runtime*, so it is compiled for every target — including ones where the
+/// `seatbelt` module does not exist (it is `cfg(unix)`, since it needs
+/// `std::os::unix`). This wrapper is what keeps that runtime branch from
+/// becoming a compile-time dependency on a Unix-only module.
+#[cfg(unix)]
+fn seatbelt_detail() -> Option<String> {
+    crate::seatbelt::probe().detail
+}
+
+#[cfg(not(unix))]
+fn seatbelt_detail() -> Option<String> {
+    None
+}
+
 /// Resolve `profile` against what `caps` says the host supports. Refuses —
 /// never silently downgrades — when the requested minimum claim cannot be
 /// satisfied (§5 "Capability probing + fail-closed").
@@ -1002,9 +1113,24 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
         IsolationClaim::Workspace => {}
         IsolationClaim::Process => {
             let mut missing: Vec<String> = Vec::new();
-            if caps.os != "linux" {
+            if caps.os == "macos" {
+                // Darwin's kernel tier is Seatbelt. It is a different mechanism
+                // with a different residual set (no syscall filter, no memory
+                // cap — see `seatbelt::RESOURCE_NOTE`), which `env probe`
+                // reports; what it must not be is a silent downgrade, so an
+                // unusable Seatbelt refuses here exactly as a missing Landlock
+                // does on Linux.
+                if !caps.seatbelt {
+                    let detail =
+                        seatbelt_detail().unwrap_or_else(|| "Seatbelt unavailable".into());
+                    missing.push(format!("macOS Seatbelt is not usable: {detail}"));
+                }
+                // `net.mode = deny` needs no namespace here: the profile simply
+                // grants no outbound rule, which the kernel enforces.
+            } else if caps.os != "linux" {
                 missing.push(format!(
-                    "isolation=process is Linux-only in this build (host: {})",
+                    "isolation=process needs Linux (Landlock+seccomp) or macOS (Seatbelt); \
+                     this host is {}",
                     caps.os
                 ));
             } else {
@@ -1235,7 +1361,30 @@ fn spawn_background_confined(
     Ok(child.id())
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS process-tier background spawn. `sandbox-exec` `execve`s the workload
+/// rather than forking it, so the returned pid *is* the service and stays
+/// `killpg`-able — the same guarantee the Linux no-pidns path gives.
+#[cfg(target_os = "macos")]
+fn spawn_background_confined(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+    out: std::fs::File,
+    err: std::fs::File,
+) -> Result<u32, H5iError> {
+    crate::seatbelt::spawn_background(
+        policy,
+        work,
+        argv,
+        injected_env,
+        out,
+        err,
+        &seatbelt_opts(false, &[]),
+    )
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn spawn_background_confined(
     _policy: &ResolvedPolicy,
     _work: &Path,
@@ -1245,7 +1394,7 @@ fn spawn_background_confined(
     _err: std::fs::File,
 ) -> Result<u32, H5iError> {
     Err(H5iError::Metadata(
-        "process-tier services require Linux".into(),
+        "process-tier services require Linux or macOS".into(),
     ))
 }
 
@@ -1352,7 +1501,20 @@ fn interactive_confined(
     Ok(status.code().unwrap_or(130))
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS interactive process tier. `interactive = true` adds the agent-config
+/// write lockdown and the pty grants, and keeps the caller's session so job
+/// control works — the same two adjustments the Linux path makes.
+#[cfg(target_os = "macos")]
+fn interactive_confined(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<i32, H5iError> {
+    crate::seatbelt::run_interactive(policy, work, argv, injected_env, &seatbelt_opts(true, &[]))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn interactive_confined(
     _policy: &ResolvedPolicy,
     _work: &Path,
@@ -1360,7 +1522,7 @@ fn interactive_confined(
     _injected_env: &[(String, String)],
 ) -> Result<i32, H5iError> {
     Err(H5iError::Metadata(
-        "isolation=process requires Linux".into(),
+        "isolation=process requires Linux or macOS".into(),
     ))
 }
 
@@ -2187,7 +2349,33 @@ pub(crate) fn make_run_cgroup(mem_bytes: Option<u64>, max_procs: Option<u64>) ->
     crate::cgroup::ScopedCgroup::create(&parent, seq, mem_bytes, max_procs).ok()
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS `process` tier: the same contract (confined filesystem, no egress,
+/// wall clock, rlimits) delivered by Seatbelt instead of Landlock+seccomp. The
+/// process tier never proxies egress, so no loopback port is opened.
+#[cfg(target_os = "macos")]
+fn run_confined(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<ExecOutcome, H5iError> {
+    crate::seatbelt::run(policy, work, argv, injected_env, &seatbelt_opts(false, &[]))
+}
+
+/// Build the Seatbelt options for a kernel-tier run on macOS.
+#[cfg(target_os = "macos")]
+pub(crate) fn seatbelt_opts(
+    interactive: bool,
+    proxy_ports: &[u16],
+) -> crate::seatbelt::SeatbeltOptions {
+    crate::seatbelt::SeatbeltOptions {
+        proxy_ports: proxy_ports.to_vec(),
+        interactive,
+        home: std::env::var_os("HOME").map(PathBuf::from),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn run_confined(
     _policy: &ResolvedPolicy,
     _work: &Path,
@@ -2195,7 +2383,9 @@ fn run_confined(
     _injected_env: &[(String, String)],
 ) -> Result<ExecOutcome, H5iError> {
     Err(H5iError::Metadata(
-        "isolation=process is Linux-only in this build (fail-closed)".into(),
+        "isolation=process needs Linux (Landlock+seccomp) or macOS (Seatbelt) — this build has \
+         neither on this target (fail-closed)"
+            .into(),
     ))
 }
 
@@ -2325,7 +2515,7 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
 /// Spawn `cmd`, stream stdout/stderr off-thread, and enforce `wall` as a hard
 /// deadline (SIGKILL). stdin is closed — env runs are non-interactive by
 /// construction so a confined process can't block on a prompt forever.
-fn wait_with_deadline(
+pub(crate) fn wait_with_deadline(
     mut cmd: std::process::Command,
     wall: Duration,
     argv: &[String],
@@ -3245,7 +3435,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     }
 
     fn caps(landlock: Option<i32>, userns: bool, seccomp: bool) -> HostCaps {
-        HostCaps { os: "linux".into(), landlock_abi: landlock, userns, seccomp, container_runtime: None }
+        HostCaps { os: "linux".into(), landlock_abi: landlock, userns, seccomp, seatbelt: false, container_runtime: None }
     }
 
     #[test]
@@ -3286,6 +3476,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
             landlock_abi: Some(3),
             userns: true,
             seccomp: true,
+            seatbelt: false,
             container_runtime: runtime.map(str::to_owned),
         }
     }
@@ -3330,12 +3521,58 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         assert!(resolve(&cont, &caps_with_container(Some("podman"))).is_ok());
     }
 
+    fn mac_caps(seatbelt: bool) -> HostCaps {
+        HostCaps {
+            os: "macos".into(),
+            landlock_abi: None,
+            userns: false,
+            seccomp: false,
+            seatbelt,
+            container_runtime: None,
+        }
+    }
+
     #[test]
-    fn resolve_process_refused_off_linux() {
+    fn resolve_process_on_macos_rests_on_seatbelt_not_landlock() {
         let p = Profile::builtin("default", IsolationClaim::Process);
-        let mac = HostCaps { os: "macos".into(), landlock_abi: None, userns: false, seccomp: false, container_runtime: None };
-        let err = resolve(&p, &mac).unwrap_err();
-        assert!(err.to_string().contains("Linux-only"), "{err}");
+        // A Mac has no Landlock, no seccomp and no userns, and must not be
+        // judged by them — Seatbelt is its kernel tier.
+        assert!(
+            resolve(&p, &mac_caps(true)).is_ok(),
+            "a usable Seatbelt satisfies the process claim on macOS"
+        );
+        // ...and an unusable one refuses rather than downgrading.
+        let err = resolve(&p, &mac_caps(false)).unwrap_err();
+        assert!(err.to_string().contains("Seatbelt"), "{err}");
+        assert!(!err.to_string().contains("Landlock"), "{err}");
+    }
+
+    #[test]
+    fn resolve_process_refused_on_a_platform_with_no_backend() {
+        let p = Profile::builtin("default", IsolationClaim::Process);
+        let win = HostCaps {
+            os: "windows".into(),
+            landlock_abi: None,
+            userns: false,
+            seccomp: false,
+            seatbelt: false,
+            container_runtime: None,
+        };
+        let err = resolve(&p, &win).unwrap_err();
+        assert!(err.to_string().contains("windows"), "{err}");
+    }
+
+    #[test]
+    fn kernel_confinement_asks_the_right_question_per_os() {
+        assert!(mac_caps(true).kernel_confinement());
+        assert!(!mac_caps(false).kernel_confinement());
+        assert_eq!(mac_caps(true).confinement_mechanism(), "seatbelt");
+        assert!(caps(Some(3), true, true).kernel_confinement());
+        assert!(
+            !caps(None, true, true).kernel_confinement(),
+            "no Landlock is no kernel confinement on Linux"
+        );
+        assert_eq!(caps(Some(3), true, true).confinement_mechanism(), "landlock+seccomp");
     }
 
     #[test]
@@ -3424,8 +3661,39 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
             let c = r.claims.iter().find(|c| c.claim == name).unwrap();
             assert!(!c.satisfiable && c.runnable.is_none());
         }
-        // Egress allowlist enforcement tracks the container runtime exactly.
-        assert_eq!(r.egress_enforced, r.container_runtime.is_some());
+        // A domain allowlist is enforced by the container tier's DNS-pinned
+        // proxy, and on macOS also by the supervised tier — whose Seatbelt
+        // profile leaves the box no outbound route except that same proxy. The
+        // Linux kernel tiers can deny all but never allowlist, so they do not
+        // count towards this.
+        let supervised_runs = r
+            .claims
+            .iter()
+            .any(|c| c.claim == "supervised" && c.runnable == Some(true));
+        assert_eq!(
+            r.egress_enforced,
+            r.container_runtime.is_some() || (r.os == "macos" && supervised_runs)
+        );
+        // The two honesty flags, which exist so a caller never infers a
+        // guarantee from a tier name that means different things per platform.
+        assert!(
+            !r.syscall_filter || r.os == "linux",
+            "only Linux has a syscall deny-list; macOS must never claim one"
+        );
+        assert!(
+            !(r.memory_limit && r.os == "macos" && r.container_runtime.is_none()),
+            "Darwin cannot cap memory without the container tier"
+        );
+        assert!(
+            !r.memory_limit || r.resource_limits,
+            "a memory cap implies some resource limit is enforced"
+        );
+        let expected_mechanism = match r.os.as_str() {
+            "linux" => "landlock+seccomp",
+            "macos" => "seatbelt",
+            _ => "none",
+        };
+        assert_eq!(r.mechanism, expected_mechanism);
         // strongest_tier is one of the known claims.
         assert!(claims.contains(&r.strongest_tier));
     }

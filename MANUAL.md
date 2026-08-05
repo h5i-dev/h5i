@@ -563,11 +563,32 @@ Being explicit about these is a feature, since the claim is a security claim.
   not built.
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so it
   binds proxy-respecting tooling only.
-- **Chrome runs with its own sandbox off.** h5i's seccomp deny-list blocks the
-  namespace syscalls Chrome's sandbox needs, at every tier. h5i's box is the
-  boundary; Chrome's is not available inside it. That is one layer fewer than a
-  browser on the host has.
-- **Linux first.** Rootless Podman on Linux, and WSL2. macOS needs a VM layer.
+- **Chrome runs with its own sandbox off.** On Linux, h5i's seccomp deny-list
+  blocks the namespace syscalls Chrome's sandbox needs, at every tier. h5i's box
+  is the boundary; Chrome's is not available inside it. That is one layer fewer
+  than a browser on the host has. The browser profile has not been exercised on
+  macOS at all, so treat it as unsupported there rather than as working.
+- **Two kernel mechanisms, not one.** Linux confines with Landlock, seccomp and
+  namespaces. macOS confines with Seatbelt, which is default deny across
+  filesystem, network, mach and sysctl in one policy, and which (unlike
+  Landlock) can subtract a child from a granted parent, so the agent config lock
+  is one rule there instead of a bind mount. That does not make `fs.deny`
+  stronger on macOS: a denied path inside a granted parent is refused as a
+  policy on every platform, so what is left is already outside every grant.
+  Two things are genuinely absent on macOS: there is
+  no syscall filter, because Darwin has no seccomp equivalent; and there is no
+  memory or process-count cap, because Darwin has no cgroups, does not enforce
+  `RLIMIT_AS` against an mmap'd heap, and scopes `RLIMIT_NPROC` to the whole
+  user rather than to one box (applying it would cap your machine, not the
+  box). `h5i box probe` names the mechanism and the gaps.
+  Rootless Podman runs on Linux and WSL2 natively, and on macOS through a
+  `podman machine` VM.
+- **A macOS box shares the host's loopback.** A Linux box gets its own network
+  namespace, so its loopback is private. macOS has no namespaces, so a box binds
+  the host's loopback (deliberately: it is the only way a dev server in a box is
+  reachable). h5i closes the outbound half of this, denying the box every
+  outbound loopback destination except its own egress proxy, but the box's own
+  listening ports are reachable by any local process.
 - **Cost.** A Chrome sidecar is real RAM and CPU, even headless. Headless boxes
   stay first class, and the browser is opt-in per box.
 - **The viewport is not a desktop.** CDP screencast shows the page. Native

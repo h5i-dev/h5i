@@ -932,14 +932,30 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     let caps = h5i_core::sandbox::probe_host();
                     println!("── Host isolation capabilities ──");
                     println!("  os           = {}", caps.os);
-                    println!(
-                        "  landlock_abi = {}",
-                        caps.landlock_abi
-                            .map(|v| v.to_string())
-                            .unwrap_or_else(|| "none".into())
-                    );
-                    println!("  userns       = {}", caps.userns);
-                    println!("  seccomp      = {}", caps.seccomp);
+                    println!("  mechanism    = {}", caps.confinement_mechanism());
+                    // Report the primitives this OS actually has. Printing
+                    // `landlock_abi = none` on a Mac reads as a broken host when
+                    // the truth is that macOS confines with something else.
+                    if caps.os == "macos" {
+                        println!("  seatbelt     = {}", caps.seatbelt);
+                        println!(
+                            "  {}",
+                            style(
+                                "note: no syscall filter and no memory cap at the macOS kernel \
+                                 tiers; use isolation=container for a memory cap"
+                            )
+                            .dim()
+                        );
+                    } else {
+                        println!(
+                            "  landlock_abi = {}",
+                            caps.landlock_abi
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "none".into())
+                        );
+                        println!("  userns       = {}", caps.userns);
+                        println!("  seccomp      = {}", caps.seccomp);
+                    }
                     println!(
                         "  container    = {}",
                         caps.container_runtime.as_deref().unwrap_or("none")
@@ -1006,21 +1022,28 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         };
                         println!("── h5i host capabilities ──");
                         println!("  os               = {}", report.os);
-                        println!(
-                            "  landlock_abi     = {}",
-                            report
-                                .landlock_abi
-                                .map(|v| v.to_string())
-                                .unwrap_or_else(|| "none".into())
-                        );
-                        println!("  userns           = {}", yn(report.userns));
-                        println!("  seccomp          = {}", yn(report.seccomp));
+                        println!("  mechanism        = {}", report.mechanism);
+                        if report.os == "macos" {
+                            println!("  seatbelt         = {}", yn(report.seatbelt));
+                        } else {
+                            println!(
+                                "  landlock_abi     = {}",
+                                report
+                                    .landlock_abi
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "none".into())
+                            );
+                            println!("  userns           = {}", yn(report.userns));
+                            println!("  seccomp          = {}", yn(report.seccomp));
+                        }
                         println!(
                             "  container        = {}",
                             report.container_runtime.as_deref().unwrap_or("none")
                         );
                         println!("  egress_enforced  = {}", yn(report.egress_enforced));
+                        println!("  syscall_filter   = {}", yn(report.syscall_filter));
                         println!("  resource_limits  = {}", yn(report.resource_limits));
+                        println!("  memory_limit     = {}", yn(report.memory_limit));
                         println!(
                             "  strongest_tier   = {}",
                             style(report.strongest_tier).cyan().bold()
