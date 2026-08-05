@@ -11,7 +11,7 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">Disposable Development Environments for AI Coding Agents</h1>
+<h1 align="center">Browser-enabled Sandbox for AI agents</h1>
 
 **h5i** (pronounced *high-five*) gives a coding agent full autonomy inside a
 throwaway box, and gives your machine nothing to lose. The code, the toolchain,
@@ -24,6 +24,8 @@ everything that ran.
 > work. It is being rebuilt around the boundary, which was always the part
 > worth having. [ROADMAP.md](ROADMAP.md) is the plan of record: what stays,
 > what was cut, and what is still coming.
+
+<a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i-dev%2Fh5i | Trendshift" width="250" height="55"/></a>
 
 ---
 
