@@ -1452,6 +1452,38 @@ mod tests {
         (out.exit_code, text)
     }
 
+    /// Isolate "SBPL rejected the profile" from "the profile was fine and the
+    /// command died". Those two look identical from a failed run, and telling
+    /// them apart is the difference between a syntax bug and a grant bug — so
+    /// this asserts the narrower property (the parser accepts what we generate)
+    /// and surfaces `sandbox-exec`'s own diagnostic when it does not.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn the_generated_profile_is_accepted_by_sandbox_exec() {
+        if !probe().usable() {
+            eprintln!("SKIP the_generated_profile_is_accepted_by_sandbox_exec: Seatbelt unusable");
+            return;
+        }
+        let (_tmp, work, pol) = functional_env();
+        let plan = plan(&pol, &work, &SeatbeltOptions::default());
+        let file = ProfileFile::write(&plan.profile).unwrap();
+        let out = std::process::Command::new(SANDBOX_EXEC)
+            .arg("-f")
+            .arg(file.path())
+            .arg("/usr/bin/true")
+            .output()
+            .expect("run sandbox-exec");
+        assert!(
+            out.status.success(),
+            "sandbox-exec rejected the generated profile.\n\
+             status: {:?}\nstderr: {}\nstdout: {}\n--- profile ---\n{}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr),
+            String::from_utf8_lossy(&out.stdout),
+            plan.profile
+        );
+    }
+
     #[test]
     #[cfg(target_os = "macos")]
     fn a_confined_command_actually_execs_under_the_real_profile() {
@@ -1463,9 +1495,30 @@ mod tests {
             return;
         }
         let (_tmp, work, pol) = functional_env();
-        let (code, text) = run_confined_sh(&pol, &work, "echo alive");
-        assert_eq!(code, Some(0), "confined /bin/sh did not run cleanly: {text}");
-        assert!(text.contains("alive"), "no output from the confined shell: {text}");
+        let out = crate::sandbox::run(
+            &pol,
+            &work,
+            &["/bin/sh".to_string(), "-c".to_string(), "echo alive".to_string()],
+        )
+        .expect("confined run should not error out");
+        // `exit_code: None` means it died on a signal. Report enough to tell a
+        // wall-clock kill from a sandbox kill from a crash, because an empty
+        // stdout+stderr on its own says almost nothing.
+        assert_eq!(
+            out.exit_code,
+            Some(0),
+            "confined /bin/sh did not run cleanly.\n\
+             exit_code={:?} timed_out={} wall_ms={}\nstdout: {:?}\nstderr: {:?}",
+            out.exit_code,
+            out.timed_out,
+            out.wall_ms,
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("alive"),
+            "no output from the confined shell"
+        );
     }
 
     #[test]
