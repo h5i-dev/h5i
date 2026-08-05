@@ -597,7 +597,36 @@ part of the pinned digest, and fail-closed when the host-side variable is
 unset. GitHub is a policy entry, not a feature. Option 2 (a TLS-terminating
 forward proxy) stays unbuilt and unneeded.
 
-**M4. Browser — profile landed, live loop not yet.** Done: the `browser`
+**M4. Browser — blocked on a pre-existing host bug.** The first attempt to run
+a real browser box found something more useful than code:
+
+| tier + profile | result |
+| --- | --- |
+| `supervised` + `default` | works |
+| `supervised` + `default` with a declared `net.egress` | works |
+| `supervised` + `agent-claude` | `spawn failed: Invalid argument (EINVAL)` |
+| `supervised` + `browser` | same (it extends `agent`) |
+| `process` + `agent-claude` | refused by design — the tier cannot enforce `net.egress` |
+
+So: the tier is fine, the egress setup is fine (`nft` and `slirp4netns` are both
+present), and the credential proxy is not involved (`H5I_CREDENTIAL_PROXY=off`
+fails identically). What is left is the agent-family-only machinery — the HOME
+redirect binds and the private `/tmp`.
+
+**It is not a regression from this work.** The pre-pivot binary (v0.2.8, built
+2026-07-15) fails the same way on the same host, which puts it with the other
+in-box-git host drift the suite already carries.
+
+The consequence is that `supervised` is the *only* kernel tier that can host an
+agent or a browser box (`process` refuses the egress the profile needs), so
+this bug blocks M4's exit criterion here. It also shows the gap that hid it:
+**nothing in the suite runs an agent-family profile at `supervised`** — every
+supervised test uses a `default`-derived profile.
+
+Fix that first: a test that runs the agent profile at `supervised`, then bisect
+the HOME-bind path against it.
+
+Done so far: Done: the `browser`
 built-in profile (the agent profile plus the browser surface, runtime scoping
 intact, egress never wider than the agent's), host-path discovery for the
 kernel tiers with a fail-closed create that names what to install,
