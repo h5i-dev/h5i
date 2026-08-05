@@ -68,11 +68,14 @@ pub struct DevArgs {
     #[command(subcommand)]
     action: Option<cli::dev::DevCommands>,
 
-    /// Where the code comes from: `.` for this repository (the default), a
-    /// GitHub pull request (number, #number, or URL), or a repository URL to
-    /// copy into the box.
+    /// Where the code comes from: `.` for this repository (the default), or a
+    /// repository URL to copy into the box. A pull request is `--pr`.
     #[arg(value_name = "SOURCE")]
     source: Option<String>,
+
+    /// Base the box on a GitHub pull request (number, #number, or URL).
+    #[arg(long, value_name = "NUMBER|URL", conflicts_with_all = ["source", "new"])]
+    pr: Option<String>,
 
     /// Start from an empty box instead of any source.
     #[arg(long, conflicts_with = "source")]
@@ -111,23 +114,37 @@ impl DevArgs {
             return Ok(action);
         }
         let source = self.source.unwrap_or_else(|| ".".to_string());
-        let (pr, clone) = if self.new {
-            (None, None)
-        } else {
-            match cli::dev::pr_spec(&source) {
-                Some(spec) => (Some(spec), None),
-                None if source == "." => (None, None),
-                None if cli::dev::looks_like_repo_url(&source) => (None, Some(source.clone())),
-                None => anyhow::bail!(
-                    "unrecognized source '{source}'.\n  \
-                     Pass `.` for this repository, a pull request (number, #number, or URL), \
-                     a repository URL, or --new for an empty box."
-                ),
+        let (pr, clone) = match (&self.pr, self.new) {
+            (Some(spec), _) => (Some(spec.clone()), None),
+            (None, true) => (None, None),
+            (None, false) if source == "." => (None, None),
+            // Checked *before* the repository-URL branch, and the order is the
+            // point: a GitHub PR URL is also a URL, so testing for a clone
+            // first would send `.../pull/42` to `git clone` and fail with a
+            // raw "repository not found". A plain repository URL has no
+            // `/pull/<n>`, so it never matches here.
+            //
+            // A pull request used to be spellable as a bare positional and
+            // people will still type it, so say where it went rather than
+            // "unrecognized source", which would read as "h5i cannot do this".
+            (None, false) if cli::dev::pr_spec(&source).is_some() => anyhow::bail!(
+                "'{source}' looks like a pull request — pass it as a flag:\n  \
+                 h5i dev --pr {source}"
+            ),
+            (None, false) if cli::dev::looks_like_repo_url(&source) => {
+                (None, Some(source.clone()))
             }
+            (None, false) => anyhow::bail!(
+                "unrecognized source '{source}'.\n  \
+                 Pass `.` for this repository, a repository URL, `--pr <number|url>` for a \
+                 pull request, or `--new` for an empty box."
+            ),
         };
         let name = match (self.name, &pr, &clone) {
             (Some(n), _, _) => n,
-            (None, Some(spec), _) => format!("pr-{spec}"),
+            // From the PR *number*, not the spec: a URL spec would otherwise
+            // become a box named `pr-https://github.com/o/r/pull/42`.
+            (None, Some(spec), _) => format!("pr-{}", h5i_core::source::parse_pr_spec(spec)?),
             (None, None, Some(url)) => cli::dev::name_from_url(url)?,
             (None, None, None) if self.new => cli::dev::free_box_name("new")?,
             (None, None, None) => cli::dev::default_box_name()?,
@@ -303,4 +320,99 @@ fn demote_headings(bytes: &[u8]) -> Vec<u8> {
         }
     }
     out.into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Route `argv` through clap and the short-form fold, exactly as `main`
+    /// does. The error is flattened to a string because `DevCommands` has no
+    /// `Debug`, and deriving one on a public enum purely for tests would be
+    /// the tail wagging the dog.
+    fn dispatch(argv: &[&str]) -> Result<cli::dev::DevCommands, String> {
+        let parsed = Cli::try_parse_from(argv).map_err(|e| e.to_string())?;
+        match parsed.command {
+            Commands::Dev(args) => args.into_command().map_err(|e| e.to_string()),
+            _ => panic!("not a dev command"),
+        }
+    }
+
+    /// The fields the source routing decides. Panics if the fold produced
+    /// anything but a `Create`, which is the only thing the short form builds.
+    fn create_parts(argv: &[&str]) -> (String, Option<String>, Option<String>, bool) {
+        match dispatch(argv) {
+            Ok(cli::dev::DevCommands::Create {
+                name, pr, clone, new, ..
+            }) => (name, pr, clone, new),
+            Ok(_) => panic!("expected Create"),
+            Err(e) => panic!("dispatch failed: {e}"),
+        }
+    }
+
+    #[test]
+    fn a_pull_request_is_a_flag_not_a_positional() {
+        let (name, pr, clone, _) = create_parts(&["h5i", "dev", "--pr", "1234"]);
+        assert_eq!(pr.as_deref(), Some("1234"));
+        assert_eq!(clone, None);
+        assert_eq!(name, "pr-1234");
+
+        // A URL spec names the box from the *number*. Naming it from the spec
+        // would produce `pr-https://github.com/o/r/pull/42`.
+        let (name, pr, _, _) =
+            create_parts(&["h5i", "dev", "--pr", "https://github.com/o/r/pull/42"]);
+        assert_eq!(pr.as_deref(), Some("https://github.com/o/r/pull/42"));
+        assert_eq!(name, "pr-42");
+    }
+
+    #[test]
+    fn the_old_positional_spelling_says_where_it_went() {
+        // `h5i dev 1234` used to mean a pull request. People will still type
+        // it, so it has to point at the flag rather than read as "h5i cannot
+        // do this".
+        for spec in ["1234", "#7", "https://github.com/o/r/pull/42"] {
+            let err = dispatch(&["h5i", "dev", spec]).err().expect("must be refused");
+            assert!(err.contains("--pr"), "{spec}: {err}");
+            assert!(err.contains("pull request"), "{spec}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_repository_url_is_still_a_positional_and_still_clones() {
+        // The PR check runs first, and this is what must survive it: a plain
+        // repository URL has no `/pull/<n>`, so it is unaffected.
+        let (_, pr, clone, _) = create_parts(&[
+            "h5i",
+            "dev",
+            "https://github.com/o/r.git",
+            "--name",
+            "r",
+        ]);
+        assert_eq!(pr, None);
+        assert_eq!(clone.as_deref(), Some("https://github.com/o/r.git"));
+    }
+
+    #[test]
+    fn an_unrecognized_source_names_every_way_in() {
+        let err = dispatch(&["h5i", "dev", "wat"]).err().expect("must be refused");
+        for hint in ["--pr", "--new", "repository URL"] {
+            assert!(err.contains(hint), "{err}");
+        }
+    }
+
+    #[test]
+    fn the_sources_are_mutually_exclusive() {
+        // Caught by clap, before any of the fold runs.
+        assert!(dispatch(&["h5i", "dev", ".", "--pr", "12"]).is_err());
+        assert!(dispatch(&["h5i", "dev", "--pr", "12", "--new"]).is_err());
+        assert!(dispatch(&["h5i", "dev", ".", "--new"]).is_err());
+    }
+
+    #[test]
+    fn an_empty_box_needs_no_source() {
+        let (name, pr, clone, new) = create_parts(&["h5i", "dev", "--new", "--name", "scratch"]);
+        assert!(new);
+        assert_eq!((pr, clone), (None, None));
+        assert_eq!(name, "scratch");
+    }
 }

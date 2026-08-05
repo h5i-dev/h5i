@@ -304,12 +304,14 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 <h2 id="h5i-dev">h5i dev</h2>
 <h3 id="making-a-box">Making a box</h3>
 <pre><code class="language-bash">h5i dev .                       # snapshot this repository at HEAD
-h5i dev 1234                    # a pull request (number, #number, or URL)
+h5i dev --pr 1234               # a pull request (number, #number, or URL)
 h5i dev https://github.com/o/r  # clone an external repository
 h5i dev --new                   # an empty box; the agent builds from nothing
 </code></pre>
 <p><code>h5i dev [SOURCE]</code> is shorthand for <a href="#h5i-dev-create"><code>h5i dev create</code></a>, and
-takes the same flags.</p>
+takes the same flags. A pull request is <code>--pr</code>, not a positional: a bare number
+is ambiguous with everything else a source could be, and <code>h5i dev create</code>
+already spelled it as a flag.</p>
 <p>Where the code comes from decides the shape of the box:</p>
 <ul>
 <li><strong>This repository</strong> → a real git worktree on its own branch, sharing the

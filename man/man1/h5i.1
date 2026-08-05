@@ -40,10 +40,13 @@ Disposable, confined development boxes. `h5i dev` with no verb creates one from 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBdev\fR [\fB\-\-new\fR] [\fB\-\-name\fR] [\fB\-\-from\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISOURCE\fR] [\fIsubcommands\fR]
+\fBdev\fR [\fB\-\-pr\fR] [\fB\-\-new\fR] [\fB\-\-name\fR] [\fB\-\-from\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISOURCE\fR] [\fIsubcommands\fR]
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
+.TP
+\fB\-\-pr\fR \fI<NUMBER|URL>\fR
+Base the box on a GitHub pull request (number, #number, or URL)
 .TP
 \fB\-\-new\fR
 Start from an empty box instead of any source
@@ -70,7 +73,7 @@ Container base image for isolation=container
 Print help
 .TP
 [\fISOURCE\fR]
-Where the code comes from: `.` for this repository (the default), a GitHub pull request (number, #number, or URL), or a repository URL to copy into the box
+Where the code comes from: `.` for this repository (the default), or a repository URL to copy into the box. A pull request is `\-\-pr`
 .SH "H5I DEV CREATE"
 Create a box explicitly. `h5i dev [SOURCE]` is the short form and takes the same flags; this is what it dispatches to
 .ie \n(.g .ds Aq \(aq

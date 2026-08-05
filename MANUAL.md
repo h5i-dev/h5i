@@ -109,13 +109,15 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 
 ```bash
 h5i dev .                       # snapshot this repository at HEAD
-h5i dev 1234                    # a pull request (number, #number, or URL)
+h5i dev --pr 1234               # a pull request (number, #number, or URL)
 h5i dev https://github.com/o/r  # clone an external repository
 h5i dev --new                   # an empty box; the agent builds from nothing
 ```
 
 `h5i dev [SOURCE]` is shorthand for [`h5i dev create`](#h5i-dev-create), and
-takes the same flags.
+takes the same flags. A pull request is `--pr`, not a positional: a bare number
+is ambiguous with everything else a source could be, and `h5i dev create`
+already spelled it as a flag.
 
 Where the code comes from decides the shape of the box:
 

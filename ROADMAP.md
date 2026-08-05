@@ -118,7 +118,7 @@ path unchanged.
 ```
 h5i dev .                    # snapshot the current repo into a box
 h5i dev <repo-url>           # clone an external repo into a box
-h5i dev <pr-url|#N>          # review a PR in a box
+h5i dev --pr <N|url>         # review a PR in a box
 h5i dev --new                # empty box, agent builds from zero
 
 h5i dev ls | status <name> | rm <name> | gc

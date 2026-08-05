@@ -24,7 +24,7 @@ stale. Reach for it before guessing at a flag.
 
 ```bash
 h5i dev                      # a box from this repository's HEAD
-h5i dev 1234                 # a box from pull request #1234 (number, #n, or URL)
+h5i dev --pr 1234            # a box from pull request #1234 (number, #n, or URL)
 h5i dev --name fix-auth      # name it yourself; otherwise the branch name is used
 ```
 

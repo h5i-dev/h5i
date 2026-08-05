@@ -49,7 +49,7 @@ of what the kernel already gives you.
 
 ```bash
 h5i dev                          # a box from this repository
-h5i dev 1234                     # a box from pull request #1234
+h5i dev --pr 1234                # a box from pull request #1234
 ```
 
 Work in it. Every command is policy-enforced and recorded:
