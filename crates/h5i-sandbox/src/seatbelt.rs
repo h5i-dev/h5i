@@ -1452,6 +1452,82 @@ mod tests {
         (out.exit_code, text)
     }
 
+    /// Every non-trivial SBPL construct [`build_profile`] emits, checked one at
+    /// a time on top of a base profile already known to work.
+    ///
+    /// This exists because libsandbox does not report a bad profile the way a
+    /// parser normally would: it `abort()`s, so `sandbox-exec` dies on SIGABRT
+    /// with nothing on stderr, and a whole-profile failure tells you only that
+    /// *something* in a few hundred lines is wrong. Checking each construct in
+    /// isolation names the culprit, and pins the dialect we depend on so a
+    /// future macOS dropping one of these fails here rather than in the field.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn every_sbpl_construct_we_emit_is_accepted() {
+        if !probe().usable() {
+            eprintln!("SKIP every_sbpl_construct_we_emit_is_accepted: Seatbelt unusable");
+            return;
+        }
+        // Sanity: the base alone must work, or every result below is noise.
+        assert!(
+            sbpl_accepts(""),
+            "the base self-test profile itself was rejected; nothing below is meaningful"
+        );
+
+        let constructs = [
+            "(allow file-read-metadata)",
+            "(allow file-read* (subpath \"/usr\"))",
+            "(allow file-read* (literal \"/dev/null\"))",
+            "(allow file-write* file-read* (subpath \"/tmp\"))",
+            "(allow file-write* file-read* (literal \"/dev/null\"))",
+            "(deny file-read* file-write* (subpath \"/Users/nobody/.ssh\"))",
+            "(deny file-write* (subpath \"/tmp/x/.claude\"))",
+            "(allow file-write* file-read* (regex #\"^/dev/tty[a-z0-9]*$\"))",
+            "(allow process-fork)",
+            "(allow process-exec*)",
+            "(allow signal (target same-sandbox))",
+            "(allow process-info* (target self))",
+            "(allow process-info-pidinfo (target same-sandbox))",
+            "(deny process-info* (target others))",
+            "(allow sysctl-read)",
+            "(deny sysctl-read (sysctl-name \"kern.procargs2\"))",
+            "(allow mach-lookup)",
+            "(allow ipc-posix-shm)",
+            "(allow network-bind (local ip \"localhost:*\"))",
+            "(allow network-inbound (local ip \"localhost:*\"))",
+            "(allow network-outbound (remote ip \"localhost:8080\"))",
+            "(allow network-outbound (remote unix-socket))",
+            "(allow network-bind (local unix-socket))",
+            "(allow network-outbound)",
+        ];
+        let rejected: Vec<&str> = constructs
+            .iter()
+            .copied()
+            .filter(|c| !sbpl_accepts(c))
+            .collect();
+        assert!(
+            rejected.is_empty(),
+            "libsandbox rejected {} construct(s) this crate emits:\n  {}",
+            rejected.len(),
+            rejected.join("\n  ")
+        );
+    }
+
+    /// Does `sandbox-exec` accept the known-good base profile plus `extra`?
+    #[cfg(target_os = "macos")]
+    fn sbpl_accepts(extra: &str) -> bool {
+        let profile = format!("{SELF_TEST_PROFILE}{extra}");
+        std::process::Command::new(SANDBOX_EXEC)
+            .arg("-p")
+            .arg(&profile)
+            .arg("/usr/bin/true")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
     /// Isolate "SBPL rejected the profile" from "the profile was fine and the
     /// command died". Those two look identical from a failed run, and telling
     /// them apart is the difference between a syntax bug and a grant bug — so
