@@ -233,7 +233,7 @@ impl RunLock {
                 let msg = match role {
                     // Another writer (or a teardown's `run.lock` hold) is live.
                     // Observers never take `run.lock`, so they can't cause this.
-                    LockRole::Writer => "environment is busy — another `h5i env run`/`shell` \
+                    LockRole::Writer => "environment is busy — another `h5i dev run`/`shell` \
                          or lifecycle op (propose/apply/rebase/abort) holds it",
                     // A teardown holds `observers.lock` exclusively.
                     LockRole::Observer => "environment is being torn down (gc/rm) — a \
@@ -728,7 +728,7 @@ pub fn read_ref_policies(repo: &Repository) -> Vec<(String, String)> {
 /// Materialize env manifests + policies from `refs/h5i/env` onto disk for any
 /// env that is absent locally, or whose ref copy is newer (`updated_at`). This
 /// is what lets a `h5i pull` make another clone's environments appear in
-/// `h5i env list`/`status`/`diff`/`apply`. Worktrees are inherently local, so a
+/// `h5i dev list`/`status`/`diff`/`apply`. Worktrees are inherently local, so a
 /// materialized ("remote") env has no `work/`; review/apply operate on the
 /// pushed code branch instead.
 pub fn materialize_from_ref(repo: &Repository, h5i_root: &Path) -> Result<usize, H5iError> {
@@ -769,7 +769,7 @@ pub fn materialize_from_ref(repo: &Repository, h5i_root: &Path) -> Result<usize,
                 eprintln!(
                     "warning: skipping shared env '{}' — its stored policy does not match the \
                      pinned digest (likely created by a different h5i version); recreate it: \
-                     `h5i env rm {} --force` then `h5i env create`",
+                     `h5i dev rm {} --force` then `h5i dev create`",
                     crate::redact::sanitize_display(&m.id),
                     crate::redact::sanitize_display(&m.slug)
                 );
@@ -1177,7 +1177,7 @@ pub fn find(h5i_root: &Path, name: &str) -> Result<EnvManifest, H5iError> {
         .collect();
     match matches.len() {
         0 => Err(H5iError::Metadata(format!(
-            "no environment named '{name}' (see `h5i env list`)"
+            "no environment named '{name}' (see `h5i dev list`)"
         ))),
         1 => Ok(matches[0].clone()),
         _ => Err(H5iError::Metadata(format!(
@@ -1203,7 +1203,7 @@ pub fn load_policy(h5i_root: &Path, m: &EnvManifest) -> Result<ResolvedPolicy, H
             "policy.resolved.toml for {} does not match the digest pinned in its manifest \
              (expected {}, found {digest}) — refusing to run under a tampered policy. \
              If you did not edit it, the env was most likely created by a different h5i \
-             version; recreate it: `h5i env rm {} --force` then `h5i env create …`",
+             version; recreate it: `h5i dev rm {} --force` then `h5i dev create …`",
             m.id, m.policy_digest, m.slug
         )));
     }
@@ -1323,7 +1323,7 @@ pub fn create(
     }
     if repo.find_reference(&branch_full).is_ok() {
         return Err(H5iError::Metadata(format!(
-            "branch {branch_full} already exists — `h5i env gc` keeps applied/aborted env \
+            "branch {branch_full} already exists — `h5i dev gc` keeps applied/aborted env \
              branches for provenance; pick a new name"
         )));
     }
@@ -1420,7 +1420,7 @@ pub fn create(
             .map_err(|e| H5iError::Metadata(format!("worktree creation failed for {id}: {e}")))?;
         // Lock the worktree for the env's whole life so a stray
         // `git worktree prune` can't reclaim a live env out from under it;
-        // `h5i env gc` is the only thing that unlocks+prunes it (and only when
+        // `h5i dev gc` is the only thing that unlocks+prunes it (and only when
         // applied/aborted).
         let _ = wt.lock(Some(&format!("h5i env {id} live")));
     }
@@ -1573,7 +1573,7 @@ pub fn has_workspace(m: &EnvManifest, h5i_root: &Path) -> bool {
 fn no_workspace_err(m: &EnvManifest, op: &str) -> H5iError {
     H5iError::Metadata(format!(
         "{}: no local workspace for `{op}` — this environment lives on another clone (or was \
-         gc'd). You can review it (`h5i env diff/status/inspect {}`) and `h5i env apply {}` \
+         gc'd). You can review it (`h5i dev diff/status/inspect {}`) and `h5i dev apply {}` \
          from the pushed code branch, but run/propose/rebase need the originating clone.",
         m.id, m.slug, m.slug
     ))
@@ -2621,7 +2621,7 @@ fn remove_path_any(path: &Path) -> Result<(), H5iError> {
     }
 }
 
-// ─── user egress allowlist (`h5i env allow`) ─────────────────────────────────
+// ─── user egress allowlist (`h5i dev allow`) ─────────────────────────────────
 
 /// Path of the persistent, **host-side** user egress allowlist: one rule per
 /// line (`api.example.com`, `.example.com`, `host:443`; `#` comments). Lives
@@ -2779,7 +2779,7 @@ fn write_user_allow(path: &Path, rules: &[String]) -> Result<(), H5iError> {
     }
     let mut text = String::from(
         "# h5i user egress allowlist — extra hosts merged into container-tier envs whose\n\
-         # profile already sets net.egress. Managed by `h5i env allow`; hand-edits kept.\n",
+         # profile already sets net.egress. Managed by `h5i dev allow`; hand-edits kept.\n",
     );
     for r in rules {
         text.push_str(r);
@@ -2817,7 +2817,7 @@ fn apply_user_egress(policy: &mut sandbox::ResolvedPolicy) {
         announce_egress(policy);
     } else if matches!(policy.claim, IsolationClaim::Container) && !user.is_empty() {
         eprintln!(
-            "note: {} `h5i env allow` rule(s) ignored — profile '{}' sets no net.egress \
+            "note: {} `h5i dev allow` rule(s) ignored — profile '{}' sets no net.egress \
              (a deny-all profile is never widened from outside the policy)",
             user.len(),
             policy.profile.name
@@ -2843,7 +2843,7 @@ fn announce_egress(policy: &sandbox::ResolvedPolicy) {
         String::new()
     } else {
         format!(
-            "  + user allow: {} (via `h5i env allow`)",
+            "  + user allow: {} (via `h5i dev allow`)",
             policy.user_egress_allow.join(", ")
         )
     };
@@ -2903,7 +2903,7 @@ pub fn run(
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
     let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
-    // Host-side `h5i env allow` extras + the explained-egress line.
+    // Host-side `h5i dev allow` extras + the explained-egress line.
     apply_user_egress(&mut policy);
 
     // Broker any declared secrets BEFORE marking the env running, so a
@@ -3248,7 +3248,7 @@ pub fn shell(
         ),
         &team_identity_env(m, h5i_root),
     );
-    // Host-side `h5i env allow` extras + the explained-egress line.
+    // Host-side `h5i dev allow` extras + the explained-egress line.
     apply_user_egress(&mut policy);
 
     // No command given → launch an interactive shell. Rather than inherit the
@@ -3583,7 +3583,7 @@ fn write_plain_bashrc(h5i_root: &Path, m: &EnvManifest) -> Result<String, H5iErr
     let path = dir.join("rc.bash");
     // The env id can contain '/' (agent/slug); harmless inside single quotes.
     let body = format!(
-        "# Generated by `h5i env shell` — a plain default rc.\n\
+        "# Generated by `h5i dev shell` — a plain default rc.\n\
          # The host ~/.bashrc is intentionally NOT sourced inside the confined box\n\
          # (it tends to reference tools the sandbox blocks, e.g. powerline-shell).\n\
          # To customize: set `[shell] rcfile = \"…\"` (relative to the worktree) in\n\
@@ -4023,12 +4023,12 @@ impl Drift {
         match self {
             Drift::UpToDate => "up to date with parent".into(),
             Drift::ParentAhead { commits, tip } => format!(
-                "parent advanced {commits} commit{} (now {}) — `h5i env rebase` to refresh the base",
+                "parent advanced {commits} commit{} (now {}) — `h5i dev rebase` to refresh the base",
                 if *commits == 1 { "" } else { "s" },
                 &tip[..12.min(tip.len())]
             ),
             Drift::Diverged { tip } => format!(
-                "parent diverged from the base (now {}) — `h5i env rebase` will 3-way merge",
+                "parent diverged from the base (now {}) — `h5i dev rebase` will 3-way merge",
                 &tip[..12.min(tip.len())]
             ),
             Drift::ParentGone => "parent branch is gone".into(),
@@ -4142,7 +4142,7 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
                     .filter(|u| !p.net_egress.iter().any(|e| e.trim().eq_ignore_ascii_case(u)))
                     .collect();
                 if !extras.is_empty() {
-                    out.push_str(&format!("  (+ h5i env allow: {})", extras.join(", ")));
+                    out.push_str(&format!("  (+ h5i dev allow: {})", extras.join(", ")));
                 }
             }
             out.push('\n');
@@ -5331,7 +5331,7 @@ pub fn render_compare(rows: &[CompareRow]) -> String {
             r.id, r.status, r.files_changed, r.insertions, r.deletions, run
         ));
     }
-    out.push_str("\nPick a winner with `h5i env diff <name>` / `h5i env inspect <name> --capture <id>`, then `h5i env apply <name>`.\n");
+    out.push_str("\nPick a winner with `h5i dev diff <name>` / `h5i dev inspect <name> --capture <id>`, then `h5i dev apply <name>`.\n");
     out
 }
 
@@ -5785,7 +5785,7 @@ pub fn propose(
         brief.push_str("  diff    : (no changes against base)\n");
     }
     brief.push_str(&format!(
-        "\nReview with `h5i env diff {}`, then `h5i env apply {}` (reviewer-selected; never automatic).\n",
+        "\nReview with `h5i dev diff {}`, then `h5i dev apply {}` (reviewer-selected; never automatic).\n",
         m.slug, m.slug
     ));
     Ok(brief)
@@ -5799,9 +5799,9 @@ pub fn propose(
 /// the parent into the env branch in-box makes a later `apply` fast-forward.
 fn conflict_runbook(m: &EnvManifest) -> String {
     format!(
-        "to resolve: `h5i env shell {slug}`, then inside the box \
+        "to resolve: `h5i dev shell {slug}`, then inside the box \
          `git merge {parent}` — fix the conflicts, `git add` the files, \
-         `git commit` — exit, then `h5i env apply {slug}`",
+         `git commit` — exit, then `h5i dev apply {slug}`",
         slug = m.slug,
         parent = m.parent_branch,
     )
@@ -5823,7 +5823,7 @@ pub fn apply(
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status != ST_PROPOSED {
         return Err(H5iError::Metadata(format!(
-            "{} is '{}' — run `h5i env propose {}` first (apply is never automatic)",
+            "{} is '{}' — run `h5i dev propose {}` first (apply is never automatic)",
             m.id, m.status, m.slug
         )));
     }
@@ -5897,7 +5897,7 @@ pub fn apply(
                 })
                 .collect();
             return Err(H5iError::Metadata(format!(
-                "apply refused — merge conflicts in: {}. Rebase the env (`h5i env rebase {}`), or {}.",
+                "apply refused — merge conflicts in: {}. Rebase the env (`h5i dev rebase {}`), or {}.",
                 paths.join(", "),
                 m.slug,
                 conflict_runbook(m)
@@ -5906,7 +5906,7 @@ pub fn apply(
         let tree = repo.find_tree(idx.write_tree_to(repo)?)?;
         let sig = crate::refstore::signature(repo)?;
         let msg = if patch_mode {
-            let mut msg = format!("h5i env apply --patch: {} → {}", m.id, m.parent_branch);
+            let mut msg = format!("h5i dev apply --patch: {} → {}", m.id, m.parent_branch);
             if !folded_subjects.is_empty() {
                 msg.push_str("\n\nSquashed env commits:\n");
                 for s in &folded_subjects {
@@ -5917,7 +5917,7 @@ pub fn apply(
             }
             msg
         } else {
-            format!("h5i env apply: merge {} → {}", m.id, m.parent_branch)
+            format!("h5i dev apply: merge {} → {}", m.id, m.parent_branch)
         };
         let parents: Vec<&git2::Commit> = if patch_mode {
             vec![&parent_tip]
@@ -5938,7 +5938,7 @@ pub fn apply(
         &format!("refs/heads/{}", m.parent_branch),
         new_commit,
         true,
-        &format!("h5i env apply: {}", m.id),
+        &format!("h5i dev apply: {}", m.id),
     )?;
 
     // Evidence summary on the `applied` event, linking the env's receipts to the
@@ -6056,7 +6056,7 @@ pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result
             .collect();
         return Err(H5iError::Metadata(format!(
             "rebase refused — conflicts against the new base in: {}. Either apply against the \
-             old base (`h5i env apply {}`), or {}.",
+             old base (`h5i dev apply {}`), or {}.",
             paths.join(", "),
             m.slug,
             conflict_runbook(m)
@@ -6071,7 +6071,7 @@ pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result
         Some("HEAD"),
         &sig,
         &sig,
-        &format!("h5i env rebase: {} onto {}", m.id, m.parent_branch),
+        &format!("h5i dev rebase: {} onto {}", m.id, m.parent_branch),
         &merged_tree,
         &[&env_tip, &parent_tip],
     )?;
@@ -6226,7 +6226,7 @@ pub fn rm(
     );
     if live && !force {
         return Err(H5iError::Metadata(format!(
-            "{} is still live (status: {}) — abort it first (`h5i env abort {}`) or pass \
+            "{} is still live (status: {}) — abort it first (`h5i dev abort {}`) or pass \
              --force to remove it anyway",
             m.id, m.status, m.slug
         )));
@@ -6590,7 +6590,7 @@ mod tests {
         let m = canonical_manifest("claude", "auth-fix");
         let rb = conflict_runbook(&m);
         assert!(
-            rb.contains("h5i env shell auth-fix"),
+            rb.contains("h5i dev shell auth-fix"),
             "names the env shell: {rb}"
         );
         assert!(
@@ -6598,7 +6598,7 @@ mod tests {
             "names the parent merge: {rb}"
         );
         assert!(
-            rb.contains("h5i env apply auth-fix"),
+            rb.contains("h5i dev apply auth-fix"),
             "names the finishing apply: {rb}"
         );
     }

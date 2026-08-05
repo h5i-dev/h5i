@@ -19,15 +19,25 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-// `Env`'s clap enum is much larger than the two generator commands; boxing it
+// `Dev`'s clap enum is much larger than the two generator commands; boxing it
 // would break clap's derive, and the enum is constructed once per process.
 #[allow(clippy::large_enum_variant)]
 enum Commands {
-    /// Isolated agent environments: a confined worktree with a pinned,
-    /// fail-closed policy. Run `h5i env --help` for the verb table.
+    /// Disposable, confined development boxes. `h5i dev` with no verb creates
+    /// one from the current repository; `h5i dev --help` has the verb table.
+    Dev(DevArgs),
+
+    /// Deprecated alias for `h5i dev`. Kept for one release.
+    #[command(hide = true)]
     Env {
         #[command(subcommand)]
-        action: cli::env::EnvCommands,
+        action: cli::dev::DevCommands,
+    },
+
+    /// Write or print the agent skill this binary carries.
+    Skill {
+        #[command(subcommand)]
+        action: cli::skill::SkillCommands,
     },
 
     /// Generate a shell completion script (bash, zsh, fish, …); e.g.
@@ -43,6 +53,81 @@ enum Commands {
     Man,
 }
 
+/// `h5i dev` with no verb is "make me a box from this source". With a verb it
+/// is the lifecycle surface. clap resolves the verb first, so a source that
+/// happens to be spelled like a verb needs the explicit `h5i dev create` form.
+#[derive(clap::Args)]
+#[command(args_conflicts_with_subcommands = true)]
+pub struct DevArgs {
+    #[command(subcommand)]
+    action: Option<cli::dev::DevCommands>,
+
+    /// Where the code comes from: `.` for this repository (the default), or a
+    /// GitHub pull request (number, #number, or URL).
+    #[arg(value_name = "SOURCE")]
+    source: Option<String>,
+
+    /// Name for the box. Derived from the source when omitted.
+    #[arg(long)]
+    name: Option<String>,
+
+    /// Base revision, when the source is this repository. Pinned immutably.
+    #[arg(long)]
+    from: Option<String>,
+
+    /// Remote to fetch a pull request head from.
+    #[arg(long, default_value = "origin")]
+    remote: String,
+
+    /// Policy profile from .h5i/env.toml (see `h5i dev create --help`).
+    #[arg(long)]
+    profile: Option<String>,
+
+    /// Isolation tier: auto (default) | workspace | process | supervised | container | ...
+    #[arg(long)]
+    isolation: Option<String>,
+
+    /// Container base image for isolation=container.
+    #[arg(long)]
+    image: Option<String>,
+}
+
+impl DevArgs {
+    /// Fold the short form into the same `Create` the explicit verb builds, so
+    /// there is exactly one create path to reason about.
+    fn into_command(self) -> anyhow::Result<cli::dev::DevCommands> {
+        if let Some(action) = self.action {
+            return Ok(action);
+        }
+        let source = self.source.unwrap_or_else(|| ".".to_string());
+        let pr = cli::dev::pr_spec(&source);
+        if pr.is_none() && source != "." {
+            anyhow::bail!(
+                "unrecognized source '{source}'.\n  \
+                 Pass `.` for this repository, or a pull request (number, #number, or URL).\n  \
+                 Cloning an external repo URL and starting from an empty box are not wired \
+                 up yet."
+            );
+        }
+        let name = match (self.name, &pr) {
+            (Some(n), _) => n,
+            (None, Some(spec)) => format!("pr-{spec}"),
+            (None, None) => cli::dev::default_box_name()?,
+        };
+        Ok(cli::dev::DevCommands::Create {
+            name,
+            from: self.from,
+            pr,
+            remote: self.remote,
+            profile: self.profile,
+            isolation: self.isolation,
+            image: self.image,
+            backend: "auto".into(),
+            audit: "signal".into(),
+        })
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     init_tracing();
     let argv: Vec<String> = std::env::args().collect();
@@ -50,7 +135,9 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse_from(argv);
 
     match cli.command {
-        Commands::Env { action } => cli::env::run(action)?,
+        Commands::Dev(args) => cli::dev::run(args.into_command()?)?,
+        Commands::Env { action } => cli::dev::run(action)?,
+        Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,
         Commands::Man => cli::man::run()?,
     }

@@ -1,14 +1,20 @@
-//! `h5i env` — CLI handlers (migrated from main.rs).
+//! `h5i dev` — the box lifecycle: create, run, shell, export, remove.
+//!
+//! `h5i env <verb>` is the same enum under the old noun, kept hidden for one
+//! release so existing scripts and muscle memory keep working.
 use clap::Subcommand;
 use console::style;
 
 use h5i_core::ui::{LOOKING, SUCCESS};
 
 #[derive(Subcommand)]
-pub enum EnvCommands {
-    /// Create an isolated environment: code branch + git worktree under
-    /// .git/.h5i/env/, a forked reasoning branch, and a pinned, fail-closed
-    /// policy. The base revision is frozen at creation.
+pub enum DevCommands {
+    /// Create a box explicitly. `h5i dev [SOURCE]` is the short form and
+    /// takes the same flags; this is what it dispatches to.
+    ///
+    /// The box is a git worktree under .git/.h5i/env/ on its own code branch,
+    /// confined by a pinned, fail-closed policy. The base revision is frozen
+    /// at creation.
     Create {
         /// Environment name (lowercase slug, e.g. `fix-auth`)
         name: String,
@@ -54,9 +60,9 @@ pub enum EnvCommands {
         audit: String,
     },
 
-    /// Run a command inside an environment, policy-enforced and
-    /// capture-wrapped: exit code passes through, evidence lands in
-    /// refs/h5i/objects tagged with the env id + policy digest.
+    /// Run one command inside a box, policy-enforced: the exit code passes
+    /// through and the run is recorded as a receipt tagged with the box id and
+    /// the policy digest that was actually enforced.
     Run {
         /// Environment name (slug, `agent/slug`, or full `env/agent/slug`)
         name: String,
@@ -115,6 +121,7 @@ pub enum EnvCommands {
     },
 
     /// List environments on this clone (the fleet view)
+    #[command(visible_alias = "ls")]
     List {
         /// Emit a machine-readable JSON array (manifest + base drift per env)
         #[arg(long)]
@@ -193,7 +200,7 @@ pub enum EnvCommands {
     /// exit code, policy digest, redactions)
     Inspect {
         name: String,
-        /// Capture id (from `h5i env status`/`log`)
+        /// Capture id (from `h5i dev status`/`log`)
         #[arg(long)]
         capture: String,
         /// Emit the stored capture manifest as JSON instead of the human view
@@ -212,9 +219,23 @@ pub enum EnvCommands {
         json: bool,
     },
 
+    /// The output gate: freeze the box and write an inspectable bundle
+    /// (patch.diff, report.md, receipt.json) for a human to review and apply.
+    /// Nothing reaches the host repository without that human step.
+    Export {
+        name: String,
+        /// Where to write the bundle (default: ./h5i-export/<name>).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Replace a non-empty output directory.
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Snapshot the worktree (mediated commit, path-allowlist enforced) and
-    /// mark the env proposed — produces a review brief. Never writes the
-    /// parent branch.
+    /// mark the box proposed — produces a review brief. Never writes the
+    /// parent branch. `export` runs this as its freeze step.
+    #[command(hide = true)]
     Propose { name: String },
 
     /// Apply a proposed environment onto its parent branch (reviewer-selected,
@@ -291,7 +312,55 @@ fn agent_identity() -> String {
         .unwrap_or_else(|| "human".to_string())
 }
 
-pub fn run(action: EnvCommands) -> anyhow::Result<()> {
+/// Is `source` a pull request spec (a number, `#number`, or a GitHub PR URL)?
+/// Returns the spec unchanged so the create path resolves it once, in core.
+pub fn pr_spec(source: &str) -> Option<String> {
+    h5i_core::source::parse_pr_spec(source)
+        .ok()
+        .map(|_| source.to_string())
+}
+
+/// Name for a box created from the current repository: the checked-out branch,
+/// slugified, with a numeric suffix when that name is taken. Deterministic
+/// enough to predict, unique enough to keep two boxes off one name.
+pub fn default_box_name() -> anyhow::Result<String> {
+    let repo = git2::Repository::discover(".")?;
+    let h5i_root = h5i_core::storage::h5i_root_for_repo(&repo)?;
+    let branch = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(str::to_owned))
+        .unwrap_or_else(|| "box".into());
+    let base: String = branch
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let base = base.trim_matches('-').to_string();
+    let base = if base.is_empty() { "box".into() } else { base };
+
+    let taken: std::collections::HashSet<String> = h5i_core::env::list(&h5i_root)
+        .into_iter()
+        .map(|m| m.slug)
+        .collect();
+    if !taken.contains(&base) {
+        return Ok(base);
+    }
+    for n in 2..1000 {
+        let candidate = format!("{base}-{n}");
+        if !taken.contains(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!("could not derive a free box name from '{base}' — pass --name")
+}
+
+pub fn run(action: DevCommands) -> anyhow::Result<()> {
     {
             let git_repo = git2::Repository::discover(".")?;
             let h5i_root = h5i_core::storage::h5i_root_for_repo(&git_repo)?;
@@ -299,7 +368,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
             let git = &git_repo;
             let workdir = git
                 .workdir()
-                .ok_or_else(|| anyhow::anyhow!("h5i env requires a non-bare repository"))?
+                .ok_or_else(|| anyhow::anyhow!("h5i dev requires a non-bare repository"))?
                 .to_path_buf();
 
             // Surface environments pulled from other clones: materialize any
@@ -316,7 +385,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
             // below — trimming a `refs/h5i/env/meta` read + disk writes off every
             // shell start.
             let in_env_box = std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok();
-            let lazy_materialize_env_ref = matches!(&action, EnvCommands::Shell { .. });
+            let lazy_materialize_env_ref = matches!(&action, DevCommands::Shell { .. });
             if !in_env_box && !lazy_materialize_env_ref {
                 if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
                     eprintln!(
@@ -327,7 +396,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
             }
 
             match action {
-                EnvCommands::Create {
+                DevCommands::Create {
                     name,
                     from,
                     pr,
@@ -416,19 +485,19 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                         println!(
                             "   {}      the 'container' tier (adds a network egress allowlist) needs \
                              rootless Podman, which isn't installed — install it, then pass --image \
-                             or set `[container] image` in .h5i/env.toml. See: h5i env probe",
+                             or set `[container] image` in .h5i/env.toml. See: h5i dev probe",
                             style("tip").yellow()
                         );
                     }
                     println!(
-                        "   next     h5i env run {} -- <cmd>   ·   h5i env shell {}   ·   h5i env propose {}",
+                        "   next     h5i dev run {} -- <cmd>   ·   h5i dev shell {}   ·   h5i dev export {}",
                         m.slug, m.slug, m.slug
                     );
                 }
 
-                EnvCommands::Run { name, command } => {
+                DevCommands::Run { name, command } => {
                     if command.is_empty() {
-                        anyhow::bail!("usage: h5i env run <name> -- <command> [args…]");
+                        anyhow::bail!("usage: h5i dev run <name> -- <command> [args…]");
                     }
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
                     let outcome = h5i_core::env::run(git, &h5i_root, &mut m, &command)?;
@@ -437,16 +506,6 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     if let Ok(raw) = h5i_core::receipt::raw_bytes(&dir, &outcome.receipt.id) {
                         print!("{}", String::from_utf8_lossy(&raw));
                     }
-                    eprintln!(
-                        "{} receipt {} · exit {} · wall {}ms",
-                        LOOKING,
-                        outcome.receipt.id,
-                        outcome
-                            .exit_code
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| "signal".into()),
-                        outcome.wall_ms
-                    );
                     if outcome.timed_out {
                         eprintln!(
                             "{} run killed by the policy wall-clock limit",
@@ -458,11 +517,15 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                         .map(|kb| format!(", rss {}MiB", kb / 1024))
                         .unwrap_or_default();
                     eprintln!(
-                        "{} evidence {} (env {}, policy {}) · wall {}ms, cpu {}ms{}",
+                        "{} receipt {} (box {}, policy {}) · exit {} · wall {}ms, cpu {}ms{}",
                         LOOKING,
                         style(&outcome.capture_id).magenta(),
                         m.id,
                         &m.policy_digest[..12],
+                        outcome
+                            .exit_code
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "signal".into()),
                         outcome.wall_ms,
                         outcome.cpu_ms,
                         rss
@@ -483,7 +546,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Shell {
+                DevCommands::Shell {
                     name,
                     readonly,
                     command,
@@ -537,7 +600,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Allow { rule, remove, json } => {
+                DevCommands::Allow { rule, remove, json } => {
                     if json && (rule.is_some() || remove) {
                         anyhow::bail!("--json can only be used when listing the allowlist");
                     }
@@ -559,7 +622,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                                     None => println!("── user egress allowlist ──"),
                                 }
                                 if rules.is_empty() {
-                                    println!("  (empty — add one with `h5i env allow <host>`)");
+                                    println!("  (empty — add one with `h5i dev allow <host>`)");
                                 }
                                 for r in &rules {
                                     println!("  {r}");
@@ -594,7 +657,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Probe => {
+                DevCommands::Probe => {
                     // Diagnostics must report the live truth, not last run's
                     // verdict — bypass the per-boot podman probe cache.
                     std::env::set_var("H5I_NO_PROBE_CACHE", "1");
@@ -658,7 +721,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Capabilities { json } => {
+                DevCommands::Capabilities { json } => {
                     // Same as Probe: a capability report is a diagnostic —
                     // never serve it from the probe cache.
                     std::env::set_var("H5I_NO_PROBE_CACHE", "1");
@@ -716,7 +779,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::List { json } => {
+                DevCommands::List { json } => {
                     let envs = h5i_core::env::list(&h5i_root);
                     if json {
                         let rows: Vec<serde_json::Value> = envs
@@ -738,7 +801,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                         println!("{}", serde_json::to_string_pretty(&rows)?);
                     } else {
                         if envs.is_empty() {
-                            println!("No environments. Create one: h5i env create <name>");
+                            println!("No environments. Create one: h5i dev create <name>");
                         }
                         for m in envs {
                             let d = h5i_core::env::drift(git, &m);
@@ -769,7 +832,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Status { name, json } => {
+                DevCommands::Status { name, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&m)?);
@@ -778,7 +841,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Doctor { name, json } => {
+                DevCommands::Doctor { name, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     let report = h5i_core::env::doctor(git, &h5i_root, &m);
                     if json {
@@ -791,7 +854,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Secrets { name, json } => {
+                DevCommands::Secrets { name, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     let policy = h5i_core::env::load_policy(&h5i_root, &m)?;
                     let rows = h5i_core::env::secrets_status(&policy);
@@ -802,7 +865,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Service { action } => match action {
+                DevCommands::Service { action } => match action {
                     EnvServiceCommands::Start { env, service } => {
                         let m = h5i_core::env::find(&h5i_root, &env)?;
                         let rec = h5i_core::env::service_start(git, &h5i_root, &m, &service)?;
@@ -845,7 +908,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 },
 
-                EnvCommands::Ports { name, json } => {
+                DevCommands::Ports { name, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     let rows = h5i_core::env::service_status(&h5i_root, &m);
                     if json {
@@ -859,13 +922,13 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Rebase { name } => {
+                DevCommands::Rebase { name } => {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
                     let msg_out = h5i_core::env::rebase(git, &h5i_root, &mut m)?;
                     println!("{} {}", SUCCESS, msg_out);
                 }
 
-                EnvCommands::Log { name, limit, json } => {
+                DevCommands::Log { name, limit, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     let mut events = h5i_core::env::read_events(git, Some(&m.id));
                     if limit > 0 && events.len() > limit {
@@ -888,7 +951,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Diff { name, stat, json } => {
+                DevCommands::Diff { name, stat, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     if json {
                         let report = h5i_core::env::diffstat_report(git, &h5i_root, &m)?;
@@ -898,7 +961,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Inspect {
+                DevCommands::Inspect {
                     name,
                     capture,
                     json,
@@ -912,7 +975,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Compare { names, json } => {
+                DevCommands::Compare { names, json } => {
                     let rows = h5i_core::env::compare(git, &h5i_root, &names)?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&rows)?);
@@ -921,13 +984,46 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Propose { name } => {
+                DevCommands::Export { name, out, force } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let out = out.unwrap_or_else(|| {
+                        workdir.join("h5i-export").join(&m.slug)
+                    });
+                    let s = h5i_core::export::export(git, &h5i_root, &mut m, &out, force)?;
+                    println!(
+                        "{} exported {} → {}",
+                        SUCCESS,
+                        s.env_id,
+                        style(s.dir.display()).cyan()
+                    );
+                    println!(
+                        "   changes  {} file(s), +{} -{} ({} bytes of patch)",
+                        s.files_changed, s.insertions, s.deletions, s.patch_bytes
+                    );
+                    println!("   receipts {} recorded", s.receipts);
+                    if s.egress_denied > 0 {
+                        println!(
+                            "   {}     {} denied egress attempt(s) — read report.md before applying",
+                            style("egress").yellow(),
+                            s.egress_denied
+                        );
+                    }
+                    if !s.redactions.is_empty() {
+                        println!("   redacted {}", s.redactions.join(", "));
+                    }
+                    println!(
+                        "   next     review {}/patch.diff, then `git apply --3way` it where you want it",
+                        s.dir.display()
+                    );
+                }
+
+                DevCommands::Propose { name } => {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
                     let brief = h5i_core::env::propose(git, &h5i_root, &mut m)?;
                     println!("{brief}");
                 }
 
-                EnvCommands::Apply { name, patch } => {
+                DevCommands::Apply { name, patch } => {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
                     let msg_out = h5i_core::env::apply(git, &h5i_root, &mut m, patch)?;
                     println!("{} {}", SUCCESS, msg_out);
@@ -947,7 +1043,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Abort { name } => {
+                DevCommands::Abort { name } => {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
                     h5i_core::env::abort(git, &h5i_root, &mut m)?;
                     println!(
@@ -956,7 +1052,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     );
                 }
 
-                EnvCommands::Rm { names, force } => {
+                DevCommands::Rm { names, force } => {
                     let mut any_failed = false;
                     for name in &names {
                         match h5i_core::env::find(&h5i_root, name) {
@@ -989,7 +1085,7 @@ pub fn run(action: EnvCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Gc => {
+                DevCommands::Gc => {
                     let reclaimed = h5i_core::env::gc(git, &h5i_root)?;
                     if reclaimed.is_empty() {
                         println!("Nothing to reclaim (only applied/aborted envs are gc'd).");

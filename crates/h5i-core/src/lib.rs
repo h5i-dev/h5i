@@ -3,9 +3,11 @@
 // a receipt is the record of what actually ran inside it. (`error` stays public
 // because `H5iError` appears in the signatures of most of them.)
 pub mod env;
+pub mod export;
 pub mod receipt;
 pub mod redact;
 pub mod refstore;
+pub mod skill;
 pub mod source;
 pub mod storage;
 pub mod ui;

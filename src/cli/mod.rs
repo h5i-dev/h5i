@@ -6,5 +6,6 @@
 //! `pub fn run(action: <Noun>Commands) -> anyhow::Result<()>`.
 
 pub mod completion;
-pub mod env;
+pub mod dev;
 pub mod man;
+pub mod skill;

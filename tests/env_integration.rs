@@ -3538,7 +3538,7 @@ fn rebase_records_a_two_parent_provenance_commit() {
     );
     let subject = out_str(&git(&r.dir, &["log", "-1", "--format=%s", branch]));
     assert!(
-        subject.contains("h5i env rebase: env/tester/prov onto main"),
+        subject.contains("h5i dev rebase: env/tester/prov onto main"),
         "provenance subject: {subject}"
     );
 }
@@ -4206,4 +4206,154 @@ fn env_rm_partial_failure_continues_and_exits_nonzero() {
         stdout.contains("good"),
         "expected 'good' removal confirmation in stdout:\n{stdout}"
     );
+}
+
+// ─── `h5i dev`: the box surface ─────────────────────────────────────────────
+
+/// The short form creates a box with no verb and no name: source defaults to
+/// this repository, the name to the checked-out branch. This is the first
+/// command a new user runs, so it must work with zero arguments.
+#[test]
+fn dev_with_no_arguments_creates_a_box_named_for_the_branch() {
+    let r = Repo::new();
+    let out = out_str(&r.h5i_ok(&["dev"]));
+    assert!(out.contains("env/tester/main"), "{out}");
+    assert!(r.env_dir("main").join("manifest.json").is_file());
+
+    // A second one cannot take the same name, so it is suffixed rather than
+    // colliding or overwriting.
+    let out = out_str(&r.h5i_ok(&["dev"]));
+    assert!(out.contains("env/tester/main-2"), "{out}");
+}
+
+/// `dev` and `env` are the same surface; the old noun stays hidden for one
+/// release so existing scripts keep working.
+#[test]
+fn env_is_a_hidden_alias_for_dev() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "aliased"]);
+    let via_dev = out_str(&r.h5i_ok(&["dev", "status", "aliased"]));
+    let via_env = out_str(&r.h5i_ok(&["env", "status", "aliased"]));
+    assert!(via_dev.contains("env/tester/aliased"), "{via_dev}");
+    assert_eq!(via_dev, via_env);
+
+    // `ls` is the short form of `list`.
+    let ls = out_str(&r.h5i_ok(&["dev", "ls"]));
+    assert!(ls.contains("env/tester/aliased"), "{ls}");
+}
+
+/// An unrecognized source fails loudly and names the forms that do work,
+/// rather than silently creating a box from HEAD.
+#[test]
+fn dev_refuses_an_unrecognized_source() {
+    let r = Repo::new();
+    let out = r.h5i(&["dev", "https://example.com/some/repo.git"]);
+    assert!(!out.status.success(), "unknown source must be refused");
+    let err = out_str(&out);
+    assert!(err.contains("unrecognized source"), "{err}");
+    assert!(err.contains("pull request"), "{err}");
+}
+
+// ─── the output gate ────────────────────────────────────────────────────────
+
+/// `dev export` freezes the box and writes the three-file bundle. The patch is
+/// the box's diff, the report names every command that ran, and the receipt
+/// carries the policy digest that was actually enforced.
+#[test]
+fn export_writes_patch_report_and_receipt() {
+    let r = Repo::new();
+    r.h5i_ok(&["dev", "--name", "gate"]);
+    r.h5i_ok(&[
+        "dev",
+        "run",
+        "gate",
+        "--",
+        "sh",
+        "-c",
+        "echo generated > new.txt; echo built",
+    ]);
+    let out = out_str(&r.h5i_ok(&["dev", "export", "gate"]));
+    assert!(out.contains("exported env/tester/gate"), "{out}");
+
+    let bundle = r.dir.join("h5i-export/gate");
+    let patch = std::fs::read_to_string(bundle.join("patch.diff")).expect("patch.diff");
+    assert!(patch.contains("new.txt"), "{patch}");
+    assert!(patch.contains("+generated"), "{patch}");
+
+    let report = std::fs::read_to_string(bundle.join("report.md")).expect("report.md");
+    assert!(report.contains("# Export: env/tester/gate"), "{report}");
+    assert!(report.contains("echo built"), "the report lists what ran: {report}");
+    assert!(report.contains("isolation enforced"), "{report}");
+
+    let receipt: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(bundle.join("receipt.json")).unwrap())
+            .expect("receipt.json is valid JSON");
+    let env_manifest = r.manifest("gate");
+    assert_eq!(receipt["env_id"], "env/tester/gate");
+    assert_eq!(receipt["policy_digest"], env_manifest["policy_digest"]);
+    let records = receipt["records"].as_array().expect("records array");
+    assert!(!records.is_empty(), "{receipt}");
+    assert_eq!(records[0]["source"], "host-env-run");
+}
+
+/// An export never silently replaces an earlier one: evidence that can be
+/// overwritten without a word is evidence that can go missing.
+#[test]
+fn export_refuses_to_overwrite_without_force() {
+    let r = Repo::new();
+    r.h5i_ok(&["dev", "--name", "twice"]);
+    r.h5i_ok(&["dev", "run", "twice", "--", "sh", "-c", "echo one > f.txt"]);
+    r.h5i_ok(&["dev", "export", "twice"]);
+
+    let out = r.h5i(&["dev", "export", "twice"]);
+    assert!(!out.status.success(), "second export must refuse");
+    assert!(out_str(&out).contains("--force"), "{}", out_str(&out));
+
+    r.h5i_ok(&["dev", "export", "twice", "--force"]);
+}
+
+/// The bundle goes where you ask it to.
+#[test]
+fn export_honours_an_explicit_out_dir() {
+    let r = Repo::new();
+    r.h5i_ok(&["dev", "--name", "outdir"]);
+    let dest = r.dir.join("somewhere/else");
+    r.h5i_ok(&[
+        "dev",
+        "export",
+        "outdir",
+        "--out",
+        dest.to_str().unwrap(),
+    ]);
+    assert!(dest.join("patch.diff").is_file());
+    assert!(dest.join("report.md").is_file());
+    assert!(dest.join("receipt.json").is_file());
+}
+
+// ─── the embedded skill ─────────────────────────────────────────────────────
+
+/// The binary carries the skill, so it can be installed with no network, no
+/// npm, and no host-to-box file path — which is how it reaches the inside of a
+/// box.
+#[test]
+fn skill_install_writes_the_embedded_pages() {
+    let r = Repo::new();
+    let target = r.dir.join("skills-out");
+    let out = out_str(&r.h5i_ok(&[
+        "skill",
+        "install",
+        "--target",
+        target.to_str().unwrap(),
+    ]));
+    assert!(out.contains("installed the h5i skill"), "{out}");
+
+    let skill = std::fs::read_to_string(target.join("SKILL.md")).expect("SKILL.md");
+    assert!(skill.starts_with("---\nname: h5i\n"), "frontmatter: {skill}");
+    assert!(target.join("references/policy.md").is_file());
+
+    // `show` prints the same bytes without touching the filesystem.
+    let shown = out_str(&r.h5i_ok(&["skill", "show"]));
+    assert_eq!(shown, skill);
+    let page = out_str(&r.h5i_ok(&["skill", "show", "policy"]));
+    assert!(page.contains("Profiles"), "{page}");
 }
