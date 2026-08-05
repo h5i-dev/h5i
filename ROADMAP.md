@@ -616,9 +616,22 @@ order:
    said everything was fine. **Fixed**: `AGENT_BROWSER_SOCKET_DIR` now points at
    the box's own `/tmp`, which every tier grants and the kernel tiers make
    per-env.
-4. Next layer, still open: the daemon now starts and exits during startup with
-   no output. `agent-browser open --debug` from inside a box is the next step,
-   and this is where Chrome under Landlock + seccomp gets interesting.
+4. `agent-browser doctor` **from inside a box** is the tool for the rest of
+   this, and it immediately caught a bug in our own policy: pinning
+   `AI_GATEWAY_API_KEY` to an empty string *enabled* chat, because
+   agent-browser tests for the variable's presence. The box reported
+   "AI_GATEWAY_API_KEY present (chat enabled)" — the opposite of the intent.
+   **Fixed** by not injecting it at all (it is not in `env.pass` either, so it
+   is absent), and verified from inside: "chat command disabled".
+5. Doctor also confirms the profile's grants work: **Chromium 130 is found** at
+   the granted `~/.cache/ms-playwright` path.
+6. Still open: the daemon exits during startup with no output, even with
+   `--no-sandbox --disable-dev-shm-usage` passed via `AGENT_BROWSER_ARGS` (the
+   obvious suspect, since our seccomp denies the namespace syscalls Chrome's
+   own sandbox needs). `--debug` adds nothing because the daemon is detached
+   and its stderr goes nowhere. The next step is to capture that detached
+   process's output — run the daemon in the foreground inside a `dev shell`, or
+   strace the exec — rather than guessing at flags.
 
 Nothing here could have been found by reading the code, which is the argument
 for driving the loop before building more on top of it.

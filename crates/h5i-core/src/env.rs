@@ -2552,9 +2552,8 @@ fn inbox_pending_context_path_from(
 ///   whole point, and it never appears in an egress allowlist.
 /// * **AI features off.** `agent-browser chat` and the dashboard's AI panel
 ///   send page content to an external gateway. Inside a box that is an
-///   exfiltration path with a friendly name, so the gateway variables are
-///   pinned empty rather than merely left unset — an unset variable is
-///   something the box can set for itself.
+///   exfiltration path with a friendly name, so the gateway credential is kept
+///   out of the box entirely: it is absent from `env.pass` and never injected.
 pub fn browser_env(policy: &ResolvedPolicy) -> Vec<(String, String)> {
     let mut allowed: Vec<String> = vec!["localhost".into(), "127.0.0.1".into(), "[::1]".into()];
     for host in &policy.profile.net_egress {
@@ -2582,9 +2581,20 @@ pub fn browser_env(policy: &ResolvedPolicy) -> Vec<(String, String)> {
             "AGENT_BROWSER_SOCKET_DIR".to_string(),
             "/tmp/agent-browser".to_string(),
         ),
-        // Refused, not merely absent.
-        ("AI_GATEWAY_API_KEY".to_string(), String::new()),
+        // Chat off. Note what does *not* work here: pinning
+        // `AI_GATEWAY_API_KEY` to an empty string. agent-browser tests for the
+        // variable's **presence**, so an empty value reads as "chat enabled" —
+        // `agent-browser doctor` inside a box said exactly that. The variable is
+        // not in `env.pass` either, so simply not injecting it leaves it absent,
+        // which is what "refused" has to mean here.
         ("AGENT_BROWSER_DISABLE_CHAT".to_string(), "1".to_string()),
+        // Chrome's own sandbox needs the namespace syscalls our seccomp policy
+        // denies, at every tier. h5i's box is the boundary; Chrome's is not
+        // available inside it, and without this the renderer dies at startup.
+        (
+            "AGENT_BROWSER_ARGS".to_string(),
+            "--no-sandbox --disable-dev-shm-usage".to_string(),
+        ),
     ]
 }
 
@@ -7830,10 +7840,10 @@ mod tests {
         let env: std::collections::HashMap<String, String> =
             browser_env(&policy).into_iter().collect();
 
-        // Pinned empty, not absent: an unset variable is one the box can set
-        // for itself, and `agent-browser chat` ships page content to a third
-        // party gateway.
-        assert_eq!(env.get("AI_GATEWAY_API_KEY").map(String::as_str), Some(""));
+        // Absent, not empty. agent-browser tests for presence, so an empty
+        // value would *enable* chat — the opposite of the intent, and exactly
+        // what a box reported before this was fixed.
+        assert!(!env.iter().any(|(k, _)| k == "AI_GATEWAY_API_KEY"));
         assert_eq!(
             env.get("AGENT_BROWSER_DISABLE_CHAT").map(String::as_str),
             Some("1")
