@@ -259,9 +259,35 @@ model we copy.
   outbound requests from the box, scoped per runtime, so a Claude box cannot
   reach the OpenAI credential or vice versa. Keep, make it default on rather
   than opt in.
-- GitHub: the box gets **capabilities**, not a token. A host side helper serves
-  a fixed verb set (fetch a PR head, read issue text, open a draft PR) and
-  refuses everything else. Raw `gh` and raw tokens never enter the box.
+- **Any other service: the same mechanism, generalized.** An earlier draft of
+  this section proposed a GitHub "capability helper" — a host side process
+  serving a fixed verb set (fetch a PR head, read issue text, open a draft
+  PR). That is the wrong shape for this repository. It overfits h5i to one
+  vendor, and the next request is GitLab, then Jira, then whatever else, each
+  adding vendor code to a tool whose job is the boundary.
+
+  The general primitive is the one already here: a **host side proxy that
+  injects a credential for an allowlisted host and never lets the box hold
+  it**. Generalize `auth_proxy.rs` from "the model API" to "any host named in
+  the profile, with a credential resolved host side", and GitHub becomes a
+  policy entry rather than a feature:
+
+  ```toml
+  [profile.review.net]
+  egress = ["api.github.com"]
+  [profile.review.auth."api.github.com"]
+  header = "Authorization: Bearer ${GITHUB_TOKEN}"   # resolved on the host
+  ```
+
+  Restricting *what* the box may do with that credential is authorization, and
+  it belongs where it is already solved: a fine-grained token, scoped to one
+  repository and the operations you meant. If a generic rule is wanted later it
+  is a method/path condition on the proxy — still policy data, not vendor code.
+  Vendor ergonomics (a friendly `gh`-shaped CLI) belong in a separate tool.
+
+  Worth noting how little is left after that: `h5i dev <pr>` already fetches
+  the PR head **host side, before the box exists**, so the demo workflow needs
+  no credential in the box at all.
 - Everything else routes through `secrets_broker.rs` with a per grant record.
 - Per env HOME state already exists (`prepare_home_state`, `policy.home_binds`)
   and is a copy of the host agent config, seeded once, never written back.
@@ -532,9 +558,10 @@ for, and it holds on every tier rather than only under a container volume.
 **M3. Agent in box hardening — partly done.** Warm caches: the store, the
 lockfile keying, the staleness rule, `h5i dev cache ls|mounts|rm` and the
 **read-only mount** on every tier are built and tested; `refresh` is not (5.8).
-**Remaining**: broker default on, the GitHub capability helper (a host-side
-verb set instead of a token in the box), and the credential-seed audit, each
-verified by a test that asserts denial rather than by inspection.
+**Remaining**: broker default on, generalizing `auth_proxy` from the model API
+to any allowlisted host with a host-side credential (5.5 — no vendor-specific
+code), and the credential-seed audit, each verified by a test that asserts
+denial rather than by inspection.
 
 **M4. Browser — profile landed, live loop not yet.** Done: the `browser`
 built-in profile (the agent profile plus the browser surface, runtime scoping
