@@ -69,6 +69,11 @@ pub enum BoxCommands {
         /// `all` records every wrapped command, including small successful output.
         #[arg(long, default_value = "signal")]
         audit: String,
+        /// Emit the created box's manifest as JSON (the `status --json` shape,
+        /// plus the workspace path) instead of the human summary. Notes still
+        /// go to stderr, so stdout stays parseable.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Run one command inside a box, policy-enforced: the exit code passes
@@ -77,6 +82,12 @@ pub enum BoxCommands {
     Run {
         /// Environment name (slug, `agent/slug`, or full `env/agent/slug`)
         name: String,
+        /// Emit a JSON envelope on stdout (receipt, exit code, timing, the
+        /// recorded output) instead of streaming the raw output. Put the flag
+        /// before the name: everything after `--` belongs to the command. The
+        /// exit code still passes through.
+        #[arg(long)]
+        json: bool,
         /// The command to run, after `--`.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
@@ -254,6 +265,9 @@ pub enum BoxCommands {
         /// Replace a non-empty output directory.
         #[arg(long)]
         force: bool,
+        /// Emit the export summary as JSON instead of the human view.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Snapshot the worktree (mediated commit, path-allowlist enforced) and
@@ -611,6 +625,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     image,
                     backend,
                     audit,
+                    json,
                 } => {
                     let agent = agent_identity();
                     use h5i_core::sandbox::{IsolationClaim, IsolationRequest};
@@ -648,6 +663,30 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         pr_head_ref: pr_base.as_ref().and_then(|b| b.head_ref.clone()),
                     };
                     let m = h5i_core::env::create(git, &h5i_root, &workdir, &agent, &name, opts)?;
+                    if json {
+                        // The manifest is the contract (same shape as
+                        // `status --json`); the workspace path is the one fact
+                        // it cannot carry, so it is injected like `list` does
+                        // with drift.
+                        let mut v = serde_json::to_value(&m)?;
+                        if let serde_json::Value::Object(ref mut map) = v {
+                            map.insert(
+                                "work_dir".into(),
+                                serde_json::Value::String(
+                                    m.work_dir(&h5i_root).display().to_string(),
+                                ),
+                            );
+                        }
+                        println!("{}", serde_json::to_string_pretty(&v)?);
+                        if profile_auto && m.profile == "default" {
+                            eprintln!(
+                                "note: this host cannot enforce the built-in 'agent' profile, so \
+                                 the fail-closed 'default' was used — coding agents won't run in \
+                                 this box"
+                            );
+                        }
+                        return Ok(());
+                    }
                     println!(
                         "{} Created environment {} (isolation: {}, profile: {})",
                         SUCCESS,
@@ -706,41 +745,59 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     );
                 }
 
-                BoxCommands::Run { name, command } => {
+                BoxCommands::Run { name, json, command } => {
                     if command.is_empty() {
-                        anyhow::bail!("usage: h5i box run <name> -- <command> [args…]");
+                        anyhow::bail!("usage: h5i box run [--json] <name> -- <command> [args…]");
                     }
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
                     let outcome = h5i_core::env::run(git, &h5i_root, &mut m, &command)?;
                     // The command's own output, as recorded (secret-redacted).
                     let dir = h5i_core::env::env_dir(&h5i_root, &m.agent, &m.slug);
-                    if let Ok(raw) = h5i_core::receipt::raw_bytes(&dir, &outcome.receipt.id) {
-                        print!("{}", String::from_utf8_lossy(&raw));
-                    }
-                    if outcome.timed_out {
+                    if json {
+                        let raw = h5i_core::receipt::raw_bytes(&dir, &outcome.receipt.id)
+                            .unwrap_or_default();
+                        let envelope = serde_json::json!({
+                            "box": m.id,
+                            "policy_digest": m.policy_digest,
+                            "capture": outcome.capture_id,
+                            "exit_code": outcome.exit_code,
+                            "timed_out": outcome.timed_out,
+                            "wall_ms": outcome.wall_ms as u64,
+                            "cpu_ms": outcome.cpu_ms as u64,
+                            "max_rss_kb": outcome.max_rss_kb,
+                            "output": String::from_utf8_lossy(&raw),
+                            "record": outcome.receipt,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&envelope)?);
+                    } else {
+                        if let Ok(raw) = h5i_core::receipt::raw_bytes(&dir, &outcome.receipt.id) {
+                            print!("{}", String::from_utf8_lossy(&raw));
+                        }
+                        if outcome.timed_out {
+                            eprintln!(
+                                "{} run killed by the policy wall-clock limit",
+                                style("warning:").yellow().bold()
+                            );
+                        }
+                        let rss = outcome
+                            .max_rss_kb
+                            .map(|kb| format!(", rss {}MiB", kb / 1024))
+                            .unwrap_or_default();
                         eprintln!(
-                            "{} run killed by the policy wall-clock limit",
-                            style("warning:").yellow().bold()
+                            "{} receipt {} (box {}, policy {}) · exit {} · wall {}ms, cpu {}ms{}",
+                            LOOKING,
+                            style(&outcome.capture_id).magenta(),
+                            m.id,
+                            &m.policy_digest[..12],
+                            outcome
+                                .exit_code
+                                .map(|c| c.to_string())
+                                .unwrap_or_else(|| "signal".into()),
+                            outcome.wall_ms,
+                            outcome.cpu_ms,
+                            rss
                         );
                     }
-                    let rss = outcome
-                        .max_rss_kb
-                        .map(|kb| format!(", rss {}MiB", kb / 1024))
-                        .unwrap_or_default();
-                    eprintln!(
-                        "{} receipt {} (box {}, policy {}) · exit {} · wall {}ms, cpu {}ms{}",
-                        LOOKING,
-                        style(&outcome.capture_id).magenta(),
-                        m.id,
-                        &m.policy_digest[..12],
-                        outcome
-                            .exit_code
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| "signal".into()),
-                        outcome.wall_ms,
-                        outcome.cpu_ms,
-                        rss
-                    );
                     // A wall-clock kill is a failure, not success — the child
                     // was SIGKILLed so it has no exit code of its own. Use the
                     // conventional timeout code (124, as coreutils `timeout`).
@@ -1210,12 +1267,16 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
 
                 BoxCommands::Cache { action } => run_cache(action, git, &h5i_root, &workdir)?,
 
-                BoxCommands::Export { name, out, force } => {
+                BoxCommands::Export { name, out, force, json } => {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
                     let out = out.unwrap_or_else(|| {
                         workdir.join("h5i-export").join(&m.slug)
                     });
                     let s = h5i_core::export::export(git, &h5i_root, &mut m, &out, force)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&s)?);
+                        return Ok(());
+                    }
                     println!(
                         "{} exported {} → {}",
                         SUCCESS,

@@ -40,7 +40,7 @@ Disposable, confined development boxes. `h5i box` with no verb creates one from 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBbox\fR [\fB\-\-pr\fR] [\fB\-\-new\fR] [\fB\-\-name\fR] [\fB\-\-from\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISOURCE\fR] [\fIsubcommands\fR]
+\fBbox\fR [\fB\-\-pr\fR] [\fB\-\-new\fR] [\fB\-\-name\fR] [\fB\-\-from\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISOURCE\fR] [\fIsubcommands\fR]
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -69,6 +69,9 @@ Isolation tier: auto (default) | workspace | process | supervised | container | 
 \fB\-\-image\fR \fI<IMAGE>\fR
 Container base image for isolation=container
 .TP
+\fB\-\-json\fR
+Emit the created box\*(Aqs manifest as JSON instead of the human summary
+.TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
@@ -79,7 +82,7 @@ Create a box explicitly. `h5i box [SOURCE]` is the short form and takes the same
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-pr\fR] [\fB\-\-clone\fR] [\fB\-\-new\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-pr\fR] [\fB\-\-clone\fR] [\fB\-\-new\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -114,6 +117,9 @@ Workspace backend (auto|worktree)
 \fB\-\-audit\fR \fI<AUDIT>\fR [default: signal]
 Audit capture mode for wrapped in\-env commands: signal (default) | all. `all` records every wrapped command, including small successful output
 .TP
+\fB\-\-json\fR
+Emit the created box\*(Aqs manifest as JSON (the `status \-\-json` shape, plus the workspace path) instead of the human summary. Notes still go to stderr, so stdout stays parseable
+.TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
@@ -124,10 +130,13 @@ Run one command inside a box, policy-enforced: the exit code passes through and 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBrun\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> [\fICOMMAND\fR] 
+\fBrun\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> [\fICOMMAND\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit a JSON envelope on stdout (receipt, exit code, timing, the recorded output) instead of streaming the raw output. Put the flag before the name: everything after `\-\-` belongs to the command. The exit code still passes through
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
@@ -499,7 +508,7 @@ The output gate: freeze the box and write an inspectable bundle (patch.diff, rep
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBexport\fR [\fB\-\-out\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBexport\fR [\fB\-\-out\fR] [\fB\-\-force\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -509,6 +518,9 @@ Where to write the bundle (default: ./h5i\-export/<name>)
 .TP
 \fB\-\-force\fR
 Replace a non\-empty output directory
+.TP
+\fB\-\-json\fR
+Emit the export summary as JSON instead of the human view
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
