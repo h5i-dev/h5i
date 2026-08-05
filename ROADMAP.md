@@ -583,7 +583,7 @@ dropped so the box cannot reach a network handle nobody granted it, and `apply`
 and `rebase` refuse and point at `export`. That is the boundary the phase was
 for, and it holds on every tier rather than only under a container volume.
 
-**M3. Agent in box hardening — partly done.** Warm caches: the store, the
+**M3. Agent in box hardening — done.** Warm caches: the store, the
 lockfile keying, the staleness rule, `h5i dev cache ls|mounts|rm` and the
 **read-only mount** on every tier are built and tested; `refresh` is not (5.8).
 Also done: the credential-seed audit (the per-box HOME copy now drops
@@ -591,11 +591,11 @@ credential-shaped entries at any depth — `credentials*`, `.netrc`, ssh keys,
 `*.pem`/`*.key`/`*.p12` — keeping only the runtime's own token, which it cannot
 function without), and the credential proxy, which was already default-on but
 did not engage for a `browser` box.
-**Remaining**: generalizing `auth_proxy` from the model API to any allowlisted
-host with a host-side credential — the last M3 item. 5.5 now names the two
-shapes it could take and why the reverse-proxy-per-grant one is the one to
-build; it wants a deliberate start rather than a tail-end improvisation,
-because the alternative involves trusting an h5i CA inside the box.
+Also done: profile-declared authenticated egress (5.5, option 1) — a reverse
+proxy per grant, the credential resolved host side and never placed in the box,
+part of the pinned digest, and fail-closed when the host-side variable is
+unset. GitHub is a policy entry, not a feature. Option 2 (a TLS-terminating
+forward proxy) stays unbuilt and unneeded.
 
 **M4. Browser — profile landed, live loop not yet.** Done: the `browser`
 built-in profile (the agent profile plus the browser surface, runtime scoping
