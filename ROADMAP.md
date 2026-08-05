@@ -1,9 +1,17 @@
 # ROADMAP: h5i as a contained agentic development environment
 
-Status: proposal, 2026-08-05. Supersedes the "auditable workspaces / provenance"
-positioning for the product surface. Design docs under `roadmap/` stay as
-history for the parts we keep. Decisions already taken are in section 10, what
-is still open is in section 11.
+Status: in progress, 2026-08-05. Supersedes the "auditable workspaces /
+provenance" positioning for the product surface. Design docs under `roadmap/`
+stay as history for the parts we keep. Decisions already taken are in section
+10, what is still open is in section 11.
+
+**M0 through M5 are built. M6 is mostly built.** What is not done, stated
+plainly so it is not read as finished: neither M4's nor M5's exit criterion has
+been demonstrated with a real agent or a real person in the loop (every piece
+each needs is built and verified by hand); the control lock is not enforced on
+the agent's side (section 11.1); `npx skills add` is unverified for lack of a
+Node 22 runtime; there is no demo video; and `/blog/` and `/pitch/` still argue
+the old positioning.
 
 ---
 
@@ -560,6 +568,16 @@ the boundary, the lock or the receipt changes when it does.
 Each phase ends with a green `cargo test` and a demo that runs on a stock
 rootless Podman host.
 
+> **Suite status, 2026-08-05.** `cargo test --lib` is green across the
+> workspace (289 tests) and clippy is clean with `--all-targets
+> --all-features`. Three `env_integration` tests fail on this WSL2 host with a
+> worktree-stat error (`box_git_grants_stay_fail_closed_outside_env_namespace`,
+> `box_git_status_and_commit_work_inside_process_tier`,
+> `process_tier_confines_fs_and_network`). They fail identically at
+> `e4488b064`, before any of this work, so it is host drift rather than a
+> regression — but it is drift nobody has diagnosed, and the process tier is
+> not actually covered here until someone does.
+
 **M0. Freeze and branch — done.** `dev` is the integration branch and this
 roadmap is on it.
 
@@ -583,9 +601,12 @@ dropped so the box cannot reach a network handle nobody granted it, and `apply`
 and `rebase` refuse and point at `export`. That is the boundary the phase was
 for, and it holds on every tier rather than only under a container volume.
 
-**M3. Agent in box hardening — done.** Warm caches: the store, the
-lockfile keying, the staleness rule, `h5i dev cache ls|mounts|rm` and the
-**read-only mount** on every tier are built and tested; `refresh` is not (5.8).
+**M3. Agent in box hardening — done.** Warm caches in full: the store, the
+lockfile keying, the staleness rule, `h5i dev cache ls|mounts|rm|refresh` and
+the **read-only mount** on every tier are built and tested (5.8). (An earlier
+revision of this line said `refresh` was not built; it landed in e75020358,
+with the writable bind reachable from no profile and the refusal that names the
+registry-only profile it demands.)
 Also done: the credential-seed audit (the per-box HOME copy now drops
 credential-shaped entries at any depth — `credentials*`, `.netrc`, ssh keys,
 `*.pem`/`*.key`/`*.p12` — keeping only the runtime's own token, which it cannot
@@ -597,17 +618,20 @@ part of the pinned digest, and fail-closed when the host-side variable is
 unset. GitHub is a policy entry, not a feature. Option 2 (a TLS-terminating
 forward proxy) stays unbuilt and unneeded.
 
-**M4. Browser — running a real box, two layers in.**
+**M4. Browser — done.**
 
-The first live run was worth more than the code around it. What it found, in
+The live runs were worth more than the code around them. What they found, in
 order:
 
-1. **The `supervised` + agent-profile `EINVAL` was neither a host bug nor a
-   permission problem.** It happens when the box's workspace is under `/tmp`,
-   because the agent profile redirects `/tmp` to a per-env scratch and that
-   shadows the worktree itself. A repo anywhere else works. The error message
-   is useless and should name this — a real footgun, worth fixing at create
-   time.
+1. ~~**The `supervised` + agent-profile `EINVAL` happens when the box's
+   workspace is under `/tmp`**, because the agent profile redirects `/tmp` to a
+   per-env scratch and that shadows the worktree.~~ **Wrong, and withdrawn.** A
+   `create`-time refusal for that layout was written and it rejected this
+   suite's own fixtures — every `tempfile` repo is under `/tmp`. Checked
+   directly instead: a supervised box whose workspace is under `/tmp` sees its
+   workspace, runs commands, and drives the full browser loop. The bind-ordering
+   fix in 86dddafe0 (mount `/tmp` last) had already handled it. The working
+   behaviour is now pinned by a test rather than guarded by a phantom.
 2. With that out of the way, a `browser` box at `supervised` creates and runs,
    and `agent-browser --version` answers from inside it.
 3. `agent-browser`'s daemon put its control socket in `$XDG_RUNTIME_DIR`
@@ -625,56 +649,127 @@ order:
    is absent), and verified from inside: "chat command disabled".
 5. Doctor also confirms the profile's grants work: **Chromium 130 is found** at
    the granted `~/.cache/ms-playwright` path.
-6. Still open: the daemon exits during startup with no output, even with
-   `--no-sandbox --disable-dev-shm-usage` passed via `AGENT_BROWSER_ARGS` (the
-   obvious suspect, since our seccomp denies the namespace syscalls Chrome's
-   own sandbox needs). `--debug` adds nothing because the daemon is detached
-   and its stderr goes nowhere. The next step is to capture that detached
-   process's output — run the daemon in the foreground inside a `dev shell`, or
-   strace the exec — rather than guessing at flags.
+6. **The daemon exited during startup with no output — and it was our socket
+   gate, not Chrome.** The supervised tier notifies on `socket()` and denied
+   `AF_UNIX` unconditionally, with no way for a profile to ask for it; the
+   daemon's control socket is a filesystem-bound `AF_UNIX` listener, so it got
+   `EPERM` on the first thing it did. `Profile::unix_sockets`
+   (`[profile.X.net] unix = true`) is that way to ask, and `browser` sets it.
+
+   The grant is narrower than it sounds, which is why it can exist: abstract
+   sockets are scoped by the private netns, filesystem-bound ones by Landlock,
+   and `/tmp` — where `.X11-unix`, `tmux-*` and an ssh-agent live — is a per-env
+   scratch at the kernel tiers. The residual is a host socket under a granted
+   path, so it stays opt-in per profile and lands in the digest.
+
+   The silence was upstream's, and worth recording: the daemon redirects its own
+   stderr to `/dev/null` before failing **unless** `AGENT_BROWSER_DEBUG` is set,
+   in which case it writes to `$AGENT_BROWSER_SOCKET_DIR/<session>.log`. That log
+   is the only place the real error appears; `--debug` alone does nothing.
+
+7. **Two variables we set were not variables agent-browser reads.**
+   `AGENT_BROWSER_HEADLESS` does not exist (it is `AGENT_BROWSER_HEADED`, and
+   headless is what a falsey value means), and neither does
+   `AGENT_BROWSER_DISABLE_CHAT` — chat is gated on `AI_GATEWAY_API_KEY`
+   presence alone. A variable the tool never reads reviews as enforcement while
+   enforcing nothing, so both are gone and the tests assert their absence.
 
 Nothing here could have been found by reading the code, which is the argument
 for driving the loop before building more on top of it.
 
-Also worth keeping: **no test in the suite runs an agent-family profile at
-`supervised`**, and `supervised` is the only kernel tier that can host an agent
-or browser box (`process` refuses the egress the profile needs). That gap is
-why both surprises above were available to find.
+That gap — **no test in the suite ran an agent-family profile at
+`supervised`**, the only kernel tier that can host an agent or browser box
+(`process` refuses the egress the profile needs) — is why both surprises were
+available to find, and it is now closed. The test that would have caught the
+daemon failure asserts both directions: a `browser` box binds a
+filesystem-bound `AF_UNIX` listener, and a `default` box on the same host and
+tier still gets `EPERM`, so the grant cannot silently become tier-wide.
 
-Done so far:Done so far:Done so far: Done: the `browser`
-built-in profile (the agent profile plus the browser surface, runtime scoping
-intact, egress never wider than the agent's), host-path discovery for the
-kernel tiers with a fail-closed create that names what to install,
-`containers/Containerfile.browser` for the container tier, and `/dev/shm` sized
-from the policy so a renderer does not die on Podman's 64 MiB default. **No
-pod, no second image, no Podman requirement** (5.2).
-Also done: `--allowed-domains` derived from the enforced `net.egress` (plus
-loopback, which never appears in an allowlist but is the whole point of a dev
-server), headless pinned, and the AI gateway **refused rather than omitted** —
-an unset variable is one the box can set for itself, so it is pinned empty.
-**Remaining**: browser commands plus console and network errors folded into the
-receipt. Exit: an agent fixes a real UI bug using only agent-browser output as
-its feedback.
+Built: the `browser` built-in profile (the agent profile plus the browser
+surface, runtime scoping intact, egress never wider than the agent's),
+host-path discovery for the kernel tiers with a fail-closed create that names
+what to install, `containers/Containerfile.browser` for the container tier, and
+`/dev/shm` sized from the policy so a renderer does not die on Podman's 64 MiB
+default. **No pod, no second image, no Podman requirement** (5.2).
+`--allowed-domains` is derived from the enforced `net.egress` (plus loopback,
+which never appears in an allowlist but is the whole point of a dev server),
+headless is pinned through the variable that actually exists, and the AI gateway
+is refused by absence — the only mechanism upstream has.
 
-**M5. Viewer — control lock landed, forward not yet.** Done: the control lock
-(`crates/h5i-core/src/control.rs`, `h5i browser status|take|release`). The
+**Browser evidence in the receipt** is built (`crates/h5i-core/src/browser.rs`).
+After a run that drove the browser, h5i asks the page what happened and records
+the console errors, uncaught exceptions and failed requests, then surfaces them
+in `report.md` above the agent-authored proposal. Four properties make it
+evidence rather than decoration: h5i picks the moment, a host-side cursor keyed
+to a session fingerprint keeps each record to its own slice, a browser command
+with no browser to ask is recorded `unavailable` rather than as a clean page,
+and a host-side socket check keeps the drain from *starting* a browser just to
+report an empty console.
+
+Verified live on a supervised browser box against a page that logs a console
+error, throws a `TypeError` and fetches a missing URL: all four findings reach
+the receipt, the export bundle and `report.md`.
+
+Exit criterion **not yet demonstrated**: an agent fixing a real UI bug using
+only agent-browser output as its feedback. Every piece it needs is built and
+proven by hand; nobody has run the loop with an agent in it.
+
+**M5. Viewer — done.** The control lock
+(`crates/h5i-core/src/control.rs`, `h5i browser status|take|release`): the
 agent holds control by default, a human *takes* it rather than asking, and
 handing it back sets a stale-handle flag that refuses the agent's next mutating
 action until it re-snapshots — read-only verbs stay available throughout,
 because watching never collides. Nothing upstream arbitrates this, which is
 why it is ours.
-**Remaining**:  `h5i dev view` and `h5i browser url` — an h5i-owned
-forward of the agent-browser stream to loopback with a per box token, a minimal
-viewer page, and session recording into the export. The forward has to cross the box's private netns;
-h5i is the supervisor and holds the pid, so it joins the namespace rather than
-punching a hole in it. Exit: a human takes over mid run, finishes a form, hands
-control back, and the agent continues from a fresh snapshot.
 
-**M6. Skill and story — partly done.** `skills/h5i/` is written against the
-real surface (five pages) and the binary carries it; the README is rewritten
-around the boundary. **Remaining**: MANUAL.md and the docs site still describe
-the previous product, `npx skills add h5i-dev/h5i` is untested, and there is no
-demo video.
+The forward (`crates/h5i-core/src/view.rs`, `h5i dev view`, `h5i browser url`)
+serves the agent-browser stream to loopback. The box's port is never published:
+h5i enters the box's user and network namespaces by pid, connects from inside,
+and hands the socket back over `SCM_RIGHTS` — the fd-handoff the supervisor
+already uses. All four gates verified live against a supervised browser box:
+loopback only; a per-box token minted at create and kept outside every path the
+box can read or write (401 without, 401 on a wrong one); cross-origin
+handshakes refused (403) even with a valid token; and the control lock on the
+input direction, with input *dropped* rather than rejected so someone who clicks
+before taking control keeps a live viewer. Sessions land in the receipt and the
+export under a `viewer` lane, and the report calls out a session where a human
+drove.
+
+Three bugs found, all the same kind — quiet failures producing a plausible
+wrong answer rather than an error, and each worth remembering:
+
+- The live registry records h5i's **host-side** pid, which is in the host's
+  netns. Entering it succeeds, finds nothing listening, and reads as a broken
+  box. Fixed by walking the session's process tree for the first descendant
+  whose netns differs from ours.
+- A stray CRLF in the relayed handshake is not a protocol error the server
+  reports — it is two bytes read as the start of the client's first frame, after
+  which the handshake completes and the viewer hangs.
+- Returning `Result<u64>` from the input pump discarded the forwarded-input
+  count on the error path, which is exactly the path a human takes by closing
+  the tab. The export would have recorded them as never having touched the box.
+
+Exit criterion **not yet demonstrated end to end**: a human takes over mid-run,
+finishes a form, hands control back, and the agent continues from a fresh
+snapshot. The takeover, the input gating and the stale-handle refusal are each
+verified; a real person finishing a real form is not something this session
+could run.
+
+**M6. Skill and story — mostly done.** `skills/h5i/` is written against the
+real surface and the binary carries it; the missing fifth page
+(`references/browser.md`) is written. The README, MANUAL.md, `man/h5i.1` and
+`docs/manual/index.html` all describe the product that exists — the manual was
+3,900 lines of `capture`/`recall`/`audit`/`team`/`mcp`, and is rewritten around
+the boundary. The landing page is rewritten too, and the embedded mock of the
+deleted `h5i serve` workbench is gone with its CSS and its film driver. Seven
+guides plus `/features/` and `/workflows/` teach deleted commands, so each
+carries a banner and is `noindex` rather than being quietly left.
+
+**Remaining**: `npx skills add h5i-dev/h5i` is still unverified — the `skills`
+CLI needs Node >= 22.20 and no such runtime was available to test it; the repo
+layout and frontmatter were checked against what the CLI discovers. There is no
+demo video. `/blog/` and `/pitch/` still argue the old positioning, and
+rewriting them means choosing the launch message, which is open question 2.
 
 **Post M6.** A full-desktop tier when something needs more than a page
 viewport (X plus streaming, Neko as the reference design), microVM backend,
@@ -743,6 +838,12 @@ Being explicit about these is a feature, since the claim is a security claim.
   every write grant the box has — plus two host observed fields for cross
   checking. The inherited-fd writer stays on the table as the stronger form
   (5.7).
+- **`AF_UNIX` is a profile grant, not a tier property.** The supervised
+  tier's `socket()` gate denies the family by default, because `SCM_RIGHTS`
+  passes file descriptors. A profile opts in (`[profile.X.net] unix = true`),
+  and it is pinned in the digest. Granting it tier-wide to make one daemon work
+  would have widened every box to buy one; the `browser` profile asks, and
+  nothing else does.
 - **No MCP.** `mcp.rs` and the `h5i_env_*` tools go with the rest. The premise
   of MCP here was a host side agent reaching into a box, which is the shape this
   product exists to eliminate. The agent is inside the box, and inside the box
@@ -751,13 +852,21 @@ Being explicit about these is a feature, since the claim is a security claim.
 
 ## 11. Still open
 
-1. **Snapshot handle staleness across a takeover.** agent-browser's `@ref`
-   handles come from a snapshot; a human editing the page between the agent's
-   snapshot and its next click invalidates them, and the failure is a wrong
-   click rather than an error. The lock tells us exactly when that window
-   opens, so the fix is probably "force a re snapshot on release" plus a guard
-   on the first action after. Needs a design against the real upstream
-   behaviour, not a guess.
+1. **Enforcing the control lock on the agent's side.** The lock is designed and
+   the viewer honours it: input from a human reaches the page only while they
+   hold it. What is *not* wired is the other direction — `control::check` exists
+   and returns `HeldByHuman` / `NeedsResnapshot` with the message an agent
+   should see, and nothing calls it. So an agent running `agent-browser click`
+   during a human takeover is not refused today; it is only told, if it asks.
+   The gap is the interception point, not the policy: there is no h5i process
+   between the agent and `agent-browser` at the kernel tiers, so this needs a
+   decision about where the check lives (a PATH shim, a skill-level convention,
+   or accepting that it is advisory) rather than more code in `control.rs`.
+
+   Related and now much smaller: **snapshot handle staleness across a takeover**
+   is modelled — `needs_resnapshot` is set on the take, survives a session that
+   never hands back, and clears only on an actual snapshot. It rests on the same
+   unenforced check.
 2. **First buyer workflow.** The positioning is broad enough to become a
    platform pitch, which sells to nobody. The launch message should be one
    workflow: run untrusted or AI generated code, see it in a real browser, keep
