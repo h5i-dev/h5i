@@ -271,6 +271,10 @@ const MACOS_DEV_WRITE: &[&str] = &[
     "/dev/stderr",
     "/dev/fd",
     "/dev/ptmx",
+    // libSystem opens this for *writing* during process startup. Granting only
+    // read is not enough: the box gets `deny(1) file-write-data
+    // /dev/dtracehelper` and dies before it reaches main().
+    "/dev/dtracehelper",
 ];
 
 /// `sysctl` names that leak another process's argv and environment. `(deny
@@ -413,6 +417,15 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
         s.push_str(&r);
         s.push('\n');
     }
+    // The root directory itself, and *only* itself. Process startup reads `/`,
+    // and no `(subpath "/usr")`-style grant covers it, so without this the box
+    // gets `deny(1) file-read-data /` and dies before main() — silently, since
+    // Seatbelt reports denials only to the system log.
+    //
+    // `literal`, emphatically not `subpath`: `(subpath "/")` would grant the
+    // entire filesystem and undo the whole profile. The two differ by one word
+    // and by everything else.
+    s.push_str("(allow file-read* (literal \"/\"))\n");
     // Device nodes are files, not directories: name them with `literal` so the
     // rule says what it means (a `subpath` of a character device is a category
     // error even where the matcher tolerates it).
@@ -1180,6 +1193,39 @@ mod tests {
     }
 
     #[test]
+    fn the_root_is_granted_as_a_literal_and_never_as_a_subpath() {
+        // `(allow file-read* (literal "/"))` grants the root directory entry,
+        // which process startup needs. `(allow file-read* (subpath "/"))`
+        // grants the entire filesystem and quietly turns the sandbox into
+        // nothing. One word apart, so assert the difference rather than trust
+        // it — a fix for "the box will not start" is exactly the situation in
+        // which someone reaches for the wrong one.
+        for claim in [IsolationClaim::Process, IsolationClaim::Supervised] {
+            let s = build_profile(&policy(claim), Path::new("/Users/dev/w"), &opts());
+            assert!(
+                s.contains("(allow file-read* (literal \"/\"))"),
+                "the root entry must be readable or nothing starts:\n{s}"
+            );
+            assert!(
+                !s.contains("(subpath \"/\")"),
+                "granting subpath / would expose the whole filesystem:\n{s}"
+            );
+        }
+    }
+
+    #[test]
+    fn startup_device_nodes_are_writable() {
+        // /dev/dtracehelper is opened for write by libSystem at startup; a
+        // read-only grant is not enough and the failure is a silent death.
+        let s = build_profile(&policy(IsolationClaim::Process), Path::new("/w"), &opts());
+        let writes = s.split(";; --- network").next().unwrap();
+        assert!(
+            writes.contains("(literal \"/dev/dtracehelper\")"),
+            "/dev/dtracehelper must be write-granted:\n{writes}"
+        );
+    }
+
+    #[test]
     fn the_generated_profile_is_pure_ascii() {
         // Not a style rule. libsandbox's SBPL parser is C, and a non-ASCII byte
         // anywhere in the profile — including inside a comment — makes it
@@ -1793,12 +1839,17 @@ mod tests {
             out.exit_code,
             Some(0),
             "confined /bin/sh did not run cleanly.\n\
-             exit_code={:?} timed_out={} wall_ms={}\nstdout: {:?}\nstderr: {:?}",
+             exit_code={:?} timed_out={} wall_ms={}\nstdout: {:?}\nstderr: {:?}\n\
+             --- sandbox denials from the system log ---\n{}",
             out.exit_code,
             out.timed_out,
             out.wall_ms,
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr),
+            // Seatbelt reports denials only here. Without it this failure is a
+            // signal number and two empty strings, which is what made the
+            // original bug take several rounds to find.
+            recent_sandbox_denials(),
         );
         assert!(
             String::from_utf8_lossy(&out.stdout).contains("alive"),
