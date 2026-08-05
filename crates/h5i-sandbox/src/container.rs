@@ -566,6 +566,39 @@ fn splice(a: TcpStream, b: TcpStream) {
 
 // ─── run argv construction (pure; unit-tested) ───────────────────────────────
 
+/// How a container reaches h5i's **host-side** proxies (the egress allowlist
+/// proxy and the credential-injecting auth proxy). This differs by platform
+/// because the network topology between the box and h5i does:
+///
+/// - **Linux**: Podman is rootless and local, so the container is one hop from
+///   h5i. `slirp4netns` with `allow_host_loopback` exposes the host's loopback —
+///   where the proxies listen — at the gateway address `10.0.2.2`. Note this is
+///   *not* `host.containers.internal`, which maps to a different gateway IP that
+///   does not forward to host loopback.
+/// - **macOS**: Podman runs in a `podman machine` VM, so there are two hops. The
+///   container's own `10.0.2.2` is the VM's loopback, where nothing of ours
+///   listens; the macOS host is reached through gvproxy at
+///   `host.containers.internal`, and the default machine network already routes
+///   there, so no `--network` override is wanted.
+pub struct HostRoute {
+    /// Value for `--network=…` on the proxy plan, when the platform needs one.
+    pub network_arg: Option<&'static str>,
+    /// Address the box dials h5i's host-side proxies on.
+    pub host_addr: &'static str,
+}
+
+#[cfg(not(target_os = "macos"))]
+pub const HOST_ROUTE: HostRoute = HostRoute {
+    network_arg: Some("slirp4netns:allow_host_loopback=true"),
+    host_addr: "10.0.2.2",
+};
+
+#[cfg(target_os = "macos")]
+pub const HOST_ROUTE: HostRoute = HostRoute {
+    network_arg: None,
+    host_addr: "host.containers.internal",
+};
+
 /// How networking is wired for a container run.
 pub enum NetPlan {
     /// No network at all (`net.mode = deny`, no egress allowlist).
@@ -982,12 +1015,10 @@ pub fn build_run_argv(
             // Default rootless network (slirp4netns/pasta) gives NAT'd egress.
         }
         NetPlan::Proxy(port) => {
-            // slirp4netns with allow_host_loopback exposes the host's loopback
-            // (where our proxy listens) at the gateway address 10.0.2.2 — NOT at
-            // `host.containers.internal`, which maps to a different gateway IP
-            // that does not forward to host loopback.
-            a.push("--network=slirp4netns:allow_host_loopback=true".into());
-            let proxy = format!("http://10.0.2.2:{port}");
+            if let Some(mode) = HOST_ROUTE.network_arg {
+                a.push(format!("--network={mode}"));
+            }
+            let proxy = format!("http://{}:{port}", HOST_ROUTE.host_addr);
             for var in [
                 "HTTP_PROXY",
                 "HTTPS_PROXY",
@@ -999,7 +1030,10 @@ pub fn build_run_argv(
                 a.push(format!("{var}={proxy}"));
             }
             a.push("--env".into());
-            a.push("NO_PROXY=localhost,127.0.0.1".into());
+            a.push(format!(
+                "NO_PROXY=localhost,127.0.0.1,{}",
+                HOST_ROUTE.host_addr
+            ));
         }
     }
 
@@ -1046,11 +1080,16 @@ fn maybe_auth_proxy(
     profile: &Profile,
     net: &NetPlan,
 ) -> Option<(crate::auth_proxy::AuthProxyHandle, Vec<(String, String)>)> {
-    // The box reaches the host proxy only on the egress-proxy net plan (slirp
-    // `allow_host_loopback` at 10.0.2.2). `engage` handles opt-out + runtime +
-    // credential resolution; the container tier ignores the returned runtime
-    // (there is no per-env HOME copy to scrub — the rootfs never mounts host HOME).
-    let e = crate::auth_proxy::engage(&profile.name, matches!(net, NetPlan::Proxy(_)))?;
+    // The box reaches the host proxy only on the egress-proxy net plan, and at
+    // whichever address this platform routes to the host ([`HOST_ROUTE`]).
+    // `engage_at` handles opt-out + runtime + credential resolution; the
+    // container tier ignores the returned runtime (there is no per-env HOME copy
+    // to scrub — the rootfs never mounts host HOME).
+    let e = crate::auth_proxy::engage_at(
+        &profile.name,
+        matches!(net, NetPlan::Proxy(_)),
+        HOST_ROUTE.host_addr,
+    )?;
     Some((e.handle, e.box_env))
 }
 
@@ -1070,7 +1109,7 @@ pub fn engage_auth_grants(
     let mut handles = Vec::new();
     let mut env = Vec::new();
     for grant in &profile.auth {
-        if let Some(e) = crate::auth_proxy::engage_grant(grant, tier_ok)? {
+        if let Some(e) = crate::auth_proxy::engage_grant_at(grant, tier_ok, HOST_ROUTE.host_addr)? {
             handles.push(e.handle);
             env.extend(e.box_env);
         }
@@ -1863,10 +1902,26 @@ mod tests {
             &[],
         );
         let joined = argv.join(" ");
-        assert!(joined.contains("--network=slirp4netns:allow_host_loopback=true"));
-        assert!(joined.contains("HTTP_PROXY=http://10.0.2.2:8123"));
-        assert!(joined.contains("HTTPS_PROXY=http://10.0.2.2:8123"));
-        assert!(joined.contains("NO_PROXY=localhost,127.0.0.1"));
+        // The route to h5i's host-side proxy is per-platform ([`HOST_ROUTE`]):
+        // one hop on Linux (slirp gateway), two on macOS (through the podman
+        // machine VM to gvproxy). Assert against the platform's own route so
+        // this stays a real check on both rather than a Linux-only one.
+        let addr = HOST_ROUTE.host_addr;
+        match HOST_ROUTE.network_arg {
+            Some(mode) => assert!(joined.contains(&format!("--network={mode}")), "{joined}"),
+            None => assert!(!joined.contains("--network="), "{joined}"),
+        }
+        assert!(joined.contains(&format!("HTTP_PROXY=http://{addr}:8123")));
+        assert!(joined.contains(&format!("HTTPS_PROXY=http://{addr}:8123")));
+        assert!(joined.contains(&format!("NO_PROXY=localhost,127.0.0.1,{addr}")));
+    }
+
+    #[test]
+    fn host_route_is_a_real_address_on_every_platform() {
+        // A blank address would silently produce `http://:1234` and the box
+        // would lose egress with no explanation.
+        assert!(!HOST_ROUTE.host_addr.is_empty());
+        assert!(!HOST_ROUTE.host_addr.contains(' '));
     }
 
     #[test]

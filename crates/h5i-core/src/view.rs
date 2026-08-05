@@ -371,10 +371,36 @@ fn enter_and_connect(pid: u32, port: u16, sock: i32) -> i32 {
     0
 }
 
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+/// macOS: there is no namespace to enter. Seatbelt confines the box's filesystem
+/// and its *outbound* network, but a box still binds the **host's** loopback —
+/// deliberately, because that is the only way a dev server in the box is
+/// reachable at all without a netns. So crossing into the box is a plain
+/// loopback connect, and `pid` is not needed.
+///
+/// The difference worth stating rather than hiding: on Linux the box's listener
+/// lives in its own network namespace and this proxy is the only route to it. On
+/// macOS the listener is on shared loopback, so any local process can reach the
+/// port directly. The viewer's token gate still governs *this* path; it cannot
+/// govern the port itself.
+#[cfg(target_os = "macos")]
+pub fn connect_in_netns(pid: u32, port: u16) -> Result<TcpStream, H5iError> {
+    let _ = pid;
+    TcpStream::connect(("127.0.0.1", port)).map_err(|e| {
+        H5iError::Metadata(format!(
+            "viewer could not reach the box's stream port {port} on loopback: {e}"
+        ))
+    })
+}
+
+#[cfg(not(any(
+    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    target_os = "macos"
+)))]
 pub fn connect_in_netns(_pid: u32, _port: u16) -> Result<TcpStream, H5iError> {
     Err(H5iError::Metadata(
-        "the viewer forward needs Linux namespaces; it is not available on this platform".into(),
+        "the viewer forward needs Linux namespaces or macOS loopback; it is not available on \
+         this platform"
+            .into(),
     ))
 }
 

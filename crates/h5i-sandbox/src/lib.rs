@@ -18,6 +18,11 @@ pub mod auth_proxy;
 pub mod cgroup;
 pub mod container;
 pub mod sandbox;
+/// macOS Seatbelt backend. Compiled on every Unix target (so its profile
+/// generator is typechecked and unit-tested by the Linux job), but
+/// [`seatbelt::probe`] fails closed anywhere but macOS.
+#[cfg(unix)]
+pub mod seatbelt;
 pub mod seccomp_notify;
 pub mod secrets;
 pub mod secrets_broker;

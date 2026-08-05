@@ -859,8 +859,14 @@ Being explicit about these is a feature, since the claim is a security claim.
   namespace syscalls Chrome's sandbox needs, at every tier. h5i's box is the
   boundary; Chrome's is not available inside it. That is one layer fewer than a
   browser on the host has.
-- **Linux first.** Rootless Podman on Linux and WSL2. macOS needs a VM layer,
-  and it is not in these six phases.
+- **Linux and macOS, by different means.** Linux confines with Landlock, seccomp
+  and namespaces; macOS confines with Seatbelt, and its `supervised` tier gets
+  its egress allowlist from the same host side proxy the container tier uses,
+  pinned by an SBPL rule that leaves the box no other outbound route. Two real
+  gaps on macOS: no syscall filter (Darwin has no seccomp) and no memory cap
+  (no cgroups, and `RLIMIT_AS` is not enforced against an mmap'd heap). Rootless
+  Podman runs natively on Linux and WSL2, and through a `podman machine` VM on
+  macOS.
 - **Cost.** A Chrome sidecar is still real RAM and CPU, even headless. Headless
   boxes must stay first class, and the browser must be opt in per box.
 - **The viewport is not a desktop.** CDP screencast shows the page. Native

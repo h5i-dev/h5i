@@ -114,14 +114,80 @@ fn probe_uncached() -> SupervisorCaps {
     SupervisorCaps { usable, components }
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS readiness for `isolation=supervised`.
+///
+/// The Linux stack — seccomp user-notification, a network namespace, nftables,
+/// cgroup delegation — does not exist on Darwin and is not faked. What the tier
+/// promises is *untrusted-code containment plus an enforced domain egress
+/// allowlist*, and macOS reaches both a different way:
+///
+/// - containment: Seatbelt's `(deny default)` covers filesystem, network, mach
+///   and sysctl in one policy, and (unlike Landlock) it can subtract, so
+///   `fs.deny` and the agent-config lock are enforced rather than linted;
+/// - egress allowlist: the box is left with **no** outbound route except h5i's
+///   own DNS-pinned allowlist proxy on loopback, which is the same proxy the
+///   container tier uses and is enforced by the kernel, not by proxy env vars.
+///
+/// What is genuinely absent is the syscall filter: there is no macOS equivalent
+/// of a seccomp deny-list, so native code in the box can attempt any syscall —
+/// it just cannot reach a path or a socket the profile does not name. That is
+/// reported here rather than glossed, and it is why the component below is
+/// spelled out instead of being asserted `ok`.
+#[cfg(target_os = "macos")]
+pub fn probe() -> SupervisorCaps {
+    static SUPERVISOR_CAPS: std::sync::OnceLock<SupervisorCaps> = std::sync::OnceLock::new();
+    SUPERVISOR_CAPS
+        .get_or_init(|| {
+            let sb = crate::seatbelt::probe();
+            let mut components = vec![ComponentStatus {
+                name: "seatbelt",
+                ok: sb.usable(),
+                detail: sb.detail.clone(),
+            }];
+            // The allowlist proxy is h5i's own code and needs only a loopback
+            // listener — but a host that cannot bind loopback cannot enforce
+            // egress, so probe it rather than assume it.
+            let loopback = std::net::TcpListener::bind("127.0.0.1:0");
+            components.push(ComponentStatus {
+                name: "loopback-egress-proxy",
+                ok: loopback.is_ok(),
+                detail: loopback
+                    .err()
+                    .map(|e| format!("cannot bind 127.0.0.1 for the allowlist proxy: {e}")),
+            });
+            components.push(ComponentStatus {
+                name: "seatbelt-network-gate",
+                ok: sb.usable(),
+                detail: (!sb.usable())
+                    .then(|| "needs Seatbelt to pin the box to the proxy port".into()),
+            });
+            // Stated, never silently assumed: this tier does NOT filter syscalls
+            // on macOS. It is `ok` because the tier does not claim to — the
+            // claim is filesystem/network containment — but it is listed so
+            // `env probe` shows the difference from a Linux box.
+            components.push(ComponentStatus {
+                name: "syscall-filter",
+                ok: true,
+                detail: Some(
+                    "not applicable on macOS: Darwin has no seccomp; containment here is \
+                     Seatbelt's filesystem/network policy"
+                        .into(),
+                ),
+            });
+            let usable = components.iter().all(|c| c.ok);
+            SupervisorCaps { usable, components }
+        })
+        .clone()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn probe() -> SupervisorCaps {
     SupervisorCaps {
         usable: false,
         components: vec![ComponentStatus {
             name: "platform",
             ok: false,
-            detail: Some("isolation=supervised is Linux-only".into()),
+            detail: Some("isolation=supervised needs Linux or macOS".into()),
         }],
     }
 }
@@ -416,6 +482,11 @@ fn preflight(policy: &crate::sandbox::ResolvedPolicy) -> Result<(), H5iError> {
             caps.missing().join(", ")
         )));
     }
+    // The egress uplink is per-platform: Linux runs the allowlist inside the
+    // box's network namespace (slirp4netns + nftables), macOS leaves the box no
+    // outbound route but h5i's own loopback proxy. Only the Linux shape has an
+    // external binary to be missing.
+    #[cfg(not(target_os = "macos"))]
     if !policy.profile.net_egress.is_empty() && slirp4netns_path().is_none() {
         return Err(H5iError::Metadata(
             "isolation=supervised net.egress requires `slirp4netns` on PATH (it provides the \
@@ -575,7 +646,10 @@ fn slirp_args(pid: u32, allow_host_loopback: bool) -> Vec<String> {
 /// *target* dir name (the real `~/.claude` / `~/.codex`); the returned path is
 /// under the env's own `backing`, never the real HOME. See
 /// [`scrub_box_credentials`].
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(
+    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    target_os = "macos"
+))]
 fn cred_scrub_paths(
     rt: crate::sandbox_policy::AgentRuntime,
     home_binds: &[crate::sandbox_policy::HomeBind],
@@ -598,7 +672,10 @@ fn cred_scrub_paths(
 /// ever touches the env's own backing copy (`policy.home_binds[..].backing`) —
 /// never the real HOME, which `prepare_home_state` only reads. Best-effort and
 /// idempotent; a later in-box login self-heals the copy if the proxy is disabled.
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(any(
+    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    target_os = "macos"
+))]
 fn scrub_box_credentials(
     policy: &crate::sandbox::ResolvedPolicy,
     rt: crate::sandbox_policy::AgentRuntime,
@@ -946,7 +1023,111 @@ fn run_supervised(
     })
 }
 
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+/// The macOS supervised tier: Seatbelt confinement plus a host-side allowlist
+/// proxy that the box has no way to route around.
+///
+/// The security argument is the mirror image of the Linux one, and it is worth
+/// stating because "point the box at a proxy" is normally *not* an enforcement
+/// mechanism — a program that ignores `HTTPS_PROXY` and opens its own socket
+/// escapes it. That is not the case here: the Seatbelt profile denies
+/// `network-outbound` to everything except the proxy's loopback port, so
+/// ignoring the env var gets the box a connection refused at the kernel, not a
+/// direct route. The proxy env vars are a *convenience* for well-behaved
+/// clients; the kernel rule is the boundary.
+///
+/// Two shapes, matching the Linux path exactly:
+///
+/// - **credential proxy engaged** (an agent box with a resolvable host token):
+///   the only reachable port is the credential-injecting auth proxy, the real
+///   token never enters the box, and it is scrubbed from the box's per-env HOME
+///   copy so it is absent rather than merely inert. No general egress at all.
+/// - **otherwise**: the DNS-pinned `net.egress` allowlist proxy is the only
+///   reachable port, and its allow/deny tally becomes the run's egress evidence.
+#[cfg(target_os = "macos")]
+fn run_supervised(
+    policy: &crate::sandbox::ResolvedPolicy,
+    work: &std::path::Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+    interactive: bool,
+) -> Result<crate::sandbox::ExecOutcome, H5iError> {
+    use crate::auth_proxy::LOOPBACK_HOST;
+
+    let has_egress = !policy.profile.net_egress.is_empty();
+
+    // Credential-injecting auth proxy (option 2). `tier_ok` is true because the
+    // box shares the host's loopback and the profile will open exactly this port.
+    let auth = if has_egress {
+        crate::auth_proxy::engage_at(&policy.profile.name, true, LOOPBACK_HOST)
+    } else {
+        None
+    };
+    let (_auth_proxy, effective_env, auth_port) = match auth {
+        Some(e) => {
+            scrub_box_credentials(policy, e.runtime);
+            let port = e.handle.port;
+            let mut env = injected_env.to_vec();
+            env.extend(e.box_env);
+            (Some(e.handle), env, Some(port))
+        }
+        None => (None, injected_env.to_vec(), None),
+    };
+
+    // The general egress allowlist proxy. Skipped entirely when the credential
+    // proxy is engaged: the box then has no business reaching anything else, and
+    // opening a second port would widen it (this mirrors `setup_egress`, which
+    // narrows the nftables ruleset to the auth proxy alone in that case).
+    let mut env = effective_env;
+    let (_egress_proxy, egress_port) = if has_egress && auth_port.is_none() {
+        let mut allow = crate::container::AllowList::parse(&policy.profile.net_egress);
+        // Pin now, so a later DNS answer cannot move the allowlist under us.
+        allow.pin_dns();
+        let handle = crate::container::spawn_proxy(allow)?;
+        let port = handle.port;
+        let url = format!("http://{LOOPBACK_HOST}:{port}");
+        for var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"] {
+            env.push((var.to_string(), url.clone()));
+        }
+        // The proxy itself is on loopback; without this a client would try to
+        // reach the proxy *through* the proxy.
+        env.push(("NO_PROXY".into(), "localhost,127.0.0.1".into()));
+        env.push(("no_proxy".into(), "localhost,127.0.0.1".into()));
+        (Some(handle), Some(port))
+    } else {
+        (None, None)
+    };
+
+    let ports: Vec<u16> = [auth_port, egress_port].into_iter().flatten().collect();
+    let opts = crate::sandbox::seatbelt_opts(interactive, &ports);
+
+    let outcome = if interactive {
+        let code = crate::seatbelt::run_interactive(policy, work, argv, &env, &opts)?;
+        crate::sandbox::ExecOutcome {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            exit_code: Some(code),
+            timed_out: false,
+            wall_ms: 0,
+            cpu_ms: 0,
+            max_rss_kb: None,
+            egress: None,
+        }
+    } else {
+        crate::seatbelt::run(policy, work, argv, &env, &opts)?
+    };
+
+    // Snapshot the allowlist proxy's verdicts before its handle drops, so a
+    // supervised macOS run leaves the same egress evidence a container run does.
+    Ok(crate::sandbox::ExecOutcome {
+        egress: _egress_proxy.as_ref().map(|h| h.egress_summary()),
+        ..outcome
+    })
+}
+
+#[cfg(not(any(
+    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    target_os = "macos"
+)))]
 fn run_supervised(
     _policy: &crate::sandbox::ResolvedPolicy,
     _work: &std::path::Path,
@@ -955,7 +1136,9 @@ fn run_supervised(
     _interactive: bool,
 ) -> Result<crate::sandbox::ExecOutcome, H5iError> {
     Err(H5iError::Metadata(
-        "isolation=supervised requires Linux + x86_64/aarch64 (seccomp user-notif)".into(),
+        "isolation=supervised requires Linux + x86_64/aarch64 (seccomp user-notif) or macOS \
+         (Seatbelt)"
+            .into(),
     ))
 }
 

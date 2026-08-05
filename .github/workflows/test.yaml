@@ -41,6 +41,44 @@ jobs:
       - name: cargo test
         run: cargo test --verbose --workspace
 
+  # macOS confines with Seatbelt, not Landlock/seccomp, so the kernel tiers there
+  # are a genuinely different code path (crates/h5i-sandbox/src/seatbelt.rs). The
+  # cross-check job below only proves it *compiles*; this one runs it, which is
+  # the only way the SBPL profiles are shown to actually confine anything. Kept
+  # separate from the Linux job so a macOS-runner outage never blocks a PR on a
+  # platform the change did not touch.
+  macos:
+    name: build · test · clippy (macOS / Seatbelt)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set Git user for tests
+        run: |
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos
+
+      - name: Seatbelt is present on the runner
+        # If this fails, every kernel-tier test below will fail-closed rather
+        # than silently pass at the workspace tier — surface the cause here.
+        run: |
+          test -x /usr/bin/sandbox-exec
+          /usr/bin/sandbox-exec -p '(version 1)(deny default)(allow file-read*)(allow process-exec*)(allow process-fork)(allow sysctl-read)(allow mach-lookup)(allow signal (target self))' /usr/bin/true
+
+      - name: cargo clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --verbose --workspace
+
   # The man page (man/man1/h5i.1) and the /manual/ HTML (docs/manual/index.html)
   # are GENERATED, not hand-edited: the man page from the clap CLI via
   # `scripts/gen_man.sh`, the HTML from MANUAL.md via `scripts/gen_manual.py`.

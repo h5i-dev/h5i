@@ -175,6 +175,15 @@ pub fn engage_grant(
     grant: &crate::sandbox_policy::AuthGrant,
     tier_ok: bool,
 ) -> Result<Option<GrantEngagement>, H5iError> {
+    engage_grant_at(grant, tier_ok, SLIRP_GATEWAY_HOST)
+}
+
+/// [`engage_grant`] with an explicit host-proxy address (see [`box_env_at`]).
+pub fn engage_grant_at(
+    grant: &crate::sandbox_policy::AuthGrant,
+    tier_ok: bool,
+    host: &str,
+) -> Result<Option<GrantEngagement>, H5iError> {
     if !tier_ok || opted_out() {
         return Ok(None);
     }
@@ -201,13 +210,14 @@ pub fn engage_grant(
         token.clone(),
         true,
     )?;
+    let no_proxy = format!("localhost,127.0.0.1,{host}");
     let box_env = vec![
         (
             grant.base_url_var.clone(),
-            format!("http://10.0.2.2:{}", handle.port),
+            format!("http://{host}:{}", handle.port),
         ),
-        ("NO_PROXY".to_string(), "localhost,127.0.0.1,10.0.2.2".to_string()),
-        ("no_proxy".to_string(), "localhost,127.0.0.1,10.0.2.2".to_string()),
+        ("NO_PROXY".to_string(), no_proxy.clone()),
+        ("no_proxy".to_string(), no_proxy),
     ];
     Ok(Some(GrantEngagement { handle, box_env }))
 }
@@ -295,17 +305,38 @@ fn spawn_to_upstream(
     Ok(AuthProxyHandle { port, stop, join: Some(join) })
 }
 
+/// The address the box reaches the host's loopback on. The Linux tiers put the
+/// box in its own network namespace whose slirp uplink maps host loopback to the
+/// gateway; macOS has no netns, so the box shares the host's loopback and dials
+/// it directly. Everything else about the wiring is identical.
+pub const SLIRP_GATEWAY_HOST: &str = "10.0.2.2";
+/// Host loopback as seen from a macOS Seatbelt box (no network namespace).
+pub const LOOPBACK_HOST: &str = "127.0.0.1";
+
 /// Box env additions that point the agent at the proxy: the base-URL override,
-/// the per-run dummy token, and a `NO_PROXY` that excludes the slirp gateway so
-/// the base URL is dialed directly (not re-wrapped through the egress CONNECT
-/// proxy). All non-secret — safe to pass by value.
+/// the per-run dummy token, and a `NO_PROXY` that excludes the proxy's own
+/// address so the base URL is dialed directly (not re-wrapped through the egress
+/// CONNECT proxy). All non-secret — safe to pass by value.
 pub fn box_env(rt: AgentRuntime, port: u16, client_token: &str) -> Vec<(String, String)> {
+    box_env_at(rt, SLIRP_GATEWAY_HOST, port, client_token)
+}
+
+/// [`box_env`] with an explicit proxy host, for backends whose box reaches the
+/// host at an address other than the slirp gateway (macOS Seatbelt boxes share
+/// the host's loopback).
+pub fn box_env_at(
+    rt: AgentRuntime,
+    host: &str,
+    port: u16,
+    client_token: &str,
+) -> Vec<(String, String)> {
     let rp = runtime_proxy(rt);
+    let no_proxy = format!("localhost,127.0.0.1,{host}");
     vec![
-        (rp.base_url_var.to_string(), format!("http://10.0.2.2:{port}")),
+        (rp.base_url_var.to_string(), format!("http://{host}:{port}")),
         (rp.dummy_var.to_string(), client_token.to_string()),
-        ("NO_PROXY".to_string(), "localhost,127.0.0.1,10.0.2.2".to_string()),
-        ("no_proxy".to_string(), "localhost,127.0.0.1,10.0.2.2".to_string()),
+        ("NO_PROXY".to_string(), no_proxy.clone()),
+        ("no_proxy".to_string(), no_proxy),
     ]
 }
 
@@ -542,12 +573,16 @@ pub struct Engagement {
     /// Box env additions: base-URL override + per-run dummy token + `NO_PROXY`.
     pub box_env: Vec<(String, String)>,
     /// The runtime, so a kernel-tier caller knows which credential file to scrub
-    /// from its per-env HOME copy. Read only by `supervisor::run_supervised`,
-    /// which is gated to `linux` + `x86_64`/`aarch64`; the container tier ignores
-    /// it. On any other target that reader is `cfg`-compiled out, so the field is
-    /// legitimately unread — allow it there (the `cfg` mirrors the reader's gate).
+    /// from its per-env HOME copy. Read by `supervisor::run_supervised` on the
+    /// kernel-tier targets (Linux x86_64/aarch64, macOS); the container tier
+    /// ignores it. On any other target that reader is `cfg`-compiled out, so the
+    /// field is legitimately unread — allow it there (the `cfg` mirrors the
+    /// reader's gate).
     #[cfg_attr(
-        not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))),
+        not(any(
+            all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+            target_os = "macos"
+        )),
         allow(dead_code)
     )]
     pub runtime: AgentRuntime,
@@ -558,6 +593,13 @@ pub struct Engagement {
 /// whether the box can reach the host proxy on this tier). `None` keeps the box
 /// on its existing in-box-login path — never a downgrade of an active protection.
 pub fn engage(profile_name: &str, tier_ok: bool) -> Option<Engagement> {
+    engage_at(profile_name, tier_ok, SLIRP_GATEWAY_HOST)
+}
+
+/// [`engage`] for a backend whose box reaches the host proxy at `host` rather
+/// than the slirp gateway — the macOS Seatbelt tiers, where the box shares the
+/// host's loopback instead of living in its own network namespace.
+pub fn engage_at(profile_name: &str, tier_ok: bool, host: &str) -> Option<Engagement> {
     if !tier_ok || opted_out() {
         return None;
     }
@@ -566,7 +608,7 @@ pub fn engage(profile_name: &str, tier_ok: bool) -> Option<Engagement> {
     let token = new_client_token();
     match spawn(rt, cred, token.clone()) {
         Ok(handle) => Some(Engagement {
-            box_env: box_env(rt, handle.port, &token),
+            box_env: box_env_at(rt, host, handle.port, &token),
             handle,
             runtime: rt,
         }),
