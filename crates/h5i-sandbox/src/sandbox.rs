@@ -196,6 +196,10 @@ struct NetToml {
     /// `[profile.agent-claude]` overlay keeps its API allowlist. An explicit
     /// `egress = []` opts out (deny).
     egress: Option<Vec<String>>,
+    /// `unix = true` allows `AF_UNIX` sockets past the supervised tier's
+    /// `socket()` gate (see [`crate::sandbox_policy::Profile::unix_sockets`]).
+    /// `None` inherits the base, so a partial overlay on `browser` keeps it.
+    unix: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -409,6 +413,10 @@ pub fn load_profile(
                     || base.allow_command_extractors,
                 shell_rcfile: t.shell.rcfile.or(base.shell_rcfile),
                 persona: if t.persona.is_empty() { base.persona } else { t.persona },
+                // Omitted → inherit the base, so a partial `[profile.browser]`
+                // overlay keeps the grant its daemon cannot start without.
+                // Explicit `unix = false` takes it away.
+                unix_sockets: t.net.unix.unwrap_or(base.unix_sockets),
             }
         }
     };

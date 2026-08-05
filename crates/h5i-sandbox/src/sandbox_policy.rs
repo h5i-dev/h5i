@@ -408,6 +408,35 @@ pub struct Profile {
     /// digests are unchanged (serialized only when non-empty).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub persona: Vec<String>,
+    /// Allow `AF_UNIX` sockets (`[profile.X.net] unix = true`). Off by default:
+    /// `SCM_RIGHTS` passes file descriptors, which is authority smuggling, so
+    /// the supervised tier's `socket()` gate denies the family unless a profile
+    /// asks for it.
+    ///
+    /// What the grant does *not* open, and this is why it can be granted at all:
+    ///
+    /// - **Abstract-namespace sockets** (leading NUL) are scoped by the network
+    ///   namespace, and a supervised box has a private one. They cannot name
+    ///   anything the host is listening on.
+    /// - **Filesystem-bound sockets** are scoped by Landlock, so a `connect()`
+    ///   can only name a path the profile already granted. The usual host
+    ///   sockets — `/tmp/.X11-unix`, `tmux-*`, an `ssh-agent` — live under
+    ///   `/tmp`, which the kernel tiers redirect to a per-env scratch.
+    ///
+    /// What is left is a host socket sitting inside a granted path, and that is
+    /// a real residual: granting this widens the box by exactly the IPC
+    /// endpoints its own filesystem grants can reach. It is opt-in per profile
+    /// and pinned in the digest for that reason.
+    ///
+    /// The `browser` profile sets it because the `agent-browser` daemon's
+    /// control socket is a filesystem-bound `AF_UNIX` listener; without the
+    /// grant the daemon dies at startup with `Failed to bind socket:
+    /// Operation not permitted`.
+    ///
+    /// Appended last, and serialized only when `true`, so every existing
+    /// profile's canonical serialization — and its pinned digest — is unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unix_sockets: bool,
 }
 
 /// Read-only system paths granted by default at the `process` tier — enough to
@@ -466,6 +495,7 @@ impl Profile {
             allow_command_extractors: false,
             shell_rcfile: None,
             persona: Vec::new(),
+            unix_sockets: false,
         }
     }
 
@@ -596,6 +626,15 @@ impl Profile {
         // Chrome's shared-memory transport. Granting it is better than relying
         // on every caller to pass --disable-dev-shm-usage.
         p.fs_write.push("/dev/shm".into());
+        // The agent-browser daemon's control socket is a filesystem-bound
+        // AF_UNIX listener under `AGENT_BROWSER_SOCKET_DIR`, and the supervised
+        // tier's socket() gate denies that family by default. Without this the
+        // daemon exits at startup with "Failed to bind socket: Operation not
+        // permitted" — and, because it redirects its own stderr to /dev/null
+        // before failing, the caller sees "exited during startup with no error
+        // output". See `Profile::unix_sockets` for what the grant does and does
+        // not widen.
+        p.unix_sockets = true;
         // A browser is heavier than a build: renderers are processes and tabs
         // are memory.
         p.mem_bytes = Some(12 * 1024 * 1024 * 1024);
@@ -708,6 +747,31 @@ mod browser_profile_tests {
         // Room for renderers.
         assert!(browser.mem_bytes > agent.mem_bytes);
         assert!(browser.max_procs > agent.max_procs);
+    }
+
+    #[test]
+    fn only_the_browser_profile_gets_af_unix() {
+        // The agent-browser daemon's control socket is a filesystem-bound
+        // AF_UNIX listener, and the supervised tier's socket() gate denies that
+        // family by default — so the daemon exits at startup without this.
+        assert!(Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude).unix_sockets);
+        // Nothing else asks for it. SCM_RIGHTS passes file descriptors, so the
+        // grant widens a box by the IPC endpoints its filesystem grants can
+        // reach, and it stays opt-in for that reason.
+        assert!(!Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude).unix_sockets);
+        assert!(!Profile::builtin("default", IsolationClaim::Supervised).unix_sockets);
+    }
+
+    #[test]
+    fn the_af_unix_grant_is_in_the_digest_and_only_when_asked_for() {
+        // It is appended last and skipped when false, so every profile that
+        // does not ask for it keeps the exact serialization — and therefore the
+        // pinned digest — it had before the field existed.
+        let plain = Profile::builtin("default", IsolationClaim::Supervised);
+        assert!(!toml::to_string(&plain).unwrap().contains("unix_sockets"));
+        // And a profile that does ask for it says so where a reviewer looks.
+        let browser = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
+        assert!(toml::to_string(&browser).unwrap().contains("unix_sockets = true"));
     }
 
     #[test]

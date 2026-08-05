@@ -2568,9 +2568,16 @@ pub fn browser_env(policy: &ResolvedPolicy) -> Vec<(String, String)> {
     }
     vec![
         ("AGENT_BROWSER_ALLOWED_DOMAINS".to_string(), allowed.join(",")),
-        // Headless: a viewer watches the CDP screencast, so nothing wants an X
-        // server and a box that tried to start one would fail confusingly.
-        ("AGENT_BROWSER_HEADLESS".to_string(), "1".to_string()),
+        // Headless. There is no `AGENT_BROWSER_HEADLESS` — agent-browser reads
+        // `AGENT_BROWSER_HEADED` and headless is what it does when that is
+        // falsey, so the way to pin headless is to pin *that* variable off.
+        // Setting a variable the tool never reads is worse than setting
+        // nothing: it reads like enforcement in a policy review and is not.
+        //
+        // It matters because a headed launch on a displayless box starts a
+        // private Xvfb, which is a whole second process tree the profile never
+        // granted, and the failure would arrive from Chrome rather than here.
+        ("AGENT_BROWSER_HEADED".to_string(), "0".to_string()),
         // The daemon's control socket. Its default is `$XDG_RUNTIME_DIR`
         // (`/run/user/<uid>`), which no box has a write grant for — and the
         // failure is an opaque "Failed to create socket directory: Permission
@@ -2581,13 +2588,17 @@ pub fn browser_env(policy: &ResolvedPolicy) -> Vec<(String, String)> {
             "AGENT_BROWSER_SOCKET_DIR".to_string(),
             "/tmp/agent-browser".to_string(),
         ),
-        // Chat off. Note what does *not* work here: pinning
-        // `AI_GATEWAY_API_KEY` to an empty string. agent-browser tests for the
-        // variable's **presence**, so an empty value reads as "chat enabled" —
-        // `agent-browser doctor` inside a box said exactly that. The variable is
-        // not in `env.pass` either, so simply not injecting it leaves it absent,
-        // which is what "refused" has to mean here.
-        ("AGENT_BROWSER_DISABLE_CHAT".to_string(), "1".to_string()),
+        // Chat off. There is exactly one gate upstream and it is the presence
+        // of `AI_GATEWAY_API_KEY`, so "off" is spelled by that variable being
+        // absent: it is not in `env.pass` and nothing here injects it.
+        //
+        // Two things that look like they would do this and do not. Pinning the
+        // key to an empty string *enables* chat, because the test is presence,
+        // not value — `agent-browser doctor` inside a box reported "chat
+        // enabled" for exactly that reason. And there is no
+        // `AGENT_BROWSER_DISABLE_CHAT`; we set one for a while, and a variable
+        // agent-browser never reads is a policy line that reviews as
+        // enforcement while enforcing nothing. Absence is the whole mechanism.
         // Chrome's own sandbox needs the namespace syscalls our seccomp policy
         // denies, at every tier. h5i's box is the boundary; Chrome's is not
         // available inside it, and without this the renderer dies at startup.
@@ -7844,11 +7855,14 @@ mod tests {
         // value would *enable* chat — the opposite of the intent, and exactly
         // what a box reported before this was fixed.
         assert!(!env.iter().any(|(k, _)| k == "AI_GATEWAY_API_KEY"));
-        assert_eq!(
-            env.get("AGENT_BROWSER_DISABLE_CHAT").map(String::as_str),
-            Some("1")
-        );
-        assert_eq!(env.get("AGENT_BROWSER_HEADLESS").map(String::as_str), Some("1"));
+        // And nothing that only *looks* like it turns chat off. There is no
+        // `AGENT_BROWSER_DISABLE_CHAT` upstream, so setting one would be a
+        // policy line that reviews as enforcement and enforces nothing.
+        assert!(!env.iter().any(|(k, _)| k == "AGENT_BROWSER_DISABLE_CHAT"));
+        // Headless is spelled by pinning the variable agent-browser actually
+        // reads to a falsey value — there is no `AGENT_BROWSER_HEADLESS`.
+        assert_eq!(env.get("AGENT_BROWSER_HEADED").map(String::as_str), Some("0"));
+        assert!(!env.iter().any(|(k, _)| k == "AGENT_BROWSER_HEADLESS"));
         // The daemon socket must land somewhere the box can write; its default
         // ($XDG_RUNTIME_DIR) is not granted on any tier.
         assert_eq!(
