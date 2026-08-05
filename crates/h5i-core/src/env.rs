@@ -3183,6 +3183,14 @@ fn run_inner(
         policy.profile.allow_command_extractors,
     )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
+    // Authenticated egress the profile declares (5.5). Host-side credentials
+    // resolve here and stay here; the box only ever learns the proxy's origin.
+    // Held for the run: dropping a handle shuts its proxy down.
+    let (_auth_handles, auth_env) = crate::container::engage_auth_grants(
+        &policy.profile,
+        policy.claim >= IsolationClaim::Supervised,
+    )?;
+
     let injected_env = merged_env(
         &merged_env(
             &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
@@ -3190,11 +3198,14 @@ fn run_inner(
         ),
         &merged_env(
             &team_identity_env(m, h5i_root),
-            &if policy.profile.name == "browser" {
-                browser_env(&policy)
-            } else {
-                Vec::new()
-            },
+            &merged_env(
+                &if policy.profile.name == "browser" {
+                    browser_env(&policy)
+                } else {
+                    Vec::new()
+                },
+                &auth_env,
+            ),
         ),
     );
 

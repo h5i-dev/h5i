@@ -283,6 +283,31 @@ pub struct PrivateBind {
 /// the real `~/.claude.json` is never raced by concurrent boxes. Unlike
 /// [`PrivateBind`] the target is an absolute host path (the real `$HOME/…`), not a
 /// workspace-relative one. Computed at run time in `env::prepare_home_state`.
+/// Authenticated egress to one host, with the credential staying on the host.
+///
+/// The shape is deliberately the one `auth_proxy` already implements: a reverse
+/// proxy the box is pointed at, not a forward proxy that would have to
+/// terminate TLS. The limit that follows is real and worth knowing before you
+/// declare one — it binds clients you can point at another origin (anything
+/// with a base-URL setting), and a plain `curl https://<host>` still goes
+/// nowhere.
+///
+/// ```toml
+/// [[profile.review.auth]]
+/// host = "api.github.com"
+/// credential_env = "GITHUB_TOKEN"   # read on the host, never in the box
+/// base_url_var = "GH_HOST"          # what the client reads
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthGrant {
+    /// Upstream host the proxy will ever connect to (an SSRF pin).
+    pub host: String,
+    /// Host-side environment variable holding the credential.
+    pub credential_env: String,
+    /// Environment variable the box is given, pointing at the proxy.
+    pub base_url_var: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct RoBind {
     /// Host directory the box reads through the bind.
@@ -330,6 +355,11 @@ pub struct Profile {
     /// non-secret policies, so their digest is unchanged.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub secret_grants: Vec<SecretGrant>,
+    /// Authenticated egress grants (see [`AuthGrant`]). Part of the profile and
+    /// therefore of the pinned digest: which hosts a box may authenticate
+    /// against is exactly the kind of thing a reviewer must see.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auth: Vec<AuthGrant>,
     pub mem_bytes: Option<u64>,
     pub max_procs: Option<u64>,
     pub wall_secs: u64,
@@ -415,6 +445,7 @@ impl Profile {
             net_egress: Vec::new(),
             secrets: Vec::new(),
             secret_grants: Vec::new(),
+            auth: Vec::new(),
             mem_bytes: Some(4 * 1024 * 1024 * 1024),
             max_procs: Some(256),
             wall_secs: DEFAULT_WALL.as_secs(),

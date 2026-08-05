@@ -63,3 +63,24 @@ h5i dev allow api.example.com --remove
 ```
 
 Denied hosts become searchable `egress-denied` findings on the receipt.
+
+## Authenticated egress
+
+A box never holds a credential. When it must talk to an authenticated service,
+the profile says so and h5i runs a host-side proxy that adds the header on the
+way out:
+
+```toml
+[[profile.review.auth]]
+host = "api.github.com"
+credential_env = "GITHUB_TOKEN"   # read on the host, never inside the box
+base_url_var = "GH_HOST"          # what the client is pointed at
+```
+
+Two limits worth knowing before you declare one. It binds clients you can point
+at another origin, so a plain `curl https://api.github.com` still goes nowhere.
+And a grant whose `credential_env` is unset on the host is an error at launch:
+h5i refuses rather than sending the box out unauthenticated.
+
+What the box may *do* with that credential is authorization, and belongs in a
+fine-grained token scoped to the repository and operations you meant.

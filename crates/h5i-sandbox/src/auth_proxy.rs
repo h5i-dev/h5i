@@ -164,6 +164,63 @@ struct ProxyState {
 /// Spawn the proxy for a runtime with a resolved credential. `client_token` is
 /// the unguessable per-run dummy the box will present. Production entry point:
 /// forwards to the runtime's HTTPS API host, DNS-pinned.
+/// Resolve a profile-declared grant into a live proxy.
+///
+/// The credential is read from `credential_env` **on the host** and never
+/// leaves it: the box is handed the proxy's origin and a per-run token, and the
+/// proxy adds the real header on the way out. Fail-closed — a grant whose
+/// environment variable is unset is an error, not a box that silently talks to
+/// the upstream unauthenticated.
+pub fn engage_grant(
+    grant: &crate::sandbox_policy::AuthGrant,
+    tier_ok: bool,
+) -> Result<Option<GrantEngagement>, H5iError> {
+    if !tier_ok || opted_out() {
+        return Ok(None);
+    }
+    let value = std::env::var(&grant.credential_env)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| {
+            H5iError::Metadata(format!(
+                "profile grants authenticated egress to {} but ${} is unset on the host — \
+                 refusing rather than sending the box out unauthenticated",
+                grant.host, grant.credential_env
+            ))
+        })?;
+    let credential = Credential {
+        header: CredHeader::Bearer,
+        value,
+    };
+    let token = new_client_token();
+    let handle = spawn_to_upstream(
+        format!("https://{}", grant.host),
+        grant.host.clone(),
+        credential,
+        token.clone(),
+        true,
+    )?;
+    let box_env = vec![
+        (
+            grant.base_url_var.clone(),
+            format!("http://10.0.2.2:{}", handle.port),
+        ),
+        ("NO_PROXY".to_string(), "localhost,127.0.0.1,10.0.2.2".to_string()),
+        ("no_proxy".to_string(), "localhost,127.0.0.1,10.0.2.2".to_string()),
+    ];
+    Ok(Some(GrantEngagement { handle, box_env }))
+}
+
+/// A live proxy for one profile-declared grant.
+pub struct GrantEngagement {
+    /// Hold for the box's lifetime; dropping it shuts the proxy — and the only
+    /// in-memory copy of the credential — down.
+    pub handle: AuthProxyHandle,
+    /// Box env additions: the base-URL override and `NO_PROXY`.
+    pub box_env: Vec<(String, String)>,
+}
+
 pub fn spawn(
     rt: AgentRuntime,
     credential: Credential,
@@ -602,6 +659,37 @@ mod tests {
         let none = b"POST /v1 HTTP/1.1\r\nContent-Type: x\r\n\r\n";
         assert!(!client_authorized(none, "the-dummy"));
         assert!(!client_authorized(head, "")); // empty token never authorizes
+    }
+
+    #[test]
+    fn a_grant_with_no_host_side_credential_is_refused() {
+        let grant = crate::sandbox_policy::AuthGrant {
+            host: "api.example.com".into(),
+            credential_env: "H5I_TEST_ABSENT_CREDENTIAL".into(),
+            base_url_var: "EXAMPLE_BASE_URL".into(),
+        };
+        std::env::remove_var("H5I_TEST_ABSENT_CREDENTIAL");
+        let err = match engage_grant(&grant, true) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("a grant with no credential must be refused"),
+        };
+        // Fail-closed, and the message says which variable and which host, so
+        // the fix is obvious rather than a hunt.
+        assert!(err.contains("api.example.com"), "{err}");
+        assert!(err.contains("H5I_TEST_ABSENT_CREDENTIAL"), "{err}");
+        assert!(err.contains("unauthenticated"), "{err}");
+    }
+
+    #[test]
+    fn a_grant_is_inert_on_a_tier_that_cannot_reach_the_proxy() {
+        let grant = crate::sandbox_policy::AuthGrant {
+            host: "api.example.com".into(),
+            credential_env: "H5I_TEST_ABSENT_CREDENTIAL".into(),
+            base_url_var: "EXAMPLE_BASE_URL".into(),
+        };
+        // No proxy path from the box → no engagement, and notably no error
+        // about the missing credential: there was nothing to authenticate.
+        assert!(matches!(engage_grant(&grant, false), Ok(None)));
     }
 
     #[test]

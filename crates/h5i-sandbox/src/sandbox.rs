@@ -134,6 +134,9 @@ struct ProfileToml {
     /// Rich per-grant config: `[profile.X.secret.NAME] source=… inject=… ttl=…`.
     #[serde(default)]
     secret: BTreeMap<String, SecretGrantToml>,
+    /// Authenticated egress: `[[profile.X.auth]] host=… credential_env=… base_url_var=…`.
+    #[serde(default)]
+    auth: Vec<crate::sandbox_policy::AuthGrant>,
     resources: Option<ResourcesToml>,
     #[serde(default)]
     tools: Vec<String>,
@@ -362,6 +365,10 @@ pub fn load_profile(
                 // (fail-closed) rather than left egressless.
                 net_egress: t.net.egress.unwrap_or(base.net_egress),
                 secret_grants: merge_secret_grants(&t.secrets, &t.secret),
+                // Omitted → inherit the built-in's (none today). An explicitly
+                // declared list replaces it: authenticated egress is never
+                // additive by accident.
+                auth: if t.auth.is_empty() { base.auth } else { t.auth },
                 secrets: t.secrets,
                 mem_bytes: match t.resources.as_ref().and_then(|r| r.mem.as_deref()) {
                     Some(s) => Some(parse_mem(s)?),

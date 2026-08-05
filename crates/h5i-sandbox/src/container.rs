@@ -1054,6 +1054,30 @@ fn maybe_auth_proxy(
     Some((e.handle, e.box_env))
 }
 
+/// Live proxies for a box's authenticated-egress grants, and the env the box
+/// is given to reach them.
+pub type AuthGrantEngagement = (Vec<crate::auth_proxy::AuthProxyHandle>, Vec<(String, String)>);
+
+/// Engage every profile-declared authenticated-egress grant.
+///
+/// Returns the live handles (held for the box's lifetime) and the env the box
+/// is given. Fail-closed: a grant whose host-side credential is missing is an
+/// error, never a box that reaches the upstream unauthenticated.
+pub fn engage_auth_grants(
+    profile: &Profile,
+    tier_ok: bool,
+) -> Result<AuthGrantEngagement, H5iError> {
+    let mut handles = Vec::new();
+    let mut env = Vec::new();
+    for grant in &profile.auth {
+        if let Some(e) = crate::auth_proxy::engage_grant(grant, tier_ok)? {
+            handles.push(e.handle);
+            env.extend(e.box_env);
+        }
+    }
+    Ok((handles, env))
+}
+
 // ─── run ─────────────────────────────────────────────────────────────────────
 
 /// Run `argv` for `policy` inside a hardened rootless container. Spawns the
