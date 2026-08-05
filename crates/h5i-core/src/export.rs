@@ -253,6 +253,34 @@ fn report(
         }
     }
 
+    // Who was at the controls. A patch produced with a human driving the
+    // browser is a different artifact from one an agent produced alone, and a
+    // reviewer should not have to infer which this was.
+    let viewer: Vec<_> = records.iter().filter(|r| r.source == "viewer").collect();
+    if !viewer.is_empty() {
+        out.push_str("\n## Viewer sessions\n\n");
+        out.push_str(
+            "Observed by h5i's own forward, not by anything in the box.\n\n\
+             | when | session |\n|---|---|\n",
+        );
+        for r in &viewer {
+            out.push_str(&format!(
+                "| {} | {} |\n",
+                r.timestamp,
+                crate::redact::sanitize_display(r.cmd.as_deref().unwrap_or("")).replace('|', "\\|")
+            ));
+        }
+        if viewer
+            .iter()
+            .any(|r| r.cmd.as_deref().unwrap_or("").contains("human took control"))
+        {
+            out.push_str(
+                "\n**A human took control of the browser during this box's life.** \
+                 Some of what the agent reports having verified may have been done by hand.\n",
+            );
+        }
+    }
+
     out.push_str("\n## Proposal\n\n```\n");
     out.push_str(brief);
     out.push_str("\n```\n");
@@ -374,6 +402,27 @@ mod tests {
         };
         let text = report(&manifest(), &summary(), &[record(Some(blind))], "brief");
         assert!(text.contains("no browser available to observe"), "{text}");
+    }
+
+    #[test]
+    fn a_human_at_the_controls_is_called_out() {
+        let mut r = record(None);
+        r.source = "viewer".into();
+        r.cmd = Some("h5i dev view (human took control, 42s)".into());
+        let text = report(&manifest(), &summary(), &[r], "brief");
+
+        assert!(text.contains("## Viewer sessions"), "{text}");
+        // The load-bearing sentence: some of what the agent claims to have
+        // verified may have been done by hand, and the reviewer has to know.
+        assert!(text.contains("A human took control"), "{text}");
+
+        // A session where nobody took over is listed but not flagged.
+        let mut watched = record(None);
+        watched.source = "viewer".into();
+        watched.cmd = Some("h5i dev view (agent, 42s)".into());
+        let text = report(&manifest(), &summary(), &[watched], "brief");
+        assert!(text.contains("## Viewer sessions"), "{text}");
+        assert!(!text.contains("A human took control"), "{text}");
     }
 
     #[test]

@@ -146,6 +146,19 @@ pub enum DevCommands {
         json: bool,
     },
 
+    /// Watch this box's browser from the host, and take over when you want to.
+    ///
+    /// Starts a loopback-only forward that h5i owns: the box's stream port is
+    /// never published, every connection carries the box's own token,
+    /// cross-origin handshakes are refused, and your input reaches the page only
+    /// while you hold the control lock (`h5i browser take`). Runs until Ctrl-C.
+    View {
+        name: String,
+        /// Loopback port to bind. 0 picks a free one and prints it.
+        #[arg(long, default_value_t = 7331)]
+        port: u16,
+    },
+
     /// Check one environment's enforcement readiness and structural health
     /// (can it actually enforce its isolation claim here? are its refs intact?)
     Doctor {
@@ -1035,6 +1048,19 @@ pub fn run(action: DevCommands) -> anyhow::Result<()> {
                     } else {
                         print!("{}", h5i_core::env::status_report(git, &h5i_root, &m));
                     }
+                }
+
+                DevCommands::View { name, port } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    let dir = h5i_core::env::env_dir(&h5i_root, &m.agent, &m.slug);
+                    let forward =
+                        h5i_core::view::Forward::bind(&dir, &m.id, &m.policy_digest, port)?;
+                    let holder = h5i_core::control::read(&dir).holder;
+                    println!("{} viewer for {}", SUCCESS, m.id);
+                    println!("   open     {}", forward.url()?);
+                    println!("   control  {holder:?} — `h5i browser take {name}` to drive");
+                    println!("   stop     Ctrl-C");
+                    forward.serve()?;
                 }
 
                 DevCommands::Doctor { name, json } => {

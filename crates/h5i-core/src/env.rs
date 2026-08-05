@@ -1599,6 +1599,13 @@ pub fn create(
     // create rather than launching an agent with a silently-empty persona.
     let persona_digest = materialize_persona(&work_path, &profile.persona)?;
 
+    // The viewer token, minted before anything inside the box has run. Minting
+    // it lazily on the first `h5i dev view` would mean minting it after an agent
+    // had already had the run of the box; minting it here means the credential
+    // for watching a box predates the box's first instruction. It lives in the
+    // env directory, outside every path the box can write or read.
+    crate::view::ensure_token(&dir)?;
+
     let manifest = EnvManifest {
         id: id.clone(),
         agent: agent.to_string(),

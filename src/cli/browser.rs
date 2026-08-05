@@ -26,6 +26,17 @@ pub enum BrowserCommands {
     /// Hand control back to the agent. It must re-snapshot before acting,
     /// because the page moved while you were driving.
     Release { name: String },
+
+    /// Print the loopback viewer URL for a box, token included. `h5i dev view`
+    /// is what actually serves it; this is for pasting into a browser when a
+    /// forward is already running.
+    Url {
+        name: String,
+        /// The loopback port `h5i dev view` was given. Defaults to the one it
+        /// picks when unspecified.
+        #[arg(long, default_value_t = 7331)]
+        port: u16,
+    },
 }
 
 pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
@@ -73,6 +84,17 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 SUCCESS,
                 c.holder.as_str()
             );
+        }
+        BrowserCommands::Url { name, port } => {
+            let dir = dir_of(&name)?;
+            let token = h5i_core::view::read_token(&dir).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "this box has no viewer token — it predates the viewer. Create a new box."
+                )
+            })?;
+            // Printed whether or not a forward is running: the URL is a
+            // property of the box, and `h5i dev view` is what makes it answer.
+            println!("http://127.0.0.1:{port}/?token={token}");
         }
     }
     Ok(())
