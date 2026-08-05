@@ -358,7 +358,7 @@ struct App<'a> {
 #[cfg(unix)]
 impl<'a> App<'a> {
     fn new(opts: &Options, guard: &'a mut term::Guard) -> App<'a> {
-        let size = guard.size();
+        let size = guard.size().or_fallback();
         App {
             env_dir: opts.env_dir.clone(),
             guard,
@@ -528,7 +528,7 @@ impl<'a> App<'a> {
     }
 
     fn on_tick(&mut self) {
-        let size = self.guard.size();
+        let size = self.guard.size().or_fallback();
         if size != self.size {
             self.size = size;
             let mut out = std::io::stdout();

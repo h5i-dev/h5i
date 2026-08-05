@@ -71,6 +71,32 @@ pub fn size(fd: RawFd) -> Size {
     }
 }
 
+impl Size {
+    /// A geometry that can actually be drawn in, even when the terminal will
+    /// not say what its own is.
+    ///
+    /// `TIOCGWINSZ` succeeding and reporting zeroes is not hypothetical: a pty
+    /// opened without a window size does exactly that, which is what `script`
+    /// and several CI harnesses produce. Taking it literally is a quiet wrong
+    /// answer of the worst kind — the page gets scaled to fit one cell, the
+    /// viewer draws a single pixel, and nothing anywhere reports a problem.
+    /// Found by running the viewer under `script` against a live box, where it
+    /// dutifully transmitted a 1×1 image.
+    ///
+    /// 80×24 is the conventional fallback. 8×16 for the cell is the usual
+    /// bitmap-font shape, and only affects the aspect correction: guessing it
+    /// stretches the page a little, while leaving it at zero would make every
+    /// cell square and stretch it a lot.
+    pub fn or_fallback(self) -> Size {
+        Size {
+            cols: if self.cols == 0 { 80 } else { self.cols },
+            rows: if self.rows == 0 { 24 } else { self.rows },
+            cell_w: if self.cell_w == 0 { 8 } else { self.cell_w },
+            cell_h: if self.cell_h == 0 { 16 } else { self.cell_h },
+        }
+    }
+}
+
 /// Is this file descriptor a terminal at all?
 pub fn is_tty(fd: RawFd) -> bool {
     unsafe { libc::isatty(fd) == 1 }
@@ -237,6 +263,38 @@ mod tests {
             libc::close(fds[0]);
             libc::close(fds[1]);
         }
+    }
+
+    #[test]
+    fn a_terminal_that_reports_no_size_still_gets_a_drawable_one() {
+        // A pty opened without a window size reports zeroes, and `TIOCGWINSZ`
+        // succeeds while doing it. Taken literally the viewer scales the page
+        // into one cell and draws a single pixel, with no error anywhere —
+        // which is exactly what it did under `script` against a live box.
+        let none = Size::default().or_fallback();
+        assert_eq!((none.cols, none.rows), (80, 24));
+        assert_eq!((none.cell_w, none.cell_h), (8, 16));
+
+        // A terminal that reports cells but not pixels is the common case, and
+        // only the cell size is filled in.
+        let cells_only = Size {
+            cols: 120,
+            rows: 40,
+            cell_w: 0,
+            cell_h: 0,
+        }
+        .or_fallback();
+        assert_eq!((cells_only.cols, cells_only.rows), (120, 40));
+        assert_eq!((cells_only.cell_w, cells_only.cell_h), (8, 16));
+
+        // A terminal that answers fully is left alone.
+        let full = Size {
+            cols: 100,
+            rows: 30,
+            cell_w: 9,
+            cell_h: 18,
+        };
+        assert_eq!(full.or_fallback(), full);
     }
 
     #[test]

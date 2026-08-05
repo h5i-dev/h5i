@@ -960,14 +960,36 @@ layout and frontmatter were checked against what the CLI discovers. There is no
 demo video. `/blog/` and `/pitch/` still argue the old positioning, and
 rewriting them means choosing the launch message, which is open question 2.
 
-**M7. Terminal viewer — built, not yet driven by a human.** `h5i box view
---term` (5.10). The whole module is unit tested (the WebSocket client also
-round-trips over a real socket), clippy is clean in both feature
-configurations, and the web viewer's silent input bug is fixed and pinned
-(5.10.1). Exit criterion **not demonstrated**: nobody has watched a real box in
-a real Kitty-protocol terminal, taken control, and driven a page with it. Every
-piece is tested in isolation; the loop has not been run, and on this host it
-cannot be — a tool shell is not a TTY.
+**M7. Terminal viewer — built and driven.** `h5i box view --term` (5.10). The
+module is unit tested (the WebSocket client also round-trips over a real
+socket), clippy is clean, and the web viewer's silent input bug is fixed and
+pinned (5.10.1).
+
+The loop was driven end to end against a live supervised `browser` box serving
+a page on its own loopback, on a pty with a real window size: watch, `i` to take
+the lock, type and click, `Ctrl-]` to hand it back, `q` to leave. What that
+proved, in order: `connect_in_netns` into the box, the WebSocket handshake, real
+JPEG frames decoded and scaled (an 800×400 image in 100×20 cells, aspect
+preserved, 624 continuation chunks), the previous frame deleted only after the
+next was placed, the control lock flipping to `human` and back to `agent`, mouse
+tracking taken and returned, the alternate screen restored on a clean exit, and
+the status line picking up the page's real URL. The receipt recorded `12
+frame(s) forwarded to the page` — "hello" as ten key events plus a press and a
+release — and flagged `a human drove this box` from the input count, which is
+the take-and-hand-back case that comparing the holder at open and close would
+have missed.
+
+Two things it found that no amount of reading would have. A pty with no window
+size makes `TIOCGWINSZ` succeed and report zeroes, and the viewer dutifully
+scaled the page into one cell and transmitted a **1×1 pixel image** with no
+error anywhere; `Size::or_fallback` now supplies 80×24. And the first harness
+stopped reading before sending `q`, which is why it looked as though the
+alternate screen was never exited — worth remembering as a way to mistake a
+test artifact for a terminal-corrupting bug.
+
+Still **not demonstrated**: a real person, at a real Kitty-protocol terminal,
+looking at the page. Everything under it is exercised; the last inch is a human
+being, and a tool shell is not a TTY.
 
 **Post M7.** A full-desktop tier when something needs more than a page viewport
 (X plus streaming, Neko as the reference design), microVM backend, macOS.
