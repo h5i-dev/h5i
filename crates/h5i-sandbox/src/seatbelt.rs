@@ -1551,6 +1551,121 @@ mod tests {
         );
     }
 
+    /// Split a generated profile into its top-level items: each comment line on
+    /// its own, each parenthesised form whole (they span lines).
+    fn split_forms(profile: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cur = String::new();
+        for line in profile.lines() {
+            let t = line.trim();
+            if cur.is_empty() && (t.is_empty() || t.starts_with(';')) {
+                if !t.is_empty() {
+                    out.push(line.to_string());
+                }
+                continue;
+            }
+            if !cur.is_empty() {
+                cur.push('\n');
+            }
+            cur.push_str(line);
+            if parens_balanced(&cur) {
+                out.push(std::mem::take(&mut cur));
+            }
+        }
+        if !cur.is_empty() {
+            out.push(cur);
+        }
+        out
+    }
+
+    /// Is `profile` a *valid* document, regardless of whether the command it
+    /// wraps can run? libsandbox signals an unusable profile by aborting, so a
+    /// death by signal means invalid and any ordinary exit means the profile
+    /// compiled (the exit code then only says whether `true` was permitted).
+    #[cfg(target_os = "macos")]
+    fn sbpl_document_is_valid(profile: &str) -> bool {
+        use std::os::unix::process::ExitStatusExt;
+        let Ok(file) = ProfileFile::write(profile) else {
+            return false;
+        };
+        match std::process::Command::new(SANDBOX_EXEC)
+            .arg("-f")
+            .arg(file.path())
+            .arg("/usr/bin/true")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+        {
+            Ok(s) => s.signal().is_none(),
+            Err(_) => false,
+        }
+    }
+
+    /// When the real profile is rejected, say *which part*.
+    ///
+    /// Checking hand-written constructs was not enough: they all passed while
+    /// the real document still aborted, which means the fault is in the actual
+    /// content (a specific path, a large filter list, the comments, the
+    /// multi-line layout) or in an interaction between forms. So bisect the
+    /// generated text itself — cumulative prefixes to find the first form that
+    /// breaks it in context, then each form alone to separate "invalid by
+    /// itself" from "invalid only in combination".
+    ///
+    /// Does nothing when the profile is fine, so it costs one `sandbox-exec`
+    /// call in the healthy case and is worth keeping for the next time.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn locate_the_rejected_part_of_the_real_profile() {
+        if !probe().usable() {
+            eprintln!("SKIP locate_the_rejected_part_of_the_real_profile: Seatbelt unusable");
+            return;
+        }
+        let (_tmp, work, pol) = functional_env();
+        let plan = plan(&pol, &work, &SeatbeltOptions::default());
+        if sbpl_document_is_valid(&plan.profile) {
+            return; // healthy: nothing to locate
+        }
+        let forms = split_forms(&plan.profile);
+        let header = "(version 1)\n(deny default)\n";
+
+        let mut first_bad_prefix: Option<(usize, String)> = None;
+        let mut acc = String::from(header);
+        for (i, f) in forms.iter().enumerate() {
+            if f.trim_start().starts_with(';') || f.contains("(version 1)") || f.contains("(deny default)") {
+                continue;
+            }
+            acc.push_str(f);
+            acc.push('\n');
+            if !sbpl_document_is_valid(&acc) {
+                first_bad_prefix = Some((i, f.clone()));
+                break;
+            }
+        }
+        let alone: Vec<String> = forms
+            .iter()
+            .filter(|f| {
+                !f.trim_start().starts_with(';')
+                    && !f.contains("(version 1)")
+                    && !f.contains("(deny default)")
+            })
+            .filter(|f| !sbpl_document_is_valid(&format!("{header}{f}\n")))
+            .cloned()
+            .collect();
+
+        panic!(
+            "the generated profile is rejected by libsandbox.\n\
+             forms: {}\n\
+             first form that breaks a cumulative prefix: {:?}\n\
+             forms invalid on their own ({}):\n{}\n\
+             --- full profile ---\n{}",
+            forms.len(),
+            first_bad_prefix,
+            alone.len(),
+            alone.join("\n  ---\n"),
+            plan.profile
+        );
+    }
+
     /// Does `sandbox-exec` accept the known-good base profile plus `extra`?
     #[cfg(target_os = "macos")]
     fn sbpl_accepts(extra: &str) -> bool {
