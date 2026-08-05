@@ -36,10 +36,9 @@ out of scope.
    cloud credential, Docker socket, or personal browser profile enters the box.
    A host side broker authenticates the calls the policy allows, and egress is
    an allowlist.
-4. **Browser in the box, two interfaces.** Chromium and its profile live inside.
-   The agent drives it through a CLI (Playwright underneath). The human watches
-   and takes over through a Neko style pixel stream. The host browser never
-   connects to the target app.
+4. **Browser in the box, two interfaces.** Chrome and its profile live inside.
+   The agent drives it through a CLI; the human watches the same viewport and
+   can take over. The host browser never connects to the target app.
 5. **Output gate.** At the end you export a patch, a report, screenshots, and an
    execution receipt, after inspection. The agent has no direct write path to
    the host.
@@ -123,36 +122,27 @@ h5i dev probe                # host capability report
 h5i dev allow <host>         # persistent egress allowlist entry
 h5i dev cache ls|refresh|rm  # per project warm dependency caches
 
-h5i browser open <url>
-h5i browser snapshot         # accessibility tree plus actionable handles
-h5i browser click @button-3
-h5i browser fill @input-1 "test@example.com"
-h5i browser wait "[data-testid=dashboard]"
-h5i browser screenshot [--out <path>]
-h5i browser console          # console messages since last read
-h5i browser requests         # network log, failures first
-h5i browser control status|take|release
+h5i browser status|take|release   # the control lock, and who holds it
+h5i browser url                  # the viewer URL for this box
 
-h5i skill install|show|path  # write or print the embedded agent skill
+h5i skill install|show|path      # write or print the embedded agent skill
 ```
 
 `h5i env *` stays as a hidden alias through one release, then is removed.
-`h5i browser *` is meant to be run **inside** the box by the agent, and is
-proxied from the host for debugging.
 
-Snapshot output is an accessibility tree, not HTML, because the consumer is a
-model with a token budget:
+**Driving the browser is `agent-browser`, not `h5i`** (7.). Inside the box the
+agent runs it directly:
 
-```
-URL: http://localhost:3000/login
-
-@input-1   textbox "Email"
-@input-2   textbox "Password"
-@button-3  button  "Sign in"
+```bash
+agent-browser open http://localhost:3000
+agent-browser snapshot                     # accessibility tree with @refs
+agent-browser click @e2
+agent-browser fill @e3 "test@example.com"
+agent-browser screenshot shot.png
 ```
 
-Handles are stable within a snapshot and invalidated by navigation. A stale
-handle is an error, never a silent mis-click.
+h5i's own browser surface is deliberately three verbs: the control lock, and
+the viewer URL. Wrapping forty automation verbs would buy nothing but drift.
 
 ## 5. Architecture
 
@@ -185,45 +175,60 @@ volume:
 
 ```
 pod h5i-dev-<name>   (rootless, slirp4netns, no host net)
-├── agent      : agent image, /work rw, no X, runs Claude/Codex, build, tests, dev server
-├── desktop    : Xorg dummy + Chromium + h5i-view + browser control daemon, /work ro
-└── (host side): egress allowlist proxy, credential broker, viewer port on 127.0.0.1
+├── agent      : agent image, /work rw, runs Claude/Codex, build, tests, dev server
+├── browser    : headless Chrome + the agent-browser daemon, /work ro
+└── (host side): egress allowlist proxy, credential broker, viewer on 127.0.0.1
 ```
 
-Why two containers instead of one: the desktop image carries an X server and a
-browser, which is a large attack surface and a large image to force on every
+Why two containers instead of one: the browser image carries Chrome and its
+sandbox, which is a large attack surface and a large image to force on every
 agent box. Splitting keeps the agent image slim and lets a headless run skip the
-desktop entirely. The shared netns is what
-makes it work: the dev server on `localhost:3000` in `agent` is `localhost:3000`
-in `desktop`, with no port publishing and no host exposure.
+browser entirely. The shared netns is what makes it work: the dev server on
+`localhost:3000` in `agent` is `localhost:3000` in `browser`, with no port
+publishing and no host exposure.
+
+Note what is **not** in that list: no X server, no window manager, no
+GStreamer, no PulseAudio. The browser runs headless and the human viewer is fed
+by CDP screencast (7.), so the whole desktop stack disappears.
 
 Single container mode stays available as `--browser=inline` for hosts where a
 pod is not practical.
 
 ### 5.3 Browser control
 
-- Playwright drives Chromium **inside** `desktop`, attached to the same X
-  display the viewer captures, so the human sees exactly what the agent is
-  doing.
-- The CDP port is never published. `h5i browser` talks to a small in pod control
-  daemon over the pod's loopback, and that daemon owns the Playwright session.
-- Chromium runs with a fresh profile created in the box. No host profile, no
-  host cookie jar, no host extension.
+The automation itself is **agent-browser** (7.), running inside the `browser`
+container. h5i does not reimplement clicking. What h5i owns is everything
+around it:
+
+- The daemon and its CDP port stay on **pod loopback**. Nothing is published to
+  the host; the human viewer reaches the stream through an h5i-owned forward
+  with a per box token (5.9).
+- Chrome runs with a **fresh profile created in the box**. No host profile, no
+  host cookie jar, no host extension, no host history.
+- Chrome's egress goes through the same allowlist proxy as everything else,
+  with `NO_PROXY` covering pod loopback so the dev server is always reachable.
+  agent-browser's own `--allowed-domains` is set from the same policy, giving a
+  second, in-process layer.
+- **AI features off.** agent-browser's `chat` and the dashboard's AI panel send
+  page content to an external gateway. In a box that is an exfiltration path
+  with a friendly name, so `AI_GATEWAY_API_KEY` is never injected and `chat` is
+  refused by policy.
 - Downloads, uploads, and clipboard resolve inside the box. A download lands in
   `/work/.h5i/downloads` and is subject to the export gate like any other file.
-- Chromium's egress goes through the same allowlist proxy as everything else,
-  with `NO_PROXY` covering pod loopback so the dev server is always reachable.
+- Every browser command, plus console and network errors, lands in the receipt.
 
 ### 5.4 Control lock
 
-Neko's `/api/room/control/{request,release,take,give,reset}` is the right
-arbitration model, and we reimplement it (7.) rather than invent a different
-one. Borrowing the semantics is free; borrowing the Go runtime is not.
+Neither agent-browser nor CDP arbitrates between two clients: the agent's CLI
+session and a human typing into the stream can both dispatch input at the same
+moment, and the result is a mess neither of them can reason about. The lock is
+h5i's, and Neko's `request / release / take / give / reset` is the semantic
+model we copy.
 
 - The agent holds control by default.
 - A human interaction in the viewer takes control. Automation pauses at the next
-  command boundary, and `h5i browser <verb>` returns a typed "control held by
-  human" error rather than fighting for the pointer.
+  command boundary, and the next agent browser command returns a typed "control
+  held by human" error rather than fighting for the pointer.
 - On release, the agent must re snapshot before acting, because the DOM it
   remembers is stale.
 - Exactly one automation client per box. Multi agent shared control is out of
@@ -306,6 +311,27 @@ minute box, so caches are in scope rather than deferred.
 This keeps the property that matters: no mutable surface is shared between an
 agent box and anything else.
 
+### 5.9 The viewer forward
+
+agent-browser's stream server assumes a friendly localhost: connect to the
+WebSocket and you can both watch and type. Inside a pod that is fine, because
+nothing else is in the pod. It is not fine on a developer machine with a
+browser on it.
+
+So the port is never published. `h5i dev view` starts a small forward the host
+owns:
+
+- It binds `127.0.0.1` only, on a port h5i chose, and prints the URL.
+- Every connection presents a **per box token**, minted at box creation and
+  never written into the box.
+- It refuses cross origin WebSocket handshakes, so a page the human happens to
+  have open cannot reach into a running box.
+- It enforces the control lock (5.4) on the input direction: frames flow out
+  always, input flows in only for the holder.
+
+That is the whole trusted surface between the human and the box, and it is
+about as small as this can be made.
+
 ## 6. Distribution: the CLI is the product, the skill is the interface
 
 `h5i` is a single Rust binary with no server, no daemon, and no SaaS. That makes
@@ -379,46 +405,58 @@ What it buys beyond convenience:
 the binary yet. Same bytes, since both come from `skills/h5i/` in this repo, and
 a test asserts the embedded copy matches the checked in one.
 
-## 7. The viewer: Neko's core, reimplemented in Rust
+## 7. The browser layer: agent-browser, not a viewer of our own
 
-We do not vendor or fork Neko. We reimplement its core as a crate,
-`crates/h5i-view`, and treat the upstream Go project at `~/Ref/neko` as the
-reference design and the protocol source.
+An earlier draft of this roadmap had us reimplementing Neko's capture, encode
+and input core in Rust so the human could watch the box. That plan is dropped.
+**agent-browser** (Vercel Labs, Apache-2.0, `~/Ref/agent-browser`) already is
+both halves of what we needed, and it is a native Rust CLI:
 
-Why reimplement rather than pin an image:
+- **Automation.** `open / snapshot / click / fill / press / hover / select /
+  scroll / screenshot / eval / wait`, plus semantic locators (`find role button
+  click --name "Submit"`). Snapshots are accessibility trees with `@e2` style
+  refs, which is exactly the token-cheap shape a model needs. It speaks CDP
+  directly: no Playwright, no Node at runtime.
+- **The human viewer.** Every session runs a WebSocket server that streams the
+  viewport as JPEG frames (CDP `Page.startScreencast`) **and accepts input
+  events back** (`Input.dispatchMouseEvent` / `KeyEvent` / `TouchEvent`). Their
+  own words for it are "pair browsing where a human can watch and interact
+  alongside an AI agent". Frame quality, size and rate are tunable per box.
 
-- **One binary.** The desktop container would otherwise need Go, GStreamer,
-  PulseAudio, supervisord, and Neko's config surface. Our viewer is the same
-  `h5i` binary that is already in the image, so the desktop container is X plus
-  Chromium plus `h5i view serve`.
-- **Scope is much smaller than Neko's.** Neko is a multi user watch party with
-  audio, chat, emotes, member management, plugins, and file dialogs. We need one
-  screen, one human, one automation client, no audio, no accounts.
-- **The boundary is ours.** The viewer sits inside the security story: loopback
-  only, one token, no clipboard bridge unless asked. That is easier to guarantee
-  in our own code than to audit into someone else's.
+What that buys us, beyond not writing it:
 
-Crate shape:
+- **The desktop stack disappears.** No Xorg, no GStreamer, no PulseAudio, no
+  window manager, no supervisord. Headless Chrome plus one binary. The browser
+  container drops from a Neko-runtime-sized image to something an agent box can
+  reasonably carry, and the attack surface shrinks with it.
+- **One less protocol to design.** Frames and input already have a defined
+  WebSocket message format, and there is a reference client (their dashboard) to
+  check ours against.
+- **It matches our distribution model.** Native Rust, installable via cargo or
+  npm, and it ships a skill of its own.
 
-```
-crates/h5i-view/
-  capture.rs    # X11 capture, XShm plus XDamage dirty rects   (x11rb)
-  encode.rs     # M4: JPEG tiles. M5: VP8 via libvpx.
-  input.rs      # pointer and key injection                    (XTEST)
-  control.rs    # the control lock, Neko's request/take/give/release semantics
-  transport.rs  # M4: WebSocket frames. M5: WebRTC             (webrtc-rs)
-  serve.rs      # loopback HTTP plus WS, single token, no auth surface
-```
+What stays ours, and it is not small:
 
-Staging is deliberate: a dirty rect JPEG viewer over a WebSocket is a few
-hundred lines and is *enough* for "watch the agent work and take over a form".
-WebRTC and VP8 buy latency, and they can land after the loop is proven. What we
-borrow from Neko on day one is the protocol and control semantics, not the
-pipeline.
+1. **The boundary.** The stream port and the CDP port never leave pod loopback.
+   The viewer is reached through an h5i-owned forward with a per box token
+   (5.9). agent-browser assumes a friendly localhost; we do not.
+2. **The control lock** (5.4). Two clients can dispatch input at once and
+   nothing upstream arbitrates. That is ours to enforce.
+3. **Policy.** Fresh profile, proxy settings, `--allowed-domains` derived from
+   `net.egress`, AI chat disabled, downloads landing under the export gate.
+4. **Receipts.** Browser commands, console errors and failed requests are
+   evidence and belong in the receipt like any other observation.
 
-Explicitly not in scope: audio, multi user rooms, chat and emotes, member
-management, broadcast to RTMP, plugins, and the Neko web client. Our client is a
-single page served from the binary.
+The cost is a third-party dependency on the critical path. We pin a version,
+depend on the **CLI** surface rather than internal APIs, and keep the fallback
+in view: it is Apache-2.0 Rust, so vendoring or forking stays available if the
+project moves somewhere we cannot follow.
+
+**Neko is not gone, it is deferred.** CDP screencast shows the page viewport and
+nothing else. The day the product needs a real desktop — a native app under
+test, browser chrome, a file picker, devtools as a human sees them — an X plus
+streaming tier comes back, and Neko is the reference design for it. Nothing in
+the boundary, the lock or the receipt changes when it does.
 
 ## 8. Phases
 
@@ -445,16 +483,17 @@ that asserts denial rather than by inspection. Warm cache volumes and `h5i dev
 cache` land here, since a slow box is what makes people mount their host repo
 instead.
 
-**M4. Browser.** Desktop sidecar container, Playwright control daemon, the `h5i
-browser` verb set, accessibility snapshot format, console and network capture
-into the receipt. Headless: no viewer yet. Exit: an agent fixes a real UI bug
-using only `h5i browser` output as its feedback.
+**M4. Browser.** Browser sidecar container (headless Chrome + pinned
+agent-browser), profile isolation, proxy and `--allowed-domains` wiring from
+`net.egress`, AI chat refused, browser commands plus console and network errors
+into the receipt. No viewer yet. Exit: an agent fixes a real UI bug using only
+agent-browser output as its feedback.
 
-**M5. Viewer.** `crates/h5i-view` at the JPEG plus WebSocket stage, `h5i dev
-view`, loopback only port with a single token, control lock and the pause and
-resume protocol, session recording into the export. Exit: a human takes over
-mid run, finishes a form, hands control back, and the agent continues from a
-fresh snapshot.
+**M5. Viewer.** `h5i dev view` and `h5i browser url`: an h5i-owned forward of
+the agent-browser stream to loopback with a per box token, a minimal viewer
+page, the control lock and its pause and resume protocol, session recording
+into the export. Exit: a human takes over mid run, finishes a form, hands
+control back, and the agent continues from a fresh snapshot.
 
 **M6. Skill and story.** `skills/h5i/` written against the real surface, `h5i
 skill install` and its embedded copy, `npx skills add h5i-dev/h5i`, docs site
@@ -464,7 +503,9 @@ rootless Podman.
 A stub `h5i skill install` lands earlier, in M2, because from M2 on every box
 bootstrap wants to call it. M6 is when the content is written for real.
 
-**Post M6.** WebRTC and VP8 in `h5i-view`, microVM backend, macOS.
+**Post M6.** A full-desktop tier when something needs more than a page
+viewport (X plus streaming, Neko as the reference design), microVM backend,
+macOS.
 
 Full loop the demo has to show:
 
@@ -491,8 +532,13 @@ Being explicit about these is a feature, since the claim is a security claim.
   Airtight L3 or L4 belongs to the hardened tier.
 - **Linux first.** Rootless Podman on Linux and WSL2. macOS needs a VM layer,
   and it is not in these six phases.
-- **Cost.** A desktop sidecar is heavyweight in RAM and CPU. Headless boxes must
-  stay first class, and the browser must be opt in per box.
+- **Cost.** A Chrome sidecar is still real RAM and CPU, even headless. Headless
+  boxes must stay first class, and the browser must be opt in per box.
+- **The viewport is not a desktop.** CDP screencast shows the page. Native
+  dialogs, browser chrome and anything outside the tab are invisible until the
+  full-desktop tier lands.
+- **A dependency on the critical path.** agent-browser is someone else's
+  release cadence. Pinned, CLI-boundary, forkable, but not ours.
 
 ## 10. Decisions taken
 
@@ -505,10 +551,12 @@ Being explicit about these is a feature, since the claim is a security claim.
   `h5i skill install` writes it out, which is how it reaches the inside of a
   box. Version drift disappears, and the in box copy can be rendered with that
   box's actual policy (6.1).
-- **The viewer is our own Rust crate.** Neko is the reference, not a
-  dependency. Reimplementing the core keeps the desktop image to X plus
-  Chromium plus the `h5i` binary, and keeps the security boundary in code we
-  own (7.).
+- **The browser layer is agent-browser** (Apache-2.0, native Rust), for both
+  automation and the human viewport stream. We do not reimplement Neko's core,
+  and the whole X/GStreamer/PulseAudio stack drops out of the design. h5i keeps
+  the boundary, the control lock, the policy and the receipts (7.). A
+  full-desktop tier, with Neko as its reference, is deferred until something
+  actually needs more than a page viewport.
 - **Warm caches are in scope.** Read only per project cache volumes, written
   only by a dedicated refresh box with no agent in it (5.8).
 - **The receipt may be generated in the box**, provided the agent cannot rewrite
@@ -522,9 +570,13 @@ Being explicit about these is a feature, since the claim is a security claim.
 
 ## 11. Still open
 
-1. **Snapshot handle stability.** Handles invalidate on navigation, but SPAs
-   mutate the DOM without navigating. Re snapshot on every verb is safe and
-   chatty. A cheap DOM revision counter is better and needs a design.
+1. **Snapshot handle staleness across a takeover.** agent-browser's `@ref`
+   handles come from a snapshot; a human editing the page between the agent's
+   snapshot and its next click invalidates them, and the failure is a wrong
+   click rather than an error. The lock tells us exactly when that window
+   opens, so the fix is probably "force a re snapshot on release" plus a guard
+   on the first action after. Needs a design against the real upstream
+   behaviour, not a guess.
 2. **First buyer workflow.** The positioning is broad enough to become a
    platform pitch, which sells to nobody. The launch message should be one
    workflow: run untrusted or AI generated code, see it in a real browser, keep
