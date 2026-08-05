@@ -4521,3 +4521,49 @@ fn the_browser_profile_fails_closed_without_the_tooling() {
         );
     }
 }
+
+/// A cache that matches the project's lockfiles is offered to a box, and it is
+/// offered **read-only**: a cache a box could write would be a mutable surface
+/// shared between boxes, which is the thing the design refuses.
+#[test]
+fn a_matching_cache_is_mounted_read_only() {
+    if !process_tier_runnable() {
+        eprintln!("skipping: this host cannot run process-tier confinement");
+        return;
+    }
+    let r = Repo::new();
+    std::fs::write(r.dir.join("Cargo.lock"), "# pinned deps\n").unwrap();
+    git(&r.dir, &["add", "."]);
+    git(&r.dir, &["commit", "-m", "lockfile"]);
+
+    // No cache yet: a box would start cold, and `mounts` says so.
+    let out = out_str(&r.h5i_ok(&["dev", "cache", "mounts"]));
+    assert!(out.contains("cold"), "{out}");
+
+    // Materialize one by hand (refresh is not built yet) and it is offered.
+    let key_line = out_str(&r.h5i(&["dev", "cache", "refresh", "cargo"]));
+    let key = key_line
+        .split("(key ")
+        .nth(1)
+        .and_then(|s| s.split(')').next())
+        .expect("the refusal names the key it would use")
+        .to_string();
+    let cache = r.dir.join(".git/.h5i/cache/cargo").join(&key);
+    std::fs::create_dir_all(cache.join("cache")).unwrap();
+    std::fs::write(cache.join("marker"), b"cached").unwrap();
+
+    let out = out_str(&r.h5i_ok(&["dev", "cache", "mounts"]));
+    assert!(out.contains("~/.cargo/registry"), "{out}");
+    assert!(out.contains("read-only"), "{out}");
+
+    let listed = out_str(&r.h5i_ok(&["dev", "cache", "ls"]));
+    assert!(listed.contains("current"), "{listed}");
+
+    // Change the lockfile: the cache is still on disk but no longer matches, so
+    // it is listed as stale and no box is given it.
+    std::fs::write(r.dir.join("Cargo.lock"), "# different deps\n").unwrap();
+    let listed = out_str(&r.h5i_ok(&["dev", "cache", "ls"]));
+    assert!(listed.contains("stale"), "{listed}");
+    let out = out_str(&r.h5i_ok(&["dev", "cache", "mounts"]));
+    assert!(out.contains("cold"), "{out}");
+}

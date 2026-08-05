@@ -46,7 +46,7 @@ use crate::error::H5iError;
 pub use crate::sandbox_policy::{
     browser_read_grants, browser_tooling_present, AgentRuntime, AuditCapture, AuditPolicy,
     BoxGitPath, ExecOutcome, HomeBind, InteractiveOutcome, IsolationClaim, NetMode, PrivateBind,
-    PrivatePath, Profile, ResolvedPolicy, SecretGrant, DEFAULT_WALL,
+    PrivatePath, Profile, ResolvedPolicy, RoBind, SecretGrant, DEFAULT_WALL,
 };
 
 /// Repo-relative path of the checked-in policy file.
@@ -1640,6 +1640,19 @@ pub(crate) fn build_confined_command(
         })
         .collect();
 
+    // Read-only binds (warm dependency caches): the box sees the cache at the
+    // package manager's own path and cannot write it. Same private ns, before
+    // Landlock, bind then remount-ro.
+    let ro_bind_c: Vec<(std::ffi::CString, std::ffi::CString)> = policy
+        .ro_binds
+        .iter()
+        .filter_map(|b| {
+            let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
+            let tc = std::ffi::CString::new(b.target.as_os_str().as_encoded_bytes()).ok()?;
+            Some((bc, tc))
+        })
+        .collect();
+
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(&work);
 
@@ -1695,7 +1708,11 @@ pub(crate) fn build_confined_command(
             // (supervised is pidns=false, so it would otherwise have none). The
             // bind is contained: a mount ns under a fresh userns reduces shared
             // mounts to slave, so it never propagates to the host.
-            if !config_lock_c.is_empty() || !private_bind_c.is_empty() || !home_bind_c.is_empty() {
+            if !config_lock_c.is_empty()
+                || !private_bind_c.is_empty()
+                || !home_bind_c.is_empty()
+                || !ro_bind_c.is_empty()
+            {
                 flags |= libc::CLONE_NEWNS;
             }
             if libc::unshare(flags) != 0 {
@@ -1927,6 +1944,40 @@ pub(crate) fn build_confined_command(
                 {
                     return Err(Error::other(format!(
                         "home-state bind failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
+            }
+
+            // 1g. Read-only cache binds. A cache the box could write is a
+            //     mutable surface shared between boxes, which is exactly what
+            //     the design refuses; bind it, then remount read-only while we
+            //     still hold CAP_SYS_ADMIN in the userns. Fail-closed: a cache
+            //     we could bind but not seal is not offered at all.
+            for (backing, target) in &ro_bind_c {
+                if libc::mount(
+                    backing.as_ptr(),
+                    target.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_BIND,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    return Err(Error::other(format!(
+                        "cache bind failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
+                if libc::mount(
+                    std::ptr::null(),
+                    target.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    return Err(Error::other(format!(
+                        "cache remount-ro failed: {}",
                         Error::last_os_error()
                     )));
                 }

@@ -762,6 +762,9 @@ mod shm_tests {
 pub fn build_run_argv(
     rt: &Runtime,
     profile: &Profile,
+    // Warm dependency caches to expose read-only (roadmap 5.8). Separate from
+    // the profile because they are runtime state, never part of the digest.
+    ro_binds: &[crate::sandbox_policy::RoBind],
     work: &Path,
     image: &str,
     name: &str,
@@ -826,6 +829,17 @@ pub fn build_run_argv(
         "/work".into(),
         "--ipc=private".into(),
     ];
+    // Warm dependency caches, read-only at the package manager's own path. A
+    // cache a box could write is a mutable surface shared between boxes, which
+    // is the thing the design refuses.
+    for b in ro_binds {
+        a.push("--mount".into());
+        a.push(format!(
+            "type=bind,source={},target={},ro",
+            b.backing.display(),
+            b.target.display()
+        ));
+    }
     for rel in [".claude/settings.json", ".codex/config.toml"] {
         let source = work.join(rel);
         if source.exists() && !source.display().to_string().contains(',') {
@@ -1106,6 +1120,7 @@ pub fn run(
     let full = build_run_argv(
         &rt,
         p,
+        &policy.ro_binds,
         work,
         &image,
         &name,
@@ -1233,6 +1248,7 @@ pub fn run_interactive(
     let full = build_run_argv(
         &rt,
         p,
+        &policy.ro_binds,
         work,
         &image,
         &name,
@@ -1508,6 +1524,7 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
             Path::new("/work/dir"),
             "docker.io/library/debian:stable-slim",
             "h5i-test",
@@ -1556,6 +1573,7 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
             work,
             "img",
             "n",
@@ -1606,6 +1624,7 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
             Path::new("/w"),
             "img",
             "n",
@@ -1648,6 +1667,7 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
             Path::new("/w"),
             "img",
             "n",
@@ -1685,6 +1705,7 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
             Path::new("/work/dir"),
             "img",
             "n",
@@ -1717,6 +1738,7 @@ mod tests {
         let with = build_run_argv(
             &rt(),
             &p,
+            &[],
             Path::new("/w"),
             "img",
             "n",
@@ -1744,6 +1766,7 @@ mod tests {
         let without = build_run_argv(
             &rt(),
             &p,
+            &[],
             Path::new("/w"),
             "img",
             "n",
@@ -1780,6 +1803,7 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
             Path::new("/w"),
             "img",
             "n",
@@ -1808,6 +1832,7 @@ mod tests {
             build_run_argv(
                 &rt(),
                 &p,
+                &[],
                 Path::new("/w"),
                 "img",
                 "n",
@@ -1847,6 +1872,7 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
             Path::new("/w"),
             "img",
             "n",
@@ -1873,6 +1899,7 @@ mod tests {
         let plain = build_run_argv(
             &rt(),
             &p,
+            &[],
             Path::new("/w"),
             "img",
             "n",
@@ -1896,6 +1923,7 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
             Path::new("/w"),
             "img",
             "n",
@@ -1922,6 +1950,7 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
             Path::new("/w"),
             "img",
             "n",
@@ -2170,6 +2199,7 @@ mod tests {
         let argv = build_run_argv(
             &rt(),
             &p,
+            &[],
             Path::new("/w"),
             "img",
             "n",

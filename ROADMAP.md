@@ -333,16 +333,19 @@ minute box, so caches are in scope rather than deferred.
 - Mounted **read only** into the agent box at the ecosystem's cache path
   (`~/.cargo/registry`, `~/.npm`, `~/.cache/uv`, …). A read only cache is a
   correctness problem for nothing: every package manager falls back to fetching
-  what it cannot find. **Not built**: this needs a read-only variant of the
-  existing bind plumbing (`HomeBind` is read-write by construction) plus the
-  container `--mount ...,ro`. `h5i dev cache mounts` already resolves and prints
-  exactly what would be mounted where.
+  what it cannot find. **Built**: `ResolvedPolicy::ro_binds` (runtime-only, never
+  serialized, so it cannot move a pinned digest) is applied as `MS_BIND` then
+  `MS_REMOUNT | MS_RDONLY` on the kernel tiers and as `--mount ...,ro` at the
+  container tier. `h5i dev cache mounts` prints exactly what a box would get.
 - Writing to a cache happens only in a dedicated `h5i dev cache refresh` box,
   which runs the install step alone, with egress narrowed to the registry hosts
   and no agent inside it. The cache is populated by a build, never by an agent
-  session. **Not built**: it depends on the mount above, so `refresh` refuses
-  and says exactly what it would do rather than quietly populating a cache from
-  the host, which would be the wrong boundary.
+  session. **Not built**: the mount it depends on now exists, but the fetch step
+  still needs the ecosystem's cache path redirected into a writable location
+  for that one run (`CARGO_HOME` and friends), and the layout has to match what
+  the read-only mount later exposes. `refresh` refuses and prints the box it
+  would build rather than quietly populating a cache from the host, which would
+  be the wrong boundary.
 - `h5i dev cache ls|refresh|rm` are the whole surface. A box records which cache
   volume and which digest it used, in the receipt.
 
@@ -527,8 +530,8 @@ and `rebase` refuse and point at `export`. That is the boundary the phase was
 for, and it holds on every tier rather than only under a container volume.
 
 **M3. Agent in box hardening — partly done.** Warm caches: the store, the
-lockfile keying, the staleness rule and `h5i dev cache ls|mounts|rm` are built
-and tested; the read-only mount and therefore `refresh` are not (5.8).
+lockfile keying, the staleness rule, `h5i dev cache ls|mounts|rm` and the
+**read-only mount** on every tier are built and tested; `refresh` is not (5.8).
 **Remaining**: broker default on, the GitHub capability helper (a host-side
 verb set instead of a token in the box), and the credential-seed audit, each
 verified by a test that asserts denial rather than by inspection.

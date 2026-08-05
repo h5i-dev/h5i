@@ -14,7 +14,11 @@
 //!   back to fetching what it cannot find, so a read-only cache is a speed
 //!   feature with no correctness cost.
 //! * Writing to a cache happens only in `h5i dev cache refresh`, which runs the
-//!   ecosystem's fetch step alone, in a box with no agent in it.
+//!   ecosystem's fetch step alone, in a box with no agent in it. That command
+//!   is **not built yet**: the read-only mount below is, so a cache that exists
+//!   is used, but nothing here populates one. `refresh` refuses and says so
+//!   rather than filling the cache from the host, which would be the wrong
+//!   boundary.
 //!
 //! The result is that no mutable surface is ever shared between an agent box
 //! and anything else.

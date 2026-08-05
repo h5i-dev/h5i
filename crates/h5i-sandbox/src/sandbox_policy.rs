@@ -279,6 +279,14 @@ pub struct PrivateBind {
 /// [`PrivateBind`] the target is an absolute host path (the real `$HOME/…`), not a
 /// workspace-relative one. Computed at run time in `env::prepare_home_state`.
 #[derive(Debug, Clone)]
+pub struct RoBind {
+    /// Host directory the box reads through the bind.
+    pub backing: PathBuf,
+    /// Absolute path inside the box the backing shadows.
+    pub target: PathBuf,
+}
+
+#[derive(Debug, Clone)]
 pub struct HomeBind {
     /// Host backing copy under the env's `home/` tree (distinct inode per env).
     pub backing: PathBuf,
@@ -782,6 +790,14 @@ pub struct ResolvedPolicy {
     /// read-only rootfs never mounts host HOME, so there is no race to close there).
     #[serde(skip)]
     pub home_binds: Vec<HomeBind>,
+    /// Runtime-only **read-only** binds — never serialized, so they cannot move
+    /// a pinned policy digest. Each shadows a path inside the box with a host
+    /// directory the box may read and never write: today the warm dependency
+    /// caches (roadmap 5.8). Applied as `MS_BIND` followed by a
+    /// `MS_REMOUNT | MS_RDONLY`, in the same private mount namespace and before
+    /// Landlock, exactly like the interactive config lockdown.
+    #[serde(skip)]
+    pub ro_binds: Vec<RoBind>,
     /// Runtime-only: enforce the worktree (`$WORK`) as **read-only** — a
     /// read-only observer session (`env shell --readonly`). Never serialized (it
     /// is a per-invocation enforcement mode, not policy): a readonly session and
@@ -814,6 +830,7 @@ impl ResolvedPolicy {
             env_inbox: None,
             private_binds: Vec::new(),
             home_binds: Vec::new(),
+            ro_binds: Vec::new(),
             work_readonly: false,
             user_egress_allow: Vec::new(),
         }

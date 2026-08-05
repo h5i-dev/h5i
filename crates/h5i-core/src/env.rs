@@ -2292,6 +2292,34 @@ pub fn write_inbox_cursor(
 /// moves a staged record into the log, and it stamps the lane (`tee-shim`,
 /// `inbox-capture`) so box-claimed evidence stays distinguishable from
 /// host-observed evidence forever.
+/// Offer this project's warm dependency caches to the box, read-only.
+///
+/// Only caches whose key matches the project's current lockfiles are offered
+/// (`cache::mounts_for`), and the bind is read-only on every tier, so a cache
+/// is never a mutable surface shared between boxes. `$HOME` inside the box is
+/// the operator's home path on the kernel tiers, so `~`-relative targets are
+/// expanded here rather than inside the box.
+fn prepare_cache_mounts(h5i_root: &Path, workdir: &Path, policy: &mut ResolvedPolicy) {
+    let home = std::env::var("HOME").ok().filter(|h| !h.is_empty());
+    for (host, target) in crate::cache::mounts_for(h5i_root, workdir) {
+        let target = match target.strip_prefix("~/") {
+            Some(rest) => match &home {
+                Some(h) => PathBuf::from(h).join(rest),
+                // No HOME to anchor a `~` path against: skip rather than guess.
+                None => continue,
+            },
+            None => PathBuf::from(&target),
+        };
+        // Landlock still governs reads, so the backing path needs a read grant
+        // as well as the bind; without it the box would see an unreadable mount.
+        policy.profile.fs_read.push(host.display().to_string());
+        policy.ro_binds.push(sandbox::RoBind {
+            backing: host,
+            target,
+        });
+    }
+}
+
 fn prepare_env_capture_spool(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -2996,6 +3024,7 @@ pub fn run(
         None,
     )?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
+    prepare_cache_mounts(h5i_root, &work, &mut policy);
     let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
     // Host-side `h5i dev allow` extras + the explained-egress line.
@@ -3309,6 +3338,7 @@ pub fn shell(
         prepare_env_capture_spool(h5i_root, m, &mut policy)?
     };
     let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
+    prepare_cache_mounts(h5i_root, &work, &mut policy);
     let cargo_env = match &session_root {
         // `$WORK` is read-only for an observer, so cargo's default target dir
         // (`$WORK/.h5i/cargo-target`) is unwritable — point it at the scratch.
