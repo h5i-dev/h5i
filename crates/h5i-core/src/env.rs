@@ -7183,6 +7183,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("repo"); // == commondir().parent()
         let repo = git2::Repository::init(&root).unwrap();
+        // libgit2 resolves symlinks when it records the repository path, so
+        // `commondir()` comes back fully realpath'd. On Linux that changes
+        // nothing, but macOS puts the temp dir under `/var/folders/...`, and
+        // `/var` is a firmlink to `/private/var` — so the grant would read
+        // `/private/var/...` while an expectation built from `dir.path()` says
+        // `/var/...`, and the string compare below would fail for a reason that
+        // has nothing to do with the grant being right. Compare like for like.
+        let root = root.canonicalize().unwrap();
         std::fs::create_dir_all(root.join(".codex")).unwrap();
         std::fs::write(root.join(".codex/config.toml"), "[hooks]\n").unwrap();
         std::fs::create_dir_all(root.join(".claude")).unwrap();
