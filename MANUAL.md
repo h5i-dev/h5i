@@ -571,8 +571,11 @@ Being explicit about these is a feature, since the claim is a security claim.
 - **Two kernel mechanisms, not one.** Linux confines with Landlock, seccomp and
   namespaces. macOS confines with Seatbelt, which is default deny across
   filesystem, network, mach and sysctl in one policy, and which (unlike
-  Landlock) can subtract, so `fs.deny` and the agent config lock are enforced
-  there rather than linted. Two things are genuinely absent on macOS: there is
+  Landlock) can subtract a child from a granted parent, so the agent config lock
+  is one rule there instead of a bind mount. That does not make `fs.deny`
+  stronger on macOS: a denied path inside a granted parent is refused as a
+  policy on every platform, so what is left is already outside every grant.
+  Two things are genuinely absent on macOS: there is
   no syscall filter, because Darwin has no seccomp equivalent; and there is no
   memory cap, because Darwin has no cgroups and does not enforce `RLIMIT_AS`
   against an mmap'd heap. `h5i box probe` names the mechanism and both gaps.

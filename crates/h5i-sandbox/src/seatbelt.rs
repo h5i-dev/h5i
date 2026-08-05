@@ -12,12 +12,23 @@
 //! filesystem, network, mach, sysctl, process — and, unlike Landlock, it can
 //! **subtract**: a `(deny …)` rule after an `(allow …)` genuinely removes access.
 //!
+//! Be precise about what that subtraction buys, because it is easy to overstate.
+//! It does **not** make `fs.deny` more powerful here: `validate_profile` already
+//! refuses, on every platform, any policy whose granted parent contains a denied
+//! child, so a surviving `fs.deny` entry sits outside every grant and
+//! `(deny default)` covers it regardless. The rules this module emits for it are
+//! defence in depth, not a new capability. Where subtraction genuinely earns its
+//! keep is the **agent-config lockdown**: `$WORK` is granted read-write and
+//! `$WORK/.claude` must still be unwritable. Landlock cannot express that at all,
+//! which is why the Linux path needs a bind plus a remount-ro inside a private
+//! mount namespace to get it; here it is one rule.
+//!
 //! So the mapping is not one-to-one, and this module never pretends it is:
 //!
 //! | property                  | Linux                          | macOS (here)                                   |
 //! |---------------------------|--------------------------------|------------------------------------------------|
 //! | filesystem allowlist      | Landlock                       | SBPL `(deny default)` + `file-read*`/`file-write*` |
-//! | filesystem **deny**       | lint only (Landlock can't)     | **enforced** — `(deny …)` wins over an allow    |
+//! | subtracting from a grant  | impossible (bind + remount-ro) | one `(deny …)` rule — last match wins           |
 //! | syscall deny-list         | seccomp-bpf                    | **absent** (no equivalent)                      |
 //! | egress allowlist          | netns + nftables + slirp4netns | loopback-only + host allowlist proxy            |
 //! | net deny                  | empty network namespace        | `(deny network*)`                               |
@@ -488,12 +499,15 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     }
     s.push_str("(deny process-info* (target others))\n");
 
-    // `fs.deny` is a lint on Linux because Landlock cannot subtract. Seatbelt
-    // can, so on macOS these are real rules — the one place the macOS tier is
-    // strictly stronger than its Linux counterpart.
+    // Defence in depth, not a new capability: `validate_profile` refuses a
+    // policy whose granted parent contains a denied child, so anything left in
+    // `fs.deny` is already outside every grant and `(deny default)` covers it.
+    // Emitting it anyway costs nothing and means the profile states the intent
+    // explicitly, so a reader of the generated SBPL sees the same list the
+    // policy does.
     let denies: Vec<String> = p.fs_deny.iter().filter_map(|d| expand_home(d, home)).collect();
     if let Some(r) = rule("deny file-read* file-write*", "subpath", &denies) {
-        s.push_str(";; profile fs.deny (enforced here; a lint-only list on Linux)\n");
+        s.push_str(";; profile fs.deny (restated; already outside every grant)\n");
         s.push_str(&r);
         s.push('\n');
     }
@@ -1394,6 +1408,193 @@ mod tests {
         assert!(parens_balanced("(allow (foo \"a)b\"))"));
         assert!(!parens_balanced("(allow (foo)"));
         assert!(!parens_balanced("(allow))"));
+    }
+
+    // ─── functional (macOS only) ─────────────────────────────────────────────
+    //
+    // Everything above tests the profile *text*. These four run commands under
+    // the real generated profile and check what the kernel actually did, which
+    // is the only evidence that any of this confines anything. They exist
+    // because a profile that SBPL rejects, or one that over-restricts until
+    // nothing execs, would pass every string test in this file.
+    //
+    // Every denial below is paired with a positive control in the *same* run.
+    // Without that, a sandbox so broken that nothing runs at all reads as a
+    // clean pass — the failure mode most likely to be mistaken for success.
+
+    /// Shared setup: a worktree and the built-in `process` policy over it.
+    #[cfg(target_os = "macos")]
+    fn functional_env() -> (tempfile::TempDir, PathBuf, ResolvedPolicy) {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let pol = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            crate::sandbox_policy::Profile::builtin("seatbelt-fn", IsolationClaim::Process),
+        );
+        (tmp, work, pol)
+    }
+
+    /// Run `script` under the real confinement and return its stdout+stderr.
+    #[cfg(target_os = "macos")]
+    fn run_confined_sh(pol: &ResolvedPolicy, work: &Path, script: &str) -> (Option<i32>, String) {
+        let out = crate::sandbox::run(
+            pol,
+            work,
+            &["/bin/sh".to_string(), "-c".to_string(), script.to_string()],
+        )
+        .expect("confined run should not error out");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.exit_code, text)
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn a_confined_command_actually_execs_under_the_real_profile() {
+        // The load-bearing one. If SBPL rejects the generated profile, or the
+        // grants miss something dyld needs, nothing runs at all and every other
+        // "denied" assertion here would be true for the wrong reason.
+        if !probe().usable() {
+            eprintln!("SKIP a_confined_command_actually_execs: Seatbelt unusable on this host");
+            return;
+        }
+        let (_tmp, work, pol) = functional_env();
+        let (code, text) = run_confined_sh(&pol, &work, "echo alive");
+        assert_eq!(code, Some(0), "confined /bin/sh did not run cleanly: {text}");
+        assert!(text.contains("alive"), "no output from the confined shell: {text}");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn writes_are_confined_to_the_worktree() {
+        if !probe().usable() {
+            eprintln!("SKIP writes_are_confined_to_the_worktree: Seatbelt unusable");
+            return;
+        }
+        let (tmp, work, pol) = functional_env();
+        // A sibling of $WORK: no grant names it, and it is not under /tmp (macOS
+        // temp dirs live in /var/folders), so nothing else can be granting it.
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+
+        let (_code, text) = run_confined_sh(
+            &pol,
+            &work,
+            &format!(
+                "echo in > inside.txt && echo INSIDE-OK; \
+                 echo out > '{}/outside.txt' 2>/dev/null && echo OUTSIDE-WROTE || echo OUTSIDE-DENIED",
+                outside.display()
+            ),
+        );
+        // Positive control first: the box can write where it is supposed to.
+        assert!(text.contains("INSIDE-OK"), "worktree must stay writable: {text}");
+        assert!(work.join("inside.txt").exists(), "the write did not land: {text}");
+        // ...and cannot write where it is not.
+        assert!(text.contains("OUTSIDE-DENIED"), "write outside $WORK was allowed: {text}");
+        assert!(
+            !outside.join("outside.txt").exists(),
+            "a file appeared outside $WORK — the filesystem boundary did not hold"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn net_deny_blocks_outbound_even_on_loopback() {
+        if !probe().usable() {
+            eprintln!("SKIP net_deny_blocks_outbound_even_on_loopback: Seatbelt unusable");
+            return;
+        }
+        let nc = Path::new("/usr/bin/nc");
+        if !nc.is_file() {
+            eprintln!("SKIP net_deny_blocks_outbound_even_on_loopback: no /usr/bin/nc");
+            return;
+        }
+        // A listener on host loopback. Deliberately loopback rather than a real
+        // host: it needs no network in CI, and it is the case that actually
+        // differs from Linux (a macOS box shares the host's loopback, so the
+        // profile has to deny dialing it — a Linux box gets a private one).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        // Positive control, unconfined: the listener really is reachable, so a
+        // later refusal means the sandbox refused it and not that the test
+        // pointed at a dead port.
+        let reachable = std::process::Command::new(nc)
+            .args(["-z", "-w", "2", "127.0.0.1", &port.to_string()])
+            .status()
+            .expect("run nc unconfined");
+        assert!(
+            reachable.success(),
+            "positive control failed: the listener must be reachable when unconfined"
+        );
+
+        let (_tmp, work, pol) = functional_env();
+        assert_eq!(pol.profile.net_mode, NetMode::Deny);
+        let (_code, text) = run_confined_sh(
+            &pol,
+            &work,
+            &format!(
+                "echo RAN; /usr/bin/nc -z -w 2 127.0.0.1 {port} && echo CONNECTED || echo BLOCKED"
+            ),
+        );
+        // RAN proves the shell executed, so BLOCKED means the connect was
+        // refused rather than the whole command failing to start.
+        assert!(text.contains("RAN"), "the confined shell did not run: {text}");
+        assert!(
+            text.contains("BLOCKED") && !text.contains("CONNECTED"),
+            "net.mode=deny let the box dial host loopback: {text}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn config_lock_subtracts_from_the_granted_worktree() {
+        // The one place Seatbelt's ability to subtract genuinely buys something
+        // Landlock cannot express: $WORK is granted read-write, and
+        // $WORK/.claude must still be unwritable. Linux needs a bind plus a
+        // remount-ro in a private mount namespace for this; here it is a rule,
+        // and this proves the rule actually binds.
+        if !probe().usable() {
+            eprintln!("SKIP config_lock_subtracts_from_the_granted_worktree: Seatbelt unusable");
+            return;
+        }
+        let (_tmp, work, pol) = functional_env();
+        std::fs::create_dir_all(work.join(".claude")).unwrap();
+
+        let opts = SeatbeltOptions {
+            proxy_ports: Vec::new(),
+            interactive: true, // interactive sessions get the config lockdown
+            home: std::env::var_os("HOME").map(PathBuf::from),
+        };
+        let script = "echo x > sibling.txt && echo SIBLING-OK; \
+                      echo y > .claude/settings.local.json 2>/dev/null && echo LOCK-BYPASSED \
+                      || echo LOCK-HELD";
+        let out = run(
+            &pol,
+            &work,
+            &["/bin/sh".to_string(), "-c".to_string(), script.to_string()],
+            &[],
+            &opts,
+        )
+        .expect("confined run should not error out");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // Control: the rest of the worktree is still writable, so the lock is a
+        // subtraction and not a blanket read-only worktree.
+        assert!(text.contains("SIBLING-OK"), "worktree must stay writable: {text}");
+        assert!(
+            text.contains("LOCK-HELD"),
+            "the agent could create $WORK/.claude/settings.local.json — the config lock did not \
+             hold, and an in-box agent could disable the observation hook: {text}"
+        );
+        assert!(!work.join(".claude/settings.local.json").exists());
     }
 
     #[test]
