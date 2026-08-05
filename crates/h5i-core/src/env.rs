@@ -82,11 +82,6 @@ const RUN_LOCK_FILE: &str = "run.lock";
 #[cfg(unix)] // only the unix-gated RunLock references this
 const OBSERVERS_LOCK_FILE: &str = "observers.lock";
 
-#[cfg(not(unix))]
-fn acquire_drain_lock(_env_dir: &Path) -> Result<Option<std::fs::File>, H5iError> {
-    Ok(None)
-}
-
 /// Advisory `flock`s that coordinate concurrent work on one environment. The
 /// kernel releases a lock when the holding process exits — including on a crash
 /// — so there are never stale locks to clear.
