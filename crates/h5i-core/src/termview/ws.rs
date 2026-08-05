@@ -409,8 +409,8 @@ mod tests {
 
     #[test]
     fn frame_lengths_use_the_shortest_encoding_at_each_boundary() {
-        assert_eq!(encode_frame(opcode::TEXT, &vec![0u8; 125])[1] & 0x7f, 125);
-        assert_eq!(encode_frame(opcode::TEXT, &vec![0u8; 126])[1] & 0x7f, 126);
+        assert_eq!(encode_frame(opcode::TEXT, &[0u8; 125])[1] & 0x7f, 125);
+        assert_eq!(encode_frame(opcode::TEXT, &[0u8; 126])[1] & 0x7f, 126);
         assert_eq!(
             encode_frame(opcode::TEXT, &vec![0u8; 65535])[1] & 0x7f,
             126,

@@ -92,6 +92,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(600);
 const TICK: Duration = Duration::from_millis(250);
 
 /// Rows the viewer keeps for itself: the status line and a blank separator.
+#[cfg(unix)]
 const CHROME_ROWS: u16 = 2;
 
 /// What a viewer needs to know to attach to one box.
@@ -314,6 +315,7 @@ fn probe_graphics(fd: std::os::fd::RawFd) -> Result<(), H5iError> {
     Err(unsupported())
 }
 
+#[cfg(unix)]
 fn unsupported() -> H5iError {
     H5iError::Metadata(
         "this terminal does not support the Kitty graphics protocol, so there is nowhere \
@@ -681,7 +683,9 @@ impl<'a> App<'a> {
     }
 }
 
-#[cfg(test)]
+// Unix-gated with the code they cover: on a target with no terminal half there
+// is nothing here to test.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -690,8 +694,7 @@ mod tests {
         // The page starts below the status line and its separator. If this ever
         // became 0 the page would be drawn over the one row it must never be
         // able to touch.
-        assert_eq!(CHROME_ROWS, 2);
-        assert!(CHROME_ROWS >= 1, "row one belongs to the status line");
+        assert_eq!(CHROME_ROWS, 2, "row one is the status line, row two separates it");
     }
 
     #[test]
