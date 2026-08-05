@@ -11,7 +11,7 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">Browser-enabled Sandbox for AI agents</h1>
+<h1 align="center">Auditable workspaces for AI coding agent</h1>
 
 **h5i** (pronounced *high-five*) gives a coding agent full autonomy inside a
 throwaway box, and gives your machine nothing to lose. The code, the toolchain,
