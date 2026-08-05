@@ -1,18 +1,24 @@
 # h5i demo film
 
-The h5i product video (~1:14), built as a deterministic HTML timeline and
-rendered to mp4.
+The h5i product video (~1:18), built as a deterministic HTML timeline and
+rendered to mp4. Embedded on the front page hero (`docs/index.html`) as an
+`<iframe src="demo/?embed">`, which hides the scrub controls and loops.
 
 ## The film — `index.html`
 
-Short and punchy, for landing pages and social. Structure: pain first
-(agent editing production code, Git only shows the diff), product line by 0:09,
-then the sandbox as the star — three BLOCKED cards (fs / net / refs) — followed
-by "The agent still finishes the task. Only the reviewed diff is merged.",
-"Every diff gets a receipt." with a checked Prompt/Commands/Tests/Denials/Diff
-list, ten seconds of scale (Claude + Codex in parallel), and the closing line
-"Git tracks the diff. h5i tracks the run." CTA is GitHub + h5i.dev (no
-`curl | sh` — the hook frames piping scripts to a shell as the threat).
+The first buyer workflow, compressed: run a pull request you do not trust,
+keep it off your machine. Five scenes. The hook (0:00): an AI-written PR is
+checked out on a bare host, `npm install` fires a postinstall, and the keys
+leave the laptop. The box (0:15): `h5i box --pr 214`, the agent runs with
+permissions off inside the boundary, the same postinstall hits two denial
+cards (fs, net), then the agent starts the dev server and drives agent-browser
+through the signup flow. The viewport (0:44): `h5i box view` next to a mock
+browser window, `h5i browser take` flips the control pill to "you" and a human
+click lands, `release` hands back. The output gate (0:58): `h5i box export`
+with the patch/report/screenshot/receipt checklist and the denied-egress line.
+Close (1:10): "Run code you don't trust. Keep it off your machine." CTA is
+GitHub + h5i.dev (no `curl | sh` in the close: the hook frames running
+untrusted code as the threat).
 
 ## Files
 
@@ -46,12 +52,13 @@ node render.mjs --stills 40,70           # PNG frames for eyeballing a moment
 
 All content lives in `index.html`:
 
-- Scene scripts (`evHookM`, `evEnvM`, `evRecM`, …) are arrays of
+- Scene scripts (`evHookM`, `evBoxM`, `evViewM`, `evGateM`) are arrays of
   `{at, cmd}` / `{at, out:[html lines]}` events, times in seconds local to the
   scene.
 - Scene boundaries and eyebrow labels are in the `SCENES` table; the total
-  runtime is `TOTAL`.
-- Evidence-rail chips are in `RAIL` (absolute seconds).
+  runtime is `TOTAL` (also update the hardcoded `/ 1:18` in the time display).
+- Receipts-rail chips are in `RAIL` (absolute seconds); the denial cards on
+  the box diagram are in `BLOCKS` (seconds local to the box scene).
 
 Because rendering is deterministic, re-rendering after an edit reproduces
 every unchanged frame exactly.

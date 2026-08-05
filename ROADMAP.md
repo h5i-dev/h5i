@@ -139,6 +139,11 @@ h5i skill install|show|path      # write or print the embedded agent skill
 `h5i dev *` and `h5i env *` stay as hidden aliases through one release, then
 are removed. The command is `box` because that is the noun everything else uses.
 
+The non-interactive lifecycle verbs (create, run, export, ls, status, and the
+rest of the reporting set) take `--json` and emit a stable envelope on stdout,
+human notes on stderr: that contract is the programmable surface an SDK would
+wrap, and it is specified in 6.2.
+
 **Driving the browser is `agent-browser`, not `h5i`** (7.). Inside the box the
 agent runs it directly:
 
@@ -511,6 +516,55 @@ What it buys beyond convenience:
 the binary yet. Same bytes, since both come from `skills/h5i/` in this repo, and
 a test asserts the embedded copy matches the checked in one.
 
+### 6.2 The programmable surface: a JSON contract first, an SDK second
+
+The model is `remote-agent-browser` (Vercel Labs, `~/Ref/remote-agent-browser`).
+Its whole SDK is about 1,200 lines of TypeScript: spawn a command in the
+sandbox, parse the JSON envelope, hand back a typed result. The programmable
+experience developers like lives almost entirely in the CLI's machine readable
+output, not in the wrapper. That is the order of work here too: the contract is
+the product, the SDK is packaging.
+
+**No daemon.** The SDK spawns the `h5i` binary as a subprocess and parses
+`--json` output. This keeps the "one Rust binary, no server" decision intact,
+and it does not conflict with the No MCP decision: MCP was cut because it put a
+host side *agent* inside the box's interface. An SDK puts the developer's
+*orchestrator* on the host and the agent in the box, which is the direction
+`box run` already serves.
+
+**The JSON contract.** Every lifecycle verb an SDK would call takes `--json`
+and emits a stable envelope on stdout, with human notes on stderr. As of
+2026-08-05 that covers the full loop: `create` (the manifest, same shape as
+`status --json`, plus the workspace path), `run` (box id, policy digest,
+capture id, exit code, timing, peak rss, the recorded redacted output, and the
+full receipt record; the exit code still passes through), `export` (the export
+summary: files changed, patch bytes, receipts, denied egress count,
+redactions), plus the verbs that already had it: `list`, `status`, `diff`,
+`log`, `inspect`, `compare`, `capabilities`, `doctor`, `secrets`, `ports`,
+`allow`, and `--version`. This is scriptable today from shell, CI, or an
+agent's Bash tool, with no SDK at all.
+
+**The SDK mapping is mechanical.** `create()` is `box create --json`, `exec()`
+is `box run --json`, `browser.run([...])` is `box run -- agent-browser ...`
+(the daemon is already in the box, so no new host-to-box channel exists),
+`diff()` is `box diff --json`, `export()` is `box export --json`, `events()` is
+`box log --json`, `close()` is `box rm`. One deliberate omission: an
+`agent.run(prompt)` that shells out to a per-call headless `claude -p` is the
+wrong primitive. If the SDK grows an agent handle it should hold a resident
+session (a `box shell` it can send to and wait on), and the first release can
+ship without it: exec, browser, diff, and export are enough for the derivative
+projects that matter (PR screenshot bots, dependency evaluators, visual
+regression CI, browser-use evals).
+
+**Sequencing.** The contract lands now. `@h5i/sdk` (TypeScript, a postinstall
+that fetches the release binary the way esbuild and biome do) waits until the
+first buyer workflow has been demonstrated end to end, because the SDK
+amplifies a story that has to exist first. Python follows demand, not the
+roadmap. The acquisition logic: every third party repository whose README says
+`npm install @h5i/sdk` is distribution, and the closest fit between the
+boundary's value and an SDK consumer is CI (run an untrusted PR, build it,
+drive it in the box's browser, post the screenshots and the receipt).
+
 ## 7. The browser layer: agent-browser, not a viewer of our own
 
 An earlier draft of this roadmap had us reimplementing Neko's capture, encode
@@ -845,6 +899,11 @@ Being explicit about these is a feature, since the claim is a security claim.
   and it is pinned in the digest. Granting it tier-wide to make one daemon work
   would have widened every box to buy one; the `browser` profile asks, and
   nothing else does.
+- **The programmable surface is the CLI's JSON contract, not a daemon.** An SDK
+  is a thin subprocess wrapper around the binary (the `remote-agent-browser`
+  shape, about 1,200 lines), published only after the first buyer workflow is
+  demonstrated. `create`/`run`/`export` gained `--json` on 2026-08-05, which
+  closes the loop the contract needs (6.2).
 - **No MCP.** `mcp.rs` and the `h5i_env_*` tools go with the rest. The premise
   of MCP here was a host side agent reaching into a box, which is the shape this
   product exists to eliminate. The agent is inside the box, and inside the box
@@ -872,3 +931,8 @@ Being explicit about these is a feature, since the claim is a security claim.
    platform pitch, which sells to nobody. The launch message should be one
    workflow: run untrusted or AI generated code, see it in a real browser, keep
    it off your machine.
+3. **Publishing `@h5i/sdk`.** Blocked on item 2 by decision, not by code: the
+   JSON contract it wraps is complete (6.2). First release scope is
+   `create`/`exec`/`browser`/`diff`/`export`/`close`, TypeScript only, binary
+   fetched on postinstall. No `agent.run()` until the resident session shape is
+   settled, and Python only when someone asks for it.

@@ -109,6 +109,10 @@ pub struct BoxArgs {
     /// Container base image for isolation=container.
     #[arg(long)]
     image: Option<String>,
+
+    /// Emit the created box's manifest as JSON instead of the human summary.
+    #[arg(long)]
+    json: bool,
 }
 
 impl BoxArgs {
@@ -166,6 +170,7 @@ impl BoxArgs {
             image: self.image,
             backend: "auto".into(),
             audit: "signal".into(),
+            json: self.json,
         })
     }
 }
@@ -425,6 +430,15 @@ mod tests {
         assert_eq!(name, "viadev");
         // `env` keeps only the verb form (it never had the source short form).
         assert!(dispatch(&["h5i", "env", "ls"]).is_ok());
+    }
+
+    #[test]
+    fn the_short_form_carries_json() {
+        match dispatch(&["h5i", "box", "--new", "--name", "scratch", "--json"]) {
+            Ok(cli::boxes::BoxCommands::Create { json, .. }) => assert!(json),
+            Ok(_) => panic!("expected Create"),
+            Err(e) => panic!("dispatch failed: {e}"),
+        }
     }
 
     #[test]

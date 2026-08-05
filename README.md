@@ -127,10 +127,6 @@ says which, and the rewrite is tracked there.
   it binds proxy-respecting tooling only. The `supervised` tier enforces at
   L3/L4 and does not have that hole.
 
-## Acknowledgements
-
-See [`NOTICE`](NOTICE) for attribution.
-
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
