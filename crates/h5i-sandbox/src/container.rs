@@ -2100,6 +2100,34 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
 
+        // Settle a possible ETXTBSY before the assertions start.
+        //
+        // We just wrote a file and are about to exec it. `cargo test` runs the
+        // other tests in this binary on sibling threads, and any of them that
+        // spawns a process forks a child which inherits every open descriptor —
+        // including, if the fork lands in the window while `fs::write` still
+        // holds it, the write handle to this very file. Linux then refuses to
+        // exec it with ETXTBSY until that child reaches its own exec, a window
+        // of milliseconds. That made this test fail on CI for a reason that has
+        // nothing to do with the shim.
+        //
+        // `H5I_SHIM=1` marks the run as nested, which the shim passes through
+        // unobserved, so this warm-up writes no spool entry and the spool
+        // assertions below still count only what they mean to.
+        for attempt in 0..100 {
+            match std::process::Command::new(&shim)
+                .args(["-c", ":"])
+                .env("H5I_SHIM", "1")
+                .output()
+            {
+                Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) => {
+                    assert!(attempt < 99, "shim stayed ETXTBSY for 2s");
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                _ => break,
+            }
+        }
+
         // Observed: `-c`, no TTY (Command pipes) → tee + spool + exit code.
         let out = std::process::Command::new(&shim)
             .args(["-c", "echo visible; echo err-line >&2; exit 3"])
