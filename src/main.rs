@@ -62,10 +62,15 @@ pub struct DevArgs {
     #[command(subcommand)]
     action: Option<cli::dev::DevCommands>,
 
-    /// Where the code comes from: `.` for this repository (the default), or a
-    /// GitHub pull request (number, #number, or URL).
+    /// Where the code comes from: `.` for this repository (the default), a
+    /// GitHub pull request (number, #number, or URL), or a repository URL to
+    /// copy into the box.
     #[arg(value_name = "SOURCE")]
     source: Option<String>,
+
+    /// Start from an empty box instead of any source.
+    #[arg(long, conflicts_with = "source")]
+    new: bool,
 
     /// Name for the box. Derived from the source when omitted.
     #[arg(long)]
@@ -100,24 +105,33 @@ impl DevArgs {
             return Ok(action);
         }
         let source = self.source.unwrap_or_else(|| ".".to_string());
-        let pr = cli::dev::pr_spec(&source);
-        if pr.is_none() && source != "." {
-            anyhow::bail!(
-                "unrecognized source '{source}'.\n  \
-                 Pass `.` for this repository, or a pull request (number, #number, or URL).\n  \
-                 Cloning an external repo URL and starting from an empty box are not wired \
-                 up yet."
-            );
-        }
-        let name = match (self.name, &pr) {
-            (Some(n), _) => n,
-            (None, Some(spec)) => format!("pr-{spec}"),
-            (None, None) => cli::dev::default_box_name()?,
+        let (pr, clone) = if self.new {
+            (None, None)
+        } else {
+            match cli::dev::pr_spec(&source) {
+                Some(spec) => (Some(spec), None),
+                None if source == "." => (None, None),
+                None if cli::dev::looks_like_repo_url(&source) => (None, Some(source.clone())),
+                None => anyhow::bail!(
+                    "unrecognized source '{source}'.\n  \
+                     Pass `.` for this repository, a pull request (number, #number, or URL), \
+                     a repository URL, or --new for an empty box."
+                ),
+            }
+        };
+        let name = match (self.name, &pr, &clone) {
+            (Some(n), _, _) => n,
+            (None, Some(spec), _) => format!("pr-{spec}"),
+            (None, None, Some(url)) => cli::dev::name_from_url(url)?,
+            (None, None, None) if self.new => cli::dev::free_box_name("new")?,
+            (None, None, None) => cli::dev::default_box_name()?,
         };
         Ok(cli::dev::DevCommands::Create {
             name,
             from: self.from,
             pr,
+            clone,
+            new: self.new,
             remote: self.remote,
             profile: self.profile,
             isolation: self.isolation,

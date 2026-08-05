@@ -292,6 +292,13 @@ pub struct EnvManifest {
     pub parent_branch: String,
     /// The env's own code branch (full ref, `refs/heads/h5i/env/…`).
     pub branch: String,
+    /// Where the code came from: `repo`, `clone:<url>`, or `new`. A box that
+    /// is not `repo` is **detached** — its git repository lives inside the box
+    /// directory, the host repository was never touched, and `export` is the
+    /// only way out. Defaults to `repo` so manifests written before this field
+    /// existed keep their meaning.
+    #[serde(default = "default_source")]
+    pub source: String,
     pub profile: String,
     /// sha256 of `policy.resolved.toml` as enforced.
     pub policy_digest: String,
@@ -1241,6 +1248,47 @@ fn set_status(
 
 // ─── create (§9) ────────────────────────────────────────────────────────────
 
+/// Serde default for [`EnvManifest::source`]: manifests written before boxes
+/// could be detached are all worktrees of the host repository.
+fn default_source() -> String {
+    "repo".to_string()
+}
+
+/// Where a box's code comes from.
+///
+/// `Repo` is the historical shape: a git worktree of the host repository, so
+/// the box shares its object store and can be applied back onto a branch.
+/// The other two are **detached**: the code is copied into a repository that
+/// lives inside the box's own directory, the host repository is never touched,
+/// and the only way out is `h5i dev export`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum BoxSource {
+    /// A worktree of this repository (the default).
+    #[default]
+    Repo,
+    /// Clone a remote repository into the box.
+    Clone { url: String },
+    /// An empty box: a fresh repository with one empty root commit.
+    New,
+}
+
+impl BoxSource {
+    /// The value recorded in the manifest.
+    pub fn as_manifest_str(&self) -> String {
+        match self {
+            BoxSource::Repo => "repo".to_string(),
+            BoxSource::Clone { url } => format!("clone:{url}"),
+            BoxSource::New => "new".to_string(),
+        }
+    }
+
+    /// Detached sources own their git repository; there is no parent branch in
+    /// the host repository to propose or apply onto.
+    pub fn is_detached(&self) -> bool {
+        !matches!(self, BoxSource::Repo)
+    }
+}
+
 pub struct CreateOpts {
     /// Base revision (default HEAD). Pinned immutably at creation.
     pub from: Option<String>,
@@ -1272,6 +1320,8 @@ pub struct CreateOpts {
     pub pr: Option<u64>,
     /// The PR's head branch name on its source repo (via `gh`, best-effort).
     pub pr_head_ref: Option<String>,
+    /// Where the code comes from. Defaults to a worktree of this repository.
+    pub source: BoxSource,
 }
 
 impl Default for CreateOpts {
@@ -1286,12 +1336,87 @@ impl Default for CreateOpts {
             parent_branch: None,
             pr: None,
             pr_head_ref: None,
+            source: BoxSource::Repo,
         }
     }
 }
 
-/// Create an environment: pin the base, create the code branch + worktree,
-/// fork the reasoning branch, resolve + persist the policy, record the event.
+/// Create an environment: pin the base, build the workspace for the requested
+/// source, resolve + persist the policy, record the event.
+/// Build a **detached** workspace: a git repository that lives inside the box
+/// and shares nothing with the host repository.
+///
+/// Returns the pinned base commit and tree. The box's branch is created inside
+/// its own repository, so every later operation (`run`, the mediated commit,
+/// `diff`, `export`) works exactly as it does for a worktree box — those all
+/// open `$WORK` directly.
+///
+/// Cloning runs the host's `git` against a URL the operator supplied, which is
+/// the one moment host-side code touches remote content. Two guards, both
+/// deliberate:
+///
+/// * `core.hooksPath` is pointed at an empty directory for the clone, so a
+///   repository cannot ship a hook that runs on the host.
+/// * The clone is shallow by default. It is a starting tree, not an archive,
+///   and less history is less to parse.
+fn init_detached_workspace(
+    work: &Path,
+    source: &BoxSource,
+    branch_short: &str,
+) -> Result<(git2::Oid, git2::Oid), H5iError> {
+    match source {
+        BoxSource::Repo => unreachable!("callers gate on is_detached()"),
+        BoxSource::New => {
+            let repo = Repository::init(work)?;
+            let sig = crate::refstore::signature(&repo)?;
+            // An empty root commit is the pinned base: a box that starts from
+            // nothing still has an immutable point to diff against, so `export`
+            // produces "everything the agent wrote" rather than nothing.
+            let tree_oid = {
+                let builder = repo.treebuilder(None)?;
+                builder.write()?
+            };
+            let tree = repo.find_tree(tree_oid)?;
+            let oid = repo.commit(Some("HEAD"), &sig, &sig, "h5i: empty box", &tree, &[])?;
+            repo.branch(branch_short, &repo.find_commit(oid)?, false)?;
+            repo.set_head(&format!("refs/heads/{branch_short}"))?;
+            Ok((oid, tree_oid))
+        }
+        BoxSource::Clone { url } => {
+            let hooks = work
+                .parent()
+                .unwrap_or(work)
+                .join("clone-hooks-disabled");
+            std::fs::create_dir_all(&hooks).map_err(|e| H5iError::with_path(e, &hooks))?;
+            let out = std::process::Command::new("git")
+                .arg("-c")
+                .arg(format!("core.hooksPath={}", hooks.display()))
+                .args(["clone", "--depth", "1", url])
+                .arg(work)
+                .output()
+                .map_err(|e| H5iError::Metadata(format!("failed to invoke git clone: {e}")))?;
+            if !out.status.success() {
+                return Err(H5iError::Metadata(format!(
+                    "cannot clone '{url}': {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                )));
+            }
+            let repo = Repository::open(work)?;
+            let head = repo.head()?.peel_to_commit()?;
+            let tree = head.tree()?.id();
+            let oid = head.id();
+            repo.branch(branch_short, &head, false)?;
+            repo.set_head(&format!("refs/heads/{branch_short}"))?;
+            // A shallow clone keeps its origin remote, which is a live network
+            // handle inside the box. Drop it: the box reaches the network only
+            // through the policy's egress allowlist, never through an inherited
+            // remote the operator never saw.
+            let _ = repo.remote_delete("origin");
+            Ok((oid, tree))
+        }
+    }
+}
+
 pub fn create(
     repo: &Repository,
     h5i_root: &Path,
@@ -1391,39 +1516,52 @@ pub fn create(
     sandbox::verify_exec(&policy)?;
     let policy_digest = policy.digest()?;
 
-    // Pin the immutable base.
-    let rev = opts.from.as_deref().unwrap_or("HEAD");
-    let base_commit = repo
-        .revparse_single(rev)
-        .and_then(|o| o.peel_to_commit())
-        .map_err(|e| H5iError::Metadata(format!("cannot resolve base revision '{rev}': {e}")))?;
-    let base_tree = base_commit.tree()?.id();
-    let parent_branch = opts.parent_branch.clone().unwrap_or_else(|| {
-        repo.head()
-            .ok()
-            .and_then(|h| h.shorthand().map(str::to_owned))
-            .unwrap_or_else(|| base_commit.id().to_string())
-    });
-
-    // Code branch + native git worktree (§4). The worktree lives under
-    // `.git/.h5i/env/<agent>/<slug>/work`, invisible to the main working tree.
-    repo.branch(&branch_short, &base_commit, false)?;
     let work_path = dir.join(WORK_DIR);
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
-    let wt_name = format!("h5i-env-{agent}-{slug}");
-    {
-        let branch_ref = repo.find_reference(&branch_full)?;
-        let mut wt_opts = git2::WorktreeAddOptions::new();
-        wt_opts.reference(Some(&branch_ref));
-        let wt = repo
-            .worktree(&wt_name, &work_path, Some(&wt_opts))
-            .map_err(|e| H5iError::Metadata(format!("worktree creation failed for {id}: {e}")))?;
-        // Lock the worktree for the env's whole life so a stray
-        // `git worktree prune` can't reclaim a live env out from under it;
-        // `h5i dev gc` is the only thing that unlocks+prunes it (and only when
-        // applied/aborted).
-        let _ = wt.lock(Some(&format!("h5i env {id} live")));
-    }
+
+    // Where the code comes from decides the shape of the workspace.
+    //
+    // `repo`: a native git worktree of THIS repository, sharing its object
+    // store, so the box can later be applied back onto a branch.
+    //
+    // `clone` / `new`: **detached**. The box gets a repository of its own
+    // inside its directory; the host repository is neither read nor written
+    // after this point, and `export` is the only way out. This is the shape
+    // external code should always arrive in.
+    let (base_commit_id, base_tree_id, parent_branch) = if opts.source.is_detached() {
+        let (oid, tree) = init_detached_workspace(&work_path, &opts.source, &branch_short)?;
+        (oid, tree, branch_short.clone())
+    } else {
+        let rev = opts.from.as_deref().unwrap_or("HEAD");
+        let base_commit = repo
+            .revparse_single(rev)
+            .and_then(|o| o.peel_to_commit())
+            .map_err(|e| H5iError::Metadata(format!("cannot resolve base revision '{rev}': {e}")))?;
+        let base_tree = base_commit.tree()?.id();
+        let parent_branch = opts.parent_branch.clone().unwrap_or_else(|| {
+            repo.head()
+                .ok()
+                .and_then(|h| h.shorthand().map(str::to_owned))
+                .unwrap_or_else(|| base_commit.id().to_string())
+        });
+
+        repo.branch(&branch_short, &base_commit, false)?;
+        let wt_name = format!("h5i-env-{agent}-{slug}");
+        {
+            let branch_ref = repo.find_reference(&branch_full)?;
+            let mut wt_opts = git2::WorktreeAddOptions::new();
+            wt_opts.reference(Some(&branch_ref));
+            let wt = repo
+                .worktree(&wt_name, &work_path, Some(&wt_opts))
+                .map_err(|e| H5iError::Metadata(format!("worktree creation failed for {id}: {e}")))?;
+            // Lock the worktree for the env's whole life so a stray
+            // `git worktree prune` can't reclaim a live env out from under it;
+            // `h5i dev gc` is the only thing that unlocks+prunes it (and only
+            // when applied/aborted).
+            let _ = wt.lock(Some(&format!("h5i env {id} live")));
+        }
+        (base_commit.id(), base_tree, parent_branch)
+    };
 
     // Pin service declarations from the base worktree into an env-local,
     // box-immutable manifest, recording its digest (review #1). Always Some for
@@ -1440,10 +1578,11 @@ pub fn create(
         id: id.clone(),
         agent: agent.to_string(),
         slug: slug.to_string(),
-        base_commit: base_commit.id().to_string(),
-        base_tree: base_tree.to_string(),
+        base_commit: base_commit_id.to_string(),
+        base_tree: base_tree_id.to_string(),
         parent_branch,
         branch: branch_full,
+        source: opts.source.as_manifest_str(),
         profile: profile.name.clone(),
         policy_digest: policy_digest.clone(),
         isolation_claim: policy.claim.as_str().to_string(),
@@ -1567,6 +1706,22 @@ pub struct RunOutcome {
 /// but not run/propose/rebase (which need the worktree).
 pub fn has_workspace(m: &EnvManifest, h5i_root: &Path) -> bool {
     m.work_dir(h5i_root).is_dir()
+}
+
+/// A detached box has no parent branch in this repository to land on, by
+/// design: its code was copied in from somewhere else and the host repository
+/// was never touched. `export` is its exit.
+fn detached_err(m: &EnvManifest, op: &str) -> H5iError {
+    H5iError::Metadata(format!(
+        "{}: `{op}` needs a parent branch in this repository, and this box is detached \
+         (source: {}). Use `h5i dev export {}` and apply the patch wherever you want it.",
+        m.id, m.source, m.slug
+    ))
+}
+
+/// Is this box detached (its git repository lives inside the box)?
+pub fn is_detached(m: &EnvManifest) -> bool {
+    m.source != "repo"
 }
 
 /// A uniform error for operations that need a local worktree the env lacks.
@@ -3918,11 +4073,15 @@ pub enum Drift {
     Diverged { tip: String },
     /// The parent branch no longer exists (renamed/deleted).
     ParentGone,
+    /// A detached box: its code came from outside this repository, so there is
+    /// no parent here that could drift.
+    Detached,
 }
 
 impl Drift {
     pub fn is_current(&self) -> bool {
-        matches!(self, Drift::UpToDate)
+        // A detached box has nothing to drift from, so it is never stale.
+        matches!(self, Drift::UpToDate | Drift::Detached)
     }
     /// Stable machine kind — the string clients filter/badge on.
     pub fn kind_str(&self) -> &'static str {
@@ -3931,6 +4090,7 @@ impl Drift {
             Drift::ParentAhead { .. } => "parent-ahead",
             Drift::Diverged { .. } => "diverged",
             Drift::ParentGone => "parent-gone",
+            Drift::Detached => "detached",
         }
     }
     /// One-line human summary.
@@ -3947,12 +4107,16 @@ impl Drift {
                 &tip[..12.min(tip.len())]
             ),
             Drift::ParentGone => "parent branch is gone".into(),
+            Drift::Detached => "detached box — no parent in this repository".into(),
         }
     }
 }
 
 /// Compute how `m`'s pinned base relates to its parent branch's current tip.
 pub fn drift(repo: &Repository, m: &EnvManifest) -> Drift {
+    if is_detached(m) {
+        return Drift::Detached;
+    }
     let Ok(reference) = repo.find_reference(&format!("refs/heads/{}", m.parent_branch)) else {
         return Drift::ParentGone;
     };
@@ -4015,6 +4179,14 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
         ));
     }
     out.push_str(&format!("  agent    : {}\n", m.agent));
+    if is_detached(m) {
+        // Say it plainly: this box's code came from outside, and nothing it
+        // does can reach the repository you are standing in.
+        out.push_str(&format!(
+            "  source   : {} (detached — this repository is not involved)\n",
+            crate::redact::sanitize_display(&m.source)
+        ));
+    }
     out.push_str(&format!(
         "  base     : {} (from {})\n",
         &m.base_commit[..12.min(m.base_commit.len())],
@@ -5732,6 +5904,9 @@ pub fn apply(
     m: &mut EnvManifest,
     patch_mode: bool,
 ) -> Result<String, H5iError> {
+    if is_detached(m) {
+        return Err(detached_err(m, "apply"));
+    }
     // Serialize the PROPOSED→APPLIED transition (reads the env state, mutates
     // the manifest) against any concurrent run/shell on the same env.
     #[cfg(unix)]
@@ -5907,6 +6082,9 @@ pub fn apply(
 /// `base_commit`/`base_tree` to the parent tip, and refresh the worktree to the
 /// rebased tree. Only valid before propose/apply.
 pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result<String, H5iError> {
+    if is_detached(m) {
+        return Err(detached_err(m, "rebase"));
+    }
     // Rebase force-checks-out the worktree and re-pins the base in the manifest;
     // serialize against a concurrent `env run`/`shell` exactly like propose.
     #[cfg(unix)]
@@ -6396,6 +6574,7 @@ mod tests {
             base_tree: "t".repeat(40),
             parent_branch: "main".into(),
             branch: format!("refs/heads/h5i/env/{agent}/{slug}"),
+            source: "repo".into(),
             profile: "default".into(),
             policy_digest: "d".repeat(64),
             isolation_claim: "workspace".into(),
@@ -7423,6 +7602,7 @@ mod tests {
             base_tree: "t".repeat(40),
             parent_branch: "main".into(),
             branch: "refs/heads/h5i/env/claude/fix".into(),
+            source: "repo".into(),
             profile: "default".into(),
             policy_digest: "d".repeat(64),
             isolation_claim: "workspace".into(),
@@ -7535,6 +7715,7 @@ mod tests {
                 base_tree: "t".repeat(40),
                 parent_branch: "main".into(),
                 branch: format!("refs/heads/h5i/env/{agent}/{slug}"),
+                source: "repo".into(),
                 profile: "default".into(),
                 policy_digest: "d".repeat(64),
                 isolation_claim: "workspace".into(),

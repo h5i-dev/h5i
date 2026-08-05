@@ -185,6 +185,7 @@ fn synthetic_env_manifest(
         base_tree: tree.id().to_string(),
         parent_branch: "main".into(),
         branch: format!("refs/heads/h5i/env/{agent}/{slug}"),
+        source: "repo".into(),
         profile: "default".into(),
         policy_digest: "d".repeat(64),
         isolation_claim: "workspace".into(),
@@ -4247,11 +4248,13 @@ fn env_is_a_hidden_alias_for_dev() {
 #[test]
 fn dev_refuses_an_unrecognized_source() {
     let r = Repo::new();
-    let out = r.h5i(&["dev", "https://example.com/some/repo.git"]);
+    // A bare word is neither `.`, a PR spec, nor a repository URL.
+    let out = r.h5i(&["dev", "wat"]);
     assert!(!out.status.success(), "unknown source must be refused");
     let err = out_str(&out);
     assert!(err.contains("unrecognized source"), "{err}");
     assert!(err.contains("pull request"), "{err}");
+    assert!(err.contains("--new"), "{err}");
 }
 
 // ─── the output gate ────────────────────────────────────────────────────────
@@ -4396,4 +4399,94 @@ fn the_receipt_log_is_outside_the_boxs_write_grants() {
         !writes.contains(&env_dir.display().to_string()),
         "no grant names the env directory itself: {writes}"
     );
+}
+
+// ─── detached boxes: code copied in, host repository untouched ──────────────
+
+/// `h5i dev <url>` copies an external repository into the box. The host
+/// repository gets no branch, no worktree and no objects from it: the boundary
+/// the product claims only holds if outside code never lands here.
+#[test]
+fn a_cloned_box_never_touches_the_host_repository() {
+    let r = Repo::new();
+
+    // A separate repository to stand in for "somebody else's code".
+    let external = r.dir.parent().unwrap().join("external");
+    run_ok(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&external));
+    git(&external, &["config", "user.email", "x@h5i.test"]);
+    git(&external, &["config", "user.name", "X"]);
+    std::fs::write(external.join("app.py"), "print('external')\n").unwrap();
+    git(&external, &["add", "."]);
+    git(&external, &["commit", "-m", "external code"]);
+
+    let url = format!("file://{}", external.display());
+    let out = out_str(&r.h5i_ok(&["dev", &url]));
+    assert!(out.contains("env/tester/external"), "named for the repo: {out}");
+
+    // The code is in the box …
+    assert!(r.env_dir("external").join("work/app.py").is_file());
+
+    // … and nothing of it is in the host repository.
+    let branches = out_str(&git(&r.dir, &["branch", "--list"]));
+    assert!(
+        !branches.contains("external"),
+        "no branch for a detached box: {branches}"
+    );
+    let worktrees = out_str(&git(&r.dir, &["worktree", "list"]));
+    assert!(
+        !worktrees.contains("external"),
+        "no worktree registered in the host repo: {worktrees}"
+    );
+
+    // The manifest records where it came from, and status says so.
+    let m = r.manifest("external");
+    assert_eq!(m["source"].as_str(), Some(url.as_str()).map(|u| format!("clone:{u}")).as_deref());
+    let status = out_str(&r.h5i_ok(&["dev", "status", "external"]));
+    assert!(status.contains("detached"), "{status}");
+
+    // A shallow clone keeps an origin remote pointing at the source; a box must
+    // not inherit a network handle nobody granted it.
+    let remotes = out_str(&git(&r.env_dir("external").join("work"), &["remote"]));
+    assert!(remotes.trim().is_empty(), "origin must be dropped: {remotes}");
+}
+
+/// A detached box has no parent branch here, so `apply` and `rebase` refuse and
+/// point at the export gate instead of half-working.
+#[test]
+fn a_detached_box_refuses_apply_and_rebase() {
+    let r = Repo::new();
+    r.h5i_ok(&["dev", "--new", "--name", "scratch"]);
+    r.h5i_ok(&["dev", "run", "scratch", "--", "sh", "-c", "echo hi > f.txt"]);
+    r.h5i_ok(&["dev", "propose", "scratch"]);
+
+    for verb in ["apply", "rebase"] {
+        let out = r.h5i(&["dev", verb, "scratch"]);
+        assert!(!out.status.success(), "{verb} must refuse on a detached box");
+        let err = out_str(&out);
+        assert!(err.contains("detached"), "{verb}: {err}");
+        assert!(err.contains("export"), "{verb} names the way out: {err}");
+    }
+}
+
+/// An empty box still has an immutable base, so `export` produces everything
+/// the agent wrote rather than an empty patch.
+#[test]
+fn an_empty_box_exports_everything_the_agent_wrote() {
+    let r = Repo::new();
+    r.h5i_ok(&["dev", "--new", "--name", "fromzero"]);
+    r.h5i_ok(&[
+        "dev",
+        "run",
+        "fromzero",
+        "--",
+        "sh",
+        "-c",
+        "echo 'def main(): pass' > main.py",
+    ]);
+    r.h5i_ok(&["dev", "export", "fromzero"]);
+
+    let patch =
+        std::fs::read_to_string(r.dir.join("h5i-export/fromzero/patch.diff")).expect("patch");
+    assert!(patch.contains("main.py"), "{patch}");
+    assert!(patch.contains("+def main(): pass"), "{patch}");
 }

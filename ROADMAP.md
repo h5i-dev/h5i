@@ -482,14 +482,19 @@ env create/run/shell/status/diff/propose/apply/rm/gc` all work with no git notes
 and no context refs, clippy clean with `--all-targets --all-features`, the
 binary builds without the `web` feature because the feature is gone.
 
-**M2. `h5i dev` and copy in.** New command surface with `env` aliased
-(**done**: short form, `ls`, hidden alias). Export gate replacing
-`propose`/`apply` (**done**: patch + report + receipt bundle, refuses to
-overwrite). `h5i skill install` from the embedded skill (**done**). Receipt
-integrity by sealing, with the test that pins it (**done**, 5.7).
-**Remaining**: the copy-in workspace for the container tier and the other two
-sources (repo URL, `--new`). Exit: a PR reviewed end to end with the host repo
-mounted nowhere.
+**M2. `h5i dev` and copy in — done.** New command surface with `env` aliased
+(short form, `ls`, hidden alias). Export gate replacing `propose`/`apply`
+(patch + report + receipt bundle, refuses to overwrite). `h5i skill install`
+from the embedded skill. Receipt integrity by sealing, with the test that pins
+it (5.7). All four sources: this repository, a pull request, a repository URL,
+and `--new`.
+
+The copy-in landed as **detached boxes**: for a URL or `--new`, the box gets a
+git repository of its own inside its directory, the host repository is never
+touched (no branch, no worktree, no objects), the inherited `origin` remote is
+dropped so the box cannot reach a network handle nobody granted it, and `apply`
+and `rebase` refuse and point at `export`. That is the boundary the phase was
+for, and it holds on every tier rather than only under a container volume.
 
 **M3. Agent in box hardening.** Broker default on, GitHub capability helper,
 credential seed audit, no host creds reachable from a box, verified by a test

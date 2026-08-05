@@ -29,6 +29,15 @@ pub enum DevCommands {
         /// enriches the push-back hint with the PR's head branch name.
         #[arg(long, conflicts_with = "from", value_name = "NUMBER|URL")]
         pr: Option<String>,
+        /// Copy an external repository into the box instead of taking a
+        /// worktree of this one. The box is **detached**: this repository is
+        /// never touched, and `h5i dev export` is the only way out.
+        #[arg(long, conflicts_with_all = ["from", "pr"], value_name = "URL")]
+        clone: Option<String>,
+        /// Start from an empty box (a fresh repository with one empty commit),
+        /// for letting an agent build something from nothing. Also detached.
+        #[arg(long, conflicts_with_all = ["from", "pr", "clone"])]
+        new: bool,
         /// Remote to fetch the PR head from (with --pr).
         #[arg(long, default_value = "origin")]
         remote: String,
@@ -320,18 +329,60 @@ pub fn pr_spec(source: &str) -> Option<String> {
         .map(|_| source.to_string())
 }
 
+/// Does `source` look like a repository URL we should clone into a box?
+/// Deliberately narrow: a scheme we recognize, or `user@host:path` (scp-style).
+/// Anything else is refused rather than guessed at.
+pub fn looks_like_repo_url(source: &str) -> bool {
+    const SCHEMES: &[&str] = &[
+        "https://",
+        "http://",
+        "git://",
+        "ssh://",
+        "git+ssh://",
+        // `file://` is how you point a box at a local repository without
+        // mounting anything: git copies the objects in, the box gets its own.
+        "file://",
+    ];
+    if SCHEMES.iter().any(|p| source.starts_with(p)) {
+        return true;
+    }
+    // scp-style `git@github.com:owner/repo.git`, but not a Windows path or a
+    // bare `foo:bar` word.
+    match source.split_once(':') {
+        Some((host, path)) => {
+            host.contains('@') && host.contains('.') && !path.is_empty() && !path.starts_with('/')
+        }
+        None => false,
+    }
+}
+
+/// Slugify a repository URL into a box name: the last path segment, minus
+/// `.git`.
+pub fn name_from_url(url: &str) -> anyhow::Result<String> {
+    let tail = url
+        .trim_end_matches('/')
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or(url);
+    let base = slugify(tail.strip_suffix(".git").unwrap_or(tail));
+    free_box_name(if base.is_empty() { "clone" } else { &base })
+}
+
 /// Name for a box created from the current repository: the checked-out branch,
 /// slugified, with a numeric suffix when that name is taken. Deterministic
 /// enough to predict, unique enough to keep two boxes off one name.
 pub fn default_box_name() -> anyhow::Result<String> {
     let repo = git2::Repository::discover(".")?;
-    let h5i_root = h5i_core::storage::h5i_root_for_repo(&repo)?;
     let branch = repo
         .head()
         .ok()
         .and_then(|h| h.shorthand().map(str::to_owned))
         .unwrap_or_else(|| "box".into());
-    let base: String = branch
+    free_box_name(&slugify(&branch))
+}
+
+fn slugify(s: &str) -> String {
+    let out: String = s
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() {
@@ -341,15 +392,20 @@ pub fn default_box_name() -> anyhow::Result<String> {
             }
         })
         .collect();
-    let base = base.trim_matches('-').to_string();
-    let base = if base.is_empty() { "box".into() } else { base };
+    out.trim_matches('-').to_string()
+}
 
+/// `base`, or `base-2`, `base-3`, … — the first name no box has taken.
+pub fn free_box_name(base: &str) -> anyhow::Result<String> {
+    let repo = git2::Repository::discover(".")?;
+    let h5i_root = h5i_core::storage::h5i_root_for_repo(&repo)?;
+    let base = if base.is_empty() { "box" } else { base };
     let taken: std::collections::HashSet<String> = h5i_core::env::list(&h5i_root)
         .into_iter()
         .map(|m| m.slug)
         .collect();
-    if !taken.contains(&base) {
-        return Ok(base);
+    if !taken.contains(base) {
+        return Ok(base.to_string());
     }
     for n in 2..1000 {
         let candidate = format!("{base}-{n}");
@@ -400,6 +456,8 @@ pub fn run(action: DevCommands) -> anyhow::Result<()> {
                     name,
                     from,
                     pr,
+                    clone,
+                    new,
                     remote,
                     profile,
                     isolation,
@@ -425,7 +483,13 @@ pub fn run(action: DevCommands) -> anyhow::Result<()> {
                         Some(spec) => Some(h5i_core::source::resolve_pr_base(&workdir, spec, &remote)?),
                         None => None,
                     };
+                    let source = match (&clone, new) {
+                        (Some(url), _) => h5i_core::env::BoxSource::Clone { url: url.clone() },
+                        (None, true) => h5i_core::env::BoxSource::New,
+                        (None, false) => h5i_core::env::BoxSource::Repo,
+                    };
                     let opts = h5i_core::env::CreateOpts {
+                        source,
                         from: pr_base.as_ref().map(|b| b.oid.clone()).or(from),
                         profile,
                         isolation,
