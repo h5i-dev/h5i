@@ -20,11 +20,6 @@ host directories are not mounted into it, your credentials never enter it, and
 the only thing that comes out is a patch you reviewed, next to a receipt of
 everything that ran.
 
-> **The pivot in progress.** h5i began as a provenance system for AI coding
-> work. It is being rebuilt around the boundary, which was always the part
-> worth having. [ROADMAP.md](ROADMAP.md) is the plan of record: what stays,
-> what was cut, and what is still coming.
-
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i-dev%2Fh5i | Trendshift" width="250" height="55"/></a>
 
 ---
