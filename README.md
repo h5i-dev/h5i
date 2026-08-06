@@ -113,9 +113,6 @@ npx skills add h5i-dev/h5i       # if you do not have the binary yet
 - [CONTRIBUTING.md](CONTRIBUTING.md): we welcome contributions of any kind
 - `h5i man > ~/.local/share/man/man1/h5i.1`: install the man page (generated from the CLI)
 
-Parts of the documentation still describe the previous product. The roadmap
-says which, and the rewrite is tracked there.
-
 ## What h5i does not claim
 
 - **It cannot stop an agent from putting your code in a prompt.** Containment
