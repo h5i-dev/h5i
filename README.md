@@ -13,20 +13,21 @@
 
 <h1 align="center">Integrated Sandbox for AI Coding Agents</h1>
 
-**h5i** (pronounced *high-five*) gives a coding agent full autonomy inside a
-throwaway box, and gives your machine nothing to lose. The code, the toolchain,
-the tests, the dev server and the agent itself run inside one boundary. Your
-host directories are not mounted into it, your credentials never enter it, and
-the only thing that comes out is a patch you reviewed, next to a receipt of
-everything that ran.
+**h5i** (pronounced *high-five*) gives coding agents a complete, disposable
+development environment inside a single security boundary. The agent,
+workspace, shell, dependencies, dev server, and browser all run together
+inside the sandbox, while your host files and credentials stay outside.
+When the work is done, h5i exports a reviewable patch and execution logs.
 
-Use h5i when you want to:
+h5i gives you:
 
-- start a lightweight sandbox in under 200 ms for everyday agent tasks
-- isolate untrusted agents and code in a microVM when stronger boundaries matter
-- run the agent, browser, dev server, and toolchain inside the same sandbox
-- review the resulting patch and execution record before anything touches your repository
-- Local-first. No hosted sandbox. No SaaS account required.
+- **Lightweight sandboxes** that start in under 200 ms for everyday agent tasks
+- **MicroVM isolation** with a separate kernel when stronger boundaries matter
+- **Isolated browsers** that agents can securely control from inside the sandbox
+- **Self-contained environments** with the agent, toolchain, dependencies, and browser in one boundary
+- **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
+
+**Local-first. No hosted sandbox. No SaaS account required.**
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i-dev%2Fh5i | Trendshift" width="250" height="55"/></a>
 
