@@ -26,6 +26,7 @@ Use h5i when you want to:
 - isolate untrusted agents and code in a microVM when stronger boundaries matter
 - run the agent, browser, dev server, and toolchain inside the same sandbox
 - review the resulting patch and execution record before anything touches your repository
+- Local-first. No hosted sandbox. No SaaS account required.
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i-dev%2Fh5i | Trendshift" width="250" height="55"/></a>
 
