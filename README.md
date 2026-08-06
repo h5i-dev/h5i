@@ -13,12 +13,11 @@
 
 <h1 align="center">Integrated Sandbox for AI Coding Agents</h1>
 
-**h5i** (pronounced *high-five*) gives a coding agent full autonomy inside a
-throwaway box, and gives your machine nothing to lose. The code, the toolchain,
-the tests, the dev server and the agent itself run inside one boundary. Your
-host directories are not mounted into it, your credentials never enter it, and
-the only thing that comes out is a patch you reviewed, next to a receipt of
-everything that ran.
+**h5i** (pronounced *high-five*) gives coding agents a complete, disposable
+development environment inside a single security boundary. The agent,
+workspace, shell, dependencies, dev server, and browser all run together
+inside the sandbox, while your host files and credentials stay outside.
+When the work is done, h5i exports a reviewable patch and execution logs.
 
 h5i gives you:
 
