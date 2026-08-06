@@ -335,6 +335,9 @@ fn spawn_to_upstream(
                     if stop_thread.load(Ordering::SeqCst) {
                         break;
                     }
+                    // The accepted socket may arrive non-blocking (see
+                    // `handle_client`, which is where that is corrected — at the
+                    // point the blocking reads are actually made).
                     let state = state.clone();
                     // Bound concurrent forwards: the box is a single client, and
                     // an accept loop that spawns a thread per connection is a
@@ -571,6 +574,18 @@ fn is_stripped_response_header(name: &str) -> bool {
 }
 
 fn handle_client(mut client: TcpStream, state: &ProxyState) -> std::io::Result<()> {
+    // `read_head` and the `read_exact` below are blocking reads, so say so
+    // rather than assume it. The listener is non-blocking (the accept loop polls
+    // `stop`) and on macOS — BSD `accept`, where Linux uses `accept4` — the
+    // accepted socket *inherits* that flag. Left inherited, any read that has to
+    // wait for the next packet fails with `WouldBlock`, and a well-formed
+    // request is answered `400`: a request body only has to exceed one segment
+    // to arrive split, which every real prompt does. That is the primary path on
+    // the macOS supervised tier, not an edge case.
+    //
+    // `?`, not `let _ =`: continuing with a non-blocking socket reinstates that
+    // exact bug, silently. Dropping the connection is the honest failure.
+    client.set_nonblocking(false)?;
     client.set_read_timeout(Some(Duration::from_secs(60)))?;
     let head = read_head(&mut client)?;
 
@@ -959,6 +974,96 @@ mod tests {
         assert_eq!(seen, "authorization: bearer real-token", "real credential must be injected");
         assert!(resp.contains("data: hello"), "body must stream back: {resp}");
         assert!(!resp.contains("the-dummy"), "dummy must not leak downstream");
+    }
+
+    /// A request whose body arrives after its head must still be forwarded.
+    ///
+    /// The accept loop polls a non-blocking listener, and on macOS (BSD
+    /// `accept`; Linux's `accept4` differs) the accepted socket inherits that
+    /// flag — so `read_head`/`read_exact` returned `WouldBlock` the moment a
+    /// request spanned more than one read, and a well-formed call was answered
+    /// `400`. Every real prompt is larger than one segment, and this proxy is
+    /// the *primary* egress path on the macOS supervised tier.
+    ///
+    /// Driven through `handle_client` with a deliberately non-blocking socket,
+    /// so the Darwin condition is reproduced on every platform rather than
+    /// tested only where the OS happens to create it.
+    #[test]
+    fn a_request_split_across_reads_is_forwarded_not_rejected() {
+        use std::sync::mpsc;
+
+        // Fake upstream: reports the body it received.
+        let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+        let up_port = upstream.local_addr().unwrap().port();
+        let (tx, rx) = mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            let (mut s, _) = upstream.accept().unwrap();
+            let mut reader = std::io::BufReader::new(s.try_clone().unwrap());
+            let mut len = 0usize;
+            let mut line = String::new();
+            loop {
+                line.clear();
+                if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                    break;
+                }
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    len = v.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut body = vec![0u8; len];
+            reader.read_exact(&mut body).unwrap();
+            let _ = tx.send(String::from_utf8_lossy(&body).to_string());
+            s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                .unwrap();
+        });
+
+        let state = Arc::new(ProxyState {
+            upstream: reqwest::Url::parse(&format!("http://127.0.0.1:{up_port}")).unwrap(),
+            upstream_host: "127.0.0.1".into(),
+            credential: Credential {
+                header: CredHeader::Bearer,
+                value: "REAL-TOKEN".into(),
+            },
+            client_token: "the-dummy".into(),
+            client: reqwest::blocking::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap(),
+            in_flight: std::sync::atomic::AtomicUsize::new(0),
+        });
+
+        let front = TcpListener::bind("127.0.0.1:0").unwrap();
+        let front_port = front.local_addr().unwrap().port();
+        let served = std::thread::spawn(move || {
+            let (s, _) = front.accept().unwrap();
+            // What Darwin hands the accept loop. The handler must correct it.
+            s.set_nonblocking(true).unwrap();
+            handle_client(s, &state)
+        });
+
+        let mut c = TcpStream::connect(("127.0.0.1", front_port)).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        // Head first, body only after a pause: the handler is blocked in a read
+        // with nothing buffered, which is where the inherited flag bit.
+        c.write_all(
+            b"POST /v1/messages HTTP/1.1\r\nHost: 10.0.2.2\r\nAuthorization: Bearer the-dummy\r\nContent-Length: 11\r\n\r\n",
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        c.write_all(b"hello-split").unwrap();
+
+        let mut resp = String::new();
+        c.read_to_string(&mut resp).unwrap();
+        assert!(
+            resp.starts_with("HTTP/1.1 200"),
+            "a split request must be forwarded, got: {resp}"
+        );
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "hello-split",
+            "the whole body must reach upstream"
+        );
+        served.join().unwrap().unwrap();
     }
 
     #[test]

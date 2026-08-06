@@ -738,6 +738,15 @@ Being explicit about these is a feature, since the claim is a security claim.
   tier's own egress enforcement is unchanged and still the boundary, but
   agent-browser's second, in-process domain list is gone. A page on a
   non-allowlisted host fails inside Chrome with `net::ERR_ACCESS_DENIED`.
+- **A browser box's Chrome is restarted when its route out changes.** Chrome
+  outlives the run that started it, and it takes its proxy address once, at
+  launch — so a browser started before the box's current route (an upgrade, or a
+  run whose proxy port moved) cannot reach the network through it. The box
+  cannot restart it itself: a browser from a previous run is in a previous
+  sandbox instance, which Seatbelt's same-sandbox signal grant does not reach.
+  It is detected in the box and stopped host-side at the start of the next run,
+  so the fix costs one extra run and says so rather than failing with a proxy
+  error that reads like a page problem.
 - **Two kernel mechanisms, not one.** Linux confines with Landlock, seccomp and
   namespaces. macOS confines with Seatbelt, which is default deny across
   filesystem, network, mach and sysctl in one policy, and which (unlike

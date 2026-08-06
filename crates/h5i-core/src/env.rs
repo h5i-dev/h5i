@@ -2800,13 +2800,21 @@ alive() {{
 # h5i `setsid`s the run and `killpg`s that group on exit. There is no `setsid(1)`
 # on macOS, so fall back to perl's; if neither works, still launch — Chrome then
 # lives only for this one command, which is worse but not broken.
+#
+# Every arm `exec`s, and that is load-bearing rather than tidiness. This function
+# is only ever called backgrounded, so `exec` replaces *that* subshell: the `$!`
+# recorded as `chrome.pid` is then Chrome itself. Without it the subshell stays
+# alive as a launcher, `$!` names the launcher, and every later `kill` of that
+# pid — this script's own restart below, and `h5i box rm`'s stop-the-browser —
+# kills the launcher while Chrome, in its own session, carries on. (Called in the
+# foreground it would replace the shim; it is not, and must not be.)
 detach() {{
   if command -v setsid >/dev/null 2>&1; then
-    setsid "$@"
+    exec setsid "$@"
   elif command -v perl >/dev/null 2>&1; then
-    perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- "$@"
+    exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- "$@"
   else
-    "$@"
+    exec "$@"
   fi
 }}
 
@@ -2822,15 +2830,46 @@ find_chrome() {{
 # to be *told*: it does not read `HTTPS_PROXY` on macOS (it asks the OS for the
 # system proxy configuration), so it would open its own socket, be denied by the
 # Seatbelt rule, and report `net::ERR_ACCESS_DENIED` — which reads as a page
-# problem and is a route problem. The variable is set only by the tiers that run
-# such a proxy, so on the Linux supervised tier (nftables, direct connects)
-# nothing is added and Chrome is launched exactly as before.
+# problem and is a route problem.
+#
+# Keyed on `H5I_EGRESS_PROXY`, not on `HTTPS_PROXY`: only a tier that actually
+# runs the proxy sets it, where the conventional vars are ordinary shell state
+# anything in the box may set for its own reasons. So on the Linux supervised
+# tier (nftables, direct connects) nothing is added and Chrome is launched
+# exactly as before, and that stays true whatever the box's own environment says.
 #
 # No bypass list: Chrome always bypasses loopback unless `<-loopback>` is passed,
 # so the dev server under test is still reached directly and never through — or
 # gated by — the allowlist.
 PROXY_ARG=
-if [ -n "${{HTTPS_PROXY:-}}" ]; then PROXY_ARG="--proxy-server=$HTTPS_PROXY"; fi
+if [ -n "${{{egress_var}:-}}" ]; then PROXY_ARG="--proxy-server=${egress_var}"; fi
+
+# A running Chrome took its proxy address at launch and will never re-read it,
+# so "already alive" is not on its own a reason to leave it alone: a box whose
+# Chrome predates this route (an upgrade, or a run whose proxy moved to a
+# different port) would otherwise keep failing every navigation until someone
+# thought to kill it. Compare what it was launched with against what applies
+# now, and restart it when they differ. Cheap, because they normally do not.
+# A running Chrome took its proxy address at launch and will never re-read it,
+# so "already alive" is not on its own a reason to leave it alone: a browser
+# that predates this route (an upgrade, or a run whose proxy moved) would keep
+# failing every navigation until someone thought to restart it.
+#
+# The box cannot do that itself. Chrome deliberately outlives the run that
+# started it, which puts it in a *previous* sandbox instance — Seatbelt's
+# `(allow signal (target same-sandbox))` does not reach across that, so `kill`
+# here is refused, and `agent-browser close` only ends a session it owns rather
+# than the browser process. So this records the mismatch and the **host** acts
+# on it before the next run (see `stop_stale_browser`), which is where the pid
+# is reachable. One extra run to converge, and it says so rather than failing
+# later with a proxy error that reads like a page problem.
+HAD=$(cat "$STATE/chrome.proxy" 2>/dev/null || printf '')
+if alive && [ "$PROXY_ARG" != "$HAD" ]; then
+  printf '%s' "$PROXY_ARG" > "$STATE/chrome.restart"
+  echo "h5i: this box's browser predates its current route out and cannot reach the" >&2
+  echo "     network through it. h5i will restart it at the start of the next run;" >&2
+  echo "     re-run this command to pick the restarted browser up." >&2
+fi
 
 alive || {{
   CHROME=$(find_chrome) || {{ echo "h5i: no Chrome/Chromium found for the browser profile" >&2; exit 1; }}
@@ -2844,6 +2883,10 @@ alive || {{
       --user-data-dir="$UD" --remote-debugging-port="$PORT" about:blank \
       >"$STATE/chrome.log" 2>&1 &
   echo $! > "$STATE/chrome.pid"
+  # What this Chrome can reach, recorded beside its pid: the next run compares
+  # against it rather than assuming a live browser is a correctly-routed one.
+  printf '%s' "$PROXY_ARG" > "$STATE/chrome.proxy"
+  rm -f "$STATE/chrome.restart"
   i=0
   while [ $i -lt 100 ]; do
     alive && break
@@ -2853,7 +2896,8 @@ alive || {{
 }}
 
 exec "$REAL" --cdp "$PORT" "$@"
-"##
+"##,
+        egress_var = sandbox::EGRESS_PROXY_VAR,
     )
 }
 
@@ -2873,17 +2917,75 @@ pub struct BrowserShim {
 /// browser box depends on are memorised by something that outlives a single run
 /// (Chrome's CDP endpoint, and the proxy address Chrome was launched with), so
 /// neither can be re-drawn per run.
-fn remembered_port(file: &Path, what: &str) -> Result<u16, H5iError> {
+fn remembered_port(file: &Path, what: &str, avoid: &[u16]) -> Result<u16, H5iError> {
+    // The file lives under `<env>/browser/state`, which the box is granted write
+    // on (it is where the box's own Chrome records its pid and port), so the
+    // value read back here is box-controlled. Nothing catastrophic follows from
+    // that — a port the box picks is one it could bind itself, and the policy
+    // only ever grants the port the host actually bound — but a `0` would ask
+    // for an ephemeral port under the name of a pinned one, and a privileged
+    // port would fail to bind on every run. Both are rejected in favour of
+    // drawing a fresh port, which is also what a corrupt file gets.
+    //
+    // `avoid` is the ports this env already holds. A drawn port is found by
+    // binding an ephemeral listener and dropping it, so the next draw can be
+    // handed the same number back — two of this env's own ports colliding would
+    // leave the second service unable to bind at all.
     if let Some(p) = std::fs::read_to_string(file)
         .ok()
         .and_then(|t| t.trim().parse::<u16>().ok())
+        .filter(|p| *p >= 1024 && !avoid.contains(p))
     {
         return Ok(p);
     }
-    let p = alloc_free_port()
-        .ok_or_else(|| H5iError::Metadata(format!("could not reserve a loopback port for {what}")))?;
-    std::fs::write(file, p.to_string()).map_err(|e| H5iError::with_path(e, file))?;
-    Ok(p)
+    let fail = || H5iError::Metadata(format!("could not reserve a loopback port for {what}"));
+    let mut p = alloc_free_port().ok_or_else(fail)?;
+    for _ in 0..8 {
+        if !avoid.contains(&p) {
+            std::fs::write(file, p.to_string()).map_err(|e| H5iError::with_path(e, file))?;
+            return Ok(p);
+        }
+        p = alloc_free_port().ok_or_else(fail)?;
+    }
+    Err(fail())
+}
+
+/// Stop a browser the box has asked to have restarted, at the one place that
+/// can: the host.
+///
+/// Chrome takes its proxy address once, at launch, so a browser started before
+/// this box's current route out cannot reach the network through it. The shim
+/// notices (it compares what it would launch with against `chrome.proxy`) and
+/// leaves a `chrome.restart` marker, because inside the box the browser is
+/// unreachable: it deliberately outlives the run that started it, which puts it
+/// in a *previous* sandbox instance, and Seatbelt's
+/// `(allow signal (target same-sandbox))` does not reach across that.
+///
+/// Best-effort throughout — a browser that will not die is a stale browser, not
+/// a broken run, and must not block the run the user asked for.
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn stop_stale_browser(state: &Path) {
+    let marker = state.join("chrome.restart");
+    if !marker.exists() {
+        return;
+    }
+    #[cfg(unix)]
+    if let Some(pid) = std::fs::read_to_string(state.join("chrome.pid"))
+        .ok()
+        .and_then(|t| t.trim().parse::<i32>().ok())
+        .filter(|p| *p > 1)
+    {
+        // SIGTERM, not SIGKILL: headless Chrome exits cleanly on it and leaves
+        // its profile dir consistent for the relaunch that follows.
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
+    // Both files go, whether or not the signal landed: the marker must not
+    // re-fire every run, and a `chrome.proxy` left behind would claim the next
+    // Chrome was launched with a route it never saw.
+    let _ = std::fs::remove_file(&marker);
+    let _ = std::fs::remove_file(state.join("chrome.proxy"));
 }
 
 fn prepare_browser_shim(
@@ -2900,13 +3002,16 @@ fn prepare_browser_shim(
     let dir = m.dir(h5i_root).join("browser");
     let state = dir.join("state");
     std::fs::create_dir_all(&state).map_err(|e| H5iError::with_path(e, &state))?;
+    // Before anything else: a browser the last run found stranded on an old
+    // route is stopped here, so the shim launches a fresh one below.
+    stop_stale_browser(&state);
 
     // The CDP port is picked host-side, remembered, and reused. It cannot be
     // per-run: Chrome outlives the `box run` that started it, so a fresh port on
     // the next run would be a port the still-running Chrome is not listening on
     // — and, worse, the only port the policy grants. Allocated once, then read
     // back for the life of the env.
-    let port = remembered_port(&state.join("cdp-port"), "the box's browser")?;
+    let port = remembered_port(&state.join("cdp-port"), "the box's browser", &[])?;
     policy.loopback_ports.push(port);
     // The egress allowlist proxy is remembered for the same reason, in the
     // other direction: that surviving Chrome memorises the proxy address it was
@@ -2915,6 +3020,7 @@ fn prepare_browser_shim(
     policy.egress_proxy_port = Some(remembered_port(
         &state.join("egress-port"),
         "the box's egress proxy",
+        &[port],
     )?);
     let shim = dir.join("agent-browser");
     std::fs::write(&shim, browser_shim_source(&real)).map_err(|e| H5iError::with_path(e, &shim))?;
@@ -8851,6 +8957,65 @@ mod tests {
     /// The list is generated into a shell script, so a bad word is a shim that
     /// does not parse — and the box would see a syntax error instead of a
     /// browser. `sh -n` is the same parser that will run it.
+    /// The port files live under a directory the box can write (it is where the
+    /// box's own Chrome records its pid and port), so a read-back value is
+    /// box-controlled and has to be checked rather than handed to `bind`.
+    #[test]
+    fn a_remembered_port_is_reused_but_never_a_nonsense_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("port");
+
+        // Drawn once, then reused verbatim.
+        let first = remembered_port(&f, "test", &[]).unwrap();
+        assert!(first >= 1024);
+        assert_eq!(remembered_port(&f, "test", &[]).unwrap(), first);
+
+        // `0` asks bind for an ephemeral port under the name of a pinned one,
+        // and a privileged port cannot be bound at all: both are redrawn, and
+        // the redraw is written back so it sticks.
+        for bad in ["0", "80", "not-a-port", ""] {
+            std::fs::write(&f, bad).unwrap();
+            let p = remembered_port(&f, "test", &[]).unwrap();
+            assert!(p >= 1024, "{bad} must not be honoured, got {p}");
+            assert_eq!(std::fs::read_to_string(&f).unwrap(), p.to_string());
+        }
+
+        // A port this env already holds is redrawn too — an allocation is a
+        // bind-and-drop, so the same number can come back twice.
+        let held = remembered_port(&f, "test", &[]).unwrap();
+        let other = remembered_port(&f, "test", &[held]).unwrap();
+        assert_ne!(other, held);
+    }
+
+    /// The box cannot stop its own browser once that browser has outlived the
+    /// run that started it (it is in a previous sandbox instance, which
+    /// Seatbelt's same-sandbox signal grant does not reach), so it leaves a
+    /// marker and the host does it here.
+    #[test]
+    fn a_marked_browser_is_stopped_host_side_and_the_marker_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path();
+
+        // No marker: nothing is touched, including a live-looking pid file.
+        std::fs::write(state.join("chrome.pid"), "1").unwrap();
+        std::fs::write(state.join("chrome.proxy"), "--proxy-server=x").unwrap();
+        stop_stale_browser(state);
+        assert!(state.join("chrome.proxy").exists(), "no marker → no action");
+
+        // Marked: the recorded route goes with the marker, so the next Chrome
+        // is not mistaken for one launched with a route it never saw.
+        std::fs::write(state.join("chrome.restart"), "--proxy-server=y").unwrap();
+        stop_stale_browser(state);
+        assert!(!state.join("chrome.restart").exists());
+        assert!(!state.join("chrome.proxy").exists());
+
+        // Idempotent, and harmless with no pid recorded at all.
+        std::fs::remove_file(state.join("chrome.pid")).unwrap();
+        std::fs::write(state.join("chrome.restart"), "").unwrap();
+        stop_stale_browser(state);
+        assert!(!state.join("chrome.restart").exists());
+    }
+
     #[test]
     fn the_generated_shim_is_valid_shell() {
         let script = browser_shim_source("/usr/local/bin/agent-browser");
@@ -8867,6 +9032,77 @@ mod tests {
             out.status.success(),
             "shim does not parse: {}\n{script}",
             String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Chrome ignores the environment's proxy settings on macOS, so the shim has
+    /// to pass `--proxy-server` explicitly — and it must key that off h5i's own
+    /// variable, not `HTTPS_PROXY`, which anything in the box may set for its own
+    /// reasons. Gated, so a tier that runs no proxy (Linux supervised: nftables,
+    /// direct connects) launches Chrome exactly as it did before.
+    #[test]
+    fn the_shim_passes_chrome_the_proxy_only_when_the_tier_set_one() {
+        let script = browser_shim_source("/usr/local/bin/agent-browser");
+        assert!(
+            script.contains(&format!("--proxy-server=${}", sandbox::EGRESS_PROXY_VAR)),
+            "{script}"
+        );
+        assert!(
+            script.contains(&format!("[ -n \"${{{}:-}}\" ]", sandbox::EGRESS_PROXY_VAR)),
+            "the flag must be gated on the variable: {script}"
+        );
+        // The prose above the gate still names `HTTPS_PROXY` (it explains why
+        // Chrome ignoring it is the problem); what must not appear is a *use* of
+        // it — those vars are box-settable, so the shim cannot key off them.
+        assert!(
+            !script.contains("$HTTPS_PROXY") && !script.contains("${HTTPS_PROXY"),
+            "the shim must not read the conventional proxy vars: {script}"
+        );
+
+        // A Chrome that predates the current route must not be left
+        // alive-but-unreachable: it records what it was launched with, and a
+        // mismatch leaves the marker the host acts on before the next run.
+        assert!(script.contains("chrome.proxy"), "{script}");
+        assert!(
+            script.contains("[ \"$PROXY_ARG\" != \"$HAD\" ]"),
+            "the recorded route must be compared against the current one: {script}"
+        );
+        assert!(
+            script.contains("chrome.restart"),
+            "a mismatch must be recorded for the host: {script}"
+        );
+        // The pid recorded has to be Chrome's own, or every later `kill` of it
+        // (the host restart, `box rm`) reaches a launcher instead.
+        assert!(script.contains("exec setsid"), "{script}");
+        assert!(script.contains("exec perl"), "{script}");
+
+        // And it is genuinely absent when the variable is not set: run the
+        // gate itself under `sh` and read back what it would have passed.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("gate.sh");
+        let gate: String = script
+            .lines()
+            .skip_while(|l| !l.starts_with("PROXY_ARG="))
+            .take(2)
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, format!("{gate}\nprintf '%s' \"${{PROXY_ARG:-}}\"\n")).unwrap();
+
+        let unset = std::process::Command::new("sh")
+            .arg(&path)
+            .env_remove(sandbox::EGRESS_PROXY_VAR)
+            .output()
+            .expect("run gate");
+        assert!(unset.stdout.is_empty(), "{:?}", unset.stdout);
+
+        let set = std::process::Command::new("sh")
+            .arg(&path)
+            .env(sandbox::EGRESS_PROXY_VAR, "http://127.0.0.1:8123")
+            .output()
+            .expect("run gate");
+        assert_eq!(
+            String::from_utf8_lossy(&set.stdout),
+            "--proxy-server=http://127.0.0.1:8123"
         );
     }
 

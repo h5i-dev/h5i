@@ -1126,6 +1126,13 @@ fn run_supervised(
         for var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"] {
             env.push((var.to_string(), url.clone()));
         }
+        // h5i's own name for the same address, for the in-box tooling that has to
+        // be *told* about the proxy rather than reading the conventional vars
+        // (the browser shim's `--proxy-server`). Those vars are ordinary shell
+        // state a box's rc or tooling may set for its own reasons; this one is
+        // set by the tier that actually runs the proxy and by nothing else, so a
+        // consumer keying off it is reading a fact rather than a convention.
+        env.push((crate::container::EGRESS_PROXY_VAR.to_string(), url));
         // The proxy itself is on loopback; without this a client would try to
         // reach the proxy *through* the proxy.
         env.push(("NO_PROXY".into(), "localhost,127.0.0.1".into()));

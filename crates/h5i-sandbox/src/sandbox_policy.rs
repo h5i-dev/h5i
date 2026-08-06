@@ -1480,11 +1480,23 @@ pub struct ResolvedPolicy {
     /// port nothing is listening on any more. Pinning the port per env keeps
     /// the surviving browser pointed at the proxy that is actually there.
     ///
+    /// Read only by the tier that has this problem: the macOS supervised path
+    /// ([`crate::supervisor`]). The container tier's proxy stays ephemeral, and
+    /// correctly so — its Chrome lives in the container and dies with the run,
+    /// so nothing survives to remember an address.
+    ///
     /// Allocated and persisted host-side by `env::prepare_browser_shim`,
-    /// exactly like the CDP port next to it, and with the same exposure: a
-    /// loopback port a same-uid process could squat between runs. That is
-    /// already true of the CDP port, and a same-uid process on this host can
-    /// read the workspace anyway. `None` → ephemeral, the previous behaviour.
+    /// exactly like the CDP port next to it, and with the same exposure — with
+    /// one addition worth stating plainly: the file it is persisted in lives
+    /// under a directory the **box** is granted write on, so the *value* is
+    /// box-controlled, not just squattable by a same-uid process. Neither is
+    /// authority. `remembered_port` refuses a nonsense value (`0`, privileged),
+    /// the number only ever reaches `bind`, and what the policy grants the box
+    /// is the port the host actually bound — so a box that writes its own
+    /// number gets a proxy there or an ephemeral fallback, and either way
+    /// cannot reach a port the profile does not allow.
+    ///
+    /// `None` → ephemeral, the previous behaviour.
     #[serde(skip)]
     pub egress_proxy_port: Option<u16>,
 }
