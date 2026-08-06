@@ -448,6 +448,25 @@ What the `browser` profile does to Chrome, and why:
 - **AI chat is refused.** `agent-browser chat` sends page content to an external
   gateway, which inside a box is an exfiltration path with a friendly name. The
   gateway credential is never injected, and its absence is the mechanism.
+- **On macOS it is granted the host's per-user temp directory**
+  (`/var/folders/<xx>/<yy>/T`), read and write. This is the widest thing any
+  profile asks for and it is worth understanding before you use it. Chrome puts
+  its ProcessSingleton lock socket there, and it finds that directory through
+  `confstr(_CS_DARWIN_USER_TEMP_DIR)` rather than `TMPDIR` — so the per-env
+  `/tmp` redirect cannot move it, and without the grant Chrome will not start.
+  The cost is that the directory is shared: a browser box can read what other
+  host processes leave there and can plant files they will pick up. That is
+  exactly the cross-agent rendezvous point the `/tmp` redirect exists to remove,
+  reintroduced for this one profile on this one platform. Other profiles, and
+  every profile on Linux, are unaffected.
+
+    Two consequences of that grant being a machine-specific absolute path. The
+    pinned policy digest differs between two Macs for the same profile — harmless,
+    because `policy.resolved.toml` is verified against the digest stored beside
+    it, and both are written together at create time; nothing re-resolves the
+    profile and compares. But a `browser` env created on one machine and pulled to
+    another carries a grant for a directory that does not exist there, so Chrome
+    will fail to start until the env is recreated.
 
 ---
 
@@ -508,6 +527,15 @@ mem   = "4G"
 procs = 256
 wall  = "30m"
 ```
+
+`wall` is enforced everywhere. **`mem` and `procs` are not enforced at the
+`process` and `supervised` tiers on macOS**: Darwin has no cgroups, does not
+enforce `RLIMIT_AS` against the mmap'd heap every modern runtime uses, and
+scopes `RLIMIT_NPROC` to the whole user rather than to one box, so h5i declines
+to apply a limit it cannot hold. `h5i box status` marks such a value with `*`
+and says so underneath, rather than listing it as enforced. Use
+`isolation = "container"` or `isolation = "microvm"` where you need a real
+ceiling — both cap memory and process count in the runtime itself.
 
 ### Isolation tiers
 
@@ -689,8 +717,17 @@ Being explicit about these is a feature, since the claim is a security claim.
 - **Chrome runs with its own sandbox off.** On Linux, h5i's seccomp deny-list
   blocks the namespace syscalls Chrome's sandbox needs, at every tier. h5i's box
   is the boundary; Chrome's is not available inside it. That is one layer fewer
-  than a browser on the host has. The browser profile has not been exercised on
-  macOS at all, so treat it as unsupported there rather than as working.
+  than a browser on the host has.
+- **The browser profile does not work on macOS yet.** It has now been exercised
+  there: the tooling is found, the daemon starts, and Chrome itself launches.
+  What fails is the last step — `agent-browser` reaches Chrome over CDP, which
+  is a TCP dial to loopback, and the kernel tiers refuse outbound to loopback on
+  macOS because it is the *host's* loopback and dialing it would reach host
+  services. Pinning Chrome's debug port so the policy could grant that one port
+  does not help: `agent-browser` refuses `--cdp`, `--profile` and a
+  `--user-data-dir` in `--args` whenever `--allowed-domains` is set, which h5i
+  always sets. Treat the tier as unsupported on macOS until that is resolved
+  upstream or the second layer is traded away.
 - **Two kernel mechanisms, not one.** Linux confines with Landlock, seccomp and
   namespaces. macOS confines with Seatbelt, which is default deny across
   filesystem, network, mach and sysctl in one policy, and which (unlike

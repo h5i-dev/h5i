@@ -186,9 +186,13 @@ impl Repo {
     }
 
     /// The stored raw payload of a receipt.
+    ///
+    /// Resolved through the public accessor rather than by building the on-disk
+    /// path: payload blobs are keyed by their *content* digest, while a receipt
+    /// id names the run, and the two are deliberately not the same string.
     fn capture_raw_for(&self, slug: &str, id: &str) -> Vec<u8> {
-        let path = self.env_dir(slug).join("receipts").join(format!("{id}.raw"));
-        std::fs::read(&path).unwrap_or_else(|_| panic!("raw payload {id} missing"))
+        h5i_core::receipt::raw_bytes(&self.env_dir(slug), id)
+            .unwrap_or_else(|_| panic!("raw payload {id} missing"))
     }
 }
 
@@ -1313,11 +1317,20 @@ fn supervised_enforces_runtime_confinement() {
         try:\n\
         \x20c.connect(('1.1.1.1',80)); print('CONNECTED')\n\
         except OSError: print('NOCONNECT')\n\
-        import ctypes\n\
+        import ctypes,os\n\
+        os.chdir(os.environ.get('TMPDIR','/tmp'))\n\
+        try:\n\
+        \x20_u=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); _u.bind('probe.sock')\n\
+        \x20print('UNIXBIND ALLOWED')\n\
+        except OSError as e:\n\
+        \x20print('UNIXBIND DENIED',errno.errorcode.get(e.errno,e.errno))\n\
         _l=ctypes.CDLL(None,use_errno=True); ctypes.set_errno(0)\n\
         _l.ptrace(0,0,0,0)\n\
         _pe=ctypes.get_errno()\n\
-        print('PTRACE',('DENIED '+errno.errorcode.get(_pe,str(_pe))) if _pe else 'ALLOWED')\n";
+        print('PTRACE',('DENIED '+errno.errorcode.get(_pe,str(_pe))) if _pe else 'ALLOWED')\n\
+        ctypes.set_errno(0); _l.ptrace(10,1,0,0)\n\
+        _ae=ctypes.get_errno()\n\
+        print('PTATTACH',('DENIED '+errno.errorcode.get(_ae,str(_ae))) if _ae else 'ALLOWED')\n";
     let net = supervised_run_raw(&r, "confine", &["python3", "-c", net_script]).expect("run 1");
     // Default-deny socket gate: only boring inet is allowed.
     assert!(
@@ -1328,10 +1341,23 @@ fn supervised_enforces_runtime_confinement() {
         net.contains("PACKET DENIED EPERM"),
         "packet socket denied:\n{net}"
     );
-    assert!(
-        net.contains("UNIX DENIED EPERM"),
-        "ungranted AF_UNIX denied:\n{net}"
-    );
+    // Linux denies the ungranted family at `socket()`, via the seccomp-notify
+    // gate. Seatbelt has no hook there — it filters the *operations*, so the fd
+    // is created and `bind`/`connect` are what fail. Same containment (an
+    // ungranted AF_UNIX socket cannot be used), different layer, so the
+    // assertion follows the mechanism the platform actually has. The macOS half
+    // is checked below, where a bind is attempted for real.
+    if cfg!(target_os = "macos") {
+        assert!(
+            net.contains("UNIXBIND DENIED EPERM"),
+            "an ungranted AF_UNIX socket must be unusable:\n{net}"
+        );
+    } else {
+        assert!(
+            net.contains("UNIX DENIED EPERM"),
+            "ungranted AF_UNIX denied:\n{net}"
+        );
+    }
     assert!(
         net.contains("INET ALLOWED"),
         "ordinary inet socket allowed:\n{net}"
@@ -1344,26 +1370,49 @@ fn supervised_enforces_runtime_confinement() {
     // seccomp deny-list blocks ptrace(PTRACE_TRACEME) — a classic sandbox-escape
     // vector that would otherwise succeed (return 0) for an unprivileged process.
     // A bare EPERM here is unambiguous: only the deny-list produces it.
-    assert!(
-        net.contains("PTRACE DENIED EPERM"),
-        "ptrace must be seccomp-denied (escape vector):\n{net}"
-    );
+    //
+    // macOS has no seccomp, so `PT_TRACE_ME` is not refused — and on its own it
+    // is not an escape either: it marks the caller traceable by its own parent,
+    // which is inside the box. The vector that matters is attaching to a process
+    // the box does not own, and Seatbelt denies that. Assert the property, not
+    // the syscall.
+    if cfg!(target_os = "macos") {
+        assert!(
+            net.contains("PTATTACH DENIED"),
+            "a box must not be able to ptrace-attach outside itself:\n{net}"
+        );
+    } else {
+        assert!(
+            net.contains("PTRACE DENIED EPERM"),
+            "ptrace must be seccomp-denied (escape vector):\n{net}"
+        );
+    }
 
     // The socket-gate verdicts are recorded in the run's capture EgressSummary.
-    let cap = r.capture_manifest("confine");
-    let eg = &cap["egress"];
-    assert!(
-        eg.is_object(),
-        "supervised capture must carry an egress summary: {cap}"
-    );
-    assert!(
-        eg["denied"].as_u64().unwrap_or(0) >= 1,
-        "denials counted: {eg}"
-    );
-    assert!(
-        eg["allowed"].as_u64().unwrap_or(0) >= 1,
-        "allows counted: {eg}"
-    );
+    //
+    // This tally is a product of the seccomp-notify gate, which sees every
+    // `socket()` and can count it. macOS has no such hook: enforcement there is
+    // the Seatbelt profile plus, when the profile declares an allowlist, the
+    // host proxy — and only the proxy produces a per-request tally. So a
+    // deny-all profile on macOS enforces (asserted above: no route out, and an
+    // ungranted AF_UNIX cannot bind) while recording no counts. Weaker evidence,
+    // same boundary — the same trade the microvm tier documents.
+    if !cfg!(target_os = "macos") {
+        let cap = r.capture_manifest("confine");
+        let eg = &cap["egress"];
+        assert!(
+            eg.is_object(),
+            "supervised capture must carry an egress summary: {cap}"
+        );
+        assert!(
+            eg["denied"].as_u64().unwrap_or(0) >= 1,
+            "denials counted: {eg}"
+        );
+        assert!(
+            eg["allowed"].as_u64().unwrap_or(0) >= 1,
+            "allows counted: {eg}"
+        );
+    }
 
     // Run 2 (sh): Landlock FS allowlist + seccomp deny-list (unshare).
     let fs_script = "echo in > inside.txt && echo WORK_OK; \
@@ -1375,10 +1424,15 @@ fn supervised_enforces_runtime_confinement() {
         fs.contains("ETC_DENIED") && !fs.contains("ETC_WROTE"),
         "Landlock denies writes outside $WORK:\n{fs}"
     );
-    assert!(
-        fs.contains("Operation not permitted") || fs.contains("unshare_rc=1"),
-        "seccomp deny-list blocks unshare:\n{fs}"
-    );
+    // `unshare` is a Linux tool exercising a Linux deny-list; on macOS it is
+    // simply absent (rc=127), which would prove nothing either way. The FS half
+    // above is the part that transfers, and it is asserted on both.
+    if !cfg!(target_os = "macos") {
+        assert!(
+            fs.contains("Operation not permitted") || fs.contains("unshare_rc=1"),
+            "seccomp deny-list blocks unshare:\n{fs}"
+        );
+    }
 }
 
 /// A memory limit is enforced for a supervised run: a large allocation under a
@@ -1386,6 +1440,15 @@ fn supervised_enforces_runtime_confinement() {
 /// because it needs a `resources.mem` profile.
 #[test]
 fn supervised_memory_limit_is_enforced() {
+    // Darwin has no cgroups, does not enforce RLIMIT_AS against the mmap'd
+    // heap, and scopes RLIMIT_NPROC to the uid rather than the box, so the
+    // kernel tiers there apply no memory cap — a documented limitation that
+    // `box status` now marks with `*` rather than reporting as enforced. The
+    // cap is real at the container and microvm tiers.
+    if cfg!(target_os = "macos") {
+        eprintln!("skipping: no per-box memory cap at the macOS kernel tiers");
+        return;
+    }
     let _serial = supervised_guard();
     if !have_python3() {
         eprintln!("skipping: python3 unavailable");
@@ -1559,15 +1622,35 @@ fn a_browser_box_at_supervised_gets_af_unix_and_its_neighbours_do_not() {
         return;
     };
 
+    // `python3` on the host is not `python3` in the box: on macOS `/usr/bin/python3`
+    // is the Xcode shim, and the box denies `/Applications/Xcode.app`, so it
+    // cannot start at all. Probe in-box rather than trusting `have_python3`,
+    // which asks the host.
+    let probe = supervised_run_raw(&r, "bbox", &["python3", "-c", "print('PY OK')"]);
+    if !probe.as_deref().unwrap_or("").contains("PY OK") {
+        eprintln!("skipping: python3 does not run inside a box on this host");
+        return;
+    }
+
     // Bind a real filesystem-bound listener, which is what the daemon does —
     // not just socket(), so a gate that allowed the family but a Landlock grant
     // that refused MAKE_SOCK would still be caught.
+    //
+    // Under `TMPDIR`, not a literal `/tmp`: only the Linux tiers bind-mount a
+    // per-env directory over `/tmp`, and on macOS the literal path is denied
+    // outright — the same distinction the daemon's own socket dir now follows.
+    // Bound from *inside* the directory, so `sun_path` stays a bare filename.
+    // A box's private tmp is `<repo>/.git/.h5i/env/<agent>/<slug>/tmp`, and with
+    // the repo itself under a temp dir the absolute socket path runs past the
+    // 104-byte `sun_path` limit — which fails as "AF_UNIX path too long" and
+    // would read here as a policy denial rather than the length limit it is.
     let script = "import socket,os,errno\n\
-        d='/tmp/gate-probe'\n\
+        d=os.path.join(os.environ.get('TMPDIR','/tmp'),'gate-probe')\n\
         os.makedirs(d,exist_ok=True)\n\
+        os.chdir(d)\n\
         try:\n\
         \x20s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\n\
-        \x20s.bind(d+'/x.sock'); s.listen(1); s.close(); print('UNIXBIND OK')\n\
+        \x20s.bind('x.sock'); s.listen(1); s.close(); print('UNIXBIND OK')\n\
         except OSError as e:\n\
         \x20print('UNIXBIND FAIL',errno.errorcode.get(e.errno,e.errno))\n";
     let raw = supervised_run_raw(&r, "bbox", &["python3", "-c", script]).expect("browser box run");
@@ -2533,6 +2616,15 @@ fn process_tier_fsize_caps_disk_bomb() {
 /// `env.pass` allowlist. Capability-gated.
 #[test]
 fn process_tier_pid_namespace_hides_host_processes_and_environ() {
+    // PID namespaces are a Linux primitive. Darwin has none, and h5i does not
+    // pretend otherwise — `box probe` reports mechanism=seatbelt, and the
+    // process-hiding property is carried there by `(deny process-info*
+    // (target others))` instead. Asserting "the workload is PID 1" on macOS
+    // tests a mechanism the platform never claimed.
+    if cfg!(target_os = "macos") {
+        eprintln!("skipping: no PID namespaces on macOS (Seatbelt tier)");
+        return;
+    }
     if !process_tier_runnable() {
         eprintln!("SKIP process_tier_pid_namespace...: process tier not runnable on this host");
         return;
@@ -2703,6 +2795,13 @@ fn supervised_tier_cannot_see_or_signal_host_processes() {
 /// the ordering (unshare the pidns *after* the helper has come and gone).
 #[test]
 fn supervised_egress_still_works_with_a_pid_namespace() {
+    // Same as the process-tier PID-namespace test: the namespace half of this
+    // does not exist on Darwin. macOS egress is covered by
+    // `supervised_enforces_runtime_confinement`.
+    if cfg!(target_os = "macos") {
+        eprintln!("skipping: no PID namespaces on macOS (Seatbelt tier)");
+        return;
+    }
     if !supervised_tier_runnable() {
         eprintln!("SKIP supervised_egress_still_works...: supervised tier not runnable here");
         return;
@@ -2744,6 +2843,12 @@ fn supervised_egress_still_works_with_a_pid_namespace() {
 /// command that touches /proc would break). Capability-gated.
 #[test]
 fn process_tier_proc_self_is_readable_under_pid_namespace() {
+    // There is no procfs on Darwin at all, so there is no freshly-mounted
+    // /proc for the workload to read.
+    if cfg!(target_os = "macos") {
+        eprintln!("skipping: macOS has no procfs");
+        return;
+    }
     if !process_tier_runnable() {
         eprintln!("SKIP process_tier_proc_self...: process tier not runnable on this host");
         return;
@@ -3885,7 +3990,7 @@ fn rebase_records_a_two_parent_provenance_commit() {
     );
     let subject = out_str(&git(&r.dir, &["log", "-1", "--format=%s", branch]));
     assert!(
-        subject.contains("h5i dev rebase: env/tester/prov onto main"),
+        subject.contains("h5i box rebase: env/tester/prov onto main"),
         "provenance subject: {subject}"
     );
 }
@@ -4211,11 +4316,38 @@ fn private_paths_isolate_writes_into_per_env_backing() {
         std::fs::read_to_string(&backing).unwrap().trim(),
         "hello-from-box"
     );
+    // The property is that the bytes live in the per-env backing, not in an
+    // inode the repo's other worktrees share.
+    //
+    // Linux gets that from a bind mount, so the worktree path shows nothing at
+    // all. macOS has no bind mounts, so the redirect is a symlink *to* the
+    // backing: the path resolves, which is the point of it, and `exists()` is
+    // therefore the wrong question there. Ask the one that actually matters on
+    // both — is this a redirect to the per-env backing, and is it kept out of
+    // the diff h5i would hand a reviewer?
     let worktree_marker = r.work("work1").join("cache/marker.txt");
-    assert!(
-        !worktree_marker.exists(),
-        "private-path write must NOT appear in the shared worktree"
-    );
+    if cfg!(target_os = "macos") {
+        let link = r.work("work1").join("cache");
+        // Canonicalized on both sides: macOS firmlinks mean the symlink records
+        // `/private/var/…` where the test's own path says `/var/…`.
+        let target = std::fs::read_link(&link).expect("private path must be a symlink");
+        assert_eq!(
+            target.canonicalize().ok(),
+            r.env_dir("work1").join("private/cache").canonicalize().ok(),
+            "the worktree path must be a symlink to the per-env backing"
+        );
+        let out = r.h5i_ok(&["env", "diff", "work1"]);
+        let diff = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !diff.contains("cache"),
+            "h5i's own private-path redirect must not reach the reviewer's diff:\n{diff}"
+        );
+    } else {
+        assert!(
+            !worktree_marker.exists(),
+            "private-path write must NOT appear in the shared worktree"
+        );
+    }
 }
 
 // ─── Idea 1: secrets broker — `env secrets` legibility + gated command: ───────
@@ -4492,7 +4624,7 @@ fn create_rejects_bad_service_name_in_config() {
 
 // ─── env rm: multi-name and partial-failure ──────────────────────────────────
 
-/// `h5i env rm a b --force` removes both envs in a single call.
+/// `h5i box rm a b --force` removes both envs in a single call.
 /// Single-name behavior is unchanged: exit 0, both manifests and worktrees gone.
 #[test]
 fn env_rm_removes_multiple_envs() {
@@ -4516,7 +4648,7 @@ fn env_rm_removes_multiple_envs() {
     assert!(!r.work("alpha").exists(), "alpha worktree still present");
     assert!(!r.work("beta").exists(), "beta worktree still present");
 
-    // h5i env list should show no envs remaining.
+    // h5i box list should show no envs remaining.
     let list_out = out_str(&r.h5i_ok(&["env", "list"]));
     assert!(
         !list_out.contains("env/tester/alpha") && !list_out.contains("env/tester/beta"),
@@ -4524,7 +4656,7 @@ fn env_rm_removes_multiple_envs() {
     );
 }
 
-/// `h5i env rm good nope` — one missing env must not abort the other.
+/// `h5i box rm good nope` — one missing env must not abort the other.
 /// The present env is removed; exit code is non-zero; both failures are reported.
 #[test]
 fn env_rm_partial_failure_continues_and_exits_nonzero() {
@@ -4753,7 +4885,7 @@ fn the_receipt_log_is_outside_the_boxs_write_grants() {
 
 // ─── detached boxes: code copied in, host repository untouched ──────────────
 
-/// `h5i dev <url>` copies an external repository into the box. The host
+/// `h5i box <url>` copies an external repository into the box. The host
 /// repository gets no branch, no worktree and no objects from it: the boundary
 /// the product claims only holds if outside code never lands here.
 #[test]

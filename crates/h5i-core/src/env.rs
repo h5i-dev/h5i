@@ -230,7 +230,7 @@ impl RunLock {
                 let msg = match role {
                     // Another writer (or a teardown's `run.lock` hold) is live.
                     // Observers never take `run.lock`, so they can't cause this.
-                    LockRole::Writer => "environment is busy — another `h5i dev run`/`shell` \
+                    LockRole::Writer => "environment is busy — another `h5i box run`/`shell` \
                          or lifecycle op (propose/apply/rebase/abort) holds it",
                     // A teardown holds `observers.lock` exclusively.
                     LockRole::Observer => "environment is being torn down (gc/rm) — a \
@@ -732,7 +732,7 @@ pub fn read_ref_policies(repo: &Repository) -> Vec<(String, String)> {
 /// Materialize env manifests + policies from `refs/h5i/env` onto disk for any
 /// env that is absent locally, or whose ref copy is newer (`updated_at`). This
 /// is what lets a `h5i pull` make another clone's environments appear in
-/// `h5i dev list`/`status`/`diff`/`apply`. Worktrees are inherently local, so a
+/// `h5i box list`/`status`/`diff`/`apply`. Worktrees are inherently local, so a
 /// materialized ("remote") env has no `work/`; review/apply operate on the
 /// pushed code branch instead.
 pub fn materialize_from_ref(repo: &Repository, h5i_root: &Path) -> Result<usize, H5iError> {
@@ -773,7 +773,7 @@ pub fn materialize_from_ref(repo: &Repository, h5i_root: &Path) -> Result<usize,
                 eprintln!(
                     "warning: skipping shared env '{}' — its stored policy does not match the \
                      pinned digest (likely created by a different h5i version); recreate it: \
-                     `h5i dev rm {} --force` then `h5i dev create`",
+                     `h5i box rm {} --force` then `h5i box create`",
                     crate::redact::sanitize_display(&m.id),
                     crate::redact::sanitize_display(&m.slug)
                 );
@@ -1181,7 +1181,7 @@ pub fn find(h5i_root: &Path, name: &str) -> Result<EnvManifest, H5iError> {
         .collect();
     match matches.len() {
         0 => Err(H5iError::Metadata(format!(
-            "no environment named '{name}' (see `h5i dev list`)"
+            "no environment named '{name}' (see `h5i box list`)"
         ))),
         1 => Ok(matches[0].clone()),
         _ => Err(H5iError::Metadata(format!(
@@ -1207,7 +1207,7 @@ pub fn load_policy(h5i_root: &Path, m: &EnvManifest) -> Result<ResolvedPolicy, H
             "policy.resolved.toml for {} does not match the digest pinned in its manifest \
              (expected {}, found {digest}) — refusing to run under a tampered policy. \
              If you did not edit it, the env was most likely created by a different h5i \
-             version; recreate it: `h5i dev rm {} --force` then `h5i dev create …`",
+             version; recreate it: `h5i box rm {} --force` then `h5i box create …`",
             m.id, m.policy_digest, m.slug
         )));
     }
@@ -1257,7 +1257,7 @@ fn default_source() -> String {
 /// the box shares its object store and can be applied back onto a branch.
 /// The other two are **detached**: the code is copied into a repository that
 /// lives inside the box's own directory, the host repository is never touched,
-/// and the only way out is `h5i dev export`.
+/// and the only way out is `h5i box export`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum BoxSource {
     /// A worktree of this repository (the default).
@@ -1445,7 +1445,7 @@ pub fn create(
     }
     if repo.find_reference(&branch_full).is_ok() {
         return Err(H5iError::Metadata(format!(
-            "branch {branch_full} already exists — `h5i dev gc` keeps applied/aborted env \
+            "branch {branch_full} already exists — `h5i box gc` keeps applied/aborted env \
              branches for provenance; pick a new name"
         )));
     }
@@ -1578,7 +1578,7 @@ pub fn create(
                 .map_err(|e| H5iError::Metadata(format!("worktree creation failed for {id}: {e}")))?;
             // Lock the worktree for the env's whole life so a stray
             // `git worktree prune` can't reclaim a live env out from under it;
-            // `h5i dev gc` is the only thing that unlocks+prunes it (and only
+            // `h5i box gc` is the only thing that unlocks+prunes it (and only
             // when applied/aborted).
             let _ = wt.lock(Some(&format!("h5i env {id} live")));
         }
@@ -1597,7 +1597,7 @@ pub fn create(
     let persona_digest = materialize_persona(&work_path, &profile.persona)?;
 
     // The viewer token, minted before anything inside the box has run. Minting
-    // it lazily on the first `h5i dev view` would mean minting it after an agent
+    // it lazily on the first `h5i box view` would mean minting it after an agent
     // had already had the run of the box; minting it here means the credential
     // for watching a box predates the box's first instruction. It lives in the
     // env directory, outside every path the box can write or read.
@@ -1743,7 +1743,7 @@ pub fn has_workspace(m: &EnvManifest, h5i_root: &Path) -> bool {
 fn detached_err(m: &EnvManifest, op: &str) -> H5iError {
     H5iError::Metadata(format!(
         "{}: `{op}` needs a parent branch in this repository, and this box is detached \
-         (source: {}). Use `h5i dev export {}` and apply the patch wherever you want it.",
+         (source: {}). Use `h5i box export {}` and apply the patch wherever you want it.",
         m.id, m.source, m.slug
     ))
 }
@@ -1757,7 +1757,7 @@ pub fn is_detached(m: &EnvManifest) -> bool {
 fn no_workspace_err(m: &EnvManifest, op: &str) -> H5iError {
     H5iError::Metadata(format!(
         "{}: no local workspace for `{op}` — this environment lives on another clone (or was \
-         gc'd). You can review it (`h5i dev diff/status/inspect {}`) and `h5i dev apply {}` \
+         gc'd). You can review it (`h5i box diff/status/inspect {}`) and `h5i box apply {}` \
          from the pushed code branch, but run/propose/rebase need the originating clone.",
         m.id, m.slug, m.slug
     ))
@@ -2039,6 +2039,54 @@ fn prepare_private_paths(
     Ok(())
 }
 
+/// Longest `TMPDIR` that still leaves room for what a box builds underneath it.
+///
+/// macOS caps an `AF_UNIX` path at 104 bytes. The deepest thing h5i knows a box
+/// puts under `TMPDIR` is Chrome's process-singleton socket, reached through
+/// agent-browser's ephemeral profile directory:
+///
+/// ```text
+///   <TMPDIR>/agent-browser-chrome-<uuid>/SingletonSocket
+///            \__________ 58 __________/\_____ 16 _____/
+/// ```
+///
+/// so a `TMPDIR` longer than this cannot host one. Not a hard guarantee for
+/// every program — it is the budget h5i sizes its own scratch path against.
+#[cfg(target_os = "macos")]
+const TMPDIR_BUDGET: usize = 104 - 58 - 16;
+
+/// Where a box's private `/tmp` is backed on disk.
+///
+/// Linux keeps it inside the env directory. The tier bind-mounts that directory
+/// over `/tmp` in a private mount namespace, so the box sees the short literal
+/// path and the backing's own depth is invisible to it.
+///
+/// macOS has no unprivileged bind mount, so `seatbelt::plan` re-expresses the
+/// redirect as `TMPDIR` pointing at the backing — which means the backing's
+/// length *is* what programs inside the box build their paths from. Nested in
+/// the repository it never fits `TMPDIR_BUDGET`: `/.git/.h5i/env/<agent>/<slug>/tmp`
+/// alone spends 26 of the ~30 bytes available before the repository path is
+/// counted at all, so a browser box failed on every Mac with Chrome reporting
+/// "Failed to create socket directory" — which reads as a permission error and
+/// is really `AF_UNIX path too long`.
+///
+/// So on macOS the backing moves to a short path outside the repository, named
+/// by digest so it stays stable for a given env (and distinct per read-only
+/// observer, which passes its own logical path). Isolation is unchanged: it
+/// comes from the directory being per-env, `0700`, and the only `/tmp` write
+/// grant the policy carries — not from where it sits.
+fn private_tmp_backing(logical: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        let digest = crate::refstore::sha256_hex(logical.display().to_string().as_bytes());
+        let short = PathBuf::from(format!("/tmp/h5i-{}", &digest[..12]));
+        debug_assert!(short.display().to_string().len() <= TMPDIR_BUDGET);
+        short
+    }
+    #[cfg(not(target_os = "macos"))]
+    logical.to_path_buf()
+}
+
 /// Give kernel-tier envs a private `/tmp` by binding an env-owned scratch dir
 /// over the host path before Landlock is applied. Agent profiles used to grant
 /// host-shared `/tmp` at process/supervised tiers; that creates an unnecessary
@@ -2065,18 +2113,37 @@ fn prepare_private_tmp(
     if !had_tmp {
         return Ok(());
     }
-    let backing = match backing_override {
+    let logical = match backing_override {
         Some(dir) => dir.to_path_buf(),
         None => m.dir(h5i_root).join("tmp"),
     };
+    let backing = private_tmp_backing(&logical);
     let _ = std::fs::remove_dir_all(&backing);
-    std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
+    if let Some(parent) = backing.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+    }
+    // Created exclusively, 0700. On macOS this lands in world-writable, sticky
+    // `/tmp` (see [`private_tmp_backing`]), where another local user could have
+    // squatted the name: `remove_dir_all` cannot delete their directory and this
+    // then fails rather than adopting a directory somebody else owns and writing
+    // the box's scratch into it.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&backing, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| H5iError::with_path(e, &backing))?;
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&backing)
+            .map_err(|e| {
+                H5iError::Metadata(format!(
+                    "could not create this box's private /tmp at {} ({e}). If that path exists \
+                     and is not yours, remove it — h5i will not reuse a scratch directory it \
+                     does not own (fail-closed).",
+                    backing.display()
+                ))
+            })?;
     }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
     policy.profile.fs_read.retain(|p| p != "/tmp");
     policy.profile.fs_write.retain(|p| p != "/tmp");
     policy.profile.fs_write.push(backing.display().to_string());
@@ -2562,6 +2629,31 @@ fn inbox_pending_context_path_from(
     Some(PathBuf::from(capture_spool?).join(SPOOL_PENDING_CONTEXT))
 }
 
+/// Where this box's private `/tmp` actually is, as the box will see it.
+///
+/// The Linux tiers bind-mount a per-env directory over `/tmp` inside a private
+/// mount namespace, so the literal path is already the private one. macOS has
+/// neither unprivileged bind mounts nor mount namespaces, so `seatbelt::plan`
+/// re-expresses that redirect as `TMPDIR` pointing at a per-env backing — and
+/// rewrites the `/tmp` write grant to that backing, which leaves the *literal*
+/// `/tmp` denied.
+///
+/// So a hardcoded `/tmp/<subdir>` is right on Linux and wrong on every Mac: the
+/// agent-browser daemon died at startup with "Failed to create socket
+/// directory: Operation not permitted", which is what a browser box looked like
+/// on macOS before this.
+fn box_tmp_root(policy: &ResolvedPolicy) -> String {
+    if !cfg!(target_os = "macos") {
+        return "/tmp".to_string();
+    }
+    policy
+        .home_binds
+        .iter()
+        .find(|b| b.target == Path::new("/tmp"))
+        .map(|b| b.backing.display().to_string())
+        .unwrap_or_else(|| "/tmp".to_string())
+}
+
 /// Environment a `browser` box needs, derived from the policy that is actually
 /// enforced.
 ///
@@ -2610,7 +2702,7 @@ pub fn browser_env(policy: &ResolvedPolicy) -> Vec<(String, String)> {
         // redirect to a per-env scratch, so two boxes never share a socket).
         (
             "AGENT_BROWSER_SOCKET_DIR".to_string(),
-            "/tmp/agent-browser".to_string(),
+            format!("{}/agent-browser", box_tmp_root(policy)),
         ),
         // Chat off. There is exactly one gate upstream and it is the presence
         // of `AI_GATEWAY_API_KEY`, so "off" is spelled by that variable being
@@ -2899,7 +2991,7 @@ fn remove_path_any(path: &Path) -> Result<(), H5iError> {
     }
 }
 
-// ─── user egress allowlist (`h5i dev allow`) ─────────────────────────────────
+// ─── user egress allowlist (`h5i box allow`) ─────────────────────────────────
 
 /// Path of the persistent, **host-side** user egress allowlist: one rule per
 /// line (`api.example.com`, `.example.com`, `host:443`; `#` comments). Lives
@@ -3010,7 +3102,7 @@ pub fn validate_egress_rule(raw: &str) -> Result<String, H5iError> {
 fn user_allow_guarded_path() -> Result<PathBuf, H5iError> {
     if std::env::var_os(H5I_ENV_ID_VAR).is_some() {
         return Err(H5iError::Metadata(
-            "refusing to edit the user egress allowlist from inside an env box — `h5i env \
+            "refusing to edit the user egress allowlist from inside an env box — `h5i box \
              allow` is host-side policy (a confined agent must not widen its own network \
              grants); run it on the host"
                 .into(),
@@ -3057,7 +3149,7 @@ fn write_user_allow(path: &Path, rules: &[String]) -> Result<(), H5iError> {
     }
     let mut text = String::from(
         "# h5i user egress allowlist — extra hosts merged into container-tier envs whose\n\
-         # profile already sets net.egress. Managed by `h5i dev allow`; hand-edits kept.\n",
+         # profile already sets net.egress. Managed by `h5i box allow`; hand-edits kept.\n",
     );
     for r in rules {
         text.push_str(r);
@@ -3095,7 +3187,7 @@ fn apply_user_egress(policy: &mut sandbox::ResolvedPolicy) {
         announce_egress(policy);
     } else if policy.claim.enforces_egress_allowlist() && !user.is_empty() {
         eprintln!(
-            "note: {} `h5i dev allow` rule(s) ignored — profile '{}' sets no net.egress \
+            "note: {} `h5i box allow` rule(s) ignored — profile '{}' sets no net.egress \
              (a deny-all profile is never widened from outside the policy)",
             user.len(),
             policy.profile.name
@@ -3125,7 +3217,7 @@ fn announce_egress(policy: &sandbox::ResolvedPolicy) {
         String::new()
     } else {
         format!(
-            "  + user allow: {} (via `h5i dev allow`)",
+            "  + user allow: {} (via `h5i box allow`)",
             policy.user_egress_allow.join(", ")
         )
     };
@@ -3150,7 +3242,7 @@ pub fn run(
 
 /// [`run`], plus one **writable** cache bind.
 ///
-/// The only caller is `h5i dev cache refresh`, which runs an ecosystem's fetch
+/// The only caller is `h5i box cache refresh`, which runs an ecosystem's fetch
 /// step in a box with no agent in it. Keeping it a separate entry point rather
 /// than a policy field an ordinary profile could set means an agent session can
 /// never reach this path: there is nothing it could write in `.h5i/env.toml` to
@@ -3230,7 +3322,7 @@ fn run_inner(
     }
     let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
-    // Host-side `h5i dev allow` extras + the explained-egress line.
+    // Host-side `h5i box allow` extras + the explained-egress line.
     apply_user_egress(&mut policy);
 
     // Broker any declared secrets BEFORE marking the env running, so a
@@ -3629,7 +3721,7 @@ pub fn shell(
             },
         ),
     );
-    // Host-side `h5i dev allow` extras + the explained-egress line.
+    // Host-side `h5i box allow` extras + the explained-egress line.
     apply_user_egress(&mut policy);
 
     // No command given → launch an interactive shell. Rather than inherit the
@@ -3965,7 +4057,7 @@ fn write_plain_bashrc(h5i_root: &Path, m: &EnvManifest) -> Result<String, H5iErr
     let path = dir.join("rc.bash");
     // The env id can contain '/' (agent/slug); harmless inside single quotes.
     let body = format!(
-        "# Generated by `h5i dev shell` — a plain default rc.\n\
+        "# Generated by `h5i box shell` — a plain default rc.\n\
          # The host ~/.bashrc is intentionally NOT sourced inside the confined box\n\
          # (it tends to reference tools the sandbox blocks, e.g. powerline-shell).\n\
          # To customize: set `[shell] rcfile = \"…\"` (relative to the worktree) in\n\
@@ -4242,6 +4334,11 @@ pub fn diff(
     m: &EnvManifest,
     stat_only: bool,
 ) -> Result<String, H5iError> {
+    // h5i's own private-path redirects are not the agent's work. On macOS they
+    // are symlinks in the worktree (no bind mounts), so without this the patch
+    // carries a `120000` entry pointing at h5i's per-env storage — and this
+    // patch is what `export` writes for a human to `git apply`.
+    let private_rels = private_path_rels(h5i_root, m);
     let render = |diff: git2::Diff| -> Result<String, H5iError> {
         if stat_only {
             let stats = diff.stats()?;
@@ -4249,7 +4346,10 @@ pub fn diff(
             return Ok(buf.as_str().unwrap_or("").to_string());
         }
         let mut out = String::new();
-        diff.print(git2::DiffFormat::Patch, |_d, _h, line| {
+        diff.print(git2::DiffFormat::Patch, |d, _h, line| {
+            if delta_is_private(&d, &private_rels) {
+                return true; // skip this delta, keep walking
+            }
             if matches!(line.origin(), '+' | '-' | ' ') {
                 out.push(line.origin());
             }
@@ -4309,14 +4409,20 @@ pub fn diffstat_report(
     h5i_root: &Path,
     m: &EnvManifest,
 ) -> Result<DiffStatReport, H5iError> {
+    // As in [`diff`]: h5i's private-path redirects are h5i artifacts, so they
+    // are neither listed nor counted. Totals are summed from the surviving
+    // files rather than taken from `diff.stats()`, which counts every delta.
+    let private_rels = private_path_rels(h5i_root, m);
     let render = |diff: git2::Diff| -> Result<DiffStatReport, H5iError> {
-        let stats = diff.stats()?;
         let mut files = Vec::new();
         let delta_count = diff.deltas().len();
         for idx in 0..delta_count {
             let Some(delta) = diff.get_delta(idx) else {
                 continue;
             };
+            if delta_is_private(&delta, &private_rels) {
+                continue;
+            }
             let (_, insertions, deletions) = git2::Patch::from_diff(&diff, idx)?
                 .map(|patch| patch.line_stats())
                 .transpose()?
@@ -4335,10 +4441,10 @@ pub fn diffstat_report(
             });
         }
         Ok(DiffStatReport {
+            files_changed: files.len(),
+            insertions: files.iter().map(|f| f.insertions).sum(),
+            deletions: files.iter().map(|f| f.deletions).sum(),
             files,
-            files_changed: stats.files_changed(),
-            insertions: stats.insertions(),
-            deletions: stats.deletions(),
         })
     };
 
@@ -4410,12 +4516,12 @@ impl Drift {
         match self {
             Drift::UpToDate => "up to date with parent".into(),
             Drift::ParentAhead { commits, tip } => format!(
-                "parent advanced {commits} commit{} (now {}) — `h5i dev rebase` to refresh the base",
+                "parent advanced {commits} commit{} (now {}) — `h5i box rebase` to refresh the base",
                 if *commits == 1 { "" } else { "s" },
                 &tip[..12.min(tip.len())]
             ),
             Drift::Diverged { tip } => format!(
-                "parent diverged from the base (now {}) — `h5i dev rebase` will 3-way merge",
+                "parent diverged from the base (now {}) — `h5i box rebase` will 3-way merge",
                 &tip[..12.min(tip.len())]
             ),
             Drift::ParentGone => "parent branch is gone".into(),
@@ -4514,24 +4620,60 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
     // Resolved policy details when readable (digest-verified).
     if let Ok(policy) = load_policy(h5i_root, m) {
         let p = &policy.profile;
+        // `enforce:` is a claim about the host, so a cap this tier cannot apply
+        // here is marked rather than printed as though it held. Darwin applies
+        // neither `mem` nor `procs` at the kernel tiers; saying "mem=8192MiB"
+        // unqualified there reads as a containment property that does not exist.
+        let limits = crate::sandbox::limit_support(policy.claim);
+        let unenforced = |on: bool| if on { "" } else { "*" };
         out.push_str(&format!(
-            "  enforce  : net.mode={:?} fs.write={:?} mem={} procs={} wall={}s{}{}\n",
+            "  enforce  : net.mode={:?} fs.write={:?} mem={}{} procs={}{} wall={}s{}{}\n",
             p.net_mode,
             p.fs_write,
             p.mem_bytes
                 .map(|b| format!("{}MiB", b / 1024 / 1024))
                 .unwrap_or_else(|| "∞".into()),
+            unenforced(limits.mem || p.mem_bytes.is_none()),
             p.max_procs
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| "∞".into()),
+            unenforced(limits.procs || p.max_procs.is_none()),
             p.wall_secs,
             p.fsize_bytes
                 .map(|b| format!(" fsize={}MiB", b / 1024 / 1024))
                 .unwrap_or_default(),
             p.cpu_secs.map(|s| format!(" cpu={s}s")).unwrap_or_default(),
         ));
+        // One footnote beats a caveat on every number, and it names the reason
+        // rather than leaving the reader to infer it from a marker.
+        let declared_unenforced = (!limits.mem && p.mem_bytes.is_some())
+            || (!limits.procs && p.max_procs.is_some());
+        if declared_unenforced {
+            out.push_str(&format!(
+                "             * declared, NOT enforced at the {} tier on this host{}\n",
+                policy.claim.as_str(),
+                if cfg!(target_os = "macos") && policy.claim < IsolationClaim::Container {
+                    " (Darwin has no cgroups; use isolation=container or microvm for a real cap)"
+                } else {
+                    ""
+                }
+            ));
+        }
         if !p.tools.is_empty() {
             out.push_str(&format!("  tools    : {}\n", p.tools.join(", ")));
+        }
+        // Named, not implied: these are held out of `diff`, `propose` and the
+        // exported patch, and a reviewer should see that from the status page
+        // rather than deduce it from an absence.
+        if !p.private_paths.is_empty() {
+            out.push_str(&format!(
+                "  private  : {} (per-env; excluded from diff/export)\n",
+                p.private_paths
+                    .iter()
+                    .map(|pp| pp.path.trim_matches('/'))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
         }
         if !p.net_egress.is_empty() {
             out.push_str(&format!("  egress   : {}", p.net_egress.join(", ")));
@@ -4541,7 +4683,7 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
                     .filter(|u| !p.net_egress.iter().any(|e| e.trim().eq_ignore_ascii_case(u)))
                     .collect();
                 if !extras.is_empty() {
-                    out.push_str(&format!("  (+ h5i dev allow: {})", extras.join(", ")));
+                    out.push_str(&format!("  (+ h5i box allow: {})", extras.join(", ")));
                 }
             }
             out.push('\n');
@@ -4598,7 +4740,7 @@ pub struct DoctorCheck {
     pub detail: String,
 }
 
-/// Per-env enforcement-readiness + structural-health report (`h5i env doctor`).
+/// Per-env enforcement-readiness + structural-health report (`h5i box doctor`).
 /// Answers "can this env actually enforce its isolation claim *here*, and is it
 /// structurally intact?" — the per-env home for the functional `verify_exec`
 /// self-test (bits present ≠ confinement can exec).
@@ -4783,7 +4925,7 @@ pub struct SecretStatus {
 }
 
 /// Resolve each declared grant's *status* without injecting it — the read-only
-/// surface behind `h5i env secrets`. `command:` extractors are never executed
+/// surface behind `h5i box secrets`. `command:` extractors are never executed
 /// here (they have host-side side effects); they show as "not evaluated".
 pub fn secrets_status(policy: &ResolvedPolicy) -> Vec<SecretStatus> {
     policy
@@ -5674,35 +5816,13 @@ pub(crate) fn diffstat_numbers(
     h5i_root: &Path,
     m: &EnvManifest,
 ) -> Option<(usize, usize, usize)> {
-    let triple = |diff: &git2::Diff| {
-        diff.stats()
-            .ok()
-            .map(|s| (s.files_changed(), s.insertions(), s.deletions()))
-    };
-    let work = m.work_dir(h5i_root);
-    if work.is_dir() {
-        let wt_repo = Repository::open(&work).ok()?;
-        let base_tree = wt_repo
-            .find_tree(git2::Oid::from_str(&m.base_tree).ok()?)
-            .ok()?;
-        let mut opts = git2::DiffOptions::new();
-        opts.include_untracked(true)
-            .recurse_untracked_dirs(true)
-            .show_untracked_content(true);
-        let diff = wt_repo
-            .diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))
-            .ok()?;
-        triple(&diff)
-    } else {
-        let base_tree = repo
-            .find_tree(git2::Oid::from_str(&m.base_tree).ok()?)
-            .ok()?;
-        let tip_tree = repo.find_reference(&m.branch).ok()?.peel_to_tree().ok()?;
-        let diff = repo
-            .diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), None)
-            .ok()?;
-        triple(&diff)
-    }
+    // Delegates rather than re-deriving the numbers from `diff.stats()`. This
+    // used to be a third independent copy of the same walk, and it counted the
+    // deltas [`diffstat_report`] excludes — so an export summary said "2 file(s)"
+    // over a one-file patch on macOS, where h5i's private-path symlink is a
+    // delta. One implementation, one answer.
+    let r = diffstat_report(repo, h5i_root, m).ok()?;
+    Some((r.files_changed, r.insertions, r.deletions))
 }
 
 /// Render comparison rows as a human-readable table, flagging when the
@@ -5744,7 +5864,7 @@ pub fn render_compare(rows: &[CompareRow]) -> String {
             r.id, r.status, r.files_changed, r.insertions, r.deletions, run
         ));
     }
-    out.push_str("\nPick a winner with `h5i dev diff <name>` / `h5i dev inspect <name> --capture <id>`, then `h5i dev apply <name>`.\n");
+    out.push_str("\nPick a winner with `h5i box diff <name>` / `h5i box inspect <name> --capture <id>`, then `h5i box apply <name>`.\n");
     out
 }
 
@@ -5756,6 +5876,59 @@ fn truncate_cmd(cmd: &str, max: usize) -> String {
     } else {
         flat
     }
+}
+
+/// The worktree-relative paths this env declares as private (per-env caches and
+/// build dirs). Empty when the policy cannot be read — the caller then treats
+/// nothing as private, which is the conservative direction: a path is shown to
+/// the reviewer rather than hidden from them.
+fn private_path_rels(h5i_root: &Path, m: &EnvManifest) -> Vec<String> {
+    load_policy(h5i_root, m)
+        .map(|p| {
+            p.profile
+                .private_paths
+                .iter()
+                .map(|pp| pp.path.trim_matches('/').to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The private paths this env keeps out of `diff`, `propose` and the exported
+/// patch, for surfacing in **human** output.
+///
+/// Deliberately not folded into [`diff`]'s own return value: that string is what
+/// `export` writes to `patch.diff`, and a note appended to it would be a note
+/// inside a patch. Callers print this beside the diff, never within it.
+///
+/// The filter itself is right — a private path is a per-env cache, and on macOS
+/// it is a symlink into h5i's own storage — but `private_paths` is repo-supplied
+/// config, and a tool whose promise is "the only thing that comes out is a patch
+/// you reviewed" should say which paths it declined to show rather than leave it
+/// to be inferred.
+pub fn private_paths_excluded(h5i_root: &Path, m: &EnvManifest) -> Vec<String> {
+    private_path_rels(h5i_root, m)
+}
+
+/// Does this diff delta describe a private path on either side?
+fn delta_is_private(d: &git2::DiffDelta<'_>, rels: &[String]) -> bool {
+    if rels.is_empty() {
+        return false;
+    }
+    [d.new_file().path(), d.old_file().path()]
+        .into_iter()
+        .flatten()
+        .any(|p| is_under_private_path(p, rels))
+}
+
+/// Is `path` one of `rels`, or inside one? Compared by path component, so a
+/// private `cache` never swallows a sibling called `cache-keys`.
+fn is_under_private_path(path: &Path, rels: &[String]) -> bool {
+    let p = path.to_string_lossy();
+    let p = p.trim_end_matches('/');
+    rels.iter()
+        .any(|r| p == r.as_str() || p.strip_prefix(r.as_str()).is_some_and(|t| t.starts_with('/')))
 }
 
 // ─── mediated commit (§4 — the critical security boundary) ─────────────────
@@ -5807,9 +5980,21 @@ pub fn mediated_commit(
     }
 
     let mut index = wt_repo.index()?;
+    // h5i's own private-path artifacts are never the agent's work product.
+    // Linux hides them by accident — a bind mount over an empty directory is
+    // not a git entry — but macOS has no bind mounts, so the redirect is a
+    // *symlink* at the worktree path. Without this it stages as a new `120000`
+    // entry whose content is a host-absolute path into h5i's env storage, and
+    // `export` then hands the reviewer a patch that, applied, drops that
+    // symlink into their repository. Skipping it explicitly makes the intent
+    // the same on both platforms.
+    let private_rels = private_path_rels(h5i_root, m);
 
     {
         let mut cb = |path: &Path, _matched: &[u8]| -> i32 {
+            if is_under_private_path(path, &private_rels) {
+                return 1; // skip, and not a violation: h5i created it
+            }
             match staged_path_violation(&canon_work, path) {
                 None => 0, // stage it
                 Some(v) => {
@@ -6209,7 +6394,7 @@ pub fn propose(
         brief.push_str("  diff    : (no changes against base)\n");
     }
     brief.push_str(&format!(
-        "\nReview with `h5i dev diff {}`, then `h5i dev apply {}` (reviewer-selected; never automatic).\n",
+        "\nReview with `h5i box diff {}`, then `h5i box apply {}` (reviewer-selected; never automatic).\n",
         m.slug, m.slug
     ));
     Ok(brief)
@@ -6223,9 +6408,9 @@ pub fn propose(
 /// the parent into the env branch in-box makes a later `apply` fast-forward.
 fn conflict_runbook(m: &EnvManifest) -> String {
     format!(
-        "to resolve: `h5i dev shell {slug}`, then inside the box \
+        "to resolve: `h5i box shell {slug}`, then inside the box \
          `git merge {parent}` — fix the conflicts, `git add` the files, \
-         `git commit` — exit, then `h5i dev apply {slug}`",
+         `git commit` — exit, then `h5i box apply {slug}`",
         slug = m.slug,
         parent = m.parent_branch,
     )
@@ -6250,7 +6435,7 @@ pub fn apply(
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status != ST_PROPOSED {
         return Err(H5iError::Metadata(format!(
-            "{} is '{}' — run `h5i dev propose {}` first (apply is never automatic)",
+            "{} is '{}' — run `h5i box propose {}` first (apply is never automatic)",
             m.id, m.status, m.slug
         )));
     }
@@ -6324,7 +6509,7 @@ pub fn apply(
                 })
                 .collect();
             return Err(H5iError::Metadata(format!(
-                "apply refused — merge conflicts in: {}. Rebase the env (`h5i dev rebase {}`), or {}.",
+                "apply refused — merge conflicts in: {}. Rebase the env (`h5i box rebase {}`), or {}.",
                 paths.join(", "),
                 m.slug,
                 conflict_runbook(m)
@@ -6333,7 +6518,7 @@ pub fn apply(
         let tree = repo.find_tree(idx.write_tree_to(repo)?)?;
         let sig = crate::refstore::signature(repo)?;
         let msg = if patch_mode {
-            let mut msg = format!("h5i dev apply --patch: {} → {}", m.id, m.parent_branch);
+            let mut msg = format!("h5i box apply --patch: {} → {}", m.id, m.parent_branch);
             if !folded_subjects.is_empty() {
                 msg.push_str("\n\nSquashed env commits:\n");
                 for s in &folded_subjects {
@@ -6344,7 +6529,7 @@ pub fn apply(
             }
             msg
         } else {
-            format!("h5i dev apply: merge {} → {}", m.id, m.parent_branch)
+            format!("h5i box apply: merge {} → {}", m.id, m.parent_branch)
         };
         let parents: Vec<&git2::Commit> = if patch_mode {
             vec![&parent_tip]
@@ -6365,7 +6550,7 @@ pub fn apply(
         &format!("refs/heads/{}", m.parent_branch),
         new_commit,
         true,
-        &format!("h5i dev apply: {}", m.id),
+        &format!("h5i box apply: {}", m.id),
     )?;
 
     // Evidence summary on the `applied` event, linking the env's receipts to the
@@ -6486,7 +6671,7 @@ pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result
             .collect();
         return Err(H5iError::Metadata(format!(
             "rebase refused — conflicts against the new base in: {}. Either apply against the \
-             old base (`h5i dev apply {}`), or {}.",
+             old base (`h5i box apply {}`), or {}.",
             paths.join(", "),
             m.slug,
             conflict_runbook(m)
@@ -6501,7 +6686,7 @@ pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result
         Some("HEAD"),
         &sig,
         &sig,
-        &format!("h5i dev rebase: {} onto {}", m.id, m.parent_branch),
+        &format!("h5i box rebase: {} onto {}", m.id, m.parent_branch),
         &merged_tree,
         &[&env_tip, &parent_tip],
     )?;
@@ -6656,7 +6841,7 @@ pub fn rm(
     );
     if live && !force {
         return Err(H5iError::Metadata(format!(
-            "{} is still live (status: {}) — abort it first (`h5i dev abort {}`) or pass \
+            "{} is still live (status: {}) — abort it first (`h5i box abort {}`) or pass \
              --force to remove it anyway",
             m.id, m.status, m.slug
         )));
@@ -6703,6 +6888,11 @@ pub fn rm(
     // 5. Erase the on-disk env dir (manifest, policy, status, leftovers), then
     //    tidy the now-empty agent dir.
     let dir = m.dir(h5i_root);
+    // On macOS the private `/tmp` backing lives outside the env dir (see
+    // [`private_tmp_backing`]), so erasing the env dir no longer takes it with
+    // it. Best-effort: a leftover scratch dir is tidiness, not correctness, and
+    // must not block the removal the user asked for.
+    let _ = std::fs::remove_dir_all(private_tmp_backing(&dir.join("tmp")));
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
     }
@@ -7021,7 +7211,7 @@ mod tests {
         let m = canonical_manifest("claude", "auth-fix");
         let rb = conflict_runbook(&m);
         assert!(
-            rb.contains("h5i dev shell auth-fix"),
+            rb.contains("h5i box shell auth-fix"),
             "names the env shell: {rb}"
         );
         assert!(
@@ -7029,7 +7219,7 @@ mod tests {
             "names the parent merge: {rb}"
         );
         assert!(
-            rb.contains("h5i dev apply auth-fix"),
+            rb.contains("h5i box apply auth-fix"),
             "names the finishing apply: {rb}"
         );
     }
@@ -7415,8 +7605,20 @@ mod tests {
 
         prepare_private_tmp(h5i_root, &m, &mut pol, None).unwrap();
 
-        let backing = m.dir(h5i_root).join("tmp");
+        // Where the backing actually lands: inside the env dir on Linux, and at
+        // a short path outside the repository on macOS, where `TMPDIR` *is* the
+        // path programs build on and `AF_UNIX` caps it at 104 bytes. Asking
+        // [`private_tmp_backing`] keeps the test honest about the platform
+        // instead of pinning the Linux layout on both.
+        let backing = private_tmp_backing(&m.dir(h5i_root).join("tmp"));
         assert!(backing.is_dir(), "{backing:?}");
+        // `#[cfg]`, not `cfg!`: `TMPDIR_BUDGET` only exists on macOS, and a
+        // runtime `cfg!` still has to compile on every platform.
+        #[cfg(target_os = "macos")]
+        {
+            let len = backing.display().to_string().len();
+            assert!(len <= TMPDIR_BUDGET, "TMPDIR too long for AF_UNIX: {len}");
+        }
         assert_eq!(
             std::fs::metadata(&backing).unwrap().permissions().mode() & 0o777,
             0o700
@@ -7958,11 +8160,25 @@ mod tests {
         assert_eq!(env.get("AGENT_BROWSER_HEADED").map(String::as_str), Some("0"));
         assert!(!env.iter().any(|(k, _)| k == "AGENT_BROWSER_HEADLESS"));
         // The daemon socket must land somewhere the box can write; its default
-        // ($XDG_RUNTIME_DIR) is not granted on any tier.
+        // ($XDG_RUNTIME_DIR) is not granted on any tier. The literal `/tmp` is
+        // the right answer only where `/tmp` is bind-mounted per env — on macOS
+        // it is denied outright and the per-env backing is the writable path,
+        // so the expectation follows [`box_tmp_root`] rather than a constant.
+        let expected = format!("{}/agent-browser", box_tmp_root(&policy));
         assert_eq!(
             env.get("AGENT_BROWSER_SOCKET_DIR").map(String::as_str),
-            Some("/tmp/agent-browser")
+            Some(expected.as_str())
         );
+        // And once a private `/tmp` redirect exists, macOS must follow it rather
+        // than the literal `/tmp`, which is denied there. Conditional because a
+        // policy without the redirect legitimately falls back to `/tmp` — that
+        // is [`box_tmp_root`]'s documented default, not a bug to assert against.
+        if policy.home_binds.iter().any(|b| b.target == Path::new("/tmp")) {
+            assert!(
+                !cfg!(target_os = "macos") || !expected.starts_with("/tmp/agent-browser"),
+                "macOS must not point the socket at the denied literal /tmp: {expected}"
+            );
+        }
     }
 
     #[test]

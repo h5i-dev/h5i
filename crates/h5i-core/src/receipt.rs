@@ -95,7 +95,7 @@ impl BrowserEvidence {
 /// One observed execution inside an environment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecRecord {
-    /// Short, stable handle for the CLI (`h5i env inspect --capture <id>`).
+    /// Short, stable handle for the CLI (`h5i box inspect --capture <id>`).
     pub id: String,
     /// RFC3339 UTC, microsecond precision, lexically sortable.
     pub timestamp: String,
@@ -200,6 +200,41 @@ fn now_ts() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
 
+/// Monotonic tiebreaker for [`run_id`]. Two runs can share a microsecond stamp
+/// *and* every other input (`true` twice in a tight loop), so the id needs one
+/// component that cannot repeat within a process.
+static RUN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The handle for one *run*.
+///
+/// This used to be `sha256(payload)[..16]` — the content address of the output
+/// and nothing else. That made the id collide across genuinely different runs:
+/// `true` and `false` both produce no output, so both got the same id, as did
+/// `echo hello` and `printf hello`. Lookup is first-match-wins, so the second
+/// run of a colliding pair became unreachable through `inspect`, and `compare`
+/// showed the wrong command and exit code for a box's latest run.
+///
+/// So the id now covers what distinguishes a run — when it happened, where, what
+/// was executed and how it ended — with the payload digest still folded in, plus
+/// the process-local sequence number. `raw_oid` remains the content address, so
+/// nothing about payload deduplication changes.
+fn run_id(timestamp: &str, input: &RecordInput, digest: &str) -> String {
+    let seq = RUN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // NUL separators: no field can contain one, so no two distinct field sets
+    // can flatten to the same string.
+    let material = format!(
+        "{timestamp}\0{}\0{}\0{}\0{}\0{}\0{}\0{seq}\0{digest}\0{}",
+        input.env_id,
+        input.policy_digest.as_deref().unwrap_or(""),
+        input.source,
+        input.cmd.as_deref().unwrap_or(""),
+        input.exit_code.map(|c| c.to_string()).unwrap_or_default(),
+        input.timed_out,
+        std::process::id(),
+    );
+    sha256_hex(material.as_bytes())[..ID_LEN].to_string()
+}
+
 /// Record one observed execution and store its raw payload.
 ///
 /// The payload and the command are secret-redacted before anything is written.
@@ -231,11 +266,12 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
     let stored: &[u8] = if raw_truncated { &raw[..RAW_CAP] } else { raw };
 
     let digest = sha256_hex(stored);
-    let id = digest[..ID_LEN].to_string();
+    let timestamp = now_ts();
+    let id = run_id(&timestamp, &input, &digest);
 
     let rec = ExecRecord {
         id: id.clone(),
-        timestamp: now_ts(),
+        timestamp,
         env_id: input.env_id,
         policy_digest: input.policy_digest,
         source: input.source,
@@ -259,12 +295,17 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
         raw_truncated,
     };
 
-    let raw_file = raw_path(env_dir, &id);
+    // The blob stays content addressed — keyed by the payload digest, NOT by the
+    // record id, which now identifies the run instead. Two runs that printed the
+    // same bytes still share one stored payload; they simply no longer share a
+    // handle. The key keeps the same shape as the ids written before this split,
+    // so payloads stored by older versions remain readable.
+    let raw_file = raw_path(env_dir, &digest[..ID_LEN]);
     if let Some(parent) = raw_file.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    // Content addressed: an identical payload is already on disk and rewriting
-    // it would only risk a torn file for a concurrent reader.
+    // An identical payload is already on disk and rewriting it would only risk a
+    // torn file for a concurrent reader.
     if !raw_file.exists() {
         std::fs::write(&raw_file, stored)?;
     }
@@ -327,8 +368,21 @@ pub fn find(env_dir: &Path, handle: &str) -> Result<ExecRecord, H5iError> {
     }
 }
 
-/// The stored raw payload for a record.
+/// The stored raw payload for a record, by run handle.
+///
+/// Two steps, because a run id and a payload key are no longer the same string:
+/// resolve the record, then read the blob its `raw_oid` names. Records written
+/// before that split used the payload digest as their id, so a direct hit on the
+/// handle is tried as a fallback and keeps those readable.
 pub fn raw_bytes(env_dir: &Path, id: &str) -> Result<Vec<u8>, H5iError> {
+    if let Ok(rec) = find(env_dir, id) {
+        if let Some(key) = blob_key(&rec.raw_oid) {
+            let p = raw_path(env_dir, &key);
+            if p.exists() {
+                return Ok(std::fs::read(p)?);
+            }
+        }
+    }
     let p = raw_path(env_dir, id);
     if !p.exists() {
         return Err(H5iError::Metadata(format!(
@@ -338,7 +392,13 @@ pub fn raw_bytes(env_dir: &Path, id: &str) -> Result<Vec<u8>, H5iError> {
     Ok(std::fs::read(p)?)
 }
 
-/// Human rendering of one record, for `h5i env inspect --capture <id>`.
+/// Blob filename for a `sha256:<hex>` object id.
+fn blob_key(raw_oid: &str) -> Option<String> {
+    let hex = raw_oid.strip_prefix("sha256:")?;
+    (hex.len() >= ID_LEN).then(|| hex[..ID_LEN].to_string())
+}
+
+/// Human rendering of one record, for `h5i box inspect --capture <id>`.
 pub fn render(rec: &ExecRecord, raw: &[u8]) -> String {
     let mut out = String::new();
     out.push_str(&format!("── Receipt {} ({}) ──\n", rec.id, rec.env_id));
@@ -441,6 +501,74 @@ mod tests {
             exit_code: Some(0),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn runs_that_share_an_output_still_get_distinct_ids() {
+        let td = TempDir::new().unwrap();
+
+        // The pair that used to collide: no output at all, different exit code.
+        let ok = append(
+            td.path(),
+            RecordInput {
+                cmd: Some("/usr/bin/true".into()),
+                exit_code: Some(0),
+                ..input()
+            },
+            b"",
+        )
+        .unwrap();
+        let bad = append(
+            td.path(),
+            RecordInput {
+                cmd: Some("/usr/bin/false".into()),
+                exit_code: Some(1),
+                ..input()
+            },
+            b"",
+        )
+        .unwrap();
+        assert_ne!(ok.id, bad.id, "distinct runs must not share a handle");
+
+        // Byte-identical runs of the *same* command are still distinct events.
+        let a = append(td.path(), input(), b"hello\n").unwrap();
+        let b = append(td.path(), input(), b"hello\n").unwrap();
+        assert_ne!(a.id, b.id);
+
+        // ...while the payload stays content addressed: one blob, one oid.
+        assert_eq!(a.raw_oid, b.raw_oid);
+        assert_eq!(
+            std::fs::read_dir(td.path().join(RAW_DIR)).unwrap().count(),
+            2,
+            "two payloads stored: the empty one and `hello`"
+        );
+
+        // Every handle resolves to its own record, and to the right bytes.
+        for rec in [&ok, &bad, &a, &b] {
+            assert_eq!(find(td.path(), &rec.id).unwrap().id, rec.id);
+        }
+        assert_eq!(find(td.path(), &bad.id).unwrap().exit_code, Some(1));
+        assert_eq!(raw_bytes(td.path(), &a.id).unwrap(), b"hello\n");
+        assert_eq!(raw_bytes(td.path(), &ok.id).unwrap(), b"");
+    }
+
+    #[test]
+    fn payloads_written_under_the_old_id_keyed_layout_still_read_back() {
+        // Pre-split receipts used the payload digest as the record id, so the
+        // blob sits at `<id>.raw`. Those envs must not lose their evidence.
+        let td = TempDir::new().unwrap();
+        let raw = b"legacy payload\n";
+        let rec = append(td.path(), input(), raw).unwrap();
+
+        // Rewind the record to the old shape: id == payload digest prefix,
+        // which is also where `append` already put the blob.
+        let legacy_id = rec.raw_oid.strip_prefix("sha256:").unwrap()[..ID_LEN].to_string();
+        let mut stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(log_path(td.path())).unwrap()).unwrap();
+        stored["id"] = serde_json::Value::String(legacy_id.clone());
+        std::fs::write(log_path(td.path()), format!("{stored}\n")).unwrap();
+
+        assert_eq!(raw_bytes(td.path(), &legacy_id).unwrap(), raw);
     }
 
     #[test]

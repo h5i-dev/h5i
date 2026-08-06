@@ -141,6 +141,10 @@ export interface EnforcedPolicy {
   image?: string;
   mem_bytes?: number;
   max_procs?: number;
+  /** False when this tier cannot apply mem_bytes on the serving host. */
+  mem_enforced?: boolean;
+  /** False when this tier cannot apply max_procs on the serving host. */
+  procs_enforced?: boolean;
   wall_secs: number;
   cpu_secs?: number;
   fsize_bytes?: number;

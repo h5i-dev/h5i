@@ -279,7 +279,7 @@ struct AllowEntry {
 }
 
 /// Combine the digested profile allowlist with the host-side user extras
-/// (`h5i env allow`) into the rule set the proxy enforces. **Fail-closed
+/// (`h5i box allow`) into the rule set the proxy enforces. **Fail-closed
 /// widening rule:** when the profile's own `net.egress` is empty (deny-all),
 /// the user extras are IGNORED — state outside the digested policy must never
 /// turn a no-network profile into a networked one; it may only add hosts to a
@@ -1168,7 +1168,7 @@ pub fn run(
 
     // Networking + optional egress proxy (held for the container's lifetime).
     // The enforced rule set = digested profile allowlist + host-side user
-    // extras (`h5i env allow`); a deny-all profile ignores the extras.
+    // extras (`h5i box allow`); a deny-all profile ignores the extras.
     let egress_rules = effective_egress(&p.net_egress, &policy.user_egress_allow);
     let mut _proxy: Option<ProxyHandle> = None;
     let net = if !egress_rules.is_empty() {

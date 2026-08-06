@@ -123,6 +123,14 @@ pub fn probe() -> Option<Runtime> {
     PROBE.get_or_init(probe_uncached).clone()
 }
 
+/// Uncached [`probe`] — the **diagnostic** path, mirroring
+/// [`crate::container::probe_fresh`]. `env probe`, `env capabilities` and the
+/// console's `/api/probe` describe the host as it is *now*, so they must not be
+/// served the memo an earlier caller filled in.
+pub fn probe_fresh() -> Option<Runtime> {
+    probe_uncached()
+}
+
 fn probe_uncached() -> Option<Runtime> {
     let version = msb_version()?;
     if version < MIN_MSB_VERSION {
@@ -240,9 +248,13 @@ pub enum NetPlan {
 ///   `suffix=` target covers only the subdomain half, so both tokens are emitted.
 /// - a bare IP or CIDR passes through as its own target.
 ///
-/// Every rule set gets a leading `allow@dns` so name resolution works against
-/// the gateway resolver; without it a default-deny box cannot resolve the very
-/// hosts it is allowed to reach.
+/// No DNS rule is emitted. microsandbox resolves names at the gateway and keeps
+/// that path reachable under `--net-default-egress deny`, so a domain rule is
+/// enough on its own: a box allowed `example.com` resolves and reaches it, and a
+/// box denied `wikipedia.org` still cannot. An explicit `allow@dns` was emitted
+/// here until it turned out `msb` 0.6.8 rejects the token outright ("the `dns`
+/// target supports `tcp`, `udp`, or `any`, not `dns`"), which failed *every*
+/// microvm run carrying an allowlist — the default agent profiles included.
 ///
 /// Fail-closed rejections: an entry carrying `,` or `@` (which would split or
 /// re-target the token), and a single-label wildcard such as `.com` (which
@@ -268,10 +280,32 @@ pub fn egress_rule_tokens(egress: &[String]) -> Result<Vec<String>, H5iError> {
                  else (fail-closed). Split it into separate entries."
             )));
         }
-        // Only a trailing all-digit segment is a port; IPv6 literals are full of colons.
+        // An IPv6 literal is full of colons, and the port split below cannot tell
+        // one from a `host:port`: `2001:db8::1` used to come out as
+        // `allow@2001:db8::tcp:1` — a rule that means nothing anyone asked for.
+        // The grammar has no unambiguous spelling for one here, so refuse it
+        // rather than translate it wrong.
+        if raw.matches(':').count() > 1 {
+            return Err(H5iError::Metadata(format!(
+                "net.egress entry '{raw}' looks like an IPv6 literal (more than one ':'), which \
+                 the microvm tier's rule grammar cannot carry unambiguously — refusing rather \
+                 than emitting a rule that means something else (fail-closed). Use a hostname, \
+                 or an IPv4 address or CIDR."
+            )));
+        }
+        // Only a trailing all-digit segment is a port.
         let (host_part, port) = match raw.rsplit_once(':') {
             Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
-                (h, p.parse::<u16>().ok())
+                // Out of range is an error, never a silent widening: `.ok()` here
+                // turned `example.com:99999` into `allow@example.com`, which is
+                // *every* port — the opposite of what the entry asked for.
+                let port = p.parse::<u16>().map_err(|_| {
+                    H5iError::Metadata(format!(
+                        "net.egress entry '{raw}' has a port outside 1-65535 — refusing rather \
+                         than falling back to an any-port rule (fail-closed)."
+                    ))
+                })?;
+                (h, Some(port))
             }
             _ => (raw, None),
         };
@@ -301,9 +335,6 @@ pub fn egress_rule_tokens(egress: &[String]) -> Result<Vec<String>, H5iError> {
         }
     }
 
-    if !tokens.is_empty() {
-        tokens.insert(0, "allow@dns".to_string());
-    }
     Ok(tokens)
 }
 
@@ -358,14 +389,36 @@ fn write_preload(work: &Path, env: &[(String, String)]) -> Result<PreloadScript,
     })?;
     let dir = env_dir.join("microvm");
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
-    let path = dir.join(format!("preload-{}.sh", std::process::id()));
-    std::fs::write(&path, preload_script(env)).map_err(|e| H5iError::with_path(e, &path))?;
+    // pid **and** sequence, matching `SandboxGuard::new`: a pid alone repeats
+    // across invocations, and two runs inside one process would share a name.
+    let path = dir.join(format!(
+        "preload-{}-{}.sh",
+        std::process::id(),
+        RUN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    // Created `0600` *before* anything is written to it. `fs::write` would make
+    // the file at the umask default and only then chmod it, leaving a window in
+    // which any local user could read the brokered secrets this script carries —
+    // the very exposure the module avoids by keeping them out of argv, so the
+    // same threat model applies here.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        // A leftover from a recycled pid is ours to clear; `create_new` then
+        // guarantees we are the file's creator and its mode was never wider.
+        let _ = std::fs::remove_file(&path);
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| H5iError::with_path(e, &path))?;
+        f.write_all(preload_script(env).as_bytes())
             .map_err(|e| H5iError::with_path(e, &path))?;
     }
+    #[cfg(not(unix))]
+    std::fs::write(&path, preload_script(env)).map_err(|e| H5iError::with_path(e, &path))?;
     check_spec_path(&path, "preload script")?;
     Ok(PreloadScript { path })
 }
@@ -623,7 +676,7 @@ fn image_or_refuse(p: &Profile) -> Result<String, H5iError> {
 }
 
 /// Resolve the network plan for a run: the enforced rule set is the digested
-/// profile allowlist plus the host-side user extras (`h5i env allow`), and a
+/// profile allowlist plus the host-side user extras (`h5i box allow`), and a
 /// deny-all profile ignores the extras (it can never be widened from outside the
 /// digested policy).
 fn net_plan(policy: &ResolvedPolicy) -> Result<NetPlan, H5iError> {
@@ -959,15 +1012,95 @@ mod tests {
     // ─── egress translation ─────────────────────────────────────────────────
 
     #[test]
-    fn plain_host_becomes_an_any_port_rule_and_dns_is_always_allowed() {
+    fn plain_host_becomes_an_any_port_rule() {
         let tokens = egress_rule_tokens(&["pypi.org".into()]).unwrap();
-        assert_eq!(tokens, vec!["allow@dns", "allow@pypi.org"]);
+        assert_eq!(tokens, vec!["allow@pypi.org"]);
     }
 
     #[test]
     fn a_port_scoped_entry_narrows_to_tcp_on_that_port() {
         let tokens = egress_rule_tokens(&["github.com:443".into()]).unwrap();
-        assert_eq!(tokens, vec!["allow@dns", "allow@github.com:tcp:443"]);
+        assert_eq!(tokens, vec!["allow@github.com:tcp:443"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_preload_script_is_never_readable_by_anyone_else() {
+        use std::os::unix::fs::PermissionsExt;
+        let td = tempfile::tempdir().unwrap();
+        let work = td.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+
+        let secret = "SUPER_SECRET_VALUE";
+        let script = write_preload(&work, &[("TOKEN".into(), secret.into())]).unwrap();
+
+        // The mode must be 0600 as observed, and — the actual point — it must
+        // never have been anything else, so it has to be set at creation rather
+        // than chmod'd afterwards.
+        let mode = std::fs::metadata(&script.path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "preload script is {mode:o}, not 0600");
+        assert!(std::fs::read_to_string(&script.path).unwrap().contains(secret));
+
+        // Writing again (same process, next run) must not inherit a wider mode
+        // from a leftover file.
+        let stale = write_preload(&work, &[("TOKEN".into(), secret.into())]).unwrap();
+        std::fs::set_permissions(&stale.path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let again = write_preload(&work, &[("TOKEN".into(), secret.into())]).unwrap();
+        let mode = std::fs::metadata(&again.path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "a later run came out {mode:o}");
+    }
+
+    #[test]
+    fn an_out_of_range_port_is_refused_not_widened() {
+        // `.ok()` here used to drop the parse failure, leaving `port = None` and
+        // emitting `allow@example.com` — every port, when the entry asked for
+        // one. A fail-closed module must not resolve "cannot translate" to
+        // "allow more".
+        for entry in ["example.com:99999", "example.com:65536", "example.com:0x1"] {
+            let out = egress_rule_tokens(&[entry.to_string()]);
+            assert!(
+                out.is_err() || !out.as_ref().unwrap().iter().any(|t| t == "allow@example.com"),
+                "{entry} widened to an any-port rule: {out:?}"
+            );
+        }
+        assert!(egress_rule_tokens(&["example.com:65536".into()]).is_err());
+        // The boundary still works.
+        assert_eq!(
+            egress_rule_tokens(&["example.com:65535".into()]).unwrap(),
+            vec!["allow@example.com:tcp:65535"]
+        );
+    }
+
+    #[test]
+    fn an_ipv6_literal_is_refused_not_mangled() {
+        // `2001:db8::1` split into host `2001:db8:` + port `1` and came out as
+        // `allow@2001:db8::tcp:1`, which is not the address anyone wrote.
+        for entry in ["2001:db8::1", "::1", "fe80::1%eth0", "2001:db8::1:443"] {
+            assert!(
+                egress_rule_tokens(&[entry.to_string()]).is_err(),
+                "{entry} was translated instead of refused"
+            );
+        }
+        // A single colon is still an ordinary host:port.
+        assert_eq!(
+            egress_rule_tokens(&["example.com:443".into()]).unwrap(),
+            vec!["allow@example.com:tcp:443"]
+        );
+    }
+
+    #[test]
+    fn no_dns_token_is_ever_emitted() {
+        // `msb` 0.6.8 rejects every spelling of the `dns` target, so emitting
+        // one failed the run before the guest booted. Name resolution goes
+        // through the gateway, which stays reachable under a default-deny
+        // egress policy, so the domain rules below are sufficient on their own.
+        for entry in ["pypi.org", "github.com:443", "*.example.com", "10.0.0.1"] {
+            let tokens = egress_rule_tokens(&[entry.into()]).unwrap();
+            assert!(
+                !tokens.iter().any(|t| t.contains("dns")),
+                "emitted a dns rule for {entry}: {tokens:?}"
+            );
+        }
     }
 
     #[test]
@@ -978,7 +1111,6 @@ mod tests {
         assert_eq!(
             tokens,
             vec![
-                "allow@dns",
                 "allow@domain=githubusercontent.com",
                 "allow@suffix=githubusercontent.com",
             ]
@@ -992,8 +1124,8 @@ mod tests {
 
     #[test]
     fn an_empty_allowlist_emits_no_rules_at_all() {
-        // Not even `allow@dns`: an empty list is deny-all, and a box that can
-        // resolve names it may not reach is a box leaking queries.
+        // An empty list is deny-all, and the caller turns "no rules" into
+        // `--no-net` rather than a default-deny rule set.
         assert!(egress_rule_tokens(&[]).unwrap().is_empty());
         assert!(egress_rule_tokens(&["  ".into()]).unwrap().is_empty());
     }
@@ -1002,7 +1134,7 @@ mod tests {
     fn duplicate_entries_collapse_and_order_is_stable() {
         let tokens =
             egress_rule_tokens(&["pypi.org".into(), "PyPI.org".into(), "crates.io".into()]).unwrap();
-        assert_eq!(tokens, vec!["allow@dns", "allow@pypi.org", "allow@crates.io"]);
+        assert_eq!(tokens, vec!["allow@pypi.org", "allow@crates.io"]);
     }
 
     #[test]
@@ -1023,7 +1155,7 @@ mod tests {
     fn an_ip_entry_passes_through_as_its_own_target() {
         assert_eq!(
             egress_rule_tokens(&["198.51.100.5:8080".into()]).unwrap(),
-            vec!["allow@dns", "allow@198.51.100.5:tcp:8080"]
+            vec!["allow@198.51.100.5:tcp:8080"]
         );
     }
 
@@ -1091,7 +1223,7 @@ mod tests {
         let a = argv_for(&policy(), &net, None);
         assert!(window(&a, "--net-default-egress").contains(&"deny"));
         assert!(window(&a, "--net-default-ingress").contains(&"deny"));
-        assert_eq!(window(&a, "--net-rule"), vec!["allow@dns", "allow@pypi.org"]);
+        assert_eq!(window(&a, "--net-rule"), vec!["allow@pypi.org"]);
         // Never the container tier's proxy env — there is no proxy here, and a
         // stale HTTP_PROXY would make the box look filtered when it is not.
         assert!(!a.iter().any(|x| x.contains("HTTP_PROXY")), "{a:?}");

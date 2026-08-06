@@ -399,10 +399,19 @@ pub struct EnforcedPolicy {
     pub wall_secs: u64,
     pub cpu_secs: Option<u64>,
     pub fsize_bytes: Option<u64>,
+    /// Whether this tier actually applies `mem_bytes` on the host serving this
+    /// console. The panel is headed "what was actually allowed", so a cap the
+    /// host cannot impose has to be drawn as declared-only rather than silently
+    /// rendered next to the ones that are real. See
+    /// [`crate::sandbox::limit_support`].
+    pub mem_enforced: bool,
+    /// As `mem_enforced`, for `max_procs`.
+    pub procs_enforced: bool,
 }
 
 impl From<&Profile> for EnforcedPolicy {
     fn from(p: &Profile) -> Self {
+        let limits = crate::sandbox::limit_support(p.isolation);
         EnforcedPolicy {
             isolation: p.isolation.as_str().to_string(),
             net_mode: match p.net_mode {
@@ -421,6 +430,8 @@ impl From<&Profile> for EnforcedPolicy {
             wall_secs: p.wall_secs,
             cpu_secs: p.cpu_secs,
             fsize_bytes: p.fsize_bytes,
+            mem_enforced: limits.mem,
+            procs_enforced: limits.procs,
         }
     }
 }

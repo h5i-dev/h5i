@@ -423,6 +423,10 @@ pub fn load_profile(
                 // overlay keeps the grant its daemon cannot start without.
                 // Explicit `unix = false` takes it away.
                 unix_sockets: t.net.unix.unwrap_or(base.unix_sockets),
+                // Inherited from the base, never spelled in `.h5i/env.toml`:
+                // it is not a policy dial an author picks, it is what the
+                // `browser` base needs in order to start a browser at all.
+                mach_iokit: base.mach_iokit,
             }
         }
     };
@@ -822,6 +826,11 @@ pub fn probe_host() -> HostCaps {
 pub fn probe_host_fresh() -> HostCaps {
     let mut caps = probe_host_kernel_uncached();
     caps.container_runtime = crate::container::probe_fresh().map(|r| r.bin);
+    // Both image-backed runtimes, or the report contradicts what `resolve` will
+    // do: [`probe_host`] fills `microvm_runtime` in, so omitting it here made
+    // `env probe`, `env capabilities` and `/api/probe` all say "microvm = none"
+    // on a host that boots microVMs perfectly well.
+    caps.microvm_runtime = crate::microvm::probe_fresh().map(|r| r.bin);
     caps
 }
 
@@ -904,7 +913,7 @@ pub struct ClaimSupport {
 }
 
 /// Machine-readable answer to "what can h5i actually enforce here?" — the
-/// structured form of `h5i env probe`, so a downstream product adapts to the
+/// structured form of `h5i box probe`, so a downstream product adapts to the
 /// real host instead of regex-scraping a log line. Backs `env capabilities
 /// [--json]`.
 #[derive(Debug, Clone, Serialize)]
@@ -1041,7 +1050,14 @@ fn capabilities_report_from(caps: HostCaps) -> CapabilitiesReport {
         claim: IsolationClaim::Microvm.as_str(),
         satisfiable: microvm_ok,
         runnable: None,
-        note: Some("needs microsandbox `msb` + host virtualization + profile container.image"),
+        // The unmet-prerequisite list belongs to a host that cannot run the
+        // tier; once it can, the only thing still outstanding is the profile
+        // image, and saying otherwise reads as a blocker that isn't there.
+        note: Some(if microvm_ok {
+            "profile needs container.image"
+        } else {
+            "needs microsandbox `msb` + host virtualization + profile container.image"
+        }),
     });
 
     let confined_tier_runs = claims
@@ -1078,6 +1094,52 @@ fn capabilities_report_from(caps: HostCaps) -> CapabilitiesReport {
         resource_limits,
         claims,
         strongest_tier: strongest.as_str(),
+    }
+}
+
+/// Which of a profile's declared resource caps a claim actually applies here.
+///
+/// `h5i box status` prints the profile's `mem`/`procs` numbers under an
+/// `enforce:` label, which is a claim about the host, not about the file the
+/// numbers came from. Darwin has no cgroups, does not enforce `RLIMIT_AS`
+/// against the mmap'd heap every modern runtime uses, and scopes `RLIMIT_NPROC`
+/// to the whole uid rather than to one box — so [`crate::seatbelt`] deliberately
+/// applies neither, and printing them unqualified stated a containment property
+/// the host does not have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LimitSupport {
+    /// Is `mem_bytes` a real ceiling on this host?
+    pub mem: bool,
+    /// Is `max_procs` a real ceiling on this host?
+    pub procs: bool,
+}
+
+impl LimitSupport {
+    /// True when neither cap is applied, so a caller can say so once instead of
+    /// annotating each number.
+    pub fn none(&self) -> bool {
+        !self.mem && !self.procs
+    }
+}
+
+/// See [`LimitSupport`].
+pub fn limit_support(claim: IsolationClaim) -> LimitSupport {
+    let both = |b| LimitSupport { mem: b, procs: b };
+    match claim {
+        // No confinement at all: `run_unconfined` sets a wall-clock deadline and
+        // applies nothing else.
+        IsolationClaim::Workspace => both(false),
+        // Image-backed tiers cap both in the runtime itself — `--memory` +
+        // `--pids-limit` for Podman, `--memory` + `--rlimit nproc` for `msb`,
+        // where the memory figure is the guest's entire address space.
+        IsolationClaim::Container | IsolationClaim::HardenedContainer | IsolationClaim::Microvm => {
+            both(true)
+        }
+        // Kernel tiers: a per-run cgroup on Linux (and only when cgroup v2 is
+        // actually delegated to this user), nothing usable on Darwin.
+        IsolationClaim::Process | IsolationClaim::Supervised => {
+            both(cfg!(target_os = "linux") && crate::cgroup::probe().usable)
+        }
     }
 }
 
@@ -1797,7 +1859,7 @@ pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
 
 /// `workspace` tier: no kernel confinement (trusted), but still scoped — runs
 /// in the env worktree with the wall-clock limit applied so a hung command
-/// cannot wedge `h5i env run` forever.
+/// cannot wedge `h5i box run` forever.
 fn run_unconfined(
     policy: &ResolvedPolicy,
     work: &Path,
@@ -1870,7 +1932,17 @@ pub(crate) struct EgressJail {
 unsafe fn close_inherited_fds() {
     // close_range(2) is Linux 5.9+; Landlock needs 5.13+, so on any host that
     // reaches this code it is present and this is the only branch that runs.
-    if libc::syscall(libc::SYS_close_range, 3 as libc::c_uint, libc::c_uint::MAX, 0) == 0 {
+    // `syscall` is variadic, so each argument is read as a `long`. Passing a
+    // 32-bit `c_uint` happens to work on x86-64 and aarch64 because the ABI
+    // zero-extends, but the widths should agree by construction rather than by
+    // the platform being forgiving.
+    if libc::syscall(
+        libc::SYS_close_range,
+        3 as libc::c_long,
+        libc::c_uint::MAX as libc::c_long,
+        0 as libc::c_long,
+    ) == 0
+    {
         return;
     }
     // Fallback for a kernel (or seccomp policy) without close_range: walk the
@@ -2876,7 +2948,7 @@ pub(crate) fn wait_loop(
             } else {
                 None // died on a signal (incl. our SIGKILL)
             };
-            return (exit_code, timed_out, cpu_ms(&usage), Some(usage.ru_maxrss));
+            return (exit_code, timed_out, cpu_ms(&usage), Some(maxrss_kb(&usage)));
         }
         if r == -1 {
             let e = std::io::Error::last_os_error();
@@ -2905,6 +2977,20 @@ fn cpu_ms(u: &libc::rusage) -> u128 {
     let secs = (u.ru_utime.tv_sec + u.ru_stime.tv_sec) as u128;
     let usecs = (u.ru_utime.tv_usec + u.ru_stime.tv_usec) as u128;
     secs * 1000 + usecs / 1000
+}
+
+/// Peak RSS in KiB, normalising the one `rusage` field whose unit POSIX never
+/// fixed: Linux (and the BSDs) report `ru_maxrss` in kilobytes, **Darwin reports
+/// it in bytes**. Taking the raw value there over-reported every receipt by
+/// 1024×, so a `pwd` claimed 1.1 GiB and a 512 MiB allocation claimed a
+/// terabyte — numbers that then travelled into export reports.
+#[cfg(unix)]
+fn maxrss_kb(u: &libc::rusage) -> i64 {
+    if cfg!(target_vendor = "apple") {
+        u.ru_maxrss / 1024
+    } else {
+        u.ru_maxrss
+    }
 }
 
 #[cfg(not(unix))]

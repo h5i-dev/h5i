@@ -471,6 +471,31 @@ pub struct Profile {
     /// profile's canonical serialization — and its pinned digest — is unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unix_sockets: bool,
+
+    /// macOS only: allow `mach-register` and `iokit-open`.
+    ///
+    /// The base profile already grants `mach-lookup`, which is enough to *find*
+    /// a service. A multi-process browser also **registers** mach ports of its
+    /// own — that is how the browser process and its renderers talk — and opens
+    /// IOKit even with `--headless` and `--disable-gpu`. Neither is covered by
+    /// `mach-lookup`, and under `(deny default)` Chrome does not report the
+    /// refusal: it dies with `SEGV_ACCERR` at a null address, several layers
+    /// after the denial that caused it.
+    ///
+    /// Bisected against a real profile rather than copied from Chromium's own
+    /// sandbox: with unrestricted reads *and* writes Chrome still crashed, and
+    /// with these two operations added to h5i's ordinary narrow grants it
+    /// started. Each alone is not enough; both together are.
+    ///
+    /// What it widens: the box may register mach service names in its own
+    /// bootstrap namespace and open IOKit user clients. It is opt-in per
+    /// profile, set only by `browser`, and pinned in the digest — the same
+    /// treatment as [`Profile::unix_sockets`], for the same reason.
+    ///
+    /// Appended last, and serialized only when `true`, so every existing
+    /// profile's canonical serialization — and its pinned digest — is unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mach_iokit: bool,
 }
 
 /// Read-only system paths granted by default at the `process` tier — enough to
@@ -530,6 +555,7 @@ impl Profile {
             shell_rcfile: None,
             persona: Vec::new(),
             unix_sockets: false,
+            mach_iokit: false,
         }
     }
 
@@ -660,6 +686,25 @@ impl Profile {
         // Chrome's shared-memory transport. Granting it is better than relying
         // on every caller to pass --disable-dev-shm-usage.
         p.fs_write.push("/dev/shm".into());
+        // Chrome's browser↔renderer IPC and its IOKit use. See
+        // [`Profile::mach_iokit`]; without it Chrome dies with a bare SEGV.
+        p.mach_iokit = true;
+        // Chrome's ProcessSingleton lock socket. It lives in the *macOS
+        // per-user* temp dir, which Chrome resolves with
+        // `confstr(_CS_DARWIN_USER_TEMP_DIR)` and NOT from `TMPDIR` — so the
+        // per-env `/tmp` redirect does not move it, and a box that cannot write
+        // there fails with "Failed to create socket directory", which reads as
+        // a path problem and is a grant problem.
+        //
+        // This is the widest thing the browser profile asks for: that directory
+        // is shared with the host user's own processes and with other browser
+        // boxes, which is the cross-agent rendezvous point the kernel tiers
+        // otherwise remove by redirecting `/tmp`. Scoped to this profile, and
+        // stated here rather than discovered later.
+        if let Some(d) = darwin_user_temp_dir() {
+            p.fs_read.push(d.clone());
+            p.fs_write.push(d);
+        }
         // The agent-browser daemon's control socket is a filesystem-bound
         // AF_UNIX listener under `AGENT_BROWSER_SOCKET_DIR`, and the supervised
         // tier's socket() gate denies that family by default. Without this the
@@ -682,13 +727,56 @@ impl Profile {
 }
 
 
+/// The per-user temp directory macOS hands out through
+/// `confstr(_CS_DARWIN_USER_TEMP_DIR)` — `/var/folders/<xx>/<yy>/T`.
+///
+/// Distinct from `TMPDIR`, and that distinction is the whole reason this
+/// exists: programs that ask the OS rather than the environment land here, so a
+/// box's `TMPDIR` redirect does not move them. Returned without its trailing
+/// slash; `seatbelt::path_aliases` adds the `/private` spelling, which Seatbelt
+/// needs as well.
+#[cfg(target_os = "macos")]
+fn darwin_user_temp_dir() -> Option<String> {
+    // `_CS_DARWIN_USER_TEMP_DIR`, which libc does not re-export.
+    const CS_DARWIN_USER_TEMP_DIR: libc::c_int = 65537;
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    let n = unsafe {
+        libc::confstr(
+            CS_DARWIN_USER_TEMP_DIR,
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+        )
+    };
+    // 0 is failure; > len means the buffer was too small to hold the answer.
+    if n == 0 || n > buf.len() {
+        return None;
+    }
+    buf.truncate(n.saturating_sub(1)); // drop the trailing NUL
+    let s = String::from_utf8(buf).ok()?;
+    let s = s.trim_end_matches('/').to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn darwin_user_temp_dir() -> Option<String> {
+    None
+}
+
 // ─── browser discovery ──────────────────────────────────────────────────────
 
 /// Candidate Chrome/Chromium binaries, in preference order. `agent-browser
 /// install` downloads Chrome for Testing under the user's cache, and a
 /// Playwright install is a common existing source; a system Chrome is used when
 /// neither is present.
+/// Non-existent entries are filtered out by [`browser_read_grants`], so the
+/// macOS and Linux locations can both live here without either host being
+/// granted a path it does not have.
 const CHROME_CANDIDATES: &[&str] = &[
+    // Where `agent-browser install` — the command h5i's own "not there" error
+    // tells you to run — actually puts the build, on every platform. The two
+    // XDG-shaped paths below are an older layout and are kept for installs that
+    // predate it.
+    "~/.agent-browser/browsers",
     "~/.cache/agent-browser",
     "~/.local/share/agent-browser",
     "~/.cache/ms-playwright",
@@ -699,6 +787,16 @@ const CHROME_CANDIDATES: &[&str] = &[
     "/usr/bin/google-chrome-stable",
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
+    // macOS. A browser installed the ordinary way is an app bundle, not a
+    // binary on PATH, and the whole bundle is granted because Chrome loads its
+    // framework and resources from inside it. Without these, a Mac with Chrome
+    // sitting in /Applications was told to go and install a second copy.
+    "/Applications/Google Chrome.app",
+    "/Applications/Google Chrome for Testing.app",
+    "/Applications/Chromium.app",
+    "~/Applications/Google Chrome.app",
+    "~/Applications/Google Chrome for Testing.app",
+    "~/Applications/Chromium.app",
 ];
 
 /// Candidate `agent-browser` binaries: cargo install, a user-local npm bin, a
@@ -708,6 +806,10 @@ const AGENT_BROWSER_CANDIDATES: &[&str] = &[
     "~/.local/bin/agent-browser",
     "/usr/local/bin/agent-browser",
     "/usr/bin/agent-browser",
+    // Homebrew on Apple Silicon. `/usr/local/bin` above covers the Intel
+    // prefix only, so `brew install agent-browser` on every current Mac landed
+    // somewhere h5i never looked.
+    "/opt/homebrew/bin/agent-browser",
 ];
 
 /// Font and rendering support Chrome needs to start at all.
@@ -789,6 +891,26 @@ mod browser_profile_tests {
         // Room for renderers.
         assert!(browser.mem_bytes > agent.mem_bytes);
         assert!(browser.max_procs > agent.max_procs);
+    }
+
+    #[test]
+    fn only_the_browser_profile_gets_the_chrome_host_surface() {
+        let agent = Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude);
+        let browser = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
+
+        // Chrome registers mach ports and opens IOKit; without both it dies
+        // with a bare SEGV under `(deny default)`.
+        assert!(browser.mach_iokit);
+        assert!(!agent.mach_iokit, "an ordinary agent box gets neither");
+
+        // Chrome's ProcessSingleton lock socket lives in the macOS per-user temp
+        // dir, which it finds via confstr and not via TMPDIR — so the per-env
+        // `/tmp` redirect cannot move it and the box must be granted the real
+        // directory. The widest thing this profile asks for, and only it.
+        if let Some(d) = darwin_user_temp_dir() {
+            assert!(browser.fs_write.contains(&d), "{:?}", browser.fs_write);
+            assert!(!agent.fs_write.contains(&d), "{:?}", agent.fs_write);
+        }
     }
 
     #[test]
@@ -947,7 +1069,7 @@ pub struct ResolvedPolicy {
     /// The one **writable** bind, and the only way a cache is ever written.
     ///
     /// Runtime-only and serde-skipped, like `ro_binds`. Deliberately an
-    /// `Option` of one rather than a list: `h5i dev cache refresh` is the sole
+    /// `Option` of one rather than a list: `h5i box cache refresh` is the sole
     /// producer, it populates exactly one ecosystem's cache, and a policy that
     /// cannot express "several writable binds" cannot grow one by accident.
     #[serde(skip)]
@@ -962,7 +1084,7 @@ pub struct ResolvedPolicy {
     #[serde(skip)]
     pub work_readonly: bool,
     /// Runtime-only extra egress hosts from the **host-side** user allowlist
-    /// (`h5i env allow`, stored under the user config dir — never inside the
+    /// (`h5i box allow`, stored under the user config dir — never inside the
     /// repo, `$WORK`, or any box-visible path). Never serialized: the pinned
     /// `policy_digest` stays reproducible; the extras are recorded per-run in
     /// the capture manifest instead. Applied only when the digested profile
