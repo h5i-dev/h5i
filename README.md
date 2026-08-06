@@ -108,7 +108,7 @@ microvm is the strongest tier and the only one that does not share the host kern
 No SSH keys, cloud credentials, or Docker socket enter a box. A runtime-scoped host proxy injects model API keys outside the boundary, preventing cross-runtime access. Each box receives a one-time copy of HOME state that is never written back.
 
 
-## For agents
+## Skill
 
 The agent-facing interface is a skill, and the binary carries it:
 
