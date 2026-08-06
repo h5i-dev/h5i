@@ -2818,6 +2818,20 @@ find_chrome() {{
   return 1
 }}
 
+# Where the box's only route out is h5i's host-side allowlist proxy, Chrome has
+# to be *told*: it does not read `HTTPS_PROXY` on macOS (it asks the OS for the
+# system proxy configuration), so it would open its own socket, be denied by the
+# Seatbelt rule, and report `net::ERR_ACCESS_DENIED` — which reads as a page
+# problem and is a route problem. The variable is set only by the tiers that run
+# such a proxy, so on the Linux supervised tier (nftables, direct connects)
+# nothing is added and Chrome is launched exactly as before.
+#
+# No bypass list: Chrome always bypasses loopback unless `<-loopback>` is passed,
+# so the dev server under test is still reached directly and never through — or
+# gated by — the allowlist.
+PROXY_ARG=
+if [ -n "${{HTTPS_PROXY:-}}" ]; then PROXY_ARG="--proxy-server=$HTTPS_PROXY"; fi
+
 alive || {{
   CHROME=$(find_chrome) || {{ echo "h5i: no Chrome/Chromium found for the browser profile" >&2; exit 1; }}
   rm -rf "$UD"; mkdir -p "$UD"
@@ -2826,6 +2840,7 @@ alive || {{
   # renderers abort on startup without it. h5i's box is the boundary.
   detach "$CHROME" --headless=new --no-sandbox --disable-dev-shm-usage \
       --disable-gpu --no-first-run --no-default-browser-check \
+      ${{PROXY_ARG:+"$PROXY_ARG"}} \
       --user-data-dir="$UD" --remote-debugging-port="$PORT" about:blank \
       >"$STATE/chrome.log" 2>&1 &
   echo $! > "$STATE/chrome.pid"
@@ -2853,6 +2868,24 @@ pub struct BrowserShim {
     pub port: u16,
 }
 
+/// A loopback port held for the life of the env: read back from `file` when it
+/// is already there, otherwise reserved once and written down. Both ports a
+/// browser box depends on are memorised by something that outlives a single run
+/// (Chrome's CDP endpoint, and the proxy address Chrome was launched with), so
+/// neither can be re-drawn per run.
+fn remembered_port(file: &Path, what: &str) -> Result<u16, H5iError> {
+    if let Some(p) = std::fs::read_to_string(file)
+        .ok()
+        .and_then(|t| t.trim().parse::<u16>().ok())
+    {
+        return Ok(p);
+    }
+    let p = alloc_free_port()
+        .ok_or_else(|| H5iError::Metadata(format!("could not reserve a loopback port for {what}")))?;
+    std::fs::write(file, p.to_string()).map_err(|e| H5iError::with_path(e, file))?;
+    Ok(p)
+}
+
 fn prepare_browser_shim(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -2873,22 +2906,16 @@ fn prepare_browser_shim(
     // the next run would be a port the still-running Chrome is not listening on
     // — and, worse, the only port the policy grants. Allocated once, then read
     // back for the life of the env.
-    let port_file = state.join("cdp-port");
-    let port = match std::fs::read_to_string(&port_file)
-        .ok()
-        .and_then(|t| t.trim().parse::<u16>().ok())
-    {
-        Some(p) => p,
-        None => {
-            let p = alloc_free_port().ok_or_else(|| {
-                H5iError::Metadata("could not reserve a loopback port for the box's browser".into())
-            })?;
-            std::fs::write(&port_file, p.to_string())
-                .map_err(|e| H5iError::with_path(e, &port_file))?;
-            p
-        }
-    };
+    let port = remembered_port(&state.join("cdp-port"), "the box's browser")?;
     policy.loopback_ports.push(port);
+    // The egress allowlist proxy is remembered for the same reason, in the
+    // other direction: that surviving Chrome memorises the proxy address it was
+    // launched with, and on the macOS supervised tier that proxy is the box's
+    // only route out. See [`sandbox::ResolvedPolicy::egress_proxy_port`].
+    policy.egress_proxy_port = Some(remembered_port(
+        &state.join("egress-port"),
+        "the box's egress proxy",
+    )?);
     let shim = dir.join("agent-browser");
     std::fs::write(&shim, browser_shim_source(&real)).map_err(|e| H5iError::with_path(e, &shim))?;
     #[cfg(unix)]

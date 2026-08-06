@@ -1469,6 +1469,24 @@ pub struct ResolvedPolicy {
     /// assigned when it starts), so a pinned policy digest is unchanged.
     #[serde(skip)]
     pub loopback_ports: Vec<u16>,
+    /// Runtime-only: the loopback port the egress allowlist proxy should bind
+    /// for this box, rather than whatever ephemeral port the OS hands out.
+    ///
+    /// It exists for one reason: on the macOS supervised tier the proxy *is*
+    /// the box's only route out, and a `browser` box's Chrome deliberately
+    /// outlives the `box run` that started it. Chrome takes its proxy address
+    /// once, at launch, so an ephemeral port makes every navigation after that
+    /// first run fail with `ERR_PROXY_CONNECTION_FAILED` — the box pointed at a
+    /// port nothing is listening on any more. Pinning the port per env keeps
+    /// the surviving browser pointed at the proxy that is actually there.
+    ///
+    /// Allocated and persisted host-side by `env::prepare_browser_shim`,
+    /// exactly like the CDP port next to it, and with the same exposure: a
+    /// loopback port a same-uid process could squat between runs. That is
+    /// already true of the CDP port, and a same-uid process on this host can
+    /// read the workspace anyway. `None` → ephemeral, the previous behaviour.
+    #[serde(skip)]
+    pub egress_proxy_port: Option<u16>,
 }
 
 impl ResolvedPolicy {
@@ -1487,6 +1505,7 @@ impl ResolvedPolicy {
             work_readonly: false,
             user_egress_allow: Vec::new(),
             loopback_ports: Vec::new(),
+            egress_proxy_port: None,
         }
     }
 

@@ -1117,7 +1117,10 @@ fn run_supervised(
         let mut allow = crate::container::AllowList::parse(&policy.profile.net_egress);
         // Pin now, so a later DNS answer cannot move the allowlist under us.
         allow.pin_dns();
-        let handle = crate::container::spawn_proxy(allow)?;
+        // On the pinned port when the box has one: a `browser` box's Chrome
+        // outlives this run and keeps dialing whatever address it was launched
+        // with (see `ResolvedPolicy::egress_proxy_port`).
+        let handle = crate::container::spawn_proxy_on(allow, policy.egress_proxy_port)?;
         let port = handle.port;
         let url = format!("http://{LOOPBACK_HOST}:{port}");
         for var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"] {

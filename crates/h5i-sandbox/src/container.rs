@@ -441,7 +441,32 @@ impl Drop for ProxyHandle {
 /// DNS-pinned. The proxy speaks just enough HTTP to gate egress: `CONNECT`
 /// tunnels (HTTPS) and absolute-form requests (plain HTTP).
 pub fn spawn_proxy(allow: AllowList) -> Result<ProxyHandle, H5iError> {
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(H5iError::Io)?;
+    spawn_proxy_on(allow, None)
+}
+
+/// [`spawn_proxy`] on a caller-chosen loopback port
+/// ([`ResolvedPolicy::egress_proxy_port`] — a box whose browser outlives the
+/// run needs the proxy to still be at the address that browser memorised).
+///
+/// Falls back to an ephemeral port when the requested one cannot be bound: a
+/// squatted port is a reason to lose browser continuity, not a reason to refuse
+/// the run. The note says which one happened, because the symptom otherwise
+/// surfaces much later as a proxy error inside the box.
+pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle, H5iError> {
+    let listener = match want {
+        Some(p) => match TcpListener::bind(("127.0.0.1", p)) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!(
+                    "note: egress proxy could not take this box's pinned port {p} ({e}); using an \
+                     ephemeral one — a browser left running by an earlier run will report \
+                     ERR_PROXY_CONNECTION_FAILED until it is restarted"
+                );
+                TcpListener::bind("127.0.0.1:0").map_err(H5iError::Io)?
+            }
+        },
+        None => TcpListener::bind("127.0.0.1:0").map_err(H5iError::Io)?,
+    };
     let port = listener.local_addr().map_err(H5iError::Io)?.port();
     listener.set_nonblocking(true).map_err(H5iError::Io)?;
     let stop = Arc::new(AtomicBool::new(false));
@@ -457,6 +482,15 @@ pub fn spawn_proxy(allow: AllowList) -> Result<ProxyHandle, H5iError> {
                     if stop_thread.load(Ordering::SeqCst) {
                         break;
                     }
+                    // The listener is non-blocking so the accept loop can poll
+                    // `stop`. On macOS (BSD accept) the accepted socket
+                    // *inherits* that flag, where on Linux (accept4) it does
+                    // not — so without this the relay reads `WouldBlock` on its
+                    // first poll, treats it as a fatal error and drops the
+                    // connection. The box sees a CONNECT tunnel that opens with
+                    // `200` and then resets mid-TLS-handshake, which reads like
+                    // an upstream fault and is this one.
+                    let _ = client.set_nonblocking(false);
                     let allow = allow.clone();
                     let tally = tally_thread.clone();
                     std::thread::spawn(move || {
@@ -2417,5 +2451,75 @@ mod tests {
             line2.contains("502") || line2.contains("200"),
             "allowed host must pass the gate (502/200), got: {line2:?}"
         );
+    }
+
+    /// Bytes actually cross an established tunnel — the half the allow/deny test
+    /// above never reaches, because 403 and 502 both return before the relay.
+    ///
+    /// It is worth a test of its own: the accept loop polls a non-blocking
+    /// listener, and on macOS the accepted socket inherits that flag, which made
+    /// the relay read `WouldBlock`, treat it as fatal and drop every tunnel the
+    /// moment it carried traffic. The gate verdicts stayed correct throughout,
+    /// so nothing here failed — the box just lost every connection mid-TLS.
+    /// Local origin only: no network, no DNS.
+    #[test]
+    fn proxy_relays_bytes_over_an_established_tunnel() {
+        use std::io::Read;
+
+        let origin = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin_port = origin.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut s, _) = origin.accept().unwrap();
+            let mut buf = [0u8; 4];
+            s.read_exact(&mut buf).unwrap();
+            assert_eq!(&buf, b"PING");
+            s.write_all(b"PONG").unwrap();
+        });
+
+        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]);
+        let proxy = spawn_proxy(allow).unwrap();
+        let mut c = TcpStream::connect(("127.0.0.1", proxy.port)).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        c.write_all(format!("CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n").as_bytes())
+            .unwrap();
+
+        // Read exactly the response head, so the origin's bytes stay in the
+        // stream for the assertion below.
+        let mut head = Vec::new();
+        let mut b = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            assert_eq!(c.read(&mut b).unwrap(), 1, "tunnel closed during CONNECT");
+            head.push(b[0]);
+        }
+        assert!(
+            String::from_utf8_lossy(&head).contains("200"),
+            "expected an established tunnel, got: {}",
+            String::from_utf8_lossy(&head)
+        );
+
+        c.write_all(b"PING").unwrap();
+        let mut echo = [0u8; 4];
+        c.read_exact(&mut echo)
+            .expect("the tunnel must carry bytes both ways once established");
+        assert_eq!(&echo, b"PONG");
+    }
+
+    /// A browser that outlives the run memorised one proxy address, so the port
+    /// has to be the caller's to choose.
+    #[test]
+    fn proxy_binds_the_requested_port_and_falls_back_when_it_cannot() {
+        let want = {
+            // A port we know is free right now: bind, read it, drop.
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let p = spawn_proxy_on(AllowList::parse(&["allowed.invalid".into()]), Some(want)).unwrap();
+        assert_eq!(p.port, want, "pinned port must be honoured");
+
+        // Same port again, while the first proxy holds it: the run continues on
+        // an ephemeral port rather than failing.
+        let p2 = spawn_proxy_on(AllowList::parse(&["allowed.invalid".into()]), Some(want)).unwrap();
+        assert_ne!(p2.port, want);
+        assert_ne!(p2.port, 0);
     }
 }
