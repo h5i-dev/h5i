@@ -75,6 +75,10 @@ h5i box diff <name>              # what changed against the pinned base
 h5i ui                           # the whole fleet on one screen, read-only
 ```
 
+<p align="center">
+  <img src="./docs/_static/sandbox-ui-demo.png" width="99%" />
+</p>
+
 Get the work out through the gate, which is deliberately a human step:
 
 ```bash
