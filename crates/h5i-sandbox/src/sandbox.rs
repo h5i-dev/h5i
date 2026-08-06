@@ -3525,6 +3525,31 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
     }
 
     #[test]
+    fn agent_profiles_reach_their_own_auth_host() {
+        // Without the auth host an agent box is a one-session box: the seeded
+        // credential copy expires, the silent refresh has nowhere to go, and the
+        // in-box login that should repopulate it cannot complete either (the
+        // paste comes back "invalid token"). Regression guard — the API host
+        // alone looks sufficient right up until a session outlives its token.
+        let dir = tempfile::tempdir().unwrap();
+        for (name, auth_host, foreign) in [
+            ("agent-claude", "platform.claude.com", "auth.openai.com"),
+            ("agent-codex", "auth.openai.com", "platform.claude.com"),
+        ] {
+            let p = load_profile(dir.path(), name, Some(IsolationClaim::Supervised)).unwrap();
+            assert!(
+                p.net_egress.iter().any(|s| s == auth_host),
+                "{name} cannot refresh or log in without {auth_host}: {:?}",
+                p.net_egress
+            );
+            assert!(
+                !p.net_egress.iter().any(|s| s == foreign),
+                "{name} must not reach the other runtime's auth host"
+            );
+        }
+    }
+
+    #[test]
     fn agent_runtime_from_identity_maps_codex_else_claude() {
         assert_eq!(AgentRuntime::from_identity("codex"), AgentRuntime::Codex);
         assert_eq!(AgentRuntime::from_identity("Codex-2"), AgentRuntime::Codex);
