@@ -814,6 +814,48 @@ const CHROME_CANDIDATES: &[&str] = &[
     "~/Applications/Chromium.app",
 ];
 
+/// The **runnable** browser under each [`CHROME_CANDIDATES`] grant, in the same
+/// preference order — one `*` per segment, matched against the real filesystem
+/// by [`chrome_binary`].
+///
+/// This is the list, and the grant list above is derived from where its entries
+/// live. They used to be independent: the grants named `~/.cache/ms-playwright`
+/// while the launcher only ever looked in `/usr/bin`, so a host whose only
+/// Chrome was a Playwright build passed `create` (the grant's directory exists),
+/// got a read grant for it, and then failed *inside the box* with "no
+/// Chrome/Chromium found". Two tables that have to agree, kept apart, disagreed.
+/// [`browser_discovery_tests`] now fails the build in both directions.
+const CHROME_EXECUTABLES: &[&str] = &[
+    // `agent-browser install`, current layout. The Linux build is a plain
+    // binary; on macOS the same download is an app bundle.
+    "~/.agent-browser/browsers/chrome-*/chrome-linux64/chrome",
+    "~/.agent-browser/browsers/chrome-*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "~/.cache/agent-browser/chrome-*/chrome-linux64/chrome",
+    "~/.cache/agent-browser/chrome-*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "~/.local/share/agent-browser/chrome-*/chrome-linux64/chrome",
+    "~/.local/share/agent-browser/chrome-*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    // Playwright. Deliberately not `chromium_headless_shell-*`: the shim
+    // launches with `--headless=new`, which the headless shell does not accept,
+    // so finding one would trade a clear "not found" for an opaque exit 1.
+    "~/.cache/ms-playwright/chromium-*/chrome-linux/chrome",
+    "~/.cache/ms-playwright/chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+    "/opt/google/chrome/chrome",
+    // Debian's `/usr/bin/chromium` is a wrapper around the second path; both
+    // are runnable and either is fine.
+    "/usr/lib/chromium/chromium",
+    "/usr/lib/chromium-browser/chromium-browser",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "~/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "~/Applications/Chromium.app/Contents/MacOS/Chromium",
+];
+
 /// Candidate `agent-browser` binaries: cargo install, a user-local npm bin, a
 /// system install.
 const AGENT_BROWSER_CANDIDATES: &[&str] = &[
@@ -872,11 +914,6 @@ pub fn browser_read_grants() -> Vec<String> {
         .collect()
 }
 
-/// Did we find anything that could actually run a browser **on this host**?
-///
-/// Only meaningful for the kernel tiers, where the box reaches the host
-/// filesystem. A container box gets its browser from the image, so `create`
-/// does not consult this there.
 /// The `agent-browser` binary on this host, if there is one.
 ///
 /// The launch-and-attach shim has to invoke the *real* binary by absolute path:
@@ -890,12 +927,294 @@ pub fn agent_browser_binary() -> Option<String> {
         .map(|p| p.display().to_string())
 }
 
+/// The browser patterns the in-box launcher should try, in preference order.
+///
+/// The shim is a shell script, so it cannot call [`chrome_binary`]: the box may
+/// see a different filesystem than the host that generated it (and at the
+/// container tier it certainly does). It gets the *patterns* and does its own
+/// `-x` test in there. Same list either way, which is the point.
+pub fn chrome_exec_patterns() -> &'static [&'static str] {
+    CHROME_EXECUTABLES
+}
+
+/// The first [`CHROME_EXECUTABLES`] entry that resolves to an executable file
+/// **on this host**, or `None`.
+///
+/// Only meaningful for the kernel tiers, where the box reaches the host
+/// filesystem. A container box gets its browser from the image, so `create`
+/// does not consult this there.
+pub fn chrome_binary() -> Option<String> {
+    chrome_binary_within(None, std::env::var("HOME").ok().as_deref())
+}
+
+/// [`chrome_binary`] with the filesystem it searches supplied.
+///
+/// `root`, when set, is prepended to **every** pattern — the absolute ones as
+/// well as the ones under `home`. A test that only redirected `home` would
+/// still be searching the real `/usr/bin`, and CI runners ship a Chrome there:
+/// the "this host has no browser" cases passed on a laptop and failed on the
+/// runner, which is the same class of mistake this whole change is about.
+fn chrome_binary_within(root: Option<&std::path::Path>, home: Option<&str>) -> Option<String> {
+    CHROME_EXECUTABLES
+        .iter()
+        .filter_map(|p| expand_home_in(p, home))
+        .map(|p| match root {
+            Some(r) => r.join(p.strip_prefix("/").unwrap_or(&p)),
+            None => p,
+        })
+        .flat_map(|p| glob_paths(&p))
+        .find(|p| is_executable_file(p))
+        .map(|p| p.display().to_string())
+}
+
+/// Expand a path with at most one `*` per segment against the real filesystem.
+///
+/// Not a general glob: no `**`, no character classes, no brace expansion. That
+/// is deliberate — the only wildcard any browser layout needs is a version
+/// directory (`chromium-1140`, `chrome-141.0.7390.54`), and a real glob crate
+/// would be a dependency in the sandbox crate for one `*`.
+///
+/// Matches within a directory are returned in **reverse** name order, so
+/// `chromium-1140` is tried before `chromium-1039`. That is a string sort and
+/// not a version comparison: with two builds installed either one works, and
+/// which is "newest" is not worth a version parser.
+fn glob_paths(pattern: &std::path::Path) -> Vec<std::path::PathBuf> {
+    use std::path::{Component, PathBuf};
+    let mut out: Vec<PathBuf> = vec![PathBuf::new()];
+    for comp in pattern.components() {
+        let Component::Normal(seg) = comp else {
+            for p in out.iter_mut() {
+                p.push(comp.as_os_str());
+            }
+            continue;
+        };
+        let seg = seg.to_string_lossy().into_owned();
+        let Some((pre, post)) = seg.split_once('*') else {
+            for p in out.iter_mut() {
+                p.push(&seg);
+            }
+            continue;
+        };
+        let mut next = Vec::new();
+        for parent in &out {
+            // An unreadable or absent directory contributes nothing, exactly as
+            // a non-matching literal segment would.
+            let Ok(entries) = std::fs::read_dir(parent) else { continue };
+            let mut hits: Vec<PathBuf> = entries
+                .flatten()
+                .filter(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    name.len() >= pre.len() + post.len()
+                        && name.starts_with(pre)
+                        && name.ends_with(post)
+                })
+                .map(|e| e.path())
+                .collect();
+            hits.sort();
+            hits.reverse();
+            next.extend(hits);
+        }
+        out = next;
+        if out.is_empty() {
+            return Vec::new();
+        }
+    }
+    out
+}
+
+fn is_executable_file(path: &std::path::Path) -> bool {
+    let Ok(md) = std::fs::metadata(path) else { return false };
+    if !md.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        md.permissions().mode() & 0o111 != 0
+    }
+    // No exec bit to consult; being a file is as much as we can ask.
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// `(a browser we can actually launch, the `agent-browser` binary)`.
+///
+/// The first half asks for a **runnable executable**, not for a directory that
+/// exists. `~/.cache/ms-playwright` is there on any host that ever installed
+/// Playwright for something else, and it may hold nothing but an ffmpeg build —
+/// which used to be enough to pass `create` and fail in the box.
 pub fn browser_tooling_present() -> (bool, bool) {
     let any = |list: &[&str]| {
         list.iter()
             .any(|c| expand_home(c).map(|p| p.exists()).unwrap_or(false))
     };
-    (any(CHROME_CANDIDATES), any(AGENT_BROWSER_CANDIDATES))
+    (chrome_binary().is_some(), any(AGENT_BROWSER_CANDIDATES))
+}
+
+/// The invariant that the two browser tables have to hold, in both directions.
+///
+/// Every failure this fix came from was one of these two assertions being false
+/// with nothing to notice it: a grant nobody looks in reads like support and
+/// supports nothing, and a launcher path nobody granted is a box that fails
+/// after `create` said it was fine.
+#[cfg(test)]
+mod browser_discovery_tests {
+    use super::*;
+
+    /// Path-segment-aware prefix: `/usr/bin/chromium` covers
+    /// `/usr/bin/chromium/…` and itself, but not `/usr/bin/chromium-browser`.
+    fn covers(grant: &str, exe: &str) -> bool {
+        exe == grant || exe.starts_with(&format!("{grant}/"))
+    }
+
+    #[test]
+    fn every_launcher_path_is_a_path_the_box_may_read() {
+        for exe in CHROME_EXECUTABLES {
+            assert!(
+                CHROME_CANDIDATES.iter().any(|g| covers(g, exe)),
+                "the launcher would try {exe}, which no CHROME_CANDIDATES grant covers — \
+                 Landlock would deny it in the box"
+            );
+        }
+    }
+
+    #[test]
+    fn every_grant_is_a_path_the_launcher_actually_tries() {
+        for grant in CHROME_CANDIDATES {
+            assert!(
+                CHROME_EXECUTABLES.iter().any(|e| covers(grant, e)),
+                "{grant} is granted to browser boxes but the launcher never looks there — \
+                 a host whose only Chrome is under it passes create and fails in the box"
+            );
+        }
+    }
+
+    /// The shim quotes a segment that contains a space and leaves `*` bare, so a
+    /// segment needing both would have its glob quoted into a literal.
+    #[test]
+    fn no_pattern_segment_needs_quoting_and_globbing_at_once() {
+        for exe in CHROME_EXECUTABLES {
+            for seg in exe.split('/') {
+                assert!(
+                    !(seg.contains(' ') && seg.contains('*')),
+                    "{exe}: segment {seg:?} cannot be both quoted and globbed in the shim"
+                );
+            }
+        }
+    }
+
+    /// The home every fixture below is built under. A virtual path, not a real
+    /// one: [`chrome_binary_within`] relocates it under the test root along
+    /// with `/usr/bin` and everything else, so no test here can see the machine
+    /// it is running on.
+    const FAKE_HOME: &str = "/home/test";
+
+    /// Place an `agent-browser`-shaped file inside a synthetic filesystem.
+    /// `path` is absolute in that filesystem's terms (`/home/test/…`,
+    /// `/usr/bin/…`).
+    fn plant(root: &std::path::Path, path: &str, mode: u32) -> std::path::PathBuf {
+        let full = root.join(path.strip_prefix('/').unwrap_or(path));
+        std::fs::create_dir_all(full.parent().unwrap()).expect("mkdir");
+        std::fs::write(&full, b"#!/bin/sh\n").expect("write");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&full, std::fs::Permissions::from_mode(mode)).expect("chmod");
+        }
+        let _ = mode;
+        full
+    }
+
+    fn found_in(root: &tempfile::TempDir) -> Option<String> {
+        chrome_binary_within(Some(root.path()), Some(FAKE_HOME))
+    }
+
+    #[test]
+    fn the_playwright_build_this_regressed_on_is_found() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let chrome = plant(
+            root.path(),
+            "/home/test/.cache/ms-playwright/chromium-1140/chrome-linux/chrome",
+            0o755,
+        );
+
+        assert_eq!(found_in(&root).as_deref(), Some(chrome.display().to_string().as_str()));
+    }
+
+    #[test]
+    fn a_directory_that_holds_no_browser_is_not_a_browser() {
+        let root = tempfile::tempdir().expect("tempdir");
+        // The shape that used to pass `create`: the Playwright cache exists,
+        // with an ffmpeg build in it and no Chrome anywhere.
+        plant(
+            root.path(),
+            "/home/test/.cache/ms-playwright/ffmpeg-1011/ffmpeg",
+            0o755,
+        );
+
+        assert_eq!(found_in(&root), None);
+    }
+
+    #[test]
+    fn a_non_executable_chrome_does_not_count() {
+        let root = tempfile::tempdir().expect("tempdir");
+        plant(
+            root.path(),
+            "/home/test/.cache/ms-playwright/chromium-1140/chrome-linux/chrome",
+            0o644,
+        );
+
+        assert_eq!(found_in(&root), None);
+    }
+
+    /// The search is over a filesystem the caller names, and `/usr/bin` is part
+    /// of it. Without this the two `None` cases above are only testing that the
+    /// *runner* has no Chrome, which on GitHub's runners is false.
+    #[test]
+    fn a_system_chrome_is_found_and_only_under_the_root_it_is_given() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let chrome = plant(root.path(), "/usr/bin/google-chrome", 0o755);
+
+        assert_eq!(found_in(&root).as_deref(), Some(chrome.display().to_string().as_str()));
+        // The same fixture, searched from an empty root: nothing.
+        let empty = tempfile::tempdir().expect("tempdir");
+        assert_eq!(found_in(&empty), None);
+    }
+
+    /// A downloaded build beats the distro one, because it is the build
+    /// `agent-browser install` put there for this.
+    #[test]
+    fn a_downloaded_build_wins_over_a_system_one() {
+        let root = tempfile::tempdir().expect("tempdir");
+        plant(root.path(), "/usr/bin/chromium", 0o755);
+        let downloaded = plant(
+            root.path(),
+            "/home/test/.agent-browser/browsers/chrome-141.0.7390.54/chrome-linux64/chrome",
+            0o755,
+        );
+
+        assert_eq!(
+            found_in(&root).as_deref(),
+            Some(downloaded.display().to_string().as_str())
+        );
+    }
+
+    #[test]
+    fn the_newest_looking_versioned_build_is_tried_first() {
+        let root = tempfile::tempdir().expect("tempdir");
+        for v in ["chromium-1039", "chromium-1140"] {
+            plant(
+                root.path(),
+                &format!("/home/test/.cache/ms-playwright/{v}/chrome-linux/chrome"),
+                0o755,
+            );
+        }
+
+        let found = found_in(&root).expect("a build");
+        assert!(found.contains("chromium-1140"), "picked {found}");
+    }
 }
 
 #[cfg(test)]
