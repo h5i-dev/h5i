@@ -2562,6 +2562,31 @@ fn inbox_pending_context_path_from(
     Some(PathBuf::from(capture_spool?).join(SPOOL_PENDING_CONTEXT))
 }
 
+/// Where this box's private `/tmp` actually is, as the box will see it.
+///
+/// The Linux tiers bind-mount a per-env directory over `/tmp` inside a private
+/// mount namespace, so the literal path is already the private one. macOS has
+/// neither unprivileged bind mounts nor mount namespaces, so `seatbelt::plan`
+/// re-expresses that redirect as `TMPDIR` pointing at a per-env backing — and
+/// rewrites the `/tmp` write grant to that backing, which leaves the *literal*
+/// `/tmp` denied.
+///
+/// So a hardcoded `/tmp/<subdir>` is right on Linux and wrong on every Mac: the
+/// agent-browser daemon died at startup with "Failed to create socket
+/// directory: Operation not permitted", which is what a browser box looked like
+/// on macOS before this.
+fn box_tmp_root(policy: &ResolvedPolicy) -> String {
+    if !cfg!(target_os = "macos") {
+        return "/tmp".to_string();
+    }
+    policy
+        .home_binds
+        .iter()
+        .find(|b| b.target == Path::new("/tmp"))
+        .map(|b| b.backing.display().to_string())
+        .unwrap_or_else(|| "/tmp".to_string())
+}
+
 /// Environment a `browser` box needs, derived from the policy that is actually
 /// enforced.
 ///
@@ -2610,7 +2635,7 @@ pub fn browser_env(policy: &ResolvedPolicy) -> Vec<(String, String)> {
         // redirect to a per-env scratch, so two boxes never share a socket).
         (
             "AGENT_BROWSER_SOCKET_DIR".to_string(),
-            "/tmp/agent-browser".to_string(),
+            format!("{}/agent-browser", box_tmp_root(policy)),
         ),
         // Chat off. There is exactly one gate upstream and it is the presence
         // of `AI_GATEWAY_API_KEY`, so "off" is spelled by that variable being
@@ -7981,10 +8006,18 @@ mod tests {
         assert_eq!(env.get("AGENT_BROWSER_HEADED").map(String::as_str), Some("0"));
         assert!(!env.iter().any(|(k, _)| k == "AGENT_BROWSER_HEADLESS"));
         // The daemon socket must land somewhere the box can write; its default
-        // ($XDG_RUNTIME_DIR) is not granted on any tier.
+        // ($XDG_RUNTIME_DIR) is not granted on any tier. The literal `/tmp` is
+        // the right answer only where `/tmp` is bind-mounted per env — on macOS
+        // it is denied outright and the per-env backing is the writable path,
+        // so the expectation follows [`box_tmp_root`] rather than a constant.
+        let expected = format!("{}/agent-browser", box_tmp_root(&policy));
         assert_eq!(
             env.get("AGENT_BROWSER_SOCKET_DIR").map(String::as_str),
-            Some("/tmp/agent-browser")
+            Some(expected.as_str())
+        );
+        assert!(
+            !cfg!(target_os = "macos") || !expected.starts_with("/tmp/"),
+            "macOS must not point the socket at the denied literal /tmp: {expected}"
         );
     }
 

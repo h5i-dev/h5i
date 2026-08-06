@@ -688,7 +688,15 @@ impl Profile {
 /// install` downloads Chrome for Testing under the user's cache, and a
 /// Playwright install is a common existing source; a system Chrome is used when
 /// neither is present.
+/// Non-existent entries are filtered out by [`browser_read_grants`], so the
+/// macOS and Linux locations can both live here without either host being
+/// granted a path it does not have.
 const CHROME_CANDIDATES: &[&str] = &[
+    // Where `agent-browser install` — the command h5i's own "not there" error
+    // tells you to run — actually puts the build, on every platform. The two
+    // XDG-shaped paths below are an older layout and are kept for installs that
+    // predate it.
+    "~/.agent-browser/browsers",
     "~/.cache/agent-browser",
     "~/.local/share/agent-browser",
     "~/.cache/ms-playwright",
@@ -699,6 +707,16 @@ const CHROME_CANDIDATES: &[&str] = &[
     "/usr/bin/google-chrome-stable",
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
+    // macOS. A browser installed the ordinary way is an app bundle, not a
+    // binary on PATH, and the whole bundle is granted because Chrome loads its
+    // framework and resources from inside it. Without these, a Mac with Chrome
+    // sitting in /Applications was told to go and install a second copy.
+    "/Applications/Google Chrome.app",
+    "/Applications/Google Chrome for Testing.app",
+    "/Applications/Chromium.app",
+    "~/Applications/Google Chrome.app",
+    "~/Applications/Google Chrome for Testing.app",
+    "~/Applications/Chromium.app",
 ];
 
 /// Candidate `agent-browser` binaries: cargo install, a user-local npm bin, a
@@ -708,6 +726,10 @@ const AGENT_BROWSER_CANDIDATES: &[&str] = &[
     "~/.local/bin/agent-browser",
     "/usr/local/bin/agent-browser",
     "/usr/bin/agent-browser",
+    // Homebrew on Apple Silicon. `/usr/local/bin` above covers the Intel
+    // prefix only, so `brew install agent-browser` on every current Mac landed
+    // somewhere h5i never looked.
+    "/opt/homebrew/bin/agent-browser",
 ];
 
 /// Font and rendering support Chrome needs to start at all.

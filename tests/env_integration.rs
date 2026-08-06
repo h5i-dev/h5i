@@ -1563,11 +1563,25 @@ fn a_browser_box_at_supervised_gets_af_unix_and_its_neighbours_do_not() {
         return;
     };
 
+    // `python3` on the host is not `python3` in the box: on macOS `/usr/bin/python3`
+    // is the Xcode shim, and the box denies `/Applications/Xcode.app`, so it
+    // cannot start at all. Probe in-box rather than trusting `have_python3`,
+    // which asks the host.
+    let probe = supervised_run_raw(&r, "bbox", &["python3", "-c", "print('PY OK')"]);
+    if !probe.as_deref().unwrap_or("").contains("PY OK") {
+        eprintln!("skipping: python3 does not run inside a box on this host");
+        return;
+    }
+
     // Bind a real filesystem-bound listener, which is what the daemon does —
     // not just socket(), so a gate that allowed the family but a Landlock grant
     // that refused MAKE_SOCK would still be caught.
+    //
+    // Under `TMPDIR`, not a literal `/tmp`: only the Linux tiers bind-mount a
+    // per-env directory over `/tmp`, and on macOS the literal path is denied
+    // outright — the same distinction the daemon's own socket dir now follows.
     let script = "import socket,os,errno\n\
-        d='/tmp/gate-probe'\n\
+        d=os.path.join(os.environ.get('TMPDIR','/tmp'),'gate-probe')\n\
         os.makedirs(d,exist_ok=True)\n\
         try:\n\
         \x20s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\n\
