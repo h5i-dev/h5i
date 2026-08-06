@@ -53,6 +53,11 @@ pub use crate::sandbox_policy::{
     PrivatePath, Profile, ResolvedPolicy, RoBind, SecretGrant, DEFAULT_WALL,
 };
 
+/// The box env var naming the host-side egress proxy. Re-exported here because
+/// the in-box tooling that reads it (the browser shim, generated in core) is
+/// written against `sandbox`, while the proxy that sets it lives in `container`.
+pub use crate::container::EGRESS_PROXY_VAR;
+
 /// Repo-relative path of the checked-in policy file.
 pub const POLICY_FILE: &str = ".h5i/env.toml";
 

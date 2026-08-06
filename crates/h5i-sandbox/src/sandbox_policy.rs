@@ -1469,6 +1469,41 @@ pub struct ResolvedPolicy {
     /// assigned when it starts), so a pinned policy digest is unchanged.
     #[serde(skip)]
     pub loopback_ports: Vec<u16>,
+    /// Runtime-only: the loopback port the egress allowlist proxy should bind
+    /// for this box, rather than whatever ephemeral port the OS hands out.
+    ///
+    /// It exists for one reason: on the macOS supervised tier the proxy *is*
+    /// the box's only route out, and a `browser` box's Chrome deliberately
+    /// outlives the `box run` that started it. Chrome takes its proxy address
+    /// once, at launch, so an ephemeral port makes every navigation after that
+    /// first run fail with `ERR_PROXY_CONNECTION_FAILED` — the box pointed at a
+    /// port nothing is listening on any more. Pinning the port per env keeps
+    /// the surviving browser pointed at the proxy that is actually there.
+    ///
+    /// Read only by the tier that has this problem: the macOS supervised path
+    /// ([`crate::supervisor`]). The container tier's proxy stays ephemeral, and
+    /// correctly so — its Chrome lives in the container and dies with the run,
+    /// so nothing survives to remember an address.
+    ///
+    /// Allocated and persisted host-side by `env::prepare_browser_shim`,
+    /// exactly like the CDP port next to it, and with the same exposure — with
+    /// one addition worth stating plainly: the file it is persisted in lives
+    /// under a directory the **box** is granted write on, so the *value* is
+    /// box-controlled, not just squattable by a same-uid process. Neither is
+    /// authority. `remembered_port` refuses a nonsense value (`0`, privileged),
+    /// the number only ever reaches `bind`, and what the policy grants the box
+    /// is the port the host actually bound — so a box that writes its own
+    /// number gets a proxy there or an ephemeral fallback, and either way
+    /// cannot reach a port the profile does not allow.
+    ///
+    /// That argument is about a *port*, and it does not carry to the pid file
+    /// sitting next to it: a pid reaches `kill` on the host rather than `bind`.
+    /// See `env::browser_pid`, which is why that one is checked to still name
+    /// this box's own browser before anything is signalled.
+    ///
+    /// `None` → ephemeral, the previous behaviour.
+    #[serde(skip)]
+    pub egress_proxy_port: Option<u16>,
 }
 
 impl ResolvedPolicy {
@@ -1487,6 +1522,7 @@ impl ResolvedPolicy {
             work_readonly: false,
             user_egress_allow: Vec::new(),
             loopback_ports: Vec::new(),
+            egress_proxy_port: None,
         }
     }
 

@@ -2800,13 +2800,29 @@ alive() {{
 # h5i `setsid`s the run and `killpg`s that group on exit. There is no `setsid(1)`
 # on macOS, so fall back to perl's; if neither works, still launch — Chrome then
 # lives only for this one command, which is worse but not broken.
+#
+# Every arm `exec`s, and that is load-bearing rather than tidiness. This function
+# is only ever called backgrounded, so `exec` replaces *that* subshell: the `$!`
+# recorded as `chrome.pid` is then Chrome itself. Without it the subshell stays
+# alive as a launcher, `$!` names the launcher, and every later `kill` of that
+# pid — `h5i box rm`'s stop-the-browser, and the host-side restart below — kills
+# the launcher while Chrome, in its own session, carries on. (Called in the
+# foreground it would replace the shim; it is not, and must not be.)
+#
+# One caveat, stated because a wrong pid is now a wrong `kill` rather than a
+# harmless no-op: `setsid(1)` execs in place only when it is not already a
+# process-group leader. Under a job-control shell (`set -m`) it would be one,
+# fork, and `$!` would name a parent that exits at once. This script is
+# `#!/bin/sh` and non-interactive, so job control is off and the pid recorded is
+# Chrome's own — and `browser_pid` on the host re-checks that before signalling
+# anything.
 detach() {{
   if command -v setsid >/dev/null 2>&1; then
-    setsid "$@"
+    exec setsid "$@"
   elif command -v perl >/dev/null 2>&1; then
-    perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- "$@"
+    exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- "$@"
   else
-    "$@"
+    exec "$@"
   fi
 }}
 
@@ -2818,6 +2834,49 @@ find_chrome() {{
   return 1
 }}
 
+# Where the box's only route out is h5i's host-side allowlist proxy, Chrome has
+# to be *told*: it does not read `HTTPS_PROXY` on macOS (it asks the OS for the
+# system proxy configuration), so it would open its own socket, be denied by the
+# Seatbelt rule, and report `net::ERR_ACCESS_DENIED` — which reads as a page
+# problem and is a route problem.
+#
+# Keyed on `H5I_EGRESS_PROXY`, not on `HTTPS_PROXY`: only a tier that actually
+# runs the proxy sets it, where the conventional vars are ordinary shell state
+# anything in the box may set for its own reasons. So on the Linux supervised
+# tier (nftables, direct connects) nothing is added and Chrome is launched
+# exactly as before, and that stays true whatever the box's own environment says.
+#
+# No bypass list: Chrome always bypasses loopback unless `<-loopback>` is passed,
+# so the dev server under test is still reached directly and never through — or
+# gated by — the allowlist.
+PROXY_ARG=
+if [ -n "${{{egress_var}:-}}" ]; then PROXY_ARG="--proxy-server=${egress_var}"; fi
+
+# A running Chrome took its proxy address at launch and will never re-read it,
+# so "already alive" is not on its own a reason to leave it alone: a browser
+# that predates this route (an upgrade, or a run whose proxy moved) would keep
+# failing every navigation until someone thought to restart it.
+#
+# The box cannot do that itself. Chrome deliberately outlives the run that
+# started it, which puts it in a *previous* sandbox instance — Seatbelt's
+# `(allow signal (target same-sandbox))` does not reach across that, so `kill`
+# here is refused, and `agent-browser close` only ends a session it owns rather
+# than the browser process. So this records the mismatch and the **host** acts
+# on it, at the start of the next `h5i box run`/`box shell` (see
+# `stop_stale_browser`) — which is where the pid is reachable. It says so rather
+# than failing later with a proxy error that reads like a page problem.
+HAD=$(cat "$STATE/chrome.proxy" 2>/dev/null || printf '')
+if alive && [ "$PROXY_ARG" != "$HAD" ]; then
+  printf '%s' "$PROXY_ARG" > "$STATE/chrome.restart"
+  # Deliberately not "re-run this command": inside an interactive `box shell`
+  # that re-enters this same shim in this same run and prints this same warning
+  # forever. The restart happens between runs, so the run has to end first.
+  echo "h5i: this box's browser predates its current route out and cannot reach the" >&2
+  echo "     network through it. h5i restarts it at the start of the NEXT run, so" >&2
+  echo "     end this one first: exit the box shell (or let this run finish) and" >&2
+  echo "     start another. The browser profile — cookies, logins — is not kept." >&2
+fi
+
 alive || {{
   CHROME=$(find_chrome) || {{ echo "h5i: no Chrome/Chromium found for the browser profile" >&2; exit 1; }}
   rm -rf "$UD"; mkdir -p "$UD"
@@ -2826,9 +2885,14 @@ alive || {{
   # renderers abort on startup without it. h5i's box is the boundary.
   detach "$CHROME" --headless=new --no-sandbox --disable-dev-shm-usage \
       --disable-gpu --no-first-run --no-default-browser-check \
+      ${{PROXY_ARG:+"$PROXY_ARG"}} \
       --user-data-dir="$UD" --remote-debugging-port="$PORT" about:blank \
       >"$STATE/chrome.log" 2>&1 &
   echo $! > "$STATE/chrome.pid"
+  # What this Chrome can reach, recorded beside its pid: the next run compares
+  # against it rather than assuming a live browser is a correctly-routed one.
+  printf '%s' "$PROXY_ARG" > "$STATE/chrome.proxy"
+  rm -f "$STATE/chrome.restart"
   i=0
   while [ $i -lt 100 ]; do
     alive && break
@@ -2838,7 +2902,8 @@ alive || {{
 }}
 
 exec "$REAL" --cdp "$PORT" "$@"
-"##
+"##,
+        egress_var = sandbox::EGRESS_PROXY_VAR,
     )
 }
 
@@ -2851,6 +2916,211 @@ pub struct BrowserShim {
     pub dir: PathBuf,
     /// The one loopback port the policy grants for CDP.
     pub port: u16,
+}
+
+/// A loopback port held for the life of the env: read back from `file` when it
+/// is already there, otherwise reserved once and written down. Both ports a
+/// browser box depends on are memorised by something that outlives a single run
+/// (Chrome's CDP endpoint, and the proxy address Chrome was launched with), so
+/// neither can be re-drawn per run.
+fn remembered_port(file: &Path, what: &str, avoid: &[u16]) -> Result<u16, H5iError> {
+    // The file lives under `<env>/browser/state`, which the box is granted write
+    // on (it is where the box's own Chrome records its pid and port), so the
+    // value read back here is box-controlled. Nothing catastrophic follows from
+    // that — a port the box picks is one it could bind itself, and the policy
+    // only ever grants the port the host actually bound — but a `0` would ask
+    // for an ephemeral port under the name of a pinned one, and a privileged
+    // port would fail to bind on every run. Both are rejected in favour of
+    // drawing a fresh port, which is also what a corrupt file gets.
+    //
+    // `avoid` is the ports this env already holds. A drawn port is found by
+    // binding an ephemeral listener and dropping it, so the next draw can be
+    // handed the same number back — two of this env's own ports colliding would
+    // leave the second service unable to bind at all.
+    if let Some(p) = std::fs::read_to_string(file)
+        .ok()
+        .and_then(|t| t.trim().parse::<u16>().ok())
+        .filter(|p| *p >= 1024 && !avoid.contains(p))
+    {
+        return Ok(p);
+    }
+    let fail = || H5iError::Metadata(format!("could not reserve a loopback port for {what}"));
+    let mut p = alloc_free_port().ok_or_else(fail)?;
+    for _ in 0..8 {
+        if !avoid.contains(&p) {
+            std::fs::write(file, p.to_string()).map_err(|e| H5iError::with_path(e, file))?;
+            return Ok(p);
+        }
+        p = alloc_free_port().ok_or_else(fail)?;
+    }
+    Err(fail())
+}
+
+/// Stop a browser the box has asked to have restarted, at the one place that
+/// can: the host.
+///
+/// Chrome takes its proxy address once, at launch, so a browser started before
+/// this box's current route out cannot reach the network through it. The shim
+/// notices (it compares what it would launch with against `chrome.proxy`) and
+/// leaves a `chrome.restart` marker, because inside the box the browser is
+/// unreachable: it deliberately outlives the run that started it, which puts it
+/// in a *previous* sandbox instance, and Seatbelt's
+/// `(allow signal (target same-sandbox))` does not reach across that.
+///
+/// Best-effort throughout — a browser that will not die is a stale browser, not
+/// a broken run, and must not block the run the user asked for.
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn stop_stale_browser(state: &Path) {
+    let marker = state.join("chrome.restart");
+    if !marker.exists() {
+        return;
+    }
+    stop_browser(state);
+    // The marker goes whether or not anything was stopped: it must not re-fire
+    // every run. `chrome.proxy` goes with it — left behind it would claim the
+    // next Chrome was launched with a route it never saw.
+    let _ = std::fs::remove_file(&marker);
+    let _ = std::fs::remove_file(state.join("chrome.proxy"));
+}
+
+/// Every process that is **this box's** browser.
+///
+/// Found by scanning for the discriminator the host already knows — the
+/// `--user-data-dir` this env's Chrome was launched with, a path no other
+/// process has a reason to name — rather than by trusting `<state>/chrome.pid`.
+/// Two reasons, and the second is the one that matters:
+///
+///  - The number in that file is written by the **box** (`<env>/browser/state`
+///    is granted write; it has to be, it is where Chrome records its port), and
+///    it would be handed to `kill` on the host, outside every sandbox.
+///    `"-1".parse::<i32>()` is `Ok(-1)`, and `kill(-1, …)` signals every process
+///    the user can signal. The pid is not the thing to trust here.
+///  - It is also, for the population this restart exists for, simply wrong. A
+///    browser started by a shim from before `detach` `exec`'d was recorded under
+///    its *launcher's* pid — and that launcher's argv is the shim, not Chrome —
+///    so a pid-keyed lookup finds nothing in exactly the case where a stale
+///    browser is certain to exist.
+///
+/// Both checks earn their place. The user-data-dir is what makes a match *this
+/// box's* browser rather than some Chrome belonging to this user; the executable
+/// name is what keeps a shell command that merely mentions the flag (a `pkill`,
+/// an editor, this project's own tests) from being mistaken for the browser.
+/// `--type=` processes are Chrome's own helpers: they carry the same profile
+/// path, and stopping the browser they belong to takes them with it.
+///
+/// `None` means the lookup itself failed — inconclusive, which a caller must not
+/// read as "nothing is running".
+#[cfg(unix)]
+fn browser_pids(profile: &Path) -> Option<Vec<i32>> {
+    let needle = format!("--user-data-dir={}", profile.display());
+    // `-A -o pid=,command=` is the same spelling on macOS and Linux.
+    let out = std::process::Command::new("ps")
+        .args(["-A", "-o", "pid=,command="])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut pids = Vec::new();
+    for line in text.lines() {
+        let Some((pid, cmd)) = line.trim_start().split_once(char::is_whitespace) else {
+            continue;
+        };
+        let Ok(pid) = pid.parse::<i32>() else {
+            continue;
+        };
+        if pid <= 1 || !cmd.contains(&needle) || cmd.contains("--type=") {
+            continue;
+        }
+        // Everything before the first ` --` is the executable — which on macOS
+        // is a path full of spaces, so it cannot be taken as the first word.
+        let exec = cmd
+            .split(" --")
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if exec.contains("chrome") || exec.contains("chromium") {
+            pids.push(pid);
+        }
+    }
+    Some(pids)
+}
+
+/// Stop this box's browser and wait for it to actually be gone, so a caller can
+/// rely on the CDP port being free when this returns.
+///
+/// Waiting is the point, and it does block: SIGTERM then up to 2s, SIGKILL then
+/// up to 1s, synchronously. Chrome's exit is not instant, and the shim decides
+/// whether to launch by polling that port — a restart that only *asked* Chrome
+/// to stop races it, finds the dying browser alive, and marks it for restart all
+/// over again, a loop that never converges. Three seconds once, against a
+/// browser that would otherwise stay unreachable, is the right trade.
+///
+/// Best-effort in what it stops: a browser that will not die is a stale browser,
+/// not a broken run, and must not fail the run the user asked for. Not
+/// best-effort in what it *records*: `chrome.pid` is removed only once the
+/// browser is confirmed gone. An inconclusive lookup leaves it, because deleting
+/// the only handle to a browser that may well be alive is how a one-run
+/// annoyance becomes a permanent one.
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn stop_browser(state: &Path) {
+    #[cfg(unix)]
+    {
+        // Also the early-out for every env that never had a browser: `rm` calls
+        // this for all of them.
+        let profile = state.join("chrome");
+        if !profile.exists() {
+            return;
+        }
+        let Some(pids) = browser_pids(&profile) else {
+            return; // could not look — change nothing, keep the record
+        };
+        for pid in pids {
+            // SIGTERM first: headless Chrome takes it as a request to quit and
+            // shuts its own children down with it, where SIGKILL would leave
+            // them orphaned. (Not to keep the profile dir consistent — the
+            // relaunch clears it.)
+            if !signal_and_wait(pid, libc::SIGTERM, 20) {
+                // A browser that ignores SIGTERM would otherwise be re-detected
+                // and re-warned about on every run, forever.
+                signal_and_wait(pid, libc::SIGKILL, 10);
+            }
+        }
+        if browser_pids(&profile).is_some_and(|p| p.is_empty()) {
+            let _ = std::fs::remove_file(state.join("chrome.pid"));
+        }
+    }
+}
+
+/// Send `sig` to `pid`, then poll (100ms, up to `ticks`) until it is gone.
+/// Returns whether it went.
+#[cfg(unix)]
+fn signal_and_wait(pid: i32, sig: i32, ticks: u32) -> bool {
+    unsafe {
+        libc::kill(pid, sig);
+    }
+    for _ in 0..ticks {
+        if pid_gone(pid) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    pid_gone(pid)
+}
+
+/// Whether `pid` no longer exists. `kill(pid, 0)` is the existence check — it
+/// signals nothing — but a bare "the call failed" is not the same question:
+/// `EPERM` means the process is very much alive and simply not ours to signal,
+/// and reporting that as *stopped* would be the one answer this is asked to
+/// avoid. Only `ESRCH` is gone. (`stop_browser` re-checks with `browser_pids`
+/// regardless, so a survivor keeps its record either way.)
+#[cfg(unix)]
+fn pid_gone(pid: i32) -> bool {
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return false;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
 }
 
 fn prepare_browser_shim(
@@ -2867,28 +3137,26 @@ fn prepare_browser_shim(
     let dir = m.dir(h5i_root).join("browser");
     let state = dir.join("state");
     std::fs::create_dir_all(&state).map_err(|e| H5iError::with_path(e, &state))?;
+    // Before anything else: a browser the last run found stranded on an old
+    // route is stopped here, so the shim launches a fresh one below.
+    stop_stale_browser(&state);
 
     // The CDP port is picked host-side, remembered, and reused. It cannot be
     // per-run: Chrome outlives the `box run` that started it, so a fresh port on
     // the next run would be a port the still-running Chrome is not listening on
     // — and, worse, the only port the policy grants. Allocated once, then read
     // back for the life of the env.
-    let port_file = state.join("cdp-port");
-    let port = match std::fs::read_to_string(&port_file)
-        .ok()
-        .and_then(|t| t.trim().parse::<u16>().ok())
-    {
-        Some(p) => p,
-        None => {
-            let p = alloc_free_port().ok_or_else(|| {
-                H5iError::Metadata("could not reserve a loopback port for the box's browser".into())
-            })?;
-            std::fs::write(&port_file, p.to_string())
-                .map_err(|e| H5iError::with_path(e, &port_file))?;
-            p
-        }
-    };
+    let port = remembered_port(&state.join("cdp-port"), "the box's browser", &[])?;
     policy.loopback_ports.push(port);
+    // The egress allowlist proxy is remembered for the same reason, in the
+    // other direction: that surviving Chrome memorises the proxy address it was
+    // launched with, and on the macOS supervised tier that proxy is the box's
+    // only route out. See [`sandbox::ResolvedPolicy::egress_proxy_port`].
+    policy.egress_proxy_port = Some(remembered_port(
+        &state.join("egress-port"),
+        "the box's egress proxy",
+        &[port],
+    )?);
     let shim = dir.join("agent-browser");
     std::fs::write(&shim, browser_shim_source(&real)).map_err(|e| H5iError::with_path(e, &shim))?;
     #[cfg(unix)]
@@ -4025,11 +4293,15 @@ pub fn shell(
     // sandbox blocks — e.g. `~/.local/bin/powerline-shell`), bash is launched
     // with a generated *plain* rcfile by default; a profile may pin a custom one
     // via `[profile.X.shell] rcfile = "…"`. May Landlock-grant the generated rc.
-    let argv: Vec<String> = if command.is_empty() {
+    let launch = if command.is_empty() {
         default_shell_argv(h5i_root, m, &mut policy, &work)?
     } else {
-        command.to_vec()
+        ShellLaunch::argv(command.to_vec())
     };
+    let argv = launch.argv;
+    // Whatever the shell launch itself needs (zsh's `$ZDOTDIR`) is merged last so
+    // it is the value the shell actually starts with.
+    let injected_env = merged_env(&injected_env, &launch.env);
 
     // A read-only observer must not touch env state: an idle/created env stays
     // in its status, and a concurrent observer must never flip it to running and
@@ -4245,6 +4517,25 @@ fn capture_shell_egress(
 
 // ─── interactive shell rc ────────────────────────────────────────────────────
 
+/// How to launch the default interactive shell: its argv, plus the environment
+/// the launch itself needs (today only zsh's `$ZDOTDIR`, which cannot be set
+/// from an rc file because it is read before any rc is sourced).
+#[derive(Debug)]
+struct ShellLaunch {
+    argv: Vec<String>,
+    env: Vec<(String, String)>,
+}
+
+impl ShellLaunch {
+    /// A launch that needs nothing injected — every shell but zsh.
+    fn argv(argv: Vec<String>) -> Self {
+        ShellLaunch {
+            argv,
+            env: Vec::new(),
+        }
+    }
+}
+
 /// Build the argv for a default (no-command) interactive `env shell` session.
 ///
 /// On the **kernel tiers** the box runs against the host filesystem, so the host
@@ -4262,21 +4553,42 @@ fn capture_shell_egress(
 ///     optional `~/.h5i_envrc` hook), written under the env's private dir and
 ///     Landlock-granted read on the kernel tiers.
 ///
-/// Non-bash shells fall through to a bare `[$SHELL, "-i"]`; the image-backed
-/// tiers (whose shell *and* rc come from the image, not the host) fall through
-/// to [`box_shell_argv`].
+/// **zsh** — the macOS default, so the common case on a Mac host — gets the same
+/// treatment through the only knob it has: `$ZDOTDIR`. zsh has no `--rcfile`; it
+/// takes its startup files from `$ZDOTDIR` (falling back to `$HOME`), so pointing
+/// that at a generated dir both skips the host `~/.zshrc` and moves `$HISTFILE`
+/// off the real `~/.zsh_history` — which is *outside every grant* in a box, so
+/// zsh's history lock fails on it (`locking failed … operation not permitted`)
+/// once at startup and again after every command. See [`write_plain_zshrc`].
+///
+/// Other shells fall through to a bare `[$SHELL, "-i"]`; the image-backed tiers
+/// (whose shell *and* rc come from the image, not the host) fall through to
+/// [`box_shell_argv`].
 fn default_shell_argv(
     h5i_root: &Path,
     m: &EnvManifest,
     policy: &mut ResolvedPolicy,
     work: &Path,
-) -> Result<Vec<String>, H5iError> {
+) -> Result<ShellLaunch, H5iError> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-    let is_bash = Path::new(&shell)
-        .file_name()
-        .map(|n| n == "bash")
-        .unwrap_or(false);
-    let bare = vec![shell.clone(), "-i".to_string()];
+    shell_launch(h5i_root, m, policy, work, &shell)
+}
+
+/// [`default_shell_argv`] with the host shell passed in rather than read from the
+/// environment, so the tests can cover every shell on any host without mutating
+/// a process-wide variable other tests read.
+fn shell_launch(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+    work: &Path,
+    shell: &str,
+) -> Result<ShellLaunch, H5iError> {
+    let shell = shell.to_string();
+    let shell_name = Path::new(&shell).file_name().unwrap_or_default().to_owned();
+    let is_bash = shell_name == "bash";
+    let is_zsh = shell_name == "zsh";
+    let bare = ShellLaunch::argv(vec![shell.clone(), "-i".to_string()]);
 
     // The box's shell + its rc come from the image, not the host — the host
     // `~/.bashrc` is never sourced there, so there is nothing to neutralize and
@@ -4290,24 +4602,60 @@ fn default_shell_argv(
                 policy.claim.as_str()
             );
         }
-        return Ok(box_shell_argv());
+        return Ok(ShellLaunch::argv(box_shell_argv()));
     }
 
-    if let Some(rc) = policy.profile.shell_rcfile.clone() {
-        if !is_bash {
+    // The custom rcfile, when the profile pins one. Both shells we generate an rc
+    // for can honour it — bash directly (`--rcfile`), zsh by sourcing it from the
+    // generated `$ZDOTDIR/.zshrc`, since zsh has no equivalent flag.
+    let custom_rc = match policy.profile.shell_rcfile.clone() {
+        Some(rc) if is_bash || is_zsh => Some(resolve_work_rcfile(work, &rc)?),
+        Some(_) => {
             eprintln!(
-                "   note: [shell] rcfile only applies to bash; $SHELL is '{shell}' — ignoring"
+                "   note: [shell] rcfile only applies to bash and zsh; $SHELL is '{shell}' \
+                 — ignoring"
             );
             return Ok(bare);
         }
-        let rcpath = resolve_work_rcfile(work, &rc)?;
-        return Ok(vec![shell, "--rcfile".into(), rcpath, "-i".into()]);
+        None => None,
+    };
+
+    if is_zsh {
+        let z = write_plain_zshrc(h5i_root, m, custom_rc.as_deref())?;
+        // Kernel tiers enforce a Landlock read allowlist. The generated rc dir is
+        // read-only — it is the host's word about how the session starts, and the
+        // box must not be able to rewrite its own next startup — while the history
+        // dir is granted write: zsh creates a lock file beside `$HISTFILE`, so the
+        // grant has to be the directory, not the file. (Workspace is unconfined;
+        // image-backed tiers returned above.)
+        if matches!(
+            policy.claim,
+            IsolationClaim::Process | IsolationClaim::Supervised
+        ) {
+            policy.profile.fs_read.push(z.zdotdir.clone());
+            policy.profile.fs_write.push(z.histdir.clone());
+        }
+        return Ok(ShellLaunch {
+            argv: vec![shell, "-i".into()],
+            // zsh resolves `$ZDOTDIR` before it sources anything, so this has to
+            // arrive in the environment — an rc-file assignment would be too late.
+            env: vec![("ZDOTDIR".to_string(), z.zdotdir)],
+        });
     }
 
     if !is_bash {
-        // We only know how to inject a plain rc for bash; other shells keep
-        // their normal startup (zsh/sh source their own host files).
+        // We only know how to inject a plain rc for bash and zsh; other shells
+        // keep their normal startup (they source their own host files).
         return Ok(bare);
+    }
+
+    if let Some(rcpath) = custom_rc {
+        return Ok(ShellLaunch::argv(vec![
+            shell,
+            "--rcfile".into(),
+            rcpath,
+            "-i".into(),
+        ]));
     }
 
     let rcpath = write_plain_bashrc(h5i_root, m)?;
@@ -4319,7 +4667,12 @@ fn default_shell_argv(
     ) {
         policy.profile.fs_read.push(rcpath.clone());
     }
-    Ok(vec![shell, "--rcfile".into(), rcpath, "-i".into()])
+    Ok(ShellLaunch::argv(vec![
+        shell,
+        "--rcfile".into(),
+        rcpath,
+        "-i".into(),
+    ]))
 }
 
 /// The default interactive shell **inside an image-backed box** (container,
@@ -4397,6 +4750,93 @@ fn write_plain_bashrc(h5i_root: &Path, m: &EnvManifest) -> Result<String, H5iErr
     );
     std::fs::write(&path, body).map_err(|e| H5iError::with_path(e, &path))?;
     Ok(path.display().to_string())
+}
+
+/// Single-quote a value for a POSIX shell, `'` included (`'` → `'\''`).
+///
+/// The bash rc only ever interpolates the env id, which cannot carry a quote.
+/// The zsh rc interpolates *paths* — the env dir, and a profile-pinned rcfile —
+/// and a path may contain anything a filesystem allows. Unquoted, a `'` in one
+/// ends the string and the rest of the line is read as code.
+fn sq(v: &str) -> String {
+    format!("'{}'", v.replace('\'', "'\\''"))
+}
+
+/// The two paths a generated zsh startup needs: the `$ZDOTDIR` the rc lives in
+/// (granted read) and the directory `$HISTFILE` lives in (granted write).
+struct ZshDirs {
+    zdotdir: String,
+    histdir: String,
+}
+
+/// Write the generated plain zsh rc into the env's private dir and return the
+/// dirs to point `$ZDOTDIR` at and to grant. Idempotent, like the bash one.
+///
+/// Two problems are solved by the one mechanism, because zsh gives us only one:
+///
+///  1. **History.** zsh's default `$HISTFILE` is `${ZDOTDIR:-$HOME}/.zsh_history`
+///     — the operator's real history file, which no box grants (nor should: it is
+///     a log of everything they have ever typed on the host). zsh does not treat
+///     that as fatal, but it *does* announce it at startup and again after every
+///     command — `zsh: locking failed for ~/.zsh_history: operation not
+///     permitted` — which buries the actual output of the session.
+///  2. **The host `~/.zshrc`**, for the same reason bash's is skipped: under
+///     confinement a real one (oh-my-zsh, a prompt framework, version managers)
+///     reaches for tools and cache dirs the sandbox blocks, and the failures land
+///     on the same line as the prompt.
+///
+/// Setting `$ZDOTDIR` moves both: zsh reads `$ZDOTDIR/.zshenv` and
+/// `$ZDOTDIR/.zshrc` instead of the host's, and macOS's `/etc/zshrc` — which is
+/// still sourced, and which is what sets `$HISTFILE` in the first place — points
+/// at the new dir on its own. The generated rc then sets `$HISTFILE` explicitly
+/// anyway, so the history lands in the writable dir on hosts whose global rc
+/// says nothing about it.
+///
+/// The rc dir stays read-only and the history dir is separate: the box gets a
+/// per-env, persistent shell history, and still cannot rewrite the rc that starts
+/// its next session.
+fn write_plain_zshrc(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    custom_rc: Option<&str>,
+) -> Result<ZshDirs, H5iError> {
+    let root = m.dir(h5i_root).join("shell");
+    let zdotdir = root.join("zdotdir");
+    let histdir = root.join("history");
+    for d in [&zdotdir, &histdir] {
+        std::fs::create_dir_all(d).map_err(|e| H5iError::with_path(e, d))?;
+    }
+    let histfile = histdir.join("zsh_history");
+    // Sourced last, so it wins over the plain defaults above it — same order the
+    // bash rc gives `~/.h5i_envrc`.
+    let custom = match custom_rc {
+        Some(rc) => format!("source {}\n", sq(rc)),
+        None => String::new(),
+    };
+    let body = format!(
+        "# Generated by `h5i box shell` — a plain default rc.\n\
+         # The host ~/.zshrc is intentionally NOT sourced inside the confined box\n\
+         # (it tends to reference tools the sandbox blocks), and the host history\n\
+         # file is outside every grant — hence this $ZDOTDIR.\n\
+         # To customize: set `[shell] rcfile = \"…\"` (relative to the worktree) in\n\
+         # .h5i/env.toml, or drop extra shell config in ~/.h5i_envrc (sourced below).\n\
+         HISTFILE={histfile}\n\
+         HISTSIZE=2000\n\
+         SAVEHIST=1000\n\
+         PROMPT='h5i:{id} %~ %# '\n\
+         alias ll='ls -alF'\n\
+         alias la='ls -A'\n\
+         [ -f \"$HOME/.h5i_envrc\" ] && . \"$HOME/.h5i_envrc\"\n\
+         {custom}",
+        histfile = sq(&histfile.display().to_string()),
+        id = m.id,
+    );
+    let path = zdotdir.join(".zshrc");
+    std::fs::write(&path, body).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(ZshDirs {
+        zdotdir: zdotdir.display().to_string(),
+        histdir: histdir.display().to_string(),
+    })
 }
 
 // ─── shell-spool ingest (in-box observation evidence) ────────────────────────
@@ -7216,21 +7656,15 @@ pub fn rm(
     let dir = m.dir(h5i_root);
     // A `browser` box leaves Chrome running on purpose — it has to outlive the
     // `box run` that started it — so removing the box has to stop it, or the
-    // process outlives everything that knows about it. Best-effort, like the
-    // scratch dir below: a survivor is untidy, not unsafe, and must not block
-    // the removal the user asked for.
-    // The whole block is gated, not just the `kill`: on a non-unix target the
-    // binding would be read by nothing, and `-D warnings` fails the
-    // cross-target check on that. `pid_alive` above takes the same shape.
-    #[cfg(unix)]
-    if let Some(pid) = std::fs::read_to_string(dir.join("browser/state/chrome.pid"))
-        .ok()
-        .and_then(|t| t.trim().parse::<i32>().ok())
-    {
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
-        }
-    }
+    // process outlives everything that knows about it. Best-effort: a survivor
+    // is untidy, not unsafe, and must not block the removal the user asked for.
+    //
+    // Through `stop_browser`, which checks the recorded pid still names *this
+    // box's* browser before signalling anything. The pid is written by the box
+    // and read here on the host, outside every sandbox: taken at face value,
+    // `-1` would turn "remove this env" into "SIGTERM everything I own". See
+    // [`browser_pid`].
+    stop_browser(&dir.join("browser/state"));
     // On macOS the private `/tmp` backing lives outside the env dir (see
     // [`private_tmp_backing`]), so erasing the env dir no longer takes it with
     // it. Best-effort: a leftover scratch dir is tidiness, not correctness, and
@@ -7392,7 +7826,9 @@ mod tests {
             for rcfile in [None, Some(".h5i/box.bashrc".to_string())] {
                 let mut pol = ResolvedPolicy::new(claim, Profile::builtin("default", claim));
                 pol.profile.shell_rcfile = rcfile.clone();
-                let argv = default_shell_argv(h5i_root.path(), &m, &mut pol, work.path()).unwrap();
+                let argv = default_shell_argv(h5i_root.path(), &m, &mut pol, work.path())
+                    .unwrap()
+                    .argv;
 
                 assert_eq!(argv[0], "/bin/sh", "{claim:?} launches via the image's sh");
                 assert_eq!(argv[1], "-c");
@@ -7424,9 +7860,129 @@ mod tests {
             IsolationClaim::Process,
             Profile::builtin("default", IsolationClaim::Process),
         );
-        let argv = default_shell_argv(h5i_root.path(), &m, &mut pol, work.path()).unwrap();
-        assert_eq!(argv[0], host_shell);
-        assert_eq!(argv.last().unwrap(), "-i");
+        let launch = default_shell_argv(h5i_root.path(), &m, &mut pol, work.path()).unwrap();
+        assert_eq!(launch.argv[0], host_shell);
+        assert_eq!(launch.argv.last().unwrap(), "-i");
+    }
+
+    // zsh is the macOS default shell, so this is the ordinary case on a Mac host:
+    // its `$HISTFILE` defaults into the operator's real HOME, which no box grants,
+    // and zsh reports the failed lock at startup and after every command. The
+    // launch must move both the rc and the history into the env's own dir.
+    #[test]
+    fn zsh_gets_a_generated_zdotdir_so_history_lands_inside_the_box() {
+        use crate::sandbox::Profile;
+        let h5i_root = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let m = canonical_manifest("claude", "demo");
+
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin("default", IsolationClaim::Supervised),
+        );
+        let launch = shell_launch(h5i_root.path(), &m, &mut pol, work.path(), "/bin/zsh").unwrap();
+
+        assert_eq!(launch.argv, vec!["/bin/zsh".to_string(), "-i".to_string()]);
+        // `$ZDOTDIR` must arrive in the environment: zsh resolves it before it
+        // sources anything, so no rc file could set it in time.
+        let (_, zdotdir) = launch
+            .env
+            .iter()
+            .find(|(k, _)| k == "ZDOTDIR")
+            .expect("ZDOTDIR injected");
+        let rc = std::fs::read_to_string(Path::new(zdotdir).join(".zshrc")).unwrap();
+        let histdir = m.dir(h5i_root.path()).join("shell").join("history");
+        assert!(
+            rc.contains(&format!("HISTFILE='{}/zsh_history'", histdir.display())),
+            "history redirected off the host's: {rc}"
+        );
+        assert!(rc.contains(&format!("h5i:{}", m.id)));
+        assert!(rc.contains("$HOME/.h5i_envrc"));
+
+        // The kernel tiers enforce an allowlist, so both dirs need a grant — and
+        // only the history one is writable: the box keeps its history across
+        // sessions but cannot rewrite the rc that starts the next one.
+        assert!(pol.profile.fs_read.iter().any(|p| p == zdotdir));
+        assert!(!pol.profile.fs_write.iter().any(|p| p == zdotdir));
+        assert!(pol.profile.fs_write.iter().any(|p| Path::new(p) == histdir));
+    }
+
+    /// The zsh rc interpolates paths, and a path may contain a quote — the bash
+    /// rc never had to care because it only ever interpolates the env id.
+    #[test]
+    fn the_generated_zshrc_survives_a_quote_in_a_path() {
+        let h5i_root = tempfile::Builder::new()
+            .prefix("it's-a-dir")
+            .tempdir()
+            .unwrap();
+        let m = canonical_manifest("claude", "demo");
+
+        let z = write_plain_zshrc(h5i_root.path(), &m, Some("/tmp/o'clock.zshrc")).unwrap();
+        let rc = std::fs::read_to_string(Path::new(&z.zdotdir).join(".zshrc")).unwrap();
+
+        // Read back through a real shell: the quoting is only right if the value
+        // the shell ends up with is the path we meant.
+        let line = rc
+            .lines()
+            .find(|l| l.starts_with("HISTFILE="))
+            .expect("HISTFILE line");
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{line}; printf '%s' \"$HISTFILE\""))
+            .output()
+            .expect("run sh");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            Path::new(&z.histdir)
+                .join("zsh_history")
+                .display()
+                .to_string()
+        );
+
+        let src = rc.lines().find(|l| l.starts_with("source ")).unwrap();
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("printf '%s' {}", &src["source ".len()..]))
+            .output()
+            .expect("run sh");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "/tmp/o'clock.zshrc");
+    }
+
+    // zsh has no `--rcfile`, so a profile's `[shell] rcfile` reaches it by being
+    // sourced from the generated rc — last, so it wins over the plain defaults.
+    #[test]
+    fn zsh_sources_a_profile_pinned_rcfile_from_the_generated_rc() {
+        use crate::sandbox::Profile;
+        let h5i_root = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let m = canonical_manifest("claude", "demo");
+        std::fs::create_dir_all(work.path().join(".h5i")).unwrap();
+        std::fs::write(work.path().join(".h5i/box.zshrc"), "PROMPT='custom %# '\n").unwrap();
+
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin("default", IsolationClaim::Supervised),
+        );
+        pol.profile.shell_rcfile = Some(".h5i/box.zshrc".into());
+        let launch = shell_launch(h5i_root.path(), &m, &mut pol, work.path(), "/bin/zsh").unwrap();
+
+        let (_, zdotdir) = launch.env.iter().find(|(k, _)| k == "ZDOTDIR").unwrap();
+        let rc = std::fs::read_to_string(Path::new(zdotdir).join(".zshrc")).unwrap();
+        let pinned = work.path().join(".h5i/box.zshrc");
+        assert!(
+            rc.contains(&format!("source '{}'", pinned.display())),
+            "{rc}"
+        );
+        // Sourced after the defaults, or the pin would not win.
+        assert!(
+            rc.find("source '").unwrap() > rc.find("PROMPT=").unwrap(),
+            "{rc}"
+        );
     }
 
     #[test]
@@ -8586,6 +9142,263 @@ mod tests {
     /// The list is generated into a shell script, so a bad word is a shim that
     /// does not parse — and the box would see a syntax error instead of a
     /// browser. `sh -n` is the same parser that will run it.
+    /// The port files live under a directory the box can write (it is where the
+    /// box's own Chrome records its pid and port), so a read-back value is
+    /// box-controlled and has to be checked rather than handed to `bind`.
+    #[test]
+    fn a_remembered_port_is_reused_but_never_a_nonsense_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("port");
+
+        // Drawn once, then reused verbatim.
+        let first = remembered_port(&f, "test", &[]).unwrap();
+        assert!(first >= 1024);
+        assert_eq!(remembered_port(&f, "test", &[]).unwrap(), first);
+
+        // `0` asks bind for an ephemeral port under the name of a pinned one,
+        // and a privileged port cannot be bound at all: both are redrawn, and
+        // the redraw is written back so it sticks.
+        for bad in ["0", "80", "not-a-port", ""] {
+            std::fs::write(&f, bad).unwrap();
+            let p = remembered_port(&f, "test", &[]).unwrap();
+            assert!(p >= 1024, "{bad} must not be honoured, got {p}");
+            assert_eq!(std::fs::read_to_string(&f).unwrap(), p.to_string());
+        }
+
+        // A port this env already holds is redrawn too — an allocation is a
+        // bind-and-drop, so the same number can come back twice.
+        let held = remembered_port(&f, "test", &[]).unwrap();
+        let other = remembered_port(&f, "test", &[held]).unwrap();
+        assert_ne!(other, held);
+    }
+
+    /// The box cannot stop its own browser once that browser has outlived the
+    /// run that started it (it is in a previous sandbox instance, which
+    /// Seatbelt's same-sandbox signal grant does not reach), so it leaves a
+    /// marker and the host does it here.
+    #[test]
+    fn a_marked_browser_is_stopped_host_side_and_the_marker_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path();
+        // The profile dir is what says this env ever had a browser at all.
+        std::fs::create_dir_all(state.join("chrome")).unwrap();
+
+        // No marker: nothing is touched, including the pid file.
+        std::fs::write(state.join("chrome.pid"), "1").unwrap();
+        std::fs::write(state.join("chrome.proxy"), "--proxy-server=x").unwrap();
+        stop_stale_browser(state);
+        assert!(state.join("chrome.proxy").exists(), "no marker → no action");
+        assert!(state.join("chrome.pid").exists());
+
+        // Marked, and nothing of this box's is running: the recorded route goes
+        // with the marker, so the next Chrome is not mistaken for one launched
+        // with a route it never saw — and the pid goes too, because the browser
+        // is now *confirmed* gone.
+        std::fs::write(state.join("chrome.restart"), "--proxy-server=y").unwrap();
+        stop_stale_browser(state);
+        assert!(!state.join("chrome.restart").exists());
+        assert!(!state.join("chrome.proxy").exists());
+        assert!(!state.join("chrome.pid").exists());
+
+        // Idempotent, and harmless with no pid recorded at all.
+        std::fs::write(state.join("chrome.restart"), "").unwrap();
+        stop_stale_browser(state);
+        assert!(!state.join("chrome.restart").exists());
+    }
+
+    /// A long-lived stand-in for the box's browser: an executable whose name
+    /// reads as Chrome, running on this env's profile dir — the two things the
+    /// host matches on.
+    ///
+    /// `/bin/sh -c '…'` and not `sleep` directly: `sleep` rejects the
+    /// `--user-data-dir` argument and exits immediately, which would leave every
+    /// assertion below true because nothing was ever running. The script is two
+    /// commands for a second reason of the same kind — a shell given a single
+    /// one `exec`s it, replacing itself with a `sleep` whose argv no longer
+    /// carries the flag the host matches on.
+    ///
+    /// Returns the pid and a thread that reaps it. The stand-in is this test's
+    /// own child, so without a `wait` it lingers as a zombie that `kill(pid, 0)`
+    /// still finds, and the stop under test would burn its full SIGTERM and
+    /// SIGKILL timeouts before giving up on a process that is already dead.
+    #[cfg(unix)]
+    fn spawn_fake_browser(exe: &Path, profile: &Path) -> (i32, std::thread::JoinHandle<()>) {
+        let child = std::process::Command::new(exe)
+            .args(["-c", "sleep 10; true"])
+            .arg(format!("--user-data-dir={}", profile.display()))
+            .spawn()
+            .expect("spawn the stand-in browser");
+        let pid = child.id() as i32;
+        let reaper = std::thread::spawn(move || {
+            let mut child = child;
+            let _ = child.wait();
+        });
+        (pid, reaper)
+    }
+
+    /// Every process whose argv names this profile dir, with none of
+    /// `browser_pids`'s judgement applied — the positive control for the tests
+    /// below, so a negative result cannot pass because `ps` had not caught up.
+    #[cfg(unix)]
+    fn pids_naming_profile(profile: &Path) -> Vec<i32> {
+        let needle = format!("--user-data-dir={}", profile.display());
+        let out = std::process::Command::new("ps")
+            .args(["-A", "-o", "pid=,command="])
+            .output()
+            .expect("ps");
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| l.trim_start().split_once(char::is_whitespace))
+            .filter(|(_, cmd)| cmd.contains(&needle))
+            .filter_map(|(pid, _)| pid.parse::<i32>().ok())
+            .collect()
+    }
+
+    /// Poll `f` for up to ~2s. Returns whether it ever held.
+    #[cfg(unix)]
+    fn eventually(mut f: impl FnMut() -> bool) -> bool {
+        for _ in 0..40 {
+            if f() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        false
+    }
+
+    /// `pid_gone` answers "no such process", not "the call failed". The
+    /// difference is `EPERM` — a process that exists and is simply not ours to
+    /// signal — and reporting that as gone would let `signal_and_wait` claim it
+    /// stopped a browser it never touched.
+    ///
+    /// No second uid needed: pid 1 is normally unsignalable by an ordinary
+    /// process, and a reaped child's pid is genuinely absent. Where pid 1 *is*
+    /// signalable by us — as root, and equally in a PID namespace whose init
+    /// shares this uid — `kill(1, 0)` succeeds instead of failing, both readings
+    /// answer "alive", and this degrades to a tautology rather than a false
+    /// failure. The note it prints says which case it landed in, so a silent
+    /// tautology is not mistaken for coverage.
+    #[cfg(unix)]
+    #[test]
+    fn pid_gone_tells_no_such_process_apart_from_not_allowed() {
+        // ESRCH: a child that has exited *and* been reaped, so the pid is free.
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+        let dead = child.id() as i32;
+        child.wait().unwrap();
+        assert!(pid_gone(dead), "a reaped child's pid is gone");
+
+        // EPERM: pid 1 is alive and not ours. The `kill` is made here as well as
+        // inside `pid_gone` so the test can say which case it actually covered.
+        if unsafe { libc::kill(1, 0) } == 0 {
+            eprintln!(
+                "note: pid 1 is signalable here (root, or a PID namespace sharing this uid) \
+                 — the EPERM half of this test is inert"
+            );
+        } else {
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM),
+                "expected pid 1 to be unsignalable, not absent"
+            );
+        }
+        assert!(
+            !pid_gone(1),
+            "a process we may not signal is alive, not gone"
+        );
+    }
+
+    /// The case the restart exists for: a browser started by a shim from before
+    /// `detach` `exec`'d, so `chrome.pid` names the *launcher* and not Chrome.
+    /// A pid-keyed lookup finds nothing there — and "nothing to stop" would mean
+    /// the warning repeats on every run forever, which is the opposite of what
+    /// the manual promises.
+    #[cfg(unix)]
+    #[test]
+    fn a_browser_recorded_under_the_wrong_pid_is_still_found_and_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path();
+        let profile = state.join("chrome");
+        std::fs::create_dir_all(&profile).unwrap();
+
+        let exe = state.join("chrome-for-testing");
+        std::os::unix::fs::symlink("/bin/sh", &exe).unwrap();
+        let (pid, reaper) = spawn_fake_browser(&exe, &profile);
+        // The test only means anything if the stand-in is actually running and
+        // actually recognised before the stop is asked for.
+        assert!(
+            eventually(|| browser_pids(&profile).unwrap().contains(&pid)),
+            "the stand-in browser was never running, so this test asserts nothing"
+        );
+
+        // What the old shim left behind: a launcher's pid, long since exited or
+        // belonging to something that is not the browser.
+        std::fs::write(state.join("chrome.pid"), "999999").unwrap();
+        std::fs::write(state.join("chrome.restart"), "--proxy-server=x").unwrap();
+
+        stop_stale_browser(state);
+
+        assert!(
+            browser_pids(&profile).unwrap().is_empty(),
+            "the browser must be stopped even though the recorded pid was wrong"
+        );
+        assert!(
+            !state.join("chrome.pid").exists(),
+            "confirmed gone → cleared"
+        );
+        assert!(!state.join("chrome.restart").exists());
+        reaper.join().unwrap();
+    }
+
+    /// A guard against reintroducing a pid-keyed lookup. Under the current
+    /// design nothing reads `chrome.pid` to decide what to signal, so `-1`
+    /// cannot reach `kill` by construction — but it could once, and `kill(-1, …)`
+    /// signals every process this user owns.
+    #[cfg(unix)]
+    #[test]
+    fn a_hostile_pid_file_never_becomes_a_signal() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path();
+        std::fs::create_dir_all(state.join("chrome")).unwrap();
+
+        for hostile in ["-1", "0", "1", "-999", "not-a-pid", ""] {
+            std::fs::write(state.join("chrome.pid"), hostile).unwrap();
+            std::fs::write(state.join("chrome.restart"), "").unwrap();
+            stop_stale_browser(state);
+        }
+        assert!(!state.join("chrome.restart").exists());
+    }
+
+    /// A process that merely *mentions* the profile path is not the browser — a
+    /// `pkill`, an editor, or this project's own tests would otherwise match.
+    #[cfg(unix)]
+    #[test]
+    fn only_a_browser_binary_matches_the_profile_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("chrome");
+        std::fs::create_dir_all(&profile).unwrap();
+
+        let (pid, reaper) = spawn_fake_browser(Path::new("/bin/sh"), &profile);
+        // Positive control first: the process is running and `ps` can see it
+        // naming this profile dir. Without this the assertion below would pass
+        // just as happily against a process that never started.
+        assert!(
+            eventually(|| pids_naming_profile(&profile).contains(&pid)),
+            "the stand-in was never visible, so the rejection below proves nothing"
+        );
+        assert!(
+            browser_pids(&profile).unwrap().is_empty(),
+            "a shell naming the flag is not this box's browser"
+        );
+
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+        reaper.join().unwrap();
+    }
+
     #[test]
     fn the_generated_shim_is_valid_shell() {
         let script = browser_shim_source("/usr/local/bin/agent-browser");
@@ -8602,6 +9415,77 @@ mod tests {
             out.status.success(),
             "shim does not parse: {}\n{script}",
             String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Chrome ignores the environment's proxy settings on macOS, so the shim has
+    /// to pass `--proxy-server` explicitly — and it must key that off h5i's own
+    /// variable, not `HTTPS_PROXY`, which anything in the box may set for its own
+    /// reasons. Gated, so a tier that runs no proxy (Linux supervised: nftables,
+    /// direct connects) launches Chrome exactly as it did before.
+    #[test]
+    fn the_shim_passes_chrome_the_proxy_only_when_the_tier_set_one() {
+        let script = browser_shim_source("/usr/local/bin/agent-browser");
+        assert!(
+            script.contains(&format!("--proxy-server=${}", sandbox::EGRESS_PROXY_VAR)),
+            "{script}"
+        );
+        assert!(
+            script.contains(&format!("[ -n \"${{{}:-}}\" ]", sandbox::EGRESS_PROXY_VAR)),
+            "the flag must be gated on the variable: {script}"
+        );
+        // The prose above the gate still names `HTTPS_PROXY` (it explains why
+        // Chrome ignoring it is the problem); what must not appear is a *use* of
+        // it — those vars are box-settable, so the shim cannot key off them.
+        assert!(
+            !script.contains("$HTTPS_PROXY") && !script.contains("${HTTPS_PROXY"),
+            "the shim must not read the conventional proxy vars: {script}"
+        );
+
+        // A Chrome that predates the current route must not be left
+        // alive-but-unreachable: it records what it was launched with, and a
+        // mismatch leaves the marker the host acts on before the next run.
+        assert!(script.contains("chrome.proxy"), "{script}");
+        assert!(
+            script.contains("[ \"$PROXY_ARG\" != \"$HAD\" ]"),
+            "the recorded route must be compared against the current one: {script}"
+        );
+        assert!(
+            script.contains("chrome.restart"),
+            "a mismatch must be recorded for the host: {script}"
+        );
+        // The pid recorded has to be Chrome's own, or every later `kill` of it
+        // (the host restart, `box rm`) reaches a launcher instead.
+        assert!(script.contains("exec setsid"), "{script}");
+        assert!(script.contains("exec perl"), "{script}");
+
+        // And it is genuinely absent when the variable is not set: run the
+        // gate itself under `sh` and read back what it would have passed.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("gate.sh");
+        let gate: String = script
+            .lines()
+            .skip_while(|l| !l.starts_with("PROXY_ARG="))
+            .take(2)
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, format!("{gate}\nprintf '%s' \"${{PROXY_ARG:-}}\"\n")).unwrap();
+
+        let unset = std::process::Command::new("sh")
+            .arg(&path)
+            .env_remove(sandbox::EGRESS_PROXY_VAR)
+            .output()
+            .expect("run gate");
+        assert!(unset.stdout.is_empty(), "{:?}", unset.stdout);
+
+        let set = std::process::Command::new("sh")
+            .arg(&path)
+            .env(sandbox::EGRESS_PROXY_VAR, "http://127.0.0.1:8123")
+            .output()
+            .expect("run gate");
+        assert_eq!(
+            String::from_utf8_lossy(&set.stdout),
+            "--proxy-server=http://127.0.0.1:8123"
         );
     }
 

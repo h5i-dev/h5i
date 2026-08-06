@@ -30,9 +30,16 @@ status` shows which. Teardown refuses while a read-only observer is attached.
 ## Interactive sessions
 
 `h5i box shell` keeps the controlling tty (job control and TUIs work) and has no
-wall-clock kill. It uses a generated plain rcfile rather than your `~/.bashrc`,
-which under confinement routinely calls tools the sandbox blocks. Pin your own
-with `[shell] rcfile = "<path-relative-to-$WORK>"` in the profile.
+wall-clock kill. It uses a generated plain rcfile rather than your `~/.bashrc`
+or `~/.zshrc`, which under confinement routinely call tools the sandbox blocks.
+Pin your own with `[shell] rcfile = "<path-relative-to-$WORK>"` in the profile
+(bash sources it directly, zsh from the generated rc).
+
+Under zsh the session also gets its own `$ZDOTDIR` and `$HISTFILE` inside the
+box. Your real `~/.zsh_history` is outside every grant, so leaving it as the
+default made zsh print `locking failed for ~/.zsh_history: operation not
+permitted` at startup and after every command; box history now persists per box
+under `<env>/shell/history/`.
 
 Project config directories (`$WORK/.claude`, `$WORK/.codex`) are mounted
 read-only during an interactive session, and the user settings files are pinned

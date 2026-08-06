@@ -441,7 +441,32 @@ impl Drop for ProxyHandle {
 /// DNS-pinned. The proxy speaks just enough HTTP to gate egress: `CONNECT`
 /// tunnels (HTTPS) and absolute-form requests (plain HTTP).
 pub fn spawn_proxy(allow: AllowList) -> Result<ProxyHandle, H5iError> {
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(H5iError::Io)?;
+    spawn_proxy_on(allow, None)
+}
+
+/// [`spawn_proxy`] on a caller-chosen loopback port
+/// ([`ResolvedPolicy::egress_proxy_port`] — a box whose browser outlives the
+/// run needs the proxy to still be at the address that browser memorised).
+///
+/// Falls back to an ephemeral port when the requested one cannot be bound: a
+/// squatted port is a reason to lose browser continuity, not a reason to refuse
+/// the run. The note says which one happened, because the symptom otherwise
+/// surfaces much later as a proxy error inside the box.
+pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle, H5iError> {
+    let listener = match want {
+        Some(p) => match TcpListener::bind(("127.0.0.1", p)) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!(
+                    "note: egress proxy could not take this box's pinned port {p} ({e}); using an \
+                     ephemeral one — a browser left running by an earlier run will report \
+                     ERR_PROXY_CONNECTION_FAILED until it is restarted"
+                );
+                TcpListener::bind("127.0.0.1:0").map_err(H5iError::Io)?
+            }
+        },
+        None => TcpListener::bind("127.0.0.1:0").map_err(H5iError::Io)?,
+    };
     let port = listener.local_addr().map_err(H5iError::Io)?.port();
     listener.set_nonblocking(true).map_err(H5iError::Io)?;
     let stop = Arc::new(AtomicBool::new(false));
@@ -457,10 +482,13 @@ pub fn spawn_proxy(allow: AllowList) -> Result<ProxyHandle, H5iError> {
                     if stop_thread.load(Ordering::SeqCst) {
                         break;
                     }
+                    // The accepted socket may arrive non-blocking (see
+                    // `handle_proxy_client`, which is where that is corrected —
+                    // at the point the blocking reads are actually made).
                     let allow = allow.clone();
                     let tally = tally_thread.clone();
                     std::thread::spawn(move || {
-                        let _ = handle_proxy_client(client, &allow, &tally);
+                        let _ = handle_proxy_client(client, &allow, &tally, HEAD_READ_TIMEOUT);
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -523,12 +551,48 @@ fn parse_target(head: &[u8]) -> Option<(String, u16, bool)> {
     Some((host, port, false))
 }
 
+/// The box env var naming h5i's host-side egress allowlist proxy, set by every
+/// tier that runs one (this one, and the macOS supervised tier) and by nothing
+/// else.
+///
+/// It exists alongside `HTTPS_PROXY` rather than instead of it. The conventional
+/// vars are what proxy-respecting tooling reads, and they are also ordinary
+/// shell state a box's own rc or tooling may set for unrelated reasons — so a
+/// consumer that must know "is this address h5i's proxy?" (the browser shim,
+/// which has to pass Chrome an explicit `--proxy-server` because Chrome ignores
+/// the environment on macOS) cannot answer it from `HTTPS_PROXY`. This variable
+/// carries that fact under h5i's own name.
+///
+/// Not a trust boundary: a box can set any variable in its own environment, and
+/// nothing here is authority — the policy grants the port the *host* bound, so a
+/// box that points its Chrome elsewhere reaches a port it is denied anyway.
+pub const EGRESS_PROXY_VAR: &str = "H5I_EGRESS_PROXY";
+
+/// How long a connection may take to finish sending its request head. It bounds
+/// only the head: a client that connects and says nothing must not hold a thread,
+/// but once the tunnel is up the relay has no clock of its own (see the reset
+/// below). Passed in rather than read here so the regression test for that reset
+/// can run in milliseconds instead of half a minute.
+const HEAD_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
 fn handle_proxy_client(
     mut client: TcpStream,
     allow: &AllowList,
     tally: &Arc<Mutex<EgressTally>>,
+    head_timeout: Duration,
 ) -> std::io::Result<()> {
-    client.set_read_timeout(Some(Duration::from_secs(30)))?;
+    // Everything below reads with blocking calls, so say so rather than assume
+    // it. The listener is non-blocking (the accept loop polls `stop`) and on
+    // macOS — BSD `accept`, where Linux uses `accept4` — the accepted socket
+    // *inherits* that flag. Left inherited, the first read that has to wait for
+    // a packet returns `WouldBlock`, the relay treats it as fatal and drops the
+    // connection: the box sees a CONNECT tunnel open with `200` and then reset
+    // mid-TLS-handshake, which reads like an upstream fault.
+    //
+    // `?`, not `let _ =`: silently continuing with a non-blocking socket
+    // reinstates that exact bug. Dropping the connection is the honest failure.
+    client.set_nonblocking(false)?;
+    client.set_read_timeout(Some(head_timeout))?;
     let head = read_head(&mut client)?;
     let Some((host, port, is_connect)) = parse_target(&head) else {
         // A malformed/empty request (incl. the shutdown probe) records no
@@ -557,6 +621,17 @@ fn handle_proxy_client(
         // Replay the original request head to the origin server.
         upstream.write_all(&head)?;
     }
+    // The 30s timeout above bounds *head* parsing — a client that opens a
+    // connection and says nothing must not hold a thread. It must not survive
+    // into the tunnel: `splice` hands a `try_clone` of this socket to the
+    // client→upstream copy, and a clone shares `SO_RCVTIMEO`, so 30s of client
+    // silence would end that copy with a timeout error and shut the upstream
+    // write half down. Client silence is the normal state of a tunnel that is
+    // waiting for a response, so anything with a slow first byte — a streaming
+    // completion, an SSE subscription, a large clone over HTTPS — died at 30s
+    // mid-flight. Once the head is parsed, the relay's only clock is the
+    // caller's.
+    client.set_read_timeout(None)?;
     splice(client, upstream);
     Ok(())
 }
@@ -1042,6 +1117,9 @@ pub fn build_run_argv(
                 a.push("--env".into());
                 a.push(format!("{var}={proxy}"));
             }
+            // h5i's own name for the same address — see `EGRESS_PROXY_VAR`.
+            a.push("--env".into());
+            a.push(format!("{EGRESS_PROXY_VAR}={proxy}"));
             a.push("--env".into());
             a.push(format!(
                 "NO_PROXY=localhost,127.0.0.1,{}",
@@ -1926,6 +2004,9 @@ mod tests {
         }
         assert!(joined.contains(&format!("HTTP_PROXY=http://{addr}:8123")));
         assert!(joined.contains(&format!("HTTPS_PROXY=http://{addr}:8123")));
+        // h5i's own name for the same address, which the browser shim keys off
+        // (the conventional vars are box-settable, so it cannot read those).
+        assert!(joined.contains(&format!("{EGRESS_PROXY_VAR}=http://{addr}:8123")));
         assert!(joined.contains(&format!("NO_PROXY=localhost,127.0.0.1,{addr}")));
     }
 
@@ -2417,5 +2498,209 @@ mod tests {
             line2.contains("502") || line2.contains("200"),
             "allowed host must pass the gate (502/200), got: {line2:?}"
         );
+    }
+
+    /// Bytes actually cross an established tunnel — the half the allow/deny test
+    /// above never reaches, because 403 and 502 both return before the relay.
+    ///
+    /// It is worth a test of its own: the accept loop polls a non-blocking
+    /// listener, and on macOS the accepted socket inherits that flag, which made
+    /// the relay read `WouldBlock`, treat it as fatal and drop every tunnel the
+    /// moment it carried traffic. The gate verdicts stayed correct throughout,
+    /// so nothing here failed — the box just lost every connection mid-TLS.
+    /// Local origin only: no network, no DNS.
+    #[test]
+    fn proxy_relays_bytes_over_an_established_tunnel() {
+        use std::io::Read;
+
+        let origin = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin_port = origin.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut s, _) = origin.accept().unwrap();
+            let mut buf = [0u8; 4];
+            s.read_exact(&mut buf).unwrap();
+            assert_eq!(&buf, b"PING");
+            s.write_all(b"PONG").unwrap();
+        });
+
+        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]);
+        let proxy = spawn_proxy(allow).unwrap();
+        let mut c = TcpStream::connect(("127.0.0.1", proxy.port)).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        c.write_all(format!("CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n").as_bytes())
+            .unwrap();
+
+        // Read exactly the response head, so the origin's bytes stay in the
+        // stream for the assertion below.
+        let mut head = Vec::new();
+        let mut b = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            assert_eq!(c.read(&mut b).unwrap(), 1, "tunnel closed during CONNECT");
+            head.push(b[0]);
+        }
+        assert!(
+            String::from_utf8_lossy(&head).contains("200"),
+            "expected an established tunnel, got: {}",
+            String::from_utf8_lossy(&head)
+        );
+
+        c.write_all(b"PING").unwrap();
+        let mut echo = [0u8; 4];
+        c.read_exact(&mut echo)
+            .expect("the tunnel must carry bytes both ways once established");
+        assert_eq!(&echo, b"PONG");
+    }
+
+    /// An established tunnel has no read timeout of its own. The head timeout is
+    /// set on the client socket, `splice` gives the client→upstream copy a
+    /// `try_clone` of it, and a clone shares `SO_RCVTIMEO` — so leaving it set
+    /// ended that copy (and shut the upstream write half) after a plain silence
+    /// the length of the timeout. A tunnel waiting for a response *is* silent in
+    /// that direction, so every slow first byte died mid-flight.
+    ///
+    /// Driven through `handle_proxy_client` directly with a short head timeout,
+    /// so the idle stretch is milliseconds rather than the real 30 seconds.
+    #[test]
+    fn an_established_tunnel_survives_a_client_silence_longer_than_the_head_timeout() {
+        use std::io::Read;
+
+        let head_timeout = Duration::from_millis(150);
+
+        // Origin: replies only after the client's post-idle byte arrives.
+        let origin = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin_port = origin.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut s, _) = origin.accept().unwrap();
+            let mut buf = [0u8; 4];
+            s.read_exact(&mut buf).unwrap();
+            s.write_all(b"PONG").unwrap();
+        });
+
+        // One connection into `handle_proxy_client`, no accept loop involved.
+        let front = TcpListener::bind("127.0.0.1:0").unwrap();
+        let front_port = front.local_addr().unwrap().port();
+        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]);
+        std::thread::spawn(move || {
+            let (s, _) = front.accept().unwrap();
+            let tally = Arc::new(Mutex::new(EgressTally::default()));
+            let _ = handle_proxy_client(s, &allow, &tally, head_timeout);
+        });
+
+        let mut c = TcpStream::connect(("127.0.0.1", front_port)).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        c.write_all(format!("CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n").as_bytes())
+            .unwrap();
+        let mut head = Vec::new();
+        let mut b = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            assert_eq!(c.read(&mut b).unwrap(), 1, "tunnel closed during CONNECT");
+            head.push(b[0]);
+        }
+        assert!(String::from_utf8_lossy(&head).contains("200"));
+
+        // The client says nothing for longer than the head timeout — exactly
+        // what waiting on a slow first byte looks like from the proxy's side.
+        std::thread::sleep(head_timeout * 4);
+
+        c.write_all(b"PING")
+            .expect("the tunnel must still accept bytes after an idle stretch");
+        let mut echo = [0u8; 4];
+        c.read_exact(&mut echo)
+            .expect("the tunnel must still carry the response after an idle stretch");
+        assert_eq!(&echo, b"PONG");
+    }
+
+    /// The relay must work on a socket that arrives non-blocking.
+    ///
+    /// That is what macOS hands the accept loop (BSD `accept` inherits the
+    /// listener's flag; Linux's `accept4` does not), and it made every tunnel
+    /// reset the moment it carried traffic — a `WouldBlock` the relay treated as
+    /// fatal. Driven through `handle_proxy_client` with the flag set
+    /// deliberately, so the Darwin condition is reproduced on every platform
+    /// rather than tested only where the OS happens to create it.
+    #[test]
+    fn a_socket_that_arrives_non_blocking_still_relays() {
+        use std::io::Read;
+
+        let origin = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin_port = origin.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut s, _) = origin.accept().unwrap();
+            let mut buf = [0u8; 4];
+            s.read_exact(&mut buf).unwrap();
+            s.write_all(b"PONG").unwrap();
+        });
+
+        let front = TcpListener::bind("127.0.0.1:0").unwrap();
+        let front_port = front.local_addr().unwrap().port();
+        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]);
+        std::thread::spawn(move || {
+            let (s, _) = front.accept().unwrap();
+            s.set_nonblocking(true).unwrap();
+            let tally = Arc::new(Mutex::new(EgressTally::default()));
+            let _ = handle_proxy_client(s, &allow, &tally, Duration::from_secs(5));
+        });
+
+        let mut c = TcpStream::connect(("127.0.0.1", front_port)).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        // Nothing buffered when the handler makes its first read: without the
+        // correction that read returns `WouldBlock` and the connection dies.
+        std::thread::sleep(Duration::from_millis(100));
+        c.write_all(format!("CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n").as_bytes())
+            .unwrap();
+        let mut head = Vec::new();
+        let mut b = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            assert_eq!(
+                c.read(&mut b).unwrap(),
+                1,
+                "tunnel closed during CONNECT (head so far: {})",
+                String::from_utf8_lossy(&head)
+            );
+            head.push(b[0]);
+        }
+        assert!(String::from_utf8_lossy(&head).contains("200"));
+
+        c.write_all(b"PING").unwrap();
+        let mut echo = [0u8; 4];
+        c.read_exact(&mut echo)
+            .expect("a non-blocking socket must still carry the tunnel");
+        assert_eq!(&echo, b"PONG");
+    }
+
+    /// A browser that outlives the run memorised one proxy address, so the port
+    /// has to be the caller's to choose.
+    ///
+    /// The "free port" is found by bind-read-drop, so another test in this
+    /// binary can take it in the gap. That is a lost race, not a bug — retried
+    /// rather than asserted once, so a green run stays green. The fallback half
+    /// has no such window (the port is held for the duration) and prints the
+    /// ephemeral-fallback note on success; that stderr line is expected here.
+    #[test]
+    fn proxy_binds_the_requested_port_and_falls_back_when_it_cannot() {
+        let allow = || AllowList::parse(&["allowed.invalid".into()]);
+
+        let mut honoured = None;
+        for _ in 0..5 {
+            let want = {
+                // A port we know is free right now: bind, read it, drop.
+                let l = TcpListener::bind("127.0.0.1:0").unwrap();
+                l.local_addr().unwrap().port()
+            };
+            let p = spawn_proxy_on(allow(), Some(want)).unwrap();
+            if p.port == want {
+                honoured = Some((p, want));
+                break;
+            }
+        }
+        let Some((_held, want)) = honoured else {
+            panic!("pinned port was never honoured in 5 attempts");
+        };
+
+        // Same port again, while the first proxy holds it: the run continues on
+        // an ephemeral port rather than failing.
+        let p2 = spawn_proxy_on(allow(), Some(want)).unwrap();
+        assert_ne!(p2.port, want);
+        assert_ne!(p2.port, 0);
     }
 }
