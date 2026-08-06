@@ -43,7 +43,7 @@ has and what it can enforce, rather than a tier name that means different things
 in different places. Two optional runtimes add tiers on top of either: rootless
 [Podman](https://podman.io/) gives you `container`, and
 [microsandbox](https://microsandbox.dev) (`msb`) gives you `microvm` on a host
-with hardware virtualization — `/dev/kvm` on Linux, Apple Silicon on macOS.
+with hardware virtualization (`/dev/kvm` on Linux, Apple Silicon on macOS).
 
 ## Use it
 
