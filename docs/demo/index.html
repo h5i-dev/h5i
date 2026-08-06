@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>h5i — demo film</title>
-<meta name="description" content="An 80-second film: an AI-written pull request runs with full autonomy inside a disposable h5i box, and your machine has nothing to lose.">
+<meta name="description" content="An 80-second film: a coding agent runs with full autonomy inside a disposable h5i box holding the workspace, the toolchain, the dev server and a browser, and your machine has nothing to lose.">
 <link rel="canonical" href="https://h5i.dev/demo/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="h5i">
 <meta property="og:title" content="h5i demo film">
-<meta property="og:description" content="Run code you don't trust. Keep it off your machine. An 80-second tour of the disposable box: agent, toolchain, dev server and browser inside one boundary.">
+<meta property="og:description" content="Give your agent the whole machine, just not yours. An 80-second tour of the disposable box: agent, workspace, toolchain, dev server and browser inside one boundary.">
 <meta property="og:url" content="https://h5i.dev/demo/">
 <style>
   @font-face{font-family:'Space Grotesk';src:url('assets/SpaceGrotesk-400.woff2') format('woff2');font-weight:300 700;font-style:normal;font-display:block}
@@ -218,16 +218,16 @@
   <!-- m0 : hook -->
   <div class="scene" id="m0">
     <div class="wrap" id="m0g1">
-      <div class="l1" id="h-l1">A pull request just landed.</div>
-      <div class="l2" id="h-l2">2,400 lines. <b>Written by an AI.</b> Someone has to run it.</div>
+      <div class="l1" id="h-l1">A coding agent is only useful unsupervised.</div>
+      <div class="l2" id="h-l2">So you turn the prompts off. <b>Now it runs as you.</b></div>
       <div class="term" id="h-term">
         <div class="tbar"><span class="d"></span><span class="d"></span><span class="d"></span>
           <span class="tt">no box</span>
           <span class="tr">your real $HOME</span><span class="agdot" style="background:var(--danger)"></span></div>
         <div class="tbody" id="t-hookm"></div>
       </div>
-      <div class="q" id="h-q1">The diff looked fine.</div>
-      <div class="q" id="h-q2"><b>Running it</b> did the damage.</div>
+      <div class="q" id="h-q1">It did exactly what you asked.</div>
+      <div class="q" id="h-q2"><b>Everything you own</b> was within reach.</div>
       <div class="blockcard hookalert" id="ha1" style="left:1180px;top:430px;width:460px">
         <div class="bt">credentials <b>exfiltrated</b></div>
       </div>
@@ -237,8 +237,8 @@
     </div>
     <div class="titlecard" id="m0title">
       <img src="assets/logo.png" alt="h5i">
-      <h1>h5i runs it in a <em>disposable box</em> instead.</h1>
-      <p>The code, the agent, the toolchain, the dev server and a real browser: <b>one boundary</b>.</p>
+      <h1>h5i gives it a <em>disposable box</em> to run in.</h1>
+      <p>The agent, the workspace, the shell, the dependencies, the dev server and a browser: <b>one boundary</b>.</p>
     </div>
   </div>
 
@@ -247,10 +247,10 @@
     <div class="cols">
       <div class="diag">
         <div class="sealed" id="d-box">
-          <div class="slabel">📦 env/you/pr-214 · sealed</div>
-          <div class="wkcard"><div class="t">PR #214, copied in</div>
-            <div class="s">.git/.h5i/env/you/pr-214/work</div></div>
-          <div class="wkcard row2"><div class="t">Claude Code · Chrome · dev server</div>
+          <div class="slabel">📦 env/you/webapp · sealed</div>
+          <div class="wkcard"><div class="t">Your workspace, copied in</div>
+            <div class="s">.git/.h5i/env/you/webapp/work</div></div>
+          <div class="wkcard row2"><div class="t">Claude Code · shell · toolchain · Chrome</div>
             <div class="s">all inside the same boundary</div></div>
           <div class="polcard" id="d-pol">
             <div class="pt">POLICY, PINNED AT CREATION</div>
@@ -276,6 +276,10 @@
     </div>
     <div class="callout" id="cm1" style="left:20px;top:600px;max-width:640px">
       <b>Turn off the permission prompts.</b> The box is the permission.
+    </div>
+    <div class="callout" id="cm2" style="left:20px;top:592px;max-width:640px">
+      <b>Want a harder wall?</b> <code style="font-family:var(--mono);font-size:21px;color:var(--codex)">--isolation microvm</code>
+      boots a guest with its own kernel.
     </div>
   </div>
 
@@ -320,19 +324,19 @@
       <div class="ck" id="ck3"><span class="box"></span><code>receipt.json</code></div>
       <div class="ck deny" id="ck4"><span class="box"></span>2 denials, listed</div>
     </div>
-    <div class="subline" id="g-sub">Like it? <b>git apply</b> the patch. Either way: <code>h5i box rm pr-214</code></div>
+    <div class="subline" id="g-sub">Like it? <b>git apply</b> the patch. Either way: <code>h5i box rm webapp</code></div>
   </div>
 
   <!-- m4 : close -->
   <div class="scene" id="m4">
     <div class="wrap">
-      <div class="t1" id="c-t1">Run code you <b>don't trust</b>.</div>
-      <div class="t2" id="c-t2">Keep it <em>off your machine</em>.</div>
+      <div class="t1" id="c-t1">Give your agent <b>a whole machine</b>.</div>
+      <div class="t2" id="c-t2">Just <em>not yours</em>.</div>
       <div class="links" id="c-links">github.com/h5i-dev/h5i<span>&nbsp;&nbsp;·&nbsp;&nbsp;</span>h5i.dev</div>
       <div class="fin" id="c-fin">
         <img src="assets/logo.png" alt="h5i">
-        <div class="fs">Disposable development environments for AI coding agents</div>
-        <div class="fr">h5i box --pr &lt;url&gt; · one command, one boundary</div>
+        <div class="fs">Integrated Sandbox for AI Coding Agents</div>
+        <div class="fr">h5i box · one command, one boundary</div>
       </div>
     </div>
   </div>
@@ -395,24 +399,25 @@ function renderTerm(el, ev, t, opts={}) {
 
 /* ---- m0 hook (0–15.2) ---- */
 const evHookM = [
-  {at:3.0, cmd:'git fetch origin pull/214/head && git checkout FETCH_HEAD', cps:44},
-  {at:4.4, cmd:'npm install', cps:30},
-  {at:5.3, out:[`<span class="dim">added 212 packages in 9s</span>`]},
-  {at:6.0, out:[`<span class="co">●</span> <span class="tool">postinstall</span><span class="dim">(node scripts/telemetry.js)</span>`]},
+  {at:2.9, cmd:'claude --dangerously-skip-permissions', cps:42},
+  {at:4.3, out:[`<span class="co">✻</span> Claude Code <span class="dim">· permissions off · your real $HOME</span>`]},
+  {at:5.1, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(npm install)</span>`]},
+  {at:6.0, out:[`  <span class="dim">⎿</span> postinstall → <span class="dim">node scripts/telemetry.js</span>`]},
   {at:6.7, out:[`  <span class="dim">⎿</span> read <span class="wr">~/.ssh/id_rsa</span> · <span class="wr">~/.aws/credentials</span>`]},
   {at:7.6, out:[`  <span class="dim">⎿</span> POST https://cdn-metrics.dev/collect → <span class="wr">uploaded</span>`]},
 ];
 
 /* ---- m1 the box (15.2–44.4) ---- */
 const evBoxM = [
-  {at:.3,  cmd:'h5i box --pr 214', cps:30},
+  {at:.3,  cmd:'h5i box', cps:22},
   {at:1.5, out:[
-    `<span class="ok">✔</span> Created environment <span class="wt">env/you/pr-214</span> (isolation: <span class="wt">container</span>, profile: <span class="wt">browser</span>)`,
-    `   <span class="dim">pr</span>       #214 head <span class="wr">9c41f2ab</span> pinned · base frozen at creation`,
-    `   <span class="dim">work</span>     .git/.h5i/env/you/pr-214/work · <span class="faint">nothing of the host inside</span>`], stagger:.3},
-  {at:3.9, cmd:'h5i box shell pr-214', cps:30},
+    `<span class="ok">✔</span> Created environment <span class="wt">env/you/webapp</span> (isolation: <span class="wt">supervised</span>, profile: <span class="wt">browser</span>)`,
+    `   <span class="dim">base</span>     main <span class="wr">9c41f2ab</span> pinned · frozen at creation`,
+    `   <span class="dim">work</span>     .git/.h5i/env/you/webapp/work · <span class="faint">nothing of the host inside</span>`], stagger:.3},
+  {at:3.3, out:[`<span class="faint">under 200 ms for an everyday box · or: --pr 1234 · a URL · --new</span>`]},
+  {at:3.9, cmd:'h5i box shell webapp', cps:30},
   {at:4.9, out:[`<span class="dim">entering confined session · walls up: fs · net · secrets</span>`]},
-  {at:5.9, cmd:'claude --dangerously-skip-permissions', prompt:'h5i:pr-214$', pcls:'box', cps:34},
+  {at:5.9, cmd:'claude --dangerously-skip-permissions', prompt:'h5i:webapp$', pcls:'box', cps:34},
   {at:7.1, out:[`<span class="co">✻</span> Claude Code <span class="dim">· permissions off</span>`]},
   {at:8.3, out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(npm install)</span>`]},
   {at:9.1, out:[`  <span class="dim">⎿</span> postinstall → node scripts/telemetry.js`]},
@@ -426,7 +431,7 @@ const evBoxM = [
     `  <span class="dim">⎿</span> <span class="vio">@e1</span> heading "Sign up" · <span class="vio">@e2</span> input email · <span class="vio">@e3</span> button`], stagger:.3},
   {at:20.9,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(agent-browser fill @e2 test@example.com)</span> <span class="ok">✓</span> · <span class="dim">(click @e3)</span> <span class="ok">✓</span>`]},
   {at:22.7,out:[`<span class="co">●</span> <span class="tool">Bash</span><span class="dim">(agent-browser screenshot signup.png)</span> <span class="ok">✓</span>`]},
-  {at:24.1,out:[`<span class="faint">the PR builds, the flow works, the evidence is on disk</span>`]},
+  {at:24.1,out:[`<span class="faint">the build passes, the flow works, the evidence is on disk</span>`]},
 ];
 const BLOCKS = [
   {at:9.9,  wall:'wall-fs',  label:'NOT IN THE BOX',    txt:'<b>~/.ssh/id_rsa</b> → nothing there'},
@@ -435,19 +440,19 @@ const BLOCKS = [
 
 /* ---- m2 the viewport (44.4–58.4) ---- */
 const evViewM = [
-  {at:1.0, cmd:'h5i box view pr-214', cps:30},
+  {at:1.0, cmd:'h5i box view webapp', cps:30},
   {at:2.1, out:[`<span class="ok">✔</span> viewer <span class="blu">http://127.0.0.1:7331</span> · control: <span class="co">agent</span>`]},
-  {at:4.4, cmd:'h5i browser take pr-214', cps:30},
+  {at:4.4, cmd:'h5i browser take webapp', cps:30},
   {at:5.4, out:[`<span class="ok">✔</span> you hold control · <span class="wt">your clicks reach the page now</span>`]},
-  {at:8.6, cmd:'h5i browser release pr-214', cps:30},
+  {at:8.6, cmd:'h5i browser release webapp', cps:30},
   {at:9.6, out:[`<span class="ok">✔</span> handed back · stale <span class="vio">@refs</span> force a fresh snapshot`]},
 ];
 
 /* ---- m3 the output gate (58.4–70.4) ---- */
 const evGateM = [
-  {at:1.0, cmd:'h5i box export pr-214', cps:30},
+  {at:1.0, cmd:'h5i box export webapp', cps:30},
   {at:2.2, out:[
-    `<span class="ok">✔</span> exported <span class="wt">env/you/pr-214</span> → <span class="blu">h5i-export/pr-214</span>`,
+    `<span class="ok">✔</span> exported <span class="wt">env/you/webapp</span> → <span class="blu">h5i-export/webapp</span>`,
     `   <span class="dim">changes</span>  9 file(s), <span class="ok">+214</span> <span class="err">-38</span>`,
     `   <span class="dim">receipts</span> 23 recorded`,
     `   <span class="wr">egress</span>   2 denied attempt(s) · read report.md before applying`], stagger:.26},
@@ -509,9 +514,11 @@ const SCENES = [
         bc.style.opacity = Math.min(eo(ramp(t, card.at, .3)), 1 - ramp(t, card.at + 2.1, .4));
         bc.style.transform = `scale(${.94 + .06*eo(ramp(t, card.at, .3))})`;
       } else bc.style.opacity = 0;
-      // callout, then the two big closing lines
+      // callouts, then the two big closing lines
       const con = Math.min(pop($('cm1'), t, 6.0), 1 - ramp(t, 14.6, .45));
       $('cm1').style.opacity = Math.max(0, con);
+      const con2 = Math.min(pop($('cm2'), t, 15.8), 1 - ramp(t, 23.4, .45));
+      $('cm2').style.opacity = Math.max(0, con2);
       pop($('big1'), t, 25.4, {d:.6});
       pop($('big2'), t, 26.6, {d:.6});
     }},
