@@ -1,0 +1,60 @@
+name: Pages
+
+# Publishes `docs/` with Actions instead of the legacy branch build.
+#
+# The legacy path (Settings → Pages → deploy from `main` /docs) ran a build on
+# GitHub's side that this repository could neither see nor time-bound. On
+# 2026-08-06 that build went from its usual ~30s to 347s and then stopped
+# reporting at all: the deploy job polled for its ten-minute limit, gave up,
+# cancelled the deployment, and marked the run failed — while the content
+# published four minutes later anyway. A red build for a site that was live.
+#
+# Building the artifact here makes the whole thing ours: the upload is a step
+# with logs, `docs/` is the only thing that leaves, and a failure means the
+# deploy actually failed.
+
+on:
+  push:
+    branches: ["main"]
+    # `docs/` is the entire published site, so nothing else can change it.
+    # A Rust-only commit does not need to redeploy a static directory.
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yaml"
+  # So a deploy can be re-run without an empty commit — which is exactly what
+  # the legacy build left no way to do.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Queue deployments, never cancel one. A cancelled deploy is a site in an
+# unknown state; a queued one is just late. This is the opposite of the test
+# workflow's policy on purpose: there, the artifact is a verdict and the newest
+# one wins; here, the artifact is the live site.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: build · deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # `docs/` is served verbatim: no Jekyll, no generator, no build step.
+      # `docs/.nojekyll` is kept for the same reason it was added, in case the
+      # source is ever pointed back at a branch.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
