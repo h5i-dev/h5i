@@ -20,11 +20,6 @@ host directories are not mounted into it, your credentials never enter it, and
 the only thing that comes out is a patch you reviewed, next to a receipt of
 everything that ran.
 
-> **The pivot in progress.** h5i began as a provenance system for AI coding
-> work. It is being rebuilt around the boundary, which was always the part
-> worth having. [ROADMAP.md](ROADMAP.md) is the plan of record: what stays,
-> what was cut, and what is still coming.
-
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i-dev%2Fh5i | Trendshift" width="250" height="55"/></a>
 
 ---
@@ -48,15 +43,7 @@ has and what it can enforce, rather than a tier name that means different things
 in different places. Two optional runtimes add tiers on top of either: rootless
 [Podman](https://podman.io/) gives you `container`, and
 [microsandbox](https://microsandbox.dev) (`msb`) gives you `microvm` on a host
-with hardware virtualization — `/dev/kvm` on Linux, Apple Silicon on macOS.
-
-The gaps worth knowing before you pick a host: macOS has no per box memory or
-process-count cap (Darwin has no cgroups, does not enforce `RLIMIT_AS` against
-the mmap'd heap every modern runtime uses, and scopes `RLIMIT_NPROC` to the
-whole user rather than to one box), and no syscall filter. `h5i box status`
-marks a declared-but-unenforced limit with `*` rather than reporting it as
-enforced. Use the `container` or `microvm` tier if you need any of those: both
-cap memory and process count in the runtime itself.
+with hardware virtualization (`/dev/kvm` on Linux, Apple Silicon on macOS).
 
 ## Use it
 
@@ -74,6 +61,10 @@ h5i box status <name>            # the policy that was actually enforced
 h5i box diff <name>              # what changed against the pinned base
 h5i ui                           # the whole fleet on one screen, read-only
 ```
+
+<p align="center">
+  <img src="./docs/_static/sandbox-ui-demo.png" width="99%" />
+</p>
 
 Get the work out through the gate, which is deliberately a human step:
 
@@ -99,14 +90,12 @@ downgrades: an unsatisfiable request fails closed.
 | `container` | rootless Podman, read-only rootfs, dropped capabilities, a portable image, and an HTTP/HTTPS proxy allowlist |
 | `microvm` | a hardware-isolated guest with **its own kernel**, booted by [microsandbox](https://microsandbox.dev) (`msb`) from the same OCI images, with the egress allowlist evaluated **by the VM's network stack** |
 
-Note the tradeoff: the container tier buys portability (any image, any Podman host), not stronger isolation. Its allowlist is proxy-based and binds only proxy-aware tooling. On Linux, supervised enforces egress at L3/L4 with nftables. On macOS, without netfilter, it uses a host-side proxy as the box’s only route out and therefore has the same limitation as container. `h5i box capabilities` reports whether `egress_l3` is available.
-
-microvm is the strongest tier and the only one that does not share the host kernel. It requires msb, hardware virtualization (`/dev/kvm` or Apple Silicon), and an image; otherwise, it is refused, never downgraded. Stronger isolation means weaker evidence: no per-request egress tally and no peak RSS.
+microvm is the strongest tier and the only one that does not share the host kernel. It requires msb, hardware virtualization (`/dev/kvm` or Apple Silicon), and an image; otherwise, it is refused, never downgraded.
 
 No SSH keys, cloud credentials, or Docker socket enter a box. A runtime-scoped host proxy injects model API keys outside the boundary, preventing cross-runtime access. Each box receives a one-time copy of HOME state that is never written back.
 
 
-## For agents
+## Skill
 
 The agent-facing interface is a skill, and the binary carries it:
 
@@ -123,9 +112,6 @@ npx skills add h5i-dev/h5i       # if you do not have the binary yet
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
 - [CONTRIBUTING.md](CONTRIBUTING.md): we welcome contributions of any kind
 - `h5i man > ~/.local/share/man/man1/h5i.1`: install the man page (generated from the CLI)
-
-Parts of the documentation still describe the previous product. The roadmap
-says which, and the rewrite is tracked there.
 
 ## What h5i does not claim
 
