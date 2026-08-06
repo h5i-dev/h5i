@@ -1360,6 +1360,21 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         println!("{}", serde_json::to_string_pretty(&report)?);
                     } else {
                         print!("{}", h5i_core::env::diff(git, &h5i_root, &m, stat)?);
+                        // On stderr, so `h5i box diff > x.patch` still yields a
+                        // clean patch while a human at a terminal is told what
+                        // was held back.
+                        let hidden = h5i_core::env::private_paths_excluded(&h5i_root, &m);
+                        if !hidden.is_empty() {
+                            eprintln!(
+                                "{}",
+                                style(format!(
+                                    "note: {} path(s) excluded as private ({})",
+                                    hidden.len(),
+                                    hidden.join(", ")
+                                ))
+                                .dim()
+                            );
+                        }
                     }
                 }
 

@@ -164,6 +164,22 @@ const MAX_REQUEST_BODY: usize = 32 * 1024 * 1024;
 /// loop of connections from spawning unbounded host threads.
 const MAX_IN_FLIGHT: usize = 64;
 
+/// Holds one of the [`MAX_IN_FLIGHT`] concurrent-forward slots and releases it
+/// on drop — including when the worker unwinds.
+///
+/// The count is the only thing standing between the box and an unbounded number
+/// of host threads, so releasing it has to be unconditional. A bare
+/// `fetch_sub` at the end of the worker closure is not: a panic in
+/// `handle_client` skips it, and the slot is then held forever by a thread that
+/// no longer exists.
+struct InFlightSlot(Arc<ProxyState>);
+
+impl Drop for InFlightSlot {
+    fn drop(&mut self) {
+        self.0.in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// Immutable per-proxy state shared with worker threads.
 struct ProxyState {
     /// The origin the proxy forwards to, parsed once at spawn:
@@ -333,9 +349,17 @@ fn spawn_to_upstream(
                         write_status(&mut client, 503, "Service Unavailable");
                         continue;
                     }
+                    // The release is a guard, not a statement after the call.
+                    // Decrementing at the end of the closure leaks the slot on
+                    // any path that does not reach it — a panic in
+                    // `handle_client`, or a `spawn` that never runs the closure
+                    // at all — and a leaked slot is permanent: after
+                    // MAX_IN_FLIGHT of them the proxy answers 503 forever and
+                    // the box loses authenticated egress for good.
+                    let slot = InFlightSlot(state.clone());
                     std::thread::spawn(move || {
-                        let _ = handle_client(client, &state);
-                        state.in_flight.fetch_sub(1, Ordering::SeqCst);
+                        let slot = slot;
+                        let _ = handle_client(client, &slot.0);
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {

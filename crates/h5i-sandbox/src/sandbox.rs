@@ -1932,7 +1932,17 @@ pub(crate) struct EgressJail {
 unsafe fn close_inherited_fds() {
     // close_range(2) is Linux 5.9+; Landlock needs 5.13+, so on any host that
     // reaches this code it is present and this is the only branch that runs.
-    if libc::syscall(libc::SYS_close_range, 3 as libc::c_uint, libc::c_uint::MAX, 0) == 0 {
+    // `syscall` is variadic, so each argument is read as a `long`. Passing a
+    // 32-bit `c_uint` happens to work on x86-64 and aarch64 because the ABI
+    // zero-extends, but the widths should agree by construction rather than by
+    // the platform being forgiving.
+    if libc::syscall(
+        libc::SYS_close_range,
+        3 as libc::c_long,
+        libc::c_uint::MAX as libc::c_long,
+        0 as libc::c_long,
+    ) == 0
+    {
         return;
     }
     // Fallback for a kernel (or seccomp policy) without close_range: walk the

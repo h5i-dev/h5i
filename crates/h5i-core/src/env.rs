@@ -4662,6 +4662,19 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
         if !p.tools.is_empty() {
             out.push_str(&format!("  tools    : {}\n", p.tools.join(", ")));
         }
+        // Named, not implied: these are held out of `diff`, `propose` and the
+        // exported patch, and a reviewer should see that from the status page
+        // rather than deduce it from an absence.
+        if !p.private_paths.is_empty() {
+            out.push_str(&format!(
+                "  private  : {} (per-env; excluded from diff/export)\n",
+                p.private_paths
+                    .iter()
+                    .map(|pp| pp.path.trim_matches('/'))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
         if !p.net_egress.is_empty() {
             out.push_str(&format!("  egress   : {}", p.net_egress.join(", ")));
             if policy.claim.enforces_egress_allowlist() {
@@ -5880,6 +5893,22 @@ fn private_path_rels(h5i_root: &Path, m: &EnvManifest) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The private paths this env keeps out of `diff`, `propose` and the exported
+/// patch, for surfacing in **human** output.
+///
+/// Deliberately not folded into [`diff`]'s own return value: that string is what
+/// `export` writes to `patch.diff`, and a note appended to it would be a note
+/// inside a patch. Callers print this beside the diff, never within it.
+///
+/// The filter itself is right — a private path is a per-env cache, and on macOS
+/// it is a symlink into h5i's own storage — but `private_paths` is repo-supplied
+/// config, and a tool whose promise is "the only thing that comes out is a patch
+/// you reviewed" should say which paths it declined to show rather than leave it
+/// to be inferred.
+pub fn private_paths_excluded(h5i_root: &Path, m: &EnvManifest) -> Vec<String> {
+    private_path_rels(h5i_root, m)
 }
 
 /// Does this diff delta describe a private path on either side?
