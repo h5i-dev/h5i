@@ -22,7 +22,7 @@ everything that ran.
 
 Use h5i when you want to:
 
-- start a lightweight sandbox in under 10 ms for everyday agent tasks
+- start a lightweight sandbox in under 200 ms for everyday agent tasks
 - isolate untrusted agents and code in a microVM when stronger boundaries matter
 - run the agent, browser, dev server, and toolchain inside the same sandbox
 - review the resulting patch and execution record before anything touches your repository
