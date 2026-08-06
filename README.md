@@ -100,7 +100,7 @@ downgrades: an unsatisfiable request fails closed.
 
 microvm is the strongest tier and the only one that does not share the host kernel. It requires msb, hardware virtualization (`/dev/kvm` or Apple Silicon), and an image; otherwise, it is refused, never downgraded.
 
-No SSH keys, cloud credentials, or Docker socket enter a box. A runtime-scoped host proxy injects model API keys outside the boundary, preventing cross-runtime access. Each box receives a one-time copy of HOME state that is never written back.
+No credentials enter a box. A runtime-scoped host proxy injects model API keys outside the boundary, preventing cross-runtime access. Each box receives a one-time copy of HOME state that is never written back.
 
 
 ## Skill
