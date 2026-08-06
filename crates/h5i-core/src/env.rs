@@ -2039,6 +2039,54 @@ fn prepare_private_paths(
     Ok(())
 }
 
+/// Longest `TMPDIR` that still leaves room for what a box builds underneath it.
+///
+/// macOS caps an `AF_UNIX` path at 104 bytes. The deepest thing h5i knows a box
+/// puts under `TMPDIR` is Chrome's process-singleton socket, reached through
+/// agent-browser's ephemeral profile directory:
+///
+/// ```text
+///   <TMPDIR>/agent-browser-chrome-<uuid>/SingletonSocket
+///            \__________ 58 __________/\_____ 16 _____/
+/// ```
+///
+/// so a `TMPDIR` longer than this cannot host one. Not a hard guarantee for
+/// every program — it is the budget h5i sizes its own scratch path against.
+#[cfg(target_os = "macos")]
+const TMPDIR_BUDGET: usize = 104 - 58 - 16;
+
+/// Where a box's private `/tmp` is backed on disk.
+///
+/// Linux keeps it inside the env directory. The tier bind-mounts that directory
+/// over `/tmp` in a private mount namespace, so the box sees the short literal
+/// path and the backing's own depth is invisible to it.
+///
+/// macOS has no unprivileged bind mount, so `seatbelt::plan` re-expresses the
+/// redirect as `TMPDIR` pointing at the backing — which means the backing's
+/// length *is* what programs inside the box build their paths from. Nested in
+/// the repository it never fits [`TMPDIR_BUDGET`]: `/.git/.h5i/env/<agent>/<slug>/tmp`
+/// alone spends 26 of the ~30 bytes available before the repository path is
+/// counted at all, so a browser box failed on every Mac with Chrome reporting
+/// "Failed to create socket directory" — which reads as a permission error and
+/// is really `AF_UNIX path too long`.
+///
+/// So on macOS the backing moves to a short path outside the repository, named
+/// by digest so it stays stable for a given env (and distinct per read-only
+/// observer, which passes its own logical path). Isolation is unchanged: it
+/// comes from the directory being per-env, `0700`, and the only `/tmp` write
+/// grant the policy carries — not from where it sits.
+fn private_tmp_backing(logical: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        let digest = crate::refstore::sha256_hex(logical.display().to_string().as_bytes());
+        let short = PathBuf::from(format!("/tmp/h5i-{}", &digest[..12]));
+        debug_assert!(short.display().to_string().len() <= TMPDIR_BUDGET);
+        short
+    }
+    #[cfg(not(target_os = "macos"))]
+    logical.to_path_buf()
+}
+
 /// Give kernel-tier envs a private `/tmp` by binding an env-owned scratch dir
 /// over the host path before Landlock is applied. Agent profiles used to grant
 /// host-shared `/tmp` at process/supervised tiers; that creates an unnecessary
@@ -2065,18 +2113,37 @@ fn prepare_private_tmp(
     if !had_tmp {
         return Ok(());
     }
-    let backing = match backing_override {
+    let logical = match backing_override {
         Some(dir) => dir.to_path_buf(),
         None => m.dir(h5i_root).join("tmp"),
     };
+    let backing = private_tmp_backing(&logical);
     let _ = std::fs::remove_dir_all(&backing);
-    std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
+    if let Some(parent) = backing.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+    }
+    // Created exclusively, 0700. On macOS this lands in world-writable, sticky
+    // `/tmp` (see [`private_tmp_backing`]), where another local user could have
+    // squatted the name: `remove_dir_all` cannot delete their directory and this
+    // then fails rather than adopting a directory somebody else owns and writing
+    // the box's scratch into it.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&backing, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| H5iError::with_path(e, &backing))?;
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&backing)
+            .map_err(|e| {
+                H5iError::Metadata(format!(
+                    "could not create this box's private /tmp at {} ({e}). If that path exists \
+                     and is not yours, remove it — h5i will not reuse a scratch directory it \
+                     does not own (fail-closed).",
+                    backing.display()
+                ))
+            })?;
     }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
     policy.profile.fs_read.retain(|p| p != "/tmp");
     policy.profile.fs_write.retain(|p| p != "/tmp");
     policy.profile.fs_write.push(backing.display().to_string());
@@ -6792,6 +6859,11 @@ pub fn rm(
     // 5. Erase the on-disk env dir (manifest, policy, status, leftovers), then
     //    tidy the now-empty agent dir.
     let dir = m.dir(h5i_root);
+    // On macOS the private `/tmp` backing lives outside the env dir (see
+    // [`private_tmp_backing`]), so erasing the env dir no longer takes it with
+    // it. Best-effort: a leftover scratch dir is tidiness, not correctness, and
+    // must not block the removal the user asked for.
+    let _ = std::fs::remove_dir_all(private_tmp_backing(&dir.join("tmp")));
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
     }
