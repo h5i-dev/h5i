@@ -2685,6 +2685,45 @@ fn box_tmp_root(policy: &ResolvedPolicy) -> String {
         .unwrap_or_else(|| "/tmp".to_string())
 }
 
+/// Loopback ports this box is allowed to dial: the dynamic host ports of its
+/// own **running** services.
+///
+/// The box's browser has to reach the dev server the box is running — that is
+/// the whole point of a browser box — and on macOS loopback is the host's, so
+/// it is denied wholesale unless a port is named. These ports were allocated by
+/// h5i for this env's services, so naming them grants the box access to itself
+/// and to nothing else on the interface.
+///
+/// Only **live** services count: a record whose process is gone would otherwise
+/// keep a port open in the policy that some unrelated host process could later
+/// bind. Re-read on every run, so starting a service and then using it works
+/// without recreating the box.
+fn live_service_ports(h5i_root: &Path, m: &EnvManifest) -> Vec<u16> {
+    let svc_dir = services_dir(h5i_root, m);
+    let Ok(entries) = std::fs::read_dir(&svc_dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in entries.flatten() {
+        let path = e.path();
+        if path.extension().and_then(|x| x.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(rec) = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<ServiceRecord>(&t).ok())
+        else {
+            continue;
+        };
+        if let Some(port) = rec.dynamic_port {
+            if pid_alive(rec.pid) {
+                out.push(port);
+            }
+        }
+    }
+    out
+}
+
 /// The `agent-browser` shim: launch Chrome ourselves, then attach to it.
 ///
 /// agent-browser's own *launch* path does not work inside a Seatbelt sandbox.
@@ -2759,6 +2798,7 @@ alive || {{
       --disable-gpu --no-first-run --no-default-browser-check \
       --user-data-dir="$UD" --remote-debugging-port="$PORT" about:blank \
       >"$STATE/chrome.log" 2>&1 &
+  echo $! > "$STATE/chrome.pid"
   i=0
   while [ $i -lt 100 ]; do
     alive && break
@@ -2775,11 +2815,19 @@ exec "$REAL" --cdp "$PORT" "$@"
 /// Materialize the shim for a `browser` box and return the directory to put on
 /// `PATH`. `None` for every other profile, and when no `agent-browser` is
 /// installed (nothing to attach with).
+/// Where the browser shim lives and which port its Chrome answers on.
+pub struct BrowserShim {
+    /// Goes on `PATH` ahead of the real `agent-browser`.
+    pub dir: PathBuf,
+    /// The one loopback port the policy grants for CDP.
+    pub port: u16,
+}
+
 fn prepare_browser_shim(
     h5i_root: &Path,
     m: &EnvManifest,
     policy: &mut ResolvedPolicy,
-) -> Result<Option<PathBuf>, H5iError> {
+) -> Result<Option<BrowserShim>, H5iError> {
     if policy.profile.name != "browser" {
         return Ok(None);
     }
@@ -2810,7 +2858,7 @@ fn prepare_browser_shim(
             p
         }
     };
-    policy.cdp_port = Some(port);
+    policy.loopback_ports.push(port);
     let shim = dir.join("agent-browser");
     std::fs::write(&shim, browser_shim_source(&real)).map_err(|e| H5iError::with_path(e, &shim))?;
     #[cfg(unix)]
@@ -2828,7 +2876,7 @@ fn prepare_browser_shim(
     if !policy.profile.fs_write.contains(&s) {
         policy.profile.fs_write.push(s);
     }
-    Ok(Some(dir))
+    Ok(Some(BrowserShim { dir, port }))
 }
 
 /// Environment a `browser` box needs, derived from the policy that is actually
@@ -2847,9 +2895,9 @@ fn prepare_browser_shim(
 ///   send page content to an external gateway. Inside a box that is an
 ///   exfiltration path with a friendly name, so the gateway credential is kept
 ///   out of the box entirely: it is absent from `env.pass` and never injected.
-pub fn browser_env(policy: &ResolvedPolicy, shim_dir: Option<&Path>) -> Vec<(String, String)> {
+pub fn browser_env(policy: &ResolvedPolicy, shim: Option<&BrowserShim>) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
-    if let Some(dir) = shim_dir {
+    if let Some(BrowserShim { dir, port }) = shim {
         // Ahead of the real binary, so a bare `agent-browser` gets the shim.
         // `injected_env` is applied after the `env.pass` allowlist, so this PATH
         // wins over the host's.
@@ -2859,11 +2907,11 @@ pub fn browser_env(policy: &ResolvedPolicy, shim_dir: Option<&Path>) -> Vec<(Str
             "H5I_BROWSER_STATE".to_string(),
             dir.join("state").display().to_string(),
         ));
-        if let Some(port) = policy.cdp_port {
-            out.push(("H5I_BROWSER_CDP_PORT".to_string(), port.to_string()));
-        }
+        // Explicitly the shim's own port, not "whichever loopback port came
+        // first" — the policy also grants the box's live service ports.
+        out.push(("H5I_BROWSER_CDP_PORT".to_string(), port.to_string()));
     }
-    out.extend(browser_env_inner(policy, shim_dir.is_some()));
+    out.extend(browser_env_inner(policy, shim.is_some()));
     out
 }
 
@@ -3506,6 +3554,11 @@ fn run_inner(
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
     prepare_private_tmp(h5i_root, m, &mut policy, None)?;
     let browser_shim = prepare_browser_shim(h5i_root, m, &mut policy)?;
+    policy.loopback_ports.extend(live_service_ports(h5i_root, m));
+    // Declared in the profile (`[profile.X.net] loopback`), so a dev server the
+    // box runs itself is reachable from the box's own browser.
+    let declared = policy.profile.loopback_ports.clone();
+    policy.loopback_ports.extend(declared);
     prepare_home_state(
         h5i_root,
         m,
@@ -3562,7 +3615,7 @@ fn run_inner(
             &team_identity_env(m, h5i_root),
             &merged_env(
                 &if policy.profile.name == "browser" {
-                    browser_env(&policy, browser_shim.as_deref())
+                    browser_env(&policy, browser_shim.as_ref())
                 } else {
                     Vec::new()
                 },
@@ -3873,6 +3926,11 @@ pub fn shell(
         session_root.as_deref().map(|r| r.join("tmp")).as_deref(),
     )?;
     let browser_shim = prepare_browser_shim(h5i_root, m, &mut policy)?;
+    policy.loopback_ports.extend(live_service_ports(h5i_root, m));
+    // Declared in the profile (`[profile.X.net] loopback`), so a dev server the
+    // box runs itself is reachable from the box's own browser.
+    let declared = policy.profile.loopback_ports.clone();
+    policy.loopback_ports.extend(declared);
     prepare_home_state(
         h5i_root,
         m,
@@ -3923,7 +3981,7 @@ pub fn shell(
         &merged_env(
             &team_identity_env(m, h5i_root),
             &if policy.profile.name == "browser" {
-                browser_env(&policy, browser_shim.as_deref())
+                browser_env(&policy, browser_shim.as_ref())
             } else {
                 Vec::new()
             },
@@ -7096,6 +7154,20 @@ pub fn rm(
     // 5. Erase the on-disk env dir (manifest, policy, status, leftovers), then
     //    tidy the now-empty agent dir.
     let dir = m.dir(h5i_root);
+    // A `browser` box leaves Chrome running on purpose — it has to outlive the
+    // `box run` that started it — so removing the box has to stop it, or the
+    // process outlives everything that knows about it. Best-effort, like the
+    // scratch dir below: a survivor is untidy, not unsafe, and must not block
+    // the removal the user asked for.
+    if let Some(pid) = std::fs::read_to_string(dir.join("browser/state/chrome.pid"))
+        .ok()
+        .and_then(|t| t.trim().parse::<i32>().ok())
+    {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
     // On macOS the private `/tmp` backing lives outside the env dir (see
     // [`private_tmp_backing`]), so erasing the env dir no longer takes it with
     // it. Best-effort: a leftover scratch dir is tidiness, not correctness, and

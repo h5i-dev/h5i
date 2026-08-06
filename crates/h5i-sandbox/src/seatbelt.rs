@@ -666,7 +666,10 @@ fn network_rules(policy: &ResolvedPolicy, opts: &SeatbeltOptions) -> String {
     // loopback wholesale because here it is the *host's*; this lets exactly the
     // one port h5i told Chrome to listen on through, and leaves every other
     // loopback service — h5i's own proxies included — as unreachable as before.
-    if let Some(port) = policy.cdp_port {
+    let mut ports: Vec<u16> = policy.loopback_ports.clone();
+    ports.sort_unstable();
+    ports.dedup();
+    for port in ports {
         s.push_str(&format!(
             "(allow network-outbound (remote ip \"localhost:{port}\"))\n"
         ));
@@ -1276,7 +1279,18 @@ mod tests {
             "no loopback egress without a pinned port\n{s}"
         );
 
-        p.cdp_port = Some(49999);
+        p.loopback_ports = vec![49999, 49999, 3000];
+        let s = build_profile(&p, Path::new("/w"), &opts());
+        assert!(s.contains("(allow network-outbound (remote ip \"localhost:3000\"))"), "{s}");
+        // Deduplicated: a port declared in the profile and also live as a
+        // service must not emit the rule twice.
+        assert_eq!(
+            s.matches("(allow network-outbound (remote ip \"localhost:49999\"))").count(),
+            1,
+            "duplicate port emitted twice\n{s}"
+        );
+
+        p.loopback_ports = vec![49999];
         let s = build_profile(&p, Path::new("/w"), &opts());
         assert!(
             s.contains("(allow network-outbound (remote ip \"localhost:49999\"))"),

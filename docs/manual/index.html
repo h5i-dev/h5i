@@ -710,9 +710,10 @@ read  = [&quot;/usr&quot;, &quot;/etc&quot;]
 write = [&quot;$WORK&quot;]
 
 [profile.review.net]
-mode   = &quot;deny&quot;
-egress = [&quot;api.github.com&quot;]
-unix   = false          # AF_UNIX sockets; see below
+mode     = &quot;deny&quot;
+egress   = [&quot;api.github.com&quot;]
+unix     = false          # AF_UNIX sockets; see below
+loopback = [3000]         # macOS only; see below
 
 [profile.review.resources]
 mem   = &quot;4G&quot;
@@ -925,16 +926,25 @@ not claim more than that.</p>
   blocks the namespace syscalls Chrome's sandbox needs, at every tier. h5i's box
   is the boundary; Chrome's is not available inside it. That is one layer fewer
   than a browser on the host has.</li>
-<li><strong>The browser profile does not work on macOS yet.</strong> It has now been exercised
-  there: the tooling is found, the daemon starts, and Chrome itself launches.
-  What fails is the last step — <code>agent-browser</code> reaches Chrome over CDP, which
-  is a TCP dial to loopback, and the kernel tiers refuse outbound to loopback on
-  macOS because it is the <em>host's</em> loopback and dialing it would reach host
-  services. Pinning Chrome's debug port so the policy could grant that one port
-  does not help: <code>agent-browser</code> refuses <code>--cdp</code>, <code>--profile</code> and a
-  <code>--user-data-dir</code> in <code>--args</code> whenever <code>--allowed-domains</code> is set, which h5i
-  always sets. Treat the tier as unsupported on macOS until that is resolved
-  upstream or the second layer is traded away.</li>
+<li><strong>A dev server the box runs is reachable only if its port is declared.</strong> On
+  macOS the box shares the <em>host's</em> loopback, so h5i denies outbound to it
+  wholesale — otherwise a box could reach a database or a dev server belonging
+  to the host. A box that runs its own dev server and wants to point its own
+  browser at it names the port: <code>[profile.X.net] loopback = [3000]</code>. Exactly
+  that port is granted; everything else on loopback stays denied, and an
+  undeclared port fails with <code>net::ERR_ACCESS_DENIED</code>. The port a declared
+  <code>[service]</code> is running on is granted automatically while that service is
+  alive, so this is only needed for a server started by hand. On Linux the box
+  has its own network namespace and none of this applies.</li>
+<li><strong>On macOS the browser has no in-process domain check.</strong> agent-browser cannot
+  start Chrome from inside a Seatbelt sandbox — the failure reproduces under a
+  fully permissive <code>sandbox-exec</code> profile and disappears without the sandbox, so
+  it is not something a grant fixes. h5i therefore launches Chrome itself and
+  attaches agent-browser to it with <code>--cdp</code>, which upstream refuses to combine
+  with <code>--allowed-domains</code>. So that flag is not set for a macOS browser box: the
+  tier's own egress enforcement is unchanged and still the boundary, but
+  agent-browser's second, in-process domain list is gone. A page on a
+  non-allowlisted host fails inside Chrome with <code>net::ERR_ACCESS_DENIED</code>.</li>
 <li><strong>Two kernel mechanisms, not one.</strong> Linux confines with Landlock, seccomp and
   namespaces. macOS confines with Seatbelt, which is default deny across
   filesystem, network, mach and sysctl in one policy, and which (unlike
