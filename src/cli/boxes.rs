@@ -1025,10 +1025,18 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         if container_ok { style("yes").green() } else { style("no").red() }
                     );
                     let microvm_ok = caps.microvm_runtime.is_some();
+                    // The prerequisite list is a hint for a reader who cannot
+                    // run this tier; printing it next to "yes" would read as an
+                    // unmet requirement on a host that already meets them all.
                     println!(
-                        "  claim {:<10} satisfiable = {} (needs microsandbox `msb` + host virtualization + profile container.image)",
+                        "  claim {:<10} satisfiable = {}{}",
                         "microvm",
-                        if microvm_ok { style("yes").green() } else { style("no").red() }
+                        if microvm_ok { style("yes").green() } else { style("no").red() },
+                        if microvm_ok {
+                            " (profile needs container.image)"
+                        } else {
+                            " (needs microsandbox `msb` + host virtualization + profile container.image)"
+                        }
                     );
                     if !microvm_ok {
                         // Which half is missing decides what the reader does

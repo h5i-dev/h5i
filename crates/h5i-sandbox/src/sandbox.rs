@@ -822,6 +822,11 @@ pub fn probe_host() -> HostCaps {
 pub fn probe_host_fresh() -> HostCaps {
     let mut caps = probe_host_kernel_uncached();
     caps.container_runtime = crate::container::probe_fresh().map(|r| r.bin);
+    // Both image-backed runtimes, or the report contradicts what `resolve` will
+    // do: [`probe_host`] fills `microvm_runtime` in, so omitting it here made
+    // `env probe`, `env capabilities` and `/api/probe` all say "microvm = none"
+    // on a host that boots microVMs perfectly well.
+    caps.microvm_runtime = crate::microvm::probe_fresh().map(|r| r.bin);
     caps
 }
 
@@ -1041,7 +1046,14 @@ fn capabilities_report_from(caps: HostCaps) -> CapabilitiesReport {
         claim: IsolationClaim::Microvm.as_str(),
         satisfiable: microvm_ok,
         runnable: None,
-        note: Some("needs microsandbox `msb` + host virtualization + profile container.image"),
+        // The unmet-prerequisite list belongs to a host that cannot run the
+        // tier; once it can, the only thing still outstanding is the profile
+        // image, and saying otherwise reads as a blocker that isn't there.
+        note: Some(if microvm_ok {
+            "profile needs container.image"
+        } else {
+            "needs microsandbox `msb` + host virtualization + profile container.image"
+        }),
     });
 
     let confined_tier_runs = claims
@@ -2876,7 +2888,7 @@ pub(crate) fn wait_loop(
             } else {
                 None // died on a signal (incl. our SIGKILL)
             };
-            return (exit_code, timed_out, cpu_ms(&usage), Some(usage.ru_maxrss));
+            return (exit_code, timed_out, cpu_ms(&usage), Some(maxrss_kb(&usage)));
         }
         if r == -1 {
             let e = std::io::Error::last_os_error();
@@ -2905,6 +2917,20 @@ fn cpu_ms(u: &libc::rusage) -> u128 {
     let secs = (u.ru_utime.tv_sec + u.ru_stime.tv_sec) as u128;
     let usecs = (u.ru_utime.tv_usec + u.ru_stime.tv_usec) as u128;
     secs * 1000 + usecs / 1000
+}
+
+/// Peak RSS in KiB, normalising the one `rusage` field whose unit POSIX never
+/// fixed: Linux (and the BSDs) report `ru_maxrss` in kilobytes, **Darwin reports
+/// it in bytes**. Taking the raw value there over-reported every receipt by
+/// 1024×, so a `pwd` claimed 1.1 GiB and a 512 MiB allocation claimed a
+/// terabyte — numbers that then travelled into export reports.
+#[cfg(unix)]
+fn maxrss_kb(u: &libc::rusage) -> i64 {
+    if cfg!(target_vendor = "apple") {
+        u.ru_maxrss / 1024
+    } else {
+        u.ru_maxrss
+    }
 }
 
 #[cfg(not(unix))]

@@ -186,9 +186,13 @@ impl Repo {
     }
 
     /// The stored raw payload of a receipt.
+    ///
+    /// Resolved through the public accessor rather than by building the on-disk
+    /// path: payload blobs are keyed by their *content* digest, while a receipt
+    /// id names the run, and the two are deliberately not the same string.
     fn capture_raw_for(&self, slug: &str, id: &str) -> Vec<u8> {
-        let path = self.env_dir(slug).join("receipts").join(format!("{id}.raw"));
-        std::fs::read(&path).unwrap_or_else(|_| panic!("raw payload {id} missing"))
+        h5i_core::receipt::raw_bytes(&self.env_dir(slug), id)
+            .unwrap_or_else(|_| panic!("raw payload {id} missing"))
     }
 }
 
