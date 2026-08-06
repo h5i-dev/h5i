@@ -98,7 +98,7 @@
           {
             "@type": "Question",
             "name": "How is h5i different from just running the agent in a container?",
-            "acceptedAnswer": {"@type": "Answer", "text": "A container is one of the four tiers h5i can use, and on its own it is the weakest at the thing that matters most here: its egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. The supervised tier puts the box in a private network namespace and enforces the allowlist with nftables rules pinned to resolved IPs, plus a seccomp gate on socket(), so a program that ignores proxy settings still cannot reach an off-list address. On top of that you get the copy-in workspace, the credential broker, the browser and the output gate."}
+            "acceptedAnswer": {"@type": "Answer", "text": "A container is one of the five tiers h5i can use, and on its own it is the weakest at the thing that matters most here: its egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. The supervised tier puts the box in a private network namespace and enforces the allowlist with nftables rules pinned to resolved IPs, plus a seccomp gate on socket(), so a program that ignores proxy settings still cannot reach an off-list address. On top of that you get the copy-in workspace, the credential broker, the browser and the output gate."}
           },
           {
             "@type": "Question",
@@ -1039,7 +1039,7 @@
       </details>
       <details class="faq-item">
         <summary>How is this different from just running the agent in a container?</summary>
-        <div class="faq-answer">A container is one of the four tiers h5i can use, and on its own it is the <em>weakest</em> at the thing that matters most here. Its egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. h5i's <code>supervised</code> tier puts the box in a private network namespace and enforces the allowlist with nftables rules pinned to resolved IPs, plus a seccomp gate on <code>socket()</code>: a program that ignores proxy settings still cannot reach an off-list address. On top of that you get the copy-in workspace, the credential broker, the browser, and the output gate, which a bare container does not give you.</div>
+        <div class="faq-answer">A container is one of the five tiers h5i can use, and on its own it is the <em>weakest</em> at the thing that matters most here. Its egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. h5i's <code>supervised</code> tier puts the box in a private network namespace and enforces the allowlist with nftables rules pinned to resolved IPs, plus a seccomp gate on <code>socket()</code>: a program that ignores proxy settings still cannot reach an off-list address. On top of that you get the copy-in workspace, the credential broker, the browser, and the output gate, which a bare container does not give you.</div>
       </details>
       <details class="faq-item">
         <summary>Do my credentials go into the box?</summary>

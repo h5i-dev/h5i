@@ -45,14 +45,18 @@ Linux and macOS. The two confine by different means: Linux uses Landlock,
 seccomp and namespaces, macOS uses Seatbelt. What that buys you is close but not
 identical, so run `h5i box probe`. It reports the mechanism your host actually
 has and what it can enforce, rather than a tier name that means different things
-in different places. Rootless [Podman](https://podman.io/) adds the container
-tier on top of either.
+in different places. Two optional runtimes add tiers on top of either: rootless
+[Podman](https://podman.io/) gives you `container`, and
+[microsandbox](https://microsandbox.dev) (`msb`) gives you `microvm` on a host
+with hardware virtualization — `/dev/kvm` on Linux, Apple Silicon on macOS.
 
 The gaps worth knowing before you pick a host: macOS has no per box memory or
 process-count cap (Darwin has no cgroups, does not enforce `RLIMIT_AS` against
 the mmap'd heap every modern runtime uses, and scopes `RLIMIT_NPROC` to the
-whole user rather than to one box), and no syscall filter. Use the container
-tier if you need any of those.
+whole user rather than to one box), and no syscall filter. `h5i box status`
+marks a declared-but-unenforced limit with `*` rather than reporting it as
+enforced. Use the `container` or `microvm` tier if you need any of those: both
+cap memory and process count in the runtime itself.
 
 ## Use it
 
@@ -93,11 +97,27 @@ downgrades: an unsatisfiable request fails closed.
 | `process` | Landlock filesystem allowlist, seccomp deny-list, namespaces, rlimits |
 | `supervised` | all of the above, plus a private network namespace with an **nftables egress allowlist pinned to resolved IPs**, DNS pinned by hosts file, and a seccomp-notify socket gate |
 | `container` | rootless Podman, read-only rootfs, dropped capabilities, a portable image, and an HTTP/HTTPS proxy allowlist |
+| `microvm` | a hardware-isolated guest with **its own kernel**, booted by [microsandbox](https://microsandbox.dev) (`msb`) from the same OCI images, with the egress allowlist evaluated **by the VM's network stack** |
 
 Note which way round that goes. The container tier buys **portability** (any
-image, any host with Podman). The strongest *network* scoping is `supervised`,
-because it enforces at L3/L4 in the kernel; the container tier's allowlist is a
-proxy, so it only binds tooling that respects a proxy.
+image, any host with Podman), not strength: its allowlist is a proxy, so it
+only binds tooling that respects a proxy. Scoping at L3/L4 — where a raw socket
+to an unlisted address is dropped rather than politely declined — is what
+`supervised` does on Linux (nftables) and what `microvm` does everywhere. On
+macOS `supervised` has no netfilter to use, so it reaches the same allowlist
+through a host-side proxy the Seatbelt profile leaves as the box's only route
+out; that binds proxy-respecting tooling only, exactly like the container tier.
+`h5i box capabilities` reports which of the two you are actually getting
+(`egress_l3`).
+
+`microvm` is the strongest tier and the only one that does not share the host
+kernel — a kernel exploit inside the box is contained by the hypervisor rather
+than by the kernel it just subverted. It needs `msb`, hardware virtualization
+(`/dev/kvm` on Linux, Apple Silicon on macOS) and an image; absent any of
+those it is refused, never downgraded. Two things it gives up in exchange, and
+they are real: a VM netstack drops packets without saying which, so there is no
+per-request egress tally in the receipt, and resource accounting belongs to the
+guest kernel, so runs report no peak RSS. Stronger enforcement, weaker evidence.
 
 Credentials are the part people get wrong, so h5i is explicit about it. No SSH
 key, cloud credential or Docker socket enters a box. Model API calls are
@@ -130,12 +150,14 @@ says which, and the rewrite is tracked there.
 
 - **It cannot stop an agent from putting your code in a prompt.** Containment
   keeps the agent off your machine. Model egress is a separate control.
-- **The kernel is shared.** Podman and the kernel tiers are good against a
-  runaway agent and careless dependency code, not against a targeted kernel
-  exploit. A microVM backend is the answer to that, and it does not exist yet.
+- **The kernel is shared, below `microvm`.** Podman and the kernel tiers are
+  good against a runaway agent and careless dependency code, not against a
+  targeted kernel exploit. `isolation=microvm` is the answer to that, and it
+  needs a host with virtualization and an image — so it is opt-in, not the
+  default you get by typing `h5i box`.
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
-  it binds proxy-respecting tooling only. The `supervised` tier enforces at
-  L3/L4 and does not have that hole.
+  it binds proxy-respecting tooling only. `supervised` and `microvm` enforce at
+  L3/L4 and do not have that hole.
 
 ## License
 
