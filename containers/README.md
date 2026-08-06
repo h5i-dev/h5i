@@ -60,6 +60,10 @@ mounts are all enforced outside the agent, so the inner layer is redundant.
 - **Observation**: the tee-shim records shell commands for any image; the
   baked-in `h5i` additionally powers the unremovable managed-settings
   `wrap-bash` hook (Claude images) and in-box `h5i capture run`.
+- **The shell** for a bare `h5i box shell` comes from the *image*, never from
+  the host `$SHELL` (a `/bin/zsh` host path does not exist in the box): `bash`
+  when the image has it, `/bin/sh` otherwise. Its rc comes from the image too,
+  so a profile's `[shell] rcfile` is ignored here.
 
 ## Extending with your project's toolchain
 
