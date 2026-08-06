@@ -2064,7 +2064,7 @@ const TMPDIR_BUDGET: usize = 104 - 58 - 16;
 /// macOS has no unprivileged bind mount, so `seatbelt::plan` re-expresses the
 /// redirect as `TMPDIR` pointing at the backing — which means the backing's
 /// length *is* what programs inside the box build their paths from. Nested in
-/// the repository it never fits [`TMPDIR_BUDGET`]: `/.git/.h5i/env/<agent>/<slug>/tmp`
+/// the repository it never fits `TMPDIR_BUDGET`: `/.git/.h5i/env/<agent>/<slug>/tmp`
 /// alone spends 26 of the ~30 bytes available before the repository path is
 /// counted at all, so a browser box failed on every Mac with Chrome reporting
 /// "Failed to create socket directory" — which reads as a permission error and
@@ -7583,7 +7583,10 @@ mod tests {
         // instead of pinning the Linux layout on both.
         let backing = private_tmp_backing(&m.dir(h5i_root).join("tmp"));
         assert!(backing.is_dir(), "{backing:?}");
-        if cfg!(target_os = "macos") {
+        // `#[cfg]`, not `cfg!`: `TMPDIR_BUDGET` only exists on macOS, and a
+        // runtime `cfg!` still has to compile on every platform.
+        #[cfg(target_os = "macos")]
+        {
             let len = backing.display().to_string().len();
             assert!(len <= TMPDIR_BUDGET, "TMPDIR too long for AF_UNIX: {len}");
         }
