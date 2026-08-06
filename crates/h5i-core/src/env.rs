@@ -4052,11 +4052,15 @@ pub fn shell(
     // sandbox blocks — e.g. `~/.local/bin/powerline-shell`), bash is launched
     // with a generated *plain* rcfile by default; a profile may pin a custom one
     // via `[profile.X.shell] rcfile = "…"`. May Landlock-grant the generated rc.
-    let argv: Vec<String> = if command.is_empty() {
+    let launch = if command.is_empty() {
         default_shell_argv(h5i_root, m, &mut policy, &work)?
     } else {
-        command.to_vec()
+        ShellLaunch::argv(command.to_vec())
     };
+    let argv = launch.argv;
+    // Whatever the shell launch itself needs (zsh's `$ZDOTDIR`) is merged last so
+    // it is the value the shell actually starts with.
+    let injected_env = merged_env(&injected_env, &launch.env);
 
     // A read-only observer must not touch env state: an idle/created env stays
     // in its status, and a concurrent observer must never flip it to running and
@@ -4272,6 +4276,25 @@ fn capture_shell_egress(
 
 // ─── interactive shell rc ────────────────────────────────────────────────────
 
+/// How to launch the default interactive shell: its argv, plus the environment
+/// the launch itself needs (today only zsh's `$ZDOTDIR`, which cannot be set
+/// from an rc file because it is read before any rc is sourced).
+#[derive(Debug)]
+struct ShellLaunch {
+    argv: Vec<String>,
+    env: Vec<(String, String)>,
+}
+
+impl ShellLaunch {
+    /// A launch that needs nothing injected — every shell but zsh.
+    fn argv(argv: Vec<String>) -> Self {
+        ShellLaunch {
+            argv,
+            env: Vec::new(),
+        }
+    }
+}
+
 /// Build the argv for a default (no-command) interactive `env shell` session.
 ///
 /// On the **kernel tiers** the box runs against the host filesystem, so the host
@@ -4289,21 +4312,42 @@ fn capture_shell_egress(
 ///     optional `~/.h5i_envrc` hook), written under the env's private dir and
 ///     Landlock-granted read on the kernel tiers.
 ///
-/// Non-bash shells fall through to a bare `[$SHELL, "-i"]`; the image-backed
-/// tiers (whose shell *and* rc come from the image, not the host) fall through
-/// to [`box_shell_argv`].
+/// **zsh** — the macOS default, so the common case on a Mac host — gets the same
+/// treatment through the only knob it has: `$ZDOTDIR`. zsh has no `--rcfile`; it
+/// takes its startup files from `$ZDOTDIR` (falling back to `$HOME`), so pointing
+/// that at a generated dir both skips the host `~/.zshrc` and moves `$HISTFILE`
+/// off the real `~/.zsh_history` — which is *outside every grant* in a box, so
+/// zsh's history lock fails on it (`locking failed … operation not permitted`)
+/// once at startup and again after every command. See [`write_plain_zshrc`].
+///
+/// Other shells fall through to a bare `[$SHELL, "-i"]`; the image-backed tiers
+/// (whose shell *and* rc come from the image, not the host) fall through to
+/// [`box_shell_argv`].
 fn default_shell_argv(
     h5i_root: &Path,
     m: &EnvManifest,
     policy: &mut ResolvedPolicy,
     work: &Path,
-) -> Result<Vec<String>, H5iError> {
+) -> Result<ShellLaunch, H5iError> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-    let is_bash = Path::new(&shell)
-        .file_name()
-        .map(|n| n == "bash")
-        .unwrap_or(false);
-    let bare = vec![shell.clone(), "-i".to_string()];
+    shell_launch(h5i_root, m, policy, work, &shell)
+}
+
+/// [`default_shell_argv`] with the host shell passed in rather than read from the
+/// environment, so the tests can cover every shell on any host without mutating
+/// a process-wide variable other tests read.
+fn shell_launch(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+    work: &Path,
+    shell: &str,
+) -> Result<ShellLaunch, H5iError> {
+    let shell = shell.to_string();
+    let shell_name = Path::new(&shell).file_name().unwrap_or_default().to_owned();
+    let is_bash = shell_name == "bash";
+    let is_zsh = shell_name == "zsh";
+    let bare = ShellLaunch::argv(vec![shell.clone(), "-i".to_string()]);
 
     // The box's shell + its rc come from the image, not the host — the host
     // `~/.bashrc` is never sourced there, so there is nothing to neutralize and
@@ -4317,24 +4361,60 @@ fn default_shell_argv(
                 policy.claim.as_str()
             );
         }
-        return Ok(box_shell_argv());
+        return Ok(ShellLaunch::argv(box_shell_argv()));
     }
 
-    if let Some(rc) = policy.profile.shell_rcfile.clone() {
-        if !is_bash {
+    // The custom rcfile, when the profile pins one. Both shells we generate an rc
+    // for can honour it — bash directly (`--rcfile`), zsh by sourcing it from the
+    // generated `$ZDOTDIR/.zshrc`, since zsh has no equivalent flag.
+    let custom_rc = match policy.profile.shell_rcfile.clone() {
+        Some(rc) if is_bash || is_zsh => Some(resolve_work_rcfile(work, &rc)?),
+        Some(_) => {
             eprintln!(
-                "   note: [shell] rcfile only applies to bash; $SHELL is '{shell}' — ignoring"
+                "   note: [shell] rcfile only applies to bash and zsh; $SHELL is '{shell}' \
+                 — ignoring"
             );
             return Ok(bare);
         }
-        let rcpath = resolve_work_rcfile(work, &rc)?;
-        return Ok(vec![shell, "--rcfile".into(), rcpath, "-i".into()]);
+        None => None,
+    };
+
+    if is_zsh {
+        let z = write_plain_zshrc(h5i_root, m, custom_rc.as_deref())?;
+        // Kernel tiers enforce a Landlock read allowlist. The generated rc dir is
+        // read-only — it is the host's word about how the session starts, and the
+        // box must not be able to rewrite its own next startup — while the history
+        // dir is granted write: zsh creates a lock file beside `$HISTFILE`, so the
+        // grant has to be the directory, not the file. (Workspace is unconfined;
+        // image-backed tiers returned above.)
+        if matches!(
+            policy.claim,
+            IsolationClaim::Process | IsolationClaim::Supervised
+        ) {
+            policy.profile.fs_read.push(z.zdotdir.clone());
+            policy.profile.fs_write.push(z.histdir.clone());
+        }
+        return Ok(ShellLaunch {
+            argv: vec![shell, "-i".into()],
+            // zsh resolves `$ZDOTDIR` before it sources anything, so this has to
+            // arrive in the environment — an rc-file assignment would be too late.
+            env: vec![("ZDOTDIR".to_string(), z.zdotdir)],
+        });
     }
 
     if !is_bash {
-        // We only know how to inject a plain rc for bash; other shells keep
-        // their normal startup (zsh/sh source their own host files).
+        // We only know how to inject a plain rc for bash and zsh; other shells
+        // keep their normal startup (they source their own host files).
         return Ok(bare);
+    }
+
+    if let Some(rcpath) = custom_rc {
+        return Ok(ShellLaunch::argv(vec![
+            shell,
+            "--rcfile".into(),
+            rcpath,
+            "-i".into(),
+        ]));
     }
 
     let rcpath = write_plain_bashrc(h5i_root, m)?;
@@ -4346,7 +4426,12 @@ fn default_shell_argv(
     ) {
         policy.profile.fs_read.push(rcpath.clone());
     }
-    Ok(vec![shell, "--rcfile".into(), rcpath, "-i".into()])
+    Ok(ShellLaunch::argv(vec![
+        shell,
+        "--rcfile".into(),
+        rcpath,
+        "-i".into(),
+    ]))
 }
 
 /// The default interactive shell **inside an image-backed box** (container,
@@ -4424,6 +4509,83 @@ fn write_plain_bashrc(h5i_root: &Path, m: &EnvManifest) -> Result<String, H5iErr
     );
     std::fs::write(&path, body).map_err(|e| H5iError::with_path(e, &path))?;
     Ok(path.display().to_string())
+}
+
+/// The two paths a generated zsh startup needs: the `$ZDOTDIR` the rc lives in
+/// (granted read) and the directory `$HISTFILE` lives in (granted write).
+struct ZshDirs {
+    zdotdir: String,
+    histdir: String,
+}
+
+/// Write the generated plain zsh rc into the env's private dir and return the
+/// dirs to point `$ZDOTDIR` at and to grant. Idempotent, like the bash one.
+///
+/// Two problems are solved by the one mechanism, because zsh gives us only one:
+///
+///  1. **History.** zsh's default `$HISTFILE` is `${ZDOTDIR:-$HOME}/.zsh_history`
+///     — the operator's real history file, which no box grants (nor should: it is
+///     a log of everything they have ever typed on the host). zsh does not treat
+///     that as fatal, but it *does* announce it at startup and again after every
+///     command — `zsh: locking failed for ~/.zsh_history: operation not
+///     permitted` — which buries the actual output of the session.
+///  2. **The host `~/.zshrc`**, for the same reason bash's is skipped: under
+///     confinement a real one (oh-my-zsh, a prompt framework, version managers)
+///     reaches for tools and cache dirs the sandbox blocks, and the failures land
+///     on the same line as the prompt.
+///
+/// Setting `$ZDOTDIR` moves both: zsh reads `$ZDOTDIR/.zshenv` and
+/// `$ZDOTDIR/.zshrc` instead of the host's, and macOS's `/etc/zshrc` — which is
+/// still sourced, and which is what sets `$HISTFILE` in the first place — points
+/// at the new dir on its own. The generated rc then sets `$HISTFILE` explicitly
+/// anyway, so the history lands in the writable dir on hosts whose global rc
+/// says nothing about it.
+///
+/// The rc dir stays read-only and the history dir is separate: the box gets a
+/// per-env, persistent shell history, and still cannot rewrite the rc that starts
+/// its next session.
+fn write_plain_zshrc(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    custom_rc: Option<&str>,
+) -> Result<ZshDirs, H5iError> {
+    let root = m.dir(h5i_root).join("shell");
+    let zdotdir = root.join("zdotdir");
+    let histdir = root.join("history");
+    for d in [&zdotdir, &histdir] {
+        std::fs::create_dir_all(d).map_err(|e| H5iError::with_path(e, d))?;
+    }
+    let histfile = histdir.join("zsh_history");
+    // Sourced last, so it wins over the plain defaults above it — same order the
+    // bash rc gives `~/.h5i_envrc`.
+    let custom = match custom_rc {
+        Some(rc) => format!("source '{rc}'\n"),
+        None => String::new(),
+    };
+    let body = format!(
+        "# Generated by `h5i box shell` — a plain default rc.\n\
+         # The host ~/.zshrc is intentionally NOT sourced inside the confined box\n\
+         # (it tends to reference tools the sandbox blocks), and the host history\n\
+         # file is outside every grant — hence this $ZDOTDIR.\n\
+         # To customize: set `[shell] rcfile = \"…\"` (relative to the worktree) in\n\
+         # .h5i/env.toml, or drop extra shell config in ~/.h5i_envrc (sourced below).\n\
+         HISTFILE='{histfile}'\n\
+         HISTSIZE=2000\n\
+         SAVEHIST=1000\n\
+         PROMPT='h5i:{id} %~ %# '\n\
+         alias ll='ls -alF'\n\
+         alias la='ls -A'\n\
+         [ -f \"$HOME/.h5i_envrc\" ] && . \"$HOME/.h5i_envrc\"\n\
+         {custom}",
+        histfile = histfile.display(),
+        id = m.id,
+    );
+    let path = zdotdir.join(".zshrc");
+    std::fs::write(&path, body).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(ZshDirs {
+        zdotdir: zdotdir.display().to_string(),
+        histdir: histdir.display().to_string(),
+    })
 }
 
 // ─── shell-spool ingest (in-box observation evidence) ────────────────────────
@@ -7419,7 +7581,9 @@ mod tests {
             for rcfile in [None, Some(".h5i/box.bashrc".to_string())] {
                 let mut pol = ResolvedPolicy::new(claim, Profile::builtin("default", claim));
                 pol.profile.shell_rcfile = rcfile.clone();
-                let argv = default_shell_argv(h5i_root.path(), &m, &mut pol, work.path()).unwrap();
+                let argv = default_shell_argv(h5i_root.path(), &m, &mut pol, work.path())
+                    .unwrap()
+                    .argv;
 
                 assert_eq!(argv[0], "/bin/sh", "{claim:?} launches via the image's sh");
                 assert_eq!(argv[1], "-c");
@@ -7451,9 +7615,83 @@ mod tests {
             IsolationClaim::Process,
             Profile::builtin("default", IsolationClaim::Process),
         );
-        let argv = default_shell_argv(h5i_root.path(), &m, &mut pol, work.path()).unwrap();
-        assert_eq!(argv[0], host_shell);
-        assert_eq!(argv.last().unwrap(), "-i");
+        let launch = default_shell_argv(h5i_root.path(), &m, &mut pol, work.path()).unwrap();
+        assert_eq!(launch.argv[0], host_shell);
+        assert_eq!(launch.argv.last().unwrap(), "-i");
+    }
+
+    // zsh is the macOS default shell, so this is the ordinary case on a Mac host:
+    // its `$HISTFILE` defaults into the operator's real HOME, which no box grants,
+    // and zsh reports the failed lock at startup and after every command. The
+    // launch must move both the rc and the history into the env's own dir.
+    #[test]
+    fn zsh_gets_a_generated_zdotdir_so_history_lands_inside_the_box() {
+        use crate::sandbox::Profile;
+        let h5i_root = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let m = canonical_manifest("claude", "demo");
+
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin("default", IsolationClaim::Supervised),
+        );
+        let launch = shell_launch(h5i_root.path(), &m, &mut pol, work.path(), "/bin/zsh").unwrap();
+
+        assert_eq!(launch.argv, vec!["/bin/zsh".to_string(), "-i".to_string()]);
+        // `$ZDOTDIR` must arrive in the environment: zsh resolves it before it
+        // sources anything, so no rc file could set it in time.
+        let (_, zdotdir) = launch
+            .env
+            .iter()
+            .find(|(k, _)| k == "ZDOTDIR")
+            .expect("ZDOTDIR injected");
+        let rc = std::fs::read_to_string(Path::new(zdotdir).join(".zshrc")).unwrap();
+        let histdir = m.dir(h5i_root.path()).join("shell").join("history");
+        assert!(
+            rc.contains(&format!("HISTFILE='{}/zsh_history'", histdir.display())),
+            "history redirected off the host's: {rc}"
+        );
+        assert!(rc.contains(&format!("h5i:{}", m.id)));
+        assert!(rc.contains("$HOME/.h5i_envrc"));
+
+        // The kernel tiers enforce an allowlist, so both dirs need a grant — and
+        // only the history one is writable: the box keeps its history across
+        // sessions but cannot rewrite the rc that starts the next one.
+        assert!(pol.profile.fs_read.iter().any(|p| p == zdotdir));
+        assert!(!pol.profile.fs_write.iter().any(|p| p == zdotdir));
+        assert!(pol.profile.fs_write.iter().any(|p| Path::new(p) == histdir));
+    }
+
+    // zsh has no `--rcfile`, so a profile's `[shell] rcfile` reaches it by being
+    // sourced from the generated rc — last, so it wins over the plain defaults.
+    #[test]
+    fn zsh_sources_a_profile_pinned_rcfile_from_the_generated_rc() {
+        use crate::sandbox::Profile;
+        let h5i_root = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let m = canonical_manifest("claude", "demo");
+        std::fs::create_dir_all(work.path().join(".h5i")).unwrap();
+        std::fs::write(work.path().join(".h5i/box.zshrc"), "PROMPT='custom %# '\n").unwrap();
+
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin("default", IsolationClaim::Supervised),
+        );
+        pol.profile.shell_rcfile = Some(".h5i/box.zshrc".into());
+        let launch = shell_launch(h5i_root.path(), &m, &mut pol, work.path(), "/bin/zsh").unwrap();
+
+        let (_, zdotdir) = launch.env.iter().find(|(k, _)| k == "ZDOTDIR").unwrap();
+        let rc = std::fs::read_to_string(Path::new(zdotdir).join(".zshrc")).unwrap();
+        let pinned = work.path().join(".h5i/box.zshrc");
+        assert!(
+            rc.contains(&format!("source '{}'", pinned.display())),
+            "{rc}"
+        );
+        // Sourced after the defaults, or the pin would not win.
+        assert!(
+            rc.find("source '").unwrap() > rc.find("PROMPT=").unwrap(),
+            "{rc}"
+        );
     }
 
     #[test]
