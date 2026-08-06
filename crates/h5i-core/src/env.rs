@@ -7159,11 +7159,14 @@ pub fn rm(
     // process outlives everything that knows about it. Best-effort, like the
     // scratch dir below: a survivor is untidy, not unsafe, and must not block
     // the removal the user asked for.
+    // The whole block is gated, not just the `kill`: on a non-unix target the
+    // binding would be read by nothing, and `-D warnings` fails the
+    // cross-target check on that. `pid_alive` above takes the same shape.
+    #[cfg(unix)]
     if let Some(pid) = std::fs::read_to_string(dir.join("browser/state/chrome.pid"))
         .ok()
         .and_then(|t| t.trim().parse::<i32>().ok())
     {
-        #[cfg(unix)]
         unsafe {
             libc::kill(pid, libc::SIGTERM);
         }
