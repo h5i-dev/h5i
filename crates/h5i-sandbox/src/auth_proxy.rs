@@ -15,10 +15,15 @@
 //! - **Token never in the box.** The box sees only the base URL + a per-run dummy.
 //!   The real credential is resolved from *h5i's own* host environment and handed
 //!   straight to the upstream request — never an env var, mount, or argv in the box.
-//! - **No SSRF.** The upstream host is pinned to the runtime's single API host
-//!   ([`RuntimeProxy::upstream_host`]); a request's own `Host`/authority is ignored
-//!   and only its path is reused, so a prompt-injected box cannot aim the real
-//!   token at an attacker host.
+//! - **No SSRF.** The upstream origin is pinned to the runtime's single API host
+//!   ([`RuntimeProxy::upstream_host`]) and the box's own `Host` header is
+//!   discarded. Ignoring the authority is necessary but *not* sufficient, and the
+//!   difference is the subtle part: the request target is appended to that
+//!   origin, and a target that does not begin with `/` extends the authority
+//!   rather than the path (`@evil.example/v1` makes the pinned name mere
+//!   userinfo). So the target must be origin-form ([`is_origin_form`]) and the
+//!   assembled URL is re-parsed and required to resolve to the pinned origin
+//!   before a single byte is sent.
 //! - **DNS-rebinding resistant.** The upstream host is resolved+pinned once at
 //!   spawn (mirrors the egress proxy's `pin_dns`).
 //! - **Loopback + shared-secret gated.** The listener binds `127.0.0.1` (reachable
@@ -146,12 +151,28 @@ impl Drop for AuthProxyHandle {
     }
 }
 
+/// Largest request body the proxy will buffer, in bytes.
+///
+/// `Content-Length` is attacker-controlled (the box sends it), so the buffer
+/// must be sized from a constant rather than from the header — allocating
+/// `Content-Length` bytes on trust lets a prompt-injected box exhaust *host*
+/// memory with a single request. 32 MiB is comfortably above the largest real
+/// request these APIs accept (a message with inline images).
+const MAX_REQUEST_BODY: usize = 32 * 1024 * 1024;
+
+/// Concurrent forwarded requests. The box is one client; a bound here stops a
+/// loop of connections from spawning unbounded host threads.
+const MAX_IN_FLIGHT: usize = 64;
+
 /// Immutable per-proxy state shared with worker threads.
 struct ProxyState {
-    /// `https://api.anthropic.com` in production; an `http://127.0.0.1:<port>`
-    /// origin in tests. No trailing slash.
-    upstream_base: String,
-    /// The single upstream host (for the forced `Host` header / SSRF pin).
+    /// The origin the proxy forwards to, parsed once at spawn:
+    /// `https://api.anthropic.com` in production, an `http://127.0.0.1:<port>`
+    /// origin in tests. Kept as a `Url` rather than a string because it is the
+    /// reference every outgoing request is checked against (see
+    /// [`handle_client`]) — a comparison a string cannot make.
+    upstream: reqwest::Url,
+    /// The single upstream host, forced as the outgoing `Host` header.
     upstream_host: String,
     /// The genuine credential injected into every forwarded request.
     credential: Credential,
@@ -159,6 +180,8 @@ struct ProxyState {
     client_token: String,
     /// Blocking HTTP client (TLS via rustls, DNS pinned, no proxy, no redirects).
     client: reqwest::blocking::Client,
+    /// Requests currently being forwarded, against [`MAX_IN_FLIGHT`].
+    in_flight: std::sync::atomic::AtomicUsize,
 }
 
 /// Spawn the proxy for a runtime with a resolved credential. `client_token` is
@@ -202,7 +225,7 @@ pub fn engage_grant_at(
         header: CredHeader::Bearer,
         value,
     };
-    let token = new_client_token();
+    let token = new_client_token()?;
     let handle = spawn_to_upstream(
         format!("https://{}", grant.host),
         grant.host.clone(),
@@ -268,6 +291,12 @@ fn spawn_to_upstream(
         .build()
         .map_err(|e| H5iError::Metadata(format!("auth proxy: build HTTP client: {e}")))?;
 
+    // Parse the origin once, here, so every request can be checked against it
+    // instead of against a string that concatenation might have moved.
+    let upstream = reqwest::Url::parse(&upstream_base).map_err(|e| {
+        H5iError::Metadata(format!("auth proxy: invalid upstream origin '{upstream_base}': {e}"))
+    })?;
+
     let listener = TcpListener::bind("127.0.0.1:0").map_err(H5iError::Io)?;
     let port = listener.local_addr().map_err(H5iError::Io)?.port();
     listener.set_nonblocking(true).map_err(H5iError::Io)?;
@@ -275,11 +304,12 @@ fn spawn_to_upstream(
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let state = Arc::new(ProxyState {
-        upstream_base,
+        upstream,
         upstream_host,
         credential,
         client_token,
         client,
+        in_flight: std::sync::atomic::AtomicUsize::new(0),
     });
 
     let join = std::thread::spawn(move || {
@@ -290,8 +320,22 @@ fn spawn_to_upstream(
                         break;
                     }
                     let state = state.clone();
+                    // Bound concurrent forwards: the box is a single client, and
+                    // an accept loop that spawns a thread per connection is a
+                    // host resource the box should not be able to grow without
+                    // limit. Over the cap we answer and close rather than queue.
+                    let live = state
+                        .in_flight
+                        .fetch_add(1, Ordering::SeqCst);
+                    if live >= MAX_IN_FLIGHT {
+                        state.in_flight.fetch_sub(1, Ordering::SeqCst);
+                        let mut client = client;
+                        write_status(&mut client, 503, "Service Unavailable");
+                        continue;
+                    }
                     std::thread::spawn(move || {
                         let _ = handle_client(client, &state);
+                        state.in_flight.fetch_sub(1, Ordering::SeqCst);
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -372,6 +416,34 @@ fn is_stripped_request_header(name: &str) -> bool {
             | "trailer"
             | "upgrade"
     )
+}
+
+/// Is `target` a safe **origin-form** request target (`/v1/messages?beta=1`)?
+///
+/// This is the SSRF gate, and it is load-bearing rather than cosmetic. The
+/// outgoing URL is the pinned origin with this string appended, and a URL's
+/// authority runs until the first `/` — so a target that does not start with
+/// `/` can extend the *authority* instead of the path. The sharp case is
+/// userinfo: `@evil.example/v1/messages` turns
+/// `https://api.anthropic.com` + target into
+/// `https://api.anthropic.com@evil.example/v1/messages`, whose host is
+/// `evil.example` and whose userinfo is the name we thought we had pinned. The
+/// proxy would then open TLS to the attacker (SNI and certificate validation
+/// following the *attacker's* name, so any ordinary certificate satisfies it)
+/// and attach the real credential — the exact exfiltration the credential proxy
+/// exists to prevent.
+///
+/// Origin-form is also all these SDKs ever send, so nothing legitimate is lost.
+/// A leading `//` is refused too: it is the protocol-relative form, harmless
+/// against today's origin but one trailing slash away from meaning `//host/`.
+/// Control characters and whitespace are refused because they are request
+/// smuggling, not paths.
+fn is_origin_form(target: &str) -> bool {
+    target.starts_with('/')
+        && !target.starts_with("//")
+        && !target
+            .bytes()
+            .any(|b| b <= b' ' || b == 0x7f || b == b'\\')
 }
 
 /// Parse the request line + headers. Returns `None` on a malformed head.
@@ -490,6 +562,19 @@ fn handle_client(mut client: TcpStream, state: &ProxyState) -> std::io::Result<(
         return Ok(());
     };
 
+    // SSRF gate, before anything is read or forwarded: only an origin-form
+    // target may be appended to the pinned origin. See [`is_origin_form`].
+    if !is_origin_form(&req.path) {
+        write_status(&mut client, 403, "Forbidden");
+        return Ok(());
+    }
+
+    // Never allocate on an attacker-supplied length.
+    if req.content_length > MAX_REQUEST_BODY {
+        write_status(&mut client, 413, "Payload Too Large");
+        return Ok(());
+    }
+
     // Read the request body (Content-Length framed; these SDKs always send one).
     let mut body = vec![0u8; req.content_length];
     if req.content_length > 0 && client.read_exact(&mut body).is_err() {
@@ -497,9 +582,26 @@ fn handle_client(mut client: TcpStream, state: &ProxyState) -> std::io::Result<(
         return Ok(());
     }
 
-    // Build the upstream request against the PINNED host (path reused, authority
-    // ignored → no SSRF), injecting the genuine credential.
-    let url = format!("{}{}", state.upstream_base, req.path);
+    // Build the upstream request against the PINNED origin, injecting the
+    // genuine credential. The target was already checked to be origin-form; the
+    // parse below is the second, independent check — whatever the concatenation
+    // produced, it must still resolve to exactly the origin we pinned at spawn,
+    // with no userinfo. Two cheap checks guard the one irreversible act this
+    // process performs: handing the real credential to whoever answers.
+    let base = state.upstream.as_str().trim_end_matches('/');
+    let url = match reqwest::Url::parse(&format!("{base}{}", req.path)) {
+        Ok(u)
+            if u.origin() == state.upstream.origin()
+                && u.username().is_empty()
+                && u.password().is_none() =>
+        {
+            u
+        }
+        _ => {
+            write_status(&mut client, 403, "Forbidden");
+            return Ok(());
+        }
+    };
     let method = match reqwest::Method::from_bytes(req.method.as_bytes()) {
         Ok(m) => m,
         Err(_) => {
@@ -507,7 +609,7 @@ fn handle_client(mut client: TcpStream, state: &ProxyState) -> std::io::Result<(
             return Ok(());
         }
     };
-    let mut builder = state.client.request(method, &url).header("host", &state.upstream_host);
+    let mut builder = state.client.request(method, url).header("host", &state.upstream_host);
     for (name, value) in &req.headers {
         builder = builder.header(name, value);
     }
@@ -549,11 +651,30 @@ fn handle_client(mut client: TcpStream, state: &ProxyState) -> std::io::Result<(
     Ok(())
 }
 
-/// A short, unguessable per-run token the box presents to the proxy. Not a
-/// credential — it only distinguishes the box from other host processes on
-/// loopback, so plain PRNG entropy is sufficient.
-pub fn new_client_token() -> String {
-    format!("h5i-proxy-{:016x}{:016x}", fastrand::u64(..), fastrand::u64(..))
+/// A short, unguessable per-run token the box presents to the proxy.
+///
+/// Not itself a credential, but it is the only thing standing between *other
+/// local processes* and a proxy that injects the real one, so the entropy has to
+/// come from the OS rather than from a fast general-purpose PRNG whose state a
+/// same-host attacker could plausibly reconstruct. 128 bits, hex.
+///
+/// Fails rather than falls back: a host that cannot produce entropy must not get
+/// a guessable gate on a credential-injecting proxy.
+pub fn new_client_token() -> Result<String, H5iError> {
+    let mut raw = [0u8; 16];
+    getrandom::fill(&mut raw).map_err(|e| {
+        H5iError::Metadata(format!(
+            "auth proxy: no OS entropy for the per-run token ({e}) — refusing to mint a \
+             guessable one (fail-closed)"
+        ))
+    })?;
+    let mut out = String::with_capacity("h5i-proxy-".len() + raw.len() * 2);
+    out.push_str("h5i-proxy-");
+    for b in raw {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{b:02x}");
+    }
+    Ok(out)
 }
 
 /// The operator opt-out: keep the box on its own in-box login (e.g. to bill a
@@ -605,7 +726,13 @@ pub fn engage_at(profile_name: &str, tier_ok: bool, host: &str) -> Option<Engage
     }
     let rt = AgentRuntime::from_profile_name(profile_name)?;
     let cred = resolve_credential(rt)?;
-    let token = new_client_token();
+    let token = match new_client_token() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("note: credential proxy unavailable ({e}); box uses in-box login");
+            return None;
+        }
+    };
     match spawn(rt, cred, token.clone()) {
         Ok(handle) => Some(Engagement {
             box_env: box_env_at(rt, host, handle.port, &token),
@@ -881,8 +1008,8 @@ mod tests {
 
     #[test]
     fn client_token_is_unguessable_and_unique() {
-        let a = new_client_token();
-        let b = new_client_token();
+        let a = new_client_token().unwrap();
+        let b = new_client_token().unwrap();
         assert_ne!(a, b, "each run gets a distinct token");
         assert!(a.starts_with("h5i-proxy-"));
         // 32 hex chars of entropy after the prefix.
@@ -947,6 +1074,111 @@ mod tests {
         assert!(!head_lower.contains("content-length"), "upstream content-length stripped: {resp}");
         assert!(!head_lower.contains("transfer-encoding"), "upstream transfer-encoding stripped: {resp}");
         assert!(head_lower.contains("connection: close"));
+    }
+
+    /// The SSRF gate, as a table. A URL's authority ends at the first `/`, so a
+    /// target that does not start with one can rewrite the host it is appended
+    /// to — `@evil/…` most sharply, via userinfo.
+    #[test]
+    fn only_origin_form_targets_are_accepted() {
+        for good in ["/", "/v1/messages", "/v1/models?limit=5", "/a/b?q=x&y=z#frag"] {
+            assert!(is_origin_form(good), "must accept {good}");
+        }
+        for bad in [
+            "@evil.example/v1/messages",   // userinfo: the host becomes evil.example
+            "@evil.example",               //
+            ":9999@evil.example/v1",       // userinfo with a password field
+            "//evil.example/v1",           // protocol-relative
+            "https://evil.example/v1",     // absolute-form
+            "v1/messages",                 // bare relative
+            "",                            //
+            "/v1 /messages",               // whitespace: request smuggling
+            "/v1\r\nX-Injected: 1",        // CRLF injection
+            "/v1\\..\\evil",               // backslash
+        ] {
+            assert!(!is_origin_form(bad), "must reject {bad:?}");
+        }
+    }
+
+    /// The regression that matters most in this file: a box that presents the
+    /// per-run token must not be able to aim the *real* credential at a host of
+    /// its choosing. The rogue upstream here stands in for an attacker-controlled
+    /// domain (which, having an ordinary valid certificate for its own name,
+    /// would satisfy TLS verification — the pinned name is not what gets
+    /// checked once the URL's host has moved).
+    #[test]
+    fn a_userinfo_target_cannot_redirect_the_credential() {
+        use std::sync::mpsc;
+
+        let rogue = TcpListener::bind("127.0.0.1:0").unwrap();
+        let rogue_port = rogue.local_addr().unwrap().port();
+        let (tx, rx) = mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            // Any connection at all is a failure: the proxy must refuse before
+            // it opens one.
+            for _stream in rogue.incoming().take(1) {
+                let _ = tx.send(());
+            }
+        });
+
+        let cred = Credential { header: CredHeader::Bearer, value: "REAL-TOKEN-SECRET".into() };
+        let handle = spawn_to_upstream(
+            "https://api.anthropic.com".into(),
+            "api.anthropic.com".into(),
+            cred,
+            "dummy-tok".into(),
+            false,
+        )
+        .unwrap();
+
+        for target in [
+            format!("@127.0.0.1:{rogue_port}/v1/messages"),
+            format!("@localhost:{rogue_port}/v1/messages"),
+            format!("https://127.0.0.1:{rogue_port}/v1/messages"),
+        ] {
+            let mut c = TcpStream::connect(("127.0.0.1", handle.port)).unwrap();
+            let req = format!(
+                "POST {target} HTTP/1.1\r\nHost: 10.0.2.2\r\nAuthorization: Bearer dummy-tok\r\n\
+                 Content-Length: 0\r\n\r\n"
+            );
+            c.write_all(req.as_bytes()).unwrap();
+            let mut resp = String::new();
+            let _ = c.read_to_string(&mut resp);
+            assert!(
+                resp.starts_with("HTTP/1.1 403"),
+                "target {target:?} must be refused, got: {resp}"
+            );
+        }
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(500)).is_err(),
+            "the proxy connected to an attacker-chosen host — the credential is exfiltratable"
+        );
+    }
+
+    /// `Content-Length` is written by the box. Sizing a buffer from it lets one
+    /// request exhaust host memory, so an oversized declaration is refused
+    /// before anything is allocated.
+    #[test]
+    fn an_oversized_content_length_is_refused_not_allocated() {
+        let cred = Credential { header: CredHeader::Bearer, value: "R".into() };
+        let handle = spawn_to_upstream(
+            "http://127.0.0.1:1".into(), // never contacted
+            "pinned.example".into(),
+            cred,
+            "dummy-tok".into(),
+            false,
+        )
+        .unwrap();
+        let mut c = TcpStream::connect(("127.0.0.1", handle.port)).unwrap();
+        c.write_all(
+            b"POST /v1/messages HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer dummy-tok\r\n\
+              Content-Length: 999999999999\r\n\r\n",
+        )
+        .unwrap();
+        let mut resp = String::new();
+        let _ = c.read_to_string(&mut resp);
+        assert!(resp.starts_with("HTTP/1.1 413"), "{resp}");
     }
 
     #[test]

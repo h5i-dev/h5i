@@ -961,8 +961,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                 BoxCommands::Probe => {
                     // Diagnostics must report the live truth, not last run's
                     // verdict — bypass the per-boot podman probe cache.
-                    std::env::set_var("H5I_NO_PROBE_CACHE", "1");
-                    let caps = h5i_core::sandbox::probe_host();
+                    let caps = h5i_core::sandbox::probe_host_fresh();
                     println!("── Host isolation capabilities ──");
                     println!("  os           = {}", caps.os);
                     println!("  mechanism    = {}", caps.confinement_mechanism());
@@ -1059,8 +1058,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                 BoxCommands::Capabilities { json } => {
                     // Same as Probe: a capability report is a diagnostic —
                     // never serve it from the probe cache.
-                    std::env::set_var("H5I_NO_PROBE_CACHE", "1");
-                    let report = h5i_core::sandbox::capabilities_report();
+                    let report = h5i_core::sandbox::capabilities_report_fresh();
                     if json {
                         println!("{}", serde_json::to_string_pretty(&report)?);
                     } else {

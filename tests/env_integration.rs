@@ -77,6 +77,28 @@ fn process_tier_runnable() -> bool {
     })
 }
 
+/// Whether this host can actually *run* a supervised-tier confined command.
+///
+/// The supervised tier needs the whole mediation stack green (seccomp
+/// user-notification, cgroup v2 delegation, nftables, namespaces) and refuses
+/// rather than downgrading, so plenty of hosts — CI runners especially — will
+/// skip every test gated on this.
+fn supervised_tier_runnable() -> bool {
+    use std::sync::OnceLock;
+    static OK: OnceLock<bool> = OnceLock::new();
+    *OK.get_or_init(|| {
+        let r = Repo::new();
+        let out = r.h5i(&["env", "create", "probe", "--isolation", "supervised"]);
+        if !out.status.success() {
+            eprintln!(
+                "supervised tier not runnable on this host — its tests will skip:\n{}",
+                out_str(&out)
+            );
+        }
+        out.status.success()
+    })
+}
+
 struct Repo {
     dir: PathBuf,
     _root: TempDir,
@@ -905,6 +927,49 @@ fn mediated_commit_fails_closed_on_nested_git_repo() {
         log.contains("violation"),
         "boundary trip must be persisted as a violation event:\n{log}"
     );
+}
+
+/// A tracked path whose parent directory has been swapped for a symlink now
+/// resolves *outside* `$WORK`, and staging it would copy whatever lives there
+/// into the reviewed patch. The mediated commit must refuse.
+///
+/// This is the escape that needs no new file: the agent deletes a tracked
+/// directory, links it somewhere else, and the content follows the link. The
+/// symlink itself is fine (it is stored as a link blob, never followed); the
+/// file *under* it is not.
+#[test]
+fn mediated_commit_fails_closed_on_a_tracked_path_symlinked_out_of_work() {
+    let r = Repo::new();
+    // A tracked file inside a real directory, in the base commit.
+    std::fs::create_dir_all(r.dir.join("pkg")).unwrap();
+    std::fs::write(r.dir.join("pkg/conf.txt"), "in-repo\n").unwrap();
+    git(&r.dir, &["add", "."]);
+    git(&r.dir, &["commit", "-m", "tracked file in a directory"]);
+
+    r.h5i_ok(&["env", "create", "escape"]);
+
+    // Somewhere outside $WORK, with a file at the same relative path.
+    let outside = r.dir.parent().unwrap().join("outside-the-box");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("conf.txt"), "HOST-SECRET-OUTSIDE-WORK\n").unwrap();
+
+    // Swap the tracked directory for a symlink to it.
+    let work_pkg = r.work("escape").join("pkg");
+    std::fs::remove_dir_all(&work_pkg).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &work_pkg).unwrap();
+
+    let out = r.h5i(&["env", "propose", "escape"]);
+    let text = out_str(&out);
+    assert!(
+        !out.status.success(),
+        "a tracked path resolving outside $WORK must fail the mediated commit:\n{text}"
+    );
+    assert!(
+        text.contains("escapes $WORK") || text.contains("fail-closed"),
+        "the refusal should name the escape:\n{text}"
+    );
+    assert_eq!(r.manifest("escape")["status"], "created");
 }
 
 /// Register a real submodule at `sub_path` in the repo's base commit, sourced
@@ -2561,6 +2626,115 @@ fn process_tier_pid_namespace_hides_host_processes_and_environ() {
     assert!(
         visible < 20,
         "the box must see only its own namespace's pids (saw {visible}); a host view shows far more"
+    );
+}
+
+/// The supervised tier is the one that claims untrusted-code containment, so it
+/// gets the PID namespace too — and the property that matters most there is not
+/// visibility but **reach**. The box's user namespace maps back to the operator's
+/// real uid, so without a PID namespace a `kill -9` from inside the box lands on
+/// any host process that user owns: their editor, their build, the h5i process
+/// supervising the box. "A runaway agent stays in the box" has to mean that.
+///
+/// (`/proc/<pid>/environ` was never readable here — the userns already fails
+/// `ptrace_may_access` — but argv, process enumeration and signals were.)
+#[test]
+fn supervised_tier_cannot_see_or_signal_host_processes() {
+    if !supervised_tier_runnable() {
+        eprintln!("SKIP supervised_tier_cannot_signal...: supervised tier not runnable here");
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "svjail", "--isolation", "supervised"]);
+
+    let mut victim = Command::new("sleep")
+        .arg("120")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn victim host process");
+    let vpid = victim.id();
+
+    // Reach: the box must not be able to signal a host process of the same uid.
+    let killed = r.h5i(&[
+        "env",
+        "run",
+        "svjail",
+        "--",
+        "sh",
+        "-c",
+        &format!("kill -9 {vpid} 2>&1; echo SENT"),
+    ]);
+    let kill_txt = out_str(&killed);
+
+    // Visibility: the host's own pids are not in the box's namespace at all.
+    let seen = r.h5i(&[
+        "env",
+        "run",
+        "svjail",
+        "--",
+        "sh",
+        "-c",
+        &format!("test -e /proc/{vpid} && echo VISIBLE || echo hidden"),
+    ]);
+    let seen_txt = out_str(&seen);
+
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let survived = victim.try_wait().ok().flatten().is_none();
+    let _ = victim.kill();
+    let _ = victim.wait();
+
+    assert!(
+        survived,
+        "a supervised box killed a HOST process — the tier claims containment it does not have:\n{kill_txt}"
+    );
+    assert!(
+        seen_txt.lines().any(|l| l.trim() == "hidden"),
+        "a host process must not exist in the box's PID namespace, got:\n{seen_txt}"
+    );
+}
+
+/// The supervised tier's egress allowlist has to keep working with the PID
+/// namespace in place, and the interaction is genuinely delicate: the netns
+/// handshake forks an `nft` helper, and if that helper is the first child after
+/// `CLONE_NEWPID` it becomes the namespace's init, exits, and leaves a dead
+/// namespace in which the workload's own fork fails with `ENOMEM`. This proves
+/// the ordering (unshare the pidns *after* the helper has come and gone).
+#[test]
+fn supervised_egress_still_works_with_a_pid_namespace() {
+    if !supervised_tier_runnable() {
+        eprintln!("SKIP supervised_egress_still_works...: supervised tier not runnable here");
+        return;
+    }
+    let r = Repo::new();
+    // `agent` declares a net.egress allowlist, so this exercises the nft +
+    // slirp4netns path rather than the airtight empty-netns one.
+    let created = r.h5i(&[
+        "env",
+        "create",
+        "svegress",
+        "--isolation",
+        "supervised",
+        "--profile",
+        "agent",
+    ]);
+    if !created.status.success() {
+        eprintln!("SKIP: no egress-capable supervised box here:\n{}", out_str(&created));
+        return;
+    }
+    // The workload must actually start and be PID 1 of its own namespace. A dead
+    // namespace shows up as a spawn failure, which is exactly what we are
+    // guarding against.
+    let out = r.h5i(&["env", "run", "svegress", "--", "sh", "-c", "echo $$"]);
+    let txt = out_str(&out);
+    assert!(
+        out.status.success(),
+        "an egress-enabled supervised run must start (a dead pidns fails with ENOMEM):\n{txt}"
+    );
+    assert!(
+        txt.lines().any(|l| l.trim() == "1"),
+        "the workload must be PID 1 of a fresh namespace, got:\n{txt}"
     );
 }
 

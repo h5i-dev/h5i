@@ -144,7 +144,8 @@ pub struct SecretGrant {
     /// `env:VAR` | `file:/abs/path`; `None` ⇒ `env:H5I_SECRET_<NAME>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
-    /// `file` (default) | `env`.
+    /// `env` (default) | `file` — see [`SecretGrant::inject_or_default`], which
+    /// is the authority on the default and explains why it is `env`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inject: Option<String>,
     /// Advisory validity window for sources that mint a credential.
@@ -722,9 +723,17 @@ const BROWSER_SUPPORT_PATHS: &[&str] = &[
 
 /// Expand `~` against `$HOME`, leaving other paths untouched.
 fn expand_home(path: &str) -> Option<std::path::PathBuf> {
+    expand_home_in(path, std::env::var("HOME").ok().as_deref())
+}
+
+/// [`expand_home`] with the home directory supplied rather than read from the
+/// environment — the pure half, so it can be tested without `set_var`. Cargo
+/// runs tests as threads of one process, so a test that reassigns `HOME`
+/// reassigns it for every concurrently-running test too, including the ones
+/// right above that resolve real paths under the real home.
+fn expand_home_in(path: &str, home: Option<&str>) -> Option<std::path::PathBuf> {
     match path.strip_prefix("~/") {
-        Some(rest) => std::env::var("HOME")
-            .ok()
+        Some(rest) => home
             .filter(|h| !h.is_empty())
             .map(|h| std::path::PathBuf::from(h).join(rest)),
         None => Some(std::path::PathBuf::from(path)),
@@ -830,15 +839,19 @@ mod browser_profile_tests {
 
     #[test]
     fn expand_home_only_touches_tilde_paths() {
-        std::env::set_var("HOME", "/home/example");
+        // The home dir is passed in, not assigned to the process: `set_var`
+        // here would change `HOME` for every test running beside this one.
         assert_eq!(
-            expand_home("~/.cache/x").unwrap(),
+            expand_home_in("~/.cache/x", Some("/home/example")).unwrap(),
             std::path::PathBuf::from("/home/example/.cache/x")
         );
         assert_eq!(
-            expand_home("/usr/bin/chromium").unwrap(),
+            expand_home_in("/usr/bin/chromium", Some("/home/example")).unwrap(),
             std::path::PathBuf::from("/usr/bin/chromium")
         );
+        // No home to expand against → no grant, rather than a bare relative path.
+        assert_eq!(expand_home_in("~/.cache/x", None), None);
+        assert_eq!(expand_home_in("~/.cache/x", Some("")), None);
     }
 }
 

@@ -256,7 +256,7 @@ reboot, swapon/off, settimeofday, …       <span class="t-cmt"># host / time / 
           <tr><td><code>CLONE_NEWUSER</code></td><td>Host capabilities outside the userns; makes the rest unprivileged</td><td>always (process tier)</td></tr>
           <tr><td><code>CLONE_NEWIPC</code> / <code>CLONE_NEWUTS</code></td><td>Shared SysV IPC; host hostname</td><td>always</td></tr>
           <tr><td><code>CLONE_NEWNET</code></td><td>All network access (empty netns)</td><td>when <code>net.mode = deny</code></td></tr>
-          <tr><td><code>CLONE_NEWPID</code> + private <code>/proc</code></td><td>Visibility of host processes and their <code>environ</code></td><td>process tier (supervisor = PID 1)</td></tr>
+          <tr><td><code>CLONE_NEWPID</code> + private <code>/proc</code></td><td>Visibility of host processes, their <code>environ</code>, and signals sent to them</td><td>process and supervised tiers (supervisor = PID 1)</td></tr>
         </tbody>
       </table>
     </div>
@@ -296,7 +296,8 @@ reboot, swapon/off, settimeofday, …       <span class="t-cmt"># host / time / 
     </p>
     <ul>
       <li><strong>One shared kernel.</strong> A seccomp deny-list plus Landlock plus namespaces reduces and bounds the attack surface; it does not prove every permitted syscall is safe against a kernel bug. For untrusted code with an exploit budget, the right boundary is a separate kernel: a microVM (Firecracker/Kata) or gVisor's user-space kernel. The deny-list is a floor, not a ceiling.</li>
-      <li><strong>The <code>supervised</code> tier is partial.</strong> It adds a seccomp-notify mediation model but currently runs with <code>pidns = false</code>. And per-command <code>execve</code> observation via seccomp-notify is <em>deferred</em>: notifying <code>execve</code> makes the bootstrap exec block on the supervisor, which deadlocks against the egress bring-up handshake. In-box observation ships through other mechanisms (a container tee-shim, a Bash hook) rather than execve notification.</li>
+      <li><strong>The <code>supervised</code> tier is partial.</strong> It now runs with a PID namespace like the process tier, but per-command <code>execve</code> observation via seccomp-notify is still <em>deferred</em>: notifying <code>execve</code> makes the bootstrap exec block on the supervisor, which deadlocks against the egress bring-up handshake. In-box observation ships through other mechanisms (a container tee-shim, a Bash hook) rather than execve notification.</li>
+      <li><strong>The PID namespace and the egress handshake have an ordering constraint.</strong> A PID namespace claims the <em>next</em> child as its init, and on the egress path that child is the short-lived <code>nft</code> helper. Unshare <code>CLONE_NEWPID</code> too early and the helper becomes PID 1, exits as soon as the ruleset loads, and leaves a dead namespace in which the workload's own fork fails with <code>ENOMEM</code>. The unshare has to happen after the helper has come and gone.</li>
       <li><strong>Hosts vary, and some can't run this at all.</strong> AppArmor-restricted unprivileged user namespaces (common on CI) break the process tier even when the capability bits look present, which is the entire reason the functional self-test exists. The correct behavior there is to refuse and let the operator choose <code>workspace</code> explicitly, not to pretend.</li>
       <li><strong>The v1 deny-list has a documented <code>clone(CLONE_NEWUSER)</code> gap</strong>, mitigated by denying <code>unshare</code> and by <code>no_new_privs</code> + Landlock, and closed properly only by a future argument-aware allowlist profile.</li>
     </ul>

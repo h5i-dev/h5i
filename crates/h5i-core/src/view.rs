@@ -39,8 +39,10 @@ use crate::error::H5iError;
 /// token the agent could hand to anything it can reach.
 const TOKEN_FILE: &str = "view-token";
 
-/// 128 bits, hex. Long enough that guessing is not a strategy against a
-/// loopback listener that exists for the life of one session.
+/// 128 bits of OS entropy, hex ([`crate::token`]). Long enough that guessing is
+/// not a strategy against a loopback listener that exists for the life of one
+/// session — and drawn from the system CSPRNG, because this one is written to
+/// disk and outlives the process that minted it.
 const TOKEN_BYTES: usize = 16;
 
 fn token_path(env_dir: &Path) -> PathBuf {
@@ -56,9 +58,7 @@ pub fn ensure_token(env_dir: &Path) -> Result<String, H5iError> {
     if let Some(existing) = read_token(env_dir) {
         return Ok(existing);
     }
-    let token: String = (0..TOKEN_BYTES)
-        .map(|_| format!("{:02x}", fastrand::u8(..)))
-        .collect();
+    let token = crate::token::hex(TOKEN_BYTES)?;
     let p = token_path(env_dir);
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;

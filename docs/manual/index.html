@@ -721,7 +721,7 @@ wall  = &quot;30m&quot;
 </tr>
 <tr>
 <td><code>supervised</code></td>
-<td>Adds a private netns with an nftables egress allowlist pinned to resolved IPs, DNS pinned by a hosts file, and a seccomp-notify gate on <code>socket()</code>.</td>
+<td>Everything <code>process</code> has, including the private pid namespace, plus a private netns with an nftables egress allowlist pinned to resolved IPs, DNS pinned by a hosts file, and a seccomp-notify gate on <code>socket()</code>.</td>
 <td><strong>L3/L4</strong></td>
 </tr>
 <tr>
