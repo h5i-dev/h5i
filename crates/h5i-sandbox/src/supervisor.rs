@@ -889,6 +889,15 @@ fn run_supervised(
     };
     let egress_jail = _egress.as_ref().map(|e| e.jail());
 
+    let p = &policy.profile;
+    // The run cgroup is created BEFORE the command so its `cgroup.procs` path can
+    // be handed to the PID-namespace supervisor: with a pidns the workload is a
+    // grandchild whose pid only exists inside `pre_exec`, so the supervisor there
+    // joins it to the cgroup — otherwise `memory.max` and the accounting would
+    // bind the thin supervisor instead of the process they are meant to bound.
+    let cg = crate::sandbox::make_run_cgroup(p.mem_bytes, p.max_procs);
+    let procs = cg.as_ref().map(|c| c.procs_path());
+
     // Shared confinement + always-netns + the seccomp-notify gate.
     let mut cmd = match crate::sandbox::build_confined_command(
         policy,
@@ -898,10 +907,21 @@ fn run_supervised(
         true,
         Some(sv_child),
         egress_jail,
-        // The supervised tier keeps its own model (seccomp-notify gate + netns +
-        // pidfd serve loop); a PID namespace here is a separate, tested follow-up.
-        false,
-        None,
+        // A PID namespace, exactly as the process tier gets. Without it the box
+        // shares the host's PID namespace, which is not a cosmetic difference:
+        // it can enumerate host processes, read their `/proc/<pid>/cmdline`, and
+        // — because the userns maps back to the operator's real uid — send
+        // signals to any of their processes, h5i itself included. A tier that
+        // claims untrusted-code containment cannot leave `kill -9` pointed at
+        // the host. `/proc/<pid>/environ` was already denied (the userns fails
+        // `ptrace_may_access`), so this closes the reachable half.
+        //
+        // Ordering note: the netns/egress handshake in `pre_exec` runs BEFORE the
+        // pidns fork and reports `getpid()`, which CLONE_NEWPID leaves in the
+        // host namespace — so `slirp4netns` still targets a pid it can see, and
+        // the workload shares that netns by inheritance.
+        true,
+        procs.as_deref(),
         interactive,
     ) {
         Ok(c) => c,
@@ -918,9 +938,6 @@ fn run_supervised(
         cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     }
 
-    let p = &policy.profile;
-    let cg = crate::sandbox::make_run_cgroup(p.mem_bytes, p.max_procs);
-
     let started = std::time::Instant::now();
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -933,14 +950,17 @@ fn run_supervised(
     // The child has its own (CLOEXEC) copy of sv_child; drop ours.
     close(sv_child);
 
-    // Join the child to its cgroup as early as possible.
+    // Join the thin supervisor to the cgroup too, so nothing in the tree escapes
+    // accounting. The workload itself was joined from inside `pre_exec` (it is a
+    // grandchild and has no host-visible pid out here until then).
     if let Some(cgrp) = &cg {
         let _ = std::fs::write(cgrp.procs_path(), child.id().to_string());
     }
 
-    // Receive the seccomp listener the child installed in pre_exec. spawn()
-    // returns Ok only after pre_exec (hence send_fd) completed, so this does not
-    // block on a healthy child; a failure means the child died mid-setup.
+    // Receive the seccomp listener the workload installed in pre_exec. `spawn()`
+    // returns once the workload reaches `execve` — the listener handoff happens
+    // just before that — so this does not block on a healthy child; a failure
+    // means it died mid-setup.
     let listener = match unsafe { recv_fd(sv_parent) } {
         Ok(fd) => fd,
         Err(e) => {

@@ -515,7 +515,7 @@ wall  = "30m"
 |---|---|---|
 | `workspace` | No confinement; just a separate worktree. | none |
 | `process` | Landlock + seccomp + namespaces, with a supervisor and a private pid namespace. | deny or host |
-| `supervised` | Adds a private netns with an nftables egress allowlist pinned to resolved IPs, DNS pinned by a hosts file, and a seccomp-notify gate on `socket()`. | **L3/L4** |
+| `supervised` | Everything `process` has, including the private pid namespace, plus a private netns with an nftables egress allowlist pinned to resolved IPs, DNS pinned by a hosts file, and a seccomp-notify gate on `socket()`. | **L3/L4** |
 | `container` | Rootless Podman: a portable image, with a CONNECT-proxy egress allowlist. | L7 |
 
 `auto` (the default) picks the strongest tier the host can actually run. An

@@ -554,14 +554,13 @@ async fn api_receipt(
 /// `h5i box capabilities --json` prints, so the console's top strip and the
 /// CLI can never disagree.
 async fn api_probe() -> Json<crate::sandbox::CapabilitiesReport> {
-    let report = tokio::task::spawn_blocking(|| {
-        // A capability report is a diagnostic: never serve it from the
-        // per-boot podman probe cache, exactly as `box probe` does.
-        std::env::set_var("H5I_NO_PROBE_CACHE", "1");
-        crate::sandbox::capabilities_report()
-    })
-    .await;
-    Json(report.unwrap_or_else(|_| crate::sandbox::capabilities_report()))
+    // A capability report is a diagnostic, so it is probed fresh rather than
+    // served from the per-boot podman cache — exactly as `box probe` does. The
+    // freshness is a property of the call, not of the process environment: this
+    // is a long-lived multithreaded server, and a `set_var` here would race
+    // every other thread's `getenv` and outlive the request that wanted it.
+    let report = tokio::task::spawn_blocking(crate::sandbox::capabilities_report_fresh).await;
+    Json(report.unwrap_or_else(|_| crate::sandbox::capabilities_report_fresh()))
 }
 
 /// Every route, wired to `state`. Extracted so tests can drive the surface
@@ -603,9 +602,7 @@ impl Console {
                 H5iError::Io(e)
             }
         })?;
-        let token: String = (0..TOKEN_BYTES)
-            .map(|_| format!("{:02x}", fastrand::u8(..)))
-            .collect();
+        let token = crate::token::hex(TOKEN_BYTES)?;
         Ok(Console {
             listener,
             state: Arc::new(AppState { repo_path, token }),

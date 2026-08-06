@@ -810,6 +810,18 @@ pub fn probe_host() -> HostCaps {
         .clone()
 }
 
+/// Uncached full probe — the **diagnostic** path.
+///
+/// Bypasses both the in-process memo and the per-boot Podman probe cache, so a
+/// report describes the host as it is now rather than as the first caller found
+/// it. Callers that just need to resolve a policy should use [`probe_host`];
+/// paying ~1s of `podman info` on every run is the reason the cache exists.
+pub fn probe_host_fresh() -> HostCaps {
+    let mut caps = probe_host_kernel_uncached();
+    caps.container_runtime = crate::container::probe_fresh().map(|r| r.bin);
+    caps
+}
+
 /// Kernel-only probe: Landlock/userns/seccomp, but **not** the ~1s Podman
 /// shell-out (`container_runtime` is left `None`). `resolve` only reads
 /// `container_runtime` inside the container arm (after the image check), and
@@ -900,7 +912,18 @@ pub struct CapabilitiesReport {
 /// (`resolve` + functional `verify_exec`) used by `env create`. Shells out to
 /// `podman info` once (via [`probe_host`]) — reserve for diagnostic paths.
 pub fn capabilities_report() -> CapabilitiesReport {
-    let caps = probe_host();
+    capabilities_report_from(probe_host())
+}
+
+/// [`capabilities_report`] against a freshly-probed host, bypassing both the
+/// in-process memo and the per-boot Podman cache. This is what the diagnostics
+/// (`box probe`, `box capabilities`, the console's `/api/probe`) want: a report
+/// that is stale is a report that misleads about what the host can enforce.
+pub fn capabilities_report_fresh() -> CapabilitiesReport {
+    capabilities_report_from(probe_host_fresh())
+}
+
+fn capabilities_report_from(caps: HostCaps) -> CapabilitiesReport {
     let mut claims: Vec<ClaimSupport> = Vec::new();
     let mut strongest = IsolationClaim::Workspace;
 
@@ -1303,13 +1326,7 @@ pub fn spawn_background(
                 .stdin(std::process::Stdio::null())
                 .stdout(out)
                 .stderr(err);
-            cmd.env_clear();
-            for key in &policy.profile.env_pass {
-                if let Ok(v) = std::env::var(key) {
-                    cmd.env(key, v);
-                }
-            }
-            apply_injected_env(&mut cmd, injected_env);
+            apply_env_allowlist(&mut cmd, &policy.profile, injected_env);
             // Own session so a later killpg(pid) reaps the whole descendant tree.
             #[cfg(unix)]
             unsafe {
@@ -1421,9 +1438,8 @@ pub fn run_interactive(
     let injected = augment_injected_env(policy, injected_env);
     let injected_env = injected.as_slice();
     match policy.claim {
-        IsolationClaim::Workspace => {
-            interactive_unconfined(work, argv, injected_env).map(InteractiveOutcome::from_code)
-        }
+        IsolationClaim::Workspace => interactive_unconfined(policy, work, argv, injected_env)
+            .map(InteractiveOutcome::from_code),
         IsolationClaim::Process => {
             interactive_confined(policy, work, argv, injected_env)
                 .map(InteractiveOutcome::from_code)
@@ -1457,13 +1473,14 @@ pub fn run_interactive(
 /// Interactive workspace tier: inherited stdio, a new session so signals reach
 /// the whole tree, no confinement (trusted code).
 fn interactive_unconfined(
+    policy: &ResolvedPolicy,
     work: &Path,
     argv: &[String],
     injected_env: &[(String, String)],
 ) -> Result<i32, H5iError> {
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(work);
-    apply_injected_env(&mut cmd, injected_env);
+    apply_env_allowlist(&mut cmd, &policy.profile, injected_env);
     let status = cmd
         .status()
         .map_err(|e| H5iError::Metadata(format!("failed to start '{}': {e}", argv[0])))?;
@@ -1532,6 +1549,35 @@ fn apply_injected_env(cmd: &mut std::process::Command, injected_env: &[(String, 
     for (k, v) in injected_env {
         cmd.env(k, v);
     }
+}
+
+/// Give `cmd` exactly the environment the profile allows: nothing inherited
+/// wholesale, the `env.pass` names forwarded from the host, then the brokered
+/// secrets layered on top (so a grant is never shadowed by a passed-through
+/// host var).
+///
+/// **Every tier goes through this, `workspace` included.** That tier applies no
+/// kernel confinement, which is a reason to skip the *sandbox*, not a reason to
+/// skip the allowlist: `env_pass` is part of the resolved policy, it is covered
+/// by the pinned digest, and `box status` shows it to a reviewer as the
+/// environment that was enforced. A tier that quietly handed the child the
+/// operator's whole environment — every API token in their shell — would make
+/// that display say something untrue, which is the one failure this codebase
+/// keeps refusing to ship. It also read strangely from inside: background
+/// services at the workspace tier already got the allowlist while captured runs
+/// and interactive sessions did not.
+fn apply_env_allowlist(
+    cmd: &mut std::process::Command,
+    profile: &Profile,
+    injected_env: &[(String, String)],
+) {
+    cmd.env_clear();
+    for key in &profile.env_pass {
+        if let Ok(v) = std::env::var(key) {
+            cmd.env(key, v);
+        }
+    }
+    apply_injected_env(cmd, injected_env);
 }
 
 /// For an **agent-in-box** profile, signal Claude Code that uid 0 inside the box
@@ -1632,7 +1678,7 @@ fn run_unconfined(
 ) -> Result<ExecOutcome, H5iError> {
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(work);
-    apply_injected_env(&mut cmd, injected_env);
+    apply_env_allowlist(&mut cmd, &policy.profile, injected_env);
     // New session so the wall-clock kill reaps the whole tree (killpg), the
     // same group-kill guarantee the confined path gets.
     #[cfg(unix)]
@@ -1670,6 +1716,90 @@ pub(crate) struct EgressJail {
     pub nft_envp: std::ffi::CString,
     /// Path to the temp file holding the pinned `/etc/hosts` content.
     pub hosts_src: std::ffi::CString,
+}
+
+/// Close every descriptor above stdio in the calling process.
+///
+/// Called by the PID-namespace supervisor immediately after its `fork`, and the
+/// reason is subtle enough to be worth stating: `Command::spawn` hands the child
+/// a `CLOEXEC` status pipe and returns only once **every** copy of that pipe's
+/// write end is closed. The workload's copy closes at `execve`, but the
+/// supervisor — forked from the same child, and never exec'ing — keeps its copy
+/// for the whole run. A supervisor that holds it makes `spawn()` block until the
+/// workload exits, which in turn means the stdout/stderr drain threads (started
+/// after `spawn` returns) never run: any command whose output fills the 64 KiB
+/// pipe deadlocks, and the wall-clock deadline is not armed until after the run
+/// it was meant to bound. The supervisor needs no inherited descriptor — it
+/// waits, mirrors an exit code, and dies — so it drops all of them.
+///
+/// Allocation-free and async-signal-safe (raw syscalls only), as everything on
+/// the post-fork path must be.
+///
+/// # Safety
+/// Closes descriptors process-wide; only ever call it in a forked child that
+/// owns no other users of those descriptors.
+#[cfg(target_os = "linux")]
+unsafe fn close_inherited_fds() {
+    // close_range(2) is Linux 5.9+; Landlock needs 5.13+, so on any host that
+    // reaches this code it is present and this is the only branch that runs.
+    if libc::syscall(libc::SYS_close_range, 3 as libc::c_uint, libc::c_uint::MAX, 0) == 0 {
+        return;
+    }
+    // Fallback for a kernel (or seccomp policy) without close_range: walk the
+    // descriptor table. Bounded so a huge RLIMIT_NOFILE cannot stall the fork.
+    let mut lim: libc::rlimit = std::mem::zeroed();
+    let max = if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) == 0 && lim.rlim_cur > 3 {
+        lim.rlim_cur.min(65536) as i32
+    } else {
+        4096
+    };
+    for fd in 3..max {
+        libc::close(fd);
+    }
+}
+
+/// Decimal-render `v` into `buf`, returning the written slice.
+///
+/// An allocation-free stand-in for `format!` on the post-fork path: everything
+/// between `fork` and `execve` runs in a child that inherited the parent's
+/// malloc state, and h5i's parents are multithreaded (the stdio drain threads,
+/// the egress helper, the notify serve loop), so a heap allocation there can
+/// deadlock on a lock whose owning thread does not exist in the child.
+#[cfg(target_os = "linux")]
+fn fmt_u32(mut v: u32, buf: &mut [u8; 24]) -> &[u8] {
+    let mut i = buf.len();
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+        if v == 0 {
+            break;
+        }
+    }
+    &buf[i..]
+}
+
+/// `open`/`write`/`close` a small procfs control file with raw syscalls.
+///
+/// The allocation-free equivalent of `std::fs::write`, which converts the path
+/// to a `CString` and so allocates — see [`fmt_u32`] for why that matters here.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated C string.
+#[cfg(target_os = "linux")]
+unsafe fn write_proc_file(path: *const libc::c_char, bytes: &[u8]) -> Result<(), std::io::Error> {
+    let fd = libc::open(path, libc::O_WRONLY | libc::O_CLOEXEC);
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let n = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
+    // `close` can clobber errno, so capture the write's error first.
+    let err = std::io::Error::last_os_error();
+    libc::close(fd);
+    if n != bytes.len() as isize {
+        return Err(err);
+    }
+    Ok(())
 }
 
 /// Build a fully-confined `std::process::Command` for `argv` — the **shared**
@@ -1849,19 +1979,23 @@ pub(crate) fn build_confined_command(
             Some((bc, tc))
         });
 
+    // uid/gid map contents, rendered HERE rather than post-fork. The egress path
+    // execs `nft` and so needs root-in-userns (capabilities only survive execve
+    // for uid 0); every other tier keeps the 1:1 map. Both forms are known
+    // pre-fork, so the child writes bytes and allocates nothing — see
+    // [`fmt_u32`] for why that matters.
+    let (uid_map, gid_map) = if egress.is_some() {
+        (format!("0 {uid} 1"), format!("0 {gid} 1"))
+    } else {
+        (format!("{uid} {uid} 1"), format!("{gid} {gid} 1"))
+    };
+
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(&work);
 
-    // Environment allowlist — nothing inherited wholesale (§7).
-    cmd.env_clear();
-    for key in &p.env_pass {
-        if let Ok(v) = std::env::var(key) {
-            cmd.env(key, v);
-        }
-    }
-    // Brokered secrets, applied after the allowlist (so a grant is never
-    // shadowed by a passed-through host var).
-    apply_injected_env(&mut cmd, injected_env);
+    // Environment allowlist — nothing inherited wholesale (§7) — plus the
+    // brokered secrets layered on top.
+    apply_env_allowlist(&mut cmd, p, injected_env);
 
     let mut ruleset_slot = Some(ruleset);
     unsafe {
@@ -1894,11 +2028,19 @@ pub(crate) fn build_confined_command(
                 flags |= libc::CLONE_NEWNET;
             }
             if pidns {
-                // A new PID namespace (so host processes are invisible/unsignalable)
-                // plus a new mount namespace (so we can mount a private procfs over
-                // /proc without touching the host). The userns in the same call
-                // grants the CAP_SYS_ADMIN both need, unprivileged.
-                flags |= libc::CLONE_NEWPID | libc::CLONE_NEWNS;
+                // A new mount namespace, so we can mount a private procfs over
+                // /proc without touching the host. The userns in the same call
+                // grants the CAP_SYS_ADMIN it needs, unprivileged.
+                //
+                // CLONE_NEWPID is deliberately NOT requested here — it is
+                // unshared later, immediately before the fork that uses it (1c).
+                // A PID namespace claims the *next* child as its init, and on the
+                // egress path (1b) that child is the short-lived `nft` helper:
+                // it would become PID 1, exit as soon as the ruleset is loaded,
+                // and leave a dead namespace in which the workload's own fork
+                // fails with ENOMEM. Unsharing late keeps the helper an ordinary
+                // child in the host namespace and hands PID 1 to the workload.
+                flags |= libc::CLONE_NEWNS;
             }
             // Config lockdown needs a private mount namespace to ro-bind in
             // (supervised is pidns=false, so it would otherwise have none). The
@@ -1915,20 +2057,14 @@ pub(crate) fn build_confined_command(
             if libc::unshare(flags) != 0 {
                 return Err(Error::last_os_error());
             }
-            std::fs::write("/proc/self/setgroups", "deny")?;
-            // The egress path execs `nft` to install the allowlist; capabilities
-            // only survive execve for uid 0 in the user ns, so map the child to
-            // root-in-userns there (CAP_NET_ADMIN is kept ⇒ nft can touch
-            // netlink). The map still points back to our real host uid, so files
-            // created in $WORK stay owned by us. The non-egress tiers keep the
-            // 1:1 map (the untrusted program runs as our own uid).
-            if egress.is_some() {
-                std::fs::write("/proc/self/gid_map", format!("0 {gid} 1"))?;
-                std::fs::write("/proc/self/uid_map", format!("0 {uid} 1"))?;
-            } else {
-                std::fs::write("/proc/self/gid_map", format!("{gid} {gid} 1"))?;
-                std::fs::write("/proc/self/uid_map", format!("{uid} {uid} 1"))?;
-            }
+            // The maps were rendered pre-fork (see `uid_map`/`gid_map` above);
+            // raw writes here keep this path allocation-free. `setgroups=deny`
+            // must land before `gid_map`, and `gid_map` before `uid_map` — the
+            // kernel refuses the group map otherwise. The map points back at our
+            // real host uid either way, so files created in $WORK stay ours.
+            write_proc_file(c"/proc/self/setgroups".as_ptr(), b"deny")?;
+            write_proc_file(c"/proc/self/gid_map".as_ptr(), gid_map.as_bytes())?;
+            write_proc_file(c"/proc/self/uid_map".as_ptr(), uid_map.as_bytes())?;
 
             // 1b. Egress allowlist (supervised increment 2). We still hold full
             //     caps in our userns and seccomp/Landlock are not yet applied, so
@@ -1994,15 +2130,32 @@ pub(crate) fn build_confined_command(
             //     process, which holds the operator's environment (defeating the
             //     env.pass allowlist). Raw syscalls + one File::open only.
             if pidns {
+                // Claim the PID namespace now — after the egress helper has come
+                // and gone (see the CLONE_NEWNS note in step 1), and immediately
+                // before the fork that becomes its init.
+                if libc::unshare(libc::CLONE_NEWPID) != 0 {
+                    return Err(Error::last_os_error());
+                }
                 let kid = libc::fork();
                 if kid > 0 {
-                    // Supervisor. First move the *workload* into the run cgroup
-                    // (so memory.max + accounting bind it, not us — it was forked
-                    // before the host-side cgroup write, which only sees us).
+                    // Supervisor. Drop every inherited descriptor FIRST: holding
+                    // std's spawn-status pipe would keep `spawn()` blocked until
+                    // the workload exits, deadlocking any command that fills the
+                    // stdout pipe and disarming the wall clock. See
+                    // `close_inherited_fds`. Nothing below needs an inherited fd
+                    // (the cgroup handle is opened fresh).
+                    close_inherited_fds();
+                    // Move the *workload* into the run cgroup (so memory.max +
+                    // accounting bind it, not us — it was forked before the
+                    // host-side cgroup write, which only sees us).
                     if let Some(cpath) = &cgroup_procs_c {
                         let fd = libc::open(cpath.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
                         if fd >= 0 {
-                            let line = format!("{kid}");
+                            // Format the pid on the stack: `format!` here would
+                            // allocate in a forked child (malloc-lock deadlock
+                            // risk when the parent is multithreaded).
+                            let mut buf = [0u8; 24];
+                            let line = fmt_u32(kid as u32, &mut buf);
                             let _ = libc::write(fd, line.as_ptr().cast(), line.len());
                             libc::close(fd);
                         }
@@ -3599,6 +3752,71 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         assert_ne!(out.exit_code, Some(0));
     }
 
+    /// The PID-namespace tiers fork a thin supervisor inside `pre_exec`, and that
+    /// supervisor inherits std's `CLOEXEC` spawn-status pipe. Until it dropped
+    /// that descriptor, `Command::spawn` did not return until the workload had
+    /// already exited — so the stdout drain threads started too late and any
+    /// command whose output exceeded the 64 KiB pipe buffer deadlocked forever.
+    /// Well over one pipe buffer, and it must come back whole.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_confined_run_does_not_deadlock_on_output_larger_than_the_pipe_buffer() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+        if verify_exec(&policy).is_err() {
+            eprintln!("SKIP output-deadlock test: process tier not runnable here");
+            return;
+        }
+        // 4096 lines × ~64 B ≈ 256 KiB, four times the pipe buffer.
+        let out = run(
+            &policy,
+            dir.path(),
+            &[
+                "sh".into(),
+                "-c".into(),
+                "i=0; while [ $i -lt 4096 ]; do echo \
+                 'padding-padding-padding-padding-padding-padding-line'; i=$((i+1)); done"
+                    .into(),
+            ],
+        )
+        .expect("a confined run must not hang on a full stdout pipe");
+        assert_eq!(out.exit_code, Some(0));
+        assert!(!out.timed_out, "the run must finish well inside the wall clock");
+        assert_eq!(
+            out.stdout.iter().filter(|b| **b == b'\n').count(),
+            4096,
+            "every line must survive: got {} bytes",
+            out.stdout.len()
+        );
+    }
+
+    /// The same root cause disarmed the deadline itself: with `spawn` blocked
+    /// until the workload exited, `wait_with_deadline` only began counting after
+    /// the run it was supposed to bound. A confined `sleep` must be killed.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_wall_clock_bounds_a_confined_run_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut p = Profile::builtin("default", IsolationClaim::Process);
+        p.wall_secs = 1;
+        let policy = ResolvedPolicy::new(IsolationClaim::Process, p);
+        if verify_exec(&policy).is_err() {
+            eprintln!("SKIP confined wall-clock test: process tier not runnable here");
+            return;
+        }
+        let started = std::time::Instant::now();
+        let out = run(&policy, dir.path(), &["sleep".into(), "30".into()]).expect("run");
+        assert!(out.timed_out, "the wall clock must kill a confined run");
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "the kill must fire near the deadline, not after the command finishes: {:?}",
+            started.elapsed()
+        );
+    }
+
     #[test]
     fn run_records_resource_usage() {
         let dir = tempfile::tempdir().unwrap();
@@ -3624,6 +3842,40 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         // An unlisted program is refused before it ever executes.
         let err = run(&policy, dir.path(), &["sh".into(), "-c".into(), "echo no".into()]).unwrap_err();
         assert!(err.to_string().contains("allowlist"), "{err}");
+    }
+
+    /// `env_pass` is digested policy and `box status` reports it as enforced, so
+    /// every tier has to honour it — including `workspace`, where nothing else is
+    /// confined and the operator's shell is therefore at its most exposed.
+    #[test]
+    fn the_env_allowlist_is_enforced_at_the_workspace_tier_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy = ResolvedPolicy::new(
+            IsolationClaim::Workspace,
+            Profile::builtin("default", IsolationClaim::Workspace),
+        );
+        // A host variable nobody put on the allowlist. Set inside the test rather
+        // than assumed, so the assertion is about the allowlist and not about
+        // whatever the ambient environment happens to hold.
+        std::env::set_var("H5I_TEST_UNLISTED_HOST_VAR", "must-not-reach-the-child");
+        let out = run(
+            &policy,
+            dir.path(),
+            &[
+                "sh".into(),
+                "-c".into(),
+                "echo \"unlisted=[$H5I_TEST_UNLISTED_HOST_VAR]\"; echo \"path=[${PATH:+set}]\"".into(),
+            ],
+        )
+        .expect("workspace run");
+        std::env::remove_var("H5I_TEST_UNLISTED_HOST_VAR");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            text.contains("unlisted=[]"),
+            "an unlisted host var must not reach a workspace-tier child: {text}"
+        );
+        // …and the allowlisted ones still do, or the tier would simply be broken.
+        assert!(text.contains("path=[set]"), "PATH is on the allowlist: {text}");
     }
 
     #[test]

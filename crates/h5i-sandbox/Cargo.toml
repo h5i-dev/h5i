@@ -14,6 +14,10 @@ sha2 = "0.10"
 libc = "0.2.186"
 regex = "1"
 fastrand = "2.3.0"
+# OS entropy for the credential proxy's per-run gate token. `fastrand` is fast
+# and fine for jitter; it is explicitly not cryptographically secure, and this
+# token guards a proxy that injects a real API credential.
+getrandom = "0.3"
 tracing = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 

@@ -5778,7 +5778,18 @@ pub fn mediated_commit(
             git2::IndexAddOption::DEFAULT,
             Some(&mut cb as &mut git2::IndexMatchedPath),
         )?;
-        index.update_all(["*"].iter(), None)?;
+        // The SAME filter on the update pass. Today this is belt-and-braces
+        // rather than a hole being closed: `add_all` with a `"*"` pathspec
+        // already visits tracked entries, so a path that escapes `$WORK` through
+        // a symlinked parent is caught above and aborts the commit before this
+        // runs. But that safety is a property of libgit2's pathspec semantics,
+        // not of anything stated here, and the update pass re-stages tracked
+        // paths on its own terms. An invariant enforced on one of two staging
+        // paths is an invariant that depends on the other one never changing.
+        index.update_all(
+            ["*"].iter(),
+            Some(&mut cb as &mut git2::IndexMatchedPath),
+        )?;
     }
 
     // Post-stage sweep: reject submodule gitlink entries (mode 160000) that

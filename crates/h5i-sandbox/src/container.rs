@@ -146,6 +146,19 @@ pub fn probe() -> Option<Runtime> {
         .clone()
 }
 
+/// [`probe`] with both caches bypassed, for the diagnostic paths (`box probe`,
+/// `box capabilities`, the console's `/api/probe`) that must report the host as
+/// it is right now.
+///
+/// A function rather than the `H5I_NO_PROBE_CACHE` environment variable: those
+/// callers used to set that variable at run time, which mutates process-global
+/// state shared with every other thread (unsound in a threaded program, and a
+/// side effect that outlived the one call that wanted it). The variable stays as
+/// an operator escape hatch — read, never written.
+pub fn probe_fresh() -> Option<Runtime> {
+    probe_uncached()
+}
+
 fn probe_uncached() -> Option<Runtime> {
     if !version_ok("podman") {
         return None;

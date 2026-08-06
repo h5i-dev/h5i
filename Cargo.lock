@@ -599,6 +599,7 @@ dependencies = [
  "chrono",
  "console",
  "fastrand",
+ "getrandom 0.3.4",
  "git2",
  "h5i-error",
  "h5i-sandbox",
@@ -632,6 +633,7 @@ name = "h5i-sandbox"
 version = "0.2.8"
 dependencies = [
  "fastrand",
+ "getrandom 0.3.4",
  "git2",
  "h5i-error",
  "landlock",
