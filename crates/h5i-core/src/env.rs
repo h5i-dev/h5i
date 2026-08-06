@@ -2087,6 +2087,59 @@ fn private_tmp_backing(logical: &Path) -> PathBuf {
     logical.to_path_buf()
 }
 
+/// Clear (or create) the box's private `/tmp` backing, `0700` and ours.
+///
+/// Two different failures were being conflated. The security question — has
+/// another local user squatted this name in world-writable `/tmp`? — is settled
+/// by looking at who owns the directory, so it is asked directly here. What was
+/// asked instead was "did an exclusive create succeed", and that also fails for
+/// an entirely ordinary reason: `remove_dir_all` races anything still writing
+/// into the directory (a browser left running by an earlier box run keeps
+/// recreating files under it), returns `ENOTEMPTY`, and the error was swallowed
+/// by `let _ =`. The create then hit `EEXIST` and blamed another user for a
+/// directory the caller owns — an unusable box with a misleading reason.
+fn reset_private_tmp(backing: &Path) -> Result<(), H5iError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        // `symlink_metadata`: a symlink planted here must never be followed.
+        if let Ok(md) = std::fs::symlink_metadata(backing) {
+            let ours = md.is_dir() && !md.file_type().is_symlink() && md.uid() == unsafe { libc::getuid() };
+            if !ours {
+                return Err(H5iError::Metadata(format!(
+                    "{} exists and is not a directory this user owns — refusing to use it as a \
+                     box's private /tmp (fail-closed). Remove it and retry.",
+                    backing.display()
+                )));
+            }
+            // Ours: clear it. A failure here is not a security condition, so it
+            // reports what it is rather than accusing anyone.
+            if let Err(e) = std::fs::remove_dir_all(backing) {
+                return Err(H5iError::Metadata(format!(
+                    "could not clear this box's private /tmp at {} ({e}). Something is probably \
+                     still writing to it — a browser or daemon left running by an earlier run of \
+                     this box. Stop it, or remove the directory, and retry.",
+                    backing.display()
+                )));
+            }
+        }
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(backing)
+            .map_err(|e| H5iError::with_path(e, backing))?;
+        // The mode is set at creation; re-assert it in case a permissive umask
+        // or an intervening process widened it.
+        std::fs::set_permissions(backing, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| H5iError::with_path(e, backing))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = std::fs::remove_dir_all(backing);
+        std::fs::create_dir_all(backing).map_err(|e| H5iError::with_path(e, backing))?;
+    }
+    Ok(())
+}
+
 /// Give kernel-tier envs a private `/tmp` by binding an env-owned scratch dir
 /// over the host path before Landlock is applied. Agent profiles used to grant
 /// host-shared `/tmp` at process/supervised tiers; that creates an unnecessary
@@ -2118,32 +2171,10 @@ fn prepare_private_tmp(
         None => m.dir(h5i_root).join("tmp"),
     };
     let backing = private_tmp_backing(&logical);
-    let _ = std::fs::remove_dir_all(&backing);
     if let Some(parent) = backing.parent() {
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
-    // Created exclusively, 0700. On macOS this lands in world-writable, sticky
-    // `/tmp` (see [`private_tmp_backing`]), where another local user could have
-    // squatted the name: `remove_dir_all` cannot delete their directory and this
-    // then fails rather than adopting a directory somebody else owns and writing
-    // the box's scratch into it.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&backing)
-            .map_err(|e| {
-                H5iError::Metadata(format!(
-                    "could not create this box's private /tmp at {} ({e}). If that path exists \
-                     and is not yours, remove it — h5i will not reuse a scratch directory it \
-                     does not own (fail-closed).",
-                    backing.display()
-                ))
-            })?;
-    }
-    #[cfg(not(unix))]
-    std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
+    reset_private_tmp(&backing)?;
     policy.profile.fs_read.retain(|p| p != "/tmp");
     policy.profile.fs_write.retain(|p| p != "/tmp");
     policy.profile.fs_write.push(backing.display().to_string());
@@ -2654,6 +2685,200 @@ fn box_tmp_root(policy: &ResolvedPolicy) -> String {
         .unwrap_or_else(|| "/tmp".to_string())
 }
 
+/// Loopback ports this box is allowed to dial: the dynamic host ports of its
+/// own **running** services.
+///
+/// The box's browser has to reach the dev server the box is running — that is
+/// the whole point of a browser box — and on macOS loopback is the host's, so
+/// it is denied wholesale unless a port is named. These ports were allocated by
+/// h5i for this env's services, so naming them grants the box access to itself
+/// and to nothing else on the interface.
+///
+/// Only **live** services count: a record whose process is gone would otherwise
+/// keep a port open in the policy that some unrelated host process could later
+/// bind. Re-read on every run, so starting a service and then using it works
+/// without recreating the box.
+fn live_service_ports(h5i_root: &Path, m: &EnvManifest) -> Vec<u16> {
+    let svc_dir = services_dir(h5i_root, m);
+    let Ok(entries) = std::fs::read_dir(&svc_dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in entries.flatten() {
+        let path = e.path();
+        if path.extension().and_then(|x| x.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(rec) = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<ServiceRecord>(&t).ok())
+        else {
+            continue;
+        };
+        if let Some(port) = rec.dynamic_port {
+            if pid_alive(rec.pid) {
+                out.push(port);
+            }
+        }
+    }
+    out
+}
+
+/// The `agent-browser` shim: launch Chrome ourselves, then attach to it.
+///
+/// agent-browser's own *launch* path does not work inside a Seatbelt sandbox.
+/// The failure is not h5i's policy — it reproduces under `sandbox-exec` with a
+/// fully permissive `(allow default)` profile, and disappears entirely when the
+/// sandbox is removed — so no grant fixes it. Its *attach* path (`--cdp <port>`)
+/// works inside a box today.
+///
+/// So this shim closes the gap: it makes sure a Chrome is running, and hands
+/// agent-browser the port instead of letting it start one. Chrome is launched
+/// detached (`setsid`) so it outlives the single `box run` that started it, and
+/// its port is remembered in the env's own directory rather than in `TMPDIR`,
+/// which h5i wipes at the start of every run.
+///
+/// Not a security control. It is on `PATH` in a directory the box can write, so
+/// the box can replace it or call the real binary directly — the boundary is the
+/// tier, exactly as it is for every other command in the box. It exists so the
+/// browser works, not to constrain it.
+///
+/// `--cdp` and `--allowed-domains` are mutually exclusive upstream ("WebRTC
+/// containment cannot be installed before existing page scripts run"), so
+/// [`browser_env`] stops setting the domain list when the shim is in play. That
+/// is a real reduction: agent-browser's in-process domain check is gone. The
+/// tier's own egress enforcement — the actual boundary — is untouched.
+fn browser_shim_source(agent_browser: &str) -> String {
+    format!(
+        r##"#!/bin/sh
+# Generated by h5i. Launch Chrome, then attach agent-browser to it.
+set -e
+REAL='{agent_browser}'
+STATE="${{H5I_BROWSER_STATE:?h5i did not set H5I_BROWSER_STATE}}"
+PORT="${{H5I_BROWSER_CDP_PORT:?h5i did not set H5I_BROWSER_CDP_PORT}}"
+UD="$STATE/chrome"
+
+alive() {{
+  curl -s -m 2 -o /dev/null "http://127.0.0.1:$PORT/json/version"
+}}
+
+# Put Chrome in its own session so it survives the `box run` that started it:
+# h5i `setsid`s the run and `killpg`s that group on exit. There is no `setsid(1)`
+# on macOS, so fall back to perl's; if neither works, still launch — Chrome then
+# lives only for this one command, which is worse but not broken.
+detach() {{
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@"
+  elif command -v perl >/dev/null 2>&1; then
+    perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or die "exec: $!"' -- "$@"
+  else
+    "$@"
+  fi
+}}
+
+find_chrome() {{
+  for c in \
+    "$HOME"/.agent-browser/browsers/chrome-*/"Google Chrome for Testing.app"/Contents/MacOS/"Google Chrome for Testing" \
+    "$HOME"/.cache/agent-browser/chrome-*/"Google Chrome for Testing.app"/Contents/MacOS/"Google Chrome for Testing" \
+    /Applications/"Google Chrome.app"/Contents/MacOS/"Google Chrome" \
+    /Applications/"Chromium.app"/Contents/MacOS/Chromium \
+    /usr/bin/google-chrome /usr/bin/chromium /usr/bin/chromium-browser; do
+    [ -x "$c" ] && {{ printf '%s' "$c"; return 0; }}
+  done
+  return 1
+}}
+
+alive || {{
+  CHROME=$(find_chrome) || {{ echo "h5i: no Chrome/Chromium found for the browser profile" >&2; exit 1; }}
+  rm -rf "$UD"; mkdir -p "$UD"
+  # `--no-sandbox` is required, not a shortcut: macOS refuses to nest Seatbelt
+  # profiles, so Chrome's own sandbox cannot initialise inside the box and its
+  # renderers abort on startup without it. h5i's box is the boundary.
+  detach "$CHROME" --headless=new --no-sandbox --disable-dev-shm-usage \
+      --disable-gpu --no-first-run --no-default-browser-check \
+      --user-data-dir="$UD" --remote-debugging-port="$PORT" about:blank \
+      >"$STATE/chrome.log" 2>&1 &
+  echo $! > "$STATE/chrome.pid"
+  i=0
+  while [ $i -lt 100 ]; do
+    alive && break
+    i=$((i+1)); sleep 0.1
+  done
+  alive || {{ echo "h5i: Chrome did not come up on port $PORT" >&2; tail -5 "$STATE/chrome.log" >&2; exit 1; }}
+}}
+
+exec "$REAL" --cdp "$PORT" "$@"
+"##
+    )
+}
+
+/// Materialize the shim for a `browser` box and return the directory to put on
+/// `PATH`. `None` for every other profile, and when no `agent-browser` is
+/// installed (nothing to attach with).
+/// Where the browser shim lives and which port its Chrome answers on.
+pub struct BrowserShim {
+    /// Goes on `PATH` ahead of the real `agent-browser`.
+    pub dir: PathBuf,
+    /// The one loopback port the policy grants for CDP.
+    pub port: u16,
+}
+
+fn prepare_browser_shim(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+) -> Result<Option<BrowserShim>, H5iError> {
+    if policy.profile.name != "browser" {
+        return Ok(None);
+    }
+    let Some(real) = sandbox::agent_browser_binary() else {
+        return Ok(None);
+    };
+    let dir = m.dir(h5i_root).join("browser");
+    let state = dir.join("state");
+    std::fs::create_dir_all(&state).map_err(|e| H5iError::with_path(e, &state))?;
+
+    // The CDP port is picked host-side, remembered, and reused. It cannot be
+    // per-run: Chrome outlives the `box run` that started it, so a fresh port on
+    // the next run would be a port the still-running Chrome is not listening on
+    // — and, worse, the only port the policy grants. Allocated once, then read
+    // back for the life of the env.
+    let port_file = state.join("cdp-port");
+    let port = match std::fs::read_to_string(&port_file)
+        .ok()
+        .and_then(|t| t.trim().parse::<u16>().ok())
+    {
+        Some(p) => p,
+        None => {
+            let p = alloc_free_port().ok_or_else(|| {
+                H5iError::Metadata("could not reserve a loopback port for the box's browser".into())
+            })?;
+            std::fs::write(&port_file, p.to_string())
+                .map_err(|e| H5iError::with_path(e, &port_file))?;
+            p
+        }
+    };
+    policy.loopback_ports.push(port);
+    let shim = dir.join("agent-browser");
+    std::fs::write(&shim, browser_shim_source(&real)).map_err(|e| H5iError::with_path(e, &shim))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| H5iError::with_path(e, &shim))?;
+    }
+    // The box runs the shim and writes Chrome's port and profile under `state`.
+    let d = dir.display().to_string();
+    if !policy.profile.fs_read.contains(&d) {
+        policy.profile.fs_read.push(d);
+    }
+    let s = state.display().to_string();
+    if !policy.profile.fs_write.contains(&s) {
+        policy.profile.fs_write.push(s);
+    }
+    Ok(Some(BrowserShim { dir, port }))
+}
+
 /// Environment a `browser` box needs, derived from the policy that is actually
 /// enforced.
 ///
@@ -2670,7 +2895,27 @@ fn box_tmp_root(policy: &ResolvedPolicy) -> String {
 ///   send page content to an external gateway. Inside a box that is an
 ///   exfiltration path with a friendly name, so the gateway credential is kept
 ///   out of the box entirely: it is absent from `env.pass` and never injected.
-pub fn browser_env(policy: &ResolvedPolicy) -> Vec<(String, String)> {
+pub fn browser_env(policy: &ResolvedPolicy, shim: Option<&BrowserShim>) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    if let Some(BrowserShim { dir, port }) = shim {
+        // Ahead of the real binary, so a bare `agent-browser` gets the shim.
+        // `injected_env` is applied after the `env.pass` allowlist, so this PATH
+        // wins over the host's.
+        let host_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".into());
+        out.push(("PATH".to_string(), format!("{}:{host_path}", dir.display())));
+        out.push((
+            "H5I_BROWSER_STATE".to_string(),
+            dir.join("state").display().to_string(),
+        ));
+        // Explicitly the shim's own port, not "whichever loopback port came
+        // first" — the policy also grants the box's live service ports.
+        out.push(("H5I_BROWSER_CDP_PORT".to_string(), port.to_string()));
+    }
+    out.extend(browser_env_inner(policy, shim.is_some()));
+    out
+}
+
+fn browser_env_inner(policy: &ResolvedPolicy, shimmed: bool) -> Vec<(String, String)> {
     let mut allowed: Vec<String> = vec!["localhost".into(), "127.0.0.1".into(), "[::1]".into()];
     for host in &policy.profile.net_egress {
         // `net.egress` entries may carry a `:port`; the browser wants hosts.
@@ -2682,8 +2927,16 @@ pub fn browser_env(policy: &ResolvedPolicy) -> Vec<(String, String)> {
             allowed.push(host.to_string());
         }
     }
-    vec![
-        ("AGENT_BROWSER_ALLOWED_DOMAINS".to_string(), allowed.join(",")),
+    let mut v: Vec<(String, String)> = Vec::new();
+    // Only when agent-browser is launching Chrome itself. Under the shim it
+    // attaches with `--cdp`, which upstream refuses to combine with
+    // `--allowed-domains`, so setting it would break every command rather than
+    // add a layer. The tier's egress enforcement is unchanged either way; what
+    // is lost is agent-browser's own in-process check. See `browser_shim_source`.
+    if !shimmed {
+        v.push(("AGENT_BROWSER_ALLOWED_DOMAINS".to_string(), allowed.join(",")));
+    }
+    v.extend(vec![
         // Headless. There is no `AGENT_BROWSER_HEADLESS` — agent-browser reads
         // `AGENT_BROWSER_HEADED` and headless is what it does when that is
         // falsey, so the way to pin headless is to pin *that* variable off.
@@ -2722,7 +2975,8 @@ pub fn browser_env(policy: &ResolvedPolicy) -> Vec<(String, String)> {
             "AGENT_BROWSER_ARGS".to_string(),
             "--no-sandbox --disable-dev-shm-usage".to_string(),
         ),
-    ]
+    ]);
+    v
 }
 
 fn merged_env(a: &[(String, String)], b: &[(String, String)]) -> Vec<(String, String)> {
@@ -3299,6 +3553,12 @@ fn run_inner(
     grant_box_git(repo, m, &work, &mut policy, false)?;
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
     prepare_private_tmp(h5i_root, m, &mut policy, None)?;
+    let browser_shim = prepare_browser_shim(h5i_root, m, &mut policy)?;
+    policy.loopback_ports.extend(live_service_ports(h5i_root, m));
+    // Declared in the profile (`[profile.X.net] loopback`), so a dev server the
+    // box runs itself is reachable from the box's own browser.
+    let declared = policy.profile.loopback_ports.clone();
+    policy.loopback_ports.extend(declared);
     prepare_home_state(
         h5i_root,
         m,
@@ -3355,7 +3615,7 @@ fn run_inner(
             &team_identity_env(m, h5i_root),
             &merged_env(
                 &if policy.profile.name == "browser" {
-                    browser_env(&policy)
+                    browser_env(&policy, browser_shim.as_ref())
                 } else {
                     Vec::new()
                 },
@@ -3665,6 +3925,12 @@ pub fn shell(
         &mut policy,
         session_root.as_deref().map(|r| r.join("tmp")).as_deref(),
     )?;
+    let browser_shim = prepare_browser_shim(h5i_root, m, &mut policy)?;
+    policy.loopback_ports.extend(live_service_ports(h5i_root, m));
+    // Declared in the profile (`[profile.X.net] loopback`), so a dev server the
+    // box runs itself is reachable from the box's own browser.
+    let declared = policy.profile.loopback_ports.clone();
+    policy.loopback_ports.extend(declared);
     prepare_home_state(
         h5i_root,
         m,
@@ -3715,7 +3981,7 @@ pub fn shell(
         &merged_env(
             &team_identity_env(m, h5i_root),
             &if policy.profile.name == "browser" {
-                browser_env(&policy)
+                browser_env(&policy, browser_shim.as_ref())
             } else {
                 Vec::new()
             },
@@ -6888,6 +7154,23 @@ pub fn rm(
     // 5. Erase the on-disk env dir (manifest, policy, status, leftovers), then
     //    tidy the now-empty agent dir.
     let dir = m.dir(h5i_root);
+    // A `browser` box leaves Chrome running on purpose — it has to outlive the
+    // `box run` that started it — so removing the box has to stop it, or the
+    // process outlives everything that knows about it. Best-effort, like the
+    // scratch dir below: a survivor is untidy, not unsafe, and must not block
+    // the removal the user asked for.
+    // The whole block is gated, not just the `kill`: on a non-unix target the
+    // binding would be read by nothing, and `-D warnings` fails the
+    // cross-target check on that. `pid_alive` above takes the same shape.
+    #[cfg(unix)]
+    if let Some(pid) = std::fs::read_to_string(dir.join("browser/state/chrome.pid"))
+        .ok()
+        .and_then(|t| t.trim().parse::<i32>().ok())
+    {
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
     // On macOS the private `/tmp` backing lives outside the env dir (see
     // [`private_tmp_backing`]), so erasing the env dir no longer takes it with
     // it. Best-effort: a leftover scratch dir is tidiness, not correctness, and
@@ -7590,6 +7873,43 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn the_private_tmp_is_cleared_when_ours_and_refused_when_not() {
+        use std::os::unix::fs::PermissionsExt;
+        let td = tempfile::tempdir().unwrap();
+
+        // Fresh: created 0700.
+        let fresh = td.path().join("fresh");
+        reset_private_tmp(&fresh).unwrap();
+        assert_eq!(
+            std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+
+        // Ours with leftovers: cleared rather than adopted, and 0700 again even
+        // though the stale directory had been widened.
+        std::fs::write(fresh.join("stale"), b"x").unwrap();
+        std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        reset_private_tmp(&fresh).unwrap();
+        assert!(!fresh.join("stale").exists(), "leftovers survived the reset");
+        assert_eq!(
+            std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+
+        // A symlink planted at the path is refused rather than followed — the
+        // point of the ownership check, since on macOS this lives in
+        // world-writable `/tmp`.
+        let victim = td.path().join("victim");
+        std::fs::create_dir(&victim).unwrap();
+        std::fs::write(victim.join("keep"), b"important").unwrap();
+        let planted = td.path().join("planted");
+        std::os::unix::fs::symlink(&victim, &planted).unwrap();
+        assert!(reset_private_tmp(&planted).is_err(), "followed a symlink");
+        assert!(victim.join("keep").exists(), "the symlink target was cleared");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn prepare_private_tmp_redirects_shared_tmp_to_env_backing() {
         use crate::sandbox::{AgentRuntime, Profile};
         use std::os::unix::fs::PermissionsExt;
@@ -8123,7 +8443,7 @@ mod tests {
         policy.profile.net_egress = vec!["api.anthropic.com".into(), "example.com:8443".into()];
 
         let env: std::collections::HashMap<String, String> =
-            browser_env(&policy).into_iter().collect();
+            browser_env(&policy, None).into_iter().collect();
         let allowed = &env["AGENT_BROWSER_ALLOWED_DOMAINS"];
 
         // The dev server under test never appears in an egress allowlist, so
@@ -8145,7 +8465,7 @@ mod tests {
             crate::sandbox::Profile::builtin("browser", IsolationClaim::Supervised),
         );
         let env: std::collections::HashMap<String, String> =
-            browser_env(&policy).into_iter().collect();
+            browser_env(&policy, None).into_iter().collect();
 
         // Absent, not empty. agent-browser tests for presence, so an empty
         // value would *enable* chat — the opposite of the intent, and exactly

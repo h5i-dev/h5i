@@ -662,6 +662,19 @@ fn network_rules(policy: &ResolvedPolicy, opts: &SeatbeltOptions) -> String {
     s.push_str("(allow network-bind (local ip \"localhost:*\"))\n");
     s.push_str("(allow network-inbound (local ip \"localhost:*\"))\n");
 
+    // The box's own browser, and nothing else on loopback. The arms below refuse
+    // loopback wholesale because here it is the *host's*; this lets exactly the
+    // one port h5i told Chrome to listen on through, and leaves every other
+    // loopback service — h5i's own proxies included — as unreachable as before.
+    let mut ports: Vec<u16> = policy.loopback_ports.clone();
+    ports.sort_unstable();
+    ports.dedup();
+    for port in ports {
+        s.push_str(&format!(
+            "(allow network-outbound (remote ip \"localhost:{port}\"))\n"
+        ));
+    }
+
     match p.net_mode {
         NetMode::Host => {
             s.push_str("(allow network-outbound)\n");
@@ -1253,6 +1266,43 @@ mod tests {
         p.profile.unix_sockets = true;
         let s = build_profile(&p, Path::new("/w"), &opts());
         assert!(s.contains("(allow network-outbound (remote unix-socket))"));
+    }
+
+    #[test]
+    fn only_the_browsers_own_cdp_port_is_dialable_on_loopback() {
+        let mut p = policy(IsolationClaim::Supervised);
+        // Off by default: loopback is the *host's* here, so a box that could
+        // dial it would reach host services, h5i's own proxies among them.
+        let s = build_profile(&p, Path::new("/w"), &opts());
+        assert!(
+            !s.contains("(allow network-outbound (remote ip \"localhost:"),
+            "no loopback egress without a pinned port\n{s}"
+        );
+
+        p.loopback_ports = vec![49999, 49999, 3000];
+        let s = build_profile(&p, Path::new("/w"), &opts());
+        assert!(s.contains("(allow network-outbound (remote ip \"localhost:3000\"))"), "{s}");
+        // Deduplicated: a port declared in the profile and also live as a
+        // service must not emit the rule twice.
+        assert_eq!(
+            s.matches("(allow network-outbound (remote ip \"localhost:49999\"))").count(),
+            1,
+            "duplicate port emitted twice\n{s}"
+        );
+
+        p.loopback_ports = vec![49999];
+        let s = build_profile(&p, Path::new("/w"), &opts());
+        assert!(
+            s.contains("(allow network-outbound (remote ip \"localhost:49999\"))"),
+            "the box's own browser port must be dialable\n{s}"
+        );
+        // Exactly one port, not the interface.
+        assert_eq!(
+            s.matches("(allow network-outbound (remote ip \"localhost:").count(),
+            1,
+            "granted more than the one port\n{s}"
+        );
+        assert!(!s.contains("(allow network-outbound)\n"), "{s}");
     }
 
     #[test]

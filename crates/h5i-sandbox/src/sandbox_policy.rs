@@ -496,6 +496,20 @@ pub struct Profile {
     /// profile's canonical serialization — and its pinned digest — is unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mach_iokit: bool,
+
+    /// Loopback ports the box may dial (`[profile.X.net] loopback = [3000]`).
+    ///
+    /// macOS shares the host's loopback with the box, so it is denied wholesale
+    /// — dialing it would reach host services. A box that runs its own dev
+    /// server and wants to point its own browser at it names the port here, and
+    /// exactly that port is granted. Declared, so it is part of the digest and a
+    /// reviewer sees it; on Linux the box has a private netns and this is
+    /// redundant but harmless.
+    ///
+    /// Appended last, and serialized only when non-empty, so every existing
+    /// profile's canonical serialization — and its pinned digest — is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loopback_ports: Vec<u16>,
 }
 
 /// Read-only system paths granted by default at the `process` tier — enough to
@@ -556,6 +570,7 @@ impl Profile {
             persona: Vec::new(),
             unix_sockets: false,
             mach_iokit: false,
+            loopback_ports: Vec::new(),
         }
     }
 
@@ -862,6 +877,19 @@ pub fn browser_read_grants() -> Vec<String> {
 /// Only meaningful for the kernel tiers, where the box reaches the host
 /// filesystem. A container box gets its browser from the image, so `create`
 /// does not consult this there.
+/// The `agent-browser` binary on this host, if there is one.
+///
+/// The launch-and-attach shim has to invoke the *real* binary by absolute path:
+/// it installs itself on `PATH` under the same name, so a bare `agent-browser`
+/// from inside the shim would be the shim again.
+pub fn agent_browser_binary() -> Option<String> {
+    AGENT_BROWSER_CANDIDATES
+        .iter()
+        .filter_map(|c| expand_home(c))
+        .find(|p| p.is_file())
+        .map(|p| p.display().to_string())
+}
+
 pub fn browser_tooling_present() -> (bool, bool) {
     let any = |list: &[&str]| {
         list.iter()
@@ -1093,6 +1121,19 @@ pub struct ResolvedPolicy {
     /// tier (the only tier that enforces a domain allowlist).
     #[serde(skip)]
     pub user_egress_allow: Vec<String>,
+    /// Runtime-only: the loopback ports this box may dial, and the only ones.
+    ///
+    /// On macOS a box shares the *host's* loopback, so `network_rules` refuses
+    /// outbound to it wholesale — dialing it would reach host services, h5i's
+    /// own proxies among them. But a box has legitimate business on loopback
+    /// with itself: the browser's CDP endpoint, and the dev server a declared
+    /// `[service]` is running. Both are ports h5i allocated for this box, so it
+    /// can name them exactly instead of opening the interface.
+    ///
+    /// Never serialized: these are per-box runtime facts (a service's port is
+    /// assigned when it starts), so a pinned policy digest is unchanged.
+    #[serde(skip)]
+    pub loopback_ports: Vec<u16>,
 }
 
 impl ResolvedPolicy {
@@ -1110,6 +1151,7 @@ impl ResolvedPolicy {
             cache_write: None,
             work_readonly: false,
             user_egress_allow: Vec::new(),
+            loopback_ports: Vec::new(),
         }
     }
 

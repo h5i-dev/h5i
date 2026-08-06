@@ -46,7 +46,8 @@ use crate::error::H5iError;
 // imports them from `sandbox_policy` directly, breaking the `sandbox →
 // container → sandbox` dispatch cycle.
 pub use crate::sandbox_policy::{
-    browser_read_grants, browser_tooling_present, AgentRuntime, AuditCapture, AuditPolicy,
+    agent_browser_binary, browser_read_grants, browser_tooling_present, AgentRuntime, AuditCapture,
+    AuditPolicy,
     BoxGitPath, ExecOutcome, HomeBind, InteractiveOutcome, IsolationClaim, NetMode, PrivateBind,
     PrivatePath, Profile, ResolvedPolicy, RoBind, SecretGrant, DEFAULT_WALL,
 };
@@ -206,6 +207,12 @@ struct NetToml {
     /// `socket()` gate (see [`crate::sandbox_policy::Profile::unix_sockets`]).
     /// `None` inherits the base, so a partial overlay on `browser` keeps it.
     unix: Option<bool>,
+    /// Loopback ports the box may dial, e.g. `loopback = [3000]` for a dev
+    /// server it runs itself. Needed only on macOS, where loopback is the
+    /// *host's* and is otherwise denied wholesale; on Linux the box has its own
+    /// netns and this is redundant but harmless. Declared rather than
+    /// discovered, so the grant is visible in the digested policy.
+    loopback: Option<Vec<u16>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -423,6 +430,11 @@ pub fn load_profile(
                 // overlay keeps the grant its daemon cannot start without.
                 // Explicit `unix = false` takes it away.
                 unix_sockets: t.net.unix.unwrap_or(base.unix_sockets),
+                loopback_ports: t
+                    .net
+                    .loopback
+                    .clone()
+                    .unwrap_or_else(|| base.loopback_ports.clone()),
                 // Inherited from the base, never spelled in `.h5i/env.toml`:
                 // it is not a policy dial an author picks, it is what the
                 // `browser` base needs in order to start a browser at all.
