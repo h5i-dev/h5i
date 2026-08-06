@@ -25,7 +25,7 @@ h5i gives you:
 - **Lightweight sandboxes** that start in under 200 ms for everyday agent tasks
 - **MicroVM isolation** with a separate kernel when stronger boundaries matter
 - **Isolated browsers** that agents can securely control from inside the sandbox
-- **Self-contained environments** with the agent, toolchain, dependencies, and dev server in one boundary
+- **Self-contained environments** with the agent, toolchain, dependencies, and browser in one boundary
 - **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
 
 **Local-first. No hosted sandbox. No SaaS account required.**
