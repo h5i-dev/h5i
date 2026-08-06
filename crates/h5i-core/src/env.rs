@@ -73,8 +73,10 @@ pub const H5I_ENV_INBOX_VAR: &str = "H5I_ENV_INBOX";
 /// `h5i team agent submit` can refuse a provably empty submission in-box
 /// (the box can't read the sealed team refs to learn the base itself).
 pub const H5I_ENV_BASE_TREE_VAR: &str = "H5I_ENV_BASE_TREE";
-const CONTAINER_CAPTURE_SPOOL: &str = "/.h5i/spool";
-const CONTAINER_INBOX_MOUNT: &str = "/.h5i/inbox";
+/// In-box mountpoints, identical on every image-backed tier so nothing running
+/// *inside* a box needs to know whether it booted under Podman or a microVM.
+const BOX_CAPTURE_SPOOL: &str = "/.h5i/spool";
+const BOX_INBOX_MOUNT: &str = "/.h5i/inbox";
 /// Inbox subdir under the env admin dir; mounted read-only into the box.
 const ENV_INBOX_DIR: &str = "inbox";
 #[cfg(unix)] // only the unix-gated RunLock references this
@@ -1919,7 +1921,7 @@ fn grant_box_git(
                 }
             }
         }
-        IsolationClaim::Container => {
+        claim if claim.image_backed() => {
             let mut mounts = box_git_plumbing(repo, m)?;
             mounts.push(BoxGitPath {
                 host: work.to_path_buf(),
@@ -1934,8 +1936,8 @@ fn grant_box_git(
                     });
                 }
             }
-            // Podman errors on a missing bind source (unlike Landlock, which
-            // skips) — keep only what exists on the host.
+            // A bind-mounting runtime errors on a missing source (unlike
+            // Landlock, which skips) — keep only what exists on the host.
             mounts.retain(|b| b.host.exists());
             policy.box_git = mounts;
         }
@@ -1958,6 +1960,22 @@ fn prepare_cargo_env(
         "CARGO_TARGET_DIR".to_string(),
         target_dir.display().to_string(),
     )])
+}
+
+/// The character an image-backed tier's mount **spec string** reserves, and
+/// which a host path therefore cannot contain: `,` for Podman's
+/// `type=bind,source=…,target=…`, `:` for microsandbox's `SOURCE:DEST:OPTIONS`.
+/// `None` for the kernel tiers, which pass paths as arguments rather than as
+/// fields of a delimited string and so have no such hazard.
+///
+/// Callers use this to refuse a path they could not mount, instead of emitting a
+/// spec that would mount something else.
+fn mount_spec_separator(claim: IsolationClaim) -> Option<char> {
+    match claim {
+        IsolationClaim::Container => Some(','),
+        IsolationClaim::Microvm => Some(':'),
+        _ => None,
+    }
 }
 
 /// Materialize per-env private paths (Idea 3): give each declared path its own
@@ -1995,17 +2013,21 @@ fn prepare_private_paths(
         // The mountpoint must exist inside the worktree.
         let target = work.join(&rel);
         std::fs::create_dir_all(&target).map_err(|e| H5iError::with_path(e, &target))?;
-        // Container tier carries the backing dir as a Podman `--mount` whose
-        // syntax can't include a comma — fail closed if the env's host path has
-        // one, rather than silently dropping the (policy-required) isolation.
-        if policy.claim == IsolationClaim::Container && backing.display().to_string().contains(',')
-        {
-            return Err(H5iError::Metadata(format!(
-                "private_paths '{rel}': the env's backing path '{}' contains a ',' which the \
-                 container mount syntax cannot carry — move the repo out of a comma'd path \
-                 (fail-closed)",
-                backing.display()
-            )));
+        // The image-backed tiers carry the backing dir as a mount *spec string*,
+        // and each runtime's syntax reserves a separator its paths cannot
+        // contain: Podman's `--mount` splits on ',', microsandbox's
+        // `SOURCE:DEST` on ':'. Fail closed if the env's host path holds one,
+        // rather than silently dropping the (policy-required) isolation.
+        if let Some(sep) = mount_spec_separator(policy.claim) {
+            if backing.display().to_string().contains(sep) {
+                return Err(H5iError::Metadata(format!(
+                    "private_paths '{rel}': the env's backing path '{}' contains a '{sep}' which \
+                     the {} tier's mount syntax cannot carry — move the repo out of that path \
+                     (fail-closed)",
+                    backing.display(),
+                    policy.claim.as_str()
+                )));
+            }
         }
         if kernel {
             policy.profile.fs_write.push(backing.display().to_string());
@@ -2302,9 +2324,9 @@ fn prepare_env_inbox(
     let inbox = env_inbox_dir(h5i_root, m);
     std::fs::create_dir_all(&inbox).map_err(|e| H5iError::with_path(e, &inbox))?;
     let inside = match policy.claim {
-        IsolationClaim::Container => {
+        claim if claim.image_backed() => {
             policy.env_inbox = Some(inbox);
-            CONTAINER_INBOX_MOUNT.to_string()
+            BOX_INBOX_MOUNT.to_string()
         }
         IsolationClaim::Process | IsolationClaim::Supervised => {
             // Read-only: the box may read its inbox, never write it.
@@ -2393,9 +2415,9 @@ fn prepare_env_capture_spool(
     let spool = m.dir(h5i_root).join("spool");
     std::fs::create_dir_all(&spool).map_err(|e| H5iError::with_path(e, &spool))?;
     let spool_inside = match policy.claim {
-        IsolationClaim::Container => {
+        claim if claim.image_backed() => {
             policy.env_capture_spool = Some(spool);
-            CONTAINER_CAPTURE_SPOOL.to_string()
+            BOX_CAPTURE_SPOOL.to_string()
         }
         IsolationClaim::Process | IsolationClaim::Supervised => {
             policy.profile.fs_write.push(spool.display().to_string());
@@ -2843,7 +2865,7 @@ fn push_protected_hook_config(
     let original = std::fs::read(&path).ok();
     let mut sentinel_created = false;
     let mut parent_created = false;
-    if claim == IsolationClaim::Container
+    if claim.image_backed()
         && matches!(scope, ProtectedHookScope::Worktree)
         && original.is_none()
     {
@@ -3057,8 +3079,8 @@ fn write_user_allow(path: &Path, rules: &[String]) -> Result<(), H5iError> {
 /// `403 Blocked by network policy` is self-diagnosing.
 fn apply_user_egress(policy: &mut sandbox::ResolvedPolicy) {
     let user = user_allow_list();
-    let enforced = matches!(policy.claim, IsolationClaim::Container)
-        && !policy.profile.net_egress.is_empty();
+    let enforced =
+        policy.claim.enforces_egress_allowlist() && !policy.profile.net_egress.is_empty();
     if enforced {
         policy.user_egress_allow = user
             .into_iter()
@@ -3071,7 +3093,7 @@ fn apply_user_egress(policy: &mut sandbox::ResolvedPolicy) {
             })
             .collect();
         announce_egress(policy);
-    } else if matches!(policy.claim, IsolationClaim::Container) && !user.is_empty() {
+    } else if policy.claim.enforces_egress_allowlist() && !user.is_empty() {
         eprintln!(
             "note: {} `h5i dev allow` rule(s) ignored — profile '{}' sets no net.egress \
              (a deny-all profile is never widened from outside the policy)",
@@ -3081,7 +3103,11 @@ fn apply_user_egress(policy: &mut sandbox::ResolvedPolicy) {
     }
 }
 
-/// One line at session start explaining the enforced egress scope.
+/// One line at session start explaining the enforced egress scope — and, since
+/// the two tiers that enforce it do so by different mechanisms with different
+/// holes, *how* it is enforced. A `403` from a proxy and a dropped packet are
+/// diagnosed differently, and the line is the only place the box's operator is
+/// told which one to expect.
 fn announce_egress(policy: &sandbox::ResolvedPolicy) {
     const SHOW: usize = 8;
     let profile = &policy.profile.net_egress;
@@ -3103,7 +3129,11 @@ fn announce_egress(policy: &sandbox::ResolvedPolicy) {
             policy.user_egress_allow.join(", ")
         )
     };
-    eprintln!("⦿ egress (proxy-enforced, everything else 403): {line}{user_part}");
+    let how = match policy.claim {
+        IsolationClaim::Microvm => "address-enforced in the VM netstack, everything else dropped",
+        _ => "proxy-enforced, everything else 403",
+    };
+    eprintln!("⦿ egress ({how}): {line}{user_part}");
 }
 
 /// Run `argv` inside the env's worktree under its pinned policy, and record
@@ -3858,11 +3888,12 @@ fn default_shell_argv(
     // The container shell + its rc come from the image, not the host — the host
     // `~/.bashrc` is never sourced there, so there is nothing to neutralize and
     // a host-path rcfile would not resolve in-box. Honor neither default here.
-    if policy.claim == IsolationClaim::Container {
+    if policy.claim.image_backed() {
         if policy.profile.shell_rcfile.is_some() {
             eprintln!(
-                "   note: [shell] rcfile is ignored at isolation=container \
-                 (the shell rc comes from the image)"
+                "   note: [shell] rcfile is ignored at isolation={} \
+                 (the shell rc comes from the image)",
+                policy.claim.as_str()
             );
         }
         return Ok(bare);
@@ -4504,7 +4535,7 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
         }
         if !p.net_egress.is_empty() {
             out.push_str(&format!("  egress   : {}", p.net_egress.join(", ")));
-            if matches!(policy.claim, IsolationClaim::Container) {
+            if policy.claim.enforces_egress_allowlist() {
                 let extras: Vec<String> = user_allow_list()
                     .into_iter()
                     .filter(|u| !p.net_egress.iter().any(|e| e.trim().eq_ignore_ascii_case(u)))
@@ -4620,9 +4651,23 @@ pub fn doctor(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> DoctorRepo
                     false,
                     "workspace tier needs no kernel confinement".into()
                 ),
-                IsolationClaim::Container
-                | IsolationClaim::HardenedContainer
-                | IsolationClaim::Microvm => {
+                IsolationClaim::Microvm => match caps.microvm_runtime.as_deref() {
+                    Some(rt) => chk!(
+                        "enforcement",
+                        true,
+                        false,
+                        format!("microVM runtime present ({rt}) and the host can virtualize")
+                    ),
+                    // Name the missing half. "Install msb" and "enable nested
+                    // virtualization" are different problems with different fixes.
+                    None => chk!(
+                        "enforcement",
+                        false,
+                        false,
+                        sandbox::microvm_unavailable_detail()
+                    ),
+                },
+                IsolationClaim::Container | IsolationClaim::HardenedContainer => {
                     if let Some(rt) = caps.container_runtime.as_deref() {
                         chk!(
                             "enforcement",

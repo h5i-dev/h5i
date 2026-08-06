@@ -109,10 +109,10 @@ Remote to fetch the PR head from (with \-\-pr)
 Policy profile from .h5i/env.toml. Built\-ins need no file: `agent` (agent\-in\-box, scoped to $H5I_AGENT\*(Aqs runtime), `agent\-claude` / `agent\-codex` (pin one runtime: only that agent\*(Aqs HOME state + API egress), `browser` (the agent profile plus headless Chrome and the agent\-browser daemon, so the agent can drive a real browser against the dev server it just started), and `default` (fail\-closed build/test confinement). Unset auto\-picks the creating runtime\*(Aqs agent profile when this host can enforce it, else `default`
 .TP
 \fB\-\-isolation\fR \fI<ISOLATION>\fR
-Isolation: auto (default) | workspace | process | supervised | container | hardened\-container | microvm. `auto` (or unset) picks the strongest tier the host can run; an explicit tier fails closed if the host cannot satisfy it (never silently downgrades)
+Isolation: auto (default) | workspace | process | supervised | container | microvm. `auto` (or unset) picks the strongest tier the host can run; an explicit tier fails closed if the host cannot satisfy it (never silently downgrades). `microvm` boots a hardware\-isolated guest via microsandbox (`msb`) and is the only tier whose net.egress allowlist is enforced by address rather than by an HTTP proxy; it needs an image and host virtualization
 .TP
 \fB\-\-image\fR \fI<IMAGE>\fR
-Container base image for isolation=container (pre\-pulled; runs use \-\-pull=never). Overrides the profile\*(Aqs `container.image` and the repo\-level `[container] image` default in .h5i/env.toml. Passing it makes the container tier a candidate for the isolation auto\-pick
+Base image for isolation=container and isolation=microvm (pre\-pulled; runs never pull). Overrides the profile\*(Aqs `container.image` and the repo\-level `[container] image` default in .h5i/env.toml. Passing it makes both image\-backed tiers candidates for the isolation auto\-pick
 .TP
 \fB\-\-backend\fR \fI<BACKEND>\fR [default: auto]
 Workspace backend (auto|worktree)
@@ -171,7 +171,7 @@ Environment name (slug, `agent/slug`, or full `env/agent/slug`)
 [\fICOMMAND\fR]
 Command to run inside the box (after `\-\-`); default: an interactive shell
 .SH "H5I BOX ALLOW"
-Manage the persistent user-level egress allowlist: extra hosts merged into every container-tier env whose profile already sets net.egress (a deny-all profile is never widened). Stored host-side under ~/.config/h5i/, outside every box-granted path; takes effect at the next `env run`/`env shell`. With no rule, lists the current entries
+Manage the persistent user-level egress allowlist: extra hosts merged into every container- or microvm-tier env whose profile already sets net.egress (a deny-all profile is never widened). Stored host-side under ~/.config/h5i/, outside every box-granted path; takes effect at the next `env run`/`env shell`. With no rule, lists the current entries
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS

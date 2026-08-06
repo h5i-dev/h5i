@@ -51,15 +51,18 @@ pub enum BoxCommands {
         /// agent profile when this host can enforce it, else `default`.
         #[arg(long)]
         profile: Option<String>,
-        /// Isolation: auto (default) | workspace | process | supervised | container | hardened-container | microvm.
+        /// Isolation: auto (default) | workspace | process | supervised | container | microvm.
         /// `auto` (or unset) picks the strongest tier the host can run; an explicit
         /// tier fails closed if the host cannot satisfy it (never silently downgrades).
+        /// `microvm` boots a hardware-isolated guest via microsandbox (`msb`) and is
+        /// the only tier whose net.egress allowlist is enforced by address rather
+        /// than by an HTTP proxy; it needs an image and host virtualization.
         #[arg(long)]
         isolation: Option<String>,
-        /// Container base image for isolation=container (pre-pulled; runs use
-        /// --pull=never). Overrides the profile's `container.image` and the
+        /// Base image for isolation=container and isolation=microvm (pre-pulled;
+        /// runs never pull). Overrides the profile's `container.image` and the
         /// repo-level `[container] image` default in .h5i/env.toml. Passing it
-        /// makes the container tier a candidate for the isolation auto-pick.
+        /// makes both image-backed tiers candidates for the isolation auto-pick.
         #[arg(long)]
         image: Option<String>,
         /// Workspace backend (auto|worktree)
@@ -113,8 +116,8 @@ pub enum BoxCommands {
     },
 
     /// Manage the persistent user-level egress allowlist: extra hosts merged
-    /// into every container-tier env whose profile already sets net.egress
-    /// (a deny-all profile is never widened). Stored host-side under
+    /// into every container- or microvm-tier env whose profile already sets
+    /// net.egress (a deny-all profile is never widened). Stored host-side under
     /// ~/.config/h5i/, outside every box-granted path; takes effect at the
     /// next `env run`/`env shell`. With no rule, lists the current entries.
     Allow {
@@ -990,6 +993,10 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         "  container    = {}",
                         caps.container_runtime.as_deref().unwrap_or("none")
                     );
+                    println!(
+                        "  microvm      = {}",
+                        caps.microvm_runtime.as_deref().unwrap_or("none")
+                    );
                     println!();
                     for (claim, profile_net_deny) in [
                         (h5i_core::sandbox::IsolationClaim::Workspace, false),
@@ -1010,16 +1017,30 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             }
                         );
                     }
-                    // Container claim: needs rootless Podman + a profile image;
-                    // show whether the runtime half is satisfiable.
+                    // Image-backed claims: each needs its own runtime plus a
+                    // profile image; show whether the runtime half is there.
                     let container_ok = caps.container_runtime.is_some();
                     println!(
                         "  claim {:<10} satisfiable = {} (needs rootless Podman + profile container.image)",
                         "container",
                         if container_ok { style("yes").green() } else { style("no").red() }
                     );
+                    let microvm_ok = caps.microvm_runtime.is_some();
                     println!(
-                        "  claim hardened-container/microvm: external backends (not in this build)"
+                        "  claim {:<10} satisfiable = {} (needs microsandbox `msb` + host virtualization + profile container.image)",
+                        "microvm",
+                        if microvm_ok { style("yes").green() } else { style("no").red() }
+                    );
+                    if !microvm_ok {
+                        // Which half is missing decides what the reader does
+                        // next: install a package, or turn on nested virt.
+                        println!(
+                            "    {}",
+                            style(h5i_core::sandbox::microvm_unavailable_detail()).dim()
+                        );
+                    }
+                    println!(
+                        "  claim hardened-container: external backend (not in this build)"
                     );
                     // Functional self-test: bits can be present while a hardened
                     // kernel still denies exec under the full confinement stack.
@@ -1070,7 +1091,25 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             "  container        = {}",
                             report.container_runtime.as_deref().unwrap_or("none")
                         );
+                        println!(
+                            "  microvm          = {}",
+                            report.microvm_runtime.as_deref().unwrap_or("none")
+                        );
                         println!("  egress_enforced  = {}", yn(report.egress_enforced));
+                        // The distinction that matters for untrusted code: an
+                        // L7 proxy stops `curl`, an L3 filter stops a raw socket.
+                        println!(
+                            "  egress_l3        = {} {}",
+                            yn(report.egress_enforced_l3),
+                            style(if report.egress_enforced_l3 {
+                                "(by address, microvm netstack)"
+                            } else if report.egress_enforced {
+                                "(allowlist is L7 proxy only)"
+                            } else {
+                                ""
+                            })
+                            .dim()
+                        );
                         println!("  syscall_filter   = {}", yn(report.syscall_filter));
                         println!("  resource_limits  = {}", yn(report.resource_limits));
                         println!("  memory_limit     = {}", yn(report.memory_limit));

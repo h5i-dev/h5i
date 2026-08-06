@@ -500,28 +500,24 @@ pub fn effective_auto(
             }
         }
     }
-    // Strongest first. `container` is only picked when the profile sets an
-    // image (resolve refuses it otherwise), so the bare default lands on the
-    // strongest *kernel* confinement instead.
-    for tier in [
-        IsolationClaim::Container,
-        IsolationClaim::Supervised,
-        IsolationClaim::Process,
-    ] {
+    // Strongest first ([`AUTO_TIERS`]).
+    for tier in AUTO_TIERS {
         let Ok(mut profile) = load_profile(repo_workdir, name, Some(tier)) else {
             continue;
         };
         if let Some(img) = image_override {
             profile.image = Some(img.to_string());
         }
-        // Container needs a declared image; without one `resolve` refuses it
-        // regardless of the host, so skip the candidate before paying the ~1s
-        // Podman probe that `probe_host_for(Container)` would trigger.
-        if tier == IsolationClaim::Container && profile.image.is_none() {
+        // The image-backed tiers need a declared image; without one `resolve`
+        // refuses them regardless of the host, so skip the candidate before
+        // paying the runtime probe that `probe_host_for` would trigger (~1s for
+        // `podman info`).
+        if tier.image_backed() && profile.image.is_none() {
             continue;
         }
-        // Probe only what this tier consults: container resolves against the
-        // Podman-aware caps, every other tier against the cheap kernel-only probe.
+        // Probe only what this tier consults: the image-backed tiers resolve
+        // against the runtime-aware caps, every other tier against the cheap
+        // kernel-only probe.
         let caps = probe_host_for(tier);
         let runnable = resolve(&profile, &caps).and_then(|pol| verify_exec(&pol)).is_ok();
         if runnable {
@@ -757,6 +753,12 @@ pub struct HostCaps {
     /// Detected rootless Podman binary for `isolation=container`; `None` when
     /// Podman is absent, broken, or rootful.
     pub container_runtime: Option<String>,
+    /// Detected microVM runtime binary for `isolation=microvm` (microsandbox's
+    /// `msb`); `None` when it is absent, too old, or the host cannot virtualize.
+    /// Kept separate from `container_runtime` because the two answer different
+    /// questions: a host can have Podman and no KVM, or KVM and no Podman.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub microvm_runtime: Option<String>,
 }
 
 impl HostCaps {
@@ -805,17 +807,18 @@ pub fn probe_host() -> HostCaps {
         .get_or_init(|| {
             let mut caps = probe_host_kernel();
             caps.container_runtime = crate::container::probe().map(|r| r.bin);
+            caps.microvm_runtime = crate::microvm::probe().map(|r| r.bin);
             caps
         })
         .clone()
 }
 
 /// Kernel-only probe: Landlock/userns/seccomp, but **not** the ~1s Podman
-/// shell-out (`container_runtime` is left `None`). `resolve` only reads
-/// `container_runtime` inside the container arm (after the image check), and
-/// `supervisor::probe` only reads the kernel bits — so every non-container claim
-/// can probe with this and skip `podman info` entirely. Memoized separately from
-/// the full probe so the two never cross-trigger.
+/// shell-out (`container_runtime` and `microvm_runtime` are left `None`).
+/// `resolve` only reads those inside the container/microvm arms (after the image
+/// check), and `supervisor::probe` only reads the kernel bits — so every
+/// non-image-backed claim can probe with this and skip `podman info` entirely.
+/// Memoized separately from the full probe so the two never cross-trigger.
 pub fn probe_host_kernel() -> HostCaps {
     HOST_CAPS_KERNEL.get_or_init(probe_host_kernel_uncached).clone()
 }
@@ -828,8 +831,24 @@ pub fn podman_present() -> bool {
     crate::container::podman_present()
 }
 
-/// Capability probe scoped to what `claim` actually needs: the container family
-/// gets the full (Podman-aware) probe; every other claim gets the cheap
+/// Cheap "is microsandbox installed?" check for discoverability hints — runs
+/// only `msb --version`, not the virtualization check. Use when a hint just
+/// needs binary presence, not full microvm-tier readiness (that's
+/// [`probe_host`]'s `microvm_runtime`).
+pub fn msb_present() -> bool {
+    crate::microvm::msb_present()
+}
+
+/// Why the `microvm` tier is unavailable on this host, naming the specific
+/// missing half (no `msb`, an `msb` too old, or no virtualization). For
+/// diagnostics — `env doctor`/`env probe` — that must be actionable rather than
+/// merely negative.
+pub fn microvm_unavailable_detail() -> String {
+    crate::microvm::unavailable_detail()
+}
+
+/// Capability probe scoped to what `claim` actually needs: the image-backed
+/// family gets the full (runtime-aware) probe; every other claim gets the cheap
 /// kernel-only probe. This is the choke point that keeps a default supervised/
 /// process `env create` from ever shelling out to `podman info`.
 pub fn probe_host_for(claim: IsolationClaim) -> HostCaps {
@@ -841,6 +860,20 @@ pub fn probe_host_for(claim: IsolationClaim) -> HostCaps {
     }
 }
 
+/// The tiers `--isolation auto` will consider, strongest first.
+///
+/// `microvm` leads: when a host can virtualize and the profile names an image,
+/// it is the strongest boundary h5i can build, and its egress allowlist is the
+/// only one enforced by address rather than by proxy etiquette. Both image-backed
+/// tiers are skipped without an image, so a bare default still lands on the
+/// strongest *kernel* confinement rather than refusing.
+const AUTO_TIERS: [IsolationClaim; 4] = [
+    IsolationClaim::Microvm,
+    IsolationClaim::Container,
+    IsolationClaim::Supervised,
+    IsolationClaim::Process,
+];
+
 /// Support for one isolation claim on this host: can its policy be *resolved*
 /// (`satisfiable`), and — for the kernel tiers — does a confined command
 /// actually *exec* here (`runnable`, the functional `verify_exec` self-test)?
@@ -849,8 +882,9 @@ pub struct ClaimSupport {
     pub claim: &'static str,
     pub satisfiable: bool,
     /// Functional exec self-test for the kernel tiers (`Some`); `None` for tiers
-    /// not exec-tested here (container needs an image; hardened/microvm aren't
-    /// built in).
+    /// not exec-tested here (container and microvm both need a profile image, so
+    /// their readiness is a runtime check rather than a boot; hardened-container
+    /// has no adapter in this build).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runnable: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -883,10 +917,21 @@ pub struct CapabilitiesReport {
     /// (see `seatbelt::RESOURCE_NOTE`).
     pub memory_limit: bool,
     pub container_runtime: Option<String>,
-    /// A **domain allowlist** for egress can be *enforced* here. Only the
-    /// container tier's DNS-pinned proxy enforces it; the kernel tiers can
-    /// deny-all but never allowlist, so this tracks the container runtime.
+    /// Detected microVM runtime (microsandbox's `msb`) for `isolation=microvm`;
+    /// `None` when it is absent, too old, or the host cannot virtualize.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub microvm_runtime: Option<String>,
+    /// A **domain allowlist** for egress can be *enforced* here. The container
+    /// tier's DNS-pinned proxy enforces it at L7 and the microvm tier's netstack
+    /// rules enforce it by address; the kernel tiers can deny-all but never
+    /// allowlist, so this tracks whether either of those runtimes is present.
     pub egress_enforced: bool,
+    /// The allowlist above is enforced **by address** (L3/L4), not by a proxy the
+    /// box could decline to use. True only for the microvm tier. Distinguished
+    /// from `egress_enforced` because it is exactly the difference a caller
+    /// running genuinely untrusted code needs to know about: an L7 proxy stops
+    /// `curl` and does not stop a raw socket.
+    pub egress_enforced_l3: bool,
     /// Resource limits (mem / procs / wall / cpu) can be enforced — true when
     /// any confined tier beyond `workspace` runs here (kernel rlimits or the
     /// container runtime's cgroup limits).
@@ -956,30 +1001,43 @@ pub fn capabilities_report() -> CapabilitiesReport {
         runnable: None,
         note: Some("needs rootless Podman + profile container.image"),
     });
-    for claim in [IsolationClaim::HardenedContainer, IsolationClaim::Microvm] {
-        claims.push(ClaimSupport {
-            claim: claim.as_str(),
-            satisfiable: false,
-            runnable: None,
-            note: Some("external backend (not in this build)"),
-        });
+    claims.push(ClaimSupport {
+        claim: IsolationClaim::HardenedContainer.as_str(),
+        satisfiable: false,
+        runnable: None,
+        note: Some("external backend (not in this build)"),
+    });
+    // microVM tier: gated by microsandbox's `msb` **and** host virtualization;
+    // like container, a concrete run also needs a profile image, so it isn't
+    // exec-tested here.
+    let microvm_ok = caps.microvm_runtime.is_some();
+    if microvm_ok && IsolationClaim::Microvm > strongest {
+        strongest = IsolationClaim::Microvm;
     }
+    claims.push(ClaimSupport {
+        claim: IsolationClaim::Microvm.as_str(),
+        satisfiable: microvm_ok,
+        runnable: None,
+        note: Some("needs microsandbox `msb` + host virtualization + profile container.image"),
+    });
 
     let confined_tier_runs = claims
         .iter()
         .any(|c| c.claim != "workspace" && c.runnable == Some(true));
-    let resource_limits = container_ok || confined_tier_runs;
+    let resource_limits = container_ok || microvm_ok || confined_tier_runs;
     // Darwin has no cgroups and does not enforce RLIMIT_AS against mmap, so a
     // memory cap at the kernel tiers there would be a limit in name only. Say
-    // so rather than let `resource_limits` imply it.
-    let memory_limit = container_ok || (caps.os != "macos" && confined_tier_runs);
-    // A domain allowlist is enforced by the container tier's DNS-pinned proxy
-    // and — on macOS — by the supervised tier, whose Seatbelt profile leaves the
-    // box no outbound route except that same proxy on loopback.
+    // so rather than let `resource_limits` imply it. A microVM's memory is the
+    // guest's whole address space, so it is a hard cap on every host.
+    let memory_limit = container_ok || microvm_ok || (caps.os != "macos" && confined_tier_runs);
+    // A domain allowlist is enforced by the container tier's DNS-pinned proxy,
+    // by the microvm tier's netstack rules, and — on macOS — by the supervised
+    // tier, whose Seatbelt profile leaves the box no outbound route except that
+    // same proxy on loopback.
     let supervised_runs = claims
         .iter()
         .any(|c| c.claim == "supervised" && c.runnable == Some(true));
-    let egress_enforced = container_ok || (caps.os == "macos" && supervised_runs);
+    let egress_enforced = container_ok || microvm_ok || (caps.os == "macos" && supervised_runs);
 
     CapabilitiesReport {
         mechanism: caps.confinement_mechanism(),
@@ -991,7 +1049,9 @@ pub fn capabilities_report() -> CapabilitiesReport {
         seatbelt: caps.seatbelt,
         memory_limit,
         container_runtime: caps.container_runtime,
+        microvm_runtime: caps.microvm_runtime,
         egress_enforced,
+        egress_enforced_l3: microvm_ok,
         resource_limits,
         claims,
         strongest_tier: strongest.as_str(),
@@ -1007,6 +1067,7 @@ fn probe_host_kernel_uncached() -> HostCaps {
         seccomp: probe_seccomp(),
         seatbelt: false,
         container_runtime: None,
+        microvm_runtime: None,
     }
 }
 
@@ -1022,6 +1083,7 @@ fn probe_host_kernel_uncached() -> HostCaps {
         seccomp: false,
         seatbelt: crate::seatbelt::probe().usable(),
         container_runtime: None,
+        microvm_runtime: None,
     }
 }
 
@@ -1034,6 +1096,7 @@ fn probe_host_kernel_uncached() -> HostCaps {
         seccomp: false,
         seatbelt: false,
         container_runtime: None,
+        microvm_runtime: None,
     }
 }
 
@@ -1185,6 +1248,61 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
                 ));
             }
         }
+        IsolationClaim::Microvm => {
+            // Same ordering rule as the container arm: validate the declared
+            // config (image) BEFORE probing host capability, so the error a box
+            // or a CI runner sees is the host-independent one it can act on.
+            if profile.image.is_none() {
+                return Err(H5iError::Metadata(format!(
+                    "isolation claim 'microvm' requires a base image — pass `--image <img>`, \
+                     set a repo default `[container] image = \"…\"` in .h5i/env.toml, or set \
+                     `container.image` in profile '{}' (the microvm tier boots the same OCI \
+                     images the container tier runs)",
+                    profile.name
+                )));
+            }
+            if caps.microvm_runtime.is_none() {
+                // Say which half is missing. "Install microsandbox" and "enable
+                // nested virtualization in your hypervisor" are very different
+                // afternoons, and a tier that refuses without saying which one
+                // is a tier nobody can adopt.
+                let detail = crate::microvm::unavailable_detail();
+                return Err(H5iError::Metadata(format!(
+                    "isolation claim 'microvm' cannot be satisfied on this host — refusing \
+                     (h5i never silently downgrades):\n  - {detail}\nRe-request a weaker claim \
+                     (--isolation container|supervised|process), or run on a host with \
+                     virtualization enabled."
+                )));
+            }
+            // Reject an untranslatable allowlist here, at policy-resolve time,
+            // rather than at first run: a `net.egress` entry the rule grammar
+            // cannot carry exactly is a policy this tier cannot enforce, and the
+            // place to find that out is `env create`.
+            crate::microvm::egress_rule_tokens(&profile.net_egress)?;
+            // Authenticated egress (5.5) hands the box a base URL pointing at a
+            // proxy on the *host's* loopback. A container reaches that through a
+            // known slirp gateway; a microVM's guest has its own loopback and its
+            // own per-sandbox subnet, so the same URL resolves to nothing inside
+            // it. Refuse the combination rather than hand the box an origin it
+            // cannot dial — a grant that silently fails to authenticate is worse
+            // than one that never started.
+            if !profile.auth.is_empty() {
+                return Err(H5iError::Metadata(format!(
+                    "profile '{}' declares authenticated-egress grants ({}), which the microvm \
+                     tier cannot route yet: the credential proxy listens on the host's loopback \
+                     and a microVM has its own. Use --isolation container|supervised for this \
+                     profile, or drop the `[[profile.{}.auth]]` grants (fail-closed).",
+                    profile.name,
+                    profile
+                        .auth
+                        .iter()
+                        .map(|g| g.host.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    profile.name
+                )));
+            }
+        }
         IsolationClaim::Supervised => {
             // The keystone safety property: refuse unless the ENTIRE mediation
             // stack probes green on this host. Never downgrade to a weaker tier
@@ -1266,6 +1384,7 @@ pub fn run_with_env(
         IsolationClaim::Process => run_confined(policy, work, argv, injected_env),
         IsolationClaim::Supervised => crate::supervisor::run(policy, work, argv, injected_env),
         IsolationClaim::Container => crate::container::run(policy, work, argv, injected_env),
+        IsolationClaim::Microvm => crate::microvm::run(policy, work, argv, injected_env),
         claim => Err(H5iError::Metadata(format!(
             "no backend for isolation claim '{}'",
             claim.as_str()
@@ -1440,6 +1559,15 @@ pub fn run_interactive(
         }
         IsolationClaim::Container => {
             crate::container::run_interactive(
+                policy,
+                work,
+                argv,
+                injected_env,
+                managed_settings_content,
+            )
+        }
+        IsolationClaim::Microvm => {
+            crate::microvm::run_interactive(
                 policy,
                 work,
                 argv,
@@ -3435,7 +3563,15 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     }
 
     fn caps(landlock: Option<i32>, userns: bool, seccomp: bool) -> HostCaps {
-        HostCaps { os: "linux".into(), landlock_abi: landlock, userns, seccomp, seatbelt: false, container_runtime: None }
+        HostCaps {
+            os: "linux".into(),
+            landlock_abi: landlock,
+            userns,
+            seccomp,
+            seatbelt: false,
+            container_runtime: None,
+            microvm_runtime: None,
+        }
     }
 
     #[test]
@@ -3463,11 +3599,11 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
 
     #[test]
     fn resolve_refuses_unimplemented_backends() {
-        for claim in [IsolationClaim::HardenedContainer, IsolationClaim::Microvm] {
-            let p = Profile::builtin("default", claim);
-            let err = resolve(&p, &caps(Some(5), true, true)).unwrap_err();
-            assert!(err.to_string().contains("backend"), "{err}");
-        }
+        // `hardened-container` (gVisor/Kata) still has no adapter. `microvm`
+        // does — see `resolve_microvm_requires_image_and_runtime`.
+        let p = Profile::builtin("default", IsolationClaim::HardenedContainer);
+        let err = resolve(&p, &caps(Some(5), true, true)).unwrap_err();
+        assert!(err.to_string().contains("backend"), "{err}");
     }
 
     fn caps_with_container(runtime: Option<&str>) -> HostCaps {
@@ -3478,7 +3614,49 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
             seccomp: true,
             seatbelt: false,
             container_runtime: runtime.map(str::to_owned),
+            microvm_runtime: None,
         }
+    }
+
+    fn caps_with_microvm(runtime: Option<&str>) -> HostCaps {
+        HostCaps {
+            microvm_runtime: runtime.map(str::to_owned),
+            ..caps_with_container(None)
+        }
+    }
+
+    #[test]
+    fn resolve_microvm_requires_image_and_runtime() {
+        // A missing image is a *static* profile error — true on every host — so
+        // it is reported before the host probe, and a box or a CI runner with no
+        // virtualization still gets the message it can act on.
+        let bare = Profile::builtin("default", IsolationClaim::Microvm);
+        let err = resolve(&bare, &caps_with_microvm(Some("msb"))).unwrap_err();
+        assert!(err.to_string().contains("requires a base image"), "{err}");
+
+        // Image declared, no runtime → refuse, never downgrade.
+        let mut imaged = bare.clone();
+        imaged.image = Some("alpine".into());
+        let err = resolve(&imaged, &caps_with_microvm(None)).unwrap_err();
+        let text = err.to_string();
+        assert!(text.contains("never silently downgrades"), "{text}");
+        assert!(text.contains("microvm"), "{text}");
+
+        // Both halves present → satisfiable.
+        let policy = resolve(&imaged, &caps_with_microvm(Some("msb"))).unwrap();
+        assert_eq!(policy.claim, IsolationClaim::Microvm);
+    }
+
+    #[test]
+    fn resolve_microvm_rejects_an_untranslatable_egress_entry_at_create_time() {
+        // A `net.egress` entry this tier's rule grammar cannot carry exactly is
+        // a policy it cannot enforce. Finding that out at `env create` beats
+        // finding it out on the first run inside the box.
+        let mut p = Profile::builtin("default", IsolationClaim::Microvm);
+        p.image = Some("alpine".into());
+        p.net_egress = vec!["*.com".into()];
+        let err = resolve(&p, &caps_with_microvm(Some("msb"))).unwrap_err();
+        assert!(err.to_string().contains("at least two"), "{err}");
     }
 
     #[test]
@@ -3529,6 +3707,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
             seccomp: false,
             seatbelt,
             container_runtime: None,
+            microvm_runtime: None,
         }
     }
 
@@ -3557,6 +3736,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
             seccomp: false,
             seatbelt: false,
             container_runtime: None,
+            microvm_runtime: None,
         };
         let err = resolve(&p, &win).unwrap_err();
         assert!(err.to_string().contains("windows"), "{err}");
@@ -3656,24 +3836,36 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         // Workspace is the floor: no confinement needed, so always usable.
         let ws = r.claims.iter().find(|c| c.claim == "workspace").unwrap();
         assert!(ws.satisfiable && ws.runnable == Some(true));
-        // Not-in-this-build backends are always unsatisfiable.
-        for name in ["hardened-container", "microvm"] {
-            let c = r.claims.iter().find(|c| c.claim == name).unwrap();
-            assert!(!c.satisfiable && c.runnable.is_none());
-        }
+        // The one remaining not-in-this-build backend is always unsatisfiable.
+        let hc = r.claims.iter().find(|c| c.claim == "hardened-container").unwrap();
+        assert!(!hc.satisfiable && hc.runnable.is_none());
+        // The image-backed tiers are never exec-tested (a run needs an image),
+        // and each tracks its own runtime.
+        let mv = r.claims.iter().find(|c| c.claim == "microvm").unwrap();
+        assert!(mv.runnable.is_none());
+        assert_eq!(mv.satisfiable, r.microvm_runtime.is_some());
+        let ct = r.claims.iter().find(|c| c.claim == "container").unwrap();
+        assert!(ct.runnable.is_none());
+        assert_eq!(ct.satisfiable, r.container_runtime.is_some());
         // A domain allowlist is enforced by the container tier's DNS-pinned
-        // proxy, and on macOS also by the supervised tier — whose Seatbelt
-        // profile leaves the box no outbound route except that same proxy. The
-        // Linux kernel tiers can deny all but never allowlist, so they do not
-        // count towards this.
+        // proxy, by the microvm tier's netstack rules, and on macOS also by the
+        // supervised tier — whose Seatbelt profile leaves the box no outbound
+        // route except that same proxy. The Linux kernel tiers can deny all but
+        // never allowlist, so they do not count towards this.
         let supervised_runs = r
             .claims
             .iter()
             .any(|c| c.claim == "supervised" && c.runnable == Some(true));
         assert_eq!(
             r.egress_enforced,
-            r.container_runtime.is_some() || (r.os == "macos" && supervised_runs)
+            r.container_runtime.is_some()
+                || r.microvm_runtime.is_some()
+                || (r.os == "macos" && supervised_runs)
         );
+        // L3 enforcement is the microvm tier's alone: an L7 proxy stops `curl`
+        // and does not stop a raw socket, and the report must not blur the two.
+        assert_eq!(r.egress_enforced_l3, r.microvm_runtime.is_some());
+        assert!(!r.egress_enforced_l3 || r.egress_enforced);
         // The two honesty flags, which exist so a caller never infers a
         // guarantee from a tier name that means different things per platform.
         assert!(
@@ -3681,8 +3873,11 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
             "only Linux has a syscall deny-list; macOS must never claim one"
         );
         assert!(
-            !(r.memory_limit && r.os == "macos" && r.container_runtime.is_none()),
-            "Darwin cannot cap memory without the container tier"
+            !(r.memory_limit
+                && r.os == "macos"
+                && r.container_runtime.is_none()
+                && r.microvm_runtime.is_none()),
+            "Darwin cannot cap memory without an image-backed tier"
         );
         assert!(
             !r.memory_limit || r.resource_limits,

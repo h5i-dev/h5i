@@ -370,7 +370,7 @@ unsatisfiable request fails closed rather than leaving half a box behind.</p>
 </tr>
 <tr>
 <td><code>--image &lt;img&gt;</code></td>
-<td>Container base image for <code>isolation=container</code>.</td>
+<td>Base image for <code>isolation=container</code> and <code>isolation=microvm</code>. Pre-pulled; runs never pull.</td>
 </tr>
 </tbody>
 </table>
@@ -729,6 +729,11 @@ wall  = &quot;30m&quot;
 <td>Rootless Podman: a portable image, with a CONNECT-proxy egress allowlist.</td>
 <td>L7</td>
 </tr>
+<tr>
+<td><code>microvm</code></td>
+<td>A hardware-isolated guest with its own kernel, booted by <a href="https://microsandbox.dev">microsandbox</a> (<code>msb</code>) from the same OCI images. Egress rules are evaluated by the VM's network stack.</td>
+<td><strong>L3/L4</strong></td>
+</tr>
 </tbody>
 </table>
 <p><code>auto</code> (the default) picks the strongest tier the host can actually run. An
@@ -738,6 +743,38 @@ silently downgrades.</p>
 container tier buys <strong>portability</strong>, not tighter network control. Its allowlist
 is a proxy, so it binds proxy-respecting tooling only. <code>supervised</code> enforces at
 L3/L4 and does not have that hole.</p>
+<h4 id="the-microvm-tier">The microvm tier</h4>
+<p><code>microvm</code> is the one tier where the boundary is a virtual machine rather than a
+policy applied to a host process. A kernel exploit inside the box meets the
+hypervisor, not the host kernel it just subverted. Its <code>net.egress</code> allowlist
+becomes default-deny plus one address rule per allowed destination, so a raw
+socket to an unlisted IP is dropped rather than merely un-proxied.</p>
+<p>Requirements, all three, or the tier refuses:</p>
+<ul>
+<li>microsandbox's <code>msb</code> on <code>PATH</code>, version 0.6 or newer.</li>
+<li>Host virtualization: <code>/dev/kvm</code> openable on Linux, Apple Silicon on macOS.
+  A stock WSL2 kernel and most cloud CI runners have neither.</li>
+<li>A base image, from <code>--image</code>, the profile's <code>container.image</code>, or the
+  repo-level <code>[container] image</code> — the same images the container tier runs,
+  pre-pulled with <code>msb pull</code>.</li>
+</ul>
+<p><code>h5i box probe</code> reports which of the three is missing, since "install a package"
+and "enable nested virtualization" are different problems.</p>
+<p>Two things it does <strong>not</strong> do yet, stated rather than left to be discovered:</p>
+<ul>
+<li><strong>No per-request egress tally.</strong> The container tier's proxy sees every CONNECT
+  and records allow/deny counts in the capture manifest. A netstack filter drops
+  packets without reporting them, so a microvm receipt carries no egress
+  summary. Stronger enforcement, thinner evidence.</li>
+<li><strong>No authenticated-egress grants.</strong> <code>[[profile.X.auth]]</code> hands the box a base
+  URL pointing at a credential proxy on the <em>host's</em> loopback, which a microVM
+  guest cannot dial. A profile that declares grants is refused at this tier
+  rather than handed an origin that resolves to nothing.</li>
+</ul>
+<p>In-box observation works as it does under <code>container</code>: the read-only
+managed-settings mount carrying the <code>wrap-bash</code> hook, and the capture spool at
+<code>/.h5i/spool</code>. The container tier's tee shim has no analogue here (it depends on
+self-mounting the image, which a VM has nothing to do).</p>
 <h3 id="af_unix-sockets">AF_UNIX sockets</h3>
 <p><code>[profile.X.net] unix = true</code> lets the box create <code>AF_UNIX</code> sockets. Off by
 default, because <code>SCM_RIGHTS</code> passes file descriptors, which is authority
