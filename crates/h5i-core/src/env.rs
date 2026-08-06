@@ -4267,6 +4267,11 @@ pub fn diff(
     m: &EnvManifest,
     stat_only: bool,
 ) -> Result<String, H5iError> {
+    // h5i's own private-path redirects are not the agent's work. On macOS they
+    // are symlinks in the worktree (no bind mounts), so without this the patch
+    // carries a `120000` entry pointing at h5i's per-env storage — and this
+    // patch is what `export` writes for a human to `git apply`.
+    let private_rels = private_path_rels(h5i_root, m);
     let render = |diff: git2::Diff| -> Result<String, H5iError> {
         if stat_only {
             let stats = diff.stats()?;
@@ -4274,7 +4279,10 @@ pub fn diff(
             return Ok(buf.as_str().unwrap_or("").to_string());
         }
         let mut out = String::new();
-        diff.print(git2::DiffFormat::Patch, |_d, _h, line| {
+        diff.print(git2::DiffFormat::Patch, |d, _h, line| {
+            if delta_is_private(&d, &private_rels) {
+                return true; // skip this delta, keep walking
+            }
             if matches!(line.origin(), '+' | '-' | ' ') {
                 out.push(line.origin());
             }
@@ -4334,14 +4342,20 @@ pub fn diffstat_report(
     h5i_root: &Path,
     m: &EnvManifest,
 ) -> Result<DiffStatReport, H5iError> {
+    // As in [`diff`]: h5i's private-path redirects are h5i artifacts, so they
+    // are neither listed nor counted. Totals are summed from the surviving
+    // files rather than taken from `diff.stats()`, which counts every delta.
+    let private_rels = private_path_rels(h5i_root, m);
     let render = |diff: git2::Diff| -> Result<DiffStatReport, H5iError> {
-        let stats = diff.stats()?;
         let mut files = Vec::new();
         let delta_count = diff.deltas().len();
         for idx in 0..delta_count {
             let Some(delta) = diff.get_delta(idx) else {
                 continue;
             };
+            if delta_is_private(&delta, &private_rels) {
+                continue;
+            }
             let (_, insertions, deletions) = git2::Patch::from_diff(&diff, idx)?
                 .map(|patch| patch.line_stats())
                 .transpose()?
@@ -4360,10 +4374,10 @@ pub fn diffstat_report(
             });
         }
         Ok(DiffStatReport {
+            files_changed: files.len(),
+            insertions: files.iter().map(|f| f.insertions).sum(),
+            deletions: files.iter().map(|f| f.deletions).sum(),
             files,
-            files_changed: stats.files_changed(),
-            insertions: stats.insertions(),
-            deletions: stats.deletions(),
         })
     };
 
@@ -5722,35 +5736,13 @@ pub(crate) fn diffstat_numbers(
     h5i_root: &Path,
     m: &EnvManifest,
 ) -> Option<(usize, usize, usize)> {
-    let triple = |diff: &git2::Diff| {
-        diff.stats()
-            .ok()
-            .map(|s| (s.files_changed(), s.insertions(), s.deletions()))
-    };
-    let work = m.work_dir(h5i_root);
-    if work.is_dir() {
-        let wt_repo = Repository::open(&work).ok()?;
-        let base_tree = wt_repo
-            .find_tree(git2::Oid::from_str(&m.base_tree).ok()?)
-            .ok()?;
-        let mut opts = git2::DiffOptions::new();
-        opts.include_untracked(true)
-            .recurse_untracked_dirs(true)
-            .show_untracked_content(true);
-        let diff = wt_repo
-            .diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))
-            .ok()?;
-        triple(&diff)
-    } else {
-        let base_tree = repo
-            .find_tree(git2::Oid::from_str(&m.base_tree).ok()?)
-            .ok()?;
-        let tip_tree = repo.find_reference(&m.branch).ok()?.peel_to_tree().ok()?;
-        let diff = repo
-            .diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), None)
-            .ok()?;
-        triple(&diff)
-    }
+    // Delegates rather than re-deriving the numbers from `diff.stats()`. This
+    // used to be a third independent copy of the same walk, and it counted the
+    // deltas [`diffstat_report`] excludes — so an export summary said "2 file(s)"
+    // over a one-file patch on macOS, where h5i's private-path symlink is a
+    // delta. One implementation, one answer.
+    let r = diffstat_report(repo, h5i_root, m).ok()?;
+    Some((r.files_changed, r.insertions, r.deletions))
 }
 
 /// Render comparison rows as a human-readable table, flagging when the
@@ -5806,6 +5798,43 @@ fn truncate_cmd(cmd: &str, max: usize) -> String {
     }
 }
 
+/// The worktree-relative paths this env declares as private (per-env caches and
+/// build dirs). Empty when the policy cannot be read — the caller then treats
+/// nothing as private, which is the conservative direction: a path is shown to
+/// the reviewer rather than hidden from them.
+fn private_path_rels(h5i_root: &Path, m: &EnvManifest) -> Vec<String> {
+    load_policy(h5i_root, m)
+        .map(|p| {
+            p.profile
+                .private_paths
+                .iter()
+                .map(|pp| pp.path.trim_matches('/').to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Does this diff delta describe a private path on either side?
+fn delta_is_private(d: &git2::DiffDelta<'_>, rels: &[String]) -> bool {
+    if rels.is_empty() {
+        return false;
+    }
+    [d.new_file().path(), d.old_file().path()]
+        .into_iter()
+        .flatten()
+        .any(|p| is_under_private_path(p, rels))
+}
+
+/// Is `path` one of `rels`, or inside one? Compared by path component, so a
+/// private `cache` never swallows a sibling called `cache-keys`.
+fn is_under_private_path(path: &Path, rels: &[String]) -> bool {
+    let p = path.to_string_lossy();
+    let p = p.trim_end_matches('/');
+    rels.iter()
+        .any(|r| p == r.as_str() || p.strip_prefix(r.as_str()).is_some_and(|t| t.starts_with('/')))
+}
+
 // ─── mediated commit (§4 — the critical security boundary) ─────────────────
 
 /// Snapshot the env worktree onto the env branch **host-side**: h5i stages and
@@ -5855,9 +5884,21 @@ pub fn mediated_commit(
     }
 
     let mut index = wt_repo.index()?;
+    // h5i's own private-path artifacts are never the agent's work product.
+    // Linux hides them by accident — a bind mount over an empty directory is
+    // not a git entry — but macOS has no bind mounts, so the redirect is a
+    // *symlink* at the worktree path. Without this it stages as a new `120000`
+    // entry whose content is a host-absolute path into h5i's env storage, and
+    // `export` then hands the reviewer a patch that, applied, drops that
+    // symlink into their repository. Skipping it explicitly makes the intent
+    // the same on both platforms.
+    let private_rels = private_path_rels(h5i_root, m);
 
     {
         let mut cb = |path: &Path, _matched: &[u8]| -> i32 {
+            if is_under_private_path(path, &private_rels) {
+                return 1; // skip, and not a violation: h5i created it
+            }
             match staged_path_violation(&canon_work, path) {
                 None => 0, // stage it
                 Some(v) => {

@@ -233,6 +233,11 @@ const MACOS_SYSTEM_READ: &[&str] = &[
     "/Library/Apple",
     "/Library/Frameworks",
     "/Library/Preferences/.GlobalPreferences.plist",
+    // Where Xcode records that its licence was accepted. The `/usr/bin` tool
+    // shims refuse to run without it ("You have not agreed to the Xcode license
+    // agreements"), so a box that cannot read this cannot run `git` even with
+    // the toolchain itself granted. A system preference file, no user data.
+    "/Library/Preferences/com.apple.dt.Xcode.plist",
     "/private/var/db/dyld",
     "/private/var/db/timezone",
     "/private/var/select",
@@ -245,6 +250,73 @@ const MACOS_SYSTEM_READ: &[&str] = &[
     "/private/etc/hosts",
     "/private/etc/resolv.conf",
 ];
+
+/// Where `xcode-select` records the active developer directory. A symlink, so
+/// the active toolchain is resolvable with a `readlink` rather than an exec.
+const XCODE_SELECT_LINK: &str = "/var/db/xcode_select_link";
+
+/// Standard developer directories, used when [`XCODE_SELECT_LINK`] is absent
+/// (it is only written once `xcode-select` has run).
+const MACOS_DEVELOPER_DIRS: &[&str] = &[
+    "/Applications/Xcode.app/Contents/Developer",
+    "/Library/Developer/CommandLineTools",
+];
+
+/// Read grants for the active Xcode / Command Line Tools toolchain.
+///
+/// Not a convenience. On macOS the tools in `/usr/bin` — `git`, `python3`,
+/// `clang`, `make` — are *shims*: each one loads `libxcrun.dylib` from the
+/// active developer directory and re-execs the real binary from there. Granting
+/// `/usr/bin` alone therefore buys nothing, and a box denied this path could not
+/// run `git` at all:
+///
+/// ```text
+/// xcrun: error: unable to load libxcrun (… file system sandbox blocked open())
+/// ```
+///
+/// which is what `git status` inside a box did on every Mac. Read-only, and the
+/// same category as [`MACOS_SYSTEM_READ`]: a system toolchain carrying no user
+/// data, and the counterpart of the `/usr/bin` + `/usr/lib` grants that make
+/// the equivalent tools work on Linux.
+fn macos_developer_reads() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |p: PathBuf| {
+        // A full Xcode's developer dir is `Xcode.app/Contents/Developer`, but
+        // the shim also loads DVTSystemPrerequisites from the bundle's
+        // `Contents/SharedFrameworks`, one level *outside* it. Granting only
+        // the developer dir gets past `libxcrun` and then fails with "unable to
+        // locate xcodebuild", so the grant is the bundle root when there is one.
+        let p = app_bundle_root(&p).unwrap_or(p);
+        let s = p.display().to_string();
+        if p.is_dir() && !out.contains(&s) {
+            out.push(s);
+        }
+    };
+    if let Ok(active) = std::fs::read_link(XCODE_SELECT_LINK) {
+        push(active);
+    }
+    for d in MACOS_DEVELOPER_DIRS {
+        push(PathBuf::from(d));
+    }
+    out
+}
+
+/// The enclosing `.app` bundle of `path`, if it is inside one. Pure, so the
+/// truncation rule is testable without an Xcode install.
+fn app_bundle_root(path: &Path) -> Option<PathBuf> {
+    let mut acc = PathBuf::new();
+    for part in path.components() {
+        acc.push(part);
+        if acc
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("app"))
+        {
+            return Some(acc);
+        }
+    }
+    None
+}
 
 /// Device nodes every program opens. Kept apart from [`MACOS_SYSTEM_READ`]
 /// because they are files, so they are emitted with `literal` rather than
@@ -412,6 +484,7 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     // ── filesystem: reads ─────────────────────────────────────────────────
     s.push_str(";; --- filesystem: read grants -----------------------------------\n");
     let mut reads: Vec<String> = MACOS_SYSTEM_READ.iter().map(|s| s.to_string()).collect();
+    reads.extend(macos_developer_reads());
     reads.extend(p.fs_read.iter().filter_map(|r| expand_home(r, home)));
     // The worktree is always readable; it is the point of the box.
     reads.push(work.display().to_string());
@@ -638,6 +711,16 @@ fn network_rules(policy: &ResolvedPolicy, opts: &SeatbeltOptions) -> String {
 /// Anything that does not fit one of those lands in [`SeatbeltPlan::unmapped`]
 /// and is reported, never dropped in silence.
 pub fn plan(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOptions) -> SeatbeltPlan {
+    // NOTE: the `/usr/bin` tool shims cache their toolchain lookup in the
+    // *host's* per-user temp dir, located with `confstr(_CS_DARWIN_USER_TEMP_DIR)`
+    // rather than `TMPDIR`, so the box's redirect cannot move it and the write is
+    // denied — every shimmed `git`/`python3` call prints "couldn't create cache
+    // file … (errno=Operation not permitted)" on stderr. The command still
+    // succeeds. No variable is set to suppress it: `XCRUN_NO_CACHE=1` reaches the
+    // child and changes nothing, and granting write into the host's shared temp
+    // dir would hand every box a drop point that host processes read. Noise is
+    // the better trade, and a knob that reviews as a fix while fixing nothing is
+    // the worse one.
     let mut env: Vec<(String, String)> = Vec::new();
     let mut symlinks: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut unmapped: Vec<String> = Vec::new();
