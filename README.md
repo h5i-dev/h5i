@@ -69,10 +69,9 @@ h5i box run <name> -- cargo test # one command; the exit code passes through
 
 **Work in it interactively**
 
-Work in it. Every command is policy-enforced and recorded:
-
 ```bash
 h5i box shell <name>             # an interactive confined session
+                                 # every command is policy-enforced and recorded:
 ```
 
 **Show the sandbox status**
@@ -93,7 +92,7 @@ h5i ui                           # the whole fleet on one screen, read-only
   <img src="./docs/_static/sandbox-ui-demo.png" width="99%" />
 </p>
 
-Get the work out through the gate, which is deliberately a human step:
+**Export the execution summary**
 
 ```bash
 h5i box export <name>
