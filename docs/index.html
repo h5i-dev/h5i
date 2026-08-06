@@ -546,7 +546,7 @@
 
     /* ── Deck-derived sections: even spacing + separator line ── */
     #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with,
-    #whatis, #loop, #browser, #problem {
+    #whatis, #problem {
       padding: 120px 0; border-top: 1px solid var(--border);
     }
 
@@ -709,7 +709,7 @@
       .usecase-header { flex-direction: column; gap: 1rem; }
       .works-inner { gap: 0.8rem 1.6rem; }
       #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with,
-      #whatis, #loop, #browser, #problem,
+      #whatis, #problem,
       #faq, #cta { padding: 80px 0; }
     }
     @media (max-width: 460px) {
@@ -881,8 +881,6 @@
   </a>
   <ul class="nav-links" id="nav-links">
     <li><a href="#quickstart">Install</a></li>
-    <li><a href="#loop">The loop</a></li>
-    <li><a href="#browser">Browser</a></li>
     <li><a href="/guides/">Guides</a></li>
     <li><a href="/manual/">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
@@ -922,11 +920,37 @@
   </div>
 </section>
 
-<!-- ── What h5i is ───────────────────────────────────────────── -->
+<!-- ── The problem ───────────────────────────────────────────── -->
+<section id="problem">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">The problem</span>
+      <h2 class="section-title">Full autonomy is the point.<br> Your laptop is the risk.</h2>
+      <p class="section-sub">An agent that has to ask permission for every command is an agent you are babysitting. An agent that does not is one running with your SSH keys, your cloud credentials, your browser session and write access to everything you own. The usual answer is to narrow what the agent may do. h5i narrows <em>where it is</em> instead, so it can have the run of the place.</p>
+      <div class="divider"></div>
+    </div>
+    <div class="feat-grid reveal">
+      <div class="feat-card">
+        <div class="feat-name">Approving every command is not security</div>
+        <div class="feat-desc">A prompt before each shell command makes you the sandbox. It is slow, and by the twentieth one you are approving without reading. The agent is only as autonomous as your patience.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">The agent inherits your whole machine</div>
+        <div class="feat-desc">Skip the prompts and it runs as you: SSH keys, cloud credentials, browser sessions, every repository on disk. One postinstall script in one dependency is enough to use all of it.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">The summary is the agent's own account</div>
+        <div class="feat-desc">"I ran the tests and they pass" is a sentence the agent wrote. What actually executed, what it reached on the network, and what the page did are not in it.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── How h5i solves it ─────────────────────────────────────── -->
 <section id="whatis">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">What h5i is</span>
+      <span class="section-tag">How h5i solves it</span>
       <h2 class="section-title">A contained agentic development environment.</h2>
       <p class="section-sub">h5i (pronounced <em>high-five</em>) is a throwaway box that holds the code, the agent, the toolchain, the dev server and a real browser. Your host directories are not mounted into it, your credentials never enter it, and the only thing that comes out is a patch you reviewed, next to a receipt of everything that ran. One Rust binary. No server, no daemon, no SaaS.</p>
       <div class="divider"></div>
@@ -955,69 +979,6 @@
       <div class="feat-card">
         <div class="feat-name">Receipts, not testimony</div>
         <div class="feat-desc">Exit codes and resource use come from the supervisor. Denied egress comes from the proxy. Console errors come from the page. None of it is the agent's account of itself.</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── The problem ───────────────────────────────────────────── -->
-<section id="problem">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">The problem</span>
-      <h2 class="section-title">Full autonomy is the point.<br> Your laptop is the risk.</h2>
-      <p class="section-sub">An agent that has to ask permission for every command is an agent you are babysitting. An agent that does not is one running with your SSH keys, your cloud credentials, your browser session and write access to everything you own. The usual answer is to narrow what the agent may do. h5i narrows <em>where it is</em> instead, so it can have the run of the place.</p>
-      <div class="divider"></div>
-    </div>
-  </div>
-</section>
-
-<!-- ── The loop ──────────────────────────────────────────────── -->
-<section id="loop">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">The loop</span>
-      <h2 class="section-title">Fill a box, let it work, read what came out.</h2>
-      <div class="divider"></div>
-    </div>
-    <div class="feat-grid reveal">
-      <div class="feat-card">
-        <div class="feat-name">1 · Fill it</div>
-        <div class="feat-desc"><code>h5i box .</code> for this repository, <code>h5i box --pr 1234</code> for a pull request, <code>h5i box &lt;url&gt;</code> to clone something you do not trust, <code>h5i box --new</code> to start from nothing. External code always arrives detached: your repository is never touched.</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">2 · Work in it</div>
-        <div class="feat-desc"><code>h5i box shell &lt;name&gt;</code> is the agent-in-box. Everything the session spawns is contained by the box, not by the agent choosing to wrap each call. <code>h5i box status</code> tells you the policy that was actually enforced, never the one that was requested.</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">3 · Get it out</div>
-        <div class="feat-desc"><code>h5i box export &lt;name&gt;</code> writes <code>patch.diff</code>, <code>report.md</code> and <code>receipt.json</code> for a human to read. Nothing reaches your repository without that step. Apply it wherever you want with <code>git apply --3way</code>.</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── The browser ───────────────────────────────────────────── -->
-<section id="browser">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">The browser</span>
-      <h2 class="section-title">The agent can see the app it just changed.</h2>
-      <p class="section-sub">A <code>browser</code> box runs headless Chrome and the <a href="https://github.com/vercel-labs/agent-browser" style="color:var(--red-text)">agent-browser</a> daemon alongside the agent, so the dev server is on <code>localhost</code> for both of them. The agent reads an accessibility tree rather than HTML, clicks and fills by handle, and screenshots what it sees.</p>
-      <div class="divider"></div>
-    </div>
-    <div class="feat-grid reveal">
-      <div class="feat-card">
-        <div class="feat-name">Watch it, then take over</div>
-        <div class="feat-desc"><code>h5i box view &lt;name&gt;</code> streams the viewport to loopback and lets you drive. The box's port is never published: h5i reaches into its private network namespace instead, behind a per-box token, refusing cross-origin connections.</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">One driver at a time</div>
-        <div class="feat-desc">Nothing upstream arbitrates between an agent and a human clicking at the same moment, so h5i does. You take control rather than asking for it; the agent waits, then re-snapshots, because the page moved underneath it.</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">The page's own answer</div>
-        <div class="feat-desc">Console errors, uncaught exceptions and failed requests land in the receipt, collected right after each command. "I clicked Submit and it worked" is a sentence; the export carries what actually happened next to it.</div>
       </div>
     </div>
   </div>
