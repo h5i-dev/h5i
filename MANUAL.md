@@ -460,13 +460,13 @@ What the `browser` profile does to Chrome, and why:
   reintroduced for this one profile on this one platform. Other profiles, and
   every profile on Linux, are unaffected.
 
-  Two consequences of that grant being a machine-specific absolute path. The
-  pinned policy digest differs between two Macs for the same profile — harmless,
-  because `policy.resolved.toml` is verified against the digest stored beside
-  it, and both are written together at create time; nothing re-resolves the
-  profile and compares. But a `browser` env created on one machine and pulled to
-  another carries a grant for a directory that does not exist there, so Chrome
-  will fail to start until the env is recreated.
+    Two consequences of that grant being a machine-specific absolute path. The
+    pinned policy digest differs between two Macs for the same profile — harmless,
+    because `policy.resolved.toml` is verified against the digest stored beside
+    it, and both are written together at create time; nothing re-resolves the
+    profile and compares. But a `browser` env created on one machine and pulled to
+    another carries a grant for a directory that does not exist there, so Chrome
+    will fail to start until the env is recreated.
 
 ---
 
