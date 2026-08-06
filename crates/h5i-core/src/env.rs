@@ -7576,8 +7576,17 @@ mod tests {
 
         prepare_private_tmp(h5i_root, &m, &mut pol, None).unwrap();
 
-        let backing = m.dir(h5i_root).join("tmp");
+        // Where the backing actually lands: inside the env dir on Linux, and at
+        // a short path outside the repository on macOS, where `TMPDIR` *is* the
+        // path programs build on and `AF_UNIX` caps it at 104 bytes. Asking
+        // [`private_tmp_backing`] keeps the test honest about the platform
+        // instead of pinning the Linux layout on both.
+        let backing = private_tmp_backing(&m.dir(h5i_root).join("tmp"));
         assert!(backing.is_dir(), "{backing:?}");
+        if cfg!(target_os = "macos") {
+            let len = backing.display().to_string().len();
+            assert!(len <= TMPDIR_BUDGET, "TMPDIR too long for AF_UNIX: {len}");
+        }
         assert_eq!(
             std::fs::metadata(&backing).unwrap().permissions().mode() & 0o777,
             0o700
@@ -8128,10 +8137,16 @@ mod tests {
             env.get("AGENT_BROWSER_SOCKET_DIR").map(String::as_str),
             Some(expected.as_str())
         );
-        assert!(
-            !cfg!(target_os = "macos") || !expected.starts_with("/tmp/"),
-            "macOS must not point the socket at the denied literal /tmp: {expected}"
-        );
+        // And once a private `/tmp` redirect exists, macOS must follow it rather
+        // than the literal `/tmp`, which is denied there. Conditional because a
+        // policy without the redirect legitimately falls back to `/tmp` — that
+        // is [`box_tmp_root`]'s documented default, not a bug to assert against.
+        if policy.home_binds.iter().any(|b| b.target == Path::new("/tmp")) {
+            assert!(
+                !cfg!(target_os = "macos") || !expected.starts_with("/tmp/agent-browser"),
+                "macOS must not point the socket at the denied literal /tmp: {expected}"
+            );
+        }
     }
 
     #[test]

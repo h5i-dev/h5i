@@ -908,8 +908,8 @@ mod browser_profile_tests {
         // `/tmp` redirect cannot move it and the box must be granted the real
         // directory. The widest thing this profile asks for, and only it.
         if let Some(d) = darwin_user_temp_dir() {
-            assert!(browser.fs_write.iter().any(|w| *w == d), "{:?}", browser.fs_write);
-            assert!(!agent.fs_write.iter().any(|w| *w == d), "{:?}", agent.fs_write);
+            assert!(browser.fs_write.contains(&d), "{:?}", browser.fs_write);
+            assert!(!agent.fs_write.contains(&d), "{:?}", agent.fs_write);
         }
     }
 
