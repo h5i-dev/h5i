@@ -151,7 +151,7 @@ unsatisfiable request fails closed rather than leaving half a box behind.
 | `--new` | Empty box (a fresh repository with one empty commit). Detached. |
 | `--profile <p>` | See [Profiles](#profiles). |
 | `--isolation <tier>` | See [Isolation tiers](#isolation-tiers). |
-| `--image <img>` | Container base image for `isolation=container`. |
+| `--image <img>` | Base image for `isolation=container` and `isolation=microvm`. Pre-pulled; runs never pull. |
 
 ### Working in a box
 
@@ -517,6 +517,7 @@ wall  = "30m"
 | `process` | Landlock + seccomp + namespaces, with a supervisor and a private pid namespace. | deny or host |
 | `supervised` | Adds a private netns with an nftables egress allowlist pinned to resolved IPs, DNS pinned by a hosts file, and a seccomp-notify gate on `socket()`. | **L3/L4** |
 | `container` | Rootless Podman: a portable image, with a CONNECT-proxy egress allowlist. | L7 |
+| `microvm` | A hardware-isolated guest with its own kernel, booted by [microsandbox](https://microsandbox.dev) (`msb`) from the same OCI images. Egress rules are evaluated by the VM's network stack. | **L3/L4** |
 
 `auto` (the default) picks the strongest tier the host can actually run. An
 explicit tier **fails closed** if the host cannot satisfy it — h5i never
@@ -526,6 +527,42 @@ Worth being clear about, because two drafts of the design got it backwards: the
 container tier buys **portability**, not tighter network control. Its allowlist
 is a proxy, so it binds proxy-respecting tooling only. `supervised` enforces at
 L3/L4 and does not have that hole.
+
+#### The microvm tier
+
+`microvm` is the one tier where the boundary is a virtual machine rather than a
+policy applied to a host process. A kernel exploit inside the box meets the
+hypervisor, not the host kernel it just subverted. Its `net.egress` allowlist
+becomes default-deny plus one address rule per allowed destination, so a raw
+socket to an unlisted IP is dropped rather than merely un-proxied.
+
+Requirements, all three, or the tier refuses:
+
+- microsandbox's `msb` on `PATH`, version 0.6 or newer.
+- Host virtualization: `/dev/kvm` openable on Linux, Apple Silicon on macOS.
+  A stock WSL2 kernel and most cloud CI runners have neither.
+- A base image, from `--image`, the profile's `container.image`, or the
+  repo-level `[container] image` — the same images the container tier runs,
+  pre-pulled with `msb pull`.
+
+`h5i box probe` reports which of the three is missing, since "install a package"
+and "enable nested virtualization" are different problems.
+
+Two things it does **not** do yet, stated rather than left to be discovered:
+
+- **No per-request egress tally.** The container tier's proxy sees every CONNECT
+  and records allow/deny counts in the capture manifest. A netstack filter drops
+  packets without reporting them, so a microvm receipt carries no egress
+  summary. Stronger enforcement, thinner evidence.
+- **No authenticated-egress grants.** `[[profile.X.auth]]` hands the box a base
+  URL pointing at a credential proxy on the *host's* loopback, which a microVM
+  guest cannot dial. A profile that declares grants is refused at this tier
+  rather than handed an origin that resolves to nothing.
+
+In-box observation works as it does under `container`: the read-only
+managed-settings mount carrying the `wrap-bash` hook, and the capture spool at
+`/.h5i/spool`. The container tier's tee shim has no analogue here (it depends on
+self-mounting the image, which a VM has nothing to do).
 
 ### AF_UNIX sockets
 

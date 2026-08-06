@@ -53,7 +53,12 @@ pub enum IsolationClaim {
     Container,
     /// gVisor / Kata adapter (not in this build).
     HardenedContainer,
-    /// Firecracker adapter (not in this build).
+    /// **microVM** adapter (opt-in shell-out to microsandbox's `msb`). A
+    /// hardware-isolated guest with its own kernel, and the first tier whose
+    /// `net.egress` allowlist is enforced by address in the VM's network stack
+    /// rather than by an HTTP proxy the box could decline to use. Requires
+    /// virtualization on the host (KVM / Apple Silicon); refused, never
+    /// downgraded, when it is absent (`microvm.rs`).
     Microvm,
 }
 
@@ -81,6 +86,31 @@ impl IsolationClaim {
             Self::HardenedContainer => "hardened-container",
             Self::Microvm => "microvm",
         }
+    }
+
+    /// Does this tier run the command inside a **base image** with the workspace
+    /// mounted in, rather than against the host filesystem under a kernel
+    /// policy? True for `container` and `microvm`.
+    ///
+    /// Ask this instead of testing `== Container` wherever the reason is
+    /// structural — the box needs its git plumbing mounted, its spool and inbox
+    /// mounted, its shell rc coming from the image, its host paths free of the
+    /// mount syntax's separator. Those facts follow from "the box is an image",
+    /// not from which runtime boots it, and a tier added later should inherit
+    /// them by construction rather than by someone remembering to grep.
+    ///
+    /// `hardened-container` is deliberately **not** included: it has no adapter
+    /// in this build, so claiming its structural shape would be claiming a
+    /// backend that does not exist.
+    pub fn image_backed(&self) -> bool {
+        matches!(self, Self::Container | Self::Microvm)
+    }
+
+    /// Does this tier enforce a `net.egress` **domain allowlist**? The kernel
+    /// tiers can deny all outbound or allow all of it and nothing in between,
+    /// so a non-empty allowlist there fails closed.
+    pub fn enforces_egress_allowlist(&self) -> bool {
+        matches!(self, Self::Container | Self::Microvm)
     }
 }
 
@@ -373,8 +403,11 @@ pub struct Profile {
     /// Tools allowlist — when non-empty, only these programs (argv[0] basename)
     /// may run; enforced fail-closed (see `check_tool_allowlist`).
     pub tools: Vec<String>,
-    /// Container image for `isolation=container` (required at that tier). The
-    /// command runs inside it with the workspace bind-mounted at `/work`.
+    /// Base OCI image for the image-backed tiers — `isolation=container` and
+    /// `isolation=microvm`, both of which require it. The command runs inside it
+    /// with the workspace mounted at `/work`. Named `container.image` in
+    /// `.h5i/env.toml` for compatibility; the microvm tier boots the same
+    /// images.
     pub image: Option<String>,
     /// Environment-variable allowlist — the child gets *only* these (plus
     /// nothing else; secrets are never inherited wholesale).

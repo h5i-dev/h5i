@@ -1667,19 +1667,58 @@ fn auto_isolation_picks_a_runnable_tier() {
 #[test]
 fn unimplemented_backends_refuse_at_create() {
     let r = Repo::new();
-    // hardened-container/microvm have no adapter in this build → refuse.
-    for claim in ["hardened-container", "microvm"] {
-        let out = r.h5i(&["env", "create", "boxed", "--isolation", claim]);
-        assert!(!out.status.success(), "claim {claim} must refuse");
-        assert!(out_str(&out).contains("backend"), "{}", out_str(&out));
-        assert!(
-            !r.env_dir("boxed").exists(),
-            "no state left behind on refusal"
-        );
-    }
+    // hardened-container (gVisor/Kata) still has no adapter in this build.
+    let out = r.h5i(&["env", "create", "boxed", "--isolation", "hardened-container"]);
+    assert!(!out.status.success(), "hardened-container must refuse");
+    assert!(out_str(&out).contains("backend"), "{}", out_str(&out));
+    assert!(
+        !r.env_dir("boxed").exists(),
+        "no state left behind on refusal"
+    );
     // An unknown claim name is rejected outright.
     let out = r.h5i(&["env", "create", "boxed", "--isolation", "docker"]);
     assert!(!out.status.success(), "unknown claim must refuse");
+}
+
+/// The microvm tier has an adapter, so it refuses for *substantive* reasons —
+/// a missing image or a host that cannot virtualize — and never by silently
+/// downgrading to a weaker tier.
+#[test]
+fn microvm_claim_fails_closed_with_an_actionable_reason() {
+    let r = Repo::new();
+    // No image: a static profile error, true on every host, so it is reported
+    // regardless of whether this machine has `msb` or KVM.
+    let out = r.h5i(&["env", "create", "boxed", "--isolation", "microvm"]);
+    assert!(!out.status.success(), "microvm without an image must refuse");
+    let text = out_str(&out);
+    assert!(text.contains("requires a base image"), "{text}");
+    assert!(
+        !r.env_dir("boxed").exists(),
+        "no state left behind on refusal"
+    );
+
+    // With an image the verdict depends on the host. Either it resolves to the
+    // microvm tier, or it refuses saying so — never a quiet downgrade to a
+    // weaker claim, which is the failure mode this whole design exists to avoid.
+    let out = r.h5i(&[
+        "env",
+        "create",
+        "vmbox",
+        "--isolation",
+        "microvm",
+        "--image",
+        "alpine",
+    ]);
+    let text = out_str(&out);
+    if out.status.success() {
+        assert_eq!(r.manifest("vmbox")["isolation_claim"], "microvm");
+    } else {
+        assert!(
+            text.contains("never silently downgrades"),
+            "a refusal must say why and must not downgrade: {text}"
+        );
+        assert!(!r.env_dir("vmbox").exists(), "no state left behind: {text}");
+    }
 }
 
 #[test]

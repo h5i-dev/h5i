@@ -1022,10 +1022,17 @@ Being explicit about these is a feature, since the claim is a security claim.
   agent from touching the host. It does not stop it from putting private code in
   a prompt. That is a separate control (self hosted model, or no model egress at
   all) and we will not imply otherwise.
-- **Shared kernel.** Podman and the kernel tiers share the host kernel. Good
-  against a runaway agent and against careless dependency code. Not a claim
-  against a targeted kernel exploit. A microVM backend is the answer, and it is
-  post M6.
+- **Shared kernel, unless you pick the microVM tier.** Podman and the kernel
+  tiers share the host kernel. Good against a runaway agent and against careless
+  dependency code. Not a claim against a targeted kernel exploit. The answer
+  ships as `isolation=microvm`, a microsandbox (`msb`) backend that boots the
+  same OCI images into a guest with its own kernel and filters egress by address
+  in the VM's network stack. What it costs is honest and stated in MANUAL.md: it
+  needs host virtualization (`/dev/kvm`, or Apple Silicon), it produces no
+  per-request egress tally, and it does not yet route the authenticated-egress
+  credential proxy. **Not yet demonstrated end to end** — this development host
+  has no nested virtualization, so the adapter is unit-tested against its argv
+  and rule translation and has never booted a real guest here.
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
   it binds proxy respecting tooling only. The `supervised` tier enforces at
   L3/L4 with nftables and does not have that hole, which is why M4 starts
