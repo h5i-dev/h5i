@@ -947,7 +947,7 @@ pub struct ResolvedPolicy {
     /// The one **writable** bind, and the only way a cache is ever written.
     ///
     /// Runtime-only and serde-skipped, like `ro_binds`. Deliberately an
-    /// `Option` of one rather than a list: `h5i dev cache refresh` is the sole
+    /// `Option` of one rather than a list: `h5i box cache refresh` is the sole
     /// producer, it populates exactly one ecosystem's cache, and a policy that
     /// cannot express "several writable binds" cannot grow one by accident.
     #[serde(skip)]
@@ -962,7 +962,7 @@ pub struct ResolvedPolicy {
     #[serde(skip)]
     pub work_readonly: bool,
     /// Runtime-only extra egress hosts from the **host-side** user allowlist
-    /// (`h5i env allow`, stored under the user config dir — never inside the
+    /// (`h5i box allow`, stored under the user config dir — never inside the
     /// repo, `$WORK`, or any box-visible path). Never serialized: the pinned
     /// `policy_digest` stays reproducible; the extras are recorded per-run in
     /// the capture manifest instead. Applied only when the digested profile

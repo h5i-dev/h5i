@@ -509,6 +509,15 @@ procs = 256
 wall  = "30m"
 ```
 
+`wall` is enforced everywhere. **`mem` and `procs` are not enforced at the
+`process` and `supervised` tiers on macOS**: Darwin has no cgroups, does not
+enforce `RLIMIT_AS` against the mmap'd heap every modern runtime uses, and
+scopes `RLIMIT_NPROC` to the whole user rather than to one box, so h5i declines
+to apply a limit it cannot hold. `h5i box status` marks such a value with `*`
+and says so underneath, rather than listing it as enforced. Use
+`isolation = "container"` or `isolation = "microvm"` where you need a real
+ceiling — both cap memory and process count in the runtime itself.
+
 ### Isolation tiers
 
 | Tier | What it is | Network scoping |

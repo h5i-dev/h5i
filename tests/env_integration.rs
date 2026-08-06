@@ -3889,7 +3889,7 @@ fn rebase_records_a_two_parent_provenance_commit() {
     );
     let subject = out_str(&git(&r.dir, &["log", "-1", "--format=%s", branch]));
     assert!(
-        subject.contains("h5i dev rebase: env/tester/prov onto main"),
+        subject.contains("h5i box rebase: env/tester/prov onto main"),
         "provenance subject: {subject}"
     );
 }
@@ -4496,7 +4496,7 @@ fn create_rejects_bad_service_name_in_config() {
 
 // ─── env rm: multi-name and partial-failure ──────────────────────────────────
 
-/// `h5i env rm a b --force` removes both envs in a single call.
+/// `h5i box rm a b --force` removes both envs in a single call.
 /// Single-name behavior is unchanged: exit 0, both manifests and worktrees gone.
 #[test]
 fn env_rm_removes_multiple_envs() {
@@ -4520,7 +4520,7 @@ fn env_rm_removes_multiple_envs() {
     assert!(!r.work("alpha").exists(), "alpha worktree still present");
     assert!(!r.work("beta").exists(), "beta worktree still present");
 
-    // h5i env list should show no envs remaining.
+    // h5i box list should show no envs remaining.
     let list_out = out_str(&r.h5i_ok(&["env", "list"]));
     assert!(
         !list_out.contains("env/tester/alpha") && !list_out.contains("env/tester/beta"),
@@ -4528,7 +4528,7 @@ fn env_rm_removes_multiple_envs() {
     );
 }
 
-/// `h5i env rm good nope` — one missing env must not abort the other.
+/// `h5i box rm good nope` — one missing env must not abort the other.
 /// The present env is removed; exit code is non-zero; both failures are reported.
 #[test]
 fn env_rm_partial_failure_continues_and_exits_nonzero() {
@@ -4757,7 +4757,7 @@ fn the_receipt_log_is_outside_the_boxs_write_grants() {
 
 // ─── detached boxes: code copied in, host repository untouched ──────────────
 
-/// `h5i dev <url>` copies an external repository into the box. The host
+/// `h5i box <url>` copies an external repository into the box. The host
 /// repository gets no branch, no worktree and no objects from it: the boundary
 /// the product claims only holds if outside code never lands here.
 #[test]

@@ -408,7 +408,7 @@ mod tests {
     fn a_human_at_the_controls_is_called_out() {
         let mut r = record(None);
         r.source = "viewer".into();
-        r.cmd = Some("h5i dev view (human took control, 42s)".into());
+        r.cmd = Some("h5i box view (human took control, 42s)".into());
         let text = report(&manifest(), &summary(), &[r], "brief");
 
         assert!(text.contains("## Viewer sessions"), "{text}");
@@ -419,7 +419,7 @@ mod tests {
         // A session where nobody took over is listed but not flagged.
         let mut watched = record(None);
         watched.source = "viewer".into();
-        watched.cmd = Some("h5i dev view (agent, 42s)".into());
+        watched.cmd = Some("h5i box view (agent, 42s)".into());
         let text = report(&manifest(), &summary(), &[watched], "brief");
         assert!(text.contains("## Viewer sessions"), "{text}");
         assert!(!text.contains("A human took control"), "{text}");

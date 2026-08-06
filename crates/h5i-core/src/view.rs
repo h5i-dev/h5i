@@ -7,7 +7,7 @@
 //! open could reach a port bound on loopback.
 //!
 //! So the port is never published. It stays inside the box's private network
-//! namespace, and `h5i dev view` runs a forward the **host** owns, with four
+//! namespace, and `h5i box view` runs a forward the **host** owns, with four
 //! properties (roadmap 5.9):
 //!
 //! * **Loopback only, on a port h5i chose.** Nothing binds an external address.
@@ -304,14 +304,14 @@ pub fn connect_in_netns(pid: u32, port: u16) -> Result<TcpStream, H5iError> {
         EXIT_NO_NS => format!(
             "the box (pid {pid}) is gone — its namespaces no longer exist. \
              A box only has them while a session is running; start one with \
-             `h5i dev shell <name>`."
+             `h5i box shell <name>`."
         ),
         // Deliberately no errno here: the failing `setns` happened in the
         // forked child, so the parent's `last_os_error` describes an unrelated
         // syscall. A wrong errno is worse than none.
         EXIT_SETNS => format!(
             "could not enter the box's network namespace (pid {pid}). \
-             Joining it needs the user namespace that created it, so run `h5i dev view` \
+             Joining it needs the user namespace that created it, so run `h5i box view` \
              as the user that started the box's session."
         ),
         EXIT_CONNECT => format!(
@@ -670,7 +670,7 @@ impl Forward {
     /// Bind on loopback and prepare to serve this box.
     ///
     /// Everything that can be known before a connection arrives is resolved
-    /// here, so `h5i dev view` fails with an explanation instead of printing a
+    /// here, so `h5i box view` fails with an explanation instead of printing a
     /// URL that will not work.
     pub fn bind(
         env_dir: &Path,
@@ -688,7 +688,7 @@ impl Forward {
         let pid = box_pid(env_dir).ok_or_else(|| {
             H5iError::Metadata(
                 "this box is not running, so there is no browser to watch. Start a session \
-                 (`h5i dev shell <name>`) and try again."
+                 (`h5i box shell <name>`) and try again."
                     .into(),
             )
         })?;

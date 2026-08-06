@@ -38,7 +38,7 @@
 //! | cpu / fsize / nproc caps  | rlimits                        | rlimits (same)                                  |
 //!
 //! Everything in that right-hand column is reported honestly by [`probe`] and
-//! surfaced through `h5i env probe` / `env capabilities`, so a caller adapts to
+//! surfaced through `h5i box probe` / `env capabilities`, so a caller adapts to
 //! what the host really enforces rather than to a tier name.
 //!
 //! # Why `sandbox-exec` and not `sandbox_init(3)`

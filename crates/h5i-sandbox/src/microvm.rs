@@ -632,7 +632,7 @@ fn image_or_refuse(p: &Profile) -> Result<String, H5iError> {
 }
 
 /// Resolve the network plan for a run: the enforced rule set is the digested
-/// profile allowlist plus the host-side user extras (`h5i env allow`), and a
+/// profile allowlist plus the host-side user extras (`h5i box allow`), and a
 /// deny-all profile ignores the extras (it can never be widened from outside the
 /// digested policy).
 fn net_plan(policy: &ResolvedPolicy) -> Result<NetPlan, H5iError> {

@@ -953,8 +953,21 @@ function PolicyPanel({ policy }: { policy: EnforcedPolicy | null }) {
     ["env.pass", policy.env_pass.length ? policy.env_pass.join(", ") : "—"],
     ["image", policy.image ?? "—"],
     ["wall", `${policy.wall_secs}s`],
-    ["mem", policy.mem_bytes ? fmtBytes(policy.mem_bytes) : "—"],
-    ["procs", policy.max_procs != null ? String(policy.max_procs) : "—"],
+    // A cap this host cannot apply is marked rather than shown alongside the
+    // real ones — the panel's whole claim is "what was actually allowed", and
+    // Darwin's kernel tiers impose neither of these.
+    [
+      "mem",
+      policy.mem_bytes
+        ? `${fmtBytes(policy.mem_bytes)}${policy.mem_enforced === false ? " (declared, not enforced here)" : ""}`
+        : "—",
+    ],
+    [
+      "procs",
+      policy.max_procs != null
+        ? `${policy.max_procs}${policy.procs_enforced === false ? " (declared, not enforced here)" : ""}`
+        : "—",
+    ],
     ["cpu", policy.cpu_secs != null ? `${policy.cpu_secs}s` : "—"],
     ["fsize", policy.fsize_bytes ? fmtBytes(policy.fsize_bytes) : "—"],
   ];

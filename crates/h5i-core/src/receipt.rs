@@ -95,7 +95,7 @@ impl BrowserEvidence {
 /// One observed execution inside an environment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecRecord {
-    /// Short, stable handle for the CLI (`h5i env inspect --capture <id>`).
+    /// Short, stable handle for the CLI (`h5i box inspect --capture <id>`).
     pub id: String,
     /// RFC3339 UTC, microsecond precision, lexically sortable.
     pub timestamp: String,
@@ -398,7 +398,7 @@ fn blob_key(raw_oid: &str) -> Option<String> {
     (hex.len() >= ID_LEN).then(|| hex[..ID_LEN].to_string())
 }
 
-/// Human rendering of one record, for `h5i env inspect --capture <id>`.
+/// Human rendering of one record, for `h5i box inspect --capture <id>`.
 pub fn render(rec: &ExecRecord, raw: &[u8]) -> String {
     let mut out = String::new();
     out.push_str(&format!("── Receipt {} ({}) ──\n", rec.id, rec.env_id));

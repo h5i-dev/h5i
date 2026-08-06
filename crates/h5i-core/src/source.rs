@@ -3,7 +3,7 @@
 //! An environment is pinned to an immutable base commit. Today that base can
 //! be any revision in the local repository, or a pull request head fetched
 //! from a remote. Roadmap M2 adds the other two sources (an external repo URL
-//! and an empty box) behind the same `h5i dev <source>` surface.
+//! and an empty box) behind the same `h5i box <source>` surface.
 
 use serde::Serialize;
 use std::path::Path;

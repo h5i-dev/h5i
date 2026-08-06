@@ -1,6 +1,6 @@
 //! Browser evidence: collecting what the page said after the agent touched it.
 //!
-//! `h5i dev run <box> -- agent-browser click @e2` already produces a receipt for
+//! `h5i box run <box> -- agent-browser click @e2` already produces a receipt for
 //! the command. What it does not produce, and what a reviewer actually needs, is
 //! the page's answer: the console error the click raised, the exception it threw,
 //! the request that came back 500. Without those the browser half of an export is
@@ -136,7 +136,7 @@ pub fn browser_is_live(env_dir: &Path) -> bool {
 
 /// Did this run touch the browser at all?
 ///
-/// Two shapes count. A direct invocation (`h5i dev run bx -- agent-browser
+/// Two shapes count. A direct invocation (`h5i box run bx -- agent-browser
 /// click @e2`) is the obvious one. The other is the one agents actually
 /// produce: `sh -c '... && agent-browser click @e2'`, where argv[0] is a shell
 /// and the driver is buried in the command string. Matching the string is a

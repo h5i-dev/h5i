@@ -909,7 +909,7 @@ pub struct ClaimSupport {
 }
 
 /// Machine-readable answer to "what can h5i actually enforce here?" — the
-/// structured form of `h5i env probe`, so a downstream product adapts to the
+/// structured form of `h5i box probe`, so a downstream product adapts to the
 /// real host instead of regex-scraping a log line. Backs `env capabilities
 /// [--json]`.
 #[derive(Debug, Clone, Serialize)]
@@ -1090,6 +1090,52 @@ fn capabilities_report_from(caps: HostCaps) -> CapabilitiesReport {
         resource_limits,
         claims,
         strongest_tier: strongest.as_str(),
+    }
+}
+
+/// Which of a profile's declared resource caps a claim actually applies here.
+///
+/// `h5i box status` prints the profile's `mem`/`procs` numbers under an
+/// `enforce:` label, which is a claim about the host, not about the file the
+/// numbers came from. Darwin has no cgroups, does not enforce `RLIMIT_AS`
+/// against the mmap'd heap every modern runtime uses, and scopes `RLIMIT_NPROC`
+/// to the whole uid rather than to one box — so [`crate::seatbelt`] deliberately
+/// applies neither, and printing them unqualified stated a containment property
+/// the host does not have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LimitSupport {
+    /// Is `mem_bytes` a real ceiling on this host?
+    pub mem: bool,
+    /// Is `max_procs` a real ceiling on this host?
+    pub procs: bool,
+}
+
+impl LimitSupport {
+    /// True when neither cap is applied, so a caller can say so once instead of
+    /// annotating each number.
+    pub fn none(&self) -> bool {
+        !self.mem && !self.procs
+    }
+}
+
+/// See [`LimitSupport`].
+pub fn limit_support(claim: IsolationClaim) -> LimitSupport {
+    let both = |b| LimitSupport { mem: b, procs: b };
+    match claim {
+        // No confinement at all: `run_unconfined` sets a wall-clock deadline and
+        // applies nothing else.
+        IsolationClaim::Workspace => both(false),
+        // Image-backed tiers cap both in the runtime itself — `--memory` +
+        // `--pids-limit` for Podman, `--memory` + `--rlimit nproc` for `msb`,
+        // where the memory figure is the guest's entire address space.
+        IsolationClaim::Container | IsolationClaim::HardenedContainer | IsolationClaim::Microvm => {
+            both(true)
+        }
+        // Kernel tiers: a per-run cgroup on Linux (and only when cgroup v2 is
+        // actually delegated to this user), nothing usable on Darwin.
+        IsolationClaim::Process | IsolationClaim::Supervised => {
+            both(cfg!(target_os = "linux") && crate::cgroup::probe().usable)
+        }
     }
 }
 
@@ -1809,7 +1855,7 @@ pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
 
 /// `workspace` tier: no kernel confinement (trusted), but still scoped — runs
 /// in the env worktree with the wall-clock limit applied so a hung command
-/// cannot wedge `h5i env run` forever.
+/// cannot wedge `h5i box run` forever.
 fn run_unconfined(
     policy: &ResolvedPolicy,
     work: &Path,

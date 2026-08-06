@@ -238,7 +238,7 @@ pub fn refresh(
     let slug = format!("cache-{}-{}", eco.name, &key[..8]);
     if crate::env::find(h5i_root, &slug).is_ok() {
         return Err(H5iError::Metadata(format!(
-            "a refresh box for {} already exists ({slug}) — another refresh is running, or one              was interrupted: `h5i dev rm {slug} --force` clears it",
+            "a refresh box for {} already exists ({slug}) — another refresh is running, or one              was interrupted: `h5i box rm {slug} --force` clears it",
             eco.name
         )));
     }

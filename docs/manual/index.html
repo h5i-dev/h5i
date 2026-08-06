@@ -699,6 +699,14 @@ mem   = &quot;4G&quot;
 procs = 256
 wall  = &quot;30m&quot;
 </code></pre>
+<p><code>wall</code> is enforced everywhere. <strong><code>mem</code> and <code>procs</code> are not enforced at the
+<code>process</code> and <code>supervised</code> tiers on macOS</strong>: Darwin has no cgroups, does not
+enforce <code>RLIMIT_AS</code> against the mmap'd heap every modern runtime uses, and
+scopes <code>RLIMIT_NPROC</code> to the whole user rather than to one box, so h5i declines
+to apply a limit it cannot hold. <code>h5i box status</code> marks such a value with <code>*</code>
+and says so underneath, rather than listing it as enforced. Use
+<code>isolation = "container"</code> or <code>isolation = "microvm"</code> where you need a real
+ceiling — both cap memory and process count in the runtime itself.</p>
 <h3 id="isolation-tiers">Isolation tiers</h3>
 <table>
 <thead>
