@@ -84,6 +84,10 @@ h5i box export <name>
 #   h5i-export/<name>/receipt.json  the records, with the enforced policy digest
 ```
 
+<p align="center">
+  <img src="./docs/_static/browser-demo.gif" width="99%" />
+</p>
+
 Nothing writes into your repository until you apply that patch.
 
 ## What confinement means here
