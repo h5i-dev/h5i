@@ -944,15 +944,24 @@ pub fn chrome_exec_patterns() -> &'static [&'static str] {
 /// filesystem. A container box gets its browser from the image, so `create`
 /// does not consult this there.
 pub fn chrome_binary() -> Option<String> {
-    chrome_binary_in(std::env::var("HOME").ok().as_deref())
+    chrome_binary_within(None, std::env::var("HOME").ok().as_deref())
 }
 
-/// [`chrome_binary`] with the home directory supplied, so a test can point it
-/// at a fixture tree instead of reassigning `HOME` for every concurrent test.
-pub fn chrome_binary_in(home: Option<&str>) -> Option<String> {
+/// [`chrome_binary`] with the filesystem it searches supplied.
+///
+/// `root`, when set, is prepended to **every** pattern — the absolute ones as
+/// well as the ones under `home`. A test that only redirected `home` would
+/// still be searching the real `/usr/bin`, and CI runners ship a Chrome there:
+/// the "this host has no browser" cases passed on a laptop and failed on the
+/// runner, which is the same class of mistake this whole change is about.
+fn chrome_binary_within(root: Option<&std::path::Path>, home: Option<&str>) -> Option<String> {
     CHROME_EXECUTABLES
         .iter()
         .filter_map(|p| expand_home_in(p, home))
+        .map(|p| match root {
+            Some(r) => r.join(p.strip_prefix("/").unwrap_or(&p)),
+            None => p,
+        })
         .flat_map(|p| glob_paths(&p))
         .find(|p| is_executable_file(p))
         .map(|p| p.display().to_string())
@@ -1096,75 +1105,114 @@ mod browser_discovery_tests {
         }
     }
 
-    #[test]
-    fn the_playwright_build_this_regressed_on_is_found() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let chrome = home
-            .path()
-            .join(".cache/ms-playwright/chromium-1140/chrome-linux/chrome");
-        std::fs::create_dir_all(chrome.parent().unwrap()).expect("mkdir");
-        std::fs::write(&chrome, b"#!/bin/sh\n").expect("write");
+    /// The home every fixture below is built under. A virtual path, not a real
+    /// one: [`chrome_binary_within`] relocates it under the test root along
+    /// with `/usr/bin` and everything else, so no test here can see the machine
+    /// it is running on.
+    const FAKE_HOME: &str = "/home/test";
+
+    /// Place an `agent-browser`-shaped file inside a synthetic filesystem.
+    /// `path` is absolute in that filesystem's terms (`/home/test/…`,
+    /// `/usr/bin/…`).
+    fn plant(root: &std::path::Path, path: &str, mode: u32) -> std::path::PathBuf {
+        let full = root.join(path.strip_prefix('/').unwrap_or(path));
+        std::fs::create_dir_all(full.parent().unwrap()).expect("mkdir");
+        std::fs::write(&full, b"#!/bin/sh\n").expect("write");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&chrome, std::fs::Permissions::from_mode(0o755))
-                .expect("chmod");
+            std::fs::set_permissions(&full, std::fs::Permissions::from_mode(mode)).expect("chmod");
         }
+        let _ = mode;
+        full
+    }
 
-        let found = chrome_binary_in(home.path().to_str());
-        assert_eq!(found.as_deref(), Some(chrome.display().to_string().as_str()));
+    fn found_in(root: &tempfile::TempDir) -> Option<String> {
+        chrome_binary_within(Some(root.path()), Some(FAKE_HOME))
+    }
+
+    #[test]
+    fn the_playwright_build_this_regressed_on_is_found() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let chrome = plant(
+            root.path(),
+            "/home/test/.cache/ms-playwright/chromium-1140/chrome-linux/chrome",
+            0o755,
+        );
+
+        assert_eq!(found_in(&root).as_deref(), Some(chrome.display().to_string().as_str()));
     }
 
     #[test]
     fn a_directory_that_holds_no_browser_is_not_a_browser() {
-        let home = tempfile::tempdir().expect("tempdir");
+        let root = tempfile::tempdir().expect("tempdir");
         // The shape that used to pass `create`: the Playwright cache exists,
         // with an ffmpeg build in it and no Chrome anywhere.
-        let ffmpeg = home.path().join(".cache/ms-playwright/ffmpeg-1011/ffmpeg");
-        std::fs::create_dir_all(ffmpeg.parent().unwrap()).expect("mkdir");
-        std::fs::write(&ffmpeg, b"#!/bin/sh\n").expect("write");
+        plant(
+            root.path(),
+            "/home/test/.cache/ms-playwright/ffmpeg-1011/ffmpeg",
+            0o755,
+        );
 
-        assert_eq!(chrome_binary_in(home.path().to_str()), None);
+        assert_eq!(found_in(&root), None);
     }
 
     #[test]
     fn a_non_executable_chrome_does_not_count() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let chrome = home
-            .path()
-            .join(".cache/ms-playwright/chromium-1140/chrome-linux/chrome");
-        std::fs::create_dir_all(chrome.parent().unwrap()).expect("mkdir");
-        std::fs::write(&chrome, b"a half-finished download").expect("write");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&chrome, std::fs::Permissions::from_mode(0o644))
-                .expect("chmod");
-        }
+        let root = tempfile::tempdir().expect("tempdir");
+        plant(
+            root.path(),
+            "/home/test/.cache/ms-playwright/chromium-1140/chrome-linux/chrome",
+            0o644,
+        );
 
-        assert_eq!(chrome_binary_in(home.path().to_str()), None);
+        assert_eq!(found_in(&root), None);
+    }
+
+    /// The search is over a filesystem the caller names, and `/usr/bin` is part
+    /// of it. Without this the two `None` cases above are only testing that the
+    /// *runner* has no Chrome, which on GitHub's runners is false.
+    #[test]
+    fn a_system_chrome_is_found_and_only_under_the_root_it_is_given() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let chrome = plant(root.path(), "/usr/bin/google-chrome", 0o755);
+
+        assert_eq!(found_in(&root).as_deref(), Some(chrome.display().to_string().as_str()));
+        // The same fixture, searched from an empty root: nothing.
+        let empty = tempfile::tempdir().expect("tempdir");
+        assert_eq!(found_in(&empty), None);
+    }
+
+    /// A downloaded build beats the distro one, because it is the build
+    /// `agent-browser install` put there for this.
+    #[test]
+    fn a_downloaded_build_wins_over_a_system_one() {
+        let root = tempfile::tempdir().expect("tempdir");
+        plant(root.path(), "/usr/bin/chromium", 0o755);
+        let downloaded = plant(
+            root.path(),
+            "/home/test/.agent-browser/browsers/chrome-141.0.7390.54/chrome-linux64/chrome",
+            0o755,
+        );
+
+        assert_eq!(
+            found_in(&root).as_deref(),
+            Some(downloaded.display().to_string().as_str())
+        );
     }
 
     #[test]
     fn the_newest_looking_versioned_build_is_tried_first() {
-        let home = tempfile::tempdir().expect("tempdir");
+        let root = tempfile::tempdir().expect("tempdir");
         for v in ["chromium-1039", "chromium-1140"] {
-            let c = home
-                .path()
-                .join(".cache/ms-playwright")
-                .join(v)
-                .join("chrome-linux/chrome");
-            std::fs::create_dir_all(c.parent().unwrap()).expect("mkdir");
-            std::fs::write(&c, b"#!/bin/sh\n").expect("write");
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&c, std::fs::Permissions::from_mode(0o755))
-                    .expect("chmod");
-            }
+            plant(
+                root.path(),
+                &format!("/home/test/.cache/ms-playwright/{v}/chrome-linux/chrome"),
+                0o755,
+            );
         }
 
-        let found = chrome_binary_in(home.path().to_str()).expect("a build");
+        let found = found_in(&root).expect("a build");
         assert!(found.contains("chromium-1140"), "picked {found}");
     }
 }
