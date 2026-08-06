@@ -9255,6 +9255,7 @@ mod tests {
     }
 
     /// Poll `f` for up to ~2s. Returns whether it ever held.
+    #[cfg(unix)]
     fn eventually(mut f: impl FnMut() -> bool) -> bool {
         for _ in 0..40 {
             if f() {
@@ -9263,6 +9264,45 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         false
+    }
+
+    /// `pid_gone` answers "no such process", not "the call failed". The
+    /// difference is `EPERM` — a process that exists and is simply not ours to
+    /// signal — and reporting that as gone would let `signal_and_wait` claim it
+    /// stopped a browser it never touched.
+    ///
+    /// No second uid needed: pid 1 is unkillable by an unprivileged process, and
+    /// a reaped child's pid is genuinely absent. Running as root, `kill(1, 0)`
+    /// succeeds instead of failing, so both readings answer "alive" and this
+    /// degrades to a tautology rather than a false failure — worth knowing if CI
+    /// ever moves into a root container, hence the note it prints.
+    #[cfg(unix)]
+    #[test]
+    fn pid_gone_tells_no_such_process_apart_from_not_allowed() {
+        // ESRCH: a child that has exited *and* been reaped, so the pid is free.
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+        let dead = child.id() as i32;
+        child.wait().unwrap();
+        assert!(pid_gone(dead), "a reaped child's pid is gone");
+
+        // EPERM: pid 1 is alive and not ours. The `kill` is made here as well as
+        // inside `pid_gone` so the test can say which case it actually covered.
+        if unsafe { libc::kill(1, 0) } == 0 {
+            eprintln!("note: running as root — the EPERM half of this test is inert");
+        } else {
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM),
+                "expected pid 1 to be unsignalable, not absent"
+            );
+        }
+        assert!(
+            !pid_gone(1),
+            "a process we may not signal is alive, not gone"
+        );
     }
 
     /// The case the restart exists for: a browser started by a shim from before
