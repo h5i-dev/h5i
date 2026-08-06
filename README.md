@@ -103,9 +103,7 @@ downgrades: an unsatisfiable request fails closed.
 | `container` | rootless Podman, read-only rootfs, dropped capabilities, a portable image, and an HTTP/HTTPS proxy allowlist |
 | `microvm` | a hardware-isolated guest with **its own kernel**, booted by [microsandbox](https://microsandbox.dev) (`msb`) from the same OCI images, with the egress allowlist evaluated **by the VM's network stack** |
 
-Note the tradeoff: the container tier buys portability (any image, any Podman host), not stronger isolation. Its allowlist is proxy-based and binds only proxy-aware tooling. On Linux, supervised enforces egress at L3/L4 with nftables. On macOS, without netfilter, it uses a host-side proxy as the box’s only route out and therefore has the same limitation as container. `h5i box capabilities` reports whether `egress_l3` is available.
-
-microvm is the strongest tier and the only one that does not share the host kernel. It requires msb, hardware virtualization (`/dev/kvm` or Apple Silicon), and an image; otherwise, it is refused, never downgraded. Stronger isolation means weaker evidence: no per-request egress tally and no peak RSS.
+microvm is the strongest tier and the only one that does not share the host kernel. It requires msb, hardware virtualization (`/dev/kvm` or Apple Silicon), and an image; otherwise, it is refused, never downgraded.
 
 No SSH keys, cloud credentials, or Docker socket enter a box. A runtime-scoped host proxy injects model API keys outside the boundary, preventing cross-runtime access. Each box receives a one-time copy of HOME state that is never written back.
 
