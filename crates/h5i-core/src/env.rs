@@ -2805,9 +2805,17 @@ alive() {{
 # is only ever called backgrounded, so `exec` replaces *that* subshell: the `$!`
 # recorded as `chrome.pid` is then Chrome itself. Without it the subshell stays
 # alive as a launcher, `$!` names the launcher, and every later `kill` of that
-# pid — this script's own restart below, and `h5i box rm`'s stop-the-browser —
-# kills the launcher while Chrome, in its own session, carries on. (Called in the
+# pid — `h5i box rm`'s stop-the-browser, and the host-side restart below — kills
+# the launcher while Chrome, in its own session, carries on. (Called in the
 # foreground it would replace the shim; it is not, and must not be.)
+#
+# One caveat, stated because a wrong pid is now a wrong `kill` rather than a
+# harmless no-op: `setsid(1)` execs in place only when it is not already a
+# process-group leader. Under a job-control shell (`set -m`) it would be one,
+# fork, and `$!` would name a parent that exits at once. This script is
+# `#!/bin/sh` and non-interactive, so job control is off and the pid recorded is
+# Chrome's own — and `browser_pid` on the host re-checks that before signalling
+# anything.
 detach() {{
   if command -v setsid >/dev/null 2>&1; then
     exec setsid "$@"
@@ -2845,12 +2853,6 @@ PROXY_ARG=
 if [ -n "${{{egress_var}:-}}" ]; then PROXY_ARG="--proxy-server=${egress_var}"; fi
 
 # A running Chrome took its proxy address at launch and will never re-read it,
-# so "already alive" is not on its own a reason to leave it alone: a box whose
-# Chrome predates this route (an upgrade, or a run whose proxy moved to a
-# different port) would otherwise keep failing every navigation until someone
-# thought to kill it. Compare what it was launched with against what applies
-# now, and restart it when they differ. Cheap, because they normally do not.
-# A running Chrome took its proxy address at launch and will never re-read it,
 # so "already alive" is not on its own a reason to leave it alone: a browser
 # that predates this route (an upgrade, or a run whose proxy moved) would keep
 # failing every navigation until someone thought to restart it.
@@ -2860,15 +2862,19 @@ if [ -n "${{{egress_var}:-}}" ]; then PROXY_ARG="--proxy-server=${egress_var}"; 
 # `(allow signal (target same-sandbox))` does not reach across that, so `kill`
 # here is refused, and `agent-browser close` only ends a session it owns rather
 # than the browser process. So this records the mismatch and the **host** acts
-# on it before the next run (see `stop_stale_browser`), which is where the pid
-# is reachable. One extra run to converge, and it says so rather than failing
-# later with a proxy error that reads like a page problem.
+# on it, at the start of the next `h5i box run`/`box shell` (see
+# `stop_stale_browser`) — which is where the pid is reachable. It says so rather
+# than failing later with a proxy error that reads like a page problem.
 HAD=$(cat "$STATE/chrome.proxy" 2>/dev/null || printf '')
 if alive && [ "$PROXY_ARG" != "$HAD" ]; then
   printf '%s' "$PROXY_ARG" > "$STATE/chrome.restart"
+  # Deliberately not "re-run this command": inside an interactive `box shell`
+  # that re-enters this same shim in this same run and prints this same warning
+  # forever. The restart happens between runs, so the run has to end first.
   echo "h5i: this box's browser predates its current route out and cannot reach the" >&2
-  echo "     network through it. h5i will restart it at the start of the next run;" >&2
-  echo "     re-run this command to pick the restarted browser up." >&2
+  echo "     network through it. h5i restarts it at the start of the NEXT run, so" >&2
+  echo "     end this one first: exit the box shell (or let this run finish) and" >&2
+  echo "     start another. The browser profile — cookies, logins — is not kept." >&2
 fi
 
 alive || {{
@@ -2969,23 +2975,104 @@ fn stop_stale_browser(state: &Path) {
     if !marker.exists() {
         return;
     }
-    #[cfg(unix)]
-    if let Some(pid) = std::fs::read_to_string(state.join("chrome.pid"))
-        .ok()
-        .and_then(|t| t.trim().parse::<i32>().ok())
-        .filter(|p| *p > 1)
-    {
-        // SIGTERM, not SIGKILL: headless Chrome exits cleanly on it and leaves
-        // its profile dir consistent for the relaunch that follows.
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
-        }
-    }
-    // Both files go, whether or not the signal landed: the marker must not
-    // re-fire every run, and a `chrome.proxy` left behind would claim the next
-    // Chrome was launched with a route it never saw.
+    stop_browser(state);
+    // The marker goes whether or not anything was stopped: it must not re-fire
+    // every run. `chrome.proxy` goes with it — left behind it would claim the
+    // next Chrome was launched with a route it never saw.
     let _ = std::fs::remove_file(&marker);
     let _ = std::fs::remove_file(state.join("chrome.proxy"));
+}
+
+/// The pid recorded in `<state>/chrome.pid`, **only** when it still names this
+/// box's own browser.
+///
+/// The number is written by the box (`<env>/browser/state` is granted write, and
+/// has to be — it is where Chrome records its pid and port), and it is handed to
+/// `kill` on the host, outside every sandbox. That makes it the one box-supplied
+/// value in this file with real reach, and the reach is not hypothetical:
+/// `"-1".parse::<i32>()` is `Ok(-1)`, and `kill(-1, …)` signals every process
+/// the user can signal. So the pid is not trusted as a pid — it is used to *find*
+/// a process, which then has to look like the browser this box started: a Chrome
+/// running on this env's own profile directory, which no other process on the
+/// host has a reason to name.
+///
+/// Deliberately not `> 0` plus a comm check: "some Chrome belonging to this
+/// user" would still be someone else's browser. The user-data-dir is the part
+/// that makes it *this box's*.
+#[cfg(unix)]
+fn browser_pid(state: &Path) -> Option<i32> {
+    let pid = std::fs::read_to_string(state.join("chrome.pid"))
+        .ok()?
+        .trim()
+        .parse::<i32>()
+        .ok()
+        .filter(|p| *p > 1)?;
+    // `ps -o command=` is the same spelling on macOS and Linux, and reads only
+    // this one pid — no enumeration of anyone else's processes.
+    let out = std::process::Command::new("ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None; // no such process
+    }
+    let cmd = String::from_utf8_lossy(&out.stdout);
+    let profile = state.join("chrome");
+    (cmd.to_lowercase().contains("chrome") && cmd.contains(&profile.display().to_string()))
+        .then_some(pid)
+}
+
+/// Stop this box's browser and wait for it to actually be gone, so a caller can
+/// rely on the CDP port being free when this returns.
+///
+/// Waiting is the point. Chrome's exit is not instant, and the shim decides
+/// whether to launch by polling that port: a restart that only *asked* Chrome to
+/// stop races it, finds the dying browser alive, and marks it for restart all
+/// over again — a loop that never converges. `chrome.pid` is cleared on the way
+/// out for the same reason: a pid the browser has released is a pid the host
+/// would later aim `kill` at, and by then it may belong to someone else.
+///
+/// Best-effort throughout: a browser that will not die is a stale browser, not a
+/// broken run, and must not block the run the user asked for.
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn stop_browser(state: &Path) {
+    #[cfg(unix)]
+    {
+        let Some(pid) = browser_pid(state) else {
+            // Nothing recognisable to stop — but the record is stale either way,
+            // and a stale pid is exactly what must not reach a later `kill`.
+            let _ = std::fs::remove_file(state.join("chrome.pid"));
+            return;
+        };
+        // SIGTERM first: headless Chrome takes it as a request to quit and shuts
+        // its child processes down with it, where SIGKILL would leave them
+        // orphaned. (Not to keep the profile dir consistent — the relaunch
+        // clears it.)
+        let gone = signal_and_wait(pid, libc::SIGTERM, 20);
+        if !gone {
+            // A browser that ignores SIGTERM would otherwise be re-detected and
+            // re-warned about on every run, forever.
+            signal_and_wait(pid, libc::SIGKILL, 10);
+        }
+        let _ = std::fs::remove_file(state.join("chrome.pid"));
+    }
+}
+
+/// Send `sig` to `pid`, then poll (100ms, up to `ticks`) until it is gone.
+/// Returns whether it went.
+#[cfg(unix)]
+fn signal_and_wait(pid: i32, sig: i32, ticks: u32) -> bool {
+    unsafe {
+        libc::kill(pid, sig);
+    }
+    for _ in 0..ticks {
+        // `kill(pid, 0)` is the existence check: it signals nothing.
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    unsafe { libc::kill(pid, 0) != 0 }
 }
 
 fn prepare_browser_shim(
@@ -4617,6 +4704,16 @@ fn write_plain_bashrc(h5i_root: &Path, m: &EnvManifest) -> Result<String, H5iErr
     Ok(path.display().to_string())
 }
 
+/// Single-quote a value for a POSIX shell, `'` included (`'` → `'\''`).
+///
+/// The bash rc only ever interpolates the env id, which cannot carry a quote.
+/// The zsh rc interpolates *paths* — the env dir, and a profile-pinned rcfile —
+/// and a path may contain anything a filesystem allows. Unquoted, a `'` in one
+/// ends the string and the rest of the line is read as code.
+fn sq(v: &str) -> String {
+    format!("'{}'", v.replace('\'', "'\\''"))
+}
+
 /// The two paths a generated zsh startup needs: the `$ZDOTDIR` the rc lives in
 /// (granted read) and the directory `$HISTFILE` lives in (granted write).
 struct ZshDirs {
@@ -4665,7 +4762,7 @@ fn write_plain_zshrc(
     // Sourced last, so it wins over the plain defaults above it — same order the
     // bash rc gives `~/.h5i_envrc`.
     let custom = match custom_rc {
-        Some(rc) => format!("source '{rc}'\n"),
+        Some(rc) => format!("source {}\n", sq(rc)),
         None => String::new(),
     };
     let body = format!(
@@ -4675,7 +4772,7 @@ fn write_plain_zshrc(
          # file is outside every grant — hence this $ZDOTDIR.\n\
          # To customize: set `[shell] rcfile = \"…\"` (relative to the worktree) in\n\
          # .h5i/env.toml, or drop extra shell config in ~/.h5i_envrc (sourced below).\n\
-         HISTFILE='{histfile}'\n\
+         HISTFILE={histfile}\n\
          HISTSIZE=2000\n\
          SAVEHIST=1000\n\
          PROMPT='h5i:{id} %~ %# '\n\
@@ -4683,7 +4780,7 @@ fn write_plain_zshrc(
          alias la='ls -A'\n\
          [ -f \"$HOME/.h5i_envrc\" ] && . \"$HOME/.h5i_envrc\"\n\
          {custom}",
-        histfile = histfile.display(),
+        histfile = sq(&histfile.display().to_string()),
         id = m.id,
     );
     let path = zdotdir.join(".zshrc");
@@ -7511,21 +7608,15 @@ pub fn rm(
     let dir = m.dir(h5i_root);
     // A `browser` box leaves Chrome running on purpose — it has to outlive the
     // `box run` that started it — so removing the box has to stop it, or the
-    // process outlives everything that knows about it. Best-effort, like the
-    // scratch dir below: a survivor is untidy, not unsafe, and must not block
-    // the removal the user asked for.
-    // The whole block is gated, not just the `kill`: on a non-unix target the
-    // binding would be read by nothing, and `-D warnings` fails the
-    // cross-target check on that. `pid_alive` above takes the same shape.
-    #[cfg(unix)]
-    if let Some(pid) = std::fs::read_to_string(dir.join("browser/state/chrome.pid"))
-        .ok()
-        .and_then(|t| t.trim().parse::<i32>().ok())
-    {
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
-        }
-    }
+    // process outlives everything that knows about it. Best-effort: a survivor
+    // is untidy, not unsafe, and must not block the removal the user asked for.
+    //
+    // Through `stop_browser`, which checks the recorded pid still names *this
+    // box's* browser before signalling anything. The pid is written by the box
+    // and read here on the host, outside every sandbox: taken at face value,
+    // `-1` would turn "remove this env" into "SIGTERM everything I own". See
+    // [`browser_pid`].
+    stop_browser(&dir.join("browser/state"));
     // On macOS the private `/tmp` backing lives outside the env dir (see
     // [`private_tmp_backing`]), so erasing the env dir no longer takes it with
     // it. Best-effort: a leftover scratch dir is tidiness, not correctness, and
@@ -7766,6 +7857,52 @@ mod tests {
         assert!(pol.profile.fs_read.iter().any(|p| p == zdotdir));
         assert!(!pol.profile.fs_write.iter().any(|p| p == zdotdir));
         assert!(pol.profile.fs_write.iter().any(|p| Path::new(p) == histdir));
+    }
+
+    /// The zsh rc interpolates paths, and a path may contain a quote — the bash
+    /// rc never had to care because it only ever interpolates the env id.
+    #[test]
+    fn the_generated_zshrc_survives_a_quote_in_a_path() {
+        let h5i_root = tempfile::Builder::new()
+            .prefix("it's-a-dir")
+            .tempdir()
+            .unwrap();
+        let m = canonical_manifest("claude", "demo");
+
+        let z = write_plain_zshrc(h5i_root.path(), &m, Some("/tmp/o'clock.zshrc")).unwrap();
+        let rc = std::fs::read_to_string(Path::new(&z.zdotdir).join(".zshrc")).unwrap();
+
+        // Read back through a real shell: the quoting is only right if the value
+        // the shell ends up with is the path we meant.
+        let line = rc
+            .lines()
+            .find(|l| l.starts_with("HISTFILE="))
+            .expect("HISTFILE line");
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{line}; printf '%s' \"$HISTFILE\""))
+            .output()
+            .expect("run sh");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            Path::new(&z.histdir)
+                .join("zsh_history")
+                .display()
+                .to_string()
+        );
+
+        let src = rc.lines().find(|l| l.starts_with("source ")).unwrap();
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("printf '%s' {}", &src["source ".len()..]))
+            .output()
+            .expect("run sh");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "/tmp/o'clock.zshrc");
     }
 
     // zsh has no `--rcfile`, so a profile's `[shell] rcfile` reaches it by being
@@ -8996,24 +9133,54 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = dir.path();
 
-        // No marker: nothing is touched, including a live-looking pid file.
+        // No marker: nothing is touched, including the pid file.
         std::fs::write(state.join("chrome.pid"), "1").unwrap();
         std::fs::write(state.join("chrome.proxy"), "--proxy-server=x").unwrap();
         stop_stale_browser(state);
         assert!(state.join("chrome.proxy").exists(), "no marker → no action");
+        assert!(state.join("chrome.pid").exists());
 
-        // Marked: the recorded route goes with the marker, so the next Chrome
-        // is not mistaken for one launched with a route it never saw.
+        // Marked: the recorded route goes with the marker, so the next Chrome is
+        // not mistaken for one launched with a route it never saw — and the pid
+        // goes too, because a pid the browser has released must never reach a
+        // later `kill`.
         std::fs::write(state.join("chrome.restart"), "--proxy-server=y").unwrap();
         stop_stale_browser(state);
         assert!(!state.join("chrome.restart").exists());
         assert!(!state.join("chrome.proxy").exists());
+        assert!(!state.join("chrome.pid").exists());
 
         // Idempotent, and harmless with no pid recorded at all.
-        std::fs::remove_file(state.join("chrome.pid")).unwrap();
         std::fs::write(state.join("chrome.restart"), "").unwrap();
         stop_stale_browser(state);
         assert!(!state.join("chrome.restart").exists());
+    }
+
+    /// The pid is written by the box and handed to `kill` on the host, so it is
+    /// used to *find* a process rather than trusted as one: `-1` would otherwise
+    /// signal everything the user owns, and any live pid would be someone's
+    /// process. Only a Chrome running on this env's own profile dir qualifies.
+    #[cfg(unix)]
+    #[test]
+    fn a_pid_that_does_not_name_this_boxs_browser_is_not_signalled() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path();
+
+        for hostile in ["-1", "0", "1", "not-a-pid", ""] {
+            std::fs::write(state.join("chrome.pid"), hostile).unwrap();
+            assert_eq!(browser_pid(state), None, "{hostile} must not be signalled");
+        }
+
+        // A real, live process that is simply not this box's browser: `ps` finds
+        // it, the profile-dir check rejects it.
+        let mut sleeper = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        std::fs::write(state.join("chrome.pid"), sleeper.id().to_string()).unwrap();
+        assert_eq!(browser_pid(state), None, "a live non-browser pid");
+        let _ = sleeper.kill();
+        let _ = sleeper.wait();
     }
 
     #[test]

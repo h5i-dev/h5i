@@ -1496,6 +1496,11 @@ pub struct ResolvedPolicy {
     /// number gets a proxy there or an ephemeral fallback, and either way
     /// cannot reach a port the profile does not allow.
     ///
+    /// That argument is about a *port*, and it does not carry to the pid file
+    /// sitting next to it: a pid reaches `kill` on the host rather than `bind`.
+    /// See `env::browser_pid`, which is why that one is checked to still name
+    /// this box's own browser before anything is signalled.
+    ///
     /// `None` → ephemeral, the previous behaviour.
     #[serde(skip)]
     pub egress_proxy_port: Option<u16>,

@@ -746,7 +746,8 @@ Being explicit about these is a feature, since the claim is a security claim.
   sandbox instance, which Seatbelt's same-sandbox signal grant does not reach.
   It is detected in the box and stopped host-side at the start of the next run,
   so the fix costs one extra run and says so rather than failing with a proxy
-  error that reads like a page problem.
+  error that reads like a page problem. The relaunch starts from a clean profile
+  directory, so anything the old browser held — cookies, logins — is gone.
 - **Two kernel mechanisms, not one.** Linux confines with Landlock, seccomp and
   namespaces. macOS confines with Seatbelt, which is default deny across
   filesystem, network, mach and sysctl in one policy, and which (unlike

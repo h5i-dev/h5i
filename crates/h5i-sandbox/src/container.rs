@@ -2004,6 +2004,9 @@ mod tests {
         }
         assert!(joined.contains(&format!("HTTP_PROXY=http://{addr}:8123")));
         assert!(joined.contains(&format!("HTTPS_PROXY=http://{addr}:8123")));
+        // h5i's own name for the same address, which the browser shim keys off
+        // (the conventional vars are box-settable, so it cannot read those).
+        assert!(joined.contains(&format!("{EGRESS_PROXY_VAR}=http://{addr}:8123")));
         assert!(joined.contains(&format!("NO_PROXY=localhost,127.0.0.1,{addr}")));
     }
 
