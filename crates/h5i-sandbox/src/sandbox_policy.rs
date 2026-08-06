@@ -258,9 +258,25 @@ impl AgentRuntime {
     /// The API endpoints this runtime is allowed to reach. Scoped per-runtime so
     /// a Claude box cannot egress to OpenAI (and so a stolen cross-runtime token
     /// would have nowhere allowlisted to go).
+    ///
+    /// Each runtime needs its **auth** host as well as its API host, or the box
+    /// is a one-session box: the credential copy `prepare_home_state` seeds it
+    /// with expires, the silent refresh has nowhere to go, and the in-box login
+    /// the credential-proxy design falls back to cannot complete either — the
+    /// paste is reported as an invalid token. Claude exchanges and refreshes at
+    /// `platform.claude.com/v1/oauth/token`; Codex at `auth.openai.com`.
+    ///
+    /// Granting the auth host is not a new capability class: the box already
+    /// holds the OAuth token, and `api.anthropic.com` already serves
+    /// `/api/oauth/claude_cli/create_api_key`. Where a host-side credential
+    /// exists the broker is still the better answer — `auth_proxy::engage`
+    /// scrubs the box copy and locks egress to the proxy alone, so none of these
+    /// hosts are reachable at all.
     pub(crate) fn egress(self) -> &'static [&'static str] {
         match self {
-            AgentRuntime::Claude => &["api.anthropic.com", "statsig.anthropic.com"],
+            AgentRuntime::Claude => {
+                &["api.anthropic.com", "platform.claude.com", "statsig.anthropic.com"]
+            }
             AgentRuntime::Codex => &["api.openai.com", "auth.openai.com", "chatgpt.com"],
         }
     }
