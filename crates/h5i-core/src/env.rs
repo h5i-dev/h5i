@@ -2087,6 +2087,59 @@ fn private_tmp_backing(logical: &Path) -> PathBuf {
     logical.to_path_buf()
 }
 
+/// Clear (or create) the box's private `/tmp` backing, `0700` and ours.
+///
+/// Two different failures were being conflated. The security question — has
+/// another local user squatted this name in world-writable `/tmp`? — is settled
+/// by looking at who owns the directory, so it is asked directly here. What was
+/// asked instead was "did an exclusive create succeed", and that also fails for
+/// an entirely ordinary reason: `remove_dir_all` races anything still writing
+/// into the directory (a browser left running by an earlier box run keeps
+/// recreating files under it), returns `ENOTEMPTY`, and the error was swallowed
+/// by `let _ =`. The create then hit `EEXIST` and blamed another user for a
+/// directory the caller owns — an unusable box with a misleading reason.
+fn reset_private_tmp(backing: &Path) -> Result<(), H5iError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        // `symlink_metadata`: a symlink planted here must never be followed.
+        if let Ok(md) = std::fs::symlink_metadata(backing) {
+            let ours = md.is_dir() && !md.file_type().is_symlink() && md.uid() == unsafe { libc::getuid() };
+            if !ours {
+                return Err(H5iError::Metadata(format!(
+                    "{} exists and is not a directory this user owns — refusing to use it as a \
+                     box's private /tmp (fail-closed). Remove it and retry.",
+                    backing.display()
+                )));
+            }
+            // Ours: clear it. A failure here is not a security condition, so it
+            // reports what it is rather than accusing anyone.
+            if let Err(e) = std::fs::remove_dir_all(backing) {
+                return Err(H5iError::Metadata(format!(
+                    "could not clear this box's private /tmp at {} ({e}). Something is probably \
+                     still writing to it — a browser or daemon left running by an earlier run of \
+                     this box. Stop it, or remove the directory, and retry.",
+                    backing.display()
+                )));
+            }
+        }
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(backing)
+            .map_err(|e| H5iError::with_path(e, backing))?;
+        // The mode is set at creation; re-assert it in case a permissive umask
+        // or an intervening process widened it.
+        std::fs::set_permissions(backing, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| H5iError::with_path(e, backing))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = std::fs::remove_dir_all(backing);
+        std::fs::create_dir_all(backing).map_err(|e| H5iError::with_path(e, backing))?;
+    }
+    Ok(())
+}
+
 /// Give kernel-tier envs a private `/tmp` by binding an env-owned scratch dir
 /// over the host path before Landlock is applied. Agent profiles used to grant
 /// host-shared `/tmp` at process/supervised tiers; that creates an unnecessary
@@ -2118,32 +2171,10 @@ fn prepare_private_tmp(
         None => m.dir(h5i_root).join("tmp"),
     };
     let backing = private_tmp_backing(&logical);
-    let _ = std::fs::remove_dir_all(&backing);
     if let Some(parent) = backing.parent() {
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
-    // Created exclusively, 0700. On macOS this lands in world-writable, sticky
-    // `/tmp` (see [`private_tmp_backing`]), where another local user could have
-    // squatted the name: `remove_dir_all` cannot delete their directory and this
-    // then fails rather than adopting a directory somebody else owns and writing
-    // the box's scratch into it.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&backing)
-            .map_err(|e| {
-                H5iError::Metadata(format!(
-                    "could not create this box's private /tmp at {} ({e}). If that path exists \
-                     and is not yours, remove it — h5i will not reuse a scratch directory it \
-                     does not own (fail-closed).",
-                    backing.display()
-                ))
-            })?;
-    }
-    #[cfg(not(unix))]
-    std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
+    reset_private_tmp(&backing)?;
     policy.profile.fs_read.retain(|p| p != "/tmp");
     policy.profile.fs_write.retain(|p| p != "/tmp");
     policy.profile.fs_write.push(backing.display().to_string());
@@ -7586,6 +7617,43 @@ mod tests {
             env.iter().all(|(k, _)| k != "CARGO_INSTALL_ROOT"),
             "cargo install is not part of the default sandbox workflow: {env:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_private_tmp_is_cleared_when_ours_and_refused_when_not() {
+        use std::os::unix::fs::PermissionsExt;
+        let td = tempfile::tempdir().unwrap();
+
+        // Fresh: created 0700.
+        let fresh = td.path().join("fresh");
+        reset_private_tmp(&fresh).unwrap();
+        assert_eq!(
+            std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+
+        // Ours with leftovers: cleared rather than adopted, and 0700 again even
+        // though the stale directory had been widened.
+        std::fs::write(fresh.join("stale"), b"x").unwrap();
+        std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        reset_private_tmp(&fresh).unwrap();
+        assert!(!fresh.join("stale").exists(), "leftovers survived the reset");
+        assert_eq!(
+            std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+
+        // A symlink planted at the path is refused rather than followed — the
+        // point of the ownership check, since on macOS this lives in
+        // world-writable `/tmp`.
+        let victim = td.path().join("victim");
+        std::fs::create_dir(&victim).unwrap();
+        std::fs::write(victim.join("keep"), b"important").unwrap();
+        let planted = td.path().join("planted");
+        std::os::unix::fs::symlink(&victim, &planted).unwrap();
+        assert!(reset_private_tmp(&planted).is_err(), "followed a symlink");
+        assert!(victim.join("keep").exists(), "the symlink target was cleared");
     }
 
     #[cfg(unix)]
