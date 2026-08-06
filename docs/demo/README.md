@@ -6,19 +6,21 @@ rendered to mp4. Embedded on the front page hero (`docs/index.html`) as an
 
 ## The film — `index.html`
 
-The first buyer workflow, compressed: run a pull request you do not trust,
-keep it off your machine. Five scenes. The hook (0:00): an AI-written PR is
-checked out on a bare host, `npm install` fires a postinstall, and the keys
-leave the laptop. The box (0:15): `h5i box --pr 214`, the agent runs with
-permissions off inside the boundary, the same postinstall hits two denial
-cards (fs, net), then the agent starts the dev server and drives agent-browser
-through the signup flow. The viewport (0:44): `h5i box view` next to a mock
-browser window, `h5i browser take` flips the control pill to "you" and a human
-click lands, `release` hands back. The output gate (0:58): `h5i box export`
-with the patch/report/screenshot/receipt checklist and the denied-egress line.
-Close (1:10): "Run code you don't trust. Keep it off your machine." CTA is
-GitHub + h5i.dev (no `curl | sh` in the close: the hook frames running
-untrusted code as the threat).
+The pitch of the README, compressed: a coding agent gets a complete disposable
+development environment, and your machine stays out of reach. Five scenes. The
+hook (0:00): an agent is run with permissions off on a bare host, an `npm
+install` postinstall reads `~/.ssh` and `~/.aws`, and the keys leave the laptop.
+The box (0:15): `h5i box` on this repository, the workspace copied in, the agent
+running with permissions off inside the boundary, the same postinstall hitting
+two denial cards (fs, net), then the dev server and agent-browser driving the
+signup flow. The variants (`--pr`, a URL, `--new`) and the stronger `--isolation
+microvm` boundary are one line each, not the frame of the story. The viewport
+(0:44): `h5i box view` next to a mock browser window, `h5i browser take` flips
+the control pill to "you" and a human click lands, `release` hands back. The
+output gate (0:58): `h5i box export` with the patch/report/screenshot/receipt
+checklist and the denied-egress line. Close (1:10): "Give your agent a whole
+machine. Just not yours." CTA is GitHub + h5i.dev (no `curl | sh` in the close:
+the hook frames unsupervised autonomy, not installation, as the subject).
 
 ## Files
 

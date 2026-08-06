@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i Pitch Deck: Auditable Workspaces for AI Coding Agents</title>
-<meta name="description" content="h5i pitch deck: auditable workspaces for AI coding agents. h5i gives every agent a sandboxed Git worktree and records the prompts, commands, logs, policies, reviews, and verifier results behind each change. Run one agent safely, scale to many, merge one auditable result.">
-<meta name="keywords" content="h5i pitch, ai agent teams, agent ensembles, multi-agent coding, auditable workspaces, ai agents, agent sandbox, git sidecar, agent provenance, claude code, codex, neutral verifier, ai code review, agent governance">
+<title>h5i Pitch Deck: Integrated Sandbox for AI Coding Agents</title>
+<meta name="description" content="h5i pitch deck: an integrated sandbox for AI coding agents. h5i gives a coding agent a complete, disposable development environment inside one security boundary: workspace, shell, dependencies, dev server and browser inside, host files and credentials outside, a reviewable patch and execution log on the way out.">
+<meta name="keywords" content="h5i pitch, ai agent sandbox, disposable development environment, confined coding agent, landlock seccomp sandbox, network egress allowlist, microvm isolation, headless browser for agents, claude code, codex, agent containment">
 <meta name="author" content="h5i-dev">
 <meta name="theme-color" content="#D21C1C">
 <meta name="color-scheme" content="dark">
@@ -22,21 +22,21 @@
 <link rel="apple-touch-icon" href="/_static/logo.png">
 
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i Pitch Deck", "headline": "h5i Pitch Deck: Auditable Workspaces for AI Coding Agents", "description": "An auditable workspace layer for AI coding agents: run many coding agents in isolated workspaces, seal independent attempts, verify neutrally, and merge one auditable result.", "url": "https://h5i.dev/pitch/", "inLanguage": "en", "author": {"@type": "Organization", "name": "h5i-dev", "url": "https://github.com/h5i-dev/h5i"}, "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}}, "about": {"@type": "SoftwareApplication", "name": "h5i", "applicationCategory": "DeveloperApplication"}}
+{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i Pitch Deck", "headline": "h5i Pitch Deck: Integrated Sandbox for AI Coding Agents", "description": "An integrated sandbox for AI coding agents: the agent, workspace, shell, dependencies, dev server and browser run together inside one disposable boundary, host files and credentials stay outside, and the work leaves as a reviewable patch with an execution log.", "url": "https://h5i.dev/pitch/", "inLanguage": "en", "author": {"@type": "Organization", "name": "h5i-dev", "url": "https://github.com/h5i-dev/h5i"}, "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}}, "about": {"@type": "SoftwareApplication", "name": "h5i", "applicationCategory": "DeveloperApplication"}}
 </script>
 
 <!-- Open Graph -->
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="h5i">
-<meta property="og:title" content="h5i Pitch Deck: Auditable Workspaces for AI Coding Agents">
-<meta property="og:description" content="Auditable workspaces for AI coding agents. h5i gives every agent a sandboxed Git worktree and records the prompts, commands, logs, policies, reviews, and verifier results behind each change. Run one safely, scale to many, merge one auditable result.">
+<meta property="og:title" content="h5i Pitch Deck: Integrated Sandbox for AI Coding Agents">
+<meta property="og:description" content="An integrated sandbox for AI coding agents. The agent, workspace, shell, dependencies, dev server and browser run together inside one disposable boundary. Your host files and credentials stay outside. A reviewable patch and an execution log come out.">
 <meta property="og:url" content="https://h5i.dev/pitch/">
 <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="h5i Pitch Deck: Auditable Workspaces for AI Coding Agents">
-<meta name="twitter:description" content="Auditable workspaces for AI coding agents: a sandboxed Git worktree per agent, prompt and command provenance, and a neutral verifier. Run one safely, scale to many, merge one auditable result.">
+<meta name="twitter:title" content="h5i Pitch Deck: Integrated Sandbox for AI Coding Agents">
+<meta name="twitter:description" content="An integrated sandbox for AI coding agents: a disposable box holding the workspace, the toolchain, the dev server and a real browser, with your credentials outside it and a reviewable patch coming out.">
 <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -801,14 +801,14 @@
 <div class="slide active" style="gap:28px;">
   <div class="hero-glow"></div>
   <div style="width:100%;max-width:1000px;">
-    <div class="hero-badge">Sandboxed worktrees · AI-aware versioning · persistent memory</div>
-    <h1 style="font-size:clamp(2.6rem,5.4vw,4.8rem);">Auditable Workspaces<br><span class="shine-text">for AI Coding Agents</span></h1>
+    <div class="hero-badge">Disposable boxes · confined agents · a browser inside · a reviewed patch out</div>
+    <h1 style="font-size:clamp(2.6rem,5.4vw,4.8rem);">Integrated Sandbox<br><span class="shine-text">for AI Coding Agents</span></h1>
     <ul class="lede" style="list-style:none;max-width:1040px;margin:28px 0 0;padding:0;font-size:clamp(2rem,3.8vw,3rem);line-height:1.4;display:flex;flex-direction:column;gap:20px;">
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">▸</span>h5i gives every coding agent a <span class="cyan">sandboxed Git worktree</span>.</li>
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">▸</span>h5i <span class="cyan">records the evidence</span> behind each change: prompts, commands, logs, policies, and reviews.</li>
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">▸</span><span class="cyan">In Git, no SaaS.</span></li>
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">▸</span>h5i gives a coding agent a <span class="cyan">complete, disposable development environment</span>: workspace, shell, dependencies, dev server and browser.</li>
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">▸</span>Your <span class="cyan">host files and credentials stay outside</span> the boundary.</li>
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">▸</span>What comes out is a <span class="cyan">reviewable patch and an execution log</span>.</li>
     </ul>
-    <p class="mono" style="margin-top:30px;font-size:clamp(1rem,1.8vw,1.3rem);color:var(--text-dim);">★ <span style="color:var(--ink);">450+ GitHub stars</span> · the <span class="cyan">#1 worktree manager by stars</span></p>
+    <p class="mono" style="margin-top:30px;font-size:clamp(1rem,1.8vw,1.3rem);color:var(--text-dim);">★ <span style="color:var(--ink);">500+ GitHub stars</span> · Apache 2.0 · <span class="cyan">local-first, no hosted sandbox</span></p>
   </div>
 </div>
 
@@ -822,20 +822,20 @@
     <div class="g2" style="margin-top:36px;align-items:stretch;gap:24px;">
       <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
         <span class="pill red">today</span>
-        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">An agent run is unsafe and opaque</h3>
+        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">You babysit it, or you hand it your machine</h3>
         <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.1rem,1.9vw,1.4rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>Untracked prompts and context</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>Dangerous tool usage</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>Conflicting multi-agents</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>A permission prompt before every command</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>Or your keys, your files, your whole disk</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>And only the agent's word for what happened</li>
         </ul>
       </div>
       <div class="card" style="border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
         <span class="pill green">with h5i</span>
-        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">An agent run is safe and auditable</h3>
+        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">Full autonomy, inside a boundary</h3>
         <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.1rem,1.9vw,1.4rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Sandboxed environment</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Tracked prompt and context</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Conflict-free multi-agent development</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Permission prompts off, walls up</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Host files and credentials never enter</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>A reviewable patch and an execution log</li>
         </ul>
       </div>
     </div>
@@ -853,33 +853,33 @@
     <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;margin-top:28px;align-items:stretch;">
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
         <span class="pill red">prompts</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Untracked prompts</span>
-        <span class="ml" style="font-size:1.2rem;">Can't improve them or reproduce a result.</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Permission fatigue</span>
+        <span class="ml" style="font-size:1.2rem;">Approve every command, or stop reading them.</span>
       </div>
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">context</span>
-	<span class="mv" style="font-size:1.9rem;line-height:1.15;">Lost<br> context</span>
-        <span class="ml" style="font-size:1.2rem;">Every session re-grounds from scratch.</span>
+        <span class="pill red">blast radius</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">It runs as you</span>
+        <span class="ml" style="font-size:1.2rem;">Every repo on disk, every file in your $HOME.</span>
       </div>
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">safety</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Unsupervised tool use</span>
-        <span class="ml" style="font-size:1.2rem;">Wrecked envs, malware, secret exfil.</span>
+        <span class="pill red">secrets</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Credentials in reach</span>
+        <span class="ml" style="font-size:1.2rem;">SSH keys, cloud tokens, browser sessions.</span>
       </div>
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">tokens</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Multi-agent token waste</span>
-        <span class="ml" style="font-size:1.2rem;">Each agent re-reads the whole repo, and run many tools.</span>
+        <span class="pill red">network</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Unrestricted egress</span>
+        <span class="ml" style="font-size:1.2rem;">One postinstall script is enough to send it all out.</span>
       </div>
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">conflict</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Multi-agent conflict</span>
-        <span class="ml" style="font-size:1.2rem;">They overwrite each other's work.</span>
+        <span class="pill red">verification</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">It cannot see the app</span>
+        <span class="ml" style="font-size:1.2rem;">It changes a UI it never opens, then guesses.</span>
       </div>
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">audit</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Hard to audit</span>
-        <span class="ml" style="font-size:1.2rem;">Which prompt or model shipped a change? Unknown.</span>
+        <span class="pill red">evidence</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Only its own account</span>
+        <span class="ml" style="font-size:1.2rem;">What ran, what it reached, what failed: unrecorded.</span>
       </div>
     </div>
   </div>
@@ -894,12 +894,12 @@
     <h2>h5i <span class="red">solves all six</span>.</h2>
 
     <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;margin-top:28px;align-items:stretch;">
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">prompts</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Prompt versioning</span><p class="feat-desc" style="margin-top:6px;">Captured with each commit, so results replay.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">context</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Persistent context</span><p class="feat-desc" style="margin-top:6px;">Carried across sessions, no re-grounding.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">safety</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Supervised sandbox</span><p class="feat-desc" style="margin-top:6px;">A policy-enforced worktree per agent.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">tokens</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Token reduction</span><p class="feat-desc" style="margin-top:6px;">Raw output out of context, up to <span class="green">95% less</span>.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">conflict</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Conflict-free ensemble</span><p class="feat-desc" style="margin-top:6px;">Isolated worktrees, merged into one result.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">audit</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Easy to audit</span><p class="feat-desc" style="margin-top:6px;">Risk-ranked review of every AI change.</p></div>
+      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">prompts</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Full autonomy</span><p class="feat-desc" style="margin-top:6px;">Permission prompts off. The box is the permission.</p></div>
+      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">blast radius</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Disposable workspace</span><p class="feat-desc" style="margin-top:6px;">The code is copied in. No host directory is mounted.</p></div>
+      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">secrets</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Credential broker</span><p class="feat-desc" style="margin-top:6px;">Keys stay on the host. A proxy injects them outside the box.</p></div>
+      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">network</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Egress allowlist</span><p class="feat-desc" style="margin-top:6px;">Enforced at <span class="green">L3/L4</span>, pinned to resolved IPs.</p></div>
+      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">verification</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Browser in the box</span><p class="feat-desc" style="margin-top:6px;">Chrome and the dev server on the agent's own localhost.</p></div>
+      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">evidence</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Output gate</span><p class="feat-desc" style="margin-top:6px;">A patch, a report, a receipt: changed, ran, denied.</p></div>
     </div>
   </div>
 </div>
@@ -910,18 +910,18 @@
 <div class="slide" style="gap:16px;">
   <div style="width:100%;max-width:1120px;">
     <div class="section-tag">The sandbox</div>
-    <h2>A <span class="red">sealed workspace</span> per agent.</h2>
-    <p class="lede" style="max-width:960px;">Turn agent permission prompts off: the box is the permission. Writes stay in <code>$WORK</code>, network egress is allowlisted, and every denial is logged as evidence.</p>
+    <h2>One <span class="red">sealed box</span> per agent.</h2>
+    <p class="lede" style="max-width:960px;">Turn agent permission prompts off: the box is the permission. Writes stay in <code>$WORK</code>, network egress is allowlisted, credentials never enter, and every denial is recorded. An everyday box is ready in under 200&nbsp;ms.</p>
 
     <div class="sb-stage" role="img" aria-label="Diagram: a brick wall seals an agent running with permissions off. The fs wall blocks reading ~/.ssh/id_rsa, the net wall blocks connecting to internal-billing.corp, and the task still finishes inside the box.">
       <div class="sb-box">
-        <div class="sb-label">🛡️ env/worker · sealed</div>
+        <div class="sb-label">🛡️ env/you/webapp · sealed</div>
         <div class="terminal">
           <div class="terminal-bar">
             <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
             <span class="terminal-path">agent in the box · permissions off</span>
           </div>
-          <div class="terminal-body"><pre><span class="t-prompt">h5i:worker$</span> <span class="t-cmd">claude --dangerously-skip-permissions</span>
+          <div class="terminal-body"><pre><span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">claude --dangerously-skip-permissions</span>
 <span style="color:#ff7a59;font-size:1.15em;">✻</span> <span class="t-bold">Claude Code</span> <span class="t-cmt">· permissions off</span>
 
 <span class="t-ai">●</span> <span class="t-bold">Bash</span><span class="t-out">(cat ~/.ssh/id_rsa)</span>
@@ -941,131 +941,132 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 6 — The receipt (prompt, context, tests, denials, diff)
+     SLIDE 6 — The browser in the box (agent drives it, you take over)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:18px;">
   <div style="width:100%;max-width:1080px;">
-    <div class="section-tag">The receipt</div>
-    <h2>Every diff gets a <span class="red">receipt</span>.</h2>
-    <p class="lede" style="max-width:940px;">The prompt, the reasoning, the commands, the tests, the denials: attached to the commit, versioned in Git, recallable from any clone. No SaaS.</p>
+    <div class="section-tag">The browser</div>
+    <h2>The agent can <span class="red">see the app</span> it just changed.</h2>
+    <p class="lede" style="max-width:940px;">Chrome and a fresh profile live inside the box, next to the dev server, so <code>localhost</code> means the same thing to both. The agent reads an accessibility tree rather than HTML and clicks by handle. You can watch the same viewport and take control.</p>
 
     <div class="rc-cols">
       <div class="terminal">
         <div class="terminal-bar">
           <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">a week later · any clone</span>
+          <span class="terminal-path">inside the box · the agent drives</span>
         </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --limit 1</span>
-<span class="t-bold">commit 4f2c9e1</span>  <span class="t-out">fix: clamp retry jitter</span>
-  <span class="t-out">agent</span>    <span class="t-ai">claude-code · claude-opus-4-8</span>
-  <span class="t-out">prompt</span>   <span class="t-cmt">"Fix the flaky retry test in tests/test_worker.py"</span>
-  <span class="t-out">context</span>  <span class="t-out">goal + reasoning trace, restorable per commit</span>
-  <span class="t-out">tests</span>    <span class="t-pass">241 passed</span> <span class="t-out">· coverage +1</span>
-  <span class="t-out">denials</span>  <span class="t-red">2 blocked</span> <span class="t-out">· logged as evidence</span>
-  <span class="t-out">tokens</span>   <span class="t-pass">−94%</span> <span class="t-out">(412 → 9 lines, raw recoverable)</span></pre></div>
+        <div class="terminal-body"><pre><span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser open http://localhost:3000</span>
+<span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser snapshot -i</span>
+  <span class="t-ai">@e1</span> <span class="t-out">heading "Sign up"</span> · <span class="t-ai">@e2</span> <span class="t-out">input email</span> · <span class="t-ai">@e3</span> <span class="t-out">button</span>
+<span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser fill @e2 test@example.com</span> <span class="t-pass">✓</span>
+<span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser click @e3</span> <span class="t-pass">✓</span>
+<span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser screenshot signup.png</span> <span class="t-pass">✓</span>
+  <span class="t-out">console</span> <span class="t-pass">0 errors</span> <span class="t-out">· 0 failed requests</span>
+<span class="t-cmt">the page's own answer, not the agent's summary</span></pre></div>
       </div>
       <div class="rc-list">
-        <div class="rc-ck"><span class="box">✓</span>Prompt</div>
-        <div class="rc-ck"><span class="box">✓</span>Reasoning context</div>
-        <div class="rc-ck"><span class="box">✓</span>Commands</div>
-        <div class="rc-ck"><span class="box">✓</span>Test output</div>
-        <div class="rc-ck"><span class="box">✓</span>Denied actions</div>
-        <div class="rc-ck"><span class="box">✓</span>Final diff</div>
+        <div class="rc-ck"><span class="box">✓</span>Accessibility tree, not HTML</div>
+        <div class="rc-ck"><span class="box">✓</span>Screenshots on disk</div>
+        <div class="rc-ck"><span class="box">✓</span>Console errors in the receipt</div>
+        <div class="rc-ck"><span class="box">✓</span>Watch the same viewport</div>
+        <div class="rc-ck"><span class="box">✓</span>Take control, agent waits</div>
+        <div class="rc-ck"><span class="box">✓</span>No published port</div>
       </div>
     </div>
 
-    <p class="rc-sub">A week later, you can still answer: <b>why did this diff happen, and was it built safely?</b></p>
+    <p class="rc-sub">Your host browser never connects to the app. <b>The box's Chrome does.</b></p>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 7 — Audit (h5i audit review)
+     SLIDE 7 — The output gate (h5i box export)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:20px;">
   <div style="width:100%;max-width:1040px;">
-    <div class="section-tag">Audit</div>
-    <h2>Triage the riskiest AI changes<br><span class="red">before they merge</span>.</h2>
-    <p class="lede" style="max-width:880px;">Receipts make triage automatic: <code>h5i audit review</code> ranks commits by uncertainty, blind edits, churn, and scope, so review starts with the ones that need it most.</p>
+    <div class="section-tag">The output gate</div>
+    <h2>Nothing leaves the box<br><span class="red">without your review</span>.</h2>
+    <p class="lede" style="max-width:880px;">The agent has no direct write path to your repository. <code>h5i box export</code> is the only exit: the patch, a report of what ran and what was refused, the screenshots, and the receipt. You apply it, or you delete the box.</p>
 
     <div class="terminal" style="margin-top:16px;">
       <div class="terminal-bar">
         <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-        <span class="terminal-path">h5i audit review</span>
+        <span class="terminal-path">h5i box export</span>
       </div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit review --limit 200</span>
-<span class="t-out">Suggested Review Points — 2 of 200 commits flagged</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box export webapp</span>
+<span class="t-pass">✔</span> <span class="t-bold">exported</span> <span class="t-out">env/you/webapp → h5i-export/webapp</span>
 
-  <span class="t-bold">#1</span> <span class="t-out">a3f1c0d</span>  score <span class="t-red">0.94</span>  <span class="t-red">█████████▍</span>
-     <span class="t-bold">auth: refresh token rotation</span>
-     <span class="t-red">▸</span> <span class="t-cmt">security-sensitive · API token leakage · no tests</span>
+  <span class="t-out">patch.diff</span>    <span class="t-bold">9 files</span>, <span class="t-pass">+214</span> <span class="t-red">-38</span>  <span class="t-cmt">· paths validated</span>
+  <span class="t-out">report.md</span>     <span class="t-bold">what ran</span>, what was denied, what was redacted
+  <span class="t-out">signup.png</span>    <span class="t-bold">the flow</span>, as the box's browser saw it
+  <span class="t-out">receipt.json</span>  <span class="t-bold">23 records</span> <span class="t-cmt">· with the enforced policy digest</span>
+  <span class="t-warn">egress</span>        <span class="t-red">2 denied attempt(s)</span> <span class="t-out">· read report.md before applying</span>
 
-  <span class="t-bold">#2</span> <span class="t-out">92c80f4</span>  score <span class="t-warn">0.71</span>  <span class="t-warn">███████</span>
-     <span class="t-bold">db: migration for sessions table</span>
-     <span class="t-warn">▸</span> <span class="t-cmt">large diff · broad scope · low prompt certainty</span></pre></div>
+<span class="t-cmt">$ git apply --3way h5i-export/webapp/patch.diff   # a human step, deliberately</span></pre></div>
     </div>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 8 — Token reduction (h5i capture run)
+     SLIDE 8 — The boundary (why a container is not the answer)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:20px;">
   <div style="width:100%;max-width:1080px;">
-    <div class="section-tag">Token reduction</div>
-    <h2>Tool output is trimmed before it<br>burns through the <span class="red">context window</span>.</h2>
-    <p class="lede" style="max-width:900px;">The receipt never bloats the context: <code>h5i capture run</code> keeps every command's raw output out-of-band and hands the agent a compact, structured summary. Nothing is lost, only the noise.</p>
+    <div class="section-tag">The boundary</div>
+    <h2>A container is one tier, and the <span class="red">weakest</span><br>at the thing that matters most.</h2>
+    <p class="lede" style="max-width:900px;">A container's egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. h5i's <code>supervised</code> tier puts the box in its own network namespace, enforces the allowlist with nftables rules pinned to resolved IPs, and gates <code>socket()</code> with seccomp.</p>
 
     <div style="margin-top:18px;display:flex;align-items:center;gap:16px;">
       <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;">
-        <span class="pill red">raw</span>
+        <span class="pill red">container · L7</span>
         <div class="terminal">
           <div class="terminal-bar">
             <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="terminal-path">every line into context</span>
+            <span class="terminal-path">the allowlist is a proxy setting</span>
           </div>
-          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">pytest -q</span>
-<span class="t-out">tests/test_api.py ....................  [ 18%]</span>
-<span class="t-out">tests/test_auth.py ...</span><span class="t-red">F</span><span class="t-out">................ [ 41%]</span>
-<span class="t-out">tests/test_cache.py .................    [ 60%]</span>
-<span class="t-out">tests/test_db.py ....................    [ 82%]</span>
-<span class="t-out">tests/test_util.py ..................    [100%]</span>
-<span class="t-cmt">  … 412 lines: every PASS, warning, and</span>
-<span class="t-cmt">    traceback frame streamed into context …</span>
-<span class="t-out">========= 1 failed, 240 passed =========</span></pre></div>
+          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">env -u HTTPS_PROXY node exfil.js</span>
+<span class="t-out">connecting to cdn-metrics.dev:443 …</span>
+<span class="t-out">POST /collect</span> <span class="t-red">200 OK</span>
+
+<span class="t-cmt">  the program never asked the proxy,</span>
+<span class="t-cmt">  so the allowlist was never consulted</span></pre></div>
         </div>
-        <span class="mono" style="font-size:0.95rem;color:var(--yellow);">≈ 4,600 tokens spent</span>
+        <span class="mono" style="font-size:0.95rem;color:var(--yellow);">binds proxy-respecting tooling only</span>
       </div>
 
       <span class="red" style="flex-shrink:0;font-family:var(--mono);font-size:2.2rem;line-height:1;">⇒</span>
 
       <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;">
-        <span class="pill green">filtered</span>
+        <span class="pill green">supervised · L3/L4</span>
         <div class="terminal">
           <div class="terminal-bar">
             <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="terminal-path">h5i capture run · structured</span>
+            <span class="terminal-path">private netns · nftables · seccomp</span>
           </div>
-          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i capture run -- pytest -q</span>
+          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">env -u HTTPS_PROXY node exfil.js</span>
+<span class="t-out">connecting to cdn-metrics.dev:443 …</span>
+<span class="t-red">connect: Operation not permitted</span>
 
-  <span class="t-bold">1 failed · 240 passed</span>  <span class="t-cmt">(240 ok collapsed)</span>
-  <span class="t-red">▸</span> tests/test_auth.py:88  expected 200, got 401</pre></div>
+<span class="t-cmt">  refused in the box's own network</span>
+<span class="t-cmt">  namespace · recorded as a denial</span></pre></div>
         </div>
-        <span class="mono" style="font-size:0.95rem;color:var(--green);">≈ 280 tokens · 94% fewer<span style="color:var(--text-faint);"> · rehydrate: h5i recall object 41a337be</span></span>
+        <span class="mono" style="font-size:0.95rem;color:var(--green);">no way around it from inside</span>
       </div>
     </div>
+
+    <p class="kicker" style="margin-top:18px;text-align:center;">Five tiers: <span class="mono">workspace · process · supervised · container · microvm</span>. The strongest boots its <span class="cyan">own kernel</span>. h5i never silently downgrades: a tier your host cannot satisfy <span class="red">fails closed</span>.</p>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 9 — h5i team (the convergence)
+     SLIDE 9 — The fleet (many boxes, one read-only screen)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:20px;">
   <div style="width:100%;max-width:1080px;">
-    <div class="section-tag">The team</div>
-    <h2><span class="red">Scale to many</span> with <code style="font-size:0.82em;">h5i team</code>.</h2>
-    <p class="lede" style="max-width:940px;"><code>h5i team</code> fans one task out to agents in sealed worktrees, so they never overwrite each other. They peer-review each other's work, and only the winner merges.</p>
+    <div class="section-tag">At scale</div>
+    <h2><span class="red">Many boxes at once</span>, one screen.</h2>
+    <p class="lede" style="max-width:940px;">Boxes are cheap and disposable, so you run several. <code>h5i ui</code> shows the fleet: the policy each box actually enforced, what ran inside it, and what was refused. Read-only, loopback, token-gated. It counts receipts; it does not score anyone.</p>
 
-    <img class="team-svg" src="/_static/hero-team.svg" width="1280" height="420" loading="lazy" alt="h5i team: one task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo.">
+    <img class="team-svg" src="/_static/sandbox-ui-demo.png" width="2293" height="901" loading="lazy" alt="The h5i box console: every box in the fleet with its isolation tier, profile, enforced policy, recent commands and denied egress attempts, on one read-only screen.">
   </div>
 </div>
 
@@ -1078,10 +1079,10 @@
     <h2>Agent-heavy developers are<br>already <span class="red">pulling</span> this.</h2>
 
     <div class="g4" style="margin-top:24px;">
-      <div class="metric"><span class="mv">450+</span><span class="ml">GitHub stars</span></div>
-      <div class="metric"><span class="mv">30+</span><span class="ml">forks</span></div>
-      <div class="metric"><span class="mv">8+</span><span class="ml">active contributors</span></div>
-      <div class="metric"><span class="mv">#1</span><span class="ml">worktree manager by GitHub stars</span></div>
+      <div class="metric"><span class="mv">500+</span><span class="ml">GitHub stars</span></div>
+      <div class="metric"><span class="mv">45+</span><span class="ml">forks</span></div>
+      <div class="metric"><span class="mv">14</span><span class="ml">contributors</span></div>
+      <div class="metric"><span class="mv">20+</span><span class="ml">releases since March</span></div>
       <!--<div class="metric"><span class="mv"><a href="https://news.ycombinator.com/item?id=48345837" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Trending</a></span><span class="ml">on Hacker News</span></div>-->
     </div>
   </div>
@@ -1093,22 +1094,22 @@
 <div class="slide" style="gap:22px;">
   <div style="width:100%;max-width:1040px;">
     <div class="section-tag">Beachhead</div>
-    <h2>Teams that generate code faster<br>than they can <span class="red">safely accept</span> it.</h2>
-    <p class="lede" style="max-width:900px;">We spoke with dozens of developers during PhD research in AI and systems security. The repeated bottleneck was not code generation. It was <span class="cyan">safe code acceptance</span>.</p>
+    <h2>Teams running agents faster<br>than they can <span class="red">safely supervise</span> them.</h2>
+    <p class="lede" style="max-width:900px;">We spoke with dozens of developers during PhD research in AI and systems security. The repeated bottleneck was not code generation. It was <span class="cyan">autonomy they could afford to grant</span>.</p>
 
     <div style="margin-top:24px;display:flex;flex-direction:column;gap:16px;">
       <div class="feat-card" style="border-color:rgba(98,201,140,0.4);background:rgba(98,201,140,0.05);display:flex;flex-direction:column;gap:6px;">
         <span class="pill green" style="align-self:flex-start;">beachhead · buys first</span>
         <span class="feat-cmd" style="display:block;font-size:1.9rem;line-height:1.15;color:var(--green);">Agent-heavy engineering</span>
-        <p class="feat-desc" style="font-size:1.15rem;">Already using Claude Code, Codex, Cursor, or internal agents, and drowning in unverifiable patches.</p>
+        <p class="feat-desc" style="font-size:1.15rem;">Already using Claude Code, Codex, Cursor, or internal agents, and either babysitting them or running them wide open.</p>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:10px;">
         <span class="mono" style="font-size:0.78rem;letter-spacing:0.16em;text-transform:uppercase;color:var(--cyan);">Expansion →</span>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:stretch;">
-          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Platform / DevEx</span><p class="feat-desc" style="margin-top:8px;">A standard workflow for running and reviewing many agents.</p></div>
-          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Security</span><p class="feat-desc" style="margin-top:8px;">Sandboxed autonomy and evidence for every blocked action.</p></div>
-          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Governance &amp; regulated</span><p class="feat-desc" style="margin-top:8px;">Fintech, health, government: audit every AI-written change.</p></div>
+          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Platform / DevEx</span><p class="feat-desc" style="margin-top:8px;">One standard box agents run in, on a laptop or on CI.</p></div>
+          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Security</span><p class="feat-desc" style="margin-top:8px;">Contained autonomy, with a record of every refused action.</p></div>
+          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Untrusted code</span><p class="feat-desc" style="margin-top:8px;">Run an unreviewed PR or an unknown repository off your machine.</p></div>
         </div>
       </div>
     </div>
@@ -1121,17 +1122,18 @@
 <div class="slide" style="gap:22px;">
   <div style="width:100%;max-width:1000px;">
     <div class="section-tag">Why h5i wins</div>
-    <h2>h5i wins by becoming the <span class="red">default auditable workspace</span> for agents.</h2>
-    <p class="lede" style="max-width:900px;">Agents will write more code across more repos. Teams will not trust raw diffs alone.</p>
+    <h2>h5i wins by becoming the <span class="red">default box</span> agents run in.</h2>
+    <p class="lede" style="max-width:900px;">Agents will run longer, less supervised, on more machines. The environment they run in becomes the control point.</p>
 
     <div class="ladder" style="margin-top:22px;">
       <div class="rung"><span class="rk">Coding agents</span><span class="rv">generate patches.</span></div>
-      <div class="rung"><span class="rk">Sandboxes</span><span class="rv">contain risky execution.</span></div>
-      <div class="rung"><span class="rk">Observability</span><span class="rv">records what happened.</span></div>
-      <div class="rung h5i"><span class="rk">h5i</span><span class="rv"><strong style="color:var(--ink);">gives every agent run a workspace with isolation, provenance, logs, policies, and reviews.</strong></span></div>
+      <div class="rung"><span class="rk">Process sandboxes</span><span class="rv">confine one command at a time.</span></div>
+      <div class="rung"><span class="rk">Devcontainers</span><span class="rv">give you an environment, not a boundary.</span></div>
+      <div class="rung"><span class="rk">VM sandboxes</span><span class="rv">isolate, at minutes, gigabytes, and someone else's servers.</span></div>
+      <div class="rung h5i"><span class="rk">h5i</span><span class="rv"><strong style="color:var(--ink);">puts the whole development environment, agent and browser included, inside one local boundary that starts in milliseconds.</strong></span></div>
     </div>
 
-    <p class="kicker" style="margin-top:18px;text-align:center;">The scarce resource is no longer code generation. It is <span class="red">safe code acceptance</span>.</p>
+    <p class="kicker" style="margin-top:18px;text-align:center;">The scarce resource is no longer code generation. It is <span class="red">autonomy you can afford to grant</span>.</p>
   </div>
 </div>
 
@@ -1142,36 +1144,36 @@
   <div class="hero-glow"></div>
   <div style="width:100%;max-width:1060px;">
     <div class="section-tag">Why now · why us</div>
-    <h2>We will make h5i the <span class="red">default way</span><br>teams accept AI-written code.</h2>
+    <h2>We will make h5i the <span class="red">default place</span><br>a coding agent runs.</h2>
 
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:26px;text-align:left;align-items:stretch;">
       <div class="feat-card">
         <span class="feat-cmd" style="display:block;font-size:1.25rem;color:var(--cyan);">Why this exists</span>
         <ul style="margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;">
           <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--cyan);">▸</span>PhD research in AI + systems security.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--cyan);">▸</span>Dozens of developer conversations on agent safety, sandboxing, and AI-code review.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--cyan);">▸</span>Dozens of developer conversations on agent autonomy, sandboxing, and what people actually let an agent touch.</li>
         </ul>
       </div>
       <div class="feat-card">
         <span class="feat-cmd" style="display:block;font-size:1.25rem;color:var(--green);">Built already</span>
         <ul style="margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;">
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>450+ GitHub stars.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>#1 worktree manager by GitHub stars.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>Dogfooded with real agent-team workflows.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>500+ GitHub stars, 20+ releases.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>Five isolation tiers on Linux and macOS, one Rust binary.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>Browser in the box, with human takeover.</li>
         </ul>
       </div>
       <div class="feat-card">
         <span class="feat-cmd" style="display:block;font-size:1.25rem;color:var(--yellow);">Next 12 weeks</span>
         <ul style="margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;">
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Ship the GitHub PR verifier.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Prove the browser box in live runs, not fixtures.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Boot the microVM tier on real virtualization hosts.</li>
           <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Convert 10 design partners.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Run 1,000 verified agent attempts.</li>
           <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Land first paid pilots.</li>
         </ul>
       </div>
     </div>
 
-    <p class="lede" style="margin:22px auto 0;text-align:center;max-width:860px;font-size:1.5rem;">Git tracks the <strong style="color:var(--ink);">diff</strong>. <span class="red" style="font-weight:700;">h5i tracks the run.</span></p>
+    <p class="lede" style="margin:22px auto 0;text-align:center;max-width:860px;font-size:1.5rem;">Give your agent <strong style="color:var(--ink);">a whole machine</strong>. <span class="red" style="font-weight:700;">Just not yours.</span></p>
 
     <div class="cta-links" style="justify-content:center;margin-top:16px;">
       <a class="btn btn-primary" href="https://h5i.dev">h5i.dev</a>
