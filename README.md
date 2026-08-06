@@ -54,18 +54,38 @@ on Linux, Apple Silicon on macOS).
 
 ## Use it
 
+**Create a sandboxed**
+
 ```bash
-h5i box                          # a box from this repository
-h5i box --pr 1234                # a box from pull request #1234
+h5i box create <name> --profile agent-claude            # a sandboxed Git worktree from this repository
+h5i box create <name> --profile agent-claude --pr 1234  # a sandbox from pull request #1234
 ```
+
+**Run a single command**
+
+```bash
+h5i box run <name> -- cargo test # one command; the exit code passes through
+```
+
+**Work in it interactively**
 
 Work in it. Every command is policy-enforced and recorded:
 
 ```bash
-h5i box run <name> -- cargo test # one command; the exit code passes through
 h5i box shell <name>             # an interactive confined session
+```
+
+**Show the sandbox status**
+
+```bash
+h5i box ls                       # list up all sandboxes
 h5i box status <name>            # the policy that was actually enforced
 h5i box diff <name>              # what changed against the pinned base
+```
+
+**Monitor the detailed status from Web UI**
+
+```bash
 h5i ui                           # the whole fleet on one screen, read-only
 ```
 
