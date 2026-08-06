@@ -479,7 +479,15 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     // dyld, malloc, notifyd, the bootstrap server. Restricting this to a service
     // list is brittle across macOS releases; it is a documented residual.
     s.push_str("(allow mach-lookup)\n");
-    s.push_str("(allow ipc-posix-shm)\n\n");
+    s.push_str("(allow ipc-posix-shm)\n");
+    // Opt-in, `browser` only: looking a service up is not the same as
+    // registering one, and a multi-process browser does both. See
+    // [`Profile::mach_iokit`] for what this widens and how it was established.
+    if p.mach_iokit {
+        s.push_str("(allow mach-register)\n");
+        s.push_str("(allow iokit-open)\n");
+    }
+    s.push('\n');
 
     // ── filesystem: reads ─────────────────────────────────────────────────
     s.push_str(";; --- filesystem: read grants -----------------------------------\n");
@@ -1245,6 +1253,22 @@ mod tests {
         p.profile.unix_sockets = true;
         let s = build_profile(&p, Path::new("/w"), &opts());
         assert!(s.contains("(allow network-outbound (remote unix-socket))"));
+    }
+
+    #[test]
+    fn mach_register_and_iokit_are_a_separate_opt_in() {
+        let mut p = policy(IsolationClaim::Supervised);
+        let s = build_profile(&p, Path::new("/w"), &opts());
+        // `mach-lookup` is base plumbing every program needs; registering a
+        // service and opening IOKit are not, and stay off unless asked for.
+        assert!(s.contains("(allow mach-lookup)"), "base plumbing\n{s}");
+        assert!(!s.contains("mach-register"), "off by default\n{s}");
+        assert!(!s.contains("iokit-open"), "off by default\n{s}");
+
+        p.profile.mach_iokit = true;
+        let s = build_profile(&p, Path::new("/w"), &opts());
+        assert!(s.contains("(allow mach-register)"), "{s}");
+        assert!(s.contains("(allow iokit-open)"), "{s}");
     }
 
     #[test]

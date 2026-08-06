@@ -423,6 +423,10 @@ pub fn load_profile(
                 // overlay keeps the grant its daemon cannot start without.
                 // Explicit `unix = false` takes it away.
                 unix_sockets: t.net.unix.unwrap_or(base.unix_sockets),
+                // Inherited from the base, never spelled in `.h5i/env.toml`:
+                // it is not a policy dial an author picks, it is what the
+                // `browser` base needs in order to start a browser at all.
+                mach_iokit: base.mach_iokit,
             }
         }
     };

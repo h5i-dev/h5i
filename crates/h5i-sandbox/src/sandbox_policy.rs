@@ -471,6 +471,31 @@ pub struct Profile {
     /// profile's canonical serialization — and its pinned digest — is unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unix_sockets: bool,
+
+    /// macOS only: allow `mach-register` and `iokit-open`.
+    ///
+    /// The base profile already grants `mach-lookup`, which is enough to *find*
+    /// a service. A multi-process browser also **registers** mach ports of its
+    /// own — that is how the browser process and its renderers talk — and opens
+    /// IOKit even with `--headless` and `--disable-gpu`. Neither is covered by
+    /// `mach-lookup`, and under `(deny default)` Chrome does not report the
+    /// refusal: it dies with `SEGV_ACCERR` at a null address, several layers
+    /// after the denial that caused it.
+    ///
+    /// Bisected against a real profile rather than copied from Chromium's own
+    /// sandbox: with unrestricted reads *and* writes Chrome still crashed, and
+    /// with these two operations added to h5i's ordinary narrow grants it
+    /// started. Each alone is not enough; both together are.
+    ///
+    /// What it widens: the box may register mach service names in its own
+    /// bootstrap namespace and open IOKit user clients. It is opt-in per
+    /// profile, set only by `browser`, and pinned in the digest — the same
+    /// treatment as [`Profile::unix_sockets`], for the same reason.
+    ///
+    /// Appended last, and serialized only when `true`, so every existing
+    /// profile's canonical serialization — and its pinned digest — is unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mach_iokit: bool,
 }
 
 /// Read-only system paths granted by default at the `process` tier — enough to
@@ -530,6 +555,7 @@ impl Profile {
             shell_rcfile: None,
             persona: Vec::new(),
             unix_sockets: false,
+            mach_iokit: false,
         }
     }
 
@@ -660,6 +686,25 @@ impl Profile {
         // Chrome's shared-memory transport. Granting it is better than relying
         // on every caller to pass --disable-dev-shm-usage.
         p.fs_write.push("/dev/shm".into());
+        // Chrome's browser↔renderer IPC and its IOKit use. See
+        // [`Profile::mach_iokit`]; without it Chrome dies with a bare SEGV.
+        p.mach_iokit = true;
+        // Chrome's ProcessSingleton lock socket. It lives in the *macOS
+        // per-user* temp dir, which Chrome resolves with
+        // `confstr(_CS_DARWIN_USER_TEMP_DIR)` and NOT from `TMPDIR` — so the
+        // per-env `/tmp` redirect does not move it, and a box that cannot write
+        // there fails with "Failed to create socket directory", which reads as
+        // a path problem and is a grant problem.
+        //
+        // This is the widest thing the browser profile asks for: that directory
+        // is shared with the host user's own processes and with other browser
+        // boxes, which is the cross-agent rendezvous point the kernel tiers
+        // otherwise remove by redirecting `/tmp`. Scoped to this profile, and
+        // stated here rather than discovered later.
+        if let Some(d) = darwin_user_temp_dir() {
+            p.fs_read.push(d.clone());
+            p.fs_write.push(d);
+        }
         // The agent-browser daemon's control socket is a filesystem-bound
         // AF_UNIX listener under `AGENT_BROWSER_SOCKET_DIR`, and the supervised
         // tier's socket() gate denies that family by default. Without this the
@@ -681,6 +726,41 @@ impl Profile {
     }
 }
 
+
+/// The per-user temp directory macOS hands out through
+/// `confstr(_CS_DARWIN_USER_TEMP_DIR)` — `/var/folders/<xx>/<yy>/T`.
+///
+/// Distinct from `TMPDIR`, and that distinction is the whole reason this
+/// exists: programs that ask the OS rather than the environment land here, so a
+/// box's `TMPDIR` redirect does not move them. Returned without its trailing
+/// slash; `seatbelt::path_aliases` adds the `/private` spelling, which Seatbelt
+/// needs as well.
+#[cfg(target_os = "macos")]
+fn darwin_user_temp_dir() -> Option<String> {
+    // `_CS_DARWIN_USER_TEMP_DIR`, which libc does not re-export.
+    const CS_DARWIN_USER_TEMP_DIR: libc::c_int = 65537;
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    let n = unsafe {
+        libc::confstr(
+            CS_DARWIN_USER_TEMP_DIR,
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+        )
+    };
+    // 0 is failure; > len means the buffer was too small to hold the answer.
+    if n == 0 || n > buf.len() {
+        return None;
+    }
+    buf.truncate(n.saturating_sub(1)); // drop the trailing NUL
+    let s = String::from_utf8(buf).ok()?;
+    let s = s.trim_end_matches('/').to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn darwin_user_temp_dir() -> Option<String> {
+    None
+}
 
 // ─── browser discovery ──────────────────────────────────────────────────────
 
@@ -811,6 +891,26 @@ mod browser_profile_tests {
         // Room for renderers.
         assert!(browser.mem_bytes > agent.mem_bytes);
         assert!(browser.max_procs > agent.max_procs);
+    }
+
+    #[test]
+    fn only_the_browser_profile_gets_the_chrome_host_surface() {
+        let agent = Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude);
+        let browser = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
+
+        // Chrome registers mach ports and opens IOKit; without both it dies
+        // with a bare SEGV under `(deny default)`.
+        assert!(browser.mach_iokit);
+        assert!(!agent.mach_iokit, "an ordinary agent box gets neither");
+
+        // Chrome's ProcessSingleton lock socket lives in the macOS per-user temp
+        // dir, which it finds via confstr and not via TMPDIR — so the per-env
+        // `/tmp` redirect cannot move it and the box must be granted the real
+        // directory. The widest thing this profile asks for, and only it.
+        if let Some(d) = darwin_user_temp_dir() {
+            assert!(browser.fs_write.iter().any(|w| *w == d), "{:?}", browser.fs_write);
+            assert!(!agent.fs_write.iter().any(|w| *w == d), "{:?}", agent.fs_write);
+        }
     }
 
     #[test]
