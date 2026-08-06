@@ -99,31 +99,12 @@ downgrades: an unsatisfiable request fails closed.
 | `container` | rootless Podman, read-only rootfs, dropped capabilities, a portable image, and an HTTP/HTTPS proxy allowlist |
 | `microvm` | a hardware-isolated guest with **its own kernel**, booted by [microsandbox](https://microsandbox.dev) (`msb`) from the same OCI images, with the egress allowlist evaluated **by the VM's network stack** |
 
-Note which way round that goes. The container tier buys **portability** (any
-image, any host with Podman), not strength: its allowlist is a proxy, so it
-only binds tooling that respects a proxy. Scoping at L3/L4 — where a raw socket
-to an unlisted address is dropped rather than politely declined — is what
-`supervised` does on Linux (nftables) and what `microvm` does everywhere. On
-macOS `supervised` has no netfilter to use, so it reaches the same allowlist
-through a host-side proxy the Seatbelt profile leaves as the box's only route
-out; that binds proxy-respecting tooling only, exactly like the container tier.
-`h5i box capabilities` reports which of the two you are actually getting
-(`egress_l3`).
+Note the tradeoff: the container tier buys portability (any image, any Podman host), not stronger isolation. Its allowlist is proxy-based and binds only proxy-aware tooling. On Linux, supervised enforces egress at L3/L4 with nftables. On macOS, without netfilter, it uses a host-side proxy as the box’s only route out and therefore has the same limitation as container. `h5i box capabilities` reports whether `egress_l3` is available.
 
-`microvm` is the strongest tier and the only one that does not share the host
-kernel — a kernel exploit inside the box is contained by the hypervisor rather
-than by the kernel it just subverted. It needs `msb`, hardware virtualization
-(`/dev/kvm` on Linux, Apple Silicon on macOS) and an image; absent any of
-those it is refused, never downgraded. Two things it gives up in exchange, and
-they are real: a VM netstack drops packets without saying which, so there is no
-per-request egress tally in the receipt, and resource accounting belongs to the
-guest kernel, so runs report no peak RSS. Stronger enforcement, weaker evidence.
+microvm is the strongest tier and the only one that does not share the host kernel. It requires msb, hardware virtualization (`/dev/kvm` or Apple Silicon), and an image; otherwise, it is refused, never downgraded. Stronger isolation means weaker evidence: no per-request egress tally and no peak RSS.
 
-Credentials are the part people get wrong, so h5i is explicit about it. No SSH
-key, cloud credential or Docker socket enters a box. Model API calls are
-authenticated by a host-side proxy that injects the key outside the boundary,
-scoped per runtime, so a Claude box cannot reach Codex's credential or its API.
-Per-box HOME state is a copy, seeded once and never written back.
+No SSH keys, cloud credentials, or Docker socket enter a box. A runtime-scoped host proxy injects model API keys outside the boundary, preventing cross-runtime access. Each box receives a one-time copy of HOME state that is never written back.
+
 
 ## For agents
 
