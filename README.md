@@ -24,9 +24,9 @@ h5i gives you:
 
 - **Lightweight sandboxes** that start in under 200 ms for everyday agent tasks
 - **MicroVM isolation** with a separate kernel when stronger boundaries matter
-- **An isolated browser** that agents can securely control from inside the sandbox
+- **Isolated browsers** that agents can securely control from inside the sandbox
 - **Self-contained agent environments** with the agent, toolchain, dependencies, and dev server in one boundary
-- **Human-gated exports** that let you review every patch and execution record before anything touches your repository
+- **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
 
 **Local-first. No hosted sandbox. No SaaS account required.**
 
