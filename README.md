@@ -45,14 +45,6 @@ in different places. Two optional runtimes add tiers on top of either: rootless
 [microsandbox](https://microsandbox.dev) (`msb`) gives you `microvm` on a host
 with hardware virtualization — `/dev/kvm` on Linux, Apple Silicon on macOS.
 
-The gaps worth knowing before you pick a host: macOS has no per box memory or
-process-count cap (Darwin has no cgroups, does not enforce `RLIMIT_AS` against
-the mmap'd heap every modern runtime uses, and scopes `RLIMIT_NPROC` to the
-whole user rather than to one box), and no syscall filter. `h5i box status`
-marks a declared-but-unenforced limit with `*` rather than reporting it as
-enforced. Use the `container` or `microvm` tier if you need any of those: both
-cap memory and process count in the runtime itself.
-
 ## Use it
 
 ```bash
