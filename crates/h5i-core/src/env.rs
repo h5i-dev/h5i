@@ -4247,10 +4247,14 @@ fn capture_shell_egress(
 
 /// Build the argv for a default (no-command) interactive `env shell` session.
 ///
-/// The host `$SHELL` is used, but for **bash** the host `~/.bashrc` is *not*
-/// sourced by default — under confinement it routinely calls tools the sandbox
-/// blocks (e.g. `~/.local/bin/powerline-shell`), spraying `Permission denied`
-/// noise. Instead bash is pointed at:
+/// On the **kernel tiers** the box runs against the host filesystem, so the host
+/// `$SHELL` is the right binary. On the **image-backed** tiers it is not a
+/// binary that exists at all — see [`box_shell_argv`].
+///
+/// For **bash** the host `~/.bashrc` is *not* sourced by default — under
+/// confinement it routinely calls tools the sandbox blocks (e.g.
+/// `~/.local/bin/powerline-shell`), spraying `Permission denied` noise. Instead
+/// bash is pointed at:
 ///   - a **custom** rcfile when the profile sets `[shell] rcfile` — resolved
 ///     relative to `$WORK` (the worktree), so it is version-controlled and
 ///     reachable in the box on every tier without an extra grant; or
@@ -4258,8 +4262,9 @@ fn capture_shell_egress(
 ///     optional `~/.h5i_envrc` hook), written under the env's private dir and
 ///     Landlock-granted read on the kernel tiers.
 ///
-/// Non-bash shells and the container tier (whose rc comes from the image, not
-/// the host) fall through to a bare `[$SHELL, "-i"]`.
+/// Non-bash shells fall through to a bare `[$SHELL, "-i"]`; the image-backed
+/// tiers (whose shell *and* rc come from the image, not the host) fall through
+/// to [`box_shell_argv`].
 fn default_shell_argv(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -4273,9 +4278,10 @@ fn default_shell_argv(
         .unwrap_or(false);
     let bare = vec![shell.clone(), "-i".to_string()];
 
-    // The container shell + its rc come from the image, not the host — the host
+    // The box's shell + its rc come from the image, not the host — the host
     // `~/.bashrc` is never sourced there, so there is nothing to neutralize and
-    // a host-path rcfile would not resolve in-box. Honor neither default here.
+    // a host-path rcfile would not resolve in-box. Honor neither default here,
+    // and do not carry the host `$SHELL` in either: it names a host binary.
     if policy.claim.image_backed() {
         if policy.profile.shell_rcfile.is_some() {
             eprintln!(
@@ -4284,7 +4290,7 @@ fn default_shell_argv(
                 policy.claim.as_str()
             );
         }
-        return Ok(bare);
+        return Ok(box_shell_argv());
     }
 
     if let Some(rc) = policy.profile.shell_rcfile.clone() {
@@ -4314,6 +4320,30 @@ fn default_shell_argv(
         policy.profile.fs_read.push(rcpath.clone());
     }
     Ok(vec![shell, "--rcfile".into(), rcpath, "-i".into()])
+}
+
+/// The default interactive shell **inside an image-backed box** (container,
+/// microVM).
+///
+/// `$SHELL` names a *host* binary: on a stock macOS it is `/bin/zsh`, which the
+/// box's Linux rootfs does not carry — passing it in ends the session at exec
+/// before the first prompt (`/.msb/scripts/h5i-env: exec: /bin/zsh: not found`).
+/// The shell has to come from the image, exactly like the rc does, and the image
+/// is the only thing that knows which shells it has. So ask it at start-up
+/// rather than guess host-side: prefer `bash` (both shipped agent images carry
+/// it, `containers/entrypoint.sh` falls back to it, and the container tier's
+/// observation shim shadows it), and fall back to the one shell every image is
+/// guaranteed to have — the same `/bin/sh` this probe is already running in.
+///
+/// Both arms `exec`, so the probing `sh` is *replaced* rather than left behind
+/// as a parent: the TTY, the signals and the exit code reach the real shell
+/// exactly as if it had been launched directly.
+fn box_shell_argv() -> Vec<String> {
+    vec![
+        "/bin/sh".into(),
+        "-c".into(),
+        "if command -v bash >/dev/null 2>&1; then exec bash -i; else exec /bin/sh -i; fi".into(),
+    ]
 }
 
 /// Resolve a profile `[shell] rcfile` (relative to `$WORK`) to an absolute path,
@@ -7342,6 +7372,61 @@ mod tests {
         assert!(body.contains("$HOME/.h5i_envrc"));
         assert!(!body.contains(".bashrc\""));
         assert!(path.ends_with("shell/rc.bash"));
+    }
+
+    // A box's rootfs is the image's, so the host `$SHELL` is a path to a binary
+    // that is simply not there: a stock macOS `$SHELL=/bin/zsh` used to end the
+    // session at exec ("/bin/zsh: not found") before the first prompt. The shell
+    // must be resolved inside the box instead — on every image-backed tier, and
+    // regardless of what the profile says about rc files (which are the image's
+    // business too).
+    #[test]
+    fn image_backed_tiers_take_their_shell_from_the_image_not_the_host() {
+        use crate::sandbox::Profile;
+        let h5i_root = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let m = canonical_manifest("claude", "demo");
+        let host_shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+
+        for claim in [IsolationClaim::Container, IsolationClaim::Microvm] {
+            for rcfile in [None, Some(".h5i/box.bashrc".to_string())] {
+                let mut pol = ResolvedPolicy::new(claim, Profile::builtin("default", claim));
+                pol.profile.shell_rcfile = rcfile.clone();
+                let argv = default_shell_argv(h5i_root.path(), &m, &mut pol, work.path()).unwrap();
+
+                assert_eq!(argv[0], "/bin/sh", "{claim:?} launches via the image's sh");
+                assert_eq!(argv[1], "-c");
+                // bash when the image has it, the guaranteed /bin/sh otherwise —
+                // and `exec` either way, so the probe leaves no parent behind.
+                assert!(argv[2].contains("exec bash -i"), "{argv:?}");
+                assert!(argv[2].contains("exec /bin/sh -i"), "{argv:?}");
+                // Nothing host-side rides along: no host $SHELL, and no
+                // host-path rcfile (which would not resolve in-box).
+                if host_shell != "/bin/sh" {
+                    assert!(!argv.contains(&host_shell), "host shell leaked: {argv:?}");
+                }
+                assert!(!argv.iter().any(|a| a == "--rcfile"), "{argv:?}");
+            }
+        }
+    }
+
+    // The kernel tiers DO run against the host filesystem, so there the host
+    // shell is the right one — the fix above must not have flattened them.
+    #[test]
+    fn kernel_tiers_keep_the_host_shell() {
+        use crate::sandbox::Profile;
+        let h5i_root = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let m = canonical_manifest("claude", "demo");
+        let host_shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+        let argv = default_shell_argv(h5i_root.path(), &m, &mut pol, work.path()).unwrap();
+        assert_eq!(argv[0], host_shell);
+        assert_eq!(argv.last().unwrap(), "-i");
     }
 
     #[test]
