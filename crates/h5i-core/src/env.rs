@@ -3101,13 +3101,26 @@ fn signal_and_wait(pid: i32, sig: i32, ticks: u32) -> bool {
         libc::kill(pid, sig);
     }
     for _ in 0..ticks {
-        // `kill(pid, 0)` is the existence check: it signals nothing.
-        if unsafe { libc::kill(pid, 0) } != 0 {
+        if pid_gone(pid) {
             return true;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    unsafe { libc::kill(pid, 0) != 0 }
+    pid_gone(pid)
+}
+
+/// Whether `pid` no longer exists. `kill(pid, 0)` is the existence check — it
+/// signals nothing — but a bare "the call failed" is not the same question:
+/// `EPERM` means the process is very much alive and simply not ours to signal,
+/// and reporting that as *stopped* would be the one answer this is asked to
+/// avoid. Only `ESRCH` is gone. (`stop_browser` re-checks with `browser_pids`
+/// regardless, so a survivor keeps its record either way.)
+#[cfg(unix)]
+fn pid_gone(pid: i32) -> bool {
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return false;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
 }
 
 fn prepare_browser_shim(
@@ -9193,6 +9206,65 @@ mod tests {
         assert!(!state.join("chrome.restart").exists());
     }
 
+    /// A long-lived stand-in for the box's browser: an executable whose name
+    /// reads as Chrome, running on this env's profile dir — the two things the
+    /// host matches on.
+    ///
+    /// `/bin/sh -c '…'` and not `sleep` directly: `sleep` rejects the
+    /// `--user-data-dir` argument and exits immediately, which would leave every
+    /// assertion below true because nothing was ever running. The script is two
+    /// commands for a second reason of the same kind — a shell given a single
+    /// one `exec`s it, replacing itself with a `sleep` whose argv no longer
+    /// carries the flag the host matches on.
+    ///
+    /// Returns the pid and a thread that reaps it. The stand-in is this test's
+    /// own child, so without a `wait` it lingers as a zombie that `kill(pid, 0)`
+    /// still finds, and the stop under test would burn its full SIGTERM and
+    /// SIGKILL timeouts before giving up on a process that is already dead.
+    #[cfg(unix)]
+    fn spawn_fake_browser(exe: &Path, profile: &Path) -> (i32, std::thread::JoinHandle<()>) {
+        let child = std::process::Command::new(exe)
+            .args(["-c", "sleep 10; true"])
+            .arg(format!("--user-data-dir={}", profile.display()))
+            .spawn()
+            .expect("spawn the stand-in browser");
+        let pid = child.id() as i32;
+        let reaper = std::thread::spawn(move || {
+            let mut child = child;
+            let _ = child.wait();
+        });
+        (pid, reaper)
+    }
+
+    /// Every process whose argv names this profile dir, with none of
+    /// `browser_pids`'s judgement applied — the positive control for the tests
+    /// below, so a negative result cannot pass because `ps` had not caught up.
+    #[cfg(unix)]
+    fn pids_naming_profile(profile: &Path) -> Vec<i32> {
+        let needle = format!("--user-data-dir={}", profile.display());
+        let out = std::process::Command::new("ps")
+            .args(["-A", "-o", "pid=,command="])
+            .output()
+            .expect("ps");
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| l.trim_start().split_once(char::is_whitespace))
+            .filter(|(_, cmd)| cmd.contains(&needle))
+            .filter_map(|(pid, _)| pid.parse::<i32>().ok())
+            .collect()
+    }
+
+    /// Poll `f` for up to ~2s. Returns whether it ever held.
+    fn eventually(mut f: impl FnMut() -> bool) -> bool {
+        for _ in 0..40 {
+            if f() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        false
+    }
+
     /// The case the restart exists for: a browser started by a shim from before
     /// `detach` `exec`'d, so `chrome.pid` names the *launcher* and not Chrome.
     /// A pid-keyed lookup finds nothing there — and "nothing to stop" would mean
@@ -9206,18 +9278,18 @@ mod tests {
         let profile = state.join("chrome");
         std::fs::create_dir_all(&profile).unwrap();
 
-        // A stand-in browser: an executable whose name reads as Chrome, running
-        // on this env's profile dir — the two things the host matches on.
         let exe = state.join("chrome-for-testing");
-        std::os::unix::fs::symlink("/bin/sleep", &exe).unwrap();
-        let mut fake = std::process::Command::new(&exe)
-            .arg("30")
-            .arg(format!("--user-data-dir={}", profile.display()))
-            .spawn()
-            .unwrap();
+        std::os::unix::fs::symlink("/bin/sh", &exe).unwrap();
+        let (pid, reaper) = spawn_fake_browser(&exe, &profile);
+        // The test only means anything if the stand-in is actually running and
+        // actually recognised before the stop is asked for.
+        assert!(
+            eventually(|| browser_pids(&profile).unwrap().contains(&pid)),
+            "the stand-in browser was never running, so this test asserts nothing"
+        );
 
-        // What the old shim would have left behind: a launcher's pid, long since
-        // exited or belonging to something that is not the browser.
+        // What the old shim left behind: a launcher's pid, long since exited or
+        // belonging to something that is not the browser.
         std::fs::write(state.join("chrome.pid"), "999999").unwrap();
         std::fs::write(state.join("chrome.restart"), "--proxy-server=x").unwrap();
 
@@ -9232,14 +9304,13 @@ mod tests {
             "confirmed gone → cleared"
         );
         assert!(!state.join("chrome.restart").exists());
-        let _ = fake.kill();
-        let _ = fake.wait();
+        reaper.join().unwrap();
     }
 
-    /// The pid file is box-written and used to reach `kill` on the host, so a
-    /// hostile value must not become a signal. `-1` is the one that matters:
-    /// `kill(-1, SIGTERM)` signals everything this user owns — including this
-    /// test process, which is what makes the assertion at the end meaningful.
+    /// A guard against reintroducing a pid-keyed lookup. Under the current
+    /// design nothing reads `chrome.pid` to decide what to signal, so `-1`
+    /// cannot reach `kill` by construction — but it could once, and `kill(-1, …)`
+    /// signals every process this user owns.
     #[cfg(unix)]
     #[test]
     fn a_hostile_pid_file_never_becomes_a_signal() {
@@ -9252,12 +9323,11 @@ mod tests {
             std::fs::write(state.join("chrome.restart"), "").unwrap();
             stop_stale_browser(state);
         }
-        // Reached only if nothing above signalled this process (or the world).
         assert!(!state.join("chrome.restart").exists());
     }
 
-    /// A process that merely *mentions* the profile path is not the browser —
-    /// a `pkill`, an editor, or this test's own shell would otherwise match.
+    /// A process that merely *mentions* the profile path is not the browser — a
+    /// `pkill`, an editor, or this project's own tests would otherwise match.
     #[cfg(unix)]
     #[test]
     fn only_a_browser_binary_matches_the_profile_dir() {
@@ -9265,19 +9335,23 @@ mod tests {
         let profile = dir.path().join("chrome");
         std::fs::create_dir_all(&profile).unwrap();
 
-        let mut sh = std::process::Command::new("/bin/sh")
-            .args(["-c", "sleep 30"])
-            .arg(format!("--user-data-dir={}", profile.display()))
-            .spawn()
-            .unwrap();
-        // Give it a moment to be visible to `ps`.
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        let (pid, reaper) = spawn_fake_browser(Path::new("/bin/sh"), &profile);
+        // Positive control first: the process is running and `ps` can see it
+        // naming this profile dir. Without this the assertion below would pass
+        // just as happily against a process that never started.
+        assert!(
+            eventually(|| pids_naming_profile(&profile).contains(&pid)),
+            "the stand-in was never visible, so the rejection below proves nothing"
+        );
         assert!(
             browser_pids(&profile).unwrap().is_empty(),
             "a shell naming the flag is not this box's browser"
         );
-        let _ = sh.kill();
-        let _ = sh.wait();
+
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+        reaper.join().unwrap();
     }
 
     #[test]
