@@ -46,13 +46,11 @@ cargo install --path .
 ```
 
 Linux and macOS. The two confine by different means: Linux uses Landlock,
-seccomp and namespaces, macOS uses Seatbelt. What that buys you is close but not
-identical, so run `h5i box probe`. It reports the mechanism your host actually
-has and what it can enforce, rather than a tier name that means different things
-in different places. Two optional runtimes add tiers on top of either: rootless
-[Podman](https://podman.io/) gives you `container`, and
-[microsandbox](https://microsandbox.dev) (`msb`) gives you `microvm` on a host
-with hardware virtualization (`/dev/kvm` on Linux, Apple Silicon on macOS).
+seccomp and namespaces, macOS uses Seatbelt. Two optional runtimes add 
+tiers on top of either: rootless [Podman](https://podman.io/) gives 
+you `container`, and [microsandbox](https://microsandbox.dev) (`msb`) 
+gives you `microvm` on a host with hardware virtualization (`/dev/kvm` 
+on Linux, Apple Silicon on macOS).
 
 ## Use it
 
