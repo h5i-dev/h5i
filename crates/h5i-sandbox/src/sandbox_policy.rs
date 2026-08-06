@@ -862,6 +862,19 @@ pub fn browser_read_grants() -> Vec<String> {
 /// Only meaningful for the kernel tiers, where the box reaches the host
 /// filesystem. A container box gets its browser from the image, so `create`
 /// does not consult this there.
+/// The `agent-browser` binary on this host, if there is one.
+///
+/// The launch-and-attach shim has to invoke the *real* binary by absolute path:
+/// it installs itself on `PATH` under the same name, so a bare `agent-browser`
+/// from inside the shim would be the shim again.
+pub fn agent_browser_binary() -> Option<String> {
+    AGENT_BROWSER_CANDIDATES
+        .iter()
+        .filter_map(|c| expand_home(c))
+        .find(|p| p.is_file())
+        .map(|p| p.display().to_string())
+}
+
 pub fn browser_tooling_present() -> (bool, bool) {
     let any = |list: &[&str]| {
         list.iter()
@@ -1093,6 +1106,21 @@ pub struct ResolvedPolicy {
     /// tier (the only tier that enforces a domain allowlist).
     #[serde(skip)]
     pub user_egress_allow: Vec<String>,
+    /// Runtime-only: the loopback port this box's Chrome listens on for CDP,
+    /// and the **only** loopback port the box may dial.
+    ///
+    /// The browser shim drives Chrome over CDP, which is a TCP connection to
+    /// `127.0.0.1`. On macOS a box shares the host's loopback, so `network_rules`
+    /// refuses outbound to it wholesale — dialing it would reach host services,
+    /// h5i's own proxies among them. Granting the whole interface to make one
+    /// connection work would trade the boundary for a feature, so h5i picks the
+    /// port, tells Chrome to use it, and grants that one — the same shape as the
+    /// proxy ports the supervised tier already allows.
+    ///
+    /// Never serialized: it is a per-box runtime fact, so a pinned policy digest
+    /// is unchanged.
+    #[serde(skip)]
+    pub cdp_port: Option<u16>,
 }
 
 impl ResolvedPolicy {
@@ -1110,6 +1138,7 @@ impl ResolvedPolicy {
             cache_write: None,
             work_readonly: false,
             user_egress_allow: Vec::new(),
+            cdp_port: None,
         }
     }
 
