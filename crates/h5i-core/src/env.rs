@@ -9271,11 +9271,13 @@ mod tests {
     /// signal — and reporting that as gone would let `signal_and_wait` claim it
     /// stopped a browser it never touched.
     ///
-    /// No second uid needed: pid 1 is unkillable by an unprivileged process, and
-    /// a reaped child's pid is genuinely absent. Running as root, `kill(1, 0)`
-    /// succeeds instead of failing, so both readings answer "alive" and this
-    /// degrades to a tautology rather than a false failure — worth knowing if CI
-    /// ever moves into a root container, hence the note it prints.
+    /// No second uid needed: pid 1 is normally unsignalable by an ordinary
+    /// process, and a reaped child's pid is genuinely absent. Where pid 1 *is*
+    /// signalable by us — as root, and equally in a PID namespace whose init
+    /// shares this uid — `kill(1, 0)` succeeds instead of failing, both readings
+    /// answer "alive", and this degrades to a tautology rather than a false
+    /// failure. The note it prints says which case it landed in, so a silent
+    /// tautology is not mistaken for coverage.
     #[cfg(unix)]
     #[test]
     fn pid_gone_tells_no_such_process_apart_from_not_allowed() {
@@ -9291,7 +9293,10 @@ mod tests {
         // EPERM: pid 1 is alive and not ours. The `kill` is made here as well as
         // inside `pid_gone` so the test can say which case it actually covered.
         if unsafe { libc::kill(1, 0) } == 0 {
-            eprintln!("note: running as root — the EPERM half of this test is inert");
+            eprintln!(
+                "note: pid 1 is signalable here (root, or a PID namespace sharing this uid) \
+                 — the EPERM half of this test is inert"
+            );
         } else {
             assert_eq!(
                 std::io::Error::last_os_error().raw_os_error(),
