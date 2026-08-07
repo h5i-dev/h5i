@@ -691,6 +691,14 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     Ok(())
 }
 
+/// How long a confined child waits for the slirp4netns uplink before failing
+/// closed. The helper polls for `tap0` for 6s; this leaves room for the spawn
+/// on top. Without a deadline a helper that exits without signalling wedges the
+/// run forever, because the pipe's write end is held by the live `EgressNetns`
+/// and the wall clock is not armed until `spawn()` returns.
+#[cfg(target_os = "linux")]
+pub(crate) const EGRESS_READY_TIMEOUT_MS: libc::c_int = 15_000;
+
 /// 16 hex chars of OS entropy — enough that no other local user can guess or
 /// pre-plant a scratch path before we create it.
 fn random_suffix() -> Result<String, H5iError> {
@@ -2551,8 +2559,29 @@ pub(crate) fn build_confined_command(
                 if !(libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 0) {
                     return Err(Error::other("nft egress ruleset failed to apply (fail-closed)"));
                 }
-                // (d) Block until slirp4netns has configured the uplink, so the
-                //     program never races a not-yet-ready interface.
+                // (d) Wait for slirp4netns to configure the uplink, so the
+                //     program never races a not-yet-ready interface — but with
+                //     a DEADLINE. A bare read here hung forever whenever the
+                //     helper exited without signalling (slirp failed to spawn,
+                //     or tap0 never appeared within its poll budget): the write
+                //     end lives on the parent's live `EgressNetns`, so no EOF
+                //     ever arrives, and `spawn()` blocks the caller with it —
+                //     before the run's wall clock has been armed.
+                //
+                //     `poll` is async-signal-safe and allocates nothing, which
+                //     is what this closure needs. The budget is the helper's own
+                //     (6s of tap0 polling) plus slack for the spawn itself.
+                let mut pfd = libc::pollfd {
+                    fd: eg.ready_read_fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                let ready = libc::poll(&mut pfd, 1, EGRESS_READY_TIMEOUT_MS);
+                if ready != 1 {
+                    return Err(Error::other(
+                        "slirp4netns uplink did not become ready in time (fail-closed)",
+                    ));
+                }
                 let mut rb = [0u8; 1];
                 if libc::read(eg.ready_read_fd, rb.as_mut_ptr().cast(), 1) != 1 {
                     return Err(Error::other("slirp4netns uplink did not become ready"));

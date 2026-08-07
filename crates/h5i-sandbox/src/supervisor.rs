@@ -614,17 +614,27 @@ impl EgressNetns {
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 impl Drop for EgressNetns {
     fn drop(&mut self) {
-        // Stop the uplink, then reap the helper and close every pipe end.
+        // Stop the uplink first, so the helper has nothing left to supervise.
         if let Ok(mut g) = self.slirp.lock() {
             if let Some(mut c) = g.take() {
                 let _ = c.kill();
                 let _ = c.wait();
             }
         }
+        // Close the pid pipe's WRITE ends BEFORE joining. The helper parks in
+        // `read(pid_r, .., 4)` waiting for the child to report its pid, and its
+        // only early exit is a short read — which needs every writer gone. The
+        // child's copy closes when it `_exit`s, but ours did not until after
+        // the join, so any pre_exec failure before the pid write (a userns
+        // ENOSPC from concurrent boxes, a uid_map write failure) deadlocked
+        // teardown permanently.
+        for fd in [self.child_pid_write_fd, self.pid_read_fd] {
+            unsafe { libc::close(fd) };
+        }
         if let Some(h) = self.helper.take() {
             let _ = h.join();
         }
-        for fd in [self.pid_read_fd, self.ready_write_fd, self.child_pid_write_fd, self.child_ready_read_fd] {
+        for fd in [self.ready_write_fd, self.child_ready_read_fd] {
             unsafe { libc::close(fd) };
         }
         let _ = std::fs::remove_dir_all(&self.tmp_dir);

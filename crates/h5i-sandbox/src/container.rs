@@ -559,6 +559,16 @@ impl AllowList {
     }
 }
 
+/// Most bytes the tee shim records per stream, per command. The box decides how
+/// much it writes, so this is a disk bound on the host, not a display limit —
+/// the command's own output still passes through in full.
+const SPOOL_STREAM_CAP: u64 = 4 * 1024 * 1024;
+
+/// Most connections the egress proxy will serve at once. Generous for real
+/// tooling (parallel `cargo`/`npm` fetches) and far below what it takes to
+/// exhaust host threads.
+const MAX_PROXY_CONNECTIONS: usize = 64;
+
 /// A running egress proxy: a localhost TCP listener gating CONNECT/HTTP by the
 /// allowlist. Dropping the handle shuts the accept loop down.
 pub struct ProxyHandle {
@@ -635,20 +645,36 @@ pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle
     let tally = Arc::new(Mutex::new(EgressTally::default()));
     let tally_thread = tally.clone();
 
+    // Bounded concurrency. One unbounded thread per accepted connection let a
+    // box open thousands of proxy connections and exhaust host threads; the
+    // proxy is the box's only route out, so the box is also the only thing that
+    // benefits from unbounded parallelism here.
+    let live = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let join = std::thread::spawn(move || {
         while !stop_thread.load(Ordering::SeqCst) {
             match listener.accept() {
-                Ok((client, _)) => {
+                Ok((mut client, _)) => {
                     if stop_thread.load(Ordering::SeqCst) {
                         break;
+                    }
+                    if live.load(Ordering::SeqCst) >= MAX_PROXY_CONNECTIONS {
+                        // Refuse rather than queue: a queued connection still
+                        // holds an fd, and the client sees a clear 503.
+                        let _ = client.write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
+                        );
+                        continue;
                     }
                     // The accepted socket may arrive non-blocking (see
                     // `handle_proxy_client`, which is where that is corrected —
                     // at the point the blocking reads are actually made).
                     let allow = allow.clone();
                     let tally = tally_thread.clone();
+                    let live_slot = live.clone();
+                    live_slot.fetch_add(1, Ordering::SeqCst);
                     std::thread::spawn(move || {
                         let _ = handle_proxy_client(client, &allow, &tally, HEAD_READ_TIMEOUT);
+                        live_slot.fetch_sub(1, Ordering::SeqCst);
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -966,19 +992,35 @@ while [ -e "$d/cmd-$$-$n.cmd" ] && [ "$n" -lt 1000 ]; do n=$((n+1)); done
 b="$d/cmd-$$-$n"
 {{ printf '%s' "$cmd" > "$b.cmd"; }} 2>/dev/null || exec "$real" "$@"
 mkfifo "$b.po" "$b.pe" 2>/dev/null || {{ rm -f "$b.cmd"; exec "$real" "$@"; }}
-tee "$b.out" < "$b.po" &
+# Cap what lands in the host-side spool. The box chooses how much it writes
+# here, so an uncapped `tee` let `yes > /dev/stdout` fill the operator's disk —
+# the ingest side caps what it READS, which is a different thing.
+#
+# POSIX sh, so no process substitution: tee's file target is a second fifo whose
+# reader keeps only the first $cap bytes and then drains the rest to /dev/null.
+# Draining matters — without it tee would take EPIPE once the cap was hit and
+# the command's passthrough output would stop with it.
+cap={spool_cap}
+mkfifo "$b.oc" "$b.ec" 2>/dev/null || {{ rm -f "$b.cmd" "$b.po" "$b.pe"; exec "$real" "$@"; }}
+{{ head -c "$cap" > "$b.out"; cat > /dev/null; }} < "$b.oc" &
+oc=$!
+{{ head -c "$cap" > "$b.err"; cat > /dev/null; }} < "$b.ec" &
+ec=$!
+tee "$b.oc" < "$b.po" &
 po=$!
-tee "$b.err" < "$b.pe" >&2 &
+tee "$b.ec" < "$b.pe" >&2 &
 pe=$!
 "$real" "$@" > "$b.po" 2> "$b.pe"
 rc=$?
 wait "$po" "$pe" 2>/dev/null
-rm -f "$b.po" "$b.pe"
+wait "$oc" "$ec" 2>/dev/null
+rm -f "$b.po" "$b.pe" "$b.oc" "$b.ec"
 printf '%s' "$rc" > "$b.exit" 2>/dev/null
 exit "$rc"
 "#,
         orig = orig_prefix,
         spool = spool_dir,
+        spool_cap = SPOOL_STREAM_CAP,
     )
 }
 
