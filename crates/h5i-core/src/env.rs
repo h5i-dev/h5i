@@ -3875,6 +3875,21 @@ fn announce_egress(policy: &sandbox::ResolvedPolicy) {
         _ => "proxy-enforced, everything else 403",
     };
     eprintln!("⦿ egress ({how}): {line}{user_part}");
+    // Say the cost of the allowlist plan out loud. Reaching a host-side proxy
+    // from a rootless container means `slirp4netns:allow_host_loopback=true`,
+    // which exposes *every* host loopback service at the gateway address — not
+    // just the proxy port. Choosing the allowlist therefore widens the box's
+    // reach compared with plain NAT, and a reader deserves to know that from
+    // the tier itself rather than from the source. (The supervised tiers do not
+    // share this: nftables narrows the jail to the proxy port, and Seatbelt
+    // refuses host loopback wholesale.)
+    if policy.claim == IsolationClaim::Container {
+        eprintln!(
+            "⦿ note: the allowlist proxy is reached over host loopback, so host services on \
+             127.0.0.1 are reachable from this box at the gateway address. The allowlist \
+             governs what leaves the host, not what the box can reach on it."
+        );
+    }
 }
 
 /// Run `argv` inside the env's worktree under its pinned policy, and record

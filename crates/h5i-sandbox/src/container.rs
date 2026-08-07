@@ -1290,6 +1290,23 @@ pub fn build_run_argv(
             // Default rootless network (slirp4netns/pasta) gives NAT'd egress.
         }
         NetPlan::Proxy(port) => {
+            // HONESTY: `allow_host_loopback=true` is what lets the box reach the
+            // host-side proxy at the gateway address — and it exposes every
+            // *other* host loopback service there too. Choosing the allowlist
+            // plan therefore widens the box's reach relative to plain rootless
+            // NAT, which is the opposite of how an allowlist reads.
+            //
+            // Two consequences worth naming: the box can reach `h5i ui`'s
+            // console API and any local database on 127.0.0.1, and it can reach
+            // another concurrent box's egress proxy, which has no client
+            // authentication — borrowing that box's wider allowlist.
+            //
+            // Not fixable at this layer: the proxy has to be reachable, and
+            // slirp4netns exposes loopback all-or-nothing. Narrowing it needs
+            // the proxy inside the box's network namespace instead. The
+            // supervised tiers already avoid it (nftables narrows the jail to
+            // the proxy port; Seatbelt refuses host loopback wholesale), and
+            // `announce_egress` states the caveat at session start.
             if let Some(mode) = HOST_ROUTE.network_arg {
                 a.push(format!("--network={mode}"));
             }
