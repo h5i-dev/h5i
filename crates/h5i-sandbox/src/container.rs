@@ -278,6 +278,35 @@ struct AllowEntry {
     port: Option<u16>,
 }
 
+/// The agent hook-config files that every image-backed tier mounts read-only
+/// over their place in `$WORK`, so the in-box agent cannot rewrite the file
+/// that defines its own observation hook.
+pub const AGENT_CONFIG_RELS: [&str; 2] = [".claude/settings.json", ".codex/config.toml"];
+
+/// Resolve one agent config file into a mount source, refusing anything that is
+/// not a regular file that really lives inside `$WORK`.
+///
+/// `$WORK` holds the branch under review, so this path and every directory
+/// above it are supplied by the repository. `Path::exists()` follows symlinks
+/// and the *unresolved* path is what would reach the mount spec, which the
+/// kernel then resolves host-side: a branch shipping `.claude/settings.json`
+/// as a symlink to `~/.ssh` would have h5i mount that directory into the box.
+/// The exposure is created entirely by the mount — left alone, the link dangles
+/// inside the box's mount namespace because the target is not in it.
+///
+/// `symlink_metadata` refuses a symlinked final component; canonicalizing and
+/// re-checking the prefix refuses a symlinked *ancestor*, which is the same
+/// trick one directory up.
+pub fn agent_config_mount_source(work: &Path, rel: &str) -> Option<PathBuf> {
+    let source = work.join(rel);
+    if !std::fs::symlink_metadata(&source).is_ok_and(|md| md.file_type().is_file()) {
+        return None;
+    }
+    let canon_work = work.canonicalize().ok()?;
+    let canon = source.canonicalize().ok()?;
+    canon.starts_with(&canon_work).then_some(canon)
+}
+
 /// Combine the digested profile allowlist with the host-side user extras
 /// (`h5i box allow`) into the rule set the proxy enforces. **Fail-closed
 /// widening rule:** when the profile's own `net.egress` is empty (deny-all),
@@ -971,9 +1000,11 @@ pub fn build_run_argv(
             b.target.display()
         ));
     }
-    for rel in [".claude/settings.json", ".codex/config.toml"] {
-        let source = work.join(rel);
-        if source.exists() && !source.display().to_string().contains(',') {
+    for rel in AGENT_CONFIG_RELS {
+        let Some(source) = agent_config_mount_source(work, rel) else {
+            continue;
+        };
+        if !source.display().to_string().contains(',') {
             a.push("--mount".into());
             a.push(format!(
                 "type=bind,source={},target=/work/{rel},ro",
@@ -1730,7 +1761,9 @@ mod tests {
     #[test]
     fn run_argv_mounts_agent_hook_configs_read_only() {
         let tmp = tempfile::tempdir().unwrap();
-        let work = tmp.path();
+        // Canonicalized: the mount source is the resolved path, so the test has
+        // to agree on hosts where the temp root is itself a symlink.
+        let work = &tmp.path().canonicalize().unwrap();
         std::fs::create_dir_all(work.join(".claude")).unwrap();
         std::fs::create_dir_all(work.join(".codex")).unwrap();
         std::fs::write(work.join(".claude/settings.json"), "{}").unwrap();
@@ -1765,6 +1798,52 @@ mod tests {
             "type=bind,source={},target=/work/.codex/config.toml,ro",
             work.join(".codex/config.toml").display()
         )));
+    }
+
+    /// A branch under review can ship `.claude/settings.json` as a symlink.
+    /// `exists()` follows it and the unresolved path is what the kernel would
+    /// mount, so h5i would bind the link's target — a host path the box has no
+    /// grant on — into `/work`. Refuse the mount instead.
+    #[test]
+    fn run_argv_refuses_a_symlinked_agent_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let work = root.join("work");
+        let secret_dir = root.join("secrets");
+        std::fs::create_dir_all(work.join(".claude")).unwrap();
+        std::fs::create_dir_all(&secret_dir).unwrap();
+        std::fs::write(secret_dir.join("id_rsa"), "PRIVATE KEY").unwrap();
+
+        // (a) the file itself is a symlink out of $WORK
+        std::os::unix::fs::symlink(secret_dir.join("id_rsa"), work.join(".claude/settings.json"))
+            .unwrap();
+        assert_eq!(agent_config_mount_source(&work, ".claude/settings.json"), None);
+
+        // (b) a real file, but reached through a symlinked ancestor
+        std::fs::create_dir_all(root.join("elsewhere/.codex")).unwrap();
+        std::fs::write(root.join("elsewhere/.codex/config.toml"), "").unwrap();
+        std::os::unix::fs::symlink(root.join("elsewhere/.codex"), work.join(".codex")).unwrap();
+        assert_eq!(agent_config_mount_source(&work, ".codex/config.toml"), None);
+
+        // Neither reaches the argv.
+        let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
+        let argv = build_run_argv(
+            &rt(), &p, &[], None, &work, "img", "n", &NetPlan::None,
+            &["true".into()], &[], None, None, &[], None, None, None, &[],
+        );
+        let joined = argv.join(" ");
+        assert!(!joined.contains("id_rsa"), "leaked the symlink target: {joined}");
+        assert!(!joined.contains("elsewhere"), "leaked through a symlinked parent: {joined}");
+        assert!(!joined.contains("target=/work/.claude/settings.json"));
+        assert!(!joined.contains("target=/work/.codex/config.toml"));
+
+        // A real regular file inside $WORK still mounts.
+        std::fs::remove_file(work.join(".claude/settings.json")).unwrap();
+        std::fs::write(work.join(".claude/settings.json"), "{}").unwrap();
+        assert_eq!(
+            agent_config_mount_source(&work, ".claude/settings.json"),
+            Some(work.join(".claude/settings.json")),
+        );
     }
 
     // In-box git plumbing mounts: identical source/target host paths, ro/rw

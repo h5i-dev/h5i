@@ -511,9 +511,11 @@ pub fn build_run_argv(rt: &Runtime, policy: &ResolvedPolicy, work: &Path, plan: 
     // exist host-side (an image-backed tier writes a sentinel when there is no
     // real config), so a missing source here means the guard deliberately left
     // it out, not that we should mount something else.
-    for rel in [".claude/settings.json", ".codex/config.toml"] {
-        let source = work.join(rel);
-        if source.is_file() {
+    for rel in crate::container::AGENT_CONFIG_RELS {
+        // Resolved through the shared guard: `$WORK` is repo-supplied, so a
+        // symlink here (or at any directory above it) would otherwise mount an
+        // arbitrary host path into the guest.
+        if let Some(source) = crate::container::agent_config_mount_source(work, rel) {
             a.push("--mount-file".into());
             a.push(format!("{}:{WORK_MOUNT}/{rel}:ro", source.display()));
         }
@@ -1319,8 +1321,10 @@ mod tests {
         // $WORK is rw, so without this mount an in-box agent could rewrite the
         // file that defines its observation hook and go dark.
         let dir = std::env::temp_dir().join(format!("h5i-microvm-cfg-{}", std::process::id()));
-        let work = dir.join("work");
-        std::fs::create_dir_all(work.join(".claude")).unwrap();
+        std::fs::create_dir_all(dir.join("work/.claude")).unwrap();
+        // Canonicalized: the mount source is the resolved path, so the
+        // expectation has to agree where the temp root is itself a symlink.
+        let work = dir.canonicalize().unwrap().join("work");
         std::fs::write(work.join(".claude/settings.json"), "{}").unwrap();
         let a = build_run_argv(
             &rt(),
