@@ -249,13 +249,23 @@ fn maybe_version_json(argv: &[String]) {
     let out = serde_json::json!({
         "name": "h5i",
         "version": env!("CARGO_PKG_VERSION"),
-        "features": Vec::<&str>::new(),
+        "features": compiled_features(),
     });
     println!(
         "{}",
         serde_json::to_string_pretty(&out).expect("version json is serializable")
     );
     std::process::exit(0);
+}
+
+/// Compiled feature flags for this binary, sorted so JSON output is diffable.
+fn compiled_features() -> Vec<&'static str> {
+    #[cfg(feature = "web")]
+    let mut features: Vec<&str> = vec!["web"];
+    #[cfg(not(feature = "web"))]
+    let mut features: Vec<&str> = Vec::new();
+    features.sort_unstable();
+    features
 }
 
 fn render_man_page<W: std::io::Write>(w: &mut W) -> std::io::Result<()> {
@@ -355,6 +365,15 @@ fn demote_headings(bytes: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_json_features_match_compiled_build() {
+        let features = compiled_features();
+        #[cfg(feature = "web")]
+        assert!(features.contains(&"web"));
+        #[cfg(not(feature = "web"))]
+        assert!(features.is_empty());
+    }
 
     /// Route `argv` through clap and the short-form fold, exactly as `main`
     /// does. The error is flattened to a string because `BoxCommands` has no
