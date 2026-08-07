@@ -165,13 +165,21 @@ fn cookie(header: &str, name: &str) -> Option<String> {
 }
 
 async fn gate(State(state): State<Arc<AppState>>, req: Request, next: Next) -> Response {
-    let self_origin = format!(
-        "http://{}",
-        req.headers()
-            .get(header::HOST)
-            .and_then(|h| h.to_str().ok())
-            .unwrap_or("127.0.0.1")
-    );
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("127.0.0.1");
+    // The Origin check below compares against our own Host header, which a
+    // DNS-rebinding page satisfies trivially: it arrives as
+    // `Host: evil.test:<port>` / `Origin: http://evil.test:<port>`, which match
+    // each other. Requiring the Host to actually name loopback is what makes
+    // "foreign origins refused" true rather than self-referential. (The token
+    // cookie already held this shut; the documented property did not.)
+    if !is_loopback_host(host) {
+        return Refusal::ForeignOrigin.status().into_response();
+    }
+    let self_origin = format!("http://{host}");
     let verdict = authorize(
         req.uri().query(),
         req.headers()
@@ -187,6 +195,18 @@ async fn gate(State(state): State<Arc<AppState>>, req: Request, next: Next) -> R
         Ok(()) => next.run(req).await,
         Err(r) => r.status().into_response(),
     }
+}
+
+/// Does this `Host` header name the loopback interface? Port-insensitive: the
+/// console binds an ephemeral port, so the name is the part worth pinning.
+fn is_loopback_host(host: &str) -> bool {
+    let name = match host.rsplit_once(':') {
+        // Only strip a trailing all-digit port; `[::1]` has colons of its own.
+        Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => host,
+    };
+    let name = name.trim_matches(|c| c == '[' || c == ']');
+    name.eq_ignore_ascii_case("localhost") || name == "127.0.0.1" || name == "::1"
 }
 
 // ── the bundle ───────────────────────────────────────────────────────────────
@@ -236,6 +256,11 @@ async fn asset(Path(path): Path<String>) -> Response {
 /// Every field is a count of something recorded. Nothing here is a model of
 /// intent, and the two `..._observed` counters exist so a reader can tell
 /// evidence h5i collected from evidence the box handed it.
+/// The lanes h5i itself writes, from the host, outside the box's reach.
+/// Anything else — `tee-shim`, `inbox-capture`, or a lane added later — is the
+/// box's own account and is counted as such.
+const HOST_OBSERVED_LANES: [&str; 3] = ["host-env-run", "shell-egress", "viewer"];
+
 #[derive(Serialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct Signals {
     /// Receipts on this box's log.
@@ -254,7 +279,7 @@ pub struct Signals {
     /// Console errors, page errors and failed requests the in-box browser
     /// reported, summed over runs that drove it.
     pub browser_issues: usize,
-    /// Runs h5i observed from the host (`host-env-run`, `shell-egress`).
+    /// Runs h5i observed from the host — see [`HOST_OBSERVED_LANES`].
     pub host_observed: usize,
     /// Runs recorded by the in-box tee shim — the box's own account.
     pub box_claimed: usize,
@@ -284,9 +309,15 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
         if r.timed_out {
             s.timed_out += 1;
         }
-        match r.source.as_str() {
-            "tee-shim" => s.box_claimed += 1,
-            _ => s.host_observed += 1,
+        // Allowlist, not a catch-all. `_ => host_observed` counted any unknown
+        // source as evidence h5i collected — including `inbox-capture`, which
+        // the boxed process writes into its own spool. A box could therefore
+        // clear the grey "box-claimed" badge by writing its own records, which
+        // is precisely the distinction this screen exists to keep.
+        if HOST_OBSERVED_LANES.contains(&r.source.as_str()) {
+            s.host_observed += 1;
+        } else {
+            s.box_claimed += 1;
         }
         if let Some(e) = &r.egress {
             s.egress_allowed += e.allowed;
@@ -518,12 +549,16 @@ async fn api_box(
         let m = env::list(&h5i_root).into_iter().find(|m| m.id == id)?;
         let events = env::read_events(&git, Some(&m.id));
         let mut receipts = receipts_of(&h5i_root, &m);
+        let policy = env::load_policy(&h5i_root, &m).ok().map(|rp| rp.profile);
+        // Signals over the FULL history, then fold for display. Draining first
+        // made the detail pane disagree with the fleet row the user just
+        // clicked, and in the dangerous direction: a denial older than the cap
+        // vanished on inspection while the row still showed red.
+        let item = build_row(&git, &h5i_root, &m, &events, &receipts);
         let receipts_folded = receipts.len().saturating_sub(RECEIPT_CAP);
         if receipts_folded > 0 {
             receipts.drain(..receipts_folded);
         }
-        let policy = env::load_policy(&h5i_root, &m).ok().map(|rp| rp.profile);
-        let item = build_row(&git, &h5i_root, &m, &events, &receipts);
         Some(BoxDetail {
             item,
             policy: policy.as_ref().map(EnforcedPolicy::from),
@@ -701,6 +736,37 @@ mod tests {
             raw_size: 0,
             raw_lines: 0,
             raw_truncated: false,
+        }
+    }
+
+    /// The box writes `inbox-capture` records into its own spool. Counting any
+    /// unknown source as host-observed let it clear the grey "box-claimed"
+    /// badge — the one distinction this screen is built on.
+    #[test]
+    fn box_written_lanes_are_never_counted_as_host_observed() {
+        let m = manifest("container");
+        for lane in ["tee-shim", "inbox-capture", "something-added-later"] {
+            let s = signals(&m, &[receipt(lane, 0)]);
+            assert_eq!(s.host_observed, 0, "{lane} must not read as host-observed");
+            assert_eq!(s.box_claimed, 1, "{lane}");
+            assert!(s.box_claimed_only, "{lane} alone means box-claimed only");
+        }
+        for lane in HOST_OBSERVED_LANES {
+            let s = signals(&m, &[receipt(lane, 0)]);
+            assert_eq!(s.host_observed, 1, "{lane} is a host lane");
+            assert!(!s.box_claimed_only, "{lane}");
+        }
+    }
+
+    /// A DNS-rebinding page arrives with Host and Origin that match each other,
+    /// so comparing them proves nothing. The Host has to name loopback.
+    #[test]
+    fn the_gate_requires_a_loopback_host() {
+        for good in ["127.0.0.1:8080", "localhost:1", "[::1]:9", "LOCALHOST", "127.0.0.1"] {
+            assert!(is_loopback_host(good), "{good} should be accepted");
+        }
+        for bad in ["evil.test:8080", "example.com", "127.0.0.1.evil.test", "10.0.0.1:80"] {
+            assert!(!is_loopback_host(bad), "{bad} should be refused");
         }
     }
 

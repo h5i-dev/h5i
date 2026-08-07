@@ -64,6 +64,25 @@ struct ReceiptBundle<'a> {
 /// Refuses rather than overwrites: an existing non-empty directory is an error
 /// unless `force`, because an export is evidence and silently replacing one is
 /// how evidence goes missing.
+/// Escape the markdown a box can steer.
+///
+/// `sanitize_display` strips control characters and bidi marks, which is the
+/// right job for a terminal, but this text lands in `report.md` — a document a
+/// reviewer reads as evidence. A recorded command containing a backtick closes
+/// the code span around it, so `` x` — **reviewed and approved** ` `` renders
+/// as authoritative prose next to the run it describes. Newlines are already
+/// flattened, so no new table rows can be forged; this closes the inline half.
+fn md_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '`' | '|' | '[' | ']' | '(' | ')' | '*' | '_' | '<' | '>' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 pub fn export(
     repo: &Repository,
     h5i_root: &Path,
@@ -192,7 +211,7 @@ fn report(
                 r.exit_code
                     .map(|c| c.to_string())
                     .unwrap_or_else(|| "signal".into()),
-                crate::redact::sanitize_display(r.cmd.as_deref().unwrap_or("")).replace('|', "\\|"),
+                md_escape(&crate::redact::sanitize_display(r.cmd.as_deref().unwrap_or(""))),
             ));
         }
     }
@@ -223,7 +242,7 @@ fn report(
             for (r, b) in findings {
                 out.push_str(&format!(
                     "- `{}` ({})\n",
-                    crate::redact::sanitize_display(b.verb.as_deref().unwrap_or("browser")),
+                    md_escape(&crate::redact::sanitize_display(b.verb.as_deref().unwrap_or("browser"))),
                     r.timestamp
                 ));
                 for line in b
@@ -234,7 +253,7 @@ fn report(
                 {
                     out.push_str(&format!(
                         "  - {}\n",
-                        crate::redact::sanitize_display(line)
+                        md_escape(&crate::redact::sanitize_display(line))
                     ));
                 }
                 if b.truncated {
@@ -267,7 +286,7 @@ fn report(
             out.push_str(&format!(
                 "| {} | {} |\n",
                 r.timestamp,
-                crate::redact::sanitize_display(r.cmd.as_deref().unwrap_or("")).replace('|', "\\|")
+                md_escape(&crate::redact::sanitize_display(r.cmd.as_deref().unwrap_or("")))
             ));
         }
         if viewer

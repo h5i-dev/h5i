@@ -194,6 +194,15 @@ fn raw_path(env_dir: &Path, id: &str) -> PathBuf {
     env_dir.join(RAW_DIR).join(format!("{id}.raw"))
 }
 
+/// Record ids are lowercase hex. Checking that before a handle becomes a path
+/// keeps `../..` out of the join. No caller can reach it with hostile input
+/// today — `env::inspect` is gated by `find` succeeding on the same handle —
+/// but `raw_bytes` is `pub`, and a console route added later would inherit the
+/// unvalidated join rather than this refusal.
+fn valid_handle(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// RFC3339 UTC with microsecond precision — lexically sortable, so the log's
 /// file order and its time order agree.
 fn now_ts() -> String {
@@ -388,6 +397,11 @@ pub fn raw_bytes(env_dir: &Path, id: &str) -> Result<Vec<u8>, H5iError> {
                 return Ok(std::fs::read(p)?);
             }
         }
+    }
+    if !valid_handle(id) {
+        return Err(H5iError::Metadata(format!(
+            "receipt handle '{id}' is not a hex record id (fail-closed)"
+        )));
     }
     let p = raw_path(env_dir, id);
     if !p.exists() {

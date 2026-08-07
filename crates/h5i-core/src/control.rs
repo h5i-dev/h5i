@@ -81,12 +81,20 @@ pub fn read(env_dir: &Path) -> Control {
         .unwrap_or_default()
 }
 
+/// Write the control file atomically: temp file plus rename.
+///
+/// `pump_input` re-reads this on every input frame, so a truncate-then-write
+/// left a window where a reader saw a torn file, fell back to `Holder::Agent`,
+/// and silently dropped a human's input mid-drag. `write_user_allow` in env.rs
+/// already uses this shape for the same reason.
 fn write(env_dir: &Path, c: &Control) -> Result<(), H5iError> {
     let p = path(env_dir);
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
-    std::fs::write(&p, serde_json::to_vec_pretty(c)?).map_err(|e| H5iError::with_path(e, &p))
+    let tmp = p.with_extension(format!("tmp-{}", std::process::id()));
+    std::fs::write(&tmp, serde_json::to_vec_pretty(c)?).map_err(|e| H5iError::with_path(e, &tmp))?;
+    std::fs::rename(&tmp, &p).map_err(|e| H5iError::with_path(e, &p))
 }
 
 /// A human takes control. Always succeeds: someone at the viewer wants the
@@ -108,6 +116,11 @@ pub fn take(env_dir: &Path) -> Result<Control, H5iError> {
 /// actually re-snapshots.
 pub fn release(env_dir: &Path) -> Result<Control, H5iError> {
     let prev = read(env_dir);
+    // `needs_resnapshot` only ever latches true and is cleared by the agent's
+    // own re-snapshot, so a read-modify-write racing a concurrent `take` can
+    // only lose the *holder*. Releasing to Agent when someone just took control
+    // would hand the pointer back under them, so keep Human if that is what the
+    // file says now.
     let c = Control {
         holder: Holder::Agent,
         since: now(),
