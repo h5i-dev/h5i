@@ -717,13 +717,18 @@ fn random_suffix() -> Result<String, H5iError> {
 /// default.
 pub fn private_scratch_dir(prefix: &str) -> Result<PathBuf, H5iError> {
     let dir = std::env::temp_dir().join(format!("{prefix}-{}", random_suffix()?));
-    let mut b = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
-        b.mode(0o700);
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&dir)
+            .map_err(|e| H5iError::with_path(e, &dir))?;
     }
-    b.create(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+    #[cfg(not(unix))]
+    std::fs::DirBuilder::new()
+        .create(&dir)
+        .map_err(|e| H5iError::with_path(e, &dir))?;
     Ok(dir)
 }
 
@@ -2023,6 +2028,9 @@ fn augment_injected_env(
 }
 
 /// Monotonic counter so concurrent runs get distinct per-run cgroup names.
+/// cgroups are Linux-only, and since the exec probe stopped using this for its
+/// scratch path the cgroup builder is its sole consumer.
+#[cfg(target_os = "linux")]
 static PROBE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static VERIFIED_EXEC_POLICIES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
