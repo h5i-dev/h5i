@@ -276,6 +276,67 @@ struct AllowEntry {
     wildcard: bool,
     /// Restrict to a single port when present; `None` = any port.
     port: Option<u16>,
+    /// Addresses this exact host resolved to at startup. Empty for a wildcard
+    /// (unenumerable) or when startup resolution failed.
+    pinned: Vec<IpAddr>,
+}
+
+impl AllowEntry {
+    /// Does this entry open `port`? `None` means any.
+    fn port_ok(&self, port: u16) -> bool {
+        self.port.is_none_or(|p| p == port)
+    }
+
+    /// Does this entry cover `host:port`? `host` must already be lower-cased
+    /// and free of a trailing dot.
+    fn matches(&self, host: &str, port: u16) -> bool {
+        self.port_ok(port)
+            && if self.wildcard {
+                host == self.host
+                    || host
+                        .strip_suffix(self.host.as_str())
+                        .is_some_and(|p| p.ends_with('.'))
+            } else {
+                host == self.host
+            }
+    }
+}
+
+/// Is this address one the box has no business reaching through the proxy?
+///
+/// Used only where a destination could not be pinned. The proxy runs on the
+/// host with full host network access, so an unpinned name that resolves to
+/// loopback, a private range, or the cloud metadata link-local address turns
+/// the egress boundary into an SSRF gadget. `IpAddr::is_global` is still
+/// unstable, so the ranges are spelled out.
+fn is_internal(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(a) => {
+            let [o0, o1, ..] = a.octets();
+            a.is_loopback()
+                || a.is_private()
+                || a.is_link_local()
+                || a.is_broadcast()
+                || a.is_documentation()
+                || a.is_unspecified()
+                || a.is_multicast()
+                || o0 == 0
+                || (o0 == 100 && (64..128).contains(&o1)) // CGNAT 100.64/10
+                || (o0 == 198 && (o1 & 0xfe) == 18) // benchmarking 198.18/15
+                || o0 >= 240 // reserved 240/4
+        }
+        IpAddr::V6(a) => {
+            if let Some(v4) = a.to_ipv4_mapped() {
+                return is_internal(&IpAddr::V4(v4));
+            }
+            let s0 = a.segments()[0];
+            a.is_loopback()
+                || a.is_unspecified()
+                || a.is_multicast()
+                || (s0 & 0xfe00) == 0xfc00 // unique-local fc00::/7
+                || (s0 & 0xffc0) == 0xfe80 // link-local fe80::/10
+        }
+    }
 }
 
 /// The agent hook-config files that every image-backed tier mounts read-only
@@ -331,13 +392,18 @@ pub fn effective_egress(profile_egress: &[String], user_allow: &[String]) -> Vec
     out
 }
 
-/// A resolved egress allowlist: parsed host rules plus the set of IPs the
-/// allowed domains pinned to at startup (so a client connecting by a pinned IP
-/// is permitted, and the proxy is DNS-rebinding resistant).
+/// A resolved egress allowlist: parsed host rules, each carrying the addresses
+/// its host pinned to at startup.
+///
+/// The pin is what makes the proxy DNS-rebinding resistant, and it only works
+/// if the proxy *dials* the pinned address. Matching a name and then calling
+/// `TcpStream::connect((host, port))` re-resolves, which is how an allowlisted
+/// domain under attacker DNS control used to reach host loopback or a metadata
+/// endpoint through a proxy that has full host network access. See
+/// [`AllowList::dial_addrs`].
 #[derive(Debug, Clone, Default)]
 pub struct AllowList {
     entries: Vec<AllowEntry>,
-    pinned_ips: HashSet<IpAddr>,
 }
 
 impl AllowList {
@@ -369,58 +435,78 @@ impl AllowList {
                     host,
                     wildcard,
                     port,
+                    pinned: Vec::new(),
                 });
             }
         }
-        AllowList {
-            entries,
-            pinned_ips: HashSet::new(),
-        }
+        AllowList { entries }
     }
 
-    /// Resolve every allowed host to IPs and pin them. Best-effort: a host that
-    /// fails to resolve simply contributes no pinned IPs (it can still match by
-    /// name at CONNECT time). Returns the count pinned.
+    /// Resolve every exact allowed host and pin the answers onto its entry.
+    /// Best-effort: a host that fails to resolve keeps an empty pin and falls
+    /// back to a guarded resolve at CONNECT time (see [`Self::dial_addrs`]).
+    /// Returns the number of distinct addresses pinned.
     pub fn pin_dns(&mut self) -> usize {
-        let mut pinned = HashSet::new();
-        for e in &self.entries {
+        let mut distinct = HashSet::new();
+        for e in &mut self.entries {
             if e.wildcard {
                 continue; // can't enumerate a wildcard's IPs
             }
             let port = e.port.unwrap_or(443);
             if let Ok(addrs) = (e.host.as_str(), port).to_socket_addrs() {
-                for a in addrs {
-                    pinned.insert(a.ip());
-                }
+                e.pinned = addrs.map(|a| a.ip()).collect();
+                distinct.extend(e.pinned.iter().copied());
             }
         }
-        let n = pinned.len();
-        self.pinned_ips = pinned;
-        n
+        distinct.len()
+    }
+
+    /// The addresses the proxy may dial for an already-[`allowed`](Self::allows)
+    /// request. Empty means refuse.
+    ///
+    /// Pinned addresses win, so the name the allowlist matched and the address
+    /// the socket reaches are decided by the *same* DNS answer. Only a wildcard
+    /// entry (or a host that would not resolve at startup) falls through to a
+    /// live lookup, and that answer is filtered to globally routable addresses:
+    /// without a pin there is nothing else standing between a rebound record
+    /// and the host's own loopback.
+    pub fn dial_addrs(&self, host: &str, port: u16) -> Vec<std::net::SocketAddr> {
+        let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        if let Ok(ip) = h.parse::<IpAddr>() {
+            return vec![std::net::SocketAddr::new(ip, port)];
+        }
+        let mut out: Vec<std::net::SocketAddr> = Vec::new();
+        for e in self.entries.iter().filter(|e| e.matches(&h, port)) {
+            out.extend(e.pinned.iter().map(|ip| std::net::SocketAddr::new(*ip, port)));
+        }
+        if !out.is_empty() {
+            out.sort();
+            out.dedup();
+            return out;
+        }
+        (h.as_str(), port)
+            .to_socket_addrs()
+            .map(|it| it.filter(|a| !is_internal(&a.ip())).collect())
+            .unwrap_or_default()
     }
 
     /// Decide whether a CONNECT/request to `host:port` is allowed (fail-closed:
     /// the empty allowlist permits nothing).
     pub fn allows(&self, host: &str, port: u16) -> bool {
         let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
-        // Direct connection to a pinned IP of an allowed host.
+        // Direct connection by address: permitted only when some entry pinned
+        // that exact IP *and* opened this port. Ignoring the port here let
+        // `CONNECT <pinned-ip>:22` through on an allowlist of `host:443`.
         if let Ok(ip) = host.parse::<IpAddr>() {
-            if self.pinned_ips.contains(&ip) {
-                return true;
-            }
+            return self.entries.iter().any(|e| {
+                e.port_ok(port)
+                    // Either an address the allowlist pinned for one of its
+                    // names, or an address the operator listed literally.
+                    && (e.pinned.contains(&ip) || (!e.wildcard && e.host == host))
+            });
         }
         for e in &self.entries {
-            if let Some(p) = e.port {
-                if p != port {
-                    continue;
-                }
-            }
-            let name_ok = if e.wildcard {
-                host == e.host || host.ends_with(&format!(".{}", e.host))
-            } else {
-                host == e.host
-            };
-            if name_ok {
+            if e.matches(&host, port) {
                 return true;
             }
         }
@@ -637,9 +723,13 @@ fn handle_proxy_client(
         let _ = client.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
         return Ok(());
     }
-    let mut upstream = match TcpStream::connect((host.as_str(), port)) {
-        Ok(s) => s,
-        Err(_) => {
+    // Dial the address the allowlist pinned, not a fresh lookup of the name it
+    // matched: re-resolving here is what let a rebound record send the proxy —
+    // a host process with full host network access — at loopback instead.
+    let addrs = allow.dial_addrs(&host, port);
+    let mut upstream = match addrs.iter().find_map(|a| TcpStream::connect(a).ok()) {
+        Some(s) => s,
+        None => {
             let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n");
             return Ok(());
         }
@@ -1672,6 +1762,91 @@ mod tests {
     fn empty_allowlist_denies_everything() {
         let a = AllowList::parse(&[]);
         assert!(!a.allows("anything.com", 443));
+    }
+
+    /// Build an allowlist with a hand-placed pin, so the pinning behaviour is
+    /// testable without touching the network.
+    fn pinned(rule: &str, ips: &[&str]) -> AllowList {
+        let mut a = AllowList::parse(&[rule.to_string()]);
+        a.entries[0].pinned = ips.iter().map(|i| i.parse().unwrap()).collect();
+        a
+    }
+
+    /// Matching by name and then re-resolving let an allowlisted domain under
+    /// attacker DNS control point the proxy at anything. The proxy must dial
+    /// the address the allowlist pinned.
+    #[test]
+    fn dial_uses_the_pinned_address_not_a_fresh_lookup() {
+        let a = pinned("api.example.com", &["203.0.113.10", "203.0.113.11"]);
+        let addrs = a.dial_addrs("api.example.com", 443);
+        assert_eq!(addrs.len(), 2);
+        assert!(addrs.iter().all(|x| x.ip().to_string().starts_with("203.0.113.")));
+        assert!(addrs.iter().all(|x| x.port() == 443));
+    }
+
+    /// A pinned IP opens only the port its entry named. Ignoring the port here
+    /// turned an allowlist of `host:443` into a free pass to `host:22`.
+    #[test]
+    fn a_pinned_ip_does_not_open_every_port() {
+        let a = pinned("github.com:443", &["140.82.121.4"]);
+        assert!(a.allows("140.82.121.4", 443));
+        assert!(!a.allows("140.82.121.4", 22));
+        // An address nobody pinned stays refused on any port.
+        assert!(!a.allows("140.82.121.5", 443));
+    }
+
+    /// A wildcard cannot be pinned, so its lookup happens at CONNECT time —
+    /// and that answer must not be allowed to name an internal address.
+    #[test]
+    fn unpinnable_destinations_refuse_internal_addresses() {
+        for ip in [
+            "127.0.0.1",
+            "169.254.169.254", // cloud metadata
+            "10.1.2.3",
+            "192.168.1.1",
+            "172.16.0.1",
+            "100.64.0.1", // CGNAT
+            "0.0.0.0",
+            "::1",
+            "fd00::1",   // unique-local
+            "fe80::1",   // link-local
+            "::ffff:127.0.0.1",
+        ] {
+            assert!(is_internal(&ip.parse().unwrap()), "{ip} should be internal");
+        }
+        for ip in ["93.184.216.34", "8.8.8.8", "2606:4700::1111"] {
+            assert!(!is_internal(&ip.parse().unwrap()), "{ip} should be routable");
+        }
+    }
+
+    /// A literal IP target is dialled verbatim — `allows` has already checked
+    /// it against the pins, so there is nothing left to resolve.
+    #[test]
+    fn a_literal_ip_target_is_dialled_as_given() {
+        let a = pinned("api.example.com", &["203.0.113.10"]);
+        let addrs = a.dial_addrs("203.0.113.10", 443);
+        assert_eq!(addrs.len(), 1);
+        assert_eq!(addrs[0].to_string(), "203.0.113.10:443");
+    }
+
+    /// An operator may list a literal address. That entry must keep matching
+    /// itself even though nothing pinned it (the proxy's relay tests dial a
+    /// local upstream this way).
+    #[test]
+    fn a_literal_ip_entry_still_matches_itself() {
+        let a = AllowList::parse(&["127.0.0.1:8080".into()]);
+        assert!(a.allows("127.0.0.1", 8080));
+        assert!(!a.allows("127.0.0.1", 9090), "the port on the entry still binds");
+        assert_eq!(a.dial_addrs("127.0.0.1", 8080)[0].to_string(), "127.0.0.1:8080");
+    }
+
+    /// Wildcard matching stays anchored on a label boundary.
+    #[test]
+    fn wildcard_matching_is_label_anchored() {
+        let a = AllowList::parse(&[".githubusercontent.com".into()]);
+        assert!(a.allows("raw.githubusercontent.com", 443));
+        assert!(a.allows("githubusercontent.com", 443));
+        assert!(!a.allows("evilgithubusercontent.com", 443));
     }
 
     #[test]
