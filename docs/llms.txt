@@ -1,11 +1,21 @@
 # h5i
 
-> h5i ("high-five") is an open-source **contained agentic development environment**. It gives a coding agent (Claude Code, Codex) a disposable box holding the code, the agent process, the toolchain, the dependencies, the dev server and a real browser, inside one enforced boundary. Nothing of your machine is inside it: no SSH key, no cloud credential, no personal browser profile. Nothing leaves it except a patch, a report and an execution receipt you exported deliberately. One Rust binary, local-first, no server, no daemon, no SaaS.
+> h5i ("high-five") is an open-source **integrated sandbox for AI coding agents**. It gives a coding agent (Claude Code, Codex) a complete, disposable development environment inside a single security boundary: the agent, the workspace, the shell, the dependencies, the dev server and an isolated browser all run together inside the sandbox, while your host files and credentials stay outside. When the work is done, h5i exports a reviewable patch and execution logs. One Rust binary, local-first, no hosted sandbox, no SaaS account required. Apache-2.0, written in Rust, Linux and macOS.
 
-The problem h5i solves is that a coding agent runs unattended, which makes two questions urgent at once: what could it reach, and what did it actually do? Sandboxing one command was the right idea at the wrong scale, because an agent's work is a shell, a package manager, a build, a test run, a dev server and a browser. h5i confines the workspace rather than the command, so everything the session spawns is contained by construction, and records what ran from outside the box rather than from the agent's account of itself. Apache-2.0, written in Rust, Linux and macOS.
+h5i gives you:
+- **Lightweight sandboxes** that start in under 200 ms for everyday agent tasks (`workspace` and `process` tiers)
+- **MicroVM isolation** with a separate kernel when stronger boundaries matter (`microvm` tier, via microsandbox)
+- **Isolated browsers** that agents can securely control from inside the sandbox (headless Chrome and a fresh profile, driven through a CLI over an accessibility tree)
+- **Self-contained environments** with the agent, toolchain, dependencies and browser in one boundary
+- **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
+- **Local-first.** No hosted sandbox. No SaaS account required.
+
+The problem h5i solves is that a coding agent runs unattended, which makes two questions urgent at once: what could it reach, and what did it actually do? Sandboxing one command was the right idea at the wrong scale, because an agent's work is a shell, a package manager, a build, a test run, a dev server and a browser. h5i confines the workspace rather than the command, so everything the session spawns is contained by construction, and records what ran from outside the box rather than from the agent's account of itself.
 
 ## Core concepts
-- A **box**: a disposable, confined development environment for one agent
+- A **box**: a complete, disposable development environment for one agent, inside one security boundary
+- **Start cost**: under 200 ms at the `workspace` and `process` tiers; `container` starts a container and `microvm` boots a kernel
+- **Browser in the box**: headless Chrome and a fresh profile inside the boundary, next to the dev server
 - Five **isolation tiers**: `workspace`, `process`, `supervised`, `container`, `microvm`
 - **Fail closed**: an explicit tier is refused, never silently downgraded
 - **Egress allowlist**, labelled by OSI layer (L3/L4 at `supervised` and `microvm`, L7 at `container`)

@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>h5i: Integrated Sandbox for AI Coding Agents (Claude Code &amp; Codex)</title>
-  <meta name="description" content="h5i gives a coding agent full autonomy inside a disposable, confined box holding the code, the toolchain, the dev server and a real browser. Your credentials never enter it; a reviewed patch and an execution receipt are the only things that come out.">
-  <meta name="keywords" content="ai agent sandbox, disposable development environment, confined coding agent, agent container, landlock seccomp sandbox, network egress allowlist, headless browser for agents, agent browser automation, untrusted code review, claude code, codex, h5i">
+  <meta name="description" content="h5i gives coding agents a complete, disposable development environment inside a single security boundary: agent, shell, dependencies, dev server and an isolated browser. Lightweight sandboxes start in under 200 ms, microVM isolation adds a separate kernel, and your host files and credentials stay outside. Local-first, no SaaS.">
+  <meta name="keywords" content="ai agent sandbox, integrated sandbox for ai coding agents, disposable development environment, microvm isolation, lightweight sandbox, isolated browser for agents, agent browser automation, landlock seccomp sandbox, network egress allowlist, reviewable patch, execution logs, local-first, claude code, codex, h5i">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -22,7 +22,7 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="h5i: Integrated Sandbox for AI Coding Agents (Claude Code &amp; Codex)">
-  <meta property="og:description" content="Run Claude Code or Codex with full autonomy inside a disposable box holding the workspace, the toolchain, the dev server and a real browser. Your host files and credentials stay outside. A reviewable patch and an execution log come out. Local-first, no SaaS.">
+  <meta property="og:description" content="A complete, disposable development environment for coding agents inside one security boundary. Lightweight sandboxes start in under 200 ms, microVM isolation adds a separate kernel, and agents drive an isolated browser from inside. Your host files and credentials stay outside; a reviewable patch and execution logs come out. Local-first, no SaaS.">
   <meta property="og:url" content="https://h5i.dev/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="og:image:width" content="2257">
@@ -32,7 +32,7 @@
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i: Integrated Sandbox for AI Coding Agents (Claude Code &amp; Codex)">
-  <meta name="twitter:description" content="An integrated sandbox for AI coding agents. The agent, workspace, shell, dependencies, dev server and browser run together inside one disposable boundary. Credentials stay on the host. A reviewable patch comes out. Local-first, no SaaS.">
+  <meta name="twitter:description" content="An integrated sandbox for AI coding agents. Agent, workspace, shell, dependencies, dev server and an isolated browser run together inside one disposable boundary. Sandboxes start in under 200 ms; microVM isolation when you need a separate kernel. A reviewable patch and execution logs come out. Local-first, no SaaS.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta name="twitter:image:alt" content="h5i: a coding agent working inside a disposable, confined box, with a reviewed patch and an execution receipt as the only way out">
 
@@ -55,7 +55,7 @@
         "name": "h5i",
         "alternateName": "high-five",
         "url": "https://h5i.dev/",
-        "description": "A contained agentic development environment: a disposable box holding the code, the agent, the toolchain, the dev server and a real browser, with a reviewed patch as the only way out.",
+        "description": "An integrated sandbox for AI coding agents: a complete, disposable development environment holding the agent, workspace, shell, dependencies, dev server and an isolated browser inside one security boundary, with a reviewable patch and execution logs as the only way out.",
         "publisher": {"@id": "https://h5i.dev/#org"},
         "inLanguage": "en"
       },
@@ -65,12 +65,27 @@
         "name": "h5i",
         "alternateName": "high-five",
         "applicationCategory": "DeveloperApplication",
-        "operatingSystem": "Linux",
-        "description": "A contained agentic development environment. h5i gives Claude Code, Codex and other coding agents full autonomy inside a disposable box: the code is copied in, the toolchain, tests, dev server and a real headless browser run inside one boundary enforced by Landlock, seccomp, namespaces and a network egress allowlist, credentials stay on the host behind a proxy, and the only way out is a reviewed patch with an execution receipt.",
+        "applicationSubCategory": "AI agent sandbox",
+        "operatingSystem": "Linux, macOS, Windows (WSL2)",
+        "description": "An integrated sandbox for AI coding agents. h5i gives Claude Code, Codex and other coding agents a complete, disposable development environment inside a single security boundary: the agent, workspace, shell, dependencies, dev server and an isolated browser all run inside, enforced by Landlock, seccomp, namespaces and a network egress allowlist. Lightweight sandboxes start in under 200 ms and microVM isolation adds a separate kernel. Host files and credentials stay outside, and the only way out is a reviewable patch with execution logs.",
+        "featureList": [
+          "Lightweight sandboxes that start in under 200 ms for everyday agent tasks",
+          "MicroVM isolation with a separate kernel when stronger boundaries matter",
+          "Isolated browsers that agents can securely control from inside the sandbox",
+          "Self-contained environments with the agent, toolchain, dependencies and browser in one boundary",
+          "Reviewable patches and execution logs showing what changed, what ran and what was denied",
+          "Five isolation tiers (workspace, process, supervised, container, microvm) that fail closed",
+          "A credential broker that keeps API keys, SSH keys and browser profiles on the host",
+          "A network egress allowlist enforced at L3/L4 or L7 depending on the tier"
+        ],
+        "keywords": "AI agent sandbox, coding agent sandbox, disposable development environment, microVM isolation, isolated browser for agents, egress allowlist, reviewable patch, execution logs, Claude Code, Codex",
         "url": "https://h5i.dev/",
         "downloadUrl": "https://github.com/h5i-dev/h5i",
-        "softwareHelp": "/manual/",
+        "installUrl": "https://github.com/h5i-dev/h5i#install",
+        "softwareHelp": "https://h5i.dev/manual/",
+        "softwareRequirements": "Rootless Podman for the container tier; microsandbox (msb) and hardware virtualization for the microvm tier",
         "programmingLanguage": "Rust",
+        "isAccessibleForFree": true,
         "sameAs": ["https://github.com/h5i-dev/h5i"],
         "license": "https://www.apache.org/licenses/LICENSE-2.0",
         "author": {"@type": "Person", "name": "h5i-dev"},
@@ -93,42 +108,106 @@
           {
             "@type": "Question",
             "name": "What is h5i?",
-            "acceptedAnswer": {"@type": "Answer", "text": "h5i (pronounced high-five) is an open-source contained agentic development environment. It gives a coding agent a disposable box holding the code, the toolchain, the dev server and a real browser, confined by a pinned, fail-closed policy, and gives you back a reviewed patch plus a receipt of everything that ran. One Rust binary, Apache 2.0, no hosted control plane."}
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "h5i (pronounced high-five) is an integrated sandbox for AI coding agents. It gives a coding agent a complete, disposable development environment inside a single security boundary: the agent, workspace, shell, dependencies, dev server and an isolated browser all run together inside it, while your host files and credentials stay outside. When the work is done h5i exports a reviewable patch and execution logs. One Rust binary, Apache 2.0, local-first, with no hosted sandbox and no SaaS account."
+            }
           },
           {
             "@type": "Question",
-            "name": "How is h5i different from just running the agent in a container?",
-            "acceptedAnswer": {"@type": "Answer", "text": "A container is one of the five tiers h5i can use, and on its own it is the weakest at the thing that matters most here: its egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. The supervised tier puts the box in a private network namespace and enforces the allowlist with nftables rules pinned to resolved IPs, plus a seccomp gate on socket(), so a program that ignores proxy settings still cannot reach an off-list address. On top of that you get the copy-in workspace, the credential broker, the browser and the output gate."}
+            "name": "How fast does an h5i sandbox start?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "The lightweight tiers start in under 200 ms, which is what makes a box worth creating for an everyday agent task rather than only for a risky one. workspace and process are the fast path: they are a git worktree plus, at process, a Landlock and seccomp policy applied to a supervised process tree. container and microvm are deliberately slower, because one starts a container and the other boots a kernel. Pick the tier by the trust the run needs, not by the clock."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does h5i support microVM isolation?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. isolation = microvm boots a guest with its own kernel through microsandbox (msb), from the same OCI images the container tier uses. It is the one tier where the boundary is a hypervisor rather than a policy applied to a host process, so it is the rung to reach for when a shared kernel is not an acceptable assumption. It needs hardware virtualization on the host: /dev/kvm on Linux, Apple Silicon on macOS."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can an AI agent use a browser inside the sandbox?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. A browser box runs headless Chrome and a fresh profile inside the boundary, next to the dev server, so localhost means the same thing to both. The agent drives it from a CLI and reads an accessibility tree rather than raw HTML, clicking by handle. You can watch the same viewport over a loopback-only forward and take control at any point, which invalidates the references the agent held so it has to re-snapshot before acting. The page’s console errors and failed requests land in the execution log."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How is this different from just running the agent in a container?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "A container is one of the five tiers h5i can use, and on its own it is the weakest at the thing that matters most here. Its egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. h5i’s supervised tier puts the box in a private network namespace and enforces the allowlist with nftables rules pinned to resolved IPs, plus a seccomp gate on socket(): a program that ignores proxy settings still cannot reach an off-list address. On top of that you get the copy-in workspace, the credential broker, the browser, and the output gate, which a bare container does not give you."
+            }
           },
           {
             "@type": "Question",
             "name": "Do my credentials go into the box?",
-            "acceptedAnswer": {"@type": "Answer", "text": "No. The model API key stays on the host and a reverse proxy injects it into outbound requests, scoped per runtime, so a Claude box cannot reach an OpenAI credential. Any other service works the same way as a policy entry. The per-box copy of the agent HOME config has credential-shaped entries stripped at any depth, keeping only the runtime's own token."}
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. The model API key stays on the host; a reverse proxy injects it into outbound requests, scoped per runtime, so a Claude box cannot reach an OpenAI credential. Any other service works the same way as a policy entry rather than a feature. The per-box copy of your agent’s HOME config has credential-shaped entries stripped at any depth, keeping only the runtime’s own token, which it cannot function without."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What do I actually get out of a run?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Three files, after you inspect them: a path-validated patch.diff, a report.md ordered by how much each section deserves your attention, and a receipt.json of observed execution. Together they answer what changed, what ran, and what was denied. Export is a step a human takes, so the agent has no direct write path back to your repository."
+            }
           },
           {
             "@type": "Question",
             "name": "Can the agent tamper with the receipt?",
-            "acceptedAnswer": {"@type": "Answer", "text": "It cannot rewrite what is already recorded. The box's only write window under its own directory is a staging spool; the receipt log and stored payloads sit outside every grant it has. The box stages a record, the host ingests it, and ordering and timestamps are the host's. An agent can still stage extra records or stop writing, and both are visible as a gap between host-observed exits and box-reported commands."}
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "It cannot rewrite what is already recorded. The box’s only write window under its own directory is a staging spool; the receipt log and the stored payloads are siblings of that spool, outside every grant it has. The box stages a record, the host ingests it, and ordering and timestamps are the host’s. What an agent can still do is stage extra records or stop writing, and both are visible: a gap between host-observed exits and box-reported commands is itself a finding. We do not claim more than that."
+            }
           },
           {
             "@type": "Question",
-            "name": "Can h5i stop an agent leaking my source code?",
-            "acceptedAnswer": {"@type": "Answer", "text": "No. Containment stops the agent touching your host. It does not stop it putting private code in a prompt to the model API. That is a separate control: a self-hosted model, or a profile with no model egress at all."}
+            "name": "Can it stop the agent leaking my source code?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No, and we will not imply otherwise. Containment stops the agent from touching your host. It does not stop it putting private code in a prompt to the model API. That is a separate control: a self-hosted model, or a profile with no model egress at all."
+            }
           },
           {
             "@type": "Question",
-            "name": "Does h5i need root, or a VM?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Neither. h5i uses Landlock, seccomp and unprivileged user namespaces, adding rootless Podman if available. h5i box probe reports what the host can actually enforce, and an explicitly requested tier the host cannot satisfy fails closed rather than silently downgrading."}
+            "name": "Does it need root, or a VM?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Neither, for the tiers most runs use. h5i uses Landlock, seccomp and unprivileged user namespaces, adding rootless Podman if you have it; only the microvm tier needs hardware virtualization. h5i box probe reports what your host can actually enforce, and runs a functional self-test rather than reading capability bits. An explicitly requested tier the host cannot satisfy fails closed: h5i never silently downgrades."
+            }
           },
           {
             "@type": "Question",
-            "name": "Can h5i give an AI agent a real browser?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Yes. A browser box runs headless Chrome and the agent-browser daemon alongside the agent, so the dev server is on localhost for both. The agent reads an accessibility tree rather than HTML and clicks by handle. A human can watch the same viewport over a loopback forward and take control, and the page's console errors and failed requests land in the receipt."}
+            "name": "What are the limits?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Below the microvm tier the kernel is shared, so this is good against a runaway agent and careless dependency code, and is not a claim against a targeted kernel exploit. Chrome runs with its own sandbox off, because h5i’s seccomp policy denies the namespace syscalls it needs. The box is the boundary, not Chrome. The viewport is a page, not a desktop. And it is Linux first: rootless Podman on Linux and WSL2, with macOS confining through Seatbelt. The manual keeps the full list."
+            }
           },
           {
             "@type": "Question",
             "name": "Is h5i free and open source?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Yes. Apache 2.0, written in Rust, no lock-in and no hosted service. Linux first: rootless Podman on Linux and WSL2."}
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Apache 2.0, written in Rust, local-first, with no lock-in, no hosted sandbox and no SaaS account required."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What happened to the provenance features?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "h5i began as a provenance system: prompt versioning, AI-aware blame, an audit scan, a multi-agent orchestra, a dashboard. Those are gone. The boundary was always the part worth having, and the product is being rebuilt around it. ROADMAP.md is the plan of record: what stays, what was cut, and what is still coming."
+            }
           }
         ]
       }
@@ -200,6 +279,57 @@
     <b>Apache 2.0</b><span>open source, no lock-in</span>
   </a>
 </div>
+
+<!-- ── What you get ─────────────────────────────────────────── -->
+<section id="what-you-get">
+  <div class="container">
+    <div class="section-head">
+      <span class="section-tag">What h5i gives you</span>
+      <h2 class="section-title">A complete environment, not a wrapped command.</h2>
+      <p class="section-sub">The agent, workspace, shell, dependencies, dev server and browser all run together
+        inside the sandbox, while your host files and credentials stay outside. When the work is done, h5i
+        exports a reviewable patch and execution logs.</p>
+    </div>
+    <div class="feat-grid">
+      <div class="feat-card">
+        <div class="feat-name">Lightweight sandboxes</div>
+        <div class="feat-desc">Start in <strong>under 200 ms</strong> for everyday agent tasks, which is what
+          makes a box worth creating for ordinary work and not only for a risky branch.</div>
+        <div class="feat-proves">isolation = workspace | process</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">MicroVM isolation</div>
+        <div class="feat-desc">A guest with <strong>its own kernel</strong> when stronger boundaries matter. The
+          one tier where the boundary is a hypervisor rather than a policy applied to a host process.</div>
+        <div class="feat-proves">isolation = microvm</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">Isolated browsers</div>
+        <div class="feat-desc">Chrome and a fresh profile inside the boundary, next to the dev server. Agents
+          drive it securely from within the sandbox; you can watch the same viewport and take over.</div>
+        <div class="feat-proves">h5i box view &#183; agent-browser</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">Self-contained environments</div>
+        <div class="feat-desc">The agent, toolchain, dependencies and browser in one boundary. Everything the
+          session spawns is contained by construction rather than one command at a time.</div>
+        <div class="feat-proves">one boundary, not one command</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">Reviewable patches and execution logs</div>
+        <div class="feat-desc">What changed, what ran, and what was denied. Exit codes come from the supervisor
+          and refused destinations from the proxy, so none of it is the agent's account of itself.</div>
+        <div class="feat-proves">patch.diff &#183; report.md &#183; receipt.json</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">Local-first</div>
+        <div class="feat-desc">One Rust binary on your own machine. <strong>No hosted sandbox and no SaaS
+          account required</strong>, and nothing to sign up for before the first box.</div>
+        <div class="feat-proves">Apache 2.0 &#183; no server, no daemon</div>
+      </div>
+    </div>
+  </div>
+</section>
 
 <!-- ── FIG 01 · the film ────────────────────────────────────── -->
 <section class="fig">
@@ -362,19 +492,35 @@
     <div class="faq-list">
       <details class="faq-item" open>
         <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an open-source <strong>contained agentic development environment</strong>. It gives a coding agent a disposable box holding the code, the toolchain, the dev server and a real browser, confined by a pinned, fail-closed policy, and gives you back a reviewed patch plus a receipt of everything that ran. One Rust binary, Apache 2.0, no hosted control plane.</div>
+        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an <strong>integrated sandbox for AI coding agents</strong>. It gives a coding agent a complete, disposable development environment inside a single security boundary: the agent, workspace, shell, dependencies, dev server and an isolated browser all run together inside it, while your host files and credentials stay outside. When the work is done h5i exports a reviewable patch and execution logs. One Rust binary, Apache 2.0, local-first, with no hosted sandbox and no SaaS account.</div>
+      </details>
+      <details class="faq-item">
+        <summary>How fast does an h5i sandbox start?</summary>
+        <div class="faq-answer">The lightweight tiers start in under 200 ms, which is what makes a box worth creating for an everyday agent task rather than only for a risky one. <code>workspace</code> and <code>process</code> are the fast path: they are a git worktree plus, at <code>process</code>, a Landlock and seccomp policy applied to a supervised process tree. <code>container</code> and <code>microvm</code> are deliberately slower, because one starts a container and the other boots a kernel. Pick the tier by the trust the run needs, not by the clock.</div>
+      </details>
+      <details class="faq-item">
+        <summary>Does h5i support microVM isolation?</summary>
+        <div class="faq-answer">Yes. <code>isolation = microvm</code> boots a guest with <strong>its own kernel</strong> through <a href="https://microsandbox.dev">microsandbox</a> (<code>msb</code>), from the same OCI images the <code>container</code> tier uses. It is the one tier where the boundary is a hypervisor rather than a policy applied to a host process, so it is the rung to reach for when a shared kernel is not an acceptable assumption. It needs hardware virtualization on the host: <code>/dev/kvm</code> on Linux, Apple Silicon on macOS.</div>
+      </details>
+      <details class="faq-item">
+        <summary>Can an AI agent use a browser inside the sandbox?</summary>
+        <div class="faq-answer">Yes. A browser box runs headless Chrome and a fresh profile <em>inside</em> the boundary, next to the dev server, so localhost means the same thing to both. The agent drives it from a CLI and reads an accessibility tree rather than raw HTML, clicking by handle. You can watch the same viewport over a loopback-only forward and take control at any point, which invalidates the references the agent held so it has to re-snapshot before acting. The page’s console errors and failed requests land in the execution log.</div>
       </details>
       <details class="faq-item">
         <summary>How is this different from just running the agent in a container?</summary>
-        <div class="faq-answer">A container is one of the five tiers h5i can use, and on its own it is the <em>weakest</em> at the thing that matters most here. Its egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. h5i's <code>supervised</code> tier puts the box in a private network namespace and enforces the allowlist with nftables rules pinned to resolved IPs, plus a seccomp gate on <code>socket()</code>: a program that ignores proxy settings still cannot reach an off-list address. On top of that you get the copy-in workspace, the credential broker, the browser, and the output gate, which a bare container does not give you.</div>
+        <div class="faq-answer">A container is one of the five tiers h5i can use, and on its own it is the <em>weakest</em> at the thing that matters most here. Its egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. h5i’s <code>supervised</code> tier puts the box in a private network namespace and enforces the allowlist with nftables rules pinned to resolved IPs, plus a seccomp gate on <code>socket()</code>: a program that ignores proxy settings still cannot reach an off-list address. On top of that you get the copy-in workspace, the credential broker, the browser, and the output gate, which a bare container does not give you.</div>
       </details>
       <details class="faq-item">
         <summary>Do my credentials go into the box?</summary>
-        <div class="faq-answer">No. The model API key stays on the host; a reverse proxy injects it into outbound requests, scoped per runtime, so a Claude box cannot reach an OpenAI credential. Any other service works the same way as a policy entry rather than a feature. The per-box copy of your agent's HOME config has credential-shaped entries stripped at any depth, keeping only the runtime's own token, which it cannot function without.</div>
+        <div class="faq-answer">No. The model API key stays on the host; a reverse proxy injects it into outbound requests, scoped per runtime, so a Claude box cannot reach an OpenAI credential. Any other service works the same way as a policy entry rather than a feature. The per-box copy of your agent’s HOME config has credential-shaped entries stripped at any depth, keeping only the runtime’s own token, which it cannot function without.</div>
+      </details>
+      <details class="faq-item">
+        <summary>What do I actually get out of a run?</summary>
+        <div class="faq-answer">Three files, after you inspect them: a path-validated <code>patch.diff</code>, a <code>report.md</code> ordered by how much each section deserves your attention, and a <code>receipt.json</code> of observed execution. Together they answer what changed, what ran, and what was denied. Export is a step a human takes, so the agent has no direct write path back to your repository.</div>
       </details>
       <details class="faq-item">
         <summary>Can the agent tamper with the receipt?</summary>
-        <div class="faq-answer">It cannot rewrite what is already recorded. The box's only write window under its own directory is a staging spool; the receipt log and the stored payloads are siblings of that spool, outside every grant it has. The box stages a record, the host ingests it, and ordering and timestamps are the host's. What an agent can still do is stage extra records or stop writing, and both are visible: a gap between host-observed exits and box-reported commands is itself a finding. We do not claim more than that.</div>
+        <div class="faq-answer">It cannot rewrite what is already recorded. The box’s only write window under its own directory is a staging spool; the receipt log and the stored payloads are siblings of that spool, outside every grant it has. The box stages a record, the host ingests it, and ordering and timestamps are the host’s. What an agent can still do is stage extra records or stop writing, and both are visible: a gap between host-observed exits and box-reported commands is itself a finding. We do not claim more than that.</div>
       </details>
       <details class="faq-item">
         <summary>Can it stop the agent leaking my source code?</summary>
@@ -382,15 +528,15 @@
       </details>
       <details class="faq-item">
         <summary>Does it need root, or a VM?</summary>
-        <div class="faq-answer">Neither. h5i uses Landlock, seccomp and unprivileged user namespaces, adding rootless Podman if you have it. <code>h5i box probe</code> reports what your host can actually enforce. An explicitly requested tier that the host cannot satisfy <strong>fails closed</strong> — h5i never silently downgrades.</div>
+        <div class="faq-answer">Neither, for the tiers most runs use. h5i uses Landlock, seccomp and unprivileged user namespaces, adding rootless Podman if you have it; only the <code>microvm</code> tier needs hardware virtualization. <code>h5i box probe</code> reports what your host can actually enforce, and runs a functional self-test rather than reading capability bits. An explicitly requested tier the host cannot satisfy <strong>fails closed</strong>: h5i never silently downgrades.</div>
       </details>
       <details class="faq-item">
         <summary>What are the limits?</summary>
-        <div class="faq-answer">The kernel is shared, so this is good against a runaway agent and careless dependency code, and is not a claim against a targeted kernel exploit. Chrome runs with its own sandbox off, because h5i's seccomp policy denies the namespace syscalls it needs — the box is the boundary, not Chrome. The viewport is a page, not a desktop. And it is Linux first: rootless Podman on Linux and WSL2, with macOS needing a VM layer. The <a href="/manual/#limits">manual</a> keeps the full list.</div>
+        <div class="faq-answer">Below the <code>microvm</code> tier the kernel is shared, so this is good against a runaway agent and careless dependency code, and is not a claim against a targeted kernel exploit. Chrome runs with its own sandbox off, because h5i’s seccomp policy denies the namespace syscalls it needs. The box is the boundary, not Chrome. The viewport is a page, not a desktop. And it is Linux first: rootless Podman on Linux and WSL2, with macOS confining through Seatbelt. The <a href="/manual/#limits">manual</a> keeps the full list.</div>
       </details>
       <details class="faq-item">
         <summary>Is h5i free and open source?</summary>
-        <div class="faq-answer">Yes. Apache 2.0, written in Rust, no lock-in and no hosted service.</div>
+        <div class="faq-answer">Yes. Apache 2.0, written in Rust, local-first, with no lock-in, no hosted sandbox and no SaaS account required.</div>
       </details>
       <details class="faq-item">
         <summary>What happened to the provenance features?</summary>
