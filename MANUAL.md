@@ -715,6 +715,17 @@ Being explicit about these is a feature, since the claim is a security claim.
   not built.
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so it
   binds proxy-respecting tooling only.
+- **An interactive session at a kernel tier shares your terminal.** `box shell`
+  hands the box the terminal you launched it from, because that is what makes
+  job control and every TUI work — a box shell is a nested shell, not a
+  connection to somewhere else. A terminal is a two-way device, so a box that
+  can drive it can in principle push characters into its *input* queue
+  (`TIOCSTI`), which your own shell would then read as typing after the session
+  ends. Both kernel tiers close that particular door — macOS by refusing that
+  one ioctl in the profile, Linux by the kernel's `CONFIG_LEGACY_TIOCSTI`
+  default — but the terminal is still shared. Giving the box its own pty and
+  proxying it is the airtight fix, and it is not built. The container and
+  microVM tiers do not share a terminal at all.
 - **Chrome runs with its own sandbox off.** On Linux, h5i's seccomp deny-list
   blocks the namespace syscalls Chrome's sandbox needs, at every tier. h5i's box
   is the boundary; Chrome's is not available inside it. That is one layer fewer

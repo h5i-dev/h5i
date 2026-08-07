@@ -574,11 +574,32 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
         s.push_str(&r);
         s.push('\n');
     }
-    // Pseudo-terminals: an interactive session allocates one, and the pty pair
-    // lives outside every path grant.
+    // Terminals: an interactive session inherits the operator's, and a program
+    // in the box may allocate its own pty pair — neither lives under any path
+    // grant. A captured run reaches none of this: it gets `setsid`, so it has no
+    // controlling terminal and `/dev/tty` cannot be opened at all.
+    //
+    // `file-ioctl` is a *separate* SBPL operation: `file-write*` does not imply
+    // it, so without this rule every terminal ioctl returns EPERM under
+    // `(deny default)`. That is not a cosmetic gap. An interactive zsh puts
+    // itself in its own process group and calls `tcsetpgrp` to make that group
+    // the terminal's foreground one; the EPERM surfaces as
+    //
+    //     zsh: can't set tty pgrp: operation not permitted
+    //
+    // and leaves the shell in a *background* process group, where reading the
+    // terminal raises SIGTTIN and no line ever reaches it. The box prompt
+    // renders and keystrokes echo (the tty driver does both regardless), so the
+    // session looks alive while `ls` and everything else does nothing. The same
+    // EPERM denies `tcsetattr`, so raw mode is gone too and ZLE and every TUI
+    // degrade with it.
     if opts.interactive {
         s.push_str("(allow file-write* file-read* (regex #\"^/dev/tty[a-z0-9]*$\"))\n");
         s.push_str("(allow file-write* file-read* (regex #\"^/dev/pty[a-z0-9]*$\"))\n");
+        s.push_str(
+            "(allow file-ioctl (literal \"/dev/tty\") (literal \"/dev/ptmx\") \
+             (regex #\"^/dev/tty[a-z0-9]*$\") (regex #\"^/dev/pty[a-z0-9]*$\"))\n",
+        );
     }
     s.push('\n');
 
@@ -594,6 +615,19 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
         s.push_str(&format!("(deny sysctl-read (sysctl-name \"{name}\"))\n"));
     }
     s.push_str("(deny process-info* (target others))\n");
+    // TIOCSTI (`_IOW('t', 114, char)` = 0x80017472) pushes a byte into the
+    // terminal's *input* queue rather than reading or writing it. An interactive
+    // session shares the operator's terminal, so a box able to issue it would be
+    // typing at the host shell — a command that runs outside the box, after the
+    // session ends. The tty grant above is what puts that ioctl in reach, so the
+    // subtraction ships with it. (Darwin appears to refuse TIOCSTI under a
+    // deny-default profile even without this rule; containment must not rest on
+    // an observation of undocumented behaviour, and this is the same residual
+    // the Linux tier notes at its own shared-tty comment — there it is the
+    // kernel's CONFIG_LEGACY_TIOCSTI default that closes it. A pty proxy, which
+    // would stop handing the box the operator's terminal at all, is the airtight
+    // fix on both.)
+    s.push_str("(deny file-ioctl (ioctl-command #x80017472))\n");
 
     // Defence in depth, not a new capability: `validate_profile` refuses a
     // policy whose granted parent contains a denied child, so anything left in
@@ -1334,6 +1368,44 @@ mod tests {
         assert!(deny_at > allow_at, "the subtraction must come after");
     }
 
+    /// Job control is what makes a box shell usable, and it rests on one
+    /// operation the write grant does not confer. Without `file-ioctl` the
+    /// session's `tcsetpgrp` fails, zsh warns "can't set tty pgrp" and is left in
+    /// a background process group where no typed line ever reaches it.
+    #[test]
+    fn interactive_session_may_drive_its_terminal() {
+        let p = policy(IsolationClaim::Supervised);
+        let s = build_profile(
+            &p,
+            Path::new("/w"),
+            &SeatbeltOptions {
+                interactive: true,
+                ..opts()
+            },
+        );
+        let ioctl = s
+            .find("(allow file-ioctl")
+            .unwrap_or_else(|| panic!("interactive sessions need tty ioctls\n{s}"));
+        let rule = s[ioctl..].lines().next().unwrap();
+        for f in [
+            "(literal \"/dev/tty\")",
+            "(literal \"/dev/ptmx\")",
+            "(regex #\"^/dev/tty[a-z0-9]*$\")",
+        ] {
+            assert!(rule.contains(f), "tty ioctl grant misses {f}\n{rule}");
+        }
+        // TIOCSTI types at the *host* shell through the shared terminal; the
+        // subtraction must come after the grant, or last-match-wins re-allows it.
+        let deny = s.find("(deny file-ioctl (ioctl-command #x80017472))").unwrap();
+        assert!(deny > ioctl, "the TIOCSTI subtraction must come after\n{s}");
+
+        // A captured run has no terminal to drive (it gets its own session), so
+        // it gets neither the tty paths nor the ioctl.
+        let s = build_profile(&p, Path::new("/w"), &opts());
+        assert!(!s.contains("(allow file-ioctl"), "captured runs get no tty ioctl\n{s}");
+        assert!(!s.contains("/dev/tty[a-z0-9]"), "captured runs get no tty paths\n{s}");
+    }
+
     #[test]
     fn interactive_locks_agent_config() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1727,6 +1799,9 @@ mod tests {
             "(deny file-read* file-write* (subpath \"/Users/nobody/.ssh\"))",
             "(deny file-write* (subpath \"/tmp/x/.claude\"))",
             "(allow file-write* file-read* (regex #\"^/dev/tty[a-z0-9]*$\"))",
+            "(allow file-ioctl (literal \"/dev/tty\") (literal \"/dev/ptmx\") \
+             (regex #\"^/dev/tty[a-z0-9]*$\") (regex #\"^/dev/pty[a-z0-9]*$\"))",
+            "(deny file-ioctl (ioctl-command #x80017472))",
             "(allow process-fork)",
             "(allow process-exec*)",
             "(allow signal (target same-sandbox))",

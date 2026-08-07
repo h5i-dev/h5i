@@ -4823,6 +4823,10 @@ fn write_plain_zshrc(
          HISTFILE={histfile}\n\
          HISTSIZE=2000\n\
          SAVEHIST=1000\n\
+         # zsh renices background jobs by default and the box cannot call\n\
+         # setpriority(2), so every `cmd &` would answer `zsh: nice(5) failed:\n\
+         # operation not permitted`. The renice buys the session nothing.\n\
+         unsetopt bgnice\n\
          PROMPT='h5i:{id} %~ %# '\n\
          alias ll='ls -alF'\n\
          alias la='ls -A'\n\
