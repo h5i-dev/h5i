@@ -47,14 +47,22 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # `docs/` is served verbatim: no Jekyll, no generator, no build step.
       # `docs/.nojekyll` is kept for the same reason it was added, in case the
       # source is ever pointed back at a branch.
-      - uses: actions/upload-pages-artifact@v3
+      #
+      # `include-hidden-files` is what keeps that true. This action stopped
+      # putting dotfiles in the artifact in v4, so on the default the `.nojekyll`
+      # above would be dropped — silently, and with no effect on this deploy at
+      # all, because an artifact served verbatim never runs Jekyll. It would only
+      # surface on the day someone repoints the Pages source at a branch, which
+      # is the exact day the file exists for, and `_static/` would 404.
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs
+          include-hidden-files: true
 
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

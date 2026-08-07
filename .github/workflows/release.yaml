@@ -30,9 +30,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -48,7 +48,15 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build
 
-      - uses: actions/upload-artifact@v4
+      # The artifact pair is held at the *oldest* major that runs on Node 24
+      # (upload v6, download v7) rather than at the newest, deliberately. Getting
+      # off the deprecated Node 20 runtime is the whole point of the pin, and the
+      # newer majors change behaviour rather than just the runtime: upload v7
+      # adds direct unzipped uploads, and download v8 turns a hash mismatch into
+      # an error. Both may well be improvements, and neither is testable here —
+      # nothing in this file runs on a pull request, so a release is where it
+      # would be found out. Take those on their own, when they are the change.
+      - uses: actions/upload-artifact@v6
         with:
           name: web-dist
           path: web/dist
@@ -88,13 +96,13 @@ jobs:
             archive_ext: zip
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Placed before the build so `rust-embed` finds a real bundle. With
       # H5I_SKIP_WEB_BUILD set the build script leaves an existing web/dist
       # alone and never reaches for npm.
       - name: Fetch the console bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: web-dist
           path: web/dist
@@ -128,7 +136,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache Cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
@@ -184,7 +192,7 @@ jobs:
           "$hash  $ARCHIVE" | Out-File -FilePath "${ARCHIVE}.sha256" -Encoding ASCII
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ env.BINARY_NAME }}-${{ matrix.target }}
           path: |
@@ -198,10 +206,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
@@ -210,7 +218,7 @@ jobs:
         run: ls -lh artifacts/
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: "h5i ${{ github.ref_name }}"
           draft: false
