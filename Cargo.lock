@@ -583,14 +583,12 @@ name = "h5i"
 version = "0.3.1"
 dependencies = [
  "anyhow",
- "chrono",
  "clap",
  "clap_complete",
  "clap_mangen",
  "console",
  "git2",
  "h5i-core",
- "serde",
  "serde_json",
  "tempfile",
  "tracing-subscriber",
