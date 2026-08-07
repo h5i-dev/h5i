@@ -246,6 +246,60 @@ fn append_synthetic_env_manifest(repo: &git2::Repository, m: &h5i_core::env::Env
 
 // ─── 1. create: the triple fusion ───────────────────────────────────────────
 
+/// A fail-closed step between the worktree and the manifest used to leave a
+/// registered+locked worktree and a branch that `create` refuses to reuse and
+/// `rm` cannot see — recoverable only with `git worktree prune` and
+/// `git branch -D` by hand.
+#[test]
+fn a_failed_create_leaves_nothing_behind_to_clean_up() {
+    let r = Repo::new();
+    // A malformed [service.*] table: parsed at create, *after* the worktree
+    // exists and *before* the manifest is written.
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default]\nisolation = \"workspace\"\n\n[service.web]\nport = 1\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "."]);
+    git(&r.dir, &["commit", "-m", "add a broken service declaration"]);
+
+    let out = r.h5i(&["env", "create", "broken"]);
+    assert!(!out.status.success(), "create must fail closed: {}", out_str(&out));
+
+    // Nothing half-built survives: the box is not listed, and neither the
+    // branch nor the worktree registration is left over.
+    let listed = r.h5i(&["env", "list"]);
+    assert!(
+        !String::from_utf8_lossy(&listed.stdout).contains("broken"),
+        "a failed create must not leave a box behind: {}",
+        out_str(&listed)
+    );
+    let branches = git(&r.dir, &["branch", "--list", "h5i/env/*/broken"]);
+    assert!(
+        String::from_utf8_lossy(&branches.stdout).trim().is_empty(),
+        "the env branch must be gone: {}",
+        out_str(&branches)
+    );
+    let worktrees = git(&r.dir, &["worktree", "list"]);
+    assert!(
+        !String::from_utf8_lossy(&worktrees.stdout).contains("broken"),
+        "the worktree registration must be gone: {}",
+        out_str(&worktrees)
+    );
+
+    // And the name is genuinely free again once the declaration is fixed.
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default]\nisolation = \"workspace\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "."]);
+    git(&r.dir, &["commit", "-m", "fix the service declaration"]);
+    let retry = r.h5i(&["env", "create", "broken"]);
+    assert!(retry.status.success(), "retry after the fix must work: {}", out_str(&retry));
+}
+
 #[test]
 fn create_builds_worktree_branch_policy_and_event() {
     let r = Repo::new();
