@@ -1,0 +1,61 @@
+[filters.rubocop]
+description = "Compact RuboCop output — drop inspection progress and blank lines while preserving offenses and the final count"
+match_command = "^(?:(?:bundle\\s+exec|bin/)\\s*)?rubocop(?:\\s|$)"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^Inspecting \\d+ files?$",
+  "^\\s*[.CEFW]+\\s*$",
+]
+truncate_lines_at = 240
+max_lines = 120
+on_empty = "rubocop: no offenses"
+
+[[tests.rubocop]]
+name = "drops file progress and keeps offense details and summary"
+input = """
+Inspecting 3 files
+.CW
+
+Offenses:
+
+app/models/user.rb:4:3: C: [Correctable] Style/StringLiterals: Prefer single-quoted strings.
+  name = "Ada"
+  ^^^^^^^^^^^^
+spec/user_spec.rb:8:1: W: Lint/UselessAssignment: Useless assignment to variable - result.
+result = subject.call
+^^^^^^^^^^^^^^^^^^^^^
+
+3 files inspected, 2 offenses detected, 1 offense autocorrectable
+"""
+expected = """
+Offenses:
+app/models/user.rb:4:3: C: [Correctable] Style/StringLiterals: Prefer single-quoted strings.
+  name = "Ada"
+  ^^^^^^^^^^^^
+spec/user_spec.rb:8:1: W: Lint/UselessAssignment: Useless assignment to variable - result.
+result = subject.call
+^^^^^^^^^^^^^^^^^^^^^
+3 files inspected, 2 offenses detected, 1 offense autocorrectable
+"""
+
+[[tests.rubocop]]
+name = "clean inspection keeps only the summary"
+input = """
+Inspecting 12 files
+............
+
+12 files inspected, no offenses detected
+"""
+expected = "12 files inspected, no offenses detected"
+
+[[tests.rubocop]]
+name = "preserves configuration errors"
+input = """
+Error: unrecognized cop or department Style/DoesNotExist found in .rubocop.yml
+For /work: configuration from /work/.rubocop.yml
+"""
+expected = """
+Error: unrecognized cop or department Style/DoesNotExist found in .rubocop.yml
+For /work: configuration from /work/.rubocop.yml
+"""
