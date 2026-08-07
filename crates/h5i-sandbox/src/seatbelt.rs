@@ -957,17 +957,30 @@ impl ProfileFile {
     fn write(profile: &str) -> Result<ProfileFile, H5iError> {
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "h5i-seatbelt-{}-{seq}.sb",
-            std::process::id()
-        ));
-        std::fs::write(&path, profile).map_err(|e| H5iError::with_path(e, &path))?;
+        // In a private 0700 scratch dir with an unguessable name, and created
+        // with `create_new` + 0600 rather than written at the umask default and
+        // narrowed afterwards. The doc above claimed 0600; `fs::write` gave it
+        // 0644 first, and the predictable name meant a pre-existing file (or a
+        // symlink) at that path was followed and overwritten. The profile
+        // enumerates every path the box may touch, so on a shared TMPDIR that
+        // window is both a disclosure and a write primitive.
+        let dir = crate::sandbox::private_scratch_dir("h5i-seatbelt")?;
+        let path = dir.join(format!("{seq}.sb"));
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+                .map_err(|e| H5iError::with_path(e, &path))?;
+            f.write_all(profile.as_bytes())
                 .map_err(|e| H5iError::with_path(e, &path))?;
         }
+        #[cfg(not(unix))]
+        std::fs::write(&path, profile).map_err(|e| H5iError::with_path(e, &path))?;
         Ok(ProfileFile { path })
     }
 
@@ -978,7 +991,12 @@ impl ProfileFile {
 
 impl Drop for ProfileFile {
     fn drop(&mut self) {
+        // The profile now lives in its own private scratch dir, so take the
+        // directory with it rather than leaving an empty one behind per run.
         let _ = std::fs::remove_file(&self.path);
+        if let Some(dir) = self.path.parent() {
+            let _ = std::fs::remove_dir(dir);
+        }
     }
 }
 

@@ -2385,6 +2385,18 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<(), H5iError> {
     }
     if ft.is_dir() {
         std::fs::create_dir_all(dst).map_err(|e| H5iError::with_path(e, dst))?;
+        // Carry the source directory's mode across. `create_dir_all` uses
+        // 0777 & ~umask (typically 0755), so a 0700 `~/.codex` became a 0755
+        // copy: `std::fs::copy` preserves the *file's* mode, but a config file
+        // at 0644 was relying on its parent directory for protection, which is
+        // the common case for an agent credential.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = meta.permissions().mode() & 0o7777;
+            std::fs::set_permissions(dst, std::fs::Permissions::from_mode(mode))
+                .map_err(|e| H5iError::with_path(e, dst))?;
+        }
         for entry in std::fs::read_dir(src).map_err(|e| H5iError::with_path(e, src))? {
             let entry = entry.map_err(|e| H5iError::with_path(e, src))?;
             let name = entry.file_name();
@@ -10080,6 +10092,25 @@ mod tests {
 
         // A missing source fails closed.
         assert!(materialize_persona(work, &["plugin/persona/nope.md".to_string()]).is_err());
+    }
+
+    /// The per-env HOME copy must not be more permissive than the original. A
+    /// 0700 `~/.codex` copied to 0755 exposes a 0644 config that was relying on
+    /// its parent for protection.
+    #[test]
+    #[cfg(unix)]
+    fn the_home_seed_copy_keeps_the_source_directory_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let td = tempfile::tempdir().unwrap();
+        let src = td.path().join("src/.codex");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(src.join("config.toml"), "key = 1").unwrap();
+
+        let dst = td.path().join("dst/.codex");
+        copy_tree(&src, &dst).unwrap();
+        let mode = std::fs::metadata(&dst).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "copied dir must not widen, got {mode:o}");
     }
 
     /// The spool is written by the box and is therefore untrusted. A reader
