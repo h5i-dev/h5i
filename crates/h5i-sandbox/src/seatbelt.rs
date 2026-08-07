@@ -2058,15 +2058,48 @@ mod tests {
         // agent-config lockdown, and a rule the parser rejects takes the whole
         // profile with it. Checking only the captured shape would leave every
         // interactive box shell resting on `String::contains`.
+        // The interactive lockdown comes from `config_lock_paths(work, home)`,
+        // which lists only paths that *exist* — so `home: None` (or a home with
+        // nothing in it) yields an empty lockdown and the rules production
+        // actually generates never reach the parser. Create both scopes.
+        let home = work.join("home");
+        std::fs::create_dir_all(work.join(".claude")).unwrap();
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::write(home.join(".claude/settings.json"), "{}").unwrap();
+        let home = Some(home);
         for opts in [
-            SeatbeltOptions::default(),
+            SeatbeltOptions {
+                home: home.clone(),
+                ..SeatbeltOptions::default()
+            },
             SeatbeltOptions {
                 interactive: true,
+                home: home.clone(),
                 ..SeatbeltOptions::default()
             },
         ] {
             let interactive = opts.interactive;
             let plan = plan(&pol, &work, &opts);
+            if interactive {
+                // Guard the setup, not the parser: a profile that quietly lost
+                // the tty grant or the lockdown would still compile, and this
+                // test would pass while covering less than it says it does.
+                for expected in [
+                    "(allow file-ioctl",
+                    "(deny file-ioctl (ioctl-command #x80017472))",
+                    &format!("(subpath \"{}\")", work.join(".claude").display()),
+                    &format!(
+                        "(subpath \"{}\")",
+                        work.join("home/.claude/settings.json").display()
+                    ),
+                ] {
+                    assert!(
+                        plan.profile.contains(expected),
+                        "the interactive profile handed to the parser is missing {expected}\n{}",
+                        plan.profile
+                    );
+                }
+            }
             let file = ProfileFile::write(&plan.profile).unwrap();
             let out = std::process::Command::new(SANDBOX_EXEC)
                 .arg("-f")

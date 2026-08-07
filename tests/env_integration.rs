@@ -4186,8 +4186,11 @@ fn probe_reports_all_capability_lines() {
     for key in primitives {
         assert!(out.contains(key), "probe output missing {key}: {out}");
     }
-    // Workspace is satisfiable everywhere.
-    let ws_line = out.lines().find(|l| l.contains("workspace")).unwrap();
+    // Workspace is satisfiable everywhere. Match the *claim* line specifically:
+    // other lines name the tier too (`tty-injection` reports that the shared
+    // terminal is unprotected at `isolation=workspace`), and a substring search
+    // for "workspace" would assert against whichever came first.
+    let ws_line = out.lines().find(|l| l.contains("claim workspace")).unwrap();
     assert!(ws_line.contains("yes"), "{ws_line}");
     // The functional self-test line is present and agrees with create.
     let run_line = out

@@ -989,25 +989,47 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     }
                     // An interactive box shell shares the operator's terminal
                     // (that is what makes job control work), so whether the box
-                    // can type into it is part of what this host enforces —
-                    // and on Linux it is the host's setting, not h5i's. Say
-                    // which it is rather than let the manual assume.
-                    let inject = h5i_core::sandbox::tty_input_injection();
+                    // can type into it is part of what this host enforces — and
+                    // it is not h5i's to assert: on Linux it is the kernel's
+                    // setting, the same at every tier; on macOS it is the
+                    // Seatbelt profile, so it holds only where one is applied.
+                    // Report both, because they can disagree on the same host.
+                    let confined = h5i_core::sandbox::tty_input_injection(
+                        &caps,
+                        h5i_core::sandbox::IsolationClaim::Process,
+                    );
+                    let unconfined = h5i_core::sandbox::tty_input_injection(
+                        &caps,
+                        h5i_core::sandbox::IsolationClaim::Workspace,
+                    );
                     println!(
                         "  tty-injection= {}",
-                        if inject {
-                            style("possible (a box shell can type at your terminal)").red()
-                        } else {
-                            style("blocked").green()
+                        match (confined, unconfined) {
+                            (false, false) => style("blocked at every tier".to_string()).green(),
+                            (false, true) => style(
+                                "blocked at the kernel tiers, possible at isolation=workspace"
+                                    .to_string()
+                            )
+                            .yellow(),
+                            // Nothing subtracts it anywhere: a box shell can type
+                            // at the terminal you launched it from.
+                            (true, _) => style("possible at every tier".to_string()).red(),
                         }
                     );
-                    if inject && caps.os == "linux" {
+                    if confined {
                         println!(
                             "    {}",
-                            style(
-                                "set dev.tty.legacy_tiocsti=0 (or build with \
-                                 CONFIG_LEGACY_TIOCSTI=n) to close it; upstream defaults it open"
-                            )
+                            style(match caps.os.as_str() {
+                                "linux" =>
+                                    "set dev.tty.legacy_tiocsti=0 (or build with \
+                                     CONFIG_LEGACY_TIOCSTI=n) to close it; upstream defaults \
+                                     it open",
+                                "macos" =>
+                                    "no Seatbelt profile is applied on this host, so nothing \
+                                     subtracts the ioctl",
+                                _ => "this host has no confinement backend, so nothing \
+                                      subtracts the ioctl",
+                            })
                             .dim()
                         );
                     }

@@ -722,14 +722,25 @@ Being explicit about these is a feature, since the claim is a security claim.
   both directions of it, so the residual is a list rather than a single door:
     - **Typing at your shell** (`TIOCSTI` pushes characters into the terminal's
       *input* queue, which your shell reads as if you had typed them, after the
-      session ends). On macOS the profile subtracts that one ioctl, so it is
-      refused. On Linux it is **your kernel's setting, not ours**: 6.2 made it
-      disableable via `CONFIG_LEGACY_TIOCSTI` and `dev.tty.legacy_tiocsti`, but
-      upstream defaults that *open* — many distros ship it closed, and a kernel
-      older than 6.2 cannot close it at all. h5i does not assume:
-      `h5i box probe` reads the sysctl and prints `tty-injection = blocked` or
-      `possible`, and says how to close it. h5i does no ioctl filtering of its
-      own on Linux.
+      session ends). Whether that is closed is not h5i's to assert, and the two
+      platforms answer from different places. On macOS it is the Seatbelt
+      profile that subtracts the ioctl — so it holds at `process` and
+      `supervised`, and **not** at `isolation=workspace`, which applies no
+      profile by design, nor on a host whose Seatbelt is unusable. On Linux it
+      is **your kernel's setting**, the same at every tier, since h5i does no
+      ioctl filtering of its own there: 6.2 made TIOCSTI disableable via
+      `CONFIG_LEGACY_TIOCSTI` and `dev.tty.legacy_tiocsti`, but upstream
+      defaults that *open* — many distros ship it closed, and a kernel older
+      than 6.2 cannot close it at all. So h5i measures instead of claiming.
+      `h5i box probe` prints one of:
+
+      ```
+        tty-injection= blocked at every tier
+        tty-injection= blocked at the kernel tiers, possible at isolation=workspace
+        tty-injection= possible at every tier
+      ```
+
+      and, when anything is open, how to close it.
     - **Reading what you type next.** The session's read grant on the terminal
       is not revoked when the shell exits, so a box process that outlives the
       session — a stray background job — can read the terminal it still holds

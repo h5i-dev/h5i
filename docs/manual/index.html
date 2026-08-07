@@ -922,31 +922,40 @@ not claim more than that.</p>
   not built.</li>
 <li><strong>The container tier's egress scoping is L7.</strong> Its allowlist is a proxy, so it
   binds proxy-respecting tooling only.</li>
-<li><strong>An interactive session at a kernel tier shares your terminal.</strong> <code>box shell</code>
+<li>
+<p><strong>An interactive session at a kernel tier shares your terminal.</strong> <code>box shell</code>
   hands the box the terminal you launched it from, because that is what makes
   job control and every TUI work — a box shell is a nested shell, not a
   connection to somewhere else. A terminal is a two-way device, and the box gets
-  both directions of it, so the residual is a list rather than a single door:<ul>
+  both directions of it, so the residual is a list rather than a single door:</p>
+<ul>
 <li><strong>Typing at your shell</strong> (<code>TIOCSTI</code> pushes characters into the terminal's
   <em>input</em> queue, which your shell reads as if you had typed them, after the
-  session ends). On macOS the profile subtracts that one ioctl, so it is
-  refused. On Linux it is <strong>your kernel's setting, not ours</strong>: 6.2 made it
-  disableable via <code>CONFIG_LEGACY_TIOCSTI</code> and <code>dev.tty.legacy_tiocsti</code>, but
-  upstream defaults that <em>open</em> — many distros ship it closed, and a kernel
-  older than 6.2 cannot close it at all. h5i does not assume:
-  <code>h5i box probe</code> reads the sysctl and prints <code>tty-injection = blocked</code> or
-  <code>possible</code>, and says how to close it. h5i does no ioctl filtering of its
-  own on Linux.</li>
-<li><strong>Reading what you type next.</strong> The session's read grant on the terminal
+  session ends). Whether that is closed is not h5i's to assert, and the two
+  platforms answer from different places. On macOS it is the Seatbelt
+  profile that subtracts the ioctl — so it holds at <code>process</code> and
+  <code>supervised</code>, and <strong>not</strong> at <code>isolation=workspace</code>, which applies no
+  profile by design, nor on a host whose Seatbelt is unusable. On Linux it
+  is <strong>your kernel's setting</strong>, the same at every tier, since h5i does no
+  ioctl filtering of its own there: 6.2 made TIOCSTI disableable via
+  <code>CONFIG_LEGACY_TIOCSTI</code> and <code>dev.tty.legacy_tiocsti</code>, but upstream
+  defaults that <em>open</em> — many distros ship it closed, and a kernel older
+  than 6.2 cannot close it at all. So h5i measures instead of claiming.
+  <code>h5i box probe</code> prints one of:</li>
+</ul>
+<p><code>tty-injection= blocked at every tier
+    tty-injection= blocked at the kernel tiers, possible at isolation=workspace
+    tty-injection= possible at every tier</code></p>
+<p>and, when anything is open, how to close it.
+- <strong>Reading what you type next.</strong> The session's read grant on the terminal
   is not revoked when the shell exits, so a box process that outlives the
   session — a stray background job — can read the terminal it still holds
   open. This predates the tty ioctl grant; it is a property of sharing the
-  device.</li>
-<li><strong>Leaving the terminal in a state.</strong> A box can set raw mode, turn echo
+  device.
+- <strong>Leaving the terminal in a state.</strong> A box can set raw mode, turn echo
   off, change the line discipline, or take the terminal exclusive so other
   programs cannot open it. Recoverable (<code>stty sane</code>, or a new terminal), not
-  an escape, but it is yours to recover.</li>
-</ul>
+  an escape, but it is yours to recover.</p>
 </li>
 </ul>
 <p>What is <em>not</em> reachable, checked rather than assumed: <code>TIOCCONS</code> (redirecting
