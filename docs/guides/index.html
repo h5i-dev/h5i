@@ -3,27 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Guides: h5i for Claude Code, Codex, provenance &amp; audit</title>
-  <meta name="description" content="Practical h5i guides: persistent memory and handoff for Claude Code, multi-agent workflows with Codex, AI code provenance, auditing AI-generated code, prompt-injection detection, and AI blame.">
-  <meta name="keywords" content="h5i guides, claude code guides, ai coding agent workflows, ai code provenance, audit ai code, prompt injection detection, git blame ai">
+  <title>Guides: run coding agents in a contained box</title>
+  <meta name="description" content="Task-focused h5i guides: review a pull request in a box, export a reviewable patch, keep API tokens out, contain a prompt-injected agent, and warm the dependency cache.">
+  <meta name="keywords" content="h5i guides, claude code sandbox guides, agent containment how-to, review pull request sandbox, agent credentials, prompt injection containment, dependency cache">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
-  <meta name="robots" content="noindex, follow">
+  <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://h5i.dev/guides/">
   <link rel="icon" type="image/png" href="/_static/logo.png">
   <link rel="apple-touch-icon" href="/_static/logo.png">
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i Guides: memory, multi-agent, provenance, audit, blame">
+  <meta property="og:title" content="h5i Guides: run coding agents in a contained box">
   <meta property="og:description" content="Run many coding agents, merge one auditable result. The end-to-end workflow plus task-focused guides for h5i with Claude Code and Codex: memory & handoff, multi-agent coordination, provenance, audit, prompt-injection detection, and AI blame.">
   <meta property="og:url" content="https://h5i.dev/guides/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i Guides">
-  <meta name="twitter:description" content="Practical guides for auditable AI coding workspaces with h5i, Claude Code, and Codex.">
+  <meta name="twitter:description" content="Task-focused guides for running Claude Code and Codex inside a contained, disposable box.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -36,20 +36,11 @@
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}]}
   </script>
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "ItemList", "name": "h5i Guides", "itemListElement": [{"@type": "ListItem", "position": 1, "url": "https://h5i.dev/workflows/"}, {"@type": "ListItem", "position": 2, "url": "https://h5i.dev/guides/token-reduction-capture-run/"}, {"@type": "ListItem", "position": 3, "url": "https://h5i.dev/guides/claude-code-memory/"}, {"@type": "ListItem", "position": 4, "url": "https://h5i.dev/guides/codex-claude-code-collaboration/"}, {"@type": "ListItem", "position": 5, "url": "https://h5i.dev/guides/ai-code-provenance/"}, {"@type": "ListItem", "position": 6, "url": "https://h5i.dev/guides/ai-code-review-audit/"}, {"@type": "ListItem", "position": 7, "url": "https://h5i.dev/guides/secure-api-tokens-in-agent-box/"}, {"@type": "ListItem", "position": 8, "url": "https://h5i.dev/guides/prompt-injection-detection-for-agents/"}, {"@type": "ListItem", "position": 9, "url": "https://h5i.dev/guides/git-blame-for-ai-code/"}]}
+  {"@context": "https://schema.org", "@type": "ItemList", "name": "h5i Guides", "itemListElement": [{"@type": "ListItem", "position": 1, "url": "https://h5i.dev/workflows/"}, {"@type": "ListItem", "position": 2, "url": "https://h5i.dev/guides/ai-code-review-audit/"}, {"@type": "ListItem", "position": 3, "url": "https://h5i.dev/guides/ai-code-provenance/"}, {"@type": "ListItem", "position": 4, "url": "https://h5i.dev/guides/secure-api-tokens-in-agent-box/"}, {"@type": "ListItem", "position": 5, "url": "https://h5i.dev/guides/prompt-injection-detection-for-agents/"}, {"@type": "ListItem", "position": 6, "url": "https://h5i.dev/guides/claude-code-memory/"}, {"@type": "ListItem", "position": 7, "url": "https://h5i.dev/guides/codex-claude-code-collaboration/"}, {"@type": "ListItem", "position": 8, "url": "https://h5i.dev/guides/git-blame-for-ai-code/"}, {"@type": "ListItem", "position": 9, "url": "https://h5i.dev/guides/token-reduction-capture-run/"}]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
 <body>
-  <aside style="max-width:860px;margin:0 auto 2rem;padding:1rem 1.2rem;border:1px solid #D21C1C;border-left-width:4px;border-radius:6px;background:rgba(210,28,28,0.06);">
-    <strong>This page describes features h5i no longer has.</strong>
-    h5i has been rebuilt around the boundary: a disposable, confined box that an agent works
-    inside, with a reviewed patch and an execution receipt as the only way out. Provenance,
-    the audit scan, the multi-agent orchestra and the dashboard are gone.
-    See <a href="/manual/" style="color:#D21C1C">the manual</a> for what h5i does now, or
-    <a href="https://github.com/h5i-dev/h5i/blob/main/ROADMAP.md" style="color:#D21C1C">ROADMAP.md</a>
-    for what was cut and why.
-  </aside>
 
 
 <div class="bg-grid"></div>
@@ -67,9 +58,12 @@
 
 <section class="index-hero">
   <div class="post-eyebrow">h5i Guides</div>
-  <h1>Practical guides for auditable AI coding workspaces</h1>
+  <h1>Give a coding agent a box, get a reviewed patch back</h1>
   <p>
-    Run many coding agents, merge one auditable result. Start with the end-to-end workflow, then work through task-focused walkthroughs for using h5i with Claude Code and Codex: persistent memory and handoff, multi-agent coordination, AI code provenance, auditing AI-generated code, prompt-injection detection, and AI blame.
+    Task-focused walkthroughs, each one a short numbered sequence with the commands that actually run.
+    Start with the workflow overview for the shape of the loop, then pick the guide for the thing you
+    are doing: reviewing somebody else's branch, keeping credentials out, bounding what an injected
+    agent can reach, or making box creation cheap enough to do constantly.
   </p>
 </section>
 
@@ -78,75 +72,75 @@
   <div class="featured-wrap">
     <a class="post-card featured" href="/workflows/">
       <div class="card-meta">
-        <span>Overview · Workflow</span>
+        <span>Overview &#183; Workflow</span>
       </div>
-      <h2>Run many agents, merge one auditable result</h2>
-      <p>The end-to-end flow, straight from the README: install and wire the hooks, track every prompt and context step, give each agent a sealed sandbox, then run an ensemble: peer review, a neutral verifier replays and tests each candidate, and only the result that passes is merged.</p>
+      <h2>The loop: box, work, export, apply</h2>
+      <p>The whole shape on one page. Copy the code into a disposable box, let an agent build and test and drive a browser inside it, then export a patch, a report and an execution receipt and decide what to take.</p>
     </a>
   </div>
 
-  <a class="post-card" href="/guides/token-reduction-capture-run/">
+  <a class="post-card" href="/guides/ai-code-review-audit/">
     <div class="card-meta">
-      <span>Guide · Token reduction</span>
+      <span>Guide &#183; Review</span>
     </div>
-    <h2>Keep tool output out of your agent's context</h2>
-    <p>Wrap noisy commands with <code>h5i capture run</code> so only a structured summary reaches the agent; recover the full output on demand, and query captures by status, tool, branch, or file.</p>
-  </a>
-
-  <a class="post-card" href="/guides/claude-code-memory/">
-    <div class="card-meta">
-      <span>Guide · Memory & Handoff</span>
-    </div>
-    <h2>Persistent memory & session handoff for Claude Code</h2>
-    <p>Snapshot Claude Code's memory into Git, version your reasoning, and resume the next session from a briefing instead of re-grounding.</p>
-  </a>
-
-  <a class="post-card" href="/guides/codex-claude-code-collaboration/">
-    <div class="card-meta">
-      <span>Guide · Multi-Agent</span>
-    </div>
-    <h2>Claude Code + Codex: a multi-agent coding workflow</h2>
-    <p>Let two coding agents coordinate over a Git ref: ask, review, hand off, and reply as durable, replayable messages with no server.</p>
+    <h2>Review a pull request in a box</h2>
+    <p>Fetch a pull request head into a detached box with no host credentials, build and exercise it, then read a report whose first section is every destination the boundary refused.</p>
   </a>
 
   <a class="post-card" href="/guides/ai-code-provenance/">
     <div class="card-meta">
-      <span>Guide · Provenance</span>
+      <span>Guide &#183; Export</span>
     </div>
-    <h2>AI code provenance: track AI-generated code in Git</h2>
-    <p>Attach the prompt, model, agent, tokens, and test result to every AI-assisted commit, stored in Git and queryable like git log.</p>
-  </a>
-
-  <a class="post-card" href="/guides/ai-code-review-audit/">
-    <div class="card-meta">
-      <span>Guide · Audit & Review</span>
-    </div>
-    <h2>Auditing AI-generated code: risk-rank what to review</h2>
-    <p>Rank AI commits by uncertainty, blind edits, churn, and scope so reviewers spend their attention on the riskiest changes first.</p>
+    <h2>Export a reviewable patch from a box</h2>
+    <p>Three files out of the output gate: a path-validated patch, a report of what ran, and a receipt of every observed execution. Then <code>git apply --3way</code> wherever you want it.</p>
   </a>
 
   <a class="post-card" href="/guides/secure-api-tokens-in-agent-box/">
     <div class="card-meta">
-      <span>Guide · Security</span>
+      <span>Guide &#183; Security</span>
     </div>
     <h2>Pass API tokens to a coding agent without leaking them</h2>
-    <p>Keep the real API key on the host. The agent box authenticates through a credential-injecting proxy, so a prompt-injected agent has no reusable token to steal.</p>
+    <p>Keep the real key on the host. The box authenticates through a credential-injecting proxy, so a prompt-injected agent has no reusable token to steal.</p>
   </a>
 
   <a class="post-card" href="/guides/prompt-injection-detection-for-agents/">
     <div class="card-meta">
-      <span>Guide · Security</span>
+      <span>Guide &#183; Security</span>
     </div>
-    <h2>Detecting prompt injection in AI agent traces</h2>
-    <p>Scan Claude Code reasoning traces for prompt-injection and exfiltration patterns. The scan is deterministic, with no model in the detection path.</p>
+    <h2>Contain a prompt-injected agent</h2>
+    <p>Skip detection, which is low-recall by construction. Assume the injection worked, and write down in a profile exactly what the compromised agent is able to reach.</p>
+  </a>
+
+  <a class="post-card" href="/guides/claude-code-memory/">
+    <div class="card-meta">
+      <span>Guide &#183; Credentials</span>
+    </div>
+    <h2>Give a box your Claude Code config without your credentials</h2>
+    <p>Your settings come with it; credential-shaped files are dropped by shape at any depth. How the seed works, and how to check what a box actually got.</p>
+  </a>
+
+  <a class="post-card" href="/guides/codex-claude-code-collaboration/">
+    <div class="card-meta">
+      <span>Guide &#183; Multi-runtime</span>
+    </div>
+    <h2>Run Claude Code and Codex in separate boxes</h2>
+    <p>Two runtimes on one task means two boxes and two credential sets, because a box holding both is a laundering path waiting for a prompt injection.</p>
   </a>
 
   <a class="post-card" href="/guides/git-blame-for-ai-code/">
     <div class="card-meta">
-      <span>Guide · Blame</span>
+      <span>Guide &#183; Receipts</span>
     </div>
-    <h2>git blame for AI-generated code</h2>
-    <p>Per-line provenance for AI-written code: the prompt, the model, the agent, and the test result, with the same ergonomics as git blame.</p>
+    <h2>Find out what actually ran in a box</h2>
+    <p>Four commands for what a supervisor watched, what a proxy refused, and which grade of evidence each line came from. None of them needs the agent to cooperate.</p>
+  </a>
+
+  <a class="post-card" href="/guides/token-reduction-capture-run/">
+    <div class="card-meta">
+      <span>Guide &#183; Performance</span>
+    </div>
+    <h2>Warm the dependency cache so boxes start fast</h2>
+    <p>Populate a cache once in a box with no agent in it, keyed by lockfile digest, then every agent box mounts it read-only. A twenty-second box instead of a four-minute one.</p>
   </a>
 
 </section>

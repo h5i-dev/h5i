@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>How to Review Code Written by AI Agents: h5i</title>
-  <meta name="description" content="A provenance-first AI code review checklist: review intent, context coverage, risk, and test evidence before the diff. Make provenance a merge requirement.">
-  <meta name="keywords" content="how to review code written by ai agents, ai code review checklist, review ai generated code, review agent code, ai code review, provenance-first code review, agentic coding review">
+  <title>Reviewing Code an AI Agent Wrote | h5i</title>
+  <meta name="description" content="When the author is a model that worked unattended, the review order changes. Open what was refused first, then what ran, then the diff, and read the agent's own summary last.">
+  <meta name="keywords" content="review ai generated code, ai code review, review agent code, code review checklist ai, host observed evidence, execution receipt review">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -17,31 +17,32 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="How to Review Code Written by AI Agents">
-  <meta property="og:description" content="A provenance-first AI code review checklist: review intent, context coverage, risk, and test evidence before the diff. Make provenance a merge requirement.">
+  <meta property="og:title" content="Reviewing Code an AI Agent Wrote">
+  <meta property="og:description" content="A reading order for agent-written changes: refused first, observed second, claimed third, and the author's summary last.">
   <meta property="og:url" content="https://h5i.dev/blog/review-code-written-by-ai-agents/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta property="article:published_time" content="2026-06-03">
+  <meta property="article:published_time" content="2026-05-20">
+  <meta property="article:modified_time" content="2026-08-07">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="How to Review Code Written by AI Agents">
-  <meta name="twitter:description" content="A provenance-first AI code review checklist: review intent, context coverage, risk, and test evidence before the diff. Make provenance a merge requirement.">
+  <meta name="twitter:title" content="Reviewing Code an AI Agent Wrote">
+  <meta name="twitter:description" content="A reading order for agent-written changes: refused first, observed second, claimed third, and the author's summary last.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "TechArticle",
-  "headline": "How to Review Code Written by AI Agents",
-  "description": "A provenance-first AI code review checklist: review intent, context coverage, risk, and test evidence before the diff. Make provenance a merge requirement.",
+  "headline": "Reviewing Code an AI Agent Wrote",
+  "description": "When the author is a model that worked unattended, the review order changes. Open what was refused first, then what ran, then the diff, and read the agent's own summary last.",
   "author": {
     "@type": "Person",
     "name": "Koukyosyumei",
     "url": "https://github.com/Koukyosyumei"
   },
-  "datePublished": "2026-06-03",
-  "dateModified": "2026-06-26",
+  "datePublished": "2026-05-20",
+  "dateModified": "2026-08-07",
   "publisher": {
     "@type": "Organization",
     "name": "h5i",
@@ -55,7 +56,47 @@
     "@id": "https://h5i.dev/blog/review-code-written-by-ai-agents/"
   },
   "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-  "keywords": "how to review code written by ai agents, ai code review checklist, review ai generated code, review agent code, ai code review, provenance-first code review, agentic coding review"
+  "keywords": "review ai generated code, ai code review, review agent code, code review checklist ai, host observed evidence, execution receipt review"
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What should I read first on an agent's pull request?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The denied egress section of report.md. It lists destinations the policy refused, observed host-side by the allowlist proxy rather than reported by anything inside the box, which makes it the highest-grade evidence in the export. Then what ran, then the diff, then the agent's own summary last."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why is the agent's summary at the bottom of the report?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Because it is the only section written by the thing under review. It is useful for understanding intent and it is a self-report, so reading it first primes you to read the evidence as confirming it."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What is the difference between host-observed and box-claimed evidence?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Host-observed records come from outside the box: exits and resource usage from the supervisor's wait4, and egress from the allowlist proxy's log. Box-claimed records come from the box's own shell shim. Every receipt record is labelled with its lane, and a gap between them is itself a finding."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does an empty denied-egress section mean nothing was attempted?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Not necessarily. At isolation=microvm the guest's network stack drops packets without reporting them, so a microvm receipt carries no egress summary at all. Check which tier produced the report before reading a blank section as a clean result."
+      }
+    }
+  ]
 }
   </script>
 
@@ -66,10 +107,7 @@
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "How to Review Code Written by AI Agents", "item": "https://h5i.dev/blog/review-code-written-by-ai-agents/"}]}
-  </script>
-  <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Should AI-generated code need stricter review?", "acceptedAnswer": {"@type": "Answer", "text": "It needs different review, not uniformly stricter. The code may be high quality, but the reviewer needs extra evidence about intent, context, and tests because the agent's working state is otherwise invisible. Provenance lets you apply normal-strength scrutiny in the right places instead of blanket suspicion everywhere."}}, {"@type": "Question", "name": "What is the biggest mistake when reviewing AI code?", "acceptedAnswer": {"@type": "Answer", "text": "Reviewing only the final diff and ignoring whether the agent had enough repository context to make the change. A blind edit, a file changed but never read, looks identical to a careful one in a diff."}}, {"@type": "Question", "name": "Can an AI PR bot review agent code instead?", "acceptedAnswer": {"@type": "Answer", "text": "Not on its own. Most AI reviewers see only the diff, so they share the human reviewer's blind spot about what the authoring agent observed and tested. Feed them the provenance record and they get materially better; provenance is the substrate, not a competitor."}}, {"@type": "Question", "name": "How does h5i help review AI-generated code?", "acceptedAnswer": {"@type": "Answer", "text": "h5i turns prompts, observation and action traces, uncertainty notes, test evidence, and integrity findings into Git-native records that reviewers can inspect before merging, via h5i recall log, h5i recall context, h5i audit review, and h5i share pr post."}}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Reviewing Code an AI Agent Wrote", "item": "https://h5i.dev/blog/review-code-written-by-ai-agents/"}]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -82,142 +120,192 @@
   <ul class="nav-links">
     <li><a href="/">Home</a></li>
     <li><a href="/guides/">Guides</a></li>
-    <li><a href="/manual/">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &#8594;</a></li>
   </ul>
 </nav>
 
 <main class="article-wrap">
   <article class="post">
     <header>
-      <div class="post-eyebrow">Guide · AI code review</div>
-      <h1>How to Review Code Written by AI Agents</h1>
-      <p class="post-deck">Reviewing agent-written code is a provenance problem before it is a syntax problem. Start from intent, verify the context the agent actually observed, rank by risk instead of volume, and require evidence for the behavior that changed. The diff is the last step, not the first.</p>
+      <div class="post-eyebrow">Practice &#183; 2026-05-20 &#183; rewritten 2026-08-07</div>
+      <h1>Reviewing code an AI agent wrote</h1>
+      <p class="post-deck">The instinct is to open the diff. On an agent's branch it is the third thing to open, and the agent's own summary is the last. Here is the order that puts the least trustworthy evidence at the bottom.</p>
       <div class="post-meta">
-        <span><strong>Published</strong> 2026-06-03</span>
-        <span><strong>Reading time</strong> 9 min read</span>
-        <span><strong>Tags</strong> Review · Checklist · Risk</span>
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 8 min</span>
+        <span><strong>Tags</strong> Review &#183; Practice &#183; Evidence</span>
       </div>
     </header>
 
-
-<div class="callout kt-takeaways">
-  <strong>Key takeaways</strong>
-  <ul>
-        <li>Review in order: intent, context coverage, risk, evidence, then the lines; the diff is the last step, not the first.</li>
-        <li>Generated volume is not generated risk; triage by blast radius rather than line count.</li>
-        <li>Make provenance a merge requirement, not a nicety.</li>
-  </ul>
+<div class="callout">
+  <strong>The reading order.</strong> Open <code>report.md</code> before <code>patch.diff</code>,
+  and inside it read top to bottom, because it is deliberately sorted by how much you should trust
+  each section. <strong>Refused</strong> comes first: destinations the egress allowlist blocked,
+  seen host-side. Then <strong>observed</strong>: commands and exit codes from the supervisor. Then
+  <strong>claimed</strong>: what the box's own shim reported. The diff is a separate reading job,
+  and the agent's summary is the only section written by the thing under review.
 </div>
-<p>Agents now author a large and growing share of the diffs that arrive for review. That changes who you are reviewing. The author is no longer a colleague who can defend their reasoning in standup; it is a process that produced a coherent patch in seconds and has already forgotten why. The reviewer inherits the gap. The reliable question is no longer only "is this line correct?" It is "did the agent understand the task, read the right code before editing, and test the behavior it actually changed?"</p>
-<p>The line-by-line part of review is the known problem. Humans have done it for decades, and most of those instincts still apply: read the change, reason about edge cases, check naming and error handling. What is novel is everything <em>upstream</em> of the diff. A human author carries the context in their head: the interface they read, the caller they checked, the assumption they made and chose not to verify. An agent's context is real but invisible the moment the patch is written. Provenance-first review is the practice of reconstructing that context from a record instead of guessing at it from the diff.</p>
-<p>So review in this order: <strong>intent → context coverage → risk → evidence → the lines</strong>. The diff comes last because by the time you read it, you should already know what the change was supposed to do, what the agent looked at, where the blast radius is, and which behavior has proof. An <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> is what makes this possible: it records every prompt, observation, command, and test result in the repo, so the reviewer reads a provable record rather than reverse-engineering one.</p>
-
-<h2>1. Start from intent, not the diff</h2>
-<p><strong>Technique:</strong> read the <a href="/blog/track-claude-code-prompts-diffs-git/">original prompt or task summary</a> before you open a single file. Compare the scope of the request against the scope of the change. <strong>The failure it catches:</strong> a patch that is internally correct but solves a broader or narrower problem than asked. Think of the agent told "fix the off-by-one in pagination" that rewrote the pagination API, or the one told to "harden the parser" that changed a default without saying so. A clean diff cannot tell you the request was misread; only the request can. <strong>The command:</strong> <code>h5i recall log --limit 1</code> prints the verbatim prompt, the agent, and the model for the most recent commit, so intent is the first thing on screen, not a guess.</p>
-
-<h2>2. Verify the context the agent observed</h2>
-<p><strong>Technique:</strong> before reviewing details, ask what the agent actually read. h5i records an OBSERVE entry for every file the agent opened and an ACT entry for every edit, so you can compare the two sets directly. <strong>The failure it catches:</strong> the blind edit: a change to an interface where the agent never opened the interface, or a "fix" to a function whose callers it never inspected. Agents are fluent enough to produce plausible changes without the <a href="/blog/context-dag-versioned-agent-reasoning/">repository evidence a human would naturally gather</a>, and the diff looks the same whether the agent read the surrounding code or invented it. <strong>The command:</strong> <code>h5i recall context</code> shows the goal, milestones, and the OBSERVE/ACT trace. If a file appears under ACT but not under OBSERVE, the agent edited code it never read, which is the single highest-signal flag in agent review.</p>
-
-<h2>3. Rank files by risk, not by volume</h2>
-<p><strong>Technique:</strong> do not give every generated line equal attention. Triage by blast radius and prioritize authentication, authorization, billing, data migrations, concurrency, persistence, security boundaries, generated configuration, and public APIs. <strong>The failure it catches:</strong> attention spent in the wrong place. A 600-line generated test fixture can be lower risk than a five-line change to an authorization check, but a volume-driven review spends its energy on the fixture. <a href="/blog/uncertainty-heatmap/">Ranking by risk</a> keeps scrutiny proportional to consequence. <strong>The command:</strong> <code>h5i audit review --limit 50</code> is a triage funnel that runs before merge. It surfaces the risky changes (secrets, blind edits, touched CI, security-sensitive paths) so the reviewer starts at the top of the funnel instead of the top of the diff.</p>
-
-<h2>4. Read the uncertainty the agent already admitted</h2>
-<p><strong>Technique:</strong> agents leave their own hedges in the reasoning trace: "assuming the cache is warm", "this is likely correct", "untested edge case", "may need to handle null here". Those are not noise; they are the agent telling you where it knew it was guessing. h5i mines them into NOTE entries (flagged risks, TODOs, deferrals) alongside the trace. <strong>The failure it catches:</strong> the confident-looking patch built on a stated-but-unverified assumption that no one followed up on. <strong>The command:</strong> <code>h5i recall context</code> surfaces the NOTE entries; presented as an <a href="/blog/uncertainty-heatmap/">uncertainty heatmap</a>, they point the human directly at the regions the agent itself marked as incomplete evidence, instead of leaving that signal buried in a transcript.</p>
-
-<h2>5. Verify tests against the behavior that changed</h2>
-<p><strong>Technique:</strong> a green run is necessary, not sufficient. Check whether the tests exercise the <em>new</em> behavior, the failure mode, and the specific edge case the prompt asked about, not just the path that already worked. <strong>The failure it catches:</strong> tests that prove only the old happy path, or a "test run" that was really just formatting and type checks. <strong>The command:</strong> <code>h5i capture commit --tests</code> records the test metrics with the commit (tool, pass/fail counts, summary) as <a href="/blog/structured-tool-output-schema/">structured tool output</a> rather than a wall of logs, and <code>h5i recall blame &lt;file&gt; --show-prompt</code> maps each line to the commit, model, agent, and the prompt and test result behind it, so you can ask of a specific line, "what behavior was claimed here, and was it actually exercised?"</p>
-
-<h2>6. Account for every touched file (scope creep)</h2>
-<p><strong>Technique:</strong> compare the files the change touched against the files the intent justified. Agents routinely tidy nearby code, rename helpers, reformat, or "improve" unrelated branches while solving a task. Some of that is useful; all of it widens the blast radius and complicates rollback. <strong>The failure it catches:</strong> the broad refactor smuggled in under a narrow prompt, where an unrelated behavioral change rides along with a one-line fix. A plain diff shows you the edit but not whether it was <em>asked for</em>, which is one more reason <a href="/blog/why-git-diffs-are-not-enough-for-ai-generated-code/">a plain diff is not enough</a> to judge agent work. <strong>The command:</strong> <code>h5i recall log</code> next to <code>git diff --stat</code> lets you set the files the agent edited against the prompt that authorized them; anything edited but not implied by the intent gets justified or split out.</p>
-
-<h2>7. Make provenance a merge requirement</h2>
-<p><strong>Technique:</strong> treat the provenance packet as a required artifact, not a nicety. The minimum merge packet is the prompt, the <a href="/blog/from-git-blame-to-ai-blame/">agent identity and model</a>, the changed commits, the test evidence, and the integrity findings. <strong>The failure it catches:</strong> the slow erosion of accountability. Six months later, "why is this here and who decided it was safe?" has no answer because the working state was thrown away at merge. <strong>The command:</strong> <code>h5i capture commit --audit</code> attaches an IntegrityReport (Valid / Warning / Violation) to the commit, and <code>h5i share pr post</code> renders the whole record into a sticky GitHub PR comment, the review packet, using <code>gh</code>. Styles like <code>review</code> (reviewer-first triage), <code>receipt</code>, <code>detective</code>, and <code>replay</code> shape the presentation; <code>h5i share pr body</code> prints the same markdown to stdout for CI.</p>
-
-<h2>A worked review packet</h2>
-<p>Here is what a reviewer actually sees for one commit, and how they triage from it. Start with the record:</p>
-<div class="terminal">
-  <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">review</span></div>
-  <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --limit 1</span>
-commit 4f9c1a2e8b7d3a05...
-Author:    claude-code &lt;agent@example.dev&gt;
-Agent:     claude-code (claude-sonnet-4-6) 󱐋
-Prompt:    "reject bursts above the per-key rate ceiling"
-Usage:     +18,204 tokens | model: claude-sonnet-4-6
-Tests:     ✔ 42 passed [pytest]
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context</span>
-goal: enforce per-key burst ceiling in the rate limiter
-OBSERVE  limiter.py        (read interface + window logic)
-OBSERVE  test_limiter.py   (read existing tests)
-ACT      limiter.py        (added burst check)
-ACT      api/routes.py     (wired ceiling into the handler)
-NOTE     "assuming clock is monotonic across workers — untested"
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post --style review</span>
-<span class="t-cmt"># upserts the sticky PR comment: prompt, agent/model, files</span>
-<span class="t-cmt"># observed vs edited, test result, and integrity flags</span></pre></div>
-</div>
-<p>The triage takes seconds and is driven entirely by provenance. The intent is narrow and clear. The agent observed <code>limiter.py</code> and its tests before editing them, which is what you want, but it also <em>edited</em> <code>api/routes.py</code>, which never appears under OBSERVE: a blind edit on a request path, so that file moves to the top of the read pile. Tests are green, but the prompt was about a burst <em>ceiling</em> and the count (42 passed) does not tell you a burst-rejection case exists; the reviewer goes to <code>h5i recall blame api/routes.py --show-prompt</code> to confirm the new behavior is actually exercised. And the agent's own NOTE flags a cross-worker clock assumption it never verified, exactly the kind of "plausible but unproven" risk that a diff hides. None of this required reading the diff first; the diff is now a confirmation step for three specific suspicions, not a blank search.</p>
-
-<h2>How this compares to other review styles</h2>
-<p>Provenance-first review is not a replacement for the two approaches teams already use; it supplies the ground truth both of them lack.</p>
-<p><strong>Conventional human diff review</strong> assumes a human author with full context: someone who can explain intent, who you trust to have read the callers, whose uncertainty you can ask about directly. Everything about diff review rests on those assumptions, and they break for agent code. The author cannot be questioned, the context is not in anyone's head, and the reviewer is left inferring intent from the very artifact that intent produced. Diff review still does the irreplaceable work of line-level judgment; it just needs the upstream record to know where to point that judgment.</p>
-<p><strong>LLM-as-reviewer</strong>, meaning the AI PR bots that comment on pull requests, is fast and useful for surface issues: style, obvious bugs, missing null checks, naming. But most of these tools see only the diff, the same blind spot as the human reviewer. They have no ground truth about what the <em>authoring</em> agent observed, what it assumed, or which tests it actually ran, so they cannot tell a verified change from a confident guess, and they can hallucinate a problem (or an all-clear) that the diff alone cannot confirm or refute. The honest framing is complementary, not competitive: an LLM reviewer fed the provenance record (the prompt, the OBSERVE/ACT trace, the captured test metrics) is stronger than either provenance or an LLM reviewer alone. The record narrows where the bot should look and gives it facts to check against; the bot scales the line-level reading. Provenance-first review is the substrate; LLM review and human review are both better on top of it.</p>
-
-<h2>The checklist, annotated</h2>
-<ul>
-  <li><strong>Does the change match the prompt?</strong> <code>h5i recall log --limit 1</code>. Intent before diff.</li>
-  <li><strong>Were the edited files observed before editing?</strong> <code>h5i recall context</code>. Any ACT without a matching OBSERVE is a blind edit.</li>
-  <li><strong>Does it touch a security, data, or API boundary?</strong> <code>h5i audit review</code>. Triage by blast radius, not line count.</li>
-  <li><strong>Did the agent flag its own uncertainty?</strong> <code>h5i recall context</code> NOTE entries. Follow up every "assuming"/"untested".</li>
-  <li><strong>Do tests exercise the new behavior?</strong> <code>h5i capture commit --tests</code> + <code>h5i recall blame &lt;file&gt; --show-prompt</code>. Green is not the same as covered.</li>
-  <li><strong>Is every touched file justified by the intent?</strong> <code>h5i recall log</code> with <code>git diff --stat</code>. Split out smuggled refactors.</li>
-  <li><strong>Is the provenance durable and on the PR?</strong> <code>h5i capture commit --audit</code> + <code>h5i share pr post</code>. Provenance is a merge requirement, not a courtesy.</li>
-</ul>
-
-<h2>Common failure patterns, and how provenance surfaces each</h2>
-<p>The highest-signal findings in agent review come from process, not syntax. Four recur often enough to look for by default:</p>
-<ul>
-  <li><strong>Plausible code on an unverified assumption.</strong> The change reads cleanly but rests on something the agent guessed: a cache being warm, a clock being monotonic, an input already validated upstream. <em>Surfaced by:</em> the agent's own NOTE/uncertainty entries in <code>h5i recall context</code>, where the hedge it wrote while reasoning is preserved instead of discarded.</li>
-  <li><strong>Tests that prove only the old path.</strong> The suite is green because it never exercised the behavior that changed. <em>Surfaced by:</em> <code>h5i capture commit --tests</code> metrics read against the prompt. A burst-ceiling change with no burst-rejection test is visible when intent and coverage sit side by side.</li>
-  <li><strong>A broad refactor on a narrow prompt.</strong> A one-line request returns a sweeping rename or reorganization. <em>Surfaced by:</em> the file set in <code>h5i recall log</code> compared to the prompt. Edits with no basis in the intent stand out immediately.</li>
-  <li><strong>A helper changed without checking its callers.</strong> A shared function is "fixed" while the call sites that depend on the old contract go unread. <em>Surfaced by:</em> ACT-without-OBSERVE in the trace. The helper appears as an edit; its callers never appear as observations.</li>
-</ul>
-<p>The thread through all four is the same: generated volume is not generated risk. A large fixture can be safe; a five-line authorization change can be the whole review. The provenance packet makes that triage explicit (what the agent was asked, what it inspected, what it skipped, and what evidence supports the behavior change) so the reviewer spends judgment where consequence lives.</p>
-
-<h2>FAQ</h2>
-<h3>Should AI-generated code need stricter review?</h3>
-<p>It needs <em>different</em> review, not uniformly stricter. The code may be high quality, but the reviewer needs extra evidence about intent, context, and tests because the agent's working state is otherwise invisible. Provenance lets you apply normal-strength scrutiny in the right places instead of blanket suspicion everywhere.</p>
-<h3>What is the biggest mistake?</h3>
-<p>Reviewing only the final diff and ignoring whether the agent had enough repository context to make the change. A blind edit, a file changed but never read, looks identical to a careful one in a diff.</p>
-<h3>Can an AI PR bot do this instead?</h3>
-<p>Not on its own. Most AI reviewers see only the diff, so they share the human reviewer's blind spot about what the authoring agent observed and tested. Feed them the provenance record and they get materially better; provenance is the substrate, not a competitor.</p>
-<h3>How does h5i help?</h3>
-<p>h5i turns prompts, observation/action traces, uncertainty notes, test evidence, and integrity findings into Git-native records that reviewers, human or machine, can inspect before merging, via <code>h5i recall log</code>, <code>h5i recall context</code>, <code>h5i audit review</code>, and <code>h5i share pr post</code>.</p>
 
 
-    <h2>Sources and verification</h2>
-    <p>This article avoids vendor-specific claims that were not checked against primary docs or local h5i CLI behavior.</p>
+    <p>
+      A human's pull request comes with a person attached. You can ask them whether they ran the
+      migration, and their answer is grounded in a memory of running it. That is the part of code review
+      everything else rests on, and it quietly disappears when the author is a model that worked for
+      forty minutes while you were in a meeting.
+    </p>
+
+    <p>
+      What is left is a diff and a summary, and the summary was written by the thing you are trying
+      to evaluate. So the review has to be rebuilt around a different question: not "does the author
+      say this is fine?" but "what did this actually do, according to something other than itself?"
+    </p>
+
+    <h2>Sort the evidence before you read it</h2>
+
+    <p>
+      An <a href="/blog/agent-sandbox-env/">h5i box</a> export gives you three files, and the useful
+      move is to notice that they carry very different grades of evidence.
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Grade</th><th>Where it comes from</th><th>How much to trust it</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Refused</strong></td><td>The egress allowlist proxy's own log, host-side. The box contributes nothing.</td><td>As close to fact as this gets. A refusal happened outside the box's reach.</td></tr>
+          <tr><td><strong>Observed</strong></td><td>The supervisor's <code>wait4</code>: exits, timings, resource usage. Lane <code>host-env-run</code>.</td><td>High. h5i started the process and watched it end.</td></tr>
+          <tr><td><strong>Claimed</strong></td><td>The box's shell shim, teeing commands into the spool. Lane <code>tee-shim</code>.</td><td>Useful and not authoritative. This is the box's account of itself.</td></tr>
+          <tr><td><strong>Asserted</strong></td><td>The agent's proposal at the end of the report.</td><td>Context only. Written by the subject.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Every record in the receipt is labelled with its lane precisely so you never have to guess
+      which row you are in. A review that flattens these into "the log says" has thrown away the
+      only thing that made the log worth having.
+    </p>
+
+    <h2>Read refused first, always</h2>
+
+    <p>
+      <code>report.md</code> leads with denied egress attempts, and that ordering is the single most
+      opinionated thing in the export format.
+    </p>
+
+    <p>
+      A build that failed is a work item. A test that passed is expected. A box that tried to reach a
+      host the policy refused is a question that has to be answered before anything else in the
+      report matters, and burying it under a successful <code>npm ci</code> would be a design
+      mistake. So it goes at the top, with a count.
+    </p>
+
+    <p>
+      What to do with a hit: find out what made the request. A dependency's postinstall script
+      phoning a telemetry endpoint is boring and worth knowing. The same request from a branch that
+      claims to fix a date-formatting bug is not boring at all. The receipt's ordering lets you walk
+      backwards from the refusal to the command that was running when it happened.
+    </p>
+
+    <p>
+      One caveat worth internalising: an empty section is not always good news. At
+      <code>isolation=microvm</code> the guest's network stack drops packets without reporting them,
+      so a microvm receipt carries no egress summary at all. Stronger enforcement, thinner evidence.
+      Check which tier produced the report before you read a blank section as a clean bill of health.
+    </p>
+
+    <h2>Then read what ran, looking for the gaps</h2>
+
+    <p>
+      The interesting thing in the command list is usually not any individual line. It is the
+      relationship between the lanes.
+    </p>
+
+    <p>
+      h5i's honest claim about the receipt is narrow: an agent can stage extra records, or stop
+      writing them, and both are <em>visible</em>. Visible means a discrepancy between host-observed
+      exits and box-reported commands is itself a finding. If the supervisor saw a forty-second
+      process and the shim reported nothing during it, that is worth a question. Not proof of
+      anything, and worth a question.
+    </p>
+
+    <p>
+      The other pattern to look for is work that was never done. A report showing a build and no test
+      run, under a summary that says the tests pass, is the cheapest catch in this entire workflow
+      and it takes about four seconds.
+    </p>
+
+    <h2>Then read the diff, with the report in mind</h2>
+
+    <p>
+      Now the diff is useful, because you are reading it with context about what happened rather than
+      as the whole story. Three things deserve disproportionate attention:
+    </p>
+
     <ul>
-        <li><a href="/guides/ai-code-review-audit/">h5i AI code review guide</a></li>
-        <li><a href="/blog/pr-body-ai-code-review/">h5i PR review surface</a></li>
+      <li><strong>Anything the report says was edited but never exercised.</strong> A file that changed and never appeared in a command's blast radius is untested by construction.</li>
+      <li><strong>Dependency and lockfile changes.</strong> The diff is a hyperlink to code nobody in the thread has read. Cross-reference against what the install step actually reached for.</li>
+      <li><strong>Test changes that make a test easier.</strong> A weakened assertion and a fixed bug produce the same green run. The receipt cannot tell you which one you got.</li>
     </ul>
 
+    <p>
+      The patch is path-validated at export against symlink escapes, a nested <code>.git</code> and
+      agent-introduced gitlinks, so you can read it as a diff rather than as a potential filesystem
+      trick. That is one class of worry off the list, and only that one.
+    </p>
+
+    <h2>Read the summary last, or not at all</h2>
+
+    <p>
+      The agent's proposal sits at the bottom of the report for the same reason a defendant's
+      statement is not the first exhibit. It is useful for understanding intent, and
+      intent is the thing you are least able to verify.
+    </p>
+
+    <p>
+      Reading it first is worse than not reading it, because a fluent summary primes you to interpret
+      the evidence as confirming it. Read it after you have formed a view, and treat any place it
+      disagrees with the report as the most interesting part of the review.
+    </p>
+
+    <h2>What this workflow does not give you</h2>
+
+    <ul>
+      <li><strong>It does not tell you the change is correct.</strong> Everything above is about what happened, not about whether what happened was right.</li>
+      <li><strong>It does not catch a payload that waits.</strong> Code that behaves inside a box and misbehaves in production is a known technique, and a clean report is evidence about one execution.</li>
+      <li><strong>It does not make an unreviewed diff safe to merge.</strong> It reallocates your attention; it does not remove the need for it.</li>
+    </ul>
+
+
+    <h2>FAQ</h2>
+    <div class="faq">
+      <h3>What should I read first on an agent's pull request?</h3>
+      <p>The denied egress section of <code>report.md</code>. It lists destinations the policy refused, observed host-side by the allowlist proxy rather than reported by anything inside the box, which makes it the highest-grade evidence in the export. Then what ran, then the diff, then the agent's own summary.</p>
+
+      <h3>Why is the agent's summary at the bottom of the report?</h3>
+      <p>Because it is the only section written by the thing under review. It is useful for understanding intent and it is a self-report, so reading it first primes you to read the evidence as confirming it. Read it after you have formed a view, and treat disagreements with the report as the most interesting part.</p>
+
+      <h3>What is the difference between host-observed and box-claimed evidence?</h3>
+      <p>Host-observed records come from outside the box: exits and resource usage from the supervisor's <code>wait4</code>, egress from the allowlist proxy's log. Box-claimed records come from the box's own shell shim. Every receipt record is labelled with its lane, so the two never blur, and a gap between them is itself a finding.</p>
+
+      <h3>Does an empty denied-egress section mean nothing was attempted?</h3>
+      <p>Not necessarily. At <code>isolation=microvm</code> the guest's network stack drops packets without reporting them, so a microvm receipt carries no egress summary at all. Check which tier produced the report before reading a blank section as a clean result.</p>
+
+    </div>
+
     <div class="next-up">
-      <span class="label">Next in the cluster</span>
-      <a href="/blog/pr-body-ai-code-review/">
-        <h3>The AI Pull Request Body: h5i's Review Surface for Agent Work</h3>
-        <p>Continue with the next focused workflow in the auditable workspace series.</p>
+      <span class="label">Read next</span>
+      <a href="/blog/auditing-ai-generated-code/">
+        <h3>Triaging a fleet of boxes</h3>
+        <p>Scaling the same reading order past one review, and why the console deliberately has no score.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Build a review-ready auditable workspace</h3>
-      <p>Try h5i on your next AI-assisted branch: create a sandboxed workspace, capture the run, and post a review-ready PR brief.</p>
+      <h3>Review the next agent branch with evidence</h3>
+      <p><code>h5i box export &lt;name&gt; --out ./review</code>, then open <code>report.md</code> before the diff.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
-      <a href="/guides/" class="btn btn-ghost">Read the guides</a>
+      <a href="/manual/" class="btn btn-ghost">Read the manual</a>
     </div>
   </article>
 </main>
@@ -227,12 +315,11 @@ NOTE     "assuming clock is monotonic across workers — untested"
     <div class="brand">h5i<span class="red"> / high-five</span></div>
     <nav class="links">
       <a href="/">Home</a>
-      <a href="/guides/">Guides</a>
       <a href="/blog/">Blog</a>
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
       <a href="/manual/">Manual</a>
     </nav>
-    <div class="legal">Apache 2.0 · Built with Rust</div>
+    <div class="legal">Apache 2.0 &#183; Built with Rust</div>
   </div>
 </footer>
 

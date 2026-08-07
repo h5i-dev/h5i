@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Run an AI Agent Ensemble: h5i team</title>
-  <meta name="description" content="h5i team runs several coding agents on the same task in sealed workspaces, then converges on a winner by a neutral, sandboxed verifier, so a human can merge with proof, hands-off.">
-  <meta name="keywords" content="ai agent ensemble, multi-agent coding, agent tournament, sealed workspaces, neutral verifier, auditable convergence, h5i team, agent-to-agent review">
+  <title>Many Boxes, One Repository | h5i</title>
+  <meta name="description" content="Running several agents on the same task in parallel needs one thing to be fair: a base that does not move. Boxes pin theirs at creation, which is what makes h5i box compare mean something.">
+  <meta name="keywords" content="parallel ai agents, agent comparison, multiple agent attempts, h5i box compare, pinned base revision, agent ensemble">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -17,34 +17,87 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="Run an AI Agent Ensemble: h5i team">
-  <meta property="og:description" content="h5i team runs several coding agents on the same task in sealed workspaces, then converges on a winner by a neutral, sandboxed verifier, so a human can merge with proof, hands-off.">
+  <meta property="og:title" content="Many Boxes, One Repository">
+  <meta property="og:description" content="Parallel agent attempts, and the one property that makes comparing them honest: a base revision nobody can move.">
   <meta property="og:url" content="https://h5i.dev/blog/agent-ensembles-with-h5i-team/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta property="article:published_time" content="2026-06-21">
+  <meta property="article:published_time" content="2026-06-08">
+  <meta property="article:modified_time" content="2026-08-07">
   <meta property="article:author" content="Koukyosyumei">
-  <meta property="article:tag" content="Ensembles">
-  <meta property="article:tag" content="Multi-agent">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Run an AI Agent Ensemble: h5i team">
-  <meta name="twitter:description" content="Sealed workspaces, permissioned reviews, auditable convergence. h5i team runs N agents on one task and lets a neutral, sandboxed verifier pick the winner.">
+  <meta name="twitter:title" content="Many Boxes, One Repository">
+  <meta name="twitter:description" content="Parallel agent attempts, and the one property that makes comparing them honest: a base revision nobody can move.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "TechArticle",
-    "headline": "Run an AI Agent Ensemble: h5i team",
-    "description": "h5i team runs several coding agents on the same task in sealed workspaces, then converges on a winner by a neutral, sandboxed verifier, so a human can merge with proof, hands-off.",
-    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
-    "datePublished": "2026-06-21",
-    "dateModified": "2026-06-26",
-    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/agent-ensembles-with-h5i-team/"},
-    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-    "keywords": "ai agent ensemble, multi-agent coding, agent tournament, sealed workspaces, neutral verifier, auditable convergence, h5i team, agent-to-agent review"
-  }
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Many Boxes, One Repository",
+  "description": "Running several agents on the same task in parallel needs one thing to be fair: a base that does not move. Boxes pin theirs at creation, which is what makes h5i box compare mean something.",
+  "author": {
+    "@type": "Person",
+    "name": "Koukyosyumei",
+    "url": "https://github.com/Koukyosyumei"
+  },
+  "datePublished": "2026-06-08",
+  "dateModified": "2026-08-07",
+  "publisher": {
+    "@type": "Organization",
+    "name": "h5i",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://h5i.dev/_static/logo.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://h5i.dev/blog/agent-ensembles-with-h5i-team/"
+  },
+  "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+  "keywords": "parallel ai agents, agent comparison, multiple agent attempts, h5i box compare, pinned base revision, agent ensemble"
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "How do I run several agents on the same task?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Create a box per attempt from the same base, with h5i box . --name for each. Each pins its base revision immutably at creation, so all of them describe changes to the same tree. h5i box ls lists them and h5i box compare puts two side by side."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why does the pinned base matter for comparing attempts?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Because a diff measured against a moving branch changes underneath you. If someone merges between the first agent finishing and the second, the two diffs are no longer describing the same change to the same starting point."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does h5i still have a team or orchestra command?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. The orchestration layer, personas, the neutral verifier and the scoring pass were all removed with the provenance system they were built on. What remains is cheap independent boxes, an immutable base, and a receipt per box."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why was the neutral verifier removed?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Two reasons. It was a model reading model output, so it produced confident rankings, which is the failure mode an ensemble exists to fix. And it read self-reported results, so when those turned out to be testimony rather than observation, everything computed from them inherited the problem."
+      }
+    }
+  ]
+}
   </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -54,21 +107,7 @@
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Run an AI Agent Ensemble: h5i team", "item": "https://h5i.dev/blog/agent-ensembles-with-h5i-team/"}]}
-  </script>
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "FAQPage",
-    "dateModified": "2026-06-26",
-    "mainEntity": [
-      {"@type": "Question", "name": "How is an h5i team different from a multi-agent chat framework?", "acceptedAnswer": {"@type": "Answer", "text": "Chat frameworks let agents talk from turn one, which correlates their attempts and produces premature convergence, and the chat log is not tied to the code that changed. h5i team inverts the order: every candidate works blind in its own sealed h5i env first, discussion is refused until the run is frozen, and the record is an append-only Git event log rather than a transcript."}},
-      {"@type": "Question", "name": "What stops an agent from grading its own work in h5i team?", "acceptedAnswer": {"@type": "Answer", "text": "The winner is never chosen from an agent's own captures. h5i team verify replays each frozen candidate into a throwaway worktree at the shared base commit and runs the declared command under h5i's fail-closed sandbox. The hard gates (tests pass, applies cleanly) come only from that neutral verifier; the candidate's self-report is ignored."}},
-      {"@type": "Question", "name": "Can different agent runtimes share one h5i team ensemble?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. A roster member is a persona, not a backend: you can run several Claude personas with different briefs, or mix Claude and Codex. Each persona is added with h5i team add-env and carries its own --runtime and --model attributes plus the working-style brief baked into its env's PERSONA.md."}},
-      {"@type": "Question", "name": "What happens if no candidate passes the h5i team verifier?", "acceptedAnswer": {"@type": "Answer", "text": "The run records a no_verdict and applies nothing; it never silently falls back to a loser. h5i team apply is gated on verdict.can_auto_apply (a real verifier verdict plus a clean, conflict-free apply); the explicit escape hatch is --force or --winner <id>."}},
-      {"@type": "Question", "name": "Is the whole h5i team tournament shareable across clones?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. A team run lives in refs/h5i/team/<run-id> as an append-only event log and travels with h5i share push and h5i share pull. One machine can run the agents and freeze; another can pull the sealed run, verify independently, and finalize, so the verdict is reproducible from the shared evidence."}}
-    ]
-  }
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Many Boxes, One Repository", "item": "https://h5i.dev/blog/agent-ensembles-with-h5i-team/"}]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -81,377 +120,191 @@
   <ul class="nav-links">
     <li><a href="/">Home</a></li>
     <li><a href="/guides/">Guides</a></li>
-    <li><a href="/manual/">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &#8594;</a></li>
   </ul>
 </nav>
 
 <main class="article-wrap">
   <article class="post">
     <header>
-      <div class="post-eyebrow">Ensemble · h5i team</div>
-      <h1>Run an AI Agent Ensemble: h5i team</h1>
-      <p class="post-deck">
-        <strong>Sealed workspaces. Permissioned reviews. Auditable convergence.</strong>
-        Point several coding agents at the same task, let each one work blind in its own
-        sandboxed worktree, then let a neutral, sandboxed verifier, not any agent's own
-        say-so, decide which candidate wins. The human merges with proof, hands-off.
-      </p>
+      <div class="post-eyebrow">Practice &#183; 2026-06-08 &#183; rewritten 2026-08-07</div>
+      <h1>Many boxes, one repository</h1>
+      <p class="post-deck">Running three agents at the same problem is easy. Comparing what they produced is where it falls apart, and the fix is unglamorous: make sure all three started from a point that cannot move.</p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
-        <span><strong>Reading time</strong> 12 min</span>
-        <span><strong>Tags</strong> Ensembles · Multi-agent · Verification</span>
+        <span><strong>Reading time</strong> 7 min</span>
+        <span><strong>Tags</strong> Parallelism &#183; Comparison &#183; Practice</span>
       </div>
     </header>
 
-
-<div class="callout kt-takeaways">
-  <strong>Key takeaways</strong>
-  <ul>
-        <li>Independence is what makes an ensemble work: a second attempt only adds information if its errors are decorrelated, so attempts are sealed before any discussion.</li>
-        <li>The winner is chosen by a neutral, sandboxed verifier that replays each frozen candidate at the shared base, never by self-report.</li>
-        <li>Everything is an append-only Git event log, shareable across clones, so the verdict is reproducible and defensible.</li>
-  </ul>
+<div class="callout">
+  <strong>What h5i gives you, and what it does not.</strong> Boxes are cheap, independent, and each
+  pins its base revision immutably at creation. <code>h5i box ls</code> lists them,
+  <code>h5i box compare &lt;a&gt; &lt;b&gt;</code> puts two side by side, and each carries its own
+  receipt. What h5i does <em>not</em> ship is an orchestration layer: no scheduler, no verifier, no
+  tournament. That existed once and was cut, and this post is honest about why.
 </div>
+
+
     <p>
-      Running one agent on a task is now routine. Running <em>several</em>, whether three Claudes with
-      different system prompts, or a Claude and a Codex racing the same bug, is the obvious next
-      move, because diversity beats a single sample. But the moment you do it, the same gap that
-      <a href="../auditable-workspaces-for-ai-agents/">auditable workspaces</a> closed for one agent
-      reopens, worse, for many: Git records only the diff that finally lands. It never records who
-      saw whose work, who influenced whom, or <em>why</em> this candidate won and that one lost.
+      The appeal is obvious. One agent's attempt at a hard problem is a sample from a distribution.
+      Three attempts, from different angles, and you pick the best one. It is the same instinct that
+      makes people run a test suite more than once.
     </p>
 
     <p>
-      <code>h5i team</code> is the answer: an <strong>auditable agent ensemble</strong>. It groups N
-      isolated <code>h5i env</code> workspaces against one shared task and drives them through a
-      phased, permissioned <strong>evidence-publication</strong> protocol: independence first,
-      discussion only when you ask for it, and a neutral verifier at the end that no contestant can
-      fake. Everything it does is an append-only event log in your Git refs.
+      In practice the hard part is not launching three agents. It is being able to say anything
+      trustworthy about the three results afterwards.
     </p>
 
-    <h2>The problem: ensembles erase their own provenance</h2>
+    <h2>The comparison problem</h2>
 
     <p>
-      Hand a task to three agents and merge the best result, and you have made an editorial decision
-      with no record of how you made it. Did the agents work independently, or did the second one
-      read the first one's branch and converge on the same wrong idea? When you picked a winner, was
-      it because its tests passed, or because it <em>said</em> they did? Six months later,
-      an incident reviewer cannot reconstruct the tournament. The diff that shipped looks exactly
-      like a diff from a single agent. The ensemble evaporated, and with it the reason to run one.
+      Suppose agent A finishes at 10:15 and agent B at 10:40, and in between somebody merged to the
+      parent branch.
     </p>
 
     <p>
-      The popular alternative makes it worse. "Multi-agent chat" frameworks wire the agents into a
-      group conversation and let them talk from turn one. That sounds collaborative, but it produces
-      <strong>premature convergence</strong>: the loudest first draft anchors everyone, diversity
-      collapses, and you get one opinion wearing three hats. And the chat log is not an audit trail:
-      it is unstructured, unverifiable, and disconnected from the code that actually changed.
+      If the two boxes measured their diffs against a moving branch, B's diff now silently includes
+      that merge, or excludes something A's included, and the two are no longer describing the same
+      change to the same starting point. You are comparing a photograph to a slightly different
+      photograph and calling one of them better.
     </p>
 
     <p>
-      It is worth being precise about <em>why</em> a second attempt helps, because the reason sets the
-      rules. A model ensemble (bagging, a random forest, a majority vote over independently trained
-      networks) reduces error only when its members make <strong>decorrelated mistakes</strong>. Average
-      ten models that all overfit the same way and you have learned nothing; their variance does not
-      cancel. Coding agents are the same. Two agents that started from the same context and read each
-      other's drafts produce <em>correlated</em> attempts: the same blind spot, restated, so the
-      "ensemble" collapses back to a single sample with extra cost. Independence is not a nicety here; it
-      is the thing that makes a second attempt informative at all. That is why the protocol below spends
-      its first phase protecting independence and only opens collaboration once each attempt is already on
-      the record.
+      Every naive version of parallel agent work hits this, usually without noticing, because the
+      symptom is not an error. It is a comparison that quietly stopped being one.
     </p>
 
-    <h2>The idea: sealed workspaces, then permissioned evidence</h2>
-
-    <div class="callout">
-      <strong>h5i team</strong> = N isolated <code>h5i env</code> workspaces working the same task,
-      driven through a phased, permissioned evidence-publication protocol, with a neutral sandboxed
-      verifier deciding the winner.
-    </div>
+    <h2>Pinning is the whole mechanism</h2>
 
     <p>
-      The unit of an ensemble is a <strong>roster</strong>, and a roster member is a
-      <strong>persona, not a backend</strong>. You can run three Claudes with different system
-      prompts and skills (an <em>architect</em>, an <em>implementer</em>, a <em>skeptic</em>) or
-      mix a Claude and a Codex. Each persona gets its own sealed <code>h5i env</code>: a confined,
-      disposable worktree with its own isolation policy and its own provenance. They cannot see each
-      other's work until you say so.
-    </p>
-
-    <p>
-      Because each candidate lives in a real <code>h5i env</code>, you already get everything the
-      sandbox gives a single agent (the worktree, the egress policy, the captured runs) and
-      <code>h5i team</code> layers the tournament on top. The team itself is not a new database; it
-      is a thin protocol over envs you already created.
-    </p>
-
-    <h2>The phases</h2>
-
-    <p>
-      A team run is a small state machine. The ordering enforces the one property an ensemble must
-      have to be trustworthy: <strong>independence first</strong>.
+      A box freezes its base revision at creation and pins it immutably. Nothing re-resolves it later.
+      Create three boxes from the same <code>HEAD</code> and all three are describing changes to
+      exactly the same tree, whatever anyone does to the branch in the meantime.
     </p>
 
     <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">team lifecycle</span></div>
-      <div class="terminal-body"><pre><span class="t-out">draft / dispatched  →  sealed_submit  →  verified  →  verdict  →  applied</span>
-<span class="t-cmt"># these are the literal run.phase strings folded from the event log</span>
-<span class="t-cmt"># post-freeze, opt-in: a `discuss` phase (grant-review · review submit · discuss),</span>
-<span class="t-cmt"># every message logged and influence-tracked — never legal before the freeze</span></pre></div>
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box . --name try-a --profile agent-claude</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box . --name try-b --profile agent-codex</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box . --name try-c --from a3f9c2b</span>   <span class="t-cmt"># or an explicit base</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box ls</span>                            <span class="t-cmt"># every box on this clone</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box compare try-a try-b</span>           <span class="t-cmt"># two, side by side</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box export try-b --out ./review</span></pre></div>
     </div>
 
     <p>
-      Until a run is <strong>frozen</strong> it stays in <code>draft</code>, and in draft every
-      candidate works blind: no agent can read another's submission, and discussion is refused on
-      purpose. A persona freezes its work into an <em>immutable</em> submission with
-      <code>h5i team submit</code>; <code>h5i team freeze</code> then moves the whole run into
-      <code>sealed_submit</code>, sealing every attempt as an independent baseline.
+      Drift does not disappear, it becomes visible. <code>h5i box status</code> reports how far a box
+      has fallen behind its parent, and <code>h5i box rebase</code> re-pins onto the current tip or
+      refuses if that would conflict. Refusing is the point: a silently wrong base is worse than a
+      conflict you have to resolve.
+    </p>
+
+    <h2>Two agents, two boxes, two credential sets</h2>
+
+    <p>
+      Running Claude and Codex at the same problem is one of the more useful shapes here, and it has a
+      security consequence people miss.
     </p>
 
     <p>
-      Only <em>after</em> the freeze does collaboration open, and even then it is <strong>opt-in</strong>.
-      Discussion (<code>h5i team discuss</code>) and cross-agent review (<code>h5i team grant-review</code>,
-      <code>h5i team review submit</code>) are only legal post-freeze, so the first attempt is always
-      a clean, independent sample. The protocol is explicit about this: a discuss in <code>draft</code>
-      would let influence leak before anyone committed, so it is rejected.
-    </p>
-
-    <div class="callout">
-      <strong>The independence guarantee:</strong> any candidate revised after the freeze, once it
-      could have seen another agent's work, is stamped <code>independent = false</code>, and the
-      run records the exact <strong>influence edges</strong> (which discussion events and which
-      artifact ids touched it). You can always tell an original idea from a borrowed one.
-    </div>
-
-    <h2>The golden path</h2>
-
-    <p>
-      Here is a complete tournament: fix an auth bug with an architect persona and an implementer
-      persona, then converge hands-off. The commands below are the real flags.
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">team run</span></div>
-      <div class="terminal-body"><pre><span class="t-cmt"># each env is created with a profile that bakes its persona (PERSONA.md)</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env create claude-architect --profile architect</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env create codex-impl --profile implementer</span>
-<span class="t-cmt"># group the envs as a team</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team create fix-auth --base HEAD</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/claude-architect/fix-auth --runtime claude</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/codex/codex-impl --runtime codex</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team status fix-auth</span>   <span class="t-cmt"># note the auto-generated agent ids</span>
-
-<span class="t-cmt"># each agent works in its own env, then freezes an immutable candidate</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team submit fix-auth --agent &lt;agent-id&gt;</span>   <span class="t-cmt"># ids from `team status`</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team freeze fix-auth</span>                  <span class="t-cmt"># seals both independent attempts</span>
-
-<span class="t-cmt"># neutral, SANDBOXED verifier re-runs each candidate at the shared base</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team verify fix-auth --agent &lt;agent-id&gt; -- cargo test</span>   <span class="t-cmt"># repeat per candidate</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team compare fix-auth</span>                <span class="t-cmt"># side-by-side + verifier metrics</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team finalize fix-auth</span>               <span class="t-cmt"># rule: tests pass + applies clean + smallest diff</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team apply fix-auth</span>                  <span class="t-cmt"># replays the winning patch (gated on the verdict)</span></pre></div>
-    </div>
-
-    <p>
-      <code>add-env</code> takes the env (as a <code>slug</code>, <code>agent/slug</code>, or
-      <code>env/agent/slug</code>) and optional <code>--runtime</code> / <code>--model</code>
-      attributes. The working-style brief comes from the env's profile
-      (<code>persona = [...]</code> in <code>.h5i/env.toml</code>, baked into <code>PERSONA.md</code>
-      at <code>env create</code>), so <code>add-env</code> just inherits it. Each agent
-      gets an auto-generated id (shown by <code>h5i team status</code>; pin your own with
-      <code>--as</code> if you prefer). Roster changes are
-      only allowed while the run is still in <code>draft</code>. Once frozen, the contestant list is
-      part of the record.
-    </p>
-
-    <h2>The neutral verifier</h2>
-
-    <p>
-      This is the trust primitive the whole feature turns on. The finalization metrics must
-      <strong>not</strong> come from each agent's own captures. An agent can omit a failing test,
-      run the wrong command, or simply assert it passed. Its self-reported evidence is exactly the
-      thing you cannot trust when you are picking a winner.
+      Each box is scoped to one runtime. <code>agent-claude</code> grants Claude's own HOME state and
+      Anthropic egress; <code>agent-codex</code> grants Codex's state and OpenAI egress. A box holding
+      both would let a prompt-injected session read the <em>other</em> runtime's token and spend it
+      against a host the allowlist already permits.
     </p>
 
     <p>
-      <code>h5i team verify</code> ignores all of that. It replays each frozen candidate into a
-      <strong>throwaway worktree at the shared base commit</strong> and runs the declared command
-      under h5i's sandbox: the fail-closed <code>default</code> build/test profile. You choose the
-      tier with <code>--isolation workspace|process|supervised|container</code>; left unset, it
-      auto-picks the strongest the host can enforce and falls back to <code>workspace</code>. The
-      tier that actually ran is <strong>recorded on the verification</strong>, so the audit shows not
-      just that tests passed but how strongly the box was confined when they did.
+      So parallel attempts across runtimes are not just a diversity trick. Separate boxes are how the
+      credentials stay separate.
     </p>
 
-    <div class="tbl-wrap">
-      <table class="data">
-        <thead>
-          <tr><th>Signal</th><th>Source</th><th>Role in the verdict</th></tr>
-        </thead>
-        <tbody>
-          <tr><td><strong>Tests pass</strong></td><td>Neutral verifier</td><td>Hard gate.</td></tr>
-          <tr><td><strong>Applies cleanly</strong></td><td>Neutral verifier</td><td>Hard gate.</td></tr>
-          <tr><td><strong>Smallest diff</strong></td><td>Frozen candidate</td><td>Tie-breaker, gate-passers only.</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <h2>What was cut, and why it is worth saying</h2>
 
     <p>
-      The hard gates come from the verifier; the output-reducing metric (smallest diff) is a
-      tie-breaker <em>only among candidates that already cleared the gates</em>. That ordering is
-      deliberate: you cannot win by deleting the tests, because deleting tests does not survive the
-      gate. And if candidates were verified with <em>different</em> commands, finalize refuses with a
-      <code>no_verdict</code>. A candidate waved through with a weaker command (say, <code>true</code>)
-      is not comparable to one judged by <code>cargo test</code>, so the protocol declines to crown it.
-    </p>
-
-    <h2>Hands-off finalization</h2>
-
-    <p>
-      <code>h5i team finalize</code> evaluates one conservative rule, recorded verbatim as the method
-      string <code>rule:VerifierTestsPass,AppliesCleanly,SmallestDiff</code>. The verdict is
-      explainable, never opaque: it records the method, which command decided it, and a reason line
-      for the winner (and, when nothing wins, why). Nothing about the decision is a black box.
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">verdict</span></div>
-      <div class="terminal-body"><pre><span class="t-out">selected: codex#1</span>
-<span class="t-out">method:   rule:VerifierTestsPass,AppliesCleanly,SmallestDiff</span>
-<span class="t-out">reasons:  codex#1 applies cleanly</span>
-<span class="t-out">          codex#1 verifier tests passed via `cargo test`</span>
-<span class="t-out">          smallest diff among verifier-passing candidates</span>
-<span class="t-out">can_auto_apply: true</span></pre></div>
-    </div>
-
-    <p>
-      If <em>no</em> candidate clears the gates, the run records a <code>no_verdict</code> and applies
-      nothing, and it will never silently fall back to a loser. And <code>h5i team apply</code> is gated
-      on <code>verdict.can_auto_apply</code> (a real verifier verdict plus a clean, conflict-free
-      apply). The escape hatch is explicit: pass <code>--force</code> to override the gate, or
-      <code>--winner &lt;id&gt;</code> to apply a specific submission. The default path is the safe
-      one: a human reads the verdict, sees the proof, and merges.
-    </p>
-
-    <h2>Automation, conservatively</h2>
-
-    <p>
-      Once finalization is fully mechanical, you can let a worker drive it. The worker is deliberately
-      timid: <code>h5i team worker --once</code> is a single lease-and-finalize pass, idempotent,
-      with TTL'd leases so concurrent workers don't collide, and it <strong>never auto-applies</strong>.
-      Applying a winner to a branch always stays a human (or explicitly forced) act.
+      h5i used to ship an orchestration layer: a team command, personas, a neutral verifier that
+      replayed each candidate, tournament shapes, a scoring pass. It is gone, along with the
+      provenance system it was built on.
     </p>
 
     <p>
-      For production, drive <code>--once</code> from an external scheduler. It is crash-resilient and
-      needs no long-lived process:
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">cron</span></div>
-      <div class="terminal-body"><pre><span class="t-cmt"># finalize verifier-ready teams every 5 minutes</span>
-<span class="t-out">*/5 * * * *  cd /srv/repo &amp;&amp; h5i team worker --once</span></pre></div>
-    </div>
-
-    <p>
-      If you would rather not run a scheduler, there is an opt-in in-process loop,
-      <code>h5i team worker --watch --interval 60</code>, that repeats the same finalize-only pass.
-      It is a convenience, not the recommended default; the cron line above is sturdier.
-    </p>
-
-    <h2>It is all Git, and all auditable</h2>
-
-    <p>
-      A team run's state lives in <code>refs/h5i/team/&lt;run-id&gt;</code> as an
-      <strong>append-only event log</strong>, and that log is the source of truth. Phase, roster, and
-      verdict are not stored fields you could tamper with; they are <em>folded</em> from the events,
-      deduped by id and union-merged, so two clones that each appended events reconcile cleanly. Every
-      submission, freeze, discussion, review grant, verification, and verdict is one immutable event.
+      Two reasons, and neither is that orchestration is a bad idea.
     </p>
 
     <p>
-      Because it is a Git ref, the whole tournament travels with <code>h5i share push</code> /
-      <code>h5i share pull</code>. That is what powers the cross-clone review loop: one machine runs
-      the agents and freezes, another pulls the sealed run, verifies independently, and finalizes:
-      the verdict is reproducible from the shared evidence, not from trust. And the visual board,
-      timeline, compare, and verdict views all render from the same events under
-      <code>h5i serve</code>.
-    </p>
-
-    <h2>How it compares: single agent, parallel agents, ensemble</h2>
-
-    <p>
-      The honest comparison is not "ensemble versus one agent." It is three points on a spectrum, and
-      the middle one is the trap most people actually fall into.
-    </p>
-
-    <div class="tbl-wrap">
-      <table class="data">
-        <thead>
-          <tr><th>Property</th><th>Single agent</th><th>Uncoordinated parallel agents</th><th><code>h5i team</code></th></tr>
-        </thead>
-        <tbody>
-          <tr><td>Diverse attempts</td><td>No: one sample</td><td>Yes</td><td>Yes</td></tr>
-          <tr><td>Independence protected</td><td>n/a</td><td>Accidental at best: easy to leak via shared branches/chat</td><td>Enforced: discussion refused until freeze; later edits stamped <code>independent = false</code></td></tr>
-          <tr><td>Worktree / branch conflicts</td><td>None</td><td>Common: agents stomp one repo</td><td>None: each persona in its own isolated <code>h5i env</code></td></tr>
-          <tr><td>Winner chosen by</td><td>n/a</td><td>You, by reading diffs (or by an agent's own say-so)</td><td>Neutral sandboxed verifier: replays at the shared base, gates on tests + clean apply</td></tr>
-          <tr><td>Audit trail</td><td>Just the diff</td><td>Just the diff</td><td>Append-only event log: which persona, influence edges, deciding command, explained verdict</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p>
-      <strong>Good</strong> about uncoordinated parallel agents: it is the cheapest way to get diversity:
-      open three terminals, run three agents, keep the one you like. For a throwaway exploration that is
-      often enough. <strong>Gap:</strong> nothing protects independence (one shared worktree and they
-      collide; one shared chat and they converge), and the winner is chosen by whoever is reading the
-      diffs that afternoon. The decision is real, but it leaves no record, which is exactly the problem
-      for anything you have to defend later. <code>h5i team</code> is the more expensive, more deliberate
-      option: you pay for an env per persona and a verifier pass, and in return the independence and the
-      verdict are both on the record.
-    </p>
-
-    <h2>Why this matters</h2>
-
-    <p>
-      An ensemble is only worth running if you can defend its result. <code>h5i team</code> makes that
-      defensible across every axis that matters: <strong>safety</strong>, because no agent grades its
-      own homework and the verifier runs confined; <strong>compliance</strong>, because the entire
-      decision (independence, influence edges, the deciding command, the explained verdict) is an
-      immutable, shareable Git record; <strong>debugging</strong>, because when a merged change goes
-      wrong you can replay exactly which candidate won and why; and <strong>real hands-off
-      shipping</strong>, because a human can let the tournament run, read one verdict, and merge with
-      proof instead of vibes.
+      <strong>The verifier could not be trusted more than the workers.</strong> A neutral verifier is
+      a model reading model output. It produced confident rankings, which is exactly the failure mode
+      an ensemble is supposed to fix. Automating the judgement moved the problem rather than solving
+      it, and the ranking got the authority of a number without earning it.
     </p>
 
     <p>
-      One honest caveat to close on: this is a <strong>protocol, not a benchmark</strong>. Nothing here
-      promises that three agents will beat one on your particular task. Sometimes the single best agent
-      wins outright, and sometimes <em>no</em> candidate clears the gates and the right answer is to ship
-      nothing and rethink the task. What the protocol guarantees is narrower and more durable: that when an
-      ensemble does help, you protected the independence that made it help, you picked the winner with
-      neutral evidence rather than the loudest self-report, and you can prove all of it months later from a
-      Git ref. The result of a tournament is a verdict you can defend, which is the only kind worth
-      letting an agent ship.
+      <strong>It was built on evidence the agents produced about themselves.</strong> The comparison
+      read captured prompts and self-reported test results. When those turned out to be testimony
+      rather than observation, everything computed from them inherited the problem.
     </p>
+
+    <p>
+      What survived is the substrate: cheap independent boxes, a base nobody can move, and a receipt
+      per box that was written where the box could not reach it. If you want an ensemble on top of
+      that, you can build one, and you will be building it on evidence rather than on self-report.
+    </p>
+
+    <h2>How to actually pick a winner</h2>
+
+    <p>
+      Without a verifier, the ranking is yours. A workable order:
+    </p>
+
+    <ol>
+      <li><strong>Drop any box whose report shows denied egress you cannot explain.</strong> That is the only signal in the export that makes a claim about the boundary, and an unexplained one disqualifies an attempt regardless of how good the diff looks.</li>
+      <li><strong>Drop any box that did not run what it claims to have run.</strong> A report showing a build and no test run, under a summary saying the tests pass, is a four-second check.</li>
+      <li><strong>Compare the survivors' diffs</strong>, which is now an ordinary code-review problem against a shared, fixed base.</li>
+      <li><strong>Read each agent's proposal last</strong>, as context on intent rather than as an argument for its own work.</li>
+    </ol>
+
+    <h2>The honest limits of running three</h2>
+
+    <ul>
+      <li><strong>Three attempts cost three times as much,</strong> in tokens, in wall-clock and in your attention. The third is rarely the one you take.</li>
+      <li><strong>Correlated failures do not average out.</strong> Three agents given the same misleading README all misread it the same way. Diversity of runtime helps a little; diversity of prompt helps more; neither is a guarantee.</li>
+      <li><strong>Comparison is not verification.</strong> The best of three wrong answers is still wrong, and a side-by-side view makes it look considered.</li>
+      <li><strong>Boxes are cheap, not free.</strong> Each carries a workspace and a dependency install. <code>h5i box cache</code> exists because cold installs dominate that cost.</li>
+    </ul>
+
 
     <h2>FAQ</h2>
-
     <div class="faq">
-      <p><strong>How is this different from a multi-agent chat framework?</strong> Chat frameworks let agents talk from turn one, which correlates their attempts and produces premature convergence (one opinion wearing several hats) and the chat log is not tied to the code that changed. <code>h5i team</code> inverts the order: every candidate works blind in its own sealed <code>h5i env</code> first, discussion is refused until the run is frozen, and the record is an append-only Git event log rather than a transcript.</p>
-      <p><strong>What stops an agent from grading its own work?</strong> The winner is never chosen from an agent's own captures. <code>h5i team verify</code> replays each frozen candidate into a throwaway worktree at the shared base commit and runs the declared command under h5i's fail-closed sandbox. The hard gates, tests pass and applies cleanly, come only from that neutral verifier; the candidate's self-report is ignored.</p>
-      <p><strong>Can different runtimes share one ensemble?</strong> Yes. A roster member is a persona, not a backend: you can run several Claude personas with different briefs, or mix Claude and Codex. Each persona is added with <code>h5i team add-env</code> and carries its own <code>--runtime</code> / <code>--model</code> attributes plus the working-style brief baked into its env's <code>PERSONA.md</code>.</p>
-      <p><strong>What happens if no candidate passes?</strong> The run records a <code>no_verdict</code> and applies nothing; it never silently falls back to a loser. <code>h5i team apply</code> is gated on <code>verdict.can_auto_apply</code> (a real verifier verdict plus a clean, conflict-free apply); the explicit escape hatch is <code>--force</code> or <code>--winner &lt;id&gt;</code>.</p>
-      <p><strong>Is the whole tournament shareable across clones?</strong> Yes. A team run lives in <code>refs/h5i/team/&lt;run-id&gt;</code> as an append-only event log and travels with <code>h5i share push</code> / <code>h5i share pull</code>. One machine can run the agents and freeze; another can pull the sealed run, verify independently, and finalize: the verdict is reproducible from the shared evidence.</p>
+      <h3>How do I run several agents on the same task?</h3>
+      <p>Create a box per attempt from the same base, with h5i box . --name for each. Each pins its base revision immutably at creation, so all of them describe changes to the same tree. h5i box ls lists them and h5i box compare puts two side by side.</p>
+
+      <h3>Why does the pinned base matter for comparing attempts?</h3>
+      <p>Because a diff measured against a moving branch changes underneath you. If someone merges between the first agent finishing and the second, the two diffs are no longer describing the same change to the same starting point, and the comparison has quietly stopped being one.</p>
+
+      <h3>Does h5i still have a team or orchestra command?</h3>
+      <p>No. The orchestration layer, personas, the neutral verifier and the scoring pass were all removed with the provenance system they were built on. What remains is the substrate: cheap independent boxes, an immutable base, and a receipt per box written where the box cannot reach it.</p>
+
+      <h3>Why was the neutral verifier removed?</h3>
+      <p>Two reasons. It was a model reading model output, so it produced confident rankings, which is the exact failure mode an ensemble exists to fix. And it read captured prompts and self-reported test results, so when those turned out to be testimony rather than observation, everything computed from them inherited the problem.</p>
+
+    </div>
+
+    <div class="next-up">
+      <span class="label">Read next</span>
+      <a href="/blog/orchestration-patterns-beyond-ensemble/">
+        <h3>Four shapes a box can take</h3>
+        <p>Beyond parallel attempts: the repo box, the PR box, the clone box and the empty box.</p>
+      </a>
     </div>
 
     <div class="post-cta">
-      <h3>Run your next task as an ensemble</h3>
-      <p>Group a few sandboxed envs into a team, let a neutral verifier pick the winner, and merge with proof.</p>
-      <a href="/manual/" class="btn btn-primary">Read the manual</a>
-      <a href="https://github.com/h5i-dev/h5i" class="btn btn-ghost">Star on GitHub</a>
+      <h3>Run two and compare</h3>
+      <p><code>h5i box . --name try-a</code>, <code>h5i box . --name try-b</code>, then <code>h5i box compare try-a try-b</code>.</p>
+      <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/manual/" class="btn btn-ghost">Read the manual</a>
     </div>
   </article>
 </main>
@@ -461,12 +314,11 @@
     <div class="brand">h5i<span class="red"> / high-five</span></div>
     <nav class="links">
       <a href="/">Home</a>
-      <a href="/workflows/">Workflows</a>
       <a href="/blog/">Blog</a>
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
       <a href="/manual/">Manual</a>
     </nav>
-    <div class="legal">Apache 2.0 · Built with Rust</div>
+    <div class="legal">Apache 2.0 &#183; Built with Rust</div>
   </div>
 </footer>
 

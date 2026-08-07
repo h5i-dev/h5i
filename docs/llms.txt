@@ -1,74 +1,95 @@
 # h5i
 
-> h5i ("high-five") is an open-source auditable workspace layer for AI coding agents. It runs Claude Code, Codex, and other coding agents in isolated Git workspaces, records the prompts, commands, logs, sandbox policy, reviews, and verifier results behind every change, then helps teams merge one evidence-backed result. Local-first, no SaaS.
+> h5i ("high-five") is an open-source **contained agentic development environment**. It gives a coding agent (Claude Code, Codex) a disposable box holding the code, the agent process, the toolchain, the dependencies, the dev server and a real browser, inside one enforced boundary. Nothing of your machine is inside it: no SSH key, no cloud credential, no personal browser profile. Nothing leaves it except a patch, a report and an execution receipt you exported deliberately. One Rust binary, local-first, no server, no daemon, no SaaS.
 
-h5i solves the problems that show up once agents, not just humans, write the code: running many agents in parallel without collisions, sandboxing what each one can touch, proving where AI-generated code came from, and verifying which attempt to trust. Each agent works in its own isolated git worktree under a pinned policy; attempts are sealed independently and judged by a neutral, sandboxed verifier. It integrates with Claude Code and Codex via lifecycle hooks and MCP. Apache-2.0, written in Rust.
+The problem h5i solves is that a coding agent runs unattended, which makes two questions urgent at once: what could it reach, and what did it actually do? Sandboxing one command was the right idea at the wrong scale, because an agent's work is a shell, a package manager, a build, a test run, a dev server and a browser. h5i confines the workspace rather than the command, so everything the session spawns is contained by construction, and records what ran from outside the box rather than from the agent's account of itself. Apache-2.0, written in Rust, Linux and macOS.
 
 ## Core concepts
-- Auditable workspaces for AI coding agents
-- Sandboxed agent environments (tiered isolation + network egress allowlist)
-- Sealed independent attempts
-- Neutral verifier
-- Prompt-aware commits
-- AI code provenance
-- Git-native audit trail under `refs/h5i/*`
-- Local-first, no SaaS required
+- A **box**: a disposable, confined development environment for one agent
+- Five **isolation tiers**: `workspace`, `process`, `supervised`, `container`, `microvm`
+- **Fail closed**: an explicit tier is refused, never silently downgraded
+- **Egress allowlist**, labelled by OSI layer (L3/L4 at `supervised` and `microvm`, L7 at `container`)
+- **Credential broker**: keys stay on the host; a proxy injects them into allowed calls
+- **Detached box**: external code gets its own repository, and `apply` refuses
+- **Output gate** (`h5i box export`): a path-validated patch, a report, an execution receipt
+- **Sealed receipt**: append-only JSONL stored outside every grant the box holds
+- **Lanes**: every record names who observed it, so host-observed and box-claimed never blur
+- Local-first, no SaaS, no hosted sandbox
 
 ## Technical model
-h5i stores agent evidence as Git-native sidecar refs under `refs/h5i/*`: prompts, model/agent provenance, reasoning traces, test metrics, reviews, verifier decisions, and cross-agent messages, all living alongside the repository with no hosted control plane, and travels with `h5i share push` / `h5i share pull`. It gives each agent a sandboxed, policy-enforced Git worktree and records the provenance, evidence, and coordination behind every change.
+A box's policy is resolved from a checked-in `.h5i/env.toml`, serialized to `policy.resolved.toml` and hashed *before* any state exists on disk, so an unsatisfiable request fails closed. The base revision is pinned immutably at creation. Every receipt record carries that policy digest, so a run and the rules that governed it cannot drift apart. The box's entire write window under its own directory is its `spool`; the receipt log and payloads are siblings of that spool, outside every grant, so the box stages a record and the host ingests it. Linux confines with Landlock, seccomp and namespaces; macOS with Seatbelt. Rootless Podman adds `container`, and microsandbox (`msb`) adds `microvm` on a host with hardware virtualization.
+
+## Command surface
+`h5i box` (create, ls, status, run, shell, diff, log, export, apply, rebase, abort, rm, gc, probe, capabilities, doctor, secrets, inspect, compare, view, service, ports, cache, allow) · `h5i ui` (read-only box console) · `h5i browser` (the control lock) · `h5i skill` · `h5i completion` · `h5i man`
 
 ## Docs
-- [Features](https://h5i.dev/features/): What h5i gives Claude Code and Codex: sandboxed worktrees, prompt-aware commits, compressed tool logs, agent handoffs.
-- [Manual (CLI reference)](https://h5i.dev/manual/): The complete h5i command reference: capture, recall, env, msg, share, audit, hook.
-- [Workflow](https://h5i.dev/workflows/): The end-to-end flow: install, wire hooks, track prompts/context, sandbox each agent, merge one auditable result.
-- [Blog](https://h5i.dev/blog/): Engineering posts on auditable workspaces, sandboxing, provenance, and token reduction.
-- [Guides](https://h5i.dev/guides/): Task-focused how-tos for memory, multi-agent, provenance, audit, and blame.
+- [Features](https://h5i.dev/features/): The five parts of a box, the tier ladder, the output gate, and the console.
+- [Manual (CLI reference)](https://h5i.dev/manual/): The complete command reference, the policy model, receipts, and the honest limits.
+- [Workflow](https://h5i.dev/workflows/): The end-to-end loop: box, work, export, apply.
+- [Blog](https://h5i.dev/blog/): Engineering posts on containment, evidence, review, policy and security.
+- [Guides](https://h5i.dev/guides/): Task-focused how-tos for pull-request review, credentials, containment, exports and caching.
 
-## Ensemble
-- [Run an AI Agent Ensemble (h5i team)](https://h5i.dev/blog/agent-ensembles-with-h5i-team/): Run the same task across several agents in sealed lanes, then merge the one result a neutral, sandboxed verifier clears.
-- [Why AI Agents Need Auditable Workspaces](https://h5i.dev/blog/auditable-workspaces-for-ai-agents/): The cornerstone. What an auditable workspace records (prompt, model, reasoning, commands, tests, risk, handoffs) and why Git alone is not enough.
+## The boundary
+- [What Is a Contained Agentic Development Environment?](https://h5i.dev/blog/what-is-ai-aware-version-control/): The category defined: five parts inside one boundary, why a worktree and a container each fall short, and four questions that separate a real one from a label.
+- [The Agent Sandbox With an Output Gate](https://h5i.dev/blog/agent-sandbox-env/): The product walkthrough: how a box is made, what the policy pins, what the receipt records, and why export is the only door.
+- [Four Shapes a Box Can Take](https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/): Repo box, pull-request box, clone box, empty box, and the cache-refresh box with no agent in it.
+- [Git Worktrees vs h5i Boxes](https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/): A worktree separates checkouts; a box separates authority. When each is right.
 
-## Concepts
-- [What Is AI-Aware Version Control?](https://h5i.dev/blog/what-is-ai-aware-version-control/): The record a diff can't hold: which agent and model, from what prompt, with what context, verified by what tests, all captured Git-natively.
-- [Why Git Diffs Are Not Enough for AI-Generated Code](https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/): A diff shows the destination, not the journey; for agent code the journey (intent, context, tests, uncertainty) is where the risk lives.
-- [Git Notes vs h5i](https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/): h5i is built on git notes, not a competitor. It adds a typed schema, a capture pipeline, and sibling refs (context, msg, memory).
-- [Claude Code Hooks vs Git Hooks](https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/): Two lifecycles (agent tool loop vs repository operations) with different trust models; layer both.
-- [How to Review Code Written by AI Agents](https://h5i.dev/blog/review-code-written-by-ai-agents/): Provenance-first review: intent, context coverage, risk, then evidence, all before the diff.
-- [Git as the Communication Layer for AI Agents](https://h5i.dev/blog/git-communication-layer-ai-agents/): A Git ref with compare-and-swap writes and union-merge-by-id is a lossless, server-less mailbox for multi-agent coordination.
-- [Track Claude Code Prompts and Diffs in Git](https://h5i.dev/blog/track-claude-code-prompts-diffs-git/): Capture prompts, file edits, diffs, and test evidence in Git via Claude Code lifecycle hooks.
+## Sandboxing (4-part series)
+- [Part 1: Foundations](https://h5i.dev/blog/sandboxing-ai-agents-foundations/): The threat model and the primitives (namespaces, seccomp, Landlock, cgroups) that contain an agent.
+- [Part 2: Implementing Kernel-Tier Confinement](https://h5i.dev/blog/sandboxing-ai-agents-implementation/): Probe, run a functional self-test, and fail closed instead of silently downgrading.
+- [Part 3: The Landscape, Compared by Threat Model](https://h5i.dev/blog/sandboxing-ai-agents-landscape/): A survey from nothing/YOLO to full VMs, ranked by what each boundary actually defends against.
+- [Part 4: h5i's Tier Ladder and Policy Model](https://h5i.dev/blog/sandboxing-ai-agents-h5i/): Five tiers, three egress mechanisms with three different guarantees, and the lints that refuse a contradictory profile.
 
-## Features
-- [Cut Agent Token Usage 95% with h5i Capture](https://h5i.dev/blog/token-reduction-object-store/): A content-addressed object store keeps raw tool output out of context (~95% fewer tokens), recoverable on demand.
-- [One Schema for Every Tool](https://h5i.dev/blog/structured-tool-output-schema/): A single typed result schema (ToolResult/Finding) across tests, compilers, linters, and type checkers, so an agent can branch on the result rather than parse it.
-- [Context DAG: Version-Controlled Reasoning](https://h5i.dev/blog/context-dag-versioned-agent-reasoning/): Version an agent's reasoning as a Git DAG (OBSERVE/THINK/ACT/NOTE/MERGE) that branches, merges, and pins to commits.
-- [Persistent Memory for Claude Code](https://h5i.dev/blog/persistent-memory-for-claude-code/): Memory across sessions: versioned reasoning, commit-pinned snapshots, and automatic SessionStart restoration.
-- [Uncertainty Heatmap](https://h5i.dev/blog/uncertainty-heatmap/): Mine the hedges in an agent's reasoning trace into a per-file heatmap that routes reviewer attention.
-- [Prompt Maturity Score](https://h5i.dev/blog/prompt-maturity-score/): An offline, deterministic 0–100 prompt-quality score from seven classical-NLP signals, with no LLM call.
-- [From Git Blame to AI Blame](https://h5i.dev/blog/from-git-blame-to-ai-blame/): Per-line provenance (model, agent, prompt, and test result) beyond git blame's name and date.
-- [The AI Pull Request Body](https://h5i.dev/blog/pr-body-ai-code-review/): A PR body generated from captured provenance, so reviewers triage evidence instead of a self-report.
-- [The i5h Protocol](https://h5i.dev/blog/i5h-agent-to-agent-messaging/): The wire format: typed JSON messages in `refs/h5i/msg`, append-only, with compare-and-swap sends and union-merge by id.
+## Evidence
+- [An Audit You Do Not Have to Trust](https://h5i.dev/blog/auditable-workspaces-for-ai-agents/): The test: could the agent have written this line? If yes it is testimony, not an audit.
+- [Why a Diff Is Not Enough for AI-Generated Code](https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/): Four things a comparison of two trees structurally cannot show.
+- [What Is Inside an Execution Receipt](https://h5i.dev/blog/structured-tool-output-schema/): The JSONL record field by field, including the flags that keep absence from being ambiguous.
+- [The Flight Recorder: Five Lanes and Three Colours](https://h5i.dev/blog/uncertainty-heatmap/): Red means a refused destination; grey means the evidence is weak, which is the most useful thing a dashboard can say.
+- [How to Track What Claude Code Actually Ran](https://h5i.dev/blog/track-claude-code-prompts-diffs-git/): Four commands for the part with consequences, none of which needs the agent to cooperate.
+- [We Built AI Blame, Then Deleted It](https://h5i.dev/blog/from-git-blame-to-ai-blame/): A feature retrospective: why per-line attribution answered the wrong question, and what replaced it.
 
-## Sandboxing
-- [Sandboxing AI Agents, Part 1: Foundations](https://h5i.dev/blog/sandboxing-ai-agents-foundations/): The threat model and the Linux primitives (namespaces, seccomp, Landlock, cgroups) that contain an agent.
-- [Part 2: Implementing Kernel-Tier Confinement](https://h5i.dev/blog/sandboxing-ai-agents-implementation/): Probe capabilities, run a functional self-test, and fail closed instead of silently downgrading.
-- [Part 3: The Landscape, Compared by Threat Model](https://h5i.dev/blog/sandboxing-ai-agents-landscape/): A fair survey of nothing/YOLO, git worktrees, language runtimes, kernel confinement, containers, gVisor/Kata, and microVMs.
-- [Part 4: h5i's Tier Ladder and Policy Model](https://h5i.dev/blog/sandboxing-ai-agents-h5i/): The four-tier ladder (workspace, process, supervised, container) that matches confinement to trust and to what the host can enforce.
-- [The Agent Sandbox With a Review Loop (h5i env)](https://h5i.dev/blog/agent-sandbox-env/): An isolated git worktree under a pinned policy; every run is captured as evidence, then proposed for human apply.
+## Review
+- [Review a Pull Request by Running It](https://h5i.dev/blog/pr-body-ai-code-review/): A detached box makes building an untrusted branch the cheap option instead of the risky one.
+- [Reviewing Code an AI Agent Wrote](https://h5i.dev/blog/review-code-written-by-ai-agents/): A reading order that puts the least trustworthy evidence at the bottom.
+- [Triaging a Fleet of Agent Boxes](https://h5i.dev/blog/auditing-ai-generated-code/): Counting receipts instead of scoring them, and why a risk score stops working after you ship it.
+- [Many Boxes, One Repository](https://h5i.dev/blog/agent-ensembles-with-h5i-team/): Parallel attempts, the pinned base that makes comparison honest, and why there is deliberately no verifier.
+
+## Policy
+- [Write Your First Box Profile](https://h5i.dev/blog/write-your-first-orchestra-score/): Build `.h5i/env.toml` one field at a time, with the failure each field prevents.
+- [Why the Sandbox Policy Is a File, Not Flags](https://h5i.dev/blog/programmable-agent-orchestration-edsl/): A file arrives whole before anything runs, which is the only reason it can be refused as self-contradictory.
+- [Pinning What Was Actually Enforced](https://h5i.dev/blog/context-dag-versioned-agent-reasoning/): Resolve, hash, then create. Three orderings that make "what was enforced" a fact rather than a memory.
+- [What a Box Copies From Your Config, and What It Strips](https://h5i.dev/blog/persistent-memory-for-claude-code/): Settings in, credential-shaped files out, matched by shape at any depth.
+- [Making Boxes Start in Seconds, Not Minutes](https://h5i.dev/blog/token-reduction-object-store/): Three rules that make a warm dependency cache safe rather than merely fast.
 
 ## Security
-- [CVE-2025-59536: Startup Trust Dialog Bypass](https://h5i.dev/blog/cve-2025-59536-startup-trust-dialog/): Claude Code before 1.0.111 could execute project code before the startup trust dialog was accepted.
-- [CVE-2026-33068: Permissions Settings Bypass](https://h5i.dev/blog/cve-2026-33068-bypass-permissions-settings/): A committed `.claude/settings.json` could bypass the Claude Code trust dialog via `permissions.defaultMode: bypassPermissions` (fixed in 2.1.53).
-- [Prompt Injection in Agent Traces](https://h5i.dev/blog/prompt-injection-in-agent-traces/): Stored traces and pulled cross-agent messages are untrusted input: prompt-injection and terminal-escape risks, and how h5i narrows them.
-- [Auditing AI-Generated Code](https://h5i.dev/blog/auditing-ai-generated-code/): Audit AI code by aggregating per-commit provenance into deterministic risk vectors instead of eyeballing diffs.
+- [Prompt Injection: Contain It, Because You Cannot Detect It](https://h5i.dev/blog/prompt-injection-in-agent-traces/): Every defence that reads the attacker's text is a filter the attacker can read back. Bound the reach instead.
+- [CVE-2026-33068: When a Repo's settings.json Decides Trust](https://h5i.dev/blog/cve-2026-33068-bypass-permissions-settings/): A committed `bypassPermissions` was read before the trust dialog. Inside a box, permission mode is not a boundary.
+- [CVE-2025-59536: Code Execution Before the Trust Dialog](https://h5i.dev/blog/cve-2025-59536-startup-trust-dialog/): Project code ran before the user accepted. In a box that premise is already handled.
+- [Claude Code Hooks vs Git Hooks](https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/): Two lifecycles, two trust models, and why h5i moved observation below the agent entirely.
+
+## Working in a box
+- [Who Is Driving the Browser?](https://h5i.dev/blog/git-communication-layer-ai-agents/): The control lock's three rules, and why handing control back must invalidate what the agent knew.
+- [Watching a Box's Browser Without Giving It a Port](https://h5i.dev/blog/i5h-agent-to-agent-messaging/): h5i enters the box's network namespace by pid and hands the socket back out. The terminal viewer binds nothing.
+- [Teaching an Agent to Use Its Own Box](https://h5i.dev/blog/prompt-maturity-score/): The skill is embedded in the binary, so it cannot document flags the installed binary lacks.
 
 ## Guides
-- [AI Code Provenance](https://h5i.dev/guides/ai-code-provenance/): Track which code was AI-generated, by which model and agent, from which prompt, stored in Git.
-- [Auditing AI-Generated Code](https://h5i.dev/guides/ai-code-review-audit/): Risk-rank AI commits so you review what matters first.
-- [Persistent Memory for Claude Code](https://h5i.dev/guides/claude-code-memory/): Snapshot agent memory into Git, version reasoning, and generate a handoff briefing.
-- [Claude Code + Codex Collaboration](https://h5i.dev/guides/codex-claude-code-collaboration/): Run two agents on one repo and coordinate over Git with typed handoffs.
-- [git blame for AI Code](https://h5i.dev/guides/git-blame-for-ai-code/): Resolve AI-written lines to prompt, model, agent, and test result.
-- [Prompt-Injection Detection for Agents](https://h5i.dev/guides/prompt-injection-detection-for-agents/): Scan Claude Code reasoning traces for injected instructions.
-- [Token Reduction with h5i capture run](https://h5i.dev/guides/token-reduction-capture-run/): Wrap noisy commands so only a structured summary reaches the agent; recover the full output on demand.
+- [Review a Pull Request in a Box](https://h5i.dev/guides/ai-code-review-audit/): Fetch a PR head into a detached box, build and exercise it, read what the boundary refused.
+- [Export a Reviewable Patch From a Box](https://h5i.dev/guides/ai-code-provenance/): Three files out of the output gate, then `git apply --3way`.
+- [Pass API Tokens to a Coding Agent Without Leaking Them](https://h5i.dev/guides/secure-api-tokens-in-agent-box/): The credential proxy: the box authenticates without ever holding the key.
+- [Contain a Prompt-Injected Agent](https://h5i.dev/guides/prompt-injection-detection-for-agents/): Assume the injection worked, then write down in a profile what it can reach.
+- [Give a Box Your Claude Code Config Without Your Credentials](https://h5i.dev/guides/claude-code-memory/): How the HOME seed works and how to verify what a box got.
+- [Run Claude Code and Codex in Separate Boxes](https://h5i.dev/guides/codex-claude-code-collaboration/): Two runtimes, two credential sets, one pinned base.
+- [Find Out What Actually Ran in a Box](https://h5i.dev/guides/git-blame-for-ai-code/): Four commands, and how to tell host-observed evidence from the box's own account.
+- [Warm the Dependency Cache So Boxes Start Fast](https://h5i.dev/guides/token-reduction-capture-run/): Populate a cache once in a box with no agent in it.
+
+## Honest limits
+- Containment stops the agent touching your host. It does **not** stop it putting private source into a model prompt; that needs a self-hosted model or no model egress at all.
+- Four of the five tiers share the host kernel: strong against a runaway agent and careless dependency code, not a claim against a targeted kernel exploit. `microvm` is where the boundary is a hypervisor.
+- The `container` tier's egress allowlist is L7, so it binds proxy-respecting tooling only.
+- An agent can stage extra receipt records or stop writing them. Both are visible as a gap against host-observed exits, and that is the whole claim.
+- A `microvm` receipt carries no egress summary: the guest's netstack drops packets without reporting them.
+- On macOS at the kernel tiers, memory and process-count limits cannot be enforced, and h5i marks them rather than claiming them.
 
 ## Related projects
 - [h5i-db](https://db.h5i.dev/): A sibling project from the same authors. An embedded, versioned analytical database for quantitative finance and time-series workloads, written in Rust: DataFusion SQL with native ASOF joins, OHLCV/VWAP rollups, time travel, and previewable mutations over immutable Parquet segments, designed to be safe for AI agents to drive.

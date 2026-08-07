@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Git Notes vs h5i for AI Coding Workflows: Does Your Metadata Have Behavior?</title>
-  <meta name="description" content="h5i is built on git notes, not a competitor to them. The deciding question for AI provenance: does the metadata have behavior? Must it be queried, rendered into a PR packet, or moved between agents?">
-  <meta name="keywords" content="git notes vs h5i, git notes ai coding, ai code provenance git notes, git notes refs/notes, ai coding workflow, h5i provenance, git sidecar ai agents">
+  <title>Git Worktrees vs h5i Boxes | h5i</title>
+  <meta name="description" content="A worktree separates checkouts. A box separates authority. They look similar from the outside and answer different questions, and knowing which one you need takes about thirty seconds.">
+  <meta name="keywords" content="git worktree vs sandbox, git worktree agent, parallel agents worktree, agent isolation, worktree limits, h5i box vs worktree">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -17,31 +17,32 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="Git Notes vs h5i for AI Coding Workflows">
-  <meta property="og:description" content="h5i is built on git notes, not against them. The deciding question for AI provenance: does the metadata have behavior? Must it be queried, rendered into a PR packet, or moved between agents?">
+  <meta property="og:title" content="Git Worktrees vs h5i Boxes">
+  <meta property="og:description" content="A worktree separates checkouts; a box separates authority. When each is the right tool, and when a worktree is quietly not enough.">
   <meta property="og:url" content="https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta property="article:published_time" content="2026-06-03">
+  <meta property="article:published_time" content="2026-05-30">
+  <meta property="article:modified_time" content="2026-08-07">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Git Notes vs h5i for AI Coding Workflows">
-  <meta name="twitter:description" content="h5i is built on git notes, not against them. The deciding question for AI provenance: does the metadata have behavior? Must it be queried, rendered, or moved between agents?">
+  <meta name="twitter:title" content="Git Worktrees vs h5i Boxes">
+  <meta name="twitter:description" content="A worktree separates checkouts; a box separates authority. When each is the right tool, and when a worktree is quietly not enough.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "TechArticle",
-  "headline": "Git Notes vs h5i for AI Coding Workflows",
-  "description": "h5i is built on git notes, not a competitor to them. The deciding question for AI provenance: does the metadata have behavior? Must it be queried, rendered into a PR packet, or moved between agents?",
+  "headline": "Git Worktrees vs h5i Boxes",
+  "description": "A worktree separates checkouts. A box separates authority. They look similar from the outside and answer different questions, and knowing which one you need takes about thirty seconds.",
   "author": {
     "@type": "Person",
     "name": "Koukyosyumei",
     "url": "https://github.com/Koukyosyumei"
   },
-  "datePublished": "2026-06-03",
-  "dateModified": "2026-06-26",
+  "datePublished": "2026-05-30",
+  "dateModified": "2026-08-07",
   "publisher": {
     "@type": "Organization",
     "name": "h5i",
@@ -55,7 +56,7 @@
     "@id": "https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/"
   },
   "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-  "keywords": "git notes vs h5i, git notes ai coding, ai code provenance git notes, git notes refs/notes, ai coding workflow, h5i provenance, git sidecar ai agents"
+  "keywords": "git worktree vs sandbox, git worktree agent, parallel agents worktree, agent isolation, worktree limits, h5i box vs worktree"
 }
   </script>
   <script type="application/ld+json">
@@ -65,34 +66,34 @@
   "mainEntity": [
     {
       "@type": "Question",
-      "name": "Does h5i replace git notes?",
+      "name": "Is a git worktree a sandbox?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "No. h5i is built on git notes. Its per-commit provenance record is a JSON document stored as a git note on its own ref, refs/h5i/notes. h5i adds a typed schema, a capture/recall/audit command surface, and sibling refs on top of the same primitive. It does not compete with it."
+        "text": "No. A worktree gives you a separate working directory, index and HEAD, sharing the object store. That is a statement about where files live. The process still runs with your user's filesystem access, your network, your environment and your credentials."
       }
     },
     {
       "@type": "Question",
-      "name": "Why not store AI provenance in a single free-form git note?",
+      "name": "Does an h5i box replace worktrees?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "AI provenance is structured (prompt, model, agent, tokens, test metrics, integrity findings), multi-ref (per-commit notes plus a reasoning DAG and cross-agent messages), and queried (blame by line, filter by risk, render into a PR packet). A single free-form note has no schema to query, merges badly under concurrent annotation, and cannot hold the sibling refs that context and messaging need."
+        "text": "No, it builds on them. A box created from your own repository is a real git worktree on its own branch sharing the object store, which is what lets h5i box apply land the work back locally. The worktree is the substrate and the enforced policy is what is added."
       }
     },
     {
       "@type": "Question",
-      "name": "When are raw git notes enough?",
+      "name": "When is a worktree still the right choice?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Raw git notes are enough when the metadata is small, human-authored, and rarely queried, for example a one-line review marker. Reach for h5i when the record is produced repeatably during agent work and must be acted on later: queried, rendered into a review packet, used to restore a session, or moved between agents."
+        "text": "When it is your own code, your own agent, and a task you are watching, where the threat model is a mess rather than an adversary. Also when the host cannot enforce anything stronger, which h5i models as the workspace tier and greys out in the console."
       }
     },
     {
       "@type": "Question",
-      "name": "Are git notes pushed and fetched by default?",
+      "name": "What is a detached box?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "No. refs/notes/* are not part of a default push or fetch; you must add an explicit refspec. h5i stores its data under refs/h5i/* (including refs/h5i/notes) and moves all of it intentionally with h5i share push and h5i share pull, so provenance is not silently dropped on push."
+        "text": "A box created from a URL, a pull request or --new. It gets a repository of its own, your repository is neither read nor written after creation, and the inherited origin remote is dropped. apply and rebase refuse there and point at export."
       }
     }
   ]
@@ -106,7 +107,7 @@
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Git Notes vs h5i for AI Coding Workflows", "item": "https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Git Worktrees vs h5i Boxes", "item": "https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/"}]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -119,145 +120,169 @@
   <ul class="nav-links">
     <li><a href="/">Home</a></li>
     <li><a href="/guides/">Guides</a></li>
-    <li><a href="/manual/">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &#8594;</a></li>
   </ul>
 </nav>
 
 <main class="article-wrap">
   <article class="post">
     <header>
-      <div class="post-eyebrow">Comparison · Git notes</div>
-      <h1>Git Notes vs h5i for AI Coding: Does Your Commit Metadata Have Behavior?</h1>
-      <p class="post-deck">It is not notes <em>versus</em> h5i. h5i is built on git notes for per-commit provenance and adds a typed schema, a capture/recall/audit pipeline, and sibling refs a single free-form note was never meant to hold. The deciding question is whether the metadata has behavior.</p>
+      <div class="post-eyebrow">Comparison &#183; 2026-05-30 &#183; rewritten 2026-08-07</div>
+      <h1>Git worktrees vs h5i boxes</h1>
+      <p class="post-deck">Both give an agent its own directory to work in. That is where the similarity stops, and the difference is not one of degree: they are solving different problems that happen to look the same from the file manager.</p>
       <div class="post-meta">
-        <span><strong>Published</strong> 2026-06-03</span>
-        <span><strong>Reading time</strong> 11 min read</span>
-        <span><strong>Tags</strong> Git notes · h5i · Comparison</span>
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 7 min</span>
+        <span><strong>Tags</strong> Comparison &#183; Worktrees &#183; Containment</span>
       </div>
     </header>
 
-
-<div class="callout kt-takeaways">
-  <strong>Key takeaways</strong>
-  <ul>
-        <li>Git notes are the right primitive, and h5i uses them: the record is JSON in a git note on refs/h5i/notes, not a competing store.</li>
-        <li>AI provenance is structured, multi-ref, and queried, which is exactly where a single free-form note breaks down.</li>
-        <li>Use raw notes for small human annotations; use h5i when the record must be captured repeatably and acted on later.</li>
-  </ul>
+<div class="callout">
+  <strong>The verdict.</strong> A <strong>git worktree</strong> separates <em>checkouts</em>, so two
+  agents editing the same repository do not trample each other. An <strong>h5i box</strong> separates
+  <em>authority</em>, so a process cannot read what it was not granted, reach a host that was not
+  allowlisted, or write anything on your machine. Use a worktree for parallelism with code you trust.
+  Use a box when the answer to "what else could this process touch?" matters.
 </div>
-<p>When a person writes a commit, the message <em>is</em> the provenance: a human chose the words and will answer for them. When an agent writes a commit, the interesting record lives outside the diff: which prompt produced it, which model and agent, how many tokens, whether the tests passed, whether an integrity audit flagged anything. None of that belongs in the commit message, and none of it should rewrite the commit's SHA. So the question arrives quickly for anyone running Claude Code, Codex, or a fleet of agents against a real repository: where does AI provenance go, and what can you <em>do</em> with it afterward?</p>
-<p>The usual framing, "git notes versus h5i," is the wrong one. h5i is built <em>on</em> git notes. Its per-commit provenance record is a JSON document stored as a git note. The real comparison is not between two storage mechanisms; it is between a free-form note you maintain by hand and a typed record with a query, audit, and sharing pipeline around it. The deciding question, the one this whole post turns on, is whether your metadata has <strong>behavior</strong>: does it merely sit there to be read by a human someday, or must it be queried, rendered into a PR packet, used to restore a future session, and moved between agents?</p>
-
-<h2>What you already know: how git notes actually work</h2>
-<p>Most readers of this post know the primitive, so the recap is short and aimed at the corners that bite later. A git note attaches data to an existing object, almost always a commit, <em>without</em> changing that object. Because a commit's SHA is a hash of its content, you cannot edit a merged commit to add metadata without rewriting history and breaking every downstream reference. Notes sidestep that: the note is stored as a separate blob in a parallel tree, keyed by the target commit's OID, and the commit itself is untouched.</p>
-<p>Those note trees live under their own refs. The default is <code>refs/notes/commits</code>, which <code>git log</code> renders inline beneath each message. You are not limited to it: <code>git notes --ref=&lt;name&gt;</code> (or <code>core.notesRef</code>) lets you keep parallel, independent note namespaces, so build metadata and review metadata need not collide. Four facts about notes matter for what follows:</p>
-<ul>
-  <li><strong>No schema.</strong> A note is an opaque blob. Git neither knows nor cares whether it holds a sentence, YAML, or JSON. Structure is entirely your problem.</li>
-  <li><strong>Not fetched or pushed by default.</strong> <code>refs/notes/*</code> is outside the default refspec. A plain <code>git push</code> leaves your notes behind unless you configure <code>remote.&lt;name&gt;.push</code> / <code>fetch</code> to carry them explicitly.</li>
-  <li><strong>Merges need a strategy.</strong> When two clones annotate the same commit, the note refs diverge. <code>git notes merge</code> offers <code>manual</code>, <code>ours</code>, <code>theirs</code>, and <code>cat_sort_uniq</code>, and the default is a conflict you resolve by hand.</li>
-  <li><strong>Notes are attached to a SHA.</strong> Rebase or amend that commit and the note does not follow; it now points at an object no branch reaches.</li>
-</ul>
-<p>This is the right primitive. It is the right place to put per-commit metadata, and it is exactly what h5i uses. The open question is everything Git deliberately leaves to you: the schema, the queries, the sharing, the merge policy.</p>
-
-<h2>The contrast: a hand-rolled note vs h5i capture commit</h2>
-<p>Suppose an agent just added retry logic to an API client and you want the provenance recorded. The hand-rolled approach is one extra command:</p>
-<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ git commit -m "add retry to api client"
-$ git notes add -m "prompt: retry on 503; model: claude-sonnet-4-6; agent: claude-code; tests: 12 passed"
-$ git log --notes -1
-commit 9af1c2e…
-    add retry to api client
-
-Notes:
-    prompt: retry on 503; model: claude-sonnet-4-6; agent: claude-code; tests: 12 passed</pre></div></div>
-<p>That works, and for a one-off it is fine. But look at what you have actually committed to: a single English string under the default ref, with a field convention (<code>key: value; …</code>) that exists only in your head. Nothing validates it. Nothing can answer "show me every commit by <code>claude-code</code> where tests failed" without you writing a parser. And as established above, that note will not leave your machine on the next <code>git push</code>.</p>
-<p>The h5i path looks similar at the surface and diverges underneath:</p>
-<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ git add src/api/client.py
-$ h5i capture commit -m "add retry to api client" \
-    --model claude-sonnet-4-6 --agent claude-code --tests --audit</pre></div></div>
-<p>This creates an ordinary git commit and writes a structured <code>H5iCommitRecord</code>: an <code>AiMetadata</code> block (model, agent id, prompt, token usage), optional <code>TestMetrics</code>, and an <code>IntegrityReport</code> whose severity is <code>Valid</code>, <code>Warning</code>, or <code>Violation</code>. In Claude Code the verbatim human prompt is captured automatically by the <code>UserPromptSubmit</code> hook and wins over any <code>--intent</code> you might pass, so the recorded prompt is what the human actually asked, not what the agent paraphrased.</p>
-
-<h2>It is notes underneath, with a schema on top</h2>
-<p>The point worth making visceral: h5i's record is not stored somewhere exotic. It is a git note, JSON, on h5i's own note ref, <code>refs/h5i/notes</code> (kept separate from <code>refs/notes/commits</code> so it never collides with anyone's hand-written notes). You can read it with plain Git:</p>
-<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ git notes --ref=refs/h5i/notes show HEAD
-{
-  "git_oid": "9af1c2e…",
-  "ai_metadata": {
-    "model_name": "claude-sonnet-4-6",
-    "prompt": "make the client retry on 503 with backoff",
-    "agent_id": "claude-code",
-    "usage": { "total_tokens": 1843, "model": "claude-sonnet-4-6" }
-  },
-  "test_metrics": { "passed": 12, "failed": 0, "total": 12, "tool": "pytest" },
-  "timestamp": "2026-06-03T14:22:08Z"
-}</pre></div></div>
-<p>That is the whole trick. Git notes are the storage; the schema is the value h5i adds. And because the record is typed rather than free-form, you read it ergonomically instead of grepping a string:</p>
-<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ h5i recall log --limit 3                 # commit history with AI provenance
-$ h5i recall blame src/api/client.py --show-prompt   # per line: author + model + agent + test result
-$ h5i audit review --limit 50              # triage the integrity findings before merge</pre></div></div>
-<p>The hand-rolled note can do none of this without you building it. <code>recall blame --show-prompt</code> resolves each line to the commit that wrote it and surfaces that commit's model, agent, and test outcome; <code>audit review</code> funnels the <code>IntegrityReport</code> severities so you can look at the <code>Violation</code>s before merging an AI-heavy branch. The metadata has behavior because it has a shape.</p>
-
-<h2>Where one note stops: provenance is multi-ref</h2>
-<p>Even with a schema, per-commit notes are only one dimension of what an agent session produces, and this is where the "just use a note" instinct breaks. AI provenance is not a single annotation per commit; it spans several kinds of record with different lifetimes and merge semantics. This is the reasoning behind h5i's design as a substrate for <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspaces</strong></a>: it deliberately puts each dimension on its own ref:</p>
-<ul>
-  <li><strong>Per-commit provenance → git notes</strong> (<code>refs/h5i/notes</code>). Keyed to a commit OID, written once, the case above.</li>
-  <li><strong>Reasoning and context → <code>refs/h5i/context</code>.</strong> A DAG of <code>OBSERVE</code> / <code>THINK</code> / <code>ACT</code> / <code>NOTE</code> / <code>MERGE</code> entries plus a goal, milestones, and commit-pinned snapshots: the session's thinking, which is not attached to any single commit and changes continuously while you work.</li>
-  <li><strong>Cross-agent coordination → <code>refs/h5i/msg</code>.</strong> An append-only message log (the i5h protocol) for handoffs and reviews between, say, a Claude and a Codex instance sharing a clone.</li>
-  <li><strong>Memory snapshots → their own ref.</strong> Point-in-time captures of an agent's working memory, restorable later.</li>
-</ul>
-<p>Try to cram all of that into one free-form note per commit and three things break at once. <strong>Querying</strong> breaks: a reasoning DAG and a message log have no natural home keyed to a single commit SHA, since context evolves between commits, and messages belong to no commit at all. <strong>Merging</strong> breaks: per-commit notes, an append-only message log, and a context DAG want different conflict policies (newest-wins, union-append, and structured merge respectively); one blob forces one policy on all of them. <strong>Sharing</strong> breaks: you would be moving coordination state and per-commit facts as a single unit when they have different audiences and update cadences. Separate refs exist precisely so each dimension keeps the merge and query model that suits it.</p>
-
-<h2>Sharing semantics: explicit, on both sides</h2>
-<p>Because every h5i ref lives under <code>refs/h5i/*</code>, none of it travels on a plain <code>git push</code>, the same rule that hides hand-written notes. The difference is the ergonomics of fixing that. With raw notes you edit <code>remote.origin.push</code> and <code>remote.origin.fetch</code> refspecs on each clone, remember to keep them in sync, and hope a teammate did too; forget, and provenance silently stays local. h5i moves the whole namespace with one verb on each side:</p>
-<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ h5i share push    # push notes, context, msg, memory under refs/h5i/* to origin
-$ h5i share pull    # pull them back, union-merging where the refs allow</pre></div></div>
-<p>This does not make sharing automatic, and that is deliberate. Provenance moves when you say so, not on every push, so a noisy local context branch does not spam the remote. But it is one intentional command rather than a refspec you maintain by hand and forget.</p>
-
-<h2>Failure modes and tradeoffs, on both sides</h2>
-<p>A fair comparison names where each approach hurts.</p>
-<p><strong>Raw notes.</strong> The failure modes are the four facts from earlier, now turned against you. <em>Merge conflicts:</em> two agents (or an agent and CI) annotating the same commit produce divergent note refs, and the default merge is a manual conflict. <code>cat_sort_uniq</code> can help for additive text but will happily concatenate two JSON blobs into something that is no longer JSON. <em>Silent non-sharing:</em> notes that are not in anyone's refspec simply never arrive, and nothing warns you. <em>Rebase and amend orphan notes:</em> rewrite a commit and its note is left pointing at an unreachable OID. <em>Schema cost:</em> the moment you want to query, you are maintaining a serialization format, a parser, and a convention across every contributor: an unfunded mandate that grows with the team.</p>
-<p><strong>h5i.</strong> It is not free either. It is another tool in the loop, with its own commands to learn and its own refs to share. The same conflict and orphaning realities exist underneath. h5i chooses merge policies per ref rather than abolishing the problem, and a record is still keyed to a commit, so aggressive history rewriting can still strand provenance. And it is overkill for a solo developer who wants to scribble "reviewed, ship it" on a commit: that is a sentence, and a sentence wants a plain note. h5i earns its place when records are produced <em>repeatably</em> by agents and consumed <em>later</em> by tools or people, not when you want to leave one human remark.</p>
-
-<h2>When raw notes are enough vs when h5i fits</h2>
-<p><strong>Reach for raw git notes</strong> when the metadata is small, human-authored, and rarely queried: a manual review marker, a "generated by an agent" flag, a one-line rationale you will read with your eyes and never with a script. You accept that you own the schema and the sharing, because there is barely a schema to own.</p>
-<p><strong>Reach for h5i</strong> when the record is produced during agent work and must be acted on later: filtered by agent or severity, rendered into a PR or compliance packet (<code>h5i audit compliance --since … --until … --format html</code>), used to restore a future session's context, or moved between Claude and Codex. Prompts, model identity, token counts, test evidence, integrity findings, and reasoning branches are structured, multi-ref records. Storing them as one free-form note does not just look untidy; it forecloses every downstream automation.</p>
-
-<h2>Conclusion: does the record have behavior?</h2>
-<p>The honest version of this comparison is not a contest. Git notes are the correct primitive for attaching data to a commit without rewriting it, and h5i agrees so completely that it stores its provenance as a git note. What h5i adds is everything Git deliberately leaves undefined: a typed schema so the record can be queried, a capture/recall/audit pipeline so it can be acted on, and sibling refs so the dimensions a single note cannot hold (reasoning, coordination, memory) each get a home with the right merge and sharing model.</p>
-<p>So the choice is not "notes or h5i." It is a question you can ask of any piece of AI metadata before you decide where to put it: <em>does this record have behavior?</em> If it only needs to be read by a human someday, a plain note is the lighter, more Git-native answer, and you should take it. If it must be queried, rendered, restored, or moved between agents, then a free-form note is a parser and a merge policy and a sharing convention you have not written yet, and that is precisely the work h5i has already done.</p>
-
-<h2>FAQ</h2>
-<h3>Does h5i replace git notes?</h3>
-<p>No, it is built on them. h5i's per-commit provenance is a JSON <code>H5iCommitRecord</code> stored as a git note on its own ref, <code>refs/h5i/notes</code>. It adds a typed schema, a query/audit command surface, and sibling refs on top of the same primitive rather than competing with it.</p>
-<h3>Can teammates ignore h5i?</h3>
-<p>Yes. The code history is ordinary Git. Anyone who does not use h5i can clone, branch, diff, and merge normally; the h5i data sits in <code>refs/h5i/*</code> and is only ever moved by an explicit <code>h5i share push</code> / <code>pull</code>.</p>
-<h3>Why not put everything in commit messages?</h3>
-<p>Commit messages are user-facing summaries and editing one rewrites the commit's SHA. AI provenance is structured data (prompt, model, tokens, tests, integrity findings) that wants its own queryable record attached without touching the commit, which is exactly what a git note is for.</p>
-<h3>Are git notes shared on a normal push?</h3>
-<p>No. <code>refs/notes/*</code> is outside the default refspec, so a plain <code>git push</code> leaves notes behind unless you configure push/fetch refspecs explicitly. h5i keeps its data under <code>refs/h5i/*</code> and moves all of it with <code>h5i share push</code> / <code>h5i share pull</code>.</p>
 
 
-    <h2>Sources and verification</h2>
-    <p>This article avoids vendor-specific claims that were not checked against primary docs or local h5i CLI behavior.</p>
+    <p>
+      Worktrees deserve their reputation. <code>git worktree add ../feature-x feature-x</code> is one
+      command, needs nothing installed, costs almost nothing, and solves a real problem cleanly: two
+      pieces of work on one repository without a stash-and-switch dance.
+    </p>
+
+    <p>
+      When agents arrived, worktrees were the obvious first answer, and for a lot of use they are
+      still the right one. The failure is specific rather than general, so it is worth being precise
+      about where it starts.
+    </p>
+
+    <h2>What a worktree isolates, exactly</h2>
+
+    <p>
+      A worktree gives you a separate working directory, index and <code>HEAD</code>, sharing the
+      object store. That is a complete list. It is a statement about where files live.
+    </p>
+
+    <p>
+      It says nothing about the process that edits them. An agent running in a worktree has your
+      user's filesystem access, your network, your environment variables, your SSH agent and your
+      cloud credentials. It can <code>cd</code> anywhere. It can read <code>~/.aws</code>. A
+      <code>postinstall</code> script in a dependency it just added runs with all of that.
+    </p>
+
+    <p>
+      And the branch merges like any other branch. There is no gate between "the agent finished" and
+      "this is in main" other than the one you remember to apply.
+    </p>
+
+    <h2>Side by side</h2>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th></th><th>git worktree</th><th>h5i box</th></tr></thead>
+        <tbody>
+          <tr><td>Separate checkout</td><td>Yes</td><td>Yes</td></tr>
+          <tr><td>Filesystem reach of the process</td><td>Your whole user</td><td>The policy's allowlist; home excluded by default</td></tr>
+          <tr><td>Network</td><td>Yours</td><td>Deny, or an allowlist enforced at L3/L4, L7 or in a guest netstack</td></tr>
+          <tr><td>Credentials</td><td>All of yours</td><td>None inside. A host-side proxy injects what the policy allows</td></tr>
+          <tr><td>Dev server</td><td>On your machine</td><td>Inside the boundary</td></tr>
+          <tr><td>Browser</td><td>Your profile, your cookies</td><td>A fresh Chrome profile created in the box</td></tr>
+          <tr><td>Getting work out</td><td>It is already a branch</td><td><code>h5i box export</code>, a step a human takes</td></tr>
+          <tr><td>Record of what ran</td><td>Whatever you were watching</td><td>An append-only receipt the box cannot write to</td></tr>
+          <tr><td>Setup cost</td><td>One command, nothing installed</td><td>One binary, and a probe to see what the host can enforce</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>The relationship is layered, not opposed</h2>
+
+    <p>
+      A box created from your repository <em>is</em> a real git worktree on its own branch, sharing
+      the object store, which is what lets <code>h5i box apply</code> land the work back locally. The
+      worktree is the substrate; the policy is what is added.
+    </p>
+
+    <p>
+      Code from outside gets a different shape, and the difference is worth knowing before you need
+      it. A box created from a URL, a pull request or <code>--new</code> is <strong>detached</strong>:
+      it gets a repository of its own, your repository is neither read nor written after creation,
+      and the inherited <code>origin</code> remote is dropped so it arrives holding no network handle.
+      <code>apply</code> and <code>rebase</code> refuse there and point at <code>export</code>.
+    </p>
+
+    <p>
+      That distinction has no worktree equivalent, because a worktree is definitionally part of your
+      repository.
+    </p>
+
+    <h2>When a worktree is the right call</h2>
+
+    <p>
+      Often, and saying so is not a hedge:
+    </p>
+
     <ul>
-        <li><a href="https://git-scm.com/docs/git-notes">Git notes documentation</a></li>
-        <li><a href="/guides/ai-code-provenance/">h5i AI provenance guide</a></li>
+      <li><strong>Your own code, your own agent, a task you are watching.</strong> The threat model is a mess, not an adversary, and a worktree contains a mess perfectly well.</li>
+      <li><strong>Parallel edits where the only conflict is the working tree.</strong> This is what the feature was built for.</li>
+      <li><strong>A host that cannot enforce anything better.</strong> h5i's <code>workspace</code> tier is exactly a worktree with no confinement, and it is labelled that way rather than dressed up. The console greys it out to say the evidence is weak.</li>
     </ul>
 
+    <h2>When it quietly stops being enough</h2>
+
+    <p>
+      The line is not "when the code is malicious", because almost nobody thinks their code is
+      malicious. It is earlier than that:
+    </p>
+
+    <ul>
+      <li><strong>The moment you install dependencies you did not audit.</strong> A lockfile is a hyperlink to code nobody in the review read, and its install scripts run as you.</li>
+      <li><strong>The moment the agent reads text you did not write.</strong> A README, an issue comment, a fetched page. A worktree has nothing to say about a prompt-injected agent, because the injection does not need to escape a directory.</li>
+      <li><strong>The moment you stop watching.</strong> The whole value of an agent is that you are doing something else, and that is exactly when "I would have noticed" stops being true.</li>
+      <li><strong>The moment the code came from someone else.</strong> A pull request from a stranger in a worktree is that stranger's code with your credentials.</li>
+    </ul>
+
+    <h2>The thirty-second version</h2>
+
+    <p>
+      Ask what happens if the process in that directory does something you did not intend. If the
+      answer is "I get a messy diff", a worktree is correct and a box is overhead. If the answer
+      involves your credentials, your network, or the rest of your filesystem, the directory was
+      never the boundary you needed.
+    </p>
+
+
+    <h2>FAQ</h2>
+    <div class="faq">
+      <h3>Is a git worktree a sandbox?</h3>
+      <p>No. A worktree gives you a separate working directory, index and HEAD, sharing the object store. That is a statement about where files live. The process still runs with your user's filesystem access, your network, your environment and your credentials.</p>
+
+      <h3>Does an h5i box replace worktrees?</h3>
+      <p>No, it builds on them. A box created from your own repository is a real git worktree on its own branch sharing the object store, which is what lets h5i box apply land the work back locally. The worktree is the substrate; the enforced policy is what is added on top.</p>
+
+      <h3>When is a worktree still the right choice?</h3>
+      <p>When it is your own code, your own agent, and a task you are watching, where the threat model is a mess rather than an adversary. Also when the host cannot enforce anything stronger, which h5i models honestly as the workspace tier and greys out in the console to say the evidence is weak.</p>
+
+      <h3>What is a detached box?</h3>
+      <p>A box created from a URL, a pull request or --new. It gets a repository of its own, your repository is neither read nor written after creation, and the inherited origin remote is dropped so the box arrives holding no network handle. apply and rebase refuse there and point at export.</p>
+
+    </div>
+
     <div class="next-up">
-      <span class="label">Next in the cluster</span>
-      <a href="/blog/git-communication-layer-ai-agents/">
-        <h3>Git as the Communication Layer for AI Agents</h3>
-        <p>From Git-backed provenance to Git-backed handoffs: how h5i uses refs for agent coordination.</p>
+      <span class="label">Read next</span>
+      <a href="/blog/pr-body-ai-code-review/">
+        <h3>Review a pull request by running it</h3>
+        <p>The case where a worktree is exactly the wrong container: somebody else's branch.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Try h5i on your next AI-assisted branch</h3>
-      <p>Create a sandboxed workspace, capture the run, and post a review-ready PR brief. h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <h3>Find out what your host can enforce</h3>
+      <p><code>h5i box probe</code> first, then <code>h5i box .</code>. If the answer is only <code>workspace</code>, h5i says so plainly.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
-      <a href="/guides/" class="btn btn-ghost">Read the guides</a>
+      <a href="/manual/" class="btn btn-ghost">Read the manual</a>
     </div>
   </article>
 </main>
@@ -267,12 +292,11 @@ $ h5i share pull    # pull them back, union-merging where the refs allow</pre></
     <div class="brand">h5i<span class="red"> / high-five</span></div>
     <nav class="links">
       <a href="/">Home</a>
-      <a href="/guides/">Guides</a>
       <a href="/blog/">Blog</a>
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
       <a href="/manual/">Manual</a>
     </nav>
-    <div class="legal">Apache 2.0 · Built with Rust</div>
+    <div class="legal">Apache 2.0 &#183; Built with Rust</div>
   </div>
 </footer>
 

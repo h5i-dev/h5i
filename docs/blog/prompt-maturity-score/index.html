@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>How to Measure Prompt Quality Offline: the h5i Prompt Maturity Score</title>
-  <meta name="description" content="Measure and score prompt quality without an LLM. h5i turns each AI commit's prompt into an explainable 0–100 score from seven classical-NLP signals, offline, deterministic, no API call.">
-  <meta name="keywords" content="measure prompt quality, prompt quality score, score prompt quality without llm, prompt engineering metrics, offline prompt scoring, evaluate prompts, prompt maturity score, h5i prompt score">
+  <title>Teaching an Agent to Use Its Own Box | h5i</title>
+  <meta name="description" content="The agent skill ships inside the h5i binary, so it cannot document flags the installed binary does not have. Here is what it tells an agent, and how the agent knows it is already inside a box.">
+  <meta name="keywords" content="agent skill, claude code skill, h5i skill install, agent onboarding, H5I_ENV_ID, in-box detection, agent documentation drift">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -17,32 +17,95 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="How to Measure Prompt Quality Offline: the h5i Prompt Maturity Score">
-  <meta property="og:description" content="Score prompt quality without an LLM: an offline, deterministic 0–100 measure of how well an engineer prompted an AI coding agent, from seven classical-NLP signals.">
+  <meta property="og:title" content="Teaching an Agent to Use Its Own Box">
+  <meta property="og:description" content="An agent needs to know it is in a box and what that means. The skill is embedded in the binary so it can never describe a version you do not have.">
   <meta property="og:url" content="https://h5i.dev/blog/prompt-maturity-score/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta property="article:published_time" content="2026-06-17">
+  <meta property="article:published_time" content="2026-06-22">
+  <meta property="article:modified_time" content="2026-08-07">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="How to Measure Prompt Quality Offline: h5i Prompt Maturity Score">
-  <meta name="twitter:description" content="Score prompt quality without an LLM, offline, deterministic, explainable. Here's exactly how the 0–100 number is built.">
+  <meta name="twitter:title" content="Teaching an Agent to Use Its Own Box">
+  <meta name="twitter:description" content="An agent needs to know it is in a box and what that means. The skill is embedded in the binary so it can never describe a version you do not have.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "TechArticle",
-    "headline": "How to Measure Prompt Quality Offline: the h5i Prompt Maturity Score",
-    "description": "Measure and score prompt quality without an LLM. h5i turns the prompt behind each AI commit into an explainable 0–100 score using only classical NLP (readability indices, lexical diversity, and curated lexicons) with anti-gaming guards and balance gates, and no model call.",
-    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
-    "datePublished": "2026-06-17",
-    "dateModified": "2026-06-26",
-    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/prompt-maturity-score/"},
-    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-    "keywords": "measure prompt quality, prompt quality score, score prompt quality without llm, prompt engineering metrics, offline prompt scoring, prompt maturity score"
-  }
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Teaching an Agent to Use Its Own Box",
+  "description": "The agent skill ships inside the h5i binary, so it cannot document flags the installed binary does not have. Here is what it tells an agent, and how the agent knows it is already inside a box.",
+  "author": {
+    "@type": "Person",
+    "name": "Koukyosyumei",
+    "url": "https://github.com/Koukyosyumei"
+  },
+  "datePublished": "2026-06-22",
+  "dateModified": "2026-08-07",
+  "publisher": {
+    "@type": "Organization",
+    "name": "h5i",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://h5i.dev/_static/logo.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://h5i.dev/blog/prompt-maturity-score/"
+  },
+  "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+  "keywords": "agent skill, claude code skill, h5i skill install, agent onboarding, H5I_ENV_ID, in-box detection, agent documentation drift"
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "How do I give Claude Code or Codex the h5i skill?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Run h5i skill install, which writes it into ~/.claude/skills/h5i or the Codex equivalent. npx skills add h5i-dev/h5i installs the same bytes if you do not have the binary yet."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why is the skill embedded in the binary?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "So it cannot document flags the installed binary does not have. An agent acts on documentation without the hesitation a human would have, so a stale flag costs a run and produces a bug report about something removed two releases ago."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How does an agent know it is running inside a box?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "By the presence of H5I_ENV_ID. h5i also sets H5I_ENV_POLICY_DIGEST for the policy actually enforced and H5I_ENV_CAPTURE_SPOOL for the box's only write window. These are set by h5i, not by you."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How does the in-box agent get the skill?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "It runs h5i skill install against the binary already in the box. Nothing is baked into an image and nothing is copied from host to box, so there is no second copy with its own lifetime."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does the skill make the agent behave safely?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. A skill is context, not enforcement. An agent that ignores every word of it is contained by the policy just the same, and containment does not depend on the agent having read anything."
+      }
+    }
+  ]
+}
   </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -52,20 +115,7 @@
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "How to Measure Prompt Quality Offline", "item": "https://h5i.dev/blog/prompt-maturity-score/"}]}
-  </script>
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "FAQPage",
-    "mainEntity": [
-      {"@type": "Question", "name": "How is prompt quality scored without an LLM?", "acceptedAnswer": {"@type": "Answer", "text": "h5i scores the prompt text with classical NLP only: it counts observable features (code references, constraint and verification keywords, lexical diversity via an adaptive MATTR, readability inside a target band, length) and combines them with seven fixed weights that sum to 1.0. There is no model call, no network, and no randomness, so the same prompt always produces the same 0-100 score, in a git hook, in CI, or in a PR render."}},
-      {"@type": "Question", "name": "Why not use an LLM to judge the prompt instead?", "acceptedAnswer": {"@type": "Answer", "text": "An LLM judge understands meaning but costs an API call per prompt, drifts when re-run or when a model is deprecated, hides its rubric, and can be prompt-injected by the very text it grades. The fixed-weight composite trades semantic understanding for being free, deterministic, explainable, and gameable only in the specific ways its guards close. The two are complementary, not competing."}},
-      {"@type": "Question", "name": "Won't keyword counting just be gamed by stuffing the lexicons in?", "acceptedAnswer": {"@type": "Answer", "text": "Four guards sit on top of the weighted sum: a repetition penalty (a multiplier floored at 0.6 when bigrams repeat), per-category caps so the fourth 'must' adds nothing, balance gates (no constraints caps you below 'advanced' at 69; low specificity caps at 79), and hard length caps. You can't farm a single signal by repetition or pad your way past a length floor. You have to actually cover different ground."}},
-      {"@type": "Question", "name": "Does a high score mean the prompt was correct?", "acceptedAnswer": {"@type": "Answer", "text": "No. The score grades the form of the ask, whether it is concrete, bounded, and structured, not its correctness or outcome. A precise, well-bounded instruction to do the wrong thing scores high. Read it as a heuristic signal of prompt craft alongside the test metrics and integrity audit on the same commit, never as a developer rating or a measure of whether the change was right."}},
-      {"@type": "Question", "name": "How is a whole pull request scored from many prompts?", "acceptedAnswer": {"@type": "Answer", "text": "Each commit's prompt is scored independently and the branch score is a length-weighted mean (weight = clamp(words, 20, 250)); prompts are never concatenated, so a pile of weak one-liners can't pool their vocabulary to look mature. The roll-up also tracks coverage and flags the result low-confidence when fewer than 80% of AI commits carried a prompt to score."}}
-    ]
-  }
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Teaching an Agent to Use Its Own Box", "item": "https://h5i.dev/blog/prompt-maturity-score/"}]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -79,424 +129,178 @@
     <li><a href="/">Home</a></li>
     <li><a href="/guides/">Guides</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &#8594;</a></li>
   </ul>
 </nav>
 
 <main class="article-wrap">
   <article class="post">
     <header>
-      <div class="post-eyebrow">Long read · 2026-06-17</div>
-      <h1>How to measure prompt quality offline: the h5i Prompt Maturity Score</h1>
-      <p class="post-deck">
-        <strong>Grade the ask, not the answer.</strong> h5i already records the prompt behind every AI
-        commit; this is the logic that turns those prompts into a single, explainable
-        <strong>0–100 prompt-quality score</strong>, built from seven classical-NLP signals, hardened
-        with anti-gaming guards, and computed fully offline with no LLM call. Here is exactly how the
-        number is made, and why every design choice is a defence against the obvious ways to fake it.
-      </p>
+      <div class="post-eyebrow">Design &#183; 2026-06-22 &#183; rewritten 2026-08-07</div>
+      <h1>Teaching an agent to use its own box</h1>
+      <p class="post-deck">Documentation drift is annoying for humans and actively harmful for agents, because an agent will confidently run the command your docs describe and then report that your tool is broken. So the skill lives inside the binary.</p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
-        <span><strong>Reading time</strong> 11 min</span>
-        <span><strong>Tags</strong> Prompt Engineering · Classical NLP · Provenance</span>
+        <span><strong>Reading time</strong> 6 min</span>
+        <span><strong>Tags</strong> Design &#183; Agents &#183; Documentation</span>
       </div>
     </header>
 
-
-<div class="callout kt-takeaways">
-  <strong>Key takeaways</strong>
-  <ul>
-        <li>The score grades the ask, not the answer: a fixed-weight composite over seven text features, fully deterministic, with no model call.</li>
-        <li>Its defensibility is being explainable and ungameable-by-construction in ways an LLM judge is not.</li>
-        <li>It is a form signal, not a correctness one: a precise-but-wrong prompt scores high, so pair it with tests and audit on the same commit.</li>
-  </ul>
+<div class="callout">
+  <strong>The mechanism.</strong> <code>skills/h5i/</code> is embedded in the binary at build time,
+  so the skill cannot document flags the installed binary does not have. <code>h5i skill
+  install</code> writes it out to <code>~/.claude/skills/h5i</code> or the Codex equivalent,
+  <code>h5i skill show</code> prints a page, and <code>h5i skill path</code> says where an install
+  would write. This is also how the <em>in-box</em> agent gets it: nothing is baked into an image and
+  nothing is copied from host to box.
 </div>
+
+
     <p>
-      Prompt provenance is a core property of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>:
-      not just <em>that</em> a prompt was recorded, but a signal of how well the agent was directed.
-      A pull request from an AI-assisted branch tells you <em>what</em> was asked. Open
-      <code>h5i recall blame</code> or read the PR body and you can see the prompt that triggered each
-      commit. What it doesn't tell you is <em>how well</em> it was asked. Two engineers ship the same
-      feature; one steered the agent with <em>"fix the off-by-one in <code>parse_range()</code> in
-      src/util.rs, add a test for the empty-range case, don't touch the public signature,"</em> the
-      other typed <em>"make it work."</em> Same diff, wildly different craft, and nothing in the
-      review surfaces the difference.
+      Give an agent a tool and it will read whatever documentation it can find, then act on it without
+      the hesitation a human would have. That difference in confidence is what makes documentation
+      drift a different category of problem for agents than for people.
     </p>
 
     <p>
-      The Prompt Maturity Score is how h5i <strong>measures prompt quality</strong> and makes that craft
-      a visible, trackable signal. It scores the <strong>input</strong>, the engineer's ask, not the
-      model's output. And it does so with a hard constraint: <strong>no LLM</strong>, no network, fully
-      deterministic, so you can score prompt quality inside a git hook, in CI, or in a PR render without
-      an API key.
+      A human reading a stale flag tries it, sees an error, and goes looking for the real answer. An
+      agent tries it, sees an error, tries three variations, and then tells you the tool is broken.
+      You lose the run and get a bug report about a flag that was removed two releases ago.
     </p>
 
-    <h2>Why not just ask a model?</h2>
+    <h2>Embed it, so it cannot be wrong about itself</h2>
 
     <p>
-      The obvious implementation is "send the prompt to a judge model and ask it to grade." We
-      rejected that on purpose. Prompt-eval frameworks like PromptBench (arXiv 2312.07910), APE
-      (arXiv 2211.01910), and Promptfoo already do something adjacent, but they score a prompt by
-      <em>running</em> a model and judging its <strong>output</strong>. They need API access, a task
-      dataset, and they cost money and latency on every evaluation. They answer "did the model do
-      well?"
-    </p>
-
-    <p>
-      Prompt maturity answers the complementary question, "did the engineer ask well?", purely
-      from text features. That buys three things a model judge can't: it's <strong>free</strong> (runs
-      on every commit with zero marginal cost), <strong>deterministic</strong> (the same prompt always
-      scores the same, so it's reproducible in CI and won't drift when a model is deprecated), and
-      <strong>explainable</strong> (every point is traceable to a feature you can name). The two
-      approaches are complementary, not competing.
-    </p>
-
-    <p>
-      It's worth being fair to the alternatives rather than dismissing them. There are three honest
-      options for "how well was this prompt written," and each has a real place:
-    </p>
-
-    <div class="tbl-wrap">
-      <table class="data">
-        <thead>
-          <tr><th>Approach</th><th>Good</th><th>Gap</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><strong>Ask an LLM judge</strong></td>
-            <td>Understands meaning; can catch a vague-but-clever ask a lexicon misses; no feature engineering.</td>
-            <td>Costs an API call per prompt; <em>non-deterministic</em> (re-scores drift, and a model deprecation silently moves the baseline); the rubric is opaque; and a prompt that <em>contains instructions</em> is a prompt-injection surface for the judge itself.</td>
-          </tr>
-          <tr>
-            <td><strong>Fixed-weight composite (this)</strong></td>
-            <td>Free, offline, deterministic, every point traceable to a named feature; the same prompt always scores the same in CI; gameable only in ways the guards explicitly close.</td>
-            <td>Sees surface features, not intent; can't tell whether an instruction was <em>correct</em>; tuned for English technical prose.</td>
-          </tr>
-          <tr>
-            <td><strong>No measurement</strong></td>
-            <td>Zero overhead; never wrong because it never claims anything.</td>
-            <td>Prompt craft stays invisible. <em>"Make it work"</em> and a precise, bounded ask leave the same trace, so the difference never enters review and never improves.</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p>
-      The third row is the real baseline. Today most teams ship AI-assisted code with the prompt
-      either unrecorded or recorded but ungraded, so the gap between a disciplined ask and a lazy one
-      is structurally unobservable. A deterministic proxy that is sometimes blunt still beats a blank,
-      because it makes the axis exist. The bar this metric has to clear is not "as good as a human
-      reviewer reading the prompt"; it's "better than nothing, cheaply, on every commit."
-    </p>
-
-    <h2>The caveat everything rests on: readability is not maturity</h2>
-
-    <p>
-      The first instinct when you hear "score the writing quality of a prompt" is to reach for
-      readability indices, Flesch Reading Ease, Flesch–Kincaid grade level, Gunning Fog. They're
-      well-studied, classical, and cheap. They're also a trap.
-    </p>
-
-    <p>
-      A terse, precise technical ask is an <em>excellent</em> prompt that scores <em>badly</em> on raw
-      reading-ease. <em>"Fix the off-by-one in <code>parse_range()</code> in src/util.rs, add a test"</em>
-      is dense with file paths and identifiers, exactly the tokens that wreck a syllable counter and
-      tank a reading-ease score. If readability drove the number, the best prompts would be punished
-      for being concrete. The literature on these indices is explicit about this: they are
-      length-sensitive and penalise terse technical text.
-    </p>
-
-    <p>
-      So readability is deliberately the <strong>smallest-weighted</strong> signal, it is applied as a
-      <strong>band</strong> (both extremes penalised, not "higher is better"), and it is computed on a
-      <strong>code-masked</strong> copy of the prompt, every path, <code>func()</code> call, URL, and
-      <code>snake_case</code> identifier is replaced with a neutral token before a single syllable is
-      counted. That one decision, treating readability as a bounded sub-signal rather than the score
-      itself, is the single most important guard against the metric punishing good engineering.
-    </p>
-
-    <h2>The composite: seven signals, fixed weights</h2>
-
-    <p>
-      The score is a weighted sum of seven sub-signals, each normalised to <code>0.0–1.0</code>. The
-      weights were locked deliberately and sum to exactly 1.0 (the code asserts it in a test). The
-      ranking is the whole philosophy in one table, what a reviewer actually wants to see ranks
-      highest; the signal most likely to mislead ranks lowest.
-    </p>
-
-    <div class="tbl-wrap">
-      <table class="data">
-        <thead>
-          <tr><th>Signal</th><th>Weight</th><th>What it captures</th></tr>
-        </thead>
-        <tbody>
-          <tr><td><strong>Specificity</strong></td><td>24%</td><td>Concreteness, code refs, identifiers, quoted symbols, numbers, <em>minus</em> a vagueness penalty for weak words.</td></tr>
-          <tr><td><strong>Control</strong></td><td>24%</td><td>Did the engineer bound the agent? Constraints, output shape, acceptance criteria, edge cases, scope, safety.</td></tr>
-          <tr><td><strong>Context</strong></td><td>18%</td><td>Background, the goal / why, the current state, grounding in real repo entities.</td></tr>
-          <tr><td><strong>Structure</strong></td><td>10%</td><td>Decomposition, bullets, numbered steps, headings, code fences, multi-sentence shape.</td></tr>
-          <tr><td><strong>Diversity</strong></td><td>10%</td><td>Lexical richness (adaptive MATTR), non-repetitive, not phrase-farmed.</td></tr>
-          <tr><td><strong>Clarity</strong></td><td>8%</td><td>Readability inside a target band (trapezoid, both extremes penalised).</td></tr>
-          <tr><td><strong>Adequacy</strong></td><td>6%</td><td>Length in a sweet spot, not one word, not a 1,200-word wall.</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p>
-      Specificity and control dominate at 24% each because they are what a manager actually wants to
-      confirm: <em>the engineer was concrete, and they bounded the agent</em>. Clarity is the quietest
-      voice at 8% precisely because it's the signal most likely to mislead on technical text.
-    </p>
-
-    <h3>Why the weights are hand-set, not learned</h3>
-
-    <p>
-      The obvious "modern" move would be to learn these weights from data, fit a regression against
-      some label of prompt quality. We didn't, and the reason is the whole point of the metric. A
-      learned weight vector is only as honest as its training labels, and "good prompt" has no
-      ground-truth dataset; you'd be fitting against either an LLM judge (reintroducing the
-      nondeterminism and opacity we set out to avoid) or human ratings (expensive, subjective, and
-      drifting). Worse, learned weights are a moving target: retrain on new data and last quarter's
-      scores silently change, so the number stops being comparable over time.
-    </p>
-
-    <p>
-      Fixed weights that sum to exactly 1.0 (the code asserts it in a unit test) buy two properties a
-      learned model can't. The score is <strong>auditable</strong>: anyone can read the table, see
-      that specificity is worth 24%, and disagree on the record rather than litigating a black box. And
-      it is <strong>stable</strong>: a prompt scored today scores the same next year, which is what
-      makes "prompt maturity trended up this quarter" a sentence that means something. The cost is that
-      the weights encode <em>our</em> opinion of what matters; that opinion is wrong sometimes, but it
-      is at least <em>legible</em> and arguable, which a fitted coefficient is not.
-    </p>
-
-    <h3>How each signal is computed</h3>
-
-    <p>
-      Every signal is built from <strong>counts of features in the prompt text</strong>, then squashed
-      to <code>0–1</code>. A few are worth seeing concretely:
-    </p>
-
-    <ul>
-      <li>
-        <strong>Specificity</strong> = concreteness − vagueness. Concreteness is a capped blend of code
-        references (40%), action verbs (22%), quoted symbols (20%), and numbers (18%). Vagueness comes
-        from the NALABS / Femmer "requirements smells" lexicon, words like <em>appropriate</em>,
-        <em>robust</em>, <em>somehow</em>, <em>as needed</em>, whose density per 100 words (saturating
-        at roughly eight weak words per hundred) is subtracted at half weight. So vagueness can pull
-        specificity down but never invert it; piling on weak words hurts, but the floor is concreteness
-        you actually demonstrated.
-      </li>
-      <li>
-        <strong>Control</strong> rewards <em>breadth</em> across categories: constraints
-        (<code>must</code>, <code>only</code>, <code>without</code>), verification (<code>test</code>,
-        <code>assert</code>, <code>acceptance</code>), output shape (<code>json</code>,
-        <code>signature</code>, <code>schema</code>), edge cases, scope, and safety. Hitting many
-        categories beats hammering one.
-      </li>
-      <li>
-        <strong>Diversity</strong> uses an <em>adaptive MATTR</em> (Moving-Average Type-Token Ratio)
-        with a window that scales to prompt length. Short prompts fall back to a confidence-weighted
-        type-token ratio pulled toward a neutral 0.5, a five-word prompt has no room to demonstrate
-        vocabulary, so it's neither rewarded nor punished for it.
-      </li>
-      <li>
-        <strong>Clarity</strong> maps Flesch–Kincaid grade and Flesch reading-ease through a
-        <em>trapezoid</em>: full credit for clear technical English (FK grade ≈ 7–13), tapering for
-        both a childishly-simple ask and a tangled run-on, and a neutral 0.6 for prompts too short to
-        estimate reliably.
-      </li>
-    </ul>
-
-    <div class="callout">
-      <strong>The cap is the trick.</strong> Every category feeds the score through a
-      <code>cap_ratio(count, cap)</code>, a linear ramp that saturates at a small cap (often 3 or 4).
-      So the fourth <code>must</code> in a prompt adds nothing. No single lexicon can farm a whole
-      signal by repetition; you have to actually cover different ground.
-    </div>
-
-    <h2>Anti-gaming: the guards that sit on top</h2>
-
-    <p>
-      A naïve weighted sum of keyword counts is trivially gameable, paste the lexicons into your
-      prompt and score 100. The interesting engineering is the layer that makes that not work. Four
-      guards sit on top of the weighted sum, in order:
-    </p>
-
-    <ol>
-      <li>
-        <strong>Repetition penalty.</strong> The fraction of bigrams that are exact repeats becomes a
-        multiplier (floored at 0.6). <em>"must test format must test format"</em> gets multiplied down;
-        phrase-farming is detected and punished directly.
-      </li>
-      <li>
-        <strong>Balance gates.</strong> You cannot look mature on one axis alone. <em>Control</em> is a
-        <strong>hard gate</strong>: a prompt that sets no constraints or acceptance criteria is capped
-        below "advanced" (≤ 69) no matter how concrete it is. Low specificity additionally caps at 79, so
-        you can't be "exemplary" while vague.
-      </li>
-      <li>
-        <strong>Hard length caps.</strong> Under 8 words caps at 20; under 15 words caps at 45. A
-        1,200-word unstructured wall caps at 75, that's a dump, not a mature prompt. Keyword density
-        can't buy its way past a length floor.
-      </li>
-      <li>
-        <strong>The final clamp</strong> to <code>0–100</code>.
-      </li>
-    </ol>
-
-    <p>
-      The balance gates have a subtlety worth calling out, because it's where the metric earns its
-      keep. An earlier version hard-capped any prompt with weak <em>context</em>. But a prompt like
-      <em>"run <code>cargo test</code>, fix the clippy warning in src/foo.rs, don't change the
-      signature"</em> is a perfectly legitimate <strong>tactical</strong> ask, the agent already holds
-      the repo context, so demanding a "why" paragraph would be punishing good practice. So context
-      became a <strong>soft</strong> gate: a prompt that is already both specific (≥ 0.6) and bounded
-      (control ≥ 0.5) is exempt from the context cap. Weak context still surfaces as a
-      <em>diagnostic flag</em>, it just no longer drags a crisp tactical prompt into mediocrity.
-    </p>
-
-    <h2>From one prompt to a whole branch</h2>
-
-    <p>
-      A PR has many commits. The branch score is a <strong>length-weighted mean</strong> of the
-      per-prompt scores (weight = <code>clamp(words, 20, 250)</code>), and prompts are
-      <strong>never concatenated</strong>. That last detail matters: if you glued every prompt into one
-      blob, a pile of weak one-liners would pool their vocabulary and structure and read as mature.
-      Scoring each prompt independently and taking a weighted mean means one rambling prompt can't
-      dominate, and a disciplined engineer is rewarded for <em>every</em> crisp ask.
-    </p>
-
-    <p>
-      The roll-up also tracks <strong>coverage</strong>, how many AI commits actually carried a prompt
-      to score. If fewer than 80% did, the result is flagged low-confidence, because a score built
-      from a minority of commits shouldn't be read as a verdict on the branch.
-    </p>
-
-    <h2>What it looks like in a PR</h2>
-
-    <p>
-      The score renders right under the hero of an <code>h5i share pr post</code> body, a screenshot-clean
-      headline with the per-signal detail one click away:
+      The fix is structural rather than procedural. <code>skills/h5i/</code> is compiled into the
+      binary at build time. There is no version of h5i that can hand out a skill describing a
+      different version of h5i, because the skill and the code were built together from the same tree.
     </p>
 
     <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">PR body</span></div>
-      <div class="terminal-body"><pre><span class="t-bold">&gt; [!NOTE]</span>
-<span class="t-out">&gt; 🌳 <span class="t-bold">Prompt maturity: 81/100</span> · <em>advanced</em> · 7 prompts scored (100% of AI commits)</span>
-<span class="t-out">&gt; 🔧 <em>Recurring weak spots: weak context.</em></span>
-<span class="t-out">&gt; <em>Heuristic signal of prompt craft — not a developer rating.</em></span>
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i skill install</span>         <span class="t-cmt"># write it into ~/.claude/skills/h5i (or ~/.codex)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i skill show</span>            <span class="t-cmt"># print SKILL.md</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i skill path</span>            <span class="t-cmt"># where an install would write</span>
 
-<span class="t-cmt">▼ 📊 heuristic breakdown</span>
-<span class="t-out">  Specificity                 ████████░░  0.82</span>
-<span class="t-out">  Control / acceptance        ████████░░  0.79</span>
-<span class="t-out">  Context grounding           ████░░░░░░  0.41</span>
-<span class="t-out">  Structure                   ███████░░░  0.68</span>
-<span class="t-out">  Lexical diversity           ███████░░░  0.71</span>
-<span class="t-out">  Clarity (readability band)  ████████░░  0.80</span>
-<span class="t-out">  Length adequacy             ██████████  1.00</span></pre></div>
+<span class="t-prompt">$</span> <span class="t-cmd">npx skills add h5i-dev/h5i</span>  <span class="t-cmt"># same bytes, if you do not have the binary yet</span></pre></div>
     </div>
 
     <p>
-      Note the disclaimer baked into the render: <em>"Heuristic signal of prompt craft, not a
-      developer rating."</em> That line is not decoration. The score is an offline proxy over prompt
-      text, it is not a performance metric, not a leaderboard rank, and the diagnostic flags are
-      deliberately <em>descriptive</em> ("weak context", "no acceptance criteria"), never prescriptive.
-      We don't hand engineers a keyword list to stuff, because the moment the metric becomes a target
-      to optimise, it stops measuring anything real.
+      The same property covers the man page and the manual, which are generated from the CLI
+      definition and diffed in CI, so a new flag that nobody documented fails the build rather than
+      shipping.
     </p>
 
-    <h2>Where the score is blind</h2>
+    <h2>The in-box agent gets it the same way</h2>
 
     <p>
-      Knowing the failure modes is part of using the number responsibly. The score grades the
-      <em>form</em> of the ask, never its correctness or outcome, so a handful of cases are
-      structurally invisible to it:
-    </p>
-
-    <ul>
-      <li>
-        <strong>Precise and wrong.</strong> A confident, specific, fully-bounded instruction to do the
-        wrong thing scores <em>high</em>. The metric measures how well the agent was steered, not
-        whether it was steered somewhere good. Empirical correctness is the job of the test metrics
-        and integrity audit on the <a href="../from-git-blame-to-ai-blame/">same commit</a>, not of this signal.
-      </li>
-      <li>
-        <strong>Mentioning is not requiring.</strong> The lexicons count tokens, so a prompt that
-        says the word "test" without actually asking for one still banks a little verification credit.
-        The breadth requirement and the small per-category cap blunt this (one keyword can't carry a
-        signal), but a determined writer can still surface-dress a thin ask a few points above its true
-        rigour.
-      </li>
-      <li>
-        <strong>Context it can't verify.</strong> The soft context gate exempts a crisp tactical
-        prompt on the assumption that the agent already holds the repo context. The score can only see
-        that the prompt didn't restate it; it cannot confirm the context was actually sufficient. A
-        terse ask against a model that had <em>lost</em> the thread looks identical to one against a
-        model that had it.
-      </li>
-      <li>
-        <strong>English technical prose only.</strong> Readability indices and the curated lexicons are
-        tuned for English. A prompt in another language, one that is mostly pasted log output, or one
-        dominated by non-Latin identifiers will score noisily: the code-masking helps with
-        identifiers, but the band and lexicon assumptions don't transfer cleanly.
-      </li>
-      <li>
-        <strong>Steering that happened off-commit.</strong> The branch roll-up flags low coverage when
-        fewer than 80% of AI commits carried a prompt, but it can't recover steering that lived in a
-        chat thread, a design doc, or a voice call and only landed as terse confirmations in the
-        commits. Such a branch will under-score, correctly flagged as low-confidence rather than
-        silently wrong.
-      </li>
-    </ul>
-
-    <p>
-      None of these are bugs to patch; they are the boundary of what a text-feature proxy can claim.
-      The honest framing is the one baked into the render: a <em>heuristic signal of prompt craft</em>,
-      read alongside the tests and the diff, not in place of them.
-    </p>
-
-    <h2>Conclusion: make the ask reviewable</h2>
-
-    <p>
-      The Prompt Maturity Score is a deliberately modest instrument: seven counted features, seven
-      fixed weights that sum to one, four guards, and a clamp, with no model, no network, and no randomness.
-      That modesty is the design. Because it's deterministic it belongs in CI; because every point
-      traces to a named feature it survives an argument; because the weights are hand-set and public
-      you can disagree with them out loud instead of reverse-engineering a black box. It will never tell
-      you whether a prompt was <em>right</em>. It tells you whether the engineer was concrete and
-      bounded the agent, and it tells you the same way every time.
+      This is where the design earns its keep, and it is a small detail with a large consequence.
     </p>
 
     <p>
-      The point was never the number on its own. It's that "how well was this agent steered?" stops
-      being a vibe and becomes a column you can sort, trend, and review next to the diff and the test
-      result. Once prompt craft is visible, it can be coached, compared, and improved, which is the
-      only reason to measure anything.
+      The obvious way to give an in-box agent the skill is to bake it into the container image, or to
+      copy it from the host at box creation. Both create a second copy with its own lifetime, which is
+      to say both reintroduce drift by a different route: an image built last month carries last
+      month's skill.
     </p>
+
+    <p>
+      Instead the in-box agent runs <code>h5i skill install</code> against the binary that is already
+      there. One source, one lifetime, and no host-to-box copy at all, which also keeps the transfer
+      surface at zero.
+    </p>
+
+    <h2>How an agent knows it is inside</h2>
+
+    <p>
+      An agent behaves differently in a box, so it needs to be able to tell. h5i sets a handful of
+      environment variables inside, and the presence of one of them is the signal:
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Variable</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>H5I_ENV_ID</code></td><td>The box's id. Its presence is how the skill decides you are inside.</td></tr>
+          <tr><td><code>H5I_ENV_POLICY_DIGEST</code></td><td>The digest of the policy actually enforced.</td></tr>
+          <tr><td><code>H5I_ENV_CAPTURE_SPOOL</code></td><td>The box's only write window for staging receipt records.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      These are set by h5i and are not for you to set yourself. Read them to detect a box; setting one
+      by hand tells the skill a lie about where it is running.
+    </p>
+
+    <p>
+      What the agent does with that knowledge is mostly about not wasting time. Inside a box there is
+      no point asking permission to run a build, because the boundary already decided what a build can
+      do. There is no point trying to reach a host outside the allowlist. And there is no point
+      attempting to write outside <code>$WORK</code>, which will fail in a way that reads like a
+      filesystem problem and is a policy one.
+    </p>
+
+    <h2>What the skill deliberately does not do</h2>
+
+    <p>
+      It documents h5i and stops there. Driving the browser is <code>agent-browser</code>'s job, and
+      its own <code>--help</code> is the verb table; wrapping forty automation verbs in a second layer
+      of documentation would guarantee exactly the drift this whole design exists to prevent.
+    </p>
+
+    <p>
+      It also does not try to make the agent behave well. A skill is context, not enforcement. An
+      agent that ignores every word of it is contained by the policy just the same, and that ordering
+      matters: the containment does not depend on the agent having read anything.
+    </p>
+
+    <h2>The general version</h2>
+
+    <p>
+      If you ship a tool that agents will use, the thing worth stealing here is not the specific
+      command. It is the idea that <strong>the documentation an agent reads should be an artefact of
+      the build</strong>, not a file that travels separately and rots at its own pace.
+    </p>
+
+    <p>
+      Humans tolerate stale docs because they hedge. Agents do not hedge, so the cost of drift lands
+      differently, and it is worth spending a build step to remove it.
+    </p>
+
 
     <h2>FAQ</h2>
-
     <div class="faq">
-      <p><strong>How is prompt quality scored without an LLM?</strong> h5i scores the prompt text with classical NLP only: it counts observable features (code references, constraint and verification keywords, lexical diversity via an adaptive MATTR, readability inside a target band, length) and combines them with seven fixed weights that sum to 1.0. There is no model call, no network, and no randomness, so the same prompt always produces the same 0–100 score, in a git hook, in CI, or in a PR render.</p>
-      <p><strong>Why not use an LLM to judge the prompt instead?</strong> An LLM judge understands meaning but costs an API call per prompt, drifts when re-run or when a model is deprecated, hides its rubric, and can be prompt-injected by the very text it grades. The fixed-weight composite trades semantic understanding for being free, deterministic, explainable, and gameable only in the specific ways its guards close. The two are complementary, not competing.</p>
-      <p><strong>Won't keyword counting just be gamed by stuffing the lexicons in?</strong> Four guards sit on top of the weighted sum: a repetition penalty (a multiplier floored at 0.6 when bigrams repeat), per-category caps so the fourth <code>must</code> adds nothing, balance gates (no constraints caps you below "advanced" at 69; low specificity caps at 79), and hard length caps. You can't farm a single signal by repetition or pad your way past a length floor. You have to actually cover different ground.</p>
-      <p><strong>Does a high score mean the prompt was correct?</strong> No. The score grades the <em>form</em> of the ask, whether it is concrete, bounded, and structured, not its correctness or outcome. A precise, well-bounded instruction to do the wrong thing scores high. Read it as a heuristic signal of prompt craft alongside the test metrics and integrity audit on the same commit, never as a developer rating or a measure of whether the change was right.</p>
-      <p><strong>How is a whole pull request scored from many prompts?</strong> Each commit's prompt is scored independently and the branch score is a length-weighted mean (weight = <code>clamp(words, 20, 250)</code>); prompts are never concatenated, so a pile of weak one-liners can't pool their vocabulary to look mature. The roll-up also tracks coverage and flags the result low-confidence when fewer than 80% of AI commits carried a prompt to score.</p>
+      <h3>How do I give Claude Code or Codex the h5i skill?</h3>
+      <p>Run <code>h5i skill install</code>, which writes it into ~/.claude/skills/h5i or the Codex equivalent. <code>npx skills add h5i-dev/h5i</code> installs the same bytes if you do not have the binary yet. <code>h5i skill path</code> prints where an install would write.</p>
+
+      <h3>Why is the skill embedded in the binary?</h3>
+      <p>So it cannot document flags the installed binary does not have. An agent acts on documentation without the hesitation a human would have, so a stale flag costs you a run and produces a bug report about something removed two releases ago. Embedding makes the skill and the code one artefact.</p>
+
+      <h3>How does an agent know it is running inside a box?</h3>
+      <p>By the presence of H5I_ENV_ID. h5i also sets H5I_ENV_POLICY_DIGEST for the policy actually enforced and H5I_ENV_CAPTURE_SPOOL for the box's only write window. These are set by h5i; setting one by hand tells the skill a lie about where it is running.</p>
+
+      <h3>How does the in-box agent get the skill?</h3>
+      <p>It runs h5i skill install against the binary that is already in the box. Nothing is baked into an image and nothing is copied from host to box, so there is no second copy with its own lifetime and no host-to-box transfer surface.</p>
+
+      <h3>Does the skill make the agent behave safely?</h3>
+      <p>No, and it is not meant to. A skill is context, not enforcement. An agent that ignores every word of it is contained by the policy just the same, and that ordering is deliberate: containment does not depend on the agent having read anything.</p>
+
     </div>
 
     <div class="next-up">
       <span class="label">Read next</span>
-      <a href="/blog/from-git-blame-to-ai-blame/">
-        <h3>From git blame to AI blame</h3>
-        <p>The score grades the prompt; AI blame attaches that prompt, plus model, agent, and test result, to every line it produced.</p>
+      <a href="/blog/agent-sandbox-env/">
+        <h3>The agent sandbox with an output gate</h3>
+        <p>What the skill is describing: how a box is made, what it pins, and what comes out.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Make prompt craft a visible signal</h3>
-      <p>Try h5i on your next AI-assisted branch: create a sandboxed workspace, capture the run, and post a review-ready PR brief.</p>
+      <h3>Install the skill</h3>
+      <p><code>h5i skill install</code> writes the version that matches your binary, because it came out of it.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
-      <a href="/" class="btn btn-ghost">Back to docs</a>
+      <a href="/manual/" class="btn btn-ghost">Read the manual</a>
     </div>
   </article>
 </main>
@@ -510,7 +314,7 @@
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
       <a href="/manual/">Manual</a>
     </nav>
-    <div class="legal">Apache 2.0 · Built with Rust</div>
+    <div class="legal">Apache 2.0 &#183; Built with Rust</div>
   </div>
 </footer>
 

@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>The h5i Blog: Auditable Workspaces for AI Agents</title>
-  <meta name="description" content="Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, and compressed tool logs, all Git-backed, in your repo.">
-  <meta name="keywords" content="auditable workspaces for ai agents, ai agent sandbox, claude code blog, ai code review, prompt provenance, agent confinement, compressed tool logs, prompt injection detection, h5i blog">
+  <title>The h5i Blog: Contained Development Environments for AI Agents</title>
+  <meta name="description" content="Engineering posts on containing coding agents: sandbox isolation tiers, egress allowlists enforced at L3/L4, sealed execution receipts, and how to review work an agent did while you were not watching.">
+  <meta name="keywords" content="ai agent sandbox, coding agent containment, isolation tiers, egress allowlist, execution receipt, review ai generated code, prompt injection containment, claude code sandbox, h5i blog">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -17,57 +17,217 @@
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="The h5i Blog: Auditable Workspaces for AI Agents">
-  <meta property="og:description" content="Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, and compressed tool logs, Git-backed, in your repo.">
+  <meta property="og:title" content="The h5i Blog: Contained Development Environments for AI Agents">
+  <meta property="og:description" content="Isolation tiers, egress allowlists, sealed receipts, and how to review work an agent did while you were not watching.">
   <meta property="og:url" content="https://h5i.dev/blog/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="The h5i Blog: Auditable Workspaces for AI Agents">
-  <meta name="twitter:description" content="Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, and compressed tool logs.">
+  <meta name="twitter:title" content="The h5i Blog">
+  <meta name="twitter:description" content="Isolation tiers, egress allowlists, sealed receipts, and reviewing work an agent did unattended.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "Blog",
-    "name": "The h5i Blog",
-    "description": "Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, compressed tool logs, AI provenance, and per-line AI blame, all Git-backed.",
-    "url": "https://h5i.dev/blog/",
-    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
-    "blogPost": [
-      {"@type": "BlogPosting", "headline": "Programmable Agent Orchestration: the h5i-orchestra eDSL", "datePublished": "2026-07-11", "url": "https://h5i.dev/blog/programmable-agent-orchestration-edsl/"},
-      {"@type": "BlogPosting", "headline": "Write Your First Score: an h5i-orchestra Tutorial", "datePublished": "2026-07-11", "url": "https://h5i.dev/blog/write-your-first-orchestra-score/"},
-      {"@type": "BlogPosting", "headline": "Orchestration Patterns Beyond Ensemble", "datePublished": "2026-07-11", "url": "https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/"},
-      {"@type": "BlogPosting", "headline": "Run an AI Agent Ensemble: h5i team", "datePublished": "2026-06-21", "url": "https://h5i.dev/blog/agent-ensembles-with-h5i-team/"},
-      {"@type": "BlogPosting", "headline": "Why AI Agents Need Auditable Workspaces", "datePublished": "2026-06-19", "url": "https://h5i.dev/blog/auditable-workspaces-for-ai-agents/"},
-      {"@type": "BlogPosting", "headline": "How to Measure Prompt Quality Offline: the h5i Prompt Maturity Score", "datePublished": "2026-06-17", "url": "https://h5i.dev/blog/prompt-maturity-score/"},
-      {"@type": "BlogPosting", "headline": "Sandboxing AI Agents, Part 1: Foundations", "datePublished": "2026-06-12", "url": "https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},
-      {"@type": "BlogPosting", "headline": "Sandboxing AI Agents, Part 2: How to Implement One", "datePublished": "2026-06-12", "url": "https://h5i.dev/blog/sandboxing-ai-agents-implementation/"},
-      {"@type": "BlogPosting", "headline": "Sandboxing AI Agents, Part 3: How Popular Sandboxes Differ", "datePublished": "2026-06-12", "url": "https://h5i.dev/blog/sandboxing-ai-agents-landscape/"},
-      {"@type": "BlogPosting", "headline": "Sandboxing AI Agents, Part 4: How h5i Implements It", "datePublished": "2026-06-12", "url": "https://h5i.dev/blog/sandboxing-ai-agents-h5i/"},
-      {"@type": "BlogPosting", "headline": "An Auditable Sandbox for AI Agents", "datePublished": "2026-06-10", "url": "https://h5i.dev/blog/agent-sandbox-env/"},
-      {"@type": "BlogPosting", "headline": "Auditable Workspaces for AI Agents: What h5i Records and Why", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/what-is-ai-aware-version-control/"},
-      {"@type": "BlogPosting", "headline": "Why Git Diffs Are Not Enough for AI-Generated Code", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/"},
-      {"@type": "BlogPosting", "headline": "How to Track Claude Code Prompts and Diffs in Git", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/track-claude-code-prompts-diffs-git/"},
-      {"@type": "BlogPosting", "headline": "How to Review Code Written by AI Agents", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/review-code-written-by-ai-agents/"},
-      {"@type": "BlogPosting", "headline": "Git Notes vs h5i for AI Coding Workflows", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/"},
-      {"@type": "BlogPosting", "headline": "Claude Code Hooks vs Git Hooks", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/"},
-      {"@type": "BlogPosting", "headline": "Git as the Communication Layer for AI Agents", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/git-communication-layer-ai-agents/"},
-      {"@type": "BlogPosting", "headline": "Git-Native Messaging Between AI Coding Agents", "datePublished": "2026-05-31", "url": "https://h5i.dev/blog/i5h-agent-to-agent-messaging/"},
-      {"@type": "BlogPosting", "headline": "Context DAG: Version-Controlled Reasoning for AI Agents", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/context-dag-versioned-agent-reasoning/"},
-      {"@type": "BlogPosting", "headline": "The AI Pull Request Body: h5i's Review Surface for Agent Work", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/pr-body-ai-code-review/"},
-      {"@type": "BlogPosting", "headline": "CVE-2026-33068: When a Repo's settings.json Decides Trust", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/cve-2026-33068-bypass-permissions-settings/"},
-      {"@type": "BlogPosting", "headline": "CVE-2025-59536: Claude Code Trust Dialog Bypass", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/cve-2025-59536-startup-trust-dialog/"},
-      {"@type": "BlogPosting", "headline": "Giving Claude Code Persistent Memory Across Sessions", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/persistent-memory-for-claude-code/"},
-      {"@type": "BlogPosting", "headline": "From Git Blame to AI Blame for AI-Era Code", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/from-git-blame-to-ai-blame/"},
-      {"@type": "BlogPosting", "headline": "One Schema for Every Tool: Structured Output for AI Agents", "datePublished": "2026-06-06", "url": "https://h5i.dev/blog/structured-tool-output-schema/"},
-      {"@type": "BlogPosting", "headline": "Cut Agent Token Usage 95% with h5i Capture", "datePublished": "2026-06-05", "url": "https://h5i.dev/blog/token-reduction-object-store/"},
-      {"@type": "BlogPosting", "headline": "Auditing AI-Generated Code: A Practical Framework", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/auditing-ai-generated-code/"},
-      {"@type": "BlogPosting", "headline": "Detecting Prompt Injection in Agent Reasoning Traces", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/prompt-injection-in-agent-traces/"},
-      {"@type": "BlogPosting", "headline": "Claude Code Uncertainty Heatmap for AI Code Review", "datePublished": "2026-04-15", "url": "https://h5i.dev/blog/uncertainty-heatmap/"}
-    ]
-  }
+{
+  "@context": "https://schema.org",
+  "@type": "Blog",
+  "name": "The h5i Blog",
+  "description": "Engineering posts on contained agentic development environments: sandbox tiers, egress allowlists, execution receipts, and reviewing work an agent did unattended.",
+  "url": "https://h5i.dev/blog/",
+  "publisher": {
+    "@type": "Organization",
+    "name": "h5i",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://h5i.dev/_static/logo.png"
+    }
+  },
+  "blogPost": [
+    {
+      "@type": "BlogPosting",
+      "headline": "Teaching an agent to use its own box",
+      "datePublished": "2026-06-22",
+      "url": "https://h5i.dev/blog/prompt-maturity-score/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Why the sandbox policy is a file, not flags",
+      "datePublished": "2026-06-20",
+      "url": "https://h5i.dev/blog/programmable-agent-orchestration-edsl/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Write your first box profile",
+      "datePublished": "2026-06-18",
+      "url": "https://h5i.dev/blog/write-your-first-orchestra-score/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Watching a box's browser without giving it a port",
+      "datePublished": "2026-06-16",
+      "url": "https://h5i.dev/blog/i5h-agent-to-agent-messaging/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Four shapes a box can take",
+      "datePublished": "2026-06-14",
+      "url": "https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Foundations",
+      "datePublished": "2026-06-12",
+      "url": "https://h5i.dev/blog/sandboxing-ai-agents-foundations/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Implementing kernel-tier confinement",
+      "datePublished": "2026-06-12",
+      "url": "https://h5i.dev/blog/sandboxing-ai-agents-implementation/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "The landscape, compared by threat model",
+      "datePublished": "2026-06-12",
+      "url": "https://h5i.dev/blog/sandboxing-ai-agents-landscape/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "h5i's tier ladder and policy model",
+      "datePublished": "2026-06-12",
+      "url": "https://h5i.dev/blog/sandboxing-ai-agents-h5i/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "The agent sandbox with an output gate",
+      "datePublished": "2026-06-10",
+      "url": "https://h5i.dev/blog/agent-sandbox-env/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Many boxes, one repository",
+      "datePublished": "2026-06-08",
+      "url": "https://h5i.dev/blog/agent-ensembles-with-h5i-team/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Who is driving the browser?",
+      "datePublished": "2026-06-05",
+      "url": "https://h5i.dev/blog/git-communication-layer-ai-agents/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Claude Code hooks vs Git hooks",
+      "datePublished": "2026-06-03",
+      "url": "https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "We built AI blame, then deleted it",
+      "datePublished": "2026-06-02",
+      "url": "https://h5i.dev/blog/from-git-blame-to-ai-blame/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "What is a contained agentic development environment?",
+      "datePublished": "2026-06-01",
+      "url": "https://h5i.dev/blog/what-is-ai-aware-version-control/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Git worktrees vs h5i boxes",
+      "datePublished": "2026-05-30",
+      "url": "https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "How to track what Claude Code actually ran",
+      "datePublished": "2026-05-28",
+      "url": "https://h5i.dev/blog/track-claude-code-prompts-diffs-git/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Making boxes start in seconds, not minutes",
+      "datePublished": "2026-05-26",
+      "url": "https://h5i.dev/blog/token-reduction-object-store/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Review a pull request by running it",
+      "datePublished": "2026-05-24",
+      "url": "https://h5i.dev/blog/pr-body-ai-code-review/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "What a box copies from your config, and what it strips",
+      "datePublished": "2026-05-22",
+      "url": "https://h5i.dev/blog/persistent-memory-for-claude-code/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Reviewing code an AI agent wrote",
+      "datePublished": "2026-05-20",
+      "url": "https://h5i.dev/blog/review-code-written-by-ai-agents/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Why a diff is not enough for AI-generated code",
+      "datePublished": "2026-05-18",
+      "url": "https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "What is inside an execution receipt",
+      "datePublished": "2026-05-15",
+      "url": "https://h5i.dev/blog/structured-tool-output-schema/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Triaging a fleet of agent boxes",
+      "datePublished": "2026-05-12",
+      "url": "https://h5i.dev/blog/auditing-ai-generated-code/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "The flight recorder: five lanes and three colours",
+      "datePublished": "2026-05-08",
+      "url": "https://h5i.dev/blog/uncertainty-heatmap/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Prompt injection: contain it, because you cannot detect it",
+      "datePublished": "2026-05-06",
+      "url": "https://h5i.dev/blog/prompt-injection-in-agent-traces/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "CVE-2026-33068: when a repo's settings.json decides trust",
+      "datePublished": "2026-05-06",
+      "url": "https://h5i.dev/blog/cve-2026-33068-bypass-permissions-settings/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "CVE-2025-59536: code execution before the trust dialog",
+      "datePublished": "2026-05-06",
+      "url": "https://h5i.dev/blog/cve-2025-59536-startup-trust-dialog/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "Pinning what was actually enforced",
+      "datePublished": "2026-05-04",
+      "url": "https://h5i.dev/blog/context-dag-versioned-agent-reasoning/"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "An audit you do not have to trust",
+      "datePublished": "2026-04-28",
+      "url": "https://h5i.dev/blog/auditable-workspaces-for-ai-agents/"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}]}
   </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -76,9 +236,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
-  <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}]}
-  </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
 <body>
@@ -92,19 +249,19 @@
     <li><a href="/guides/">Guides</a></li>
     <li><a href="/manual/">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &#8594;</a></li>
   </ul>
 </nav>
 
 <section class="index-hero">
   <div class="post-eyebrow">The h5i Blog</div>
-  <h1>Auditable workspaces for AI agents</h1>
+  <h1>Contained development environments for AI agents</h1>
   <p>
-    Git tracks the diff. h5i tracks the workspace behind it, a Git-backed worktree
-    where every prompt, command, log, policy, and handoff is recorded in your repo and
-    provable after the fact. It all serves one goal, run many agents and merge one
-    auditable result, which is the <strong>Ensemble</strong> pillar, supported by four more:
-    sandboxed workspaces, reviewable agent work, prompt provenance, and context compression.
+    A coding agent runs unattended, which makes two questions urgent at once: what could it reach,
+    and what did it actually do? These posts are about answering both with something other than the
+    agent's word. Isolation tiers and what each one honestly claims, egress allowlists and which
+    layer they hold at, receipts written where the box cannot reach them, and how to review a branch
+    nobody watched being written.
   </p>
 </section>
 
@@ -114,347 +271,328 @@
     <span class="post-group-num">00</span>
     <div class="post-group-body">
       <div class="post-group-eyebrow">Pillar</div>
-      <h2>Ensemble</h2>
-      <p>The whole point: run many coding agents on one task, then merge the single result a neutral verifier clears, with each candidate auditable. From the fixed <code>h5i team</code> protocol to the programmable <code>h5i-orchestra</code> eDSL. The posts the rest of the blog supports.</p>
+      <h2>The boundary</h2>
+      <p>One enforced boundary around the code, the agent, the toolchain, the dev server and a browser, with a single human-operated exit. Everything else on this blog is a consequence of that shape.</p>
     </div>
   </div>
-
-  <a class="post-card" href="/blog/agent-ensembles-with-h5i-team/">
+  <a class="post-card" href="/blog/what-is-ai-aware-version-control/">
     <div class="card-meta">
-      <span>Ensemble · h5i team</span>
-      <span>2026-06-21</span>
-      <span>12 min read</span>
+      <span>Explainer</span>
+      <span>2026-06-01</span>
+      <span>8 min read</span>
     </div>
-    <h2>Run an AI Agent Ensemble: <code>h5i team</code></h2>
-    <p>Point several coding agents at the same task in sealed workspaces, let each work blind, then let a neutral, sandboxed verifier, not any agent's own say-so, pick the winner. Sealed workspaces, permissioned reviews, auditable convergence, so a human can merge with proof, hands-off.</p>
+    <h2>What is a contained agentic development environment?</h2>
+    <p>Sandboxing one command was the right idea at the wrong scale. An agent's work is a shell, a package manager, a build, a dev server and a browser, and all of them have to be inside or the boundary is decorative.</p>
   </a>
-
-  <a class="post-card" href="/blog/programmable-agent-orchestration-edsl/">
+  <a class="post-card" href="/blog/agent-sandbox-env/">
     <div class="card-meta">
-      <span>Ensemble · h5i-orchestra</span>
-      <span>2026-07-11</span>
+      <span>Feature</span>
+      <span>2026-06-10</span>
       <span>11 min read</span>
     </div>
-    <h2>Programmable Agent Orchestration: the <code>h5i-orchestra</code> eDSL</h2>
-    <p>One ensemble topology was never going to be enough. h5i-orchestra makes the shape yours to write: a run is a plain async Rust program driving a Conductor, and every agent turn is journaled on a Git ref, so a killed run resumes without re-paying a single turn. Define-by-run, durable on Git, no hosted runtime.</p>
+    <h2>The agent sandbox with an output gate</h2>
+    <p>The product walkthrough: how a box is made, what the policy pins before any state exists, what the receipt records, and why export is deliberately a step a human takes.</p>
   </a>
-
-  <a class="post-card" href="/blog/write-your-first-orchestra-score/">
-    <div class="card-meta">
-      <span>Ensemble · Tutorial</span>
-      <span>2026-07-11</span>
-      <span>13 min read</span>
-    </div>
-    <h2>Write Your First Score: an <code>h5i-orchestra</code> Tutorial</h2>
-    <p>Build a complete score end to end: hire a roster of sandboxed agents, fan out the work, seal, review and revise, verify in a neutral sandbox, decide with a pluggable verdict, and land the winner behind a durable human gate. Kill it at any point and re-run: the journaled steps replay for free.</p>
-  </a>
-
   <a class="post-card" href="/blog/orchestration-patterns-beyond-ensemble/">
     <div class="card-meta">
-      <span>Ensemble · Patterns</span>
-      <span>2026-07-11</span>
-      <span>12 min read</span>
+      <span>Patterns</span>
+      <span>2026-06-14</span>
+      <span>7 min read</span>
     </div>
-    <h2>Orchestration Patterns Beyond Ensemble</h2>
-    <p>arena, pipeline, integrate, map_reduce, debate, and judge_panel, all written in the public eDSL so the built-ins are examples you can copy. The centerpiece: a judge panel that scores candidates over the run's recorded evidence, with every citation validated against real run state. LLM judgment, not an LLM vibe.</p>
+    <h2>Four shapes a box can take</h2>
+    <p>One create command, four meanings. Where the code came from decides whether the box is a worktree you can land in one step or a detached repository that refuses to.</p>
   </a>
-
-  <a class="post-card" href="/blog/auditable-workspaces-for-ai-agents/">
+  <a class="post-card" href="/blog/git-notes-vs-h5i-ai-coding-workflows/">
     <div class="card-meta">
-      <span>Ensemble · Start here</span>
-      <span>2026-06-19</span>
-      <span>12 min read</span>
+      <span>Comparison</span>
+      <span>2026-05-30</span>
+      <span>7 min read</span>
     </div>
-    <h2>Why AI Agents Need Auditable Workspaces</h2>
-    <p>The definition the rest of this blog builds on. An auditable workspace is where an agent does its work, a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. The three pillars (provenance, confinement, governance), the workspace stack, and the golden path.</p>
+    <h2>Git worktrees vs h5i boxes</h2>
+    <p>A worktree separates checkouts. A box separates authority. When each is right, and the four moments a worktree quietly stops being enough.</p>
   </a>
-
   <div class="post-group">
     <span class="post-group-num">01</span>
     <div class="post-group-body">
-      <div class="post-group-eyebrow">Pillar</div>
-      <h2>Sandboxed workspaces</h2>
-      <p>The sandboxed worktree is the canonical auditable workspace, what it could and couldn't reach, provable. <code>h5i env</code>.</p>
+      <div class="post-group-eyebrow">Series</div>
+      <h2>Sandboxing AI agents</h2>
+      <p>Four parts, from the threat model to the kernel primitives to a comparison of every approach in the field to h5i's own design. Start at part one if the words Landlock and seccomp are new.</p>
     </div>
   </div>
-
-  <a class="post-card" href="/blog/agent-sandbox-env/">
-    <div class="card-meta">
-      <span>Feature · Sandbox</span>
-      <span>2026-06-10</span>
-      <span>10 min read</span>
-    </div>
-    <h2>An Auditable Sandbox for AI Agents</h2>
-    <p>Run an agent in a confined, disposable environment, a git worktree plus tiered isolation (Landlock, seccomp, namespaces) and an airtight, rootless network egress allowlist a raw socket can't bypass, then audit everything it did before it touches your branch.</p>
-  </a>
-
-  <a class="post-card" href="/blog/sandboxing-ai-agents-h5i/">
-    <div class="card-meta">
-      <span>Long read · Sandbox series</span>
-      <span>2026-06-12</span>
-      <span>18 min read</span>
-    </div>
-    <h2>Sandboxing AI Agents, Part 4: How h5i Implements It</h2>
-    <p>h5i's env design in detail: tiered rootless isolation, supervised egress, mediated commits, secrets, captures, boundary pressure, and honest defense limits.</p>
-  </a>
-  
-  <a class="post-card" href="/blog/sandboxing-ai-agents-landscape/">
-    <div class="card-meta">
-      <span>Comparison · Sandbox series</span>
-      <span>2026-06-12</span>
-      <span>17 min read</span>
-    </div>
-    <h2>Sandboxing AI Agents, Part 3: How Popular Sandboxes Differ</h2>
-    <p>container-use, sandbox-runtime, OpenSandbox, E2B, gVisor, Kata, Firecracker, and h5i compared by boundary, workflow, egress control, and provenance.</p>
-  </a>
-
-  <a class="post-card" href="/blog/sandboxing-ai-agents-implementation/">
-    <div class="card-meta">
-      <span>Tutorial · Sandbox series</span>
-      <span>2026-06-12</span>
-      <span>18 min read</span>
-    </div>
-    <h2>Sandboxing AI Agents, Part 2: How to Implement One</h2>
-    <p>A practical implementation guide covering worktrees, Landlock, seccomp, namespaces, cgroups, network egress allowlists, secrets brokers, and audit captures.</p>
-  </a>
-
   <a class="post-card" href="/blog/sandboxing-ai-agents-foundations/">
     <div class="card-meta">
-      <span>Textbook · Sandbox series</span>
+      <span>Part 1</span>
       <span>2026-06-12</span>
       <span>15 min read</span>
     </div>
-    <h2>Sandboxing AI Agents, Part 1: Foundations</h2>
-    <p>What a sandbox is, what it can defend, what it cannot defend, and why AI coding agents require capability boundaries rather than permission prompts.</p>
+    <h2>Foundations</h2>
+    <p>What a sandbox is, which threat models matter for an autonomous agent, and why each Linux primitive contains exactly one axis of authority.</p>
   </a>
-
-  <a class="post-card" href="/blog/cve-2026-33068-bypass-permissions-settings/">
+  <a class="post-card" href="/blog/sandboxing-ai-agents-implementation/">
     <div class="card-meta">
-      <span>Security · CVE</span>
-      <span>2026-05-06</span>
-      <span>8 min read</span>
+      <span>Part 2</span>
+      <span>2026-06-12</span>
+      <span>17 min read</span>
     </div>
-    <h2>CVE-2026-33068: When a Repo's <code>settings.json</code> Decides Trust</h2>
-    <p>Claude Code &lt; 2.1.53 resolved <code>permissions.defaultMode</code> from a committed <code>.claude/settings.json</code> before deciding whether to show the workspace trust dialog. CWE-807, fixed in 2.1.53.</p>
+    <h2>Implementing kernel-tier confinement</h2>
+    <p>Probe, self-test, fail closed. The kernel reporting that a primitive exists does not mean confinement works, and that gap is where the dangerous bugs live.</p>
   </a>
-
-  <a class="post-card" href="/blog/cve-2025-59536-startup-trust-dialog/">
+  <a class="post-card" href="/blog/sandboxing-ai-agents-landscape/">
     <div class="card-meta">
-      <span>Security · CVE</span>
-      <span>2026-05-06</span>
-      <span>7 min read</span>
+      <span>Part 3</span>
+      <span>2026-06-12</span>
+      <span>18 min read</span>
     </div>
-    <h2>CVE-2025-59536: Claude Code Trust Dialog Bypass</h2>
-    <p>A load-order bug let project code execute before the user accepted Claude Code's startup trust prompt. CWE-94, fixed in 1.0.111. The mechanics, the patch, and the design lesson for any agentic CLI.</p>
+    <h2>The landscape, compared by threat model</h2>
+    <p>From nothing to full VMs, ranked by what each boundary actually defends against rather than by a leaderboard. Egress control measured in OSI layers.</p>
   </a>
-
+  <a class="post-card" href="/blog/sandboxing-ai-agents-h5i/">
+    <div class="card-meta">
+      <span>Part 4</span>
+      <span>2026-06-12</span>
+      <span>16 min read</span>
+    </div>
+    <h2>h5i's tier ladder and policy model</h2>
+    <p>Five tiers, three egress mechanisms with three different guarantees, the lints that refuse a self-contradictory profile, and why the receipt is a sibling of the spool.</p>
+  </a>
   <div class="post-group">
     <span class="post-group-num">02</span>
     <div class="post-group-body">
-      <div class="post-group-eyebrow">Pillar</div>
-      <h2>Reviewable agent work</h2>
-      <p>Git tracks the diff; reviewers need the workspace behind it, intent, context coverage, risk, evidence, and a way to undo by intent. Review-ready PR evidence.</p>
+      <div class="post-group-eyebrow">Theme</div>
+      <h2>Evidence</h2>
+      <p>Logging is easy and auditing is hard, and the difference is whether the thing being described could have written the description. What h5i records, where it puts it, and what it refuses to claim.</p>
     </div>
   </div>
-
-  <a class="post-card" href="/blog/what-is-ai-aware-version-control/">
+  <a class="post-card" href="/blog/auditable-workspaces-for-ai-agents/">
     <div class="card-meta">
-      <span>Pillar · Auditable workspaces</span>
-      <span>2026-06-03</span>
+      <span>Essay</span>
+      <span>2026-04-28</span>
       <span>9 min read</span>
     </div>
-    <h2>Auditable Workspaces for AI Agents: What h5i Records and Why</h2>
-    <p>Git remains the source of truth for code. The auditable workspace adds the missing layer: why an agent changed the code, what context it used, what evidence it saw, and how reviewers can audit the result.</p>
+    <h2>An audit you do not have to trust</h2>
+    <p>Point at any line in your agent's audit trail and ask whether the agent could have written it. If yes, it is testimony, and testimony is not an audit.</p>
   </a>
-
   <a class="post-card" href="/blog/why-git-diffs-are-not-enough-for-ai-generated-code/">
     <div class="card-meta">
-      <span>Guide · AI code review</span>
-      <span>2026-06-03</span>
-      <span>8 min read</span>
-    </div>
-    <h2>Why Git Diffs Are Not Enough for AI-Generated Code</h2>
-    <p>A diff tells you what changed. It does not tell you what the agent was asked, which files it ignored, why it chose the approach, or whether the risky part was tested.</p>
-  </a>
-
-  <a class="post-card" href="/blog/review-code-written-by-ai-agents/">
-    <div class="card-meta">
-      <span>Guide · AI code review</span>
-      <span>2026-06-03</span>
-      <span>9 min read</span>
-    </div>
-    <h2>How to Review Code Written by AI Agents</h2>
-    <p>Reviewing agent-written code is not just line-by-line inspection. Start with intent, verify context coverage, rank risky files, and require evidence for the behavior that changed.</p>
-  </a>
-
-  <a class="post-card" href="/blog/pr-body-ai-code-review/">
-    <div class="card-meta">
-      <span>Feature · Review</span>
-      <span>2026-05-24</span>
-      <span>6 min read</span>
-    </div>
-    <h2>The AI Pull Request Body: h5i's Review Surface for Agent Work</h2>
-    <p>The PR body is one view of h5i's shared context: review focus, risk signals, reasoning highlights, tests, and provenance where reviewers already work.</p>
-  </a>
-
-  <a class="post-card" href="/blog/from-git-blame-to-ai-blame/">
-    <div class="card-meta">
-      <span>Workflow</span>
-      <span>2026-05-06</span>
-      <span>8 min read</span>
-    </div>
-    <h2>From <code>git blame</code> to AI blame: per-line provenance for AI-era code</h2>
-    <p><code>git blame</code> answers "who wrote this" with a name and a date. h5i recall blame adds the prompt, the model, the agent, and the test result that produced each line, same ergonomics, four more answers.</p>
-  </a>
-
-  <a class="post-card" href="/blog/auditing-ai-generated-code/">
-    <div class="card-meta">
-      <span>Practice</span>
-      <span>2026-05-06</span>
-      <span>9 min read</span>
-    </div>
-    <h2>Auditing AI-Generated Code: A Practical Framework</h2>
-    <p>Your team merges 50 PRs a week, 30 of them AI-assisted. A four-vector framework, blind edits, uncertainty, scope creep, prompt injection, produces a single ranked review queue.</p>
-  </a>
-
-  <a class="post-card" href="/blog/uncertainty-heatmap/">
-    <div class="card-meta">
-      <span>Code Review</span>
-      <span>2026-04-15</span>
+      <span>Opinion</span>
+      <span>2026-05-18</span>
       <span>7 min read</span>
     </div>
-    <h2>Claude Code Uncertainty Heatmap for AI Code Review</h2>
-    <p>Turn captured uncertainty signals into a per-file review heatmap so human reviewers can focus on the parts of an AI-assisted diff that deserve the most attention.</p>
+    <h2>Why a diff is not enough for AI-generated code</h2>
+    <p>Four things a comparison of two trees structurally cannot show, and why that gap only started hurting when the author stopped being a person you could ask.</p>
   </a>
-
-  <a class="post-card" href="/blog/git-notes-vs-h5i-ai-coding-workflows/">
+  <a class="post-card" href="/blog/structured-tool-output-schema/">
     <div class="card-meta">
-      <span>Comparison · Git notes</span>
-      <span>2026-06-03</span>
+      <span>Reference</span>
+      <span>2026-05-15</span>
       <span>8 min read</span>
     </div>
-    <h2>Git Notes vs h5i for AI Coding Workflows</h2>
-    <p>Git notes are a useful primitive for attaching metadata. h5i is the workflow layer: capture, recall, audit, share, and multi-agent context.</p>
+    <h2>What is inside an execution receipt</h2>
+    <p>The record format field by field, including the three flags that exist purely so a reviewer cannot mistake missing evidence for clean evidence.</p>
   </a>
-
-  <a class="post-card" href="/blog/claude-code-hooks-vs-git-hooks/">
+  <a class="post-card" href="/blog/uncertainty-heatmap/">
     <div class="card-meta">
-      <span>Comparison · Hooks</span>
-      <span>2026-06-03</span>
+      <span>Feature</span>
+      <span>2026-05-08</span>
+      <span>7 min read</span>
+    </div>
+    <h2>The flight recorder: five lanes and three colours</h2>
+    <p>Red means the egress allowlist refused a destination, and nothing else is ever red. Grey means the evidence is weak, which is the most useful thing a dashboard can say.</p>
+  </a>
+  <a class="post-card" href="/blog/track-claude-code-prompts-diffs-git/">
+    <div class="card-meta">
+      <span>How-to</span>
+      <span>2026-05-28</span>
+      <span>7 min read</span>
+    </div>
+    <h2>How to track what Claude Code actually ran</h2>
+    <p>Recording prompts feels like the obvious thing to log and is close to the least useful. Four commands for the part with consequences.</p>
+  </a>
+  <a class="post-card" href="/blog/from-git-blame-to-ai-blame/">
+    <div class="card-meta">
+      <span>Retrospective</span>
+      <span>2026-06-02</span>
       <span>8 min read</span>
     </div>
-    <h2>Claude Code Hooks vs Git Hooks</h2>
-    <p>Git hooks protect repository operations. Claude Code hooks observe and steer the agent while it works. They are complementary, not interchangeable.</p>
+    <h2>We built AI blame, then deleted it</h2>
+    <p>Per-line provenance for AI-written code worked, and it was cut. The reason is more interesting than the feature was, and it explains the shape of everything that replaced it.</p>
   </a>
-
   <div class="post-group">
     <span class="post-group-num">03</span>
     <div class="post-group-body">
-      <div class="post-group-eyebrow">Pillar</div>
-      <h2>Prompt provenance</h2>
-      <p>Who asked, why, what the agent knew, and how agents hand work to each other, recorded in <code>refs/h5i/notes</code> and <code>refs/h5i/context</code>.</p>
+      <div class="post-group-eyebrow">Theme</div>
+      <h2>Review</h2>
+      <p>What to do with a branch an agent wrote unattended, or a pull request from someone you have never met.</p>
     </div>
   </div>
-
-  <a class="post-card" href="/blog/prompt-maturity-score/">
+  <a class="post-card" href="/blog/pr-body-ai-code-review/">
     <div class="card-meta">
-      <span>Long read</span>
-      <span>2026-06-17</span>
-      <span>11 min read</span>
+      <span>Feature</span>
+      <span>2026-05-24</span>
+      <span>9 min read</span>
     </div>
-    <h2>How to Measure Prompt Quality Offline: the Prompt Maturity Score</h2>
-    <p>A prompt quality signal without an LLM: h5i turns each AI commit's prompt into an explainable 0–100 score, seven classical-NLP signals, anti-gaming guards, and balance gates.</p>
+    <h2>Review a pull request by running it</h2>
+    <p>A diff review is a reading exercise. Give the branch a disposable machine to execute on and review a report of what it did there, starting with what the boundary refused.</p>
   </a>
-
-  <a class="post-card" href="/blog/track-claude-code-prompts-diffs-git/">
+  <a class="post-card" href="/blog/review-code-written-by-ai-agents/">
     <div class="card-meta">
-      <span>Guide · Claude Code provenance</span>
-      <span>2026-06-03</span>
+      <span>Practice</span>
+      <span>2026-05-20</span>
       <span>8 min read</span>
     </div>
-    <h2>How to Track Claude Code Prompts and Diffs in Git</h2>
-    <p>Claude Code can edit real repositories. The missing workflow is durable provenance: prompt, agent identity, changed files, tests, and review context stored next to the commits.</p>
+    <h2>Reviewing code an AI agent wrote</h2>
+    <p>A reading order that puts the least trustworthy evidence at the bottom. The diff is the third thing worth opening, and the agent's summary is the last.</p>
   </a>
-
+  <a class="post-card" href="/blog/auditing-ai-generated-code/">
+    <div class="card-meta">
+      <span>Practice</span>
+      <span>2026-05-12</span>
+      <span>8 min read</span>
+    </div>
+    <h2>Triaging a fleet of agent boxes</h2>
+    <p>One branch you can read closely; thirty is an allocation problem. Why the obvious fix, a risk score, stops working the week after you ship it.</p>
+  </a>
+  <a class="post-card" href="/blog/agent-ensembles-with-h5i-team/">
+    <div class="card-meta">
+      <span>Practice</span>
+      <span>2026-06-08</span>
+      <span>7 min read</span>
+    </div>
+    <h2>Many boxes, one repository</h2>
+    <p>Running three agents at one problem is easy. Comparing what they produced needs a base that cannot move, and there is deliberately no verifier to do the judging for you.</p>
+  </a>
+  <div class="post-group">
+    <span class="post-group-num">04</span>
+    <div class="post-group-body">
+      <div class="post-group-eyebrow">Theme</div>
+      <h2>Policy</h2>
+      <p>The boundary is a file. What goes in it, which contradictions it refuses, and what deliberately stays outside.</p>
+    </div>
+  </div>
+  <a class="post-card" href="/blog/write-your-first-orchestra-score/">
+    <div class="card-meta">
+      <span>Tutorial</span>
+      <span>2026-06-18</span>
+      <span>9 min read</span>
+    </div>
+    <h2>Write your first box profile</h2>
+    <p>Built up one field at a time, with the failure each field prevents. Everything is fail-closed, so the fastest way to learn the file is to start from nothing.</p>
+  </a>
+  <a class="post-card" href="/blog/programmable-agent-orchestration-edsl/">
+    <div class="card-meta">
+      <span>Design</span>
+      <span>2026-06-20</span>
+      <span>7 min read</span>
+    </div>
+    <h2>Why the sandbox policy is a file, not flags</h2>
+    <p>A flag describes an invocation and lives in someone's shell history. A file arrives whole before anything runs, which is the only reason it can be refused.</p>
+  </a>
+  <a class="post-card" href="/blog/context-dag-versioned-agent-reasoning/">
+    <div class="card-meta">
+      <span>Design</span>
+      <span>2026-05-04</span>
+      <span>7 min read</span>
+    </div>
+    <h2>Pinning what was actually enforced</h2>
+    <p>Resolve, hash, then create. Three small orderings that decide whether this ran under that policy is a verifiable fact or somebody's recollection.</p>
+  </a>
+  <a class="post-card" href="/blog/persistent-memory-for-claude-code/">
+    <div class="card-meta">
+      <span>Reference</span>
+      <span>2026-05-22</span>
+      <span>7 min read</span>
+    </div>
+    <h2>What a box copies from your config, and what it strips</h2>
+    <p>Your agent keeps its settings and its credentials in one directory. A box takes the first, prunes the second for size, and drops the third by shape at any depth.</p>
+  </a>
+  <a class="post-card" href="/blog/token-reduction-object-store/">
+    <div class="card-meta">
+      <span>Feature</span>
+      <span>2026-05-26</span>
+      <span>7 min read</span>
+    </div>
+    <h2>Making boxes start in seconds, not minutes</h2>
+    <p>A disposable environment stops being disposable at four minutes of cold install. Three rules that make a shared cache safe rather than merely fast.</p>
+  </a>
+  <div class="post-group">
+    <span class="post-group-num">05</span>
+    <div class="post-group-body">
+      <div class="post-group-eyebrow">Theme</div>
+      <h2>Security</h2>
+      <p>Threats that reach a coding agent through the text it reads, and what actually holds against them.</p>
+    </div>
+  </div>
   <a class="post-card" href="/blog/prompt-injection-in-agent-traces/">
     <div class="card-meta">
       <span>Security</span>
       <span>2026-05-06</span>
-      <span>10 min read</span>
+      <span>11 min read</span>
     </div>
-    <h2>Detecting Prompt Injection in Agent Reasoning Traces</h2>
-    <p>The injection lives in the trace, not the output. Eight deterministic regex rules over OBSERVE/THINK/ACT entries catch override and exfiltration patterns with no model in the audit path.</p>
+    <h2>Prompt injection: contain it, because you cannot detect it</h2>
+    <p>Every defence that works by reading the attacker's text is a filter the attacker can read back. Bound what a compromised agent can reach instead.</p>
   </a>
-
-  <a class="post-card" href="/blog/context-dag-versioned-agent-reasoning/">
+  <a class="post-card" href="/blog/cve-2026-33068-bypass-permissions-settings/">
     <div class="card-meta">
-      <span>Feature · Context</span>
-      <span>2026-05-24</span>
-      <span>7 min read</span>
-    </div>
-    <h2>Context DAG: Version-Controlled Reasoning for AI Agents</h2>
-    <p>Code has Git. Agent reasoning usually has a disappearing chat window. h5i stores OBSERVE, THINK, ACT, NOTE, branches, merges, and checkpoints as shared context.</p>
-  </a>
-
-  <a class="post-card" href="/blog/git-communication-layer-ai-agents/">
-    <div class="card-meta">
-      <span>Pillar · Multi-agent collaboration</span>
-      <span>2026-06-03</span>
-      <span>8 min read</span>
-    </div>
-    <h2>Git as the Communication Layer for AI Agents</h2>
-    <p>Agents already coordinate through files and commits. h5i makes the communication explicit: typed asks, reviews, risks, handoffs, and done messages stored in a shareable Git ref.</p>
-  </a>
-
-  <a class="post-card" href="/blog/i5h-agent-to-agent-messaging/">
-    <div class="card-meta">
-      <span>Feature · Messaging</span>
-      <span>2026-05-31</span>
-      <span>7 min read</span>
-    </div>
-    <h2>Git-Native Messaging Between AI Coding Agents</h2>
-    <p>Two agents sharing one repo usually have no way to talk. i5h gives them a channel built from Git: typed work handoffs, ask, review, hand off, done, appended as durable, replayable Git objects, with no server to run.</p>
-  </a>
-
-  <a class="post-card" href="/blog/persistent-memory-for-claude-code/">
-    <div class="card-meta">
-      <span>Workflow</span>
+      <span>Security</span>
       <span>2026-05-06</span>
       <span>8 min read</span>
     </div>
-    <h2>Giving Claude Code Persistent Memory Across Sessions</h2>
-    <p>Anthropic gives you a memory primitive. h5i gives you the layers above it, versioned reasoning, per-commit snapshots, and a SessionStart hook that injects the right slice of context into every new session.</p>
+    <h2>CVE-2026-33068: when a repo's settings.json decides trust</h2>
+    <p>A committed <code>bypassPermissions</code> was read before the trust dialog, so the dialog never appeared. Inside a box, permission mode is a convenience setting rather than a boundary.</p>
   </a>
-
-  <div class="post-group">
-    <span class="post-group-num">04</span>
-    <div class="post-group-body">
-      <div class="post-group-eyebrow">Pillar</div>
-      <h2>Context compression</h2>
-      <p>The workspace keeps raw logs out of the agent's context window, recoverable, structured, searchable. Compressed tool logs.</p>
-    </div>
-  </div>
-
-  <a class="post-card" href="/blog/token-reduction-object-store/">
+  <a class="post-card" href="/blog/cve-2025-59536-startup-trust-dialog/">
     <div class="card-meta">
-      <span>Benchmark · Compressed logs</span>
-      <span>2026-06-05</span>
-      <span>8 min read</span>
-    </div>
-    <h2>Cut Agent Token Usage 95% with h5i Capture</h2>
-    <p>A content-addressed object store keeps raw tool output (test logs, builds, big JSON) out of the context window and hands the agent a structured summary, ~95% fewer tokens in a reproducible benchmark, fully recoverable.</p>
-  </a>
-
-  <a class="post-card" href="/blog/structured-tool-output-schema/">
-    <div class="card-meta">
-      <span>Design · Structured output</span>
-      <span>2026-06-06</span>
+      <span>Security</span>
+      <span>2026-05-06</span>
       <span>7 min read</span>
     </div>
-    <h2>One Schema for Every Tool: Structured Output for AI Agents</h2>
-    <p>Compressed tool logs make output small; a unified JSON/YAML result schema makes it usable: one shape across tests, compilers, linters, and type checkers that an agent can branch on, dedupe, and query. h5i's layer beyond rtk/headroom.</p>
+    <h2>CVE-2025-59536: code execution before the trust dialog</h2>
+    <p>Project code ran before the user accepted the prompt. In a box that premise is already true and already handled, because agreeing happens at the end.</p>
   </a>
-
+  <a class="post-card" href="/blog/claude-code-hooks-vs-git-hooks/">
+    <div class="card-meta">
+      <span>Comparison</span>
+      <span>2026-06-03</span>
+      <span>10 min read</span>
+    </div>
+    <h2>Claude Code hooks vs Git hooks</h2>
+    <p>Two lifecycles, two trust models. The right question is not whether a hook runs but who can turn it off, and the answer is why h5i moved observation below the agent.</p>
+  </a>
+  <div class="post-group">
+    <span class="post-group-num">06</span>
+    <div class="post-group-body">
+      <div class="post-group-eyebrow">Theme</div>
+      <h2>Working in a box</h2>
+      <p>The browser, the viewer, the control lock, and how the agent learns any of this exists.</p>
+    </div>
+  </div>
+  <a class="post-card" href="/blog/git-communication-layer-ai-agents/">
+    <div class="card-meta">
+      <span>Design</span>
+      <span>2026-06-05</span>
+      <span>6 min read</span>
+    </div>
+    <h2>Who is driving the browser?</h2>
+    <p>An agent and a human in front of one page is a concurrency problem with a pointer. Three rules, and the third one is the one nobody expects.</p>
+  </a>
+  <a class="post-card" href="/blog/i5h-agent-to-agent-messaging/">
+    <div class="card-meta">
+      <span>Design</span>
+      <span>2026-06-16</span>
+      <span>7 min read</span>
+    </div>
+    <h2>Watching a box's browser without giving it a port</h2>
+    <p>The stream port is never published. h5i enters the namespace by pid, connects from inside, and hands the socket back out. The terminal viewer binds nothing at all.</p>
+  </a>
+  <a class="post-card" href="/blog/prompt-maturity-score/">
+    <div class="card-meta">
+      <span>Design</span>
+      <span>2026-06-22</span>
+      <span>6 min read</span>
+    </div>
+    <h2>Teaching an agent to use its own box</h2>
+    <p>Documentation drift is annoying for humans and actively harmful for agents, because an agent will run the command your docs describe and then report that your tool is broken.</p>
+  </a>
 
 </section>
 
@@ -463,12 +601,12 @@
     <div class="brand">h5i<span class="red"> / high-five</span></div>
     <nav class="links">
       <a href="/">Home</a>
-      <a href="/workflows/">Workflows</a>
+      <a href="/guides/">Guides</a>
       <a href="/blog/">Blog</a>
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
       <a href="/manual/">Manual</a>
     </nav>
-    <div class="legal">Apache 2.0 · Built with Rust</div>
+    <div class="legal">Apache 2.0 &#183; Built with Rust</div>
   </div>
 </footer>
 
