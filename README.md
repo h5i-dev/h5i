@@ -52,6 +52,8 @@ you `container`, and [microsandbox](https://microsandbox.dev) (`msb`)
 gives you `microvm` on a host with hardware virtualization (`/dev/kvm` 
 on Linux, Apple Silicon on macOS).
 
+---
+
 ## Use it
 
 **Create a sandboxed**
@@ -126,6 +128,7 @@ h5i ui                           # the whole fleet on one screen, read-only
   <img src="./docs/_static/sandbox-ui-demo.png" width="99%" />
 </p>
 
+---
 
 ## What confinement means here
 
@@ -144,6 +147,7 @@ microvm is the strongest tier and the only one that does not share the host kern
 
 No credentials enter a box. A runtime-scoped host proxy injects model API keys outside the boundary, preventing cross-runtime access. Each box receives a one-time copy of HOME state that is never written back.
 
+---
 
 ## Skill
 
@@ -155,6 +159,8 @@ h5i skill show policy            # or just read a page
 npx skills add h5i-dev/h5i       # if you do not have the binary yet
 ```
 
+---
+
 ## Documentation
 
 - [ROADMAP.md](ROADMAP.md): where this is going, and what was cut to get there
@@ -162,6 +168,8 @@ npx skills add h5i-dev/h5i       # if you do not have the binary yet
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
 - [CONTRIBUTING.md](CONTRIBUTING.md): we welcome contributions of any kind
 - `h5i man > ~/.local/share/man/man1/h5i.1`: install the man page (generated from the CLI)
+
+---
 
 ## What h5i does not claim
 
@@ -175,6 +183,8 @@ npx skills add h5i-dev/h5i       # if you do not have the binary yet
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
   it binds proxy-respecting tooling only. `supervised` and `microvm` enforce at
   L3/L4 and do not have that hole.
+
+---
 
 ## License
 
