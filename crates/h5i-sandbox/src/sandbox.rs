@@ -552,6 +552,28 @@ pub fn effective_auto(
 /// Fail-closed policy lints (§7). These reject *policies*, before any env is
 /// created — never silently weaken them.
 pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
+    // A profile that opts into an egress allowlist may not also re-export the
+    // proxy wiring: `env.pass` is applied after it, so the host's value would
+    // win and the box would route around the allowlist. Refused at load, so the
+    // author is told rather than silently getting a wider box. (Harmless with
+    // no `net.egress` — there is no proxy to shadow — so it is not refused
+    // there.)
+    if !p.net_egress.iter().all(|e| e.trim().is_empty()) {
+        if let Some(bad) = p
+            .env_pass
+            .iter()
+            .find(|k| crate::container::is_proxy_wiring_var(k))
+        {
+            return Err(H5iError::Metadata(format!(
+                "profile '{}': env.pass carries '{bad}', which is part of the egress proxy \
+                 wiring. Passing it through would replace the allowlist proxy's address with \
+                 the host's and let the box egress unfiltered — remove it from env.pass \
+                 (fail-closed).",
+                p.name
+            )));
+        }
+    }
+
     // Secret grants are brokered (docs/secrets-broker-design.md). Validate the
     // *config* here (names + source/inject syntax); values are resolved
     // fail-closed at run time, never at policy-load time.

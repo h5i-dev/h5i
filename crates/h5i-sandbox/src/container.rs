@@ -683,6 +683,27 @@ fn parse_target(head: &[u8]) -> Option<(String, u16, bool)> {
 /// box that points its Chrome elsewhere reaches a port it is denied anyway.
 pub const EGRESS_PROXY_VAR: &str = "H5I_EGRESS_PROXY";
 
+/// Environment variables that carry the egress proxy wiring. A profile's
+/// `env.pass` must never re-export one of these: podman applies `--env` in
+/// order, so a later name-only pass would replace h5i's value with the host's
+/// and route the box around the allowlist entirely.
+pub const PROXY_WIRING_VARS: [&str; 8] = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+];
+
+/// Is `key` part of the proxy wiring (case-insensitively)?
+pub fn is_proxy_wiring_var(key: &str) -> bool {
+    key.eq_ignore_ascii_case(EGRESS_PROXY_VAR)
+        || PROXY_WIRING_VARS.iter().any(|v| key.eq_ignore_ascii_case(v))
+}
+
 /// How long a connection may take to finish sending its request head. It bounds
 /// only the head: a client that connects and says nothing must not hold a thread,
 /// but once the tunnel is up the relay has no clock of its own (see the reset
@@ -1254,7 +1275,16 @@ pub fn build_run_argv(
     // value never lands in the container's argv — which is world-readable on a
     // default host via `/proc/<podman-pid>/cmdline`. (`--env KEY=VALUE` would
     // leak it there.)
+    let proxied = matches!(net, NetPlan::Proxy(_));
     for key in &profile.env_pass {
+        // Podman applies `--env` in order, and the proxy wiring was pushed
+        // above. A profile passing HTTPS_PROXY or NO_PROXY through — plausible
+        // behind a corporate proxy, and repo-supplied like the rest of the
+        // policy — would otherwise replace h5i's value with the host's and
+        // egress unfiltered through the rootless NAT.
+        if proxied && is_proxy_wiring_var(key) {
+            continue;
+        }
         if std::env::var_os(key).is_some() {
             a.push("--env".into());
             a.push(key.clone());
@@ -1827,6 +1857,37 @@ mod tests {
         let addrs = a.dial_addrs("203.0.113.10", 443);
         assert_eq!(addrs.len(), 1);
         assert_eq!(addrs[0].to_string(), "203.0.113.10:443");
+    }
+
+    /// Podman applies `--env` in order and the proxy wiring is pushed first, so
+    /// an `env.pass` entry naming one of those variables would replace h5i's
+    /// value with the host's and route the box around the allowlist.
+    #[test]
+    fn env_pass_cannot_shadow_the_egress_proxy_wiring() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
+        p.env_pass = vec!["HTTPS_PROXY".into(), "no_proxy".into(), "PATH".into()];
+        // Safety: single-threaded test; the vars are read back immediately.
+        unsafe {
+            std::env::set_var("HTTPS_PROXY", "http://attacker.invalid:3128");
+            std::env::set_var("no_proxy", "*");
+        }
+        let argv = build_run_argv(
+            &rt(), &p, &[], None, tmp.path(), "img", "n", &NetPlan::Proxy(9999),
+            &["true".into()], &[], None, None, &[], None, None, None, &[],
+        );
+        // The wiring h5i pushed is present exactly once and is never re-passed
+        // by name (a name-only `--env HTTPS_PROXY` would take the host value).
+        assert!(argv.iter().any(|a| a == "HTTPS_PROXY=http://10.0.2.2:9999"
+            || a.starts_with("HTTPS_PROXY=http://")));
+        assert!(!argv.iter().any(|a| a == "HTTPS_PROXY"), "{argv:?}");
+        assert!(!argv.iter().any(|a| a == "no_proxy"), "{argv:?}");
+        // Unrelated allowlist entries still pass.
+        assert!(argv.iter().any(|a| a == "PATH"));
+        unsafe {
+            std::env::remove_var("HTTPS_PROXY");
+            std::env::remove_var("no_proxy");
+        }
     }
 
     /// An operator may list a literal address. That entry must keep matching
