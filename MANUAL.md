@@ -621,7 +621,13 @@ socket is a filesystem-bound `AF_UNIX` listener.
   host           = "api.github.com"
   credential_env = "GITHUB_TOKEN"   # read on the host, never in the box
   base_url_var   = "GH_HOST"        # what the client reads
+  token_var      = "GH_TOKEN"       # where the box gets its per-run dummy
   ```
+
+  `token_var` is required. The proxy gates every request on a per-run token, so
+  the box has to be handed it in whatever variable its client already sends as
+  a credential. The real credential stays on the host; the box only ever holds
+  the dummy.
 
   The limit is real and worth knowing before you declare one: it binds clients
   you can point at another origin, so a plain `curl https://api.github.com`

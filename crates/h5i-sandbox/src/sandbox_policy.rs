@@ -353,6 +353,16 @@ pub struct AuthGrant {
     pub credential_env: String,
     /// Environment variable the box is given, pointing at the proxy.
     pub base_url_var: String,
+    /// Environment variable the box is given the **per-run dummy token** in —
+    /// whatever variable its client already sends as a credential (`GH_TOKEN`
+    /// for `gh`, and so on).
+    ///
+    /// The proxy gates every request on that token, so without this the box has
+    /// nothing to present and each request is refused: the grant was inert.
+    /// Validated non-empty at policy load rather than defaulted, because only
+    /// the profile author knows which variable their client reads.
+    #[serde(default)]
+    pub token_var: String,
 }
 
 #[derive(Debug, Clone)]

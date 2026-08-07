@@ -1460,16 +1460,39 @@ pub type AuthGrantEngagement = (Vec<crate::auth_proxy::AuthProxyHandle>, Vec<(St
 pub fn engage_auth_grants(
     profile: &Profile,
     tier_ok: bool,
+    host_addr: &str,
 ) -> Result<AuthGrantEngagement, H5iError> {
     let mut handles = Vec::new();
     let mut env = Vec::new();
     for grant in &profile.auth {
-        if let Some(e) = crate::auth_proxy::engage_grant_at(grant, tier_ok, HOST_ROUTE.host_addr)? {
+        if let Some(e) = crate::auth_proxy::engage_grant_at(grant, tier_ok, host_addr)? {
             handles.push(e.handle);
             env.extend(e.box_env);
         }
     }
     Ok((handles, env))
+}
+
+/// Where a box on `claim` reaches a host-side grant proxy, or `None` when it
+/// cannot reach one at all.
+///
+/// This used to be hard-wired to [`HOST_ROUTE`], which is the *container*
+/// answer. On macOS that is `host.containers.internal`, a podman-machine name
+/// that does not resolve inside a Seatbelt box sharing host loopback; and on
+/// Linux `supervised` the box lives in its own netns whose nftables set only
+/// ever opens the runtime auth-proxy port or `net.egress` — never a grant's
+/// port — so the connection is dropped whatever address it names. Saying so is
+/// better than engaging a proxy nothing can dial.
+pub fn grant_host_addr(claim: crate::sandbox_policy::IsolationClaim) -> Option<&'static str> {
+    use crate::sandbox_policy::IsolationClaim;
+    match claim {
+        IsolationClaim::Container | IsolationClaim::Microvm => Some(HOST_ROUTE.host_addr),
+        // macOS supervised/process share the host's loopback.
+        IsolationClaim::Supervised | IsolationClaim::Process if cfg!(target_os = "macos") => {
+            Some("127.0.0.1")
+        }
+        _ => None,
+    }
 }
 
 // ─── run ─────────────────────────────────────────────────────────────────────
