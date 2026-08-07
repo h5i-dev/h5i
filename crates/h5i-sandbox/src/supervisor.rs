@@ -731,9 +731,11 @@ fn setup_egress(
     let slirp = slirp4netns_path()
         .ok_or_else(|| H5iError::Metadata("`slirp4netns` not found on PATH".into()))?;
 
-    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = std::env::temp_dir().join(format!("h5i-egress-{}-{seq}", std::process::id()));
-    std::fs::create_dir_all(&tmp).map_err(H5iError::Io)?;
+    // Unguessable and 0700: the ruleset written here is handed to `nft -f` by a
+    // child holding CAP_NET_ADMIN, so a pre-planted directory or symlink at a
+    // predictable path would let another local user choose the box's egress
+    // policy outright.
+    let tmp = crate::sandbox::private_scratch_dir("h5i-egress")?;
     // No resolver port: DNS is pinned via /etc/hosts, so port 53 stays closed.
     let rules = build_nft_ruleset(&dests, None);
     let rules_path = tmp.join("egress.nft");
@@ -856,7 +858,7 @@ fn run_supervised(
     // and the real credential is scrubbed from the box's per-env HOME copy, so
     // the token is absent from the box entirely.
     let auth = if !policy.profile.net_egress.is_empty() {
-        crate::auth_proxy::engage(&policy.profile.name, true)
+        crate::auth_proxy::engage(&policy.profile.name, true)?
     } else {
         None
     };
@@ -1093,7 +1095,7 @@ fn run_supervised(
     // Credential-injecting auth proxy (option 2). `tier_ok` is true because the
     // box shares the host's loopback and the profile will open exactly this port.
     let auth = if has_egress {
-        crate::auth_proxy::engage_at(&policy.profile.name, true, LOOPBACK_HOST)
+        crate::auth_proxy::engage_at(&policy.profile.name, true, LOOPBACK_HOST)?
     } else {
         None
     };
@@ -1114,7 +1116,7 @@ fn run_supervised(
     // narrows the nftables ruleset to the auth proxy alone in that case).
     let mut env = effective_env;
     let (_egress_proxy, egress_port) = if has_egress && auth_port.is_none() {
-        let mut allow = crate::container::AllowList::parse(&policy.profile.net_egress);
+        let mut allow = crate::container::AllowList::parse(&policy.profile.net_egress)?;
         // Pin now, so a later DNS answer cannot move the allowlist under us.
         allow.pin_dns();
         // On the pinned port when the box has one: a `browser` box's Chrome

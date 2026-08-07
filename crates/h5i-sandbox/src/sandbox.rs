@@ -25,10 +25,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
-// PathBuf is only referenced from the confinement paths (Landlock grants,
-// config-lock, the Seatbelt plan); gate the import so targets with neither
-// backend don't see it as unused under `-D warnings`.
-#[cfg(unix)]
+// Used on every target now: the private-path and scratch-dir helpers below
+// return PathBuf regardless of which confinement backend (if any) this target
+// has.
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -193,12 +192,18 @@ struct ContainerToml {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FsToml {
+    // `Option`, like `net.egress`, so an author can tell h5i "nothing" and be
+    // believed. Omitted (`None`) inherits the built-in base, which is what
+    // makes a partial overlay usable; an explicit `read = []` means the empty
+    // list. Treating `[]` as "omitted" turned a narrowing into a widening: a
+    // profile written as `fs.write = []` to get a read-only box was handed
+    // `$WORK`, `~/.claude`, `/tmp` and `/dev/tty` instead.
     #[serde(default)]
-    read: Vec<String>,
+    read: Option<Vec<String>>,
     #[serde(default)]
-    write: Vec<String>,
+    write: Option<Vec<String>>,
     #[serde(default)]
-    deny: Vec<String>,
+    deny: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -234,8 +239,10 @@ struct ResourcesToml {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EnvVarsToml {
+    /// `Option` for the same reason as [`FsToml`]: an explicit `pass = []`
+    /// means an empty environment, not "inherit PATH/HOME/LANG/TERM/…".
     #[serde(default)]
-    pass: Vec<String>,
+    pass: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -383,9 +390,11 @@ pub fn load_profile(
             Profile {
                 name: name.to_string(),
                 isolation,
-                fs_read: if t.fs.read.is_empty() { base.fs_read } else { t.fs.read },
-                fs_write: if t.fs.write.is_empty() { base.fs_write } else { t.fs.write },
-                fs_deny: if t.fs.deny.is_empty() { base.fs_deny } else { t.fs.deny },
+                // Omitted → inherit the base; explicit `[]` → empty. Same rule
+                // as `net.egress` below, so narrowing a profile never widens it.
+                fs_read: t.fs.read.unwrap_or(base.fs_read),
+                fs_write: t.fs.write.unwrap_or(base.fs_write),
+                fs_deny: t.fs.deny.unwrap_or(base.fs_deny),
                 net_mode: match t.net.mode {
                     Some(ref s) => NetMode::parse(s)?,
                     None => base.net_mode,
@@ -422,7 +431,7 @@ pub fn load_profile(
                 },
                 tools: t.tools,
                 image: t.container.image.or(base.image),
-                env_pass: if t.env.pass.is_empty() { base.env_pass } else { t.env.pass },
+                env_pass: t.env.pass.unwrap_or(base.env_pass),
                 private_paths: if t.private_paths.is_empty() {
                     base.private_paths
                 } else {
@@ -552,6 +561,28 @@ pub fn effective_auto(
 /// Fail-closed policy lints (§7). These reject *policies*, before any env is
 /// created — never silently weaken them.
 pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
+    // A profile that opts into an egress allowlist may not also re-export the
+    // proxy wiring: `env.pass` is applied after it, so the host's value would
+    // win and the box would route around the allowlist. Refused at load, so the
+    // author is told rather than silently getting a wider box. (Harmless with
+    // no `net.egress` — there is no proxy to shadow — so it is not refused
+    // there.)
+    if !p.net_egress.iter().all(|e| e.trim().is_empty()) {
+        if let Some(bad) = p
+            .env_pass
+            .iter()
+            .find(|k| crate::container::is_proxy_wiring_var(k))
+        {
+            return Err(H5iError::Metadata(format!(
+                "profile '{}': env.pass carries '{bad}', which is part of the egress proxy \
+                 wiring. Passing it through would replace the allowlist proxy's address with \
+                 the host's and let the box egress unfiltered — remove it from env.pass \
+                 (fail-closed).",
+                p.name
+            )));
+        }
+    }
+
     // Secret grants are brokered (docs/secrets-broker-design.md). Validate the
     // *config* here (names + source/inject syntax); values are resolved
     // fail-closed at run time, never at policy-load time.
@@ -627,11 +658,26 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
         )));
     }
     // fs.deny preflight lint: Landlock has no deny rules, so a granted parent
-    // must never contain a denied child. Compare on expanded, normalized text.
+    // must never contain a denied child.
+    //
+    // Compare on *resolved* paths, not on expanded text. Landlock grants follow
+    // symlinks — the builder opens the grant path and hands the result to
+    // `path_beneath_rules` — so a grant of `~/work-tools` on a host where that
+    // is a symlink to `$HOME` really grants the whole home directory. A textual
+    // prefix check never saw `~/.ssh` underneath it and let the policy load.
+    // Canonicalization is best-effort: a path that does not exist yet cannot be
+    // resolved, and the expanded text is the right fallback there (a
+    // non-existent grant is skipped by the Landlock builder anyway).
+    let resolve = |s: &str| -> String {
+        let expanded = expand_tilde(s);
+        std::fs::canonicalize(&expanded)
+            .map(|p| p.display().to_string())
+            .unwrap_or(expanded)
+    };
     for grant in p.fs_read.iter().chain(p.fs_write.iter()) {
-        let g = expand_tilde(grant);
+        let g = resolve(grant);
         for deny in &p.fs_deny {
-            let d = expand_tilde(deny);
+            let d = resolve(deny);
             if d == g || d.starts_with(&format!("{}/", g.trim_end_matches('/'))) {
                 return Err(H5iError::Metadata(format!(
                     "policy refused: granted path '{grant}' contains denied child '{deny}' \
@@ -643,6 +689,109 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     }
     validate_private_paths(p)?;
     Ok(())
+}
+
+/// 16 hex chars of OS entropy — enough that no other local user can guess or
+/// pre-plant a scratch path before we create it.
+fn random_suffix() -> Result<String, H5iError> {
+    let mut raw = [0u8; 8];
+    getrandom::fill(&mut raw).map_err(|e| {
+        H5iError::Metadata(format!(
+            "no OS entropy for a private scratch path ({e}) — refusing to fall back to a \
+             guessable one (fail-closed)"
+        ))
+    })?;
+    Ok(raw.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// A private scratch directory under the system temp dir.
+///
+/// `<tmp>/<prefix>-<pid>-<seq>` was guessable, and both `create_dir_all` and
+/// `fs::write` are happy to land inside a directory (or through a symlink)
+/// another user pre-created. That matters most for the nftables ruleset, which
+/// a child then `execve`s `nft -f` on with CAP_NET_ADMIN: an attacker-supplied
+/// ruleset becomes the box's entire L3/L4 egress policy.
+///
+/// So: an unguessable name, and `mkdir(0700)` — which fails if the path exists,
+/// and sets the mode atomically rather than leaving a window at the umask
+/// default.
+pub fn private_scratch_dir(prefix: &str) -> Result<PathBuf, H5iError> {
+    let dir = std::env::temp_dir().join(format!("{prefix}-{}", random_suffix()?));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&dir)
+            .map_err(|e| H5iError::with_path(e, &dir))?;
+    }
+    #[cfg(not(unix))]
+    std::fs::DirBuilder::new()
+        .create(&dir)
+        .map_err(|e| H5iError::with_path(e, &dir))?;
+    Ok(dir)
+}
+
+/// Create the directory chain for `rel` under `work` without ever traversing a
+/// symlink, and return the joined path. `keep_last` decides whether the final
+/// component is created too (the Linux bind mountpoint) or left for the caller
+/// (the macOS redirect, which puts a symlink there).
+///
+/// `validate_private_paths` rejects a leading `/`, `..` and `,`, but it never
+/// *resolves* the path — and both `private_paths` and the worktree contents are
+/// repo-supplied. A branch shipping `a` as a symlink to `$HOME` turns a
+/// perfectly valid `a/bin` entry into a write outside `$WORK`: on Linux
+/// `create_dir_all` makes the mountpoint at the link's target and the bind
+/// grants the box rw there; on macOS `apply_symlinks` plants its redirect there
+/// instead. Walking component by component refuses both.
+fn create_dirs_within(work: &Path, rel: &str, keep_last: bool) -> Result<PathBuf, H5iError> {
+    let comps: Vec<&str> = rel
+        .trim_matches('/')
+        .split('/')
+        .filter(|c| !c.is_empty())
+        .collect();
+    let stop = if keep_last {
+        comps.len()
+    } else {
+        comps.len().saturating_sub(1)
+    };
+    let mut cur = work.to_path_buf();
+    for (i, c) in comps.iter().enumerate() {
+        cur.push(c);
+        if i >= stop {
+            break;
+        }
+        match std::fs::symlink_metadata(&cur) {
+            Ok(md) if md.file_type().is_symlink() => {
+                return Err(H5iError::Metadata(format!(
+                    "private_paths '{rel}': '{}' is a symlink, and h5i will not follow one out \
+                     of the workspace to place a private path (fail-closed). Remove it from the \
+                     branch, or point the entry somewhere else.",
+                    cur.display()
+                )))
+            }
+            Ok(md) if md.is_dir() => {}
+            Ok(_) => {
+                return Err(H5iError::Metadata(format!(
+                    "private_paths '{rel}': '{}' exists and is not a directory (fail-closed)",
+                    cur.display()
+                )))
+            }
+            Err(_) => std::fs::create_dir(&cur).map_err(|e| H5iError::with_path(e, &cur))?,
+        }
+    }
+    Ok(cur)
+}
+
+/// Create the mountpoint for a private bind, refusing a symlinked ancestor.
+pub fn create_private_mountpoint(work: &Path, rel: &str) -> Result<PathBuf, H5iError> {
+    create_dirs_within(work, rel, true)
+}
+
+/// Create the *parent* directories for a private path, refusing a symlinked
+/// ancestor, and return the path the caller should place there.
+pub fn prepare_private_link_site(work: &Path, rel: &str) -> Result<PathBuf, H5iError> {
+    create_dirs_within(work, rel, false)
 }
 
 /// Validate `private_paths` (Idea 3), fail-closed: each path is
@@ -1878,7 +2027,10 @@ fn augment_injected_env(
     env
 }
 
-/// Monotonic counter so concurrent functional probes get distinct temp dirs.
+/// Monotonic counter so concurrent runs get distinct per-run cgroup names.
+/// cgroups are Linux-only, and since the exec probe stopped using this for its
+/// scratch path the cgroup builder is its sole consumer.
+#[cfg(target_os = "linux")]
 static PROBE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static VERIFIED_EXEC_POLICIES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
@@ -1906,9 +2058,7 @@ pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
             return Ok(());
         }
     }
-    let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("h5i-exec-probe-{}-{seq}", std::process::id()));
-    std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+    let dir = private_scratch_dir("h5i-exec-probe")?;
     // Clone the profile but clear the tools allowlist so our internal probe
     // command isn't rejected by a user-pinned list that omits `true`.
     let mut profile = policy.profile.clone();
@@ -2948,9 +3098,49 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
         arch,
     )
     .map_err(|e| H5iError::Metadata(format!("seccomp filter build failed: {e}")))?;
-    filter
+    let program: seccompiler::BpfProgram = filter
         .try_into()
-        .map_err(|e: seccompiler::BackendError| H5iError::Metadata(format!("seccomp compile failed: {e}")))
+        .map_err(|e: seccompiler::BackendError| {
+            H5iError::Metadata(format!("seccomp compile failed: {e}"))
+        })?;
+    Ok(prepend_x32_guard(program))
+}
+
+/// Refuse the x32 ABI before the deny-list runs.
+///
+/// Linux only, like `seccompiler` and its caller.
+///
+/// On x86_64, x32 reports `AUDIT_ARCH_X86_64` in `seccomp_data.arch` — so
+/// seccompiler's own arch check passes — but ORs `X32_SYSCALL_BIT` into `nr`.
+/// Every syscall-number comparison in the compiled deny-list therefore misses,
+/// and an x32 `mount`/`ptrace`/`unshare` falls through to the default Allow.
+/// seccompiler has no knob for this, so the guard is prepended to the compiled
+/// program: BPF jumps are relative, so shifting the original block is safe.
+///
+/// Architecture-independent by construction — no aarch64 syscall number comes
+/// near `0x4000_0000`, so the comparison never fires there.
+#[cfg(target_os = "linux")]
+fn prepend_x32_guard(program: seccompiler::BpfProgram) -> seccompiler::BpfProgram {
+    use seccompiler::sock_filter;
+    // Spelled as literals: the classic-BPF opcode components (BPF_LD|BPF_W|
+    // BPF_ABS, BPF_JMP|BPF_JGE|BPF_K, BPF_RET|BPF_K) include zero-valued terms,
+    // and clippy rightly objects to `x | 0`.
+    const BPF_LD_W_ABS: u16 = 0x20;
+    const BPF_JMP_JGE_K: u16 = 0x35;
+    const BPF_RET_K: u16 = 0x06;
+    const OFF_NR: u32 = 0;
+    const X32_SYSCALL_BIT: u32 = 0x4000_0000;
+    const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
+
+    let mut out: seccompiler::BpfProgram = vec![
+        // A = nr
+        sock_filter { code: BPF_LD_W_ABS, jt: 0, jf: 0, k: OFF_NR },
+        // nr >= X32 bit → fall through to the kill; otherwise skip it.
+        sock_filter { code: BPF_JMP_JGE_K, jt: 0, jf: 1, k: X32_SYSCALL_BIT },
+        sock_filter { code: BPF_RET_K, jt: 0, jf: 0, k: SECCOMP_RET_KILL_PROCESS },
+    ];
+    out.extend(program);
+    out
 }
 
 /// Spawn `cmd`, stream stdout/stderr off-thread, and enforce `wall` as a hard
@@ -3542,6 +3732,52 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         assert!(p.fs_deny.iter().any(|s| s == "~/.ssh"));
     }
 
+    /// Landlock grants follow symlinks, so the lint has to as well. A grant of
+    /// a symlink into `$HOME` really grants the home directory, and a textual
+    /// prefix check never saw the denied child underneath it.
+    #[test]
+    #[cfg(unix)]
+    fn fs_deny_lint_sees_through_a_symlinked_grant() {
+        let td = tempfile::tempdir().unwrap();
+        let home = td.path().join("home");
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        // The grant is a symlink to the directory that holds the denied child.
+        let tools = td.path().join("work-tools");
+        std::os::unix::fs::symlink(&home, &tools).unwrap();
+
+        let mut p = Profile::builtin("default", IsolationClaim::Process);
+        p.fs_read = vec![tools.display().to_string()];
+        p.fs_deny = vec![home.join(".ssh").display().to_string()];
+        let err = validate_profile(&p).map(|_| ()).unwrap_err();
+        assert!(err.to_string().contains("denied child"), "{err}");
+
+        // An unrelated grant still loads.
+        p.fs_read = vec![td.path().join("elsewhere").display().to_string()];
+        assert!(validate_profile(&p).is_ok());
+    }
+
+    /// Host-side scratch must not be pre-plantable. The nftables ruleset lands
+    /// in one of these and is then executed by a child with CAP_NET_ADMIN, so a
+    /// guessable path let another local user pick the box's egress policy.
+    #[test]
+    fn private_scratch_is_unguessable_and_owner_only() {
+        let a = private_scratch_dir("h5i-test-scratch").unwrap();
+        let b = private_scratch_dir("h5i-test-scratch").unwrap();
+        assert_ne!(a, b, "two scratch dirs must not collide");
+        // Not derived from the pid: that is what made the old name guessable.
+        assert!(!a.to_string_lossy().contains(&std::process::id().to_string()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&a).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "scratch dir must be 0700, got {mode:o}");
+        }
+        // Never reuses an existing directory.
+        assert!(std::fs::DirBuilder::new().create(&a).is_err());
+        let _ = std::fs::remove_dir_all(&a);
+        let _ = std::fs::remove_dir_all(&b);
+    }
+
     #[test]
     fn agent_profile_injects_is_sandbox() {
         // Agent-in-box profiles map the agent to root-in-userns on the egress
@@ -3675,6 +3911,39 @@ net.egress = []
 "#;
         let p = load_from_str(toml_text, "agent-claude", None).unwrap();
         assert!(p.net_egress.is_empty(), "explicit [] must stay empty");
+    }
+
+    /// The same opt-out rule for the filesystem and environment lists. Treating
+    /// `[]` as "omitted" inverted a narrowing into a widening: an author asking
+    /// for a read-only box with `fs.write = []` was handed the builtin base
+    /// ($WORK, ~/.claude, ~/.cache, /tmp, /dev/tty) instead.
+    #[test]
+    fn explicit_empty_fs_and_env_lists_are_not_re_widened() {
+        let toml_text = r#"
+[profile.agent-claude]
+isolation = "supervised"
+net.egress = ["api.anthropic.com"]
+fs.write = []
+fs.read = []
+env.pass = []
+"#;
+        let p = load_from_str(toml_text, "agent-claude", None).unwrap();
+        assert!(p.fs_write.is_empty(), "explicit fs.write = [] must stay empty: {:?}", p.fs_write);
+        assert!(p.fs_read.is_empty(), "explicit fs.read = [] must stay empty: {:?}", p.fs_read);
+        assert!(p.env_pass.is_empty(), "explicit env.pass = [] must stay empty: {:?}", p.env_pass);
+    }
+
+    /// Omitting them still inherits the base, so a partial overlay stays usable.
+    #[test]
+    fn omitted_fs_and_env_lists_still_inherit_the_builtin_base() {
+        let toml_text = r#"
+[profile.agent-claude]
+isolation = "supervised"
+"#;
+        let p = load_from_str(toml_text, "agent-claude", None).unwrap();
+        assert!(!p.fs_write.is_empty(), "omitted fs.write inherits the base");
+        assert!(!p.env_pass.is_empty(), "omitted env.pass inherits the base");
+        assert!(p.env_pass.iter().any(|k| k == "PATH"));
     }
 
     #[test]

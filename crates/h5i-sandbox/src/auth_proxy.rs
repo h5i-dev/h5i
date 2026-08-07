@@ -750,39 +750,54 @@ pub struct Engagement {
 
 /// Decide + spawn the credential-injecting proxy for a run. Shared by both the
 /// container and supervised backends (their only difference is `tier_ok` —
-/// whether the box can reach the host proxy on this tier). `None` keeps the box
-/// on its existing in-box-login path — never a downgrade of an active protection.
-pub fn engage(profile_name: &str, tier_ok: bool) -> Option<Engagement> {
+/// whether the box can reach the host proxy on this tier).
+///
+/// `Ok(None)` means the proxy does not apply: opted out, an unsupported tier, a
+/// non-agent profile, or no host credential to broker. Those keep the box on
+/// its existing in-box-login path and are not a downgrade of anything.
+///
+/// `Err` means the proxy was *supposed* to engage and could not. That is a
+/// different thing entirely and must not be swallowed: the caller would keep
+/// the real credential in the box's HOME copy *and* open the full `net.egress`
+/// allowlist instead of narrowing to the proxy port, which is precisely the
+/// state this module's header claims is unreachable.
+pub fn engage(profile_name: &str, tier_ok: bool) -> Result<Option<Engagement>, H5iError> {
     engage_at(profile_name, tier_ok, SLIRP_GATEWAY_HOST)
 }
 
 /// [`engage`] for a backend whose box reaches the host proxy at `host` rather
 /// than the slirp gateway — the macOS Seatbelt tiers, where the box shares the
 /// host's loopback instead of living in its own network namespace.
-pub fn engage_at(profile_name: &str, tier_ok: bool, host: &str) -> Option<Engagement> {
+pub fn engage_at(
+    profile_name: &str,
+    tier_ok: bool,
+    host: &str,
+) -> Result<Option<Engagement>, H5iError> {
     if !tier_ok || opted_out() {
-        return None;
+        return Ok(None);
     }
-    let rt = AgentRuntime::from_profile_name(profile_name)?;
-    let cred = resolve_credential(rt)?;
-    let token = match new_client_token() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("note: credential proxy unavailable ({e}); box uses in-box login");
-            return None;
-        }
+    let Some(rt) = AgentRuntime::from_profile_name(profile_name) else {
+        return Ok(None);
     };
-    match spawn(rt, cred, token.clone()) {
-        Ok(handle) => Some(Engagement {
-            box_env: box_env_at(rt, host, handle.port, &token),
-            handle,
-            runtime: rt,
-        }),
-        Err(e) => {
-            eprintln!("note: credential proxy unavailable ({e}); box uses in-box login");
-            None
-        }
-    }
+    let Some(cred) = resolve_credential(rt) else {
+        return Ok(None);
+    };
+    // From here the proxy is expected. Entropy or bind failure is a refusal,
+    // not a fallback: silently continuing would put the long-lived token back
+    // in the box and widen its egress at the same time.
+    let token = new_client_token()?;
+    let handle = spawn(rt, cred, token.clone()).map_err(|e| {
+        H5iError::Metadata(format!(
+            "credential proxy failed to start ({e}) — refusing to run the box with its own \
+             credentials and the full egress allowlist instead (fail-closed). Set \
+             H5I_NO_AUTH_PROXY=1 to opt out deliberately."
+        ))
+    })?;
+    Ok(Some(Engagement {
+        box_env: box_env_at(rt, host, handle.port, &token),
+        handle,
+        runtime: rt,
+    }))
 }
 
 #[cfg(test)]
@@ -795,6 +810,22 @@ mod tests {
     /// otherwise race on the same vars. Poison-tolerant (a panicking test must
     /// not wedge the rest).
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// The not-applicable cases stay `Ok(None)`: they keep a working in-box
+    /// login working and are not a downgrade of anything.
+    #[test]
+    fn engage_reports_not_applicable_as_ok_none() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Unsupported tier.
+        assert!(engage_at("agent-claude", false, "127.0.0.1").unwrap().is_none());
+        // Not an agent profile.
+        assert!(engage_at("default", true, "127.0.0.1").unwrap().is_none());
+        // Agent profile with no host credential to broker.
+        for v in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] {
+            std::env::remove_var(v);
+        }
+        assert!(engage_at("agent-claude", true, "127.0.0.1").unwrap().is_none());
+    }
 
     #[test]
     fn resolve_credential_precedence_claude() {

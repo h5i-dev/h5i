@@ -1763,6 +1763,84 @@ fn no_workspace_err(m: &EnvManifest, op: &str) -> H5iError {
     ))
 }
 
+// ─── opening the env worktree (host side) ────────────────────────────────────
+
+/// Open the env's worktree repository, refusing any handle that is not this
+/// box's own.
+///
+/// Plain `Repository::open(work)` trusts two things the box can write: the
+/// `$WORK/.git` pointer file, which lives in the box's rw workspace, and the
+/// worktree admin dir (`HEAD`, `commondir`, `gitdir`), which [`box_git_plumbing`]
+/// grants rw so in-box git keeps working. A box that rewrites either one
+/// redirects every host-side git operation that follows. The consequence is
+/// worst in [`mediated_commit`], which would stage the box's tree into whatever
+/// repository the pointer names and commit it onto whatever ref its HEAD names
+/// — landing unreviewed work on the parent branch without `apply` ever running.
+///
+/// So the invariant [`box_git_plumbing`] states for grant computation — never
+/// derive host behaviour from box-writable state — is enforced here for every
+/// host-side open: the handle must sit on the manifest's branch, and its object
+/// store must be the one this box was created against.
+fn open_env_worktree(h5i_root: &Path, m: &EnvManifest) -> Result<Repository, H5iError> {
+    let work = m.work_dir(h5i_root);
+    let wt_repo = Repository::open(&work)?;
+    verify_env_worktree(h5i_root, &wt_repo, m)?;
+    Ok(wt_repo)
+}
+
+/// The two checks behind [`open_env_worktree`], split out so the refusal can be
+/// unit-tested against a deliberately redirected worktree.
+fn verify_env_worktree(
+    h5i_root: &Path,
+    wt_repo: &Repository,
+    m: &EnvManifest,
+) -> Result<(), H5iError> {
+    // Canonicalize both sides: the comparison has to survive symlinked repo
+    // paths (`/tmp` on macOS is the standing example) without being loosened
+    // into a prefix match.
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let got = canon(wt_repo.commondir());
+
+    // 1. Same object store. An attached box is a worktree of this repository,
+    //    so it shares the common dir; a detached box carries its own repository
+    //    inside the env directory and must stay inside it.
+    let ok = if is_detached(m) {
+        got.starts_with(canon(&m.dir(h5i_root)))
+    } else {
+        // `h5i_root` is `<repo>/.git/.h5i` (see `storage::h5i_root_for_repo`),
+        // so its parent is the common dir this box belongs to.
+        h5i_root.parent().is_some_and(|d| got == canon(d))
+    };
+    if !ok {
+        return Err(H5iError::Metadata(format!(
+            "{}: the box's worktree points at a git directory that is not this box's \
+             ({}). `$WORK/.git` and the worktree admin dir are writable inside the box, so \
+             h5i refuses to run a host-side git operation through a redirected pointer \
+             (fail-closed). Recreate the box to continue.",
+            m.id,
+            got.display()
+        )));
+    }
+
+    // 2. On its own branch. Without this a rewritten worktree HEAD would let a
+    //    mediated commit land on the parent branch.
+    let head_ref = wt_repo
+        .head()
+        .ok()
+        .and_then(|h| h.name().map(str::to_string));
+    if head_ref.as_deref() != Some(m.branch.as_str()) {
+        return Err(H5iError::Metadata(format!(
+            "{}: the box's worktree is on {} but this box owns {}. The worktree HEAD is \
+             writable inside the box, so h5i refuses to commit through it (fail-closed). \
+             Recreate the box to continue.",
+            m.id,
+            head_ref.as_deref().unwrap_or("a detached HEAD"),
+            m.branch
+        )));
+    }
+    Ok(())
+}
+
 // ─── in-box git plumbing grants ──────────────────────────────────────────────
 
 /// The repo-`.git` plumbing surface that makes the env's worktree a
@@ -2010,9 +2088,11 @@ fn prepare_private_paths(
             let _ = std::fs::remove_dir_all(&backing);
         }
         std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
-        // The mountpoint must exist inside the worktree.
-        let target = work.join(&rel);
-        std::fs::create_dir_all(&target).map_err(|e| H5iError::with_path(e, &target))?;
+        // The mountpoint must exist inside the worktree — and *stay* inside it.
+        // `rel` and the worktree are both repo-supplied, so a symlinked
+        // ancestor would otherwise put the mountpoint (and the bind's rw grant)
+        // on an arbitrary host path.
+        sandbox::create_private_mountpoint(work, &rel)?;
         // The image-backed tiers carry the backing dir as a mount *spec string*,
         // and each runtime's syntax reserves a separator its paths cannot
         // contain: Podman's `--mount` splits on ',', microsandbox's
@@ -2305,6 +2385,18 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<(), H5iError> {
     }
     if ft.is_dir() {
         std::fs::create_dir_all(dst).map_err(|e| H5iError::with_path(e, dst))?;
+        // Carry the source directory's mode across. `create_dir_all` uses
+        // 0777 & ~umask (typically 0755), so a 0700 `~/.codex` became a 0755
+        // copy: `std::fs::copy` preserves the *file's* mode, but a config file
+        // at 0644 was relying on its parent directory for protection, which is
+        // the common case for an agent credential.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = meta.permissions().mode() & 0o7777;
+            std::fs::set_permissions(dst, std::fs::Permissions::from_mode(mode))
+                .map_err(|e| H5iError::with_path(e, dst))?;
+        }
         for entry in std::fs::read_dir(src).map_err(|e| H5iError::with_path(e, src))? {
             let entry = entry.map_err(|e| H5iError::with_path(e, src))?;
             let name = entry.file_name();
@@ -2918,20 +3010,35 @@ pub struct BrowserShim {
     pub port: u16,
 }
 
+/// The two directories a `browser` box uses, and the trust line between them.
+///
+/// `state` is granted **write**: it is where the box's own Chrome records its
+/// pid and port. `dir` is granted **read** only, and is where the host keeps
+/// the loopback ports it reserved — those decide what
+/// `policy.loopback_ports` will grant, so they must not be box-writable.
+fn browser_dirs(h5i_root: &Path, m: &EnvManifest) -> (PathBuf, PathBuf) {
+    let dir = m.dir(h5i_root).join("browser");
+    let state = dir.join("state");
+    (dir, state)
+}
+
 /// A loopback port held for the life of the env: read back from `file` when it
 /// is already there, otherwise reserved once and written down. Both ports a
 /// browser box depends on are memorised by something that outlives a single run
 /// (Chrome's CDP endpoint, and the proxy address Chrome was launched with), so
 /// neither can be re-drawn per run.
 fn remembered_port(file: &Path, what: &str, avoid: &[u16]) -> Result<u16, H5iError> {
-    // The file lives under `<env>/browser/state`, which the box is granted write
-    // on (it is where the box's own Chrome records its pid and port), so the
-    // value read back here is box-controlled. Nothing catastrophic follows from
-    // that — a port the box picks is one it could bind itself, and the policy
-    // only ever grants the port the host actually bound — but a `0` would ask
-    // for an ephemeral port under the name of a pinned one, and a privileged
-    // port would fail to bind on every run. Both are rejected in favour of
-    // drawing a fresh port, which is also what a corrupt file gets.
+    // `file` MUST live outside every write grant the box holds. The value read
+    // back here is pushed into `policy.loopback_ports`, which Seatbelt renders
+    // as `(allow network-outbound (remote ip "localhost:<port>"))` — so a box
+    // that could write it would be choosing which host loopback service its own
+    // next session may reach (the operator's Postgres, another box's dev
+    // server). That is why these files sit in `<env>/browser`, which the box is
+    // granted read on, and not in `<env>/browser/state`, which it can write.
+    //
+    // A `0` would still ask for an ephemeral port under the name of a pinned
+    // one and a privileged port would fail to bind on every run, so both are
+    // rejected in favour of drawing a fresh port — as is a corrupt file.
     //
     // `avoid` is the ports this env already holds. A drawn port is found by
     // binding an ephemeral listener and dropping it, so the next draw can be
@@ -3134,8 +3241,7 @@ fn prepare_browser_shim(
     let Some(real) = sandbox::agent_browser_binary() else {
         return Ok(None);
     };
-    let dir = m.dir(h5i_root).join("browser");
-    let state = dir.join("state");
+    let (dir, state) = browser_dirs(h5i_root, m);
     std::fs::create_dir_all(&state).map_err(|e| H5iError::with_path(e, &state))?;
     // Before anything else: a browser the last run found stranded on an old
     // route is stopped here, so the shim launches a fresh one below.
@@ -3146,14 +3252,17 @@ fn prepare_browser_shim(
     // the next run would be a port the still-running Chrome is not listening on
     // — and, worse, the only port the policy grants. Allocated once, then read
     // back for the life of the env.
-    let port = remembered_port(&state.join("cdp-port"), "the box's browser", &[])?;
+    // Reserved in `dir`, not `state`: the box has write on `state` and only read
+    // on `dir`, and these two numbers decide which host loopback ports the
+    // policy will grant.
+    let port = remembered_port(&dir.join("cdp-port"), "the box's browser", &[])?;
     policy.loopback_ports.push(port);
     // The egress allowlist proxy is remembered for the same reason, in the
     // other direction: that surviving Chrome memorises the proxy address it was
     // launched with, and on the macOS supervised tier that proxy is the box's
     // only route out. See [`sandbox::ResolvedPolicy::egress_proxy_port`].
     policy.egress_proxy_port = Some(remembered_port(
-        &state.join("egress-port"),
+        &dir.join("egress-port"),
         "the box's egress proxy",
         &[port],
     )?);
@@ -3778,6 +3887,21 @@ fn announce_egress(policy: &sandbox::ResolvedPolicy) {
         _ => "proxy-enforced, everything else 403",
     };
     eprintln!("⦿ egress ({how}): {line}{user_part}");
+    // Say the cost of the allowlist plan out loud. Reaching a host-side proxy
+    // from a rootless container means `slirp4netns:allow_host_loopback=true`,
+    // which exposes *every* host loopback service at the gateway address — not
+    // just the proxy port. Choosing the allowlist therefore widens the box's
+    // reach compared with plain NAT, and a reader deserves to know that from
+    // the tier itself rather than from the source. (The supervised tiers do not
+    // share this: nftables narrows the jail to the proxy port, and Seatbelt
+    // refuses host loopback wholesale.)
+    if policy.claim == IsolationClaim::Container {
+        eprintln!(
+            "⦿ note: the allowlist proxy is reached over host loopback, so host services on \
+             127.0.0.1 are reachable from this box at the gateway address. The allowlist \
+             governs what leaves the host, not what the box can reach on it."
+        );
+    }
 }
 
 /// Run `argv` inside the env's worktree under its pinned policy, and record
@@ -3894,6 +4018,7 @@ fn run_inner(
         &secret_dir,
         is_workspace,
         policy.profile.allow_command_extractors,
+        &crate::secrets_broker::fingerprint_key(h5i_root)?,
     )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
     // Authenticated egress the profile declares (5.5). Host-side credentials
@@ -4017,7 +4142,7 @@ fn run_inner(
         });
 
     // Read HEAD from the WORKTREE repo so the tree recorded is the env's.
-    let wt_repo = Repository::open(&work)?;
+    let wt_repo = open_env_worktree(h5i_root, m)?;
     let head_tree = wt_repo
         .head()
         .ok()
@@ -4269,6 +4394,7 @@ pub fn shell(
         &secret_dir,
         is_workspace,
         policy.profile.allow_command_extractors,
+        &crate::secrets_broker::fingerprint_key(h5i_root)?,
     )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
     let injected_env = merged_env(
@@ -4493,7 +4619,7 @@ fn capture_shell_egress(
             h.host, h.port, h.allowed, h.denied
         ));
     }
-    let wt_repo = Repository::open(work)?;
+    let wt_repo = open_env_worktree(h5i_root, m)?;
     let head_tree = wt_repo
         .head()
         .ok()
@@ -4858,11 +4984,22 @@ const SPOOL_MAX_CMD_BYTES: u64 = 64 * 1024;
 /// capped at `cap` bytes with an explicit truncation marker.
 fn read_spool_capped(p: &Path, cap: u64) -> Option<Vec<u8>> {
     use std::io::Read as _;
-    let meta = std::fs::symlink_metadata(p).ok()?;
+    // `symlink_metadata` then `open` would be two resolutions of a path in a
+    // directory the box writes: it can stat as a regular file and be a symlink
+    // by the time we open it. Open first with O_NOFOLLOW, then `fstat` that
+    // descriptor, so the thing we check is the thing we read.
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW);
+    }
+    let f = opts.open(p).ok()?;
+    let meta = f.metadata().ok()?;
     if !meta.file_type().is_file() {
         return None;
     }
-    let f = std::fs::File::open(p).ok()?;
     let mut buf = Vec::new();
     f.take(cap).read_to_end(&mut buf).ok()?;
     if meta.len() > cap {
@@ -4889,7 +5026,7 @@ fn ingest_shell_spool(
         return Ok(0);
     }
     let work = m.work_dir(h5i_root);
-    let wt_repo = Repository::open(&work)?;
+    let wt_repo = open_env_worktree(h5i_root, m)?;
     let head_tree = wt_repo
         .head()
         .ok()
@@ -5131,7 +5268,7 @@ pub fn diff(
 
     let work = m.work_dir(h5i_root);
     if work.is_dir() {
-        let wt_repo = Repository::open(&work)?;
+        let wt_repo = open_env_worktree(h5i_root, m)?;
         let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
         let mut opts = git2::DiffOptions::new();
         opts.include_untracked(true)
@@ -5220,7 +5357,7 @@ pub fn diffstat_report(
 
     let work = m.work_dir(h5i_root);
     if work.is_dir() {
-        let wt_repo = Repository::open(&work)?;
+        let wt_repo = open_env_worktree(h5i_root, m)?;
         let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
         let mut opts = git2::DiffOptions::new();
         opts.include_untracked(true)
@@ -5690,14 +5827,18 @@ pub struct SecretStatus {
     pub ttl: Option<String>,
     /// `ok` | `command (not evaluated)` | `error: …`.
     pub status: String,
-    /// `sha256:<12>` when resolvable (env:/file:), else `None`.
+    /// `fp:<12>` (keyed, see [`crate::secrets_broker::fingerprint`]) when
+    /// resolvable (env:/file:), else `None`.
     pub fingerprint: Option<String>,
 }
 
 /// Resolve each declared grant's *status* without injecting it — the read-only
 /// surface behind `h5i box secrets`. `command:` extractors are never executed
 /// here (they have host-side side effects); they show as "not evaluated".
-pub fn secrets_status(policy: &ResolvedPolicy) -> Vec<SecretStatus> {
+pub fn secrets_status(h5i_root: &Path, policy: &ResolvedPolicy) -> Vec<SecretStatus> {
+    // Best-effort: a fingerprint the reviewer cannot compare is better than one
+    // they can grind, so a key we cannot mint drops the fingerprint entirely.
+    let fp_key = crate::secrets_broker::fingerprint_key(h5i_root).ok();
     policy
         .profile
         .secret_grants
@@ -5713,7 +5854,9 @@ pub fn secrets_status(policy: &ResolvedPolicy) -> Vec<SecretStatus> {
                 match crate::secrets_broker::resolve_value(g, false) {
                     Ok(v) => (
                         "ok".to_string(),
-                        Some(crate::secrets_broker::fingerprint(&v)),
+                        fp_key
+                            .as_ref()
+                            .map(|k| crate::secrets_broker::fingerprint(k, &v)),
                     ),
                     Err(e) => (format!("error: {e}"), None),
                 }
@@ -6197,7 +6340,7 @@ pub fn service_stop(
         if let Ok(raw) = std::fs::read(&log_path) {
             if !raw.is_empty() {
                 let work = m.work_dir(h5i_root);
-                if let Ok(wt_repo) = Repository::open(&work) {
+                if let Ok(wt_repo) = open_env_worktree(h5i_root, m) {
                     let head_tree = wt_repo
                         .head()
                         .ok()
@@ -6408,8 +6551,11 @@ fn scan_spool_pending(h5i_root: &Path, m: &EnvManifest) -> SpoolPending {
         let name = e.file_name().to_string_lossy().into_owned();
         if let Some(base) = name.strip_suffix(".json") {
             if base.starts_with("cap-") {
-                let cmd = std::fs::read(e.path())
-                    .ok()
+                // Through the same capped, symlink-refusing reader the ingest
+                // path uses. A plain `fs::read` here followed a symlink to
+                // /dev/zero and had no size cap, so a box could hang or OOM
+                // `h5i box status` — which the console polls.
+                let cmd = read_spool_capped(&e.path(), SPOOL_MAX_CMD_BYTES)
                     .and_then(|b| serde_json::from_slice::<InboxCaptureMeta>(&b).ok())
                     .map(|meta| meta.cmd)
                     .unwrap_or_default();
@@ -6724,7 +6870,7 @@ pub fn mediated_commit(
     if !work.is_dir() {
         return Err(no_workspace_err(m, "propose/rebase"));
     }
-    let wt_repo = Repository::open(&work)?;
+    let wt_repo = open_env_worktree(h5i_root, m)?;
     let canon_work = work
         .canonicalize()
         .map_err(|e| H5iError::with_path(e, &work))?;
@@ -7409,8 +7555,7 @@ pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result
     // Snapshot the worktree onto the env branch (host-side, path-allowlisted).
     mediated_commit(repo, h5i_root, m)?;
 
-    let work = m.work_dir(h5i_root);
-    let wt_repo = Repository::open(&work)?;
+    let wt_repo = open_env_worktree(h5i_root, m)?;
     let env_tip = wt_repo.head()?.peel_to_commit()?;
     let parent_tip = repo
         .find_reference(&format!("refs/heads/{}", m.parent_branch))?
@@ -9955,5 +10100,180 @@ mod tests {
 
         // A missing source fails closed.
         assert!(materialize_persona(work, &["plugin/persona/nope.md".to_string()]).is_err());
+    }
+
+    /// The per-env HOME copy must not be more permissive than the original. A
+    /// 0700 `~/.codex` copied to 0755 exposes a 0644 config that was relying on
+    /// its parent for protection.
+    #[test]
+    #[cfg(unix)]
+    fn the_home_seed_copy_keeps_the_source_directory_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let td = tempfile::tempdir().unwrap();
+        let src = td.path().join("src/.codex");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(src.join("config.toml"), "key = 1").unwrap();
+
+        let dst = td.path().join("dst/.codex");
+        copy_tree(&src, &dst).unwrap();
+        let mode = std::fs::metadata(&dst).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "copied dir must not widen, got {mode:o}");
+    }
+
+    /// The spool is written by the box and is therefore untrusted. A reader
+    /// that follows a symlink there can be pointed at any host file — or at
+    /// /dev/zero, which with no size cap hangs the host process. `box status`
+    /// (which the console polls every 8s) used a plain `fs::read`.
+    #[test]
+    #[cfg(unix)]
+    fn spool_reads_refuse_symlinks_and_stay_capped() {
+        let td = tempfile::tempdir().unwrap();
+        let spool = td.path().join("spool");
+        std::fs::create_dir_all(&spool).unwrap();
+
+        // A symlink is refused outright, even to a perfectly ordinary file.
+        let real = td.path().join("host-secret");
+        std::fs::write(&real, "PRIVATE").unwrap();
+        std::os::unix::fs::symlink(&real, spool.join("cap-1.json")).unwrap();
+        assert_eq!(read_spool_capped(&spool.join("cap-1.json"), 1024), None);
+
+        // A regular file is read, and a large one is capped rather than
+        // pulled into memory whole.
+        let big = spool.join("cmd-1-0.out");
+        std::fs::write(&big, vec![b'x'; 4096]).unwrap();
+        let got = read_spool_capped(&big, 512).unwrap();
+        assert!(got.starts_with(&[b'x'; 512][..]));
+        assert!(String::from_utf8_lossy(&got).contains("truncated"));
+    }
+
+    /// The remembered loopback ports decide what `policy.loopback_ports` grants,
+    /// which macOS turns into `(allow network-outbound (remote ip
+    /// "localhost:<port>"))`. They must therefore live outside the one browser
+    /// directory the box can write, or a box picks the host service its own
+    /// next session may reach.
+    #[test]
+    fn remembered_browser_ports_are_not_box_writable() {
+        let td = tempfile::tempdir().unwrap();
+        let m = wt_manifest("human", "b");
+        let (dir, state) = browser_dirs(td.path(), &m);
+        for f in ["cdp-port", "egress-port"] {
+            assert!(
+                !dir.join(f).starts_with(&state),
+                "{f} must not sit under the box-writable state dir"
+            );
+        }
+        // And the port that is read back is still validated.
+        std::fs::create_dir_all(&dir).unwrap();
+        for bad in ["0", "80", "-1", "not a port", ""] {
+            std::fs::write(dir.join("cdp-port"), bad).unwrap();
+            let got = remembered_port(&dir.join("cdp-port"), "test", &[]).unwrap();
+            assert!(got >= 1024, "{bad:?} yielded {got}");
+        }
+    }
+
+    /// Build a manifest for an attached box on `refs/heads/h5i/env/<agent>/<slug>`.
+    fn wt_manifest(agent: &str, slug: &str) -> EnvManifest {
+        EnvManifest {
+            id: format!("env/{agent}/{slug}"),
+            agent: agent.into(),
+            slug: slug.into(),
+            base_commit: String::new(),
+            base_tree: String::new(),
+            parent_branch: "main".into(),
+            branch: format!("refs/heads/{BRANCH_PREFIX}{agent}/{slug}"),
+            source: "repo".into(),
+            profile: "default".into(),
+            policy_digest: String::new(),
+            isolation_claim: "workspace".into(),
+            backend: "worktree".into(),
+            created_at: now_ts(),
+            updated_at: now_ts(),
+            status: ST_CREATED.into(),
+            captures: Vec::new(),
+            service_digest: None,
+            persona_digest: None,
+            pr: None,
+            pr_head_ref: None,
+        }
+    }
+
+    /// A host repo with one commit, plus a real worktree for the env branch.
+    /// Returns (tempdir, h5i_root, manifest).
+    fn worktree_fixture() -> (tempfile::TempDir, PathBuf, EnvManifest) {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("host");
+        std::fs::create_dir_all(&host).unwrap();
+        let repo = Repository::init(&host).unwrap();
+        let sig = git2::Signature::now("t", "t@example.com").unwrap();
+        let tree = repo.find_tree(repo.treebuilder(None).unwrap().write().unwrap()).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "base", &tree, &[]).unwrap();
+
+        let m = wt_manifest("human", "t");
+        let h5i_root = repo.commondir().join(".h5i");
+        let work = m.work_dir(&h5i_root);
+        std::fs::create_dir_all(work.parent().unwrap()).unwrap();
+
+        let out = std::process::Command::new("git")
+            .current_dir(&host)
+            .args(["worktree", "add", "-b", m.branch_short()])
+            .arg(&work)
+            .arg("HEAD")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        (dir, h5i_root, m)
+    }
+
+    #[test]
+    fn open_env_worktree_accepts_the_box_it_belongs_to() {
+        let (_d, h5i_root, m) = worktree_fixture();
+        let wt = open_env_worktree(&h5i_root, &m).expect("the box's own worktree opens");
+        assert_eq!(wt.head().unwrap().name(), Some(m.branch.as_str()));
+    }
+
+    /// The advisory case: the box rewrites `$WORK/.git` to point at the host
+    /// repository, so a later `propose`/`rebase` would stage the box tree onto
+    /// whatever the host has checked out (`main`) instead of the env branch.
+    /// The object store still matches — only HEAD gives it away.
+    #[test]
+    fn open_env_worktree_refuses_a_pointer_redirected_at_the_host_repo() {
+        let (_d, h5i_root, m) = worktree_fixture();
+        let work = m.work_dir(&h5i_root);
+        let host_git = h5i_root.parent().unwrap().to_path_buf();
+        std::fs::write(work.join(".git"), format!("gitdir: {}\n", host_git.display())).unwrap();
+
+        let err = open_env_worktree(&h5i_root, &m).map(|_| ()).expect_err("must fail closed");
+        let msg = err.to_string();
+        assert!(msg.contains(&m.branch), "should name the branch it owns: {msg}");
+        assert!(msg.contains("fail-closed"), "{msg}");
+    }
+
+    /// The same pointer rewritten at an unrelated repository: caught by the
+    /// object-store check rather than the branch check.
+    #[test]
+    fn open_env_worktree_refuses_a_pointer_redirected_at_a_foreign_repo() {
+        let (d, h5i_root, m) = worktree_fixture();
+        let other = d.path().join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        let orepo = Repository::init(&other).unwrap();
+        let sig = git2::Signature::now("t", "t@example.com").unwrap();
+        let tree = orepo.find_tree(orepo.treebuilder(None).unwrap().write().unwrap()).unwrap();
+        orepo.commit(Some("HEAD"), &sig, &sig, "other", &tree, &[]).unwrap();
+        // Give the foreign repo the same branch name, so only the object-store
+        // check can distinguish it.
+        let head = orepo.head().unwrap().peel_to_commit().unwrap();
+        orepo.branch(m.branch_short(), &head, false).unwrap();
+        orepo.set_head(&m.branch).unwrap();
+
+        let work = m.work_dir(&h5i_root);
+        std::fs::write(
+            work.join(".git"),
+            format!("gitdir: {}\n", orepo.path().display()),
+        )
+        .unwrap();
+
+        let err = open_env_worktree(&h5i_root, &m).map(|_| ()).expect_err("must fail closed");
+        assert!(err.to_string().contains("not this box's"), "{err}");
     }
 }

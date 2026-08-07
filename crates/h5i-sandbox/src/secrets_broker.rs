@@ -79,13 +79,80 @@ impl Drop for TempFiles {
     }
 }
 
-/// `sha256:<12 hex>` of a value — lets a reviewer confirm "same token across
-/// runs" without ever seeing it. Public so `env secrets` can fingerprint a
-/// dry-run resolution.
-pub fn fingerprint(value: &str) -> String {
-    let mut h = Sha256::new();
-    h.update(value.as_bytes());
-    format!("sha256:{:x}", h.finalize())[..19].to_string() // "sha256:" + 12 hex
+/// `fp:<12 hex>` of a value under a per-repository key — lets a reviewer confirm
+/// "same token across runs" without ever seeing it. Public so `env secrets` can
+/// fingerprint a dry-run resolution.
+///
+/// Keyed, not a bare digest. This lands in `GrantRecord::detail`, the env event
+/// log, and `h5i box secrets` output, all of which are durable and reviewable
+/// and may be mirrored through `refs/h5i/*`. An unsalted `sha256(value)` prefix
+/// is 48 bits of an offline oracle: against a deploy password or a PIN-shaped
+/// token, anyone holding the log can just enumerate candidates. HMAC under a
+/// key that never leaves the repository gives the same "same token?" answer
+/// with nothing to grind against.
+pub fn fingerprint(key: &[u8], value: &str) -> String {
+    let mac = hmac_sha256(key, value.as_bytes());
+    let hex: String = mac.iter().take(6).map(|b| format!("{b:02x}")).collect();
+    format!("fp:{hex}")
+}
+
+/// HMAC-SHA256 (RFC 2104). Hand-rolled against the `sha2` dependency already
+/// present rather than adding a crate for sixteen lines.
+fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
+    const BLOCK: usize = 64;
+    let mut k = [0u8; BLOCK];
+    if key.len() > BLOCK {
+        k[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let mut ipad = [0x36u8; BLOCK];
+    let mut opad = [0x5cu8; BLOCK];
+    for i in 0..BLOCK {
+        ipad[i] ^= k[i];
+        opad[i] ^= k[i];
+    }
+    let inner = Sha256::new().chain_update(ipad).chain_update(msg).finalize();
+    Sha256::new().chain_update(opad).chain_update(inner).finalize().into()
+}
+
+/// Load (or mint) the per-repository fingerprint key at
+/// `<h5i_root>/secrets-fp.key`, 32 bytes at 0600.
+///
+/// Per repository rather than per run, because the whole point of the
+/// fingerprint is comparing one run against another. It is not a secret whose
+/// loss is catastrophic — it only makes the fingerprints grindable again — but
+/// it is written owner-only and never leaves the host.
+pub fn fingerprint_key(h5i_root: &Path) -> Result<Vec<u8>, H5iError> {
+    let path = h5i_root.join("secrets-fp.key");
+    if let Ok(k) = std::fs::read(&path) {
+        if k.len() >= 32 {
+            return Ok(k);
+        }
+    }
+    let mut raw = [0u8; 32];
+    getrandom::fill(&mut raw).map_err(|e| {
+        H5iError::Metadata(format!(
+            "no OS entropy for the secret fingerprint key ({e}) — refusing to fall back to an \
+             unkeyed digest, which would be grindable offline (fail-closed)"
+        ))
+    })?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = std::fs::remove_file(&path);
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| H5iError::with_path(e, &path))?;
+        f.write_all(&raw).map_err(|e| H5iError::with_path(e, &path))?;
+    }
+    #[cfg(not(unix))]
+    std::fs::write(&path, raw).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(raw.to_vec())
 }
 
 /// Wall-clock timeout for a `command:` secret extractor.
@@ -276,6 +343,7 @@ pub fn broker(
     secret_dir: &Path,
     is_workspace: bool,
     allow_command: bool,
+    fp_key: &[u8],
 ) -> Result<Brokered, H5iError> {
     let mut env = Vec::new();
     let mut redactions = Vec::new();
@@ -314,7 +382,7 @@ pub fn broker(
             source: g.source_or_default(),
             inject: inject.to_string(),
             ttl: g.ttl.clone(),
-            fingerprint: fingerprint(&value),
+            fingerprint: fingerprint(fp_key, &value),
         });
         redactions.push(value);
     }
@@ -323,23 +391,54 @@ pub fn broker(
 }
 
 /// Write a secret to `secret_dir/<name>` with mode `0600` (dir `0700`).
+///
+/// Fail-closed against a pre-planted path. `inject=file` is only permitted on
+/// the workspace tier, which applies no kernel confinement, so the box — or any
+/// same-uid process — can create `<env>/secrets/<name>` before the run. Without
+/// `O_NOFOLLOW|O_EXCL` the open would follow a symlink and write the plaintext
+/// credential to its target, and `mode()` is ignored for a file that already
+/// exists, so a pre-created 0644 file would keep those permissions. `TempFiles`
+/// would then unlink only the link, leaving the secret behind.
 fn write_secret_file(secret_dir: &Path, name: &str, value: &str) -> Result<PathBuf, H5iError> {
     std::fs::create_dir_all(secret_dir).map_err(|e| H5iError::with_path(e, secret_dir))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(secret_dir, std::fs::Permissions::from_mode(0o700));
+        // Propagated, not swallowed: a directory left at the umask default is
+        // a readable secret store, which is the thing this function exists to
+        // prevent.
+        std::fs::set_permissions(secret_dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| H5iError::with_path(e, secret_dir))?;
+        if std::fs::symlink_metadata(secret_dir)
+            .map_err(|e| H5iError::with_path(e, secret_dir))?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(H5iError::Metadata(format!(
+                "secrets: '{}' is a symlink — refusing to materialize a credential through it \
+                 (fail-closed)",
+                secret_dir.display()
+            )));
+        }
     }
     let path = secret_dir.join(name);
     #[cfg(unix)]
     {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
+        // A leftover from an earlier run is ours to clear; `create_new` then
+        // guarantees we created this file, so its mode was never wider than
+        // 0600 and it is not a link to somewhere else.
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(H5iError::with_path(e, &path)),
+        }
         let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .write(true)
             .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
             .open(&path)
             .map_err(|e| H5iError::with_path(e, &path))?;
         f.write_all(value.as_bytes()).map_err(|e| H5iError::with_path(e, &path))?;
@@ -354,6 +453,52 @@ fn write_secret_file(secret_dir: &Path, name: &str, value: &str) -> Result<PathB
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `inject=file` runs on the workspace tier, which confines nothing, so the
+    /// destination can be pre-planted. Writing through a symlink would put the
+    /// plaintext credential wherever the link pointed and leave it there after
+    /// teardown (TempFiles unlinks only the link).
+    #[test]
+    #[cfg(unix)]
+    fn a_planted_symlink_cannot_capture_a_brokered_secret() {
+        let td = tempfile::tempdir().unwrap();
+        let secrets = td.path().join("secrets");
+        let stolen = td.path().join("stolen");
+        std::fs::create_dir_all(&secrets).unwrap();
+        std::os::unix::fs::symlink(&stolen, secrets.join("DEPLOY_KEY")).unwrap();
+
+        let err = write_secret_file(&secrets, "DEPLOY_KEY", "s3cret").map(|_| ());
+        // Either refused, or replaced with a fresh 0600 regular file — never
+        // written through to the link's target.
+        assert!(
+            !stolen.exists(),
+            "credential was written through the planted symlink"
+        );
+        if err.is_ok() {
+            let md = std::fs::symlink_metadata(secrets.join("DEPLOY_KEY")).unwrap();
+            assert!(md.file_type().is_file());
+        }
+    }
+
+    /// A pre-created world-readable file must not keep its mode: `mode()` on
+    /// `OpenOptions` is ignored when the file already exists.
+    #[test]
+    #[cfg(unix)]
+    fn a_pre_created_loose_mode_file_is_replaced_not_reused() {
+        use std::os::unix::fs::PermissionsExt;
+        let td = tempfile::tempdir().unwrap();
+        let secrets = td.path().join("secrets");
+        std::fs::create_dir_all(&secrets).unwrap();
+        let victim = secrets.join("TOKEN");
+        std::fs::write(&victim, "").unwrap();
+        std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let p = write_secret_file(&secrets, "TOKEN", "s3cret").unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "secret file must be 0600, got {mode:o}");
+        let dmode = std::fs::metadata(&secrets).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dmode, 0o700, "secret dir must be 0700, got {dmode:o}");
+    }
 
     fn grant(name: &str, source: Option<&str>, inject: Option<&str>) -> SecretGrant {
         SecretGrant {
@@ -410,7 +555,7 @@ mod tests {
         std::env::set_var("H5I_TEST_TOKEN_B", "tok-B");
         let g = grant("API_KEY", Some("env:H5I_TEST_TOKEN_B"), Some("env"));
         let dir = tempfile::tempdir().unwrap();
-        let b = broker(&[g], &dir.path().join("secrets"), false, false).unwrap();
+        let b = broker(&[g], &dir.path().join("secrets"), false, false, b"test-key").unwrap();
         assert_eq!(b.env, vec![("API_KEY".to_string(), "tok-B".to_string())]);
         assert_eq!(b.redactions, vec!["tok-B".to_string()]);
         assert_eq!(b.records.len(), 1);
@@ -428,7 +573,7 @@ mod tests {
         let g = grant("CERT", Some("env:H5I_TEST_TOKEN_C"), Some("file"));
         let dir = tempfile::tempdir().unwrap();
         let sdir = dir.path().join("secrets");
-        let b = broker(&[g], &sdir, true, false).unwrap();
+        let b = broker(&[g], &sdir, true, false, b"test-key").unwrap();
         // Injected as NAME_FILE → path.
         assert_eq!(b.env.len(), 1);
         assert_eq!(b.env[0].0, "CERT_FILE");
@@ -453,7 +598,7 @@ mod tests {
         std::env::set_var("H5I_TEST_TOKEN_D", "x");
         let g = grant("T", Some("env:H5I_TEST_TOKEN_D"), Some("file"));
         let dir = tempfile::tempdir().unwrap();
-        let err = broker(&[g], &dir.path().join("secrets"), false, false).unwrap_err();
+        let err = broker(&[g], &dir.path().join("secrets"), false, false, b"test-key").unwrap_err();
         assert!(format!("{err}").contains("inject=env"));
         std::env::remove_var("H5I_TEST_TOKEN_D");
     }
@@ -467,7 +612,7 @@ mod tests {
             grant("TOK_B", Some("env:H5I_TEST_M2"), Some("env")),
         ];
         let dir = tempfile::tempdir().unwrap();
-        let b = broker(&grants, &dir.path().join("secrets"), false, false).unwrap();
+        let b = broker(&grants, &dir.path().join("secrets"), false, false, b"test-key").unwrap();
         assert_eq!(b.env.len(), 2);
         assert!(b.env.contains(&("TOK_A".into(), "val-one".into())));
         assert!(b.env.contains(&("TOK_B".into(), "val-two".into())));
@@ -491,17 +636,65 @@ mod tests {
             grant("MISSING", Some("env:H5I_TEST_ABSENT_ZZZ"), Some("env")),
         ];
         let dir = tempfile::tempdir().unwrap();
-        assert!(broker(&grants, &dir.path().join("secrets"), false, false).is_err());
+        assert!(broker(&grants, &dir.path().join("secrets"), false, false, b"test-key").is_err());
         std::env::remove_var("H5I_TEST_PRESENT");
     }
 
     #[test]
     fn fingerprint_is_stable_and_value_free() {
-        let fp = fingerprint("hello");
-        assert!(fp.starts_with("sha256:"));
-        assert_eq!(fp.len(), "sha256:".len() + 12);
-        assert_eq!(fp, fingerprint("hello"));
-        assert_ne!(fp, fingerprint("world"));
+        let k = b"per-repo-key";
+        let fp = fingerprint(k, "hello");
+        assert!(fp.starts_with("fp:"));
+        assert_eq!(fp.len(), "fp:".len() + 12);
+        assert_eq!(fp, fingerprint(k, "hello"), "stable across runs");
+        assert_ne!(fp, fingerprint(k, "world"));
+        assert!(!fp.contains("hello"));
+    }
+
+    /// The fingerprint reaches durable, reviewable records, so it must not be a
+    /// bare digest anyone holding the log can grind offline against a
+    /// low-entropy credential. Under a different key the same value must
+    /// fingerprint differently.
+    #[test]
+    fn fingerprints_are_keyed_not_a_plain_digest() {
+        let a = fingerprint(b"key-a", "deploy-password");
+        let b = fingerprint(b"key-b", "deploy-password");
+        assert_ne!(a, b, "the fingerprint must depend on the repository key");
+
+        // And it is not sha256(value) truncated, which is what was grindable.
+        let mut h = Sha256::new();
+        h.update(b"deploy-password");
+        let plain = format!("{:x}", h.finalize());
+        assert!(!a.contains(&plain[..12]), "still a bare digest");
+    }
+
+    /// RFC 2104 test vector, so the hand-rolled HMAC is pinned to the standard.
+    #[test]
+    fn hmac_matches_the_rfc_vector() {
+        let mac = hmac_sha256(&[0x0b; 20], b"Hi There");
+        let hex: String = mac.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            hex,
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+    }
+
+    #[test]
+    fn the_fingerprint_key_is_per_repo_and_owner_only() {
+        let td = tempfile::tempdir().unwrap();
+        let k1 = fingerprint_key(td.path()).unwrap();
+        assert_eq!(k1.len(), 32);
+        // Stable across calls, so fingerprints compare across runs.
+        assert_eq!(k1, fingerprint_key(td.path()).unwrap());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let m = std::fs::metadata(td.path().join("secrets-fp.key")).unwrap();
+            assert_eq!(m.permissions().mode() & 0o777, 0o600);
+        }
+        // A different repository gets a different key.
+        let other = tempfile::tempdir().unwrap();
+        assert_ne!(k1, fingerprint_key(other.path()).unwrap());
     }
 
     #[test]

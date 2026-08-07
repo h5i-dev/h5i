@@ -4396,7 +4396,11 @@ fn env_secrets_reports_status_without_values() {
     let row = &rows.as_array().unwrap()[0];
     assert_eq!(row["name"], "API_KEY");
     assert_eq!(row["status"], "ok");
-    assert!(row["fingerprint"].as_str().unwrap().starts_with("sha256:"));
+    // Keyed (HMAC under the per-repo key), not a bare digest — an unsalted
+    // sha256 prefix in a durable audit record is grindable offline.
+    let fp = row["fingerprint"].as_str().unwrap();
+    assert!(fp.starts_with("fp:"), "{fp}");
+    assert!(!fp.contains("sha256:"), "must not be a plain digest: {fp}");
 }
 
 #[test]
