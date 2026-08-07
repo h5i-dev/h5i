@@ -208,14 +208,42 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Download all artifacts
+      # Only the packaged archives, never `web-dist`. The console bundle is an
+      # input to the *build* jobs, which embed it in the binary; this job has no
+      # use for it, and downloading everything meant `files:` swept it onto the
+      # release. v0.3.1 shipped 18 loose JS/CSS/font files next to the archives
+      # that way — harmless (the binary already carries its own copy) and wrong.
+      - name: Download the target artifacts
         uses: actions/download-artifact@v7
         with:
+          pattern: ${{ env.BINARY_NAME }}-*
           path: artifacts
           merge-multiple: true
 
       - name: List artifacts
         run: ls -lh artifacts/
+
+      # Fail loudly rather than publishing a short set: four targets, each with
+      # an archive and a checksum. A build job that silently stopped uploading
+      # would otherwise produce a release missing a platform, which nobody
+      # notices until someone's install breaks.
+      - name: Every expected asset is present, and nothing else
+        run: |
+          expected=8
+          found=$(find artifacts -maxdepth 1 -type f \
+            \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' \) | wc -l)
+          extra=$(find artifacts -mindepth 1 -maxdepth 1 \
+            ! \( -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' \) \) )
+          if [ "$found" -ne "$expected" ]; then
+            echo "::error::expected $expected release assets, found $found"
+            exit 1
+          fi
+          if [ -n "$extra" ]; then
+            echo "::error::unexpected entries in artifacts/:"
+            echo "$extra"
+            exit 1
+          fi
+          echo "ok: $found assets, nothing extra"
 
       - name: Create release
         uses: softprops/action-gh-release@v3
@@ -224,7 +252,13 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
-          files: artifacts/**
+          # Flat, and only the archives: `artifacts/**` would pick up any
+          # directory a future artifact adds. The guard above already refuses
+          # that case; this keeps the upload correct even if the guard changes.
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/*.sha256
           body: |
             ## Install
 
