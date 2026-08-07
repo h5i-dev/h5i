@@ -7756,6 +7756,7 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
         // teardown lock, so it could prune and `remove_dir_all` an env while a
         // writer held `run.lock` for it. The window was narrow (only applied or
         // aborted envs are swept) but that was incidental, not designed.
+        #[cfg(unix)]
         let _run_lock = match RunLock::acquire(&m.dir(h5i_root)) {
             Ok(g) => g,
             Err(_) => continue,
