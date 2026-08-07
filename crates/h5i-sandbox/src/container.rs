@@ -1383,10 +1383,13 @@ pub fn build_run_argv(
 /// A proxy that was supposed to start and could not is an `Err`, not a `None`:
 /// falling back would leave the real credential in the box while also widening
 /// its egress, which is the opposite of what this exists to do.
+/// A live credential proxy and the env additions the box needs to reach it.
+type AuthProxyEngagement = (crate::auth_proxy::AuthProxyHandle, Vec<(String, String)>);
+
 fn maybe_auth_proxy(
     profile: &Profile,
     net: &NetPlan,
-) -> Result<Option<(crate::auth_proxy::AuthProxyHandle, Vec<(String, String)>)>, H5iError> {
+) -> Result<Option<AuthProxyEngagement>, H5iError> {
     // The box reaches the host proxy only on the egress-proxy net plan, and at
     // whichever address this platform routes to the host ([`HOST_ROUTE`]).
     // `engage_at` handles opt-out + runtime + credential resolution; the

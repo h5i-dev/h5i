@@ -3112,8 +3112,11 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
 /// near `0x4000_0000`, so the comparison never fires there.
 fn prepend_x32_guard(program: seccompiler::BpfProgram) -> seccompiler::BpfProgram {
     use seccompiler::sock_filter;
-    const BPF_LD_W_ABS: u16 = 0x00 | 0x00 | 0x20; // BPF_LD | BPF_W | BPF_ABS
-    const BPF_JMP_JGE_K: u16 = 0x05 | 0x30 | 0x00; // BPF_JMP | BPF_JGE | BPF_K
+    // Spelled as literals: the classic-BPF opcode components (BPF_LD|BPF_W|
+    // BPF_ABS, BPF_JMP|BPF_JGE|BPF_K, BPF_RET|BPF_K) include zero-valued terms,
+    // and clippy rightly objects to `x | 0`.
+    const BPF_LD_W_ABS: u16 = 0x20;
+    const BPF_JMP_JGE_K: u16 = 0x35;
     const BPF_RET_K: u16 = 0x06;
     const OFF_NR: u32 = 0;
     const X32_SYSCALL_BIT: u32 = 0x4000_0000;
