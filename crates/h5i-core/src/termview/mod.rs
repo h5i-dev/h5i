@@ -112,6 +112,59 @@ pub struct Options {
     pub assume_graphics: bool,
 }
 
+/// The render loop's own clock.
+///
+/// It is a type rather than two local variables so that the tick cannot be
+/// attached to the socket again by accident, which is what it was: the tick was
+/// whatever `recv_timeout` *expiring* meant, so a box sending frames faster than
+/// [`TICK`] suppressed it entirely. At the default 10 fps a frame lands every
+/// 100 ms and the 250 ms timeout never elapses, so the status line stopped
+/// refreshing, a resize went unnoticed and a lone Escape was never flushed —
+/// all of it on exactly the pages someone is watching because they are moving.
+#[cfg(unix)]
+struct Ticker {
+    /// When the next tick is owed.
+    next: Instant,
+    /// When the keyboard was last heard from. Tracked apart from the tick
+    /// because "the input has gone quiet" is a claim about the keyboard, and
+    /// letting the frame rate answer it is how the bug above got in.
+    last_input: Instant,
+}
+
+#[cfg(unix)]
+impl Ticker {
+    fn start(now: Instant) -> Ticker {
+        Ticker {
+            next: now + TICK,
+            last_input: now,
+        }
+    }
+
+    /// How long the loop may block waiting for the next event.
+    fn wait(&self, now: Instant) -> Duration {
+        self.next.saturating_duration_since(now)
+    }
+
+    fn saw_input(&mut self, now: Instant) {
+        self.last_input = now;
+    }
+
+    /// `Some(quiet)` when a tick is owed. `quiet` says the keyboard has been
+    /// still for a whole tick, which is the only way to tell a lone `ESC` from
+    /// the start of a sequence nobody finished.
+    ///
+    /// The next tick is scheduled from *now* rather than from the deadline that
+    /// just passed, so a loop that falls behind ticks less often instead of
+    /// owing a burst it then has to catch up on.
+    fn due(&mut self, now: Instant) -> Option<bool> {
+        if now < self.next {
+            return None;
+        }
+        self.next = now + TICK;
+        Some(now.duration_since(self.last_input) >= TICK)
+    }
+}
+
 /// Everything the render loop is waiting on, from whichever thread saw it.
 #[cfg(unix)]
 enum Ev {
@@ -156,9 +209,15 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
     })?;
 
     let mut guard = term::Guard::enter(stdin).map_err(H5iError::Io)?;
-    if !opts.assume_graphics {
-        probe_graphics(stdin)?;
-    }
+    // Skipping the probe means skipping the answer about compression too. Raw
+    // is the conservative choice and the only honest one: the flag exists for
+    // the case where we were wrong about this terminal, so it must not then
+    // assume something else about it. Frames cost about six times as much.
+    let encoding = if opts.assume_graphics {
+        kitty::Encoding::Raw
+    } else {
+        probe_graphics(stdin)?
+    };
 
     // The socket is a descriptor this process owns, handed back from a fork
     // that entered the box's namespaces. Nothing is listening anywhere.
@@ -234,7 +293,7 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
     // Scoped so the app releases its borrow of the terminal guard before the
     // guard itself is dropped and the terminal is restored.
     let (outcome, bytes_in, input_sent) = {
-        let mut app = App::new(&opts, &mut guard);
+        let mut app = App::new(&opts, &mut guard, encoding);
         let outcome = app.pump(rx, &mut writer);
 
         // Leave the page as we found it. A viewer that exits still holding the
@@ -288,31 +347,39 @@ pub fn run(_opts: Options) -> Result<(), H5iError> {
     ))
 }
 
-/// Ask the terminal whether it can draw images, and refuse politely if not.
+/// Ask the terminal whether it can draw images and whether it accepts deflated
+/// pixels, and refuse politely if it cannot draw at all.
+///
+/// The read runs to the device-attributes reply rather than stopping at the
+/// first graphics answer. Both questions are in flight, and returning on the
+/// first would decide compression before its answer had arrived — which is not
+/// a slow path, it is a permanently wrong one.
 #[cfg(unix)]
-fn probe_graphics(fd: std::os::fd::RawFd) -> Result<(), H5iError> {
+fn probe_graphics(fd: std::os::fd::RawFd) -> Result<kitty::Encoding, H5iError> {
     let mut out = std::io::stdout();
     let _ = out.write_all(kitty::probe_sequence().as_bytes());
     let _ = out.flush();
 
     let mut seen = Vec::new();
     let deadline = Instant::now() + PROBE_TIMEOUT;
-    while Instant::now() < deadline {
+    while Instant::now() < deadline && !kitty::probe_done(&seen) {
         if !term::wait_readable(fd, Duration::from_millis(50)) {
             continue;
         }
         if term::read_available(fd, &mut seen).unwrap_or(0) == 0 {
             break;
         }
-        match kitty::classify_probe(&seen) {
-            kitty::Support::Yes => return Ok(()),
-            kitty::Support::No => return Err(unsupported()),
-            kitty::Support::Undecided => {}
-        }
     }
-    // A terminal that answered neither question. Treating silence as support
-    // would fill someone's screen with base64.
-    Err(unsupported())
+
+    match kitty::classify_probe(&seen) {
+        kitty::Support::Yes if kitty::accepts_zlib(&seen) => Ok(kitty::Encoding::Zlib),
+        // It draws, it just will not inflate. Six times the bytes, and every
+        // one of them arrives.
+        kitty::Support::Yes => Ok(kitty::Encoding::Raw),
+        // A terminal that said no, or that answered neither question. Treating
+        // silence as support would fill someone's screen with base64.
+        kitty::Support::No | kitty::Support::Undecided => Err(unsupported()),
+    }
 }
 
 #[cfg(unix)]
@@ -357,12 +424,12 @@ struct App<'a> {
 
 #[cfg(unix)]
 impl<'a> App<'a> {
-    fn new(opts: &Options, guard: &'a mut term::Guard) -> App<'a> {
+    fn new(opts: &Options, guard: &'a mut term::Guard, encoding: kitty::Encoding) -> App<'a> {
         let size = guard.size().or_fallback();
         App {
             env_dir: opts.env_dir.clone(),
             guard,
-            placer: kitty::Placer::new(),
+            placer: kitty::Placer::new(encoding),
             mode: Mode::View,
             last_frame: None,
             mapping: None,
@@ -381,10 +448,15 @@ impl<'a> App<'a> {
 
     /// Run until the human leaves or the box stops streaming. Returns the
     /// reason the stream ended, if it ended badly.
+    ///
+    /// The tick runs on [`Ticker`]'s deadline rather than on the receive
+    /// timeout, which is what keeps a page that never stops sending from
+    /// freezing the status line and the resize check.
     fn pump(&mut self, rx: mpsc::Receiver<Ev>, writer: &mut impl Write) -> Option<String> {
         self.draw_status();
+        let mut ticker = Ticker::start(Instant::now());
         loop {
-            match rx.recv_timeout(TICK) {
+            match rx.recv_timeout(ticker.wait(Instant::now())) {
                 Ok(Ev::Net(msg)) => {
                     if let Some(err) = self.on_net(msg, writer) {
                         return Some(err);
@@ -392,21 +464,22 @@ impl<'a> App<'a> {
                 }
                 Ok(Ev::NetDone(why)) => return why,
                 Ok(Ev::Input(bytes)) => {
+                    ticker.saw_input(Instant::now());
                     self.pending.extend_from_slice(&bytes);
                     if self.on_input(false, writer) {
                         return None;
                     }
                 }
                 Ok(Ev::InputDone) => return None,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    // Quiet input: a lone ESC is now the Escape key rather than
-                    // the start of a sequence nobody finished.
-                    if self.on_input(true, writer) {
-                        return None;
-                    }
-                    self.on_tick();
-                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => return None,
+            }
+
+            if let Some(quiet) = ticker.due(Instant::now()) {
+                if self.on_input(quiet, writer) {
+                    return None;
+                }
+                self.on_tick();
             }
         }
     }
@@ -695,6 +768,50 @@ mod tests {
         // became 0 the page would be drawn over the one row it must never be
         // able to touch.
         assert_eq!(CHROME_ROWS, 2, "row one is the status line, row two separates it");
+    }
+
+    #[test]
+    fn a_page_that_never_stops_sending_cannot_starve_the_tick() {
+        // The regression this is here for. Frames every 100 ms, which is what
+        // the default `--fps 10` produces. With the tick hung off the receive
+        // timeout, a 250 ms timeout next to a 100 ms frame interval never
+        // elapsed and the tick simply never ran — no status refresh, no resize
+        // check, for as long as the page kept moving.
+        let t0 = Instant::now();
+        let mut ticker = Ticker::start(t0);
+
+        let mut ticks = 0;
+        for n in 1..=10u32 {
+            let now = t0 + Duration::from_millis(100 * u64::from(n));
+            // The loop must never block past the next deadline either.
+            assert!(ticker.wait(now) <= TICK, "wait overshoots the deadline");
+            if ticker.due(now).is_some() {
+                ticks += 1;
+            }
+        }
+        // Ticks land on event boundaries and are rescheduled from where they
+        // actually ran, so one second of 100 ms frames owes three or four of
+        // them. The number is not the point. Zero was.
+        assert!((3..=4).contains(&ticks), "one second of frames owed {ticks} ticks");
+    }
+
+    #[test]
+    fn quiet_input_is_a_claim_about_the_keyboard_and_not_about_the_frame_rate() {
+        let t0 = Instant::now();
+        let mut ticker = Ticker::start(t0);
+
+        // A keystroke at 200 ms. The tick at 250 ms is only 50 ms later, so a
+        // lone ESC sitting in the buffer might still be the start of a sequence
+        // whose tail has not arrived: it must not be flushed as Escape yet.
+        ticker.saw_input(t0 + Duration::from_millis(200));
+        assert_eq!(ticker.due(t0 + Duration::from_millis(250)), Some(false));
+
+        // By the next tick the keyboard has been still for a whole one, so the
+        // ESC is the Escape key.
+        assert_eq!(ticker.due(t0 + Duration::from_millis(500)), Some(true));
+
+        // And nothing is owed before the deadline.
+        assert_eq!(ticker.due(t0 + Duration::from_millis(600)), None);
     }
 
     #[test]

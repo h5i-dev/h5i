@@ -10,7 +10,7 @@
 //! the escape sequences. There is no path from the box's output to the host's
 //! PTY, which is the property a terminal viewer has to earn.
 //!
-//! Three choices in here follow from that, and each would be wrong in an
+//! Four choices in here follow from that, and each would be wrong in an
 //! ordinary image viewer:
 //!
 //! * **`q=2` on every render command.** The terminal answers graphics commands
@@ -25,7 +25,14 @@
 //!   and they are the fast path this module deliberately does not take yet:
 //!   they only work when the terminal is on this machine, and working over SSH
 //!   is half the point of a terminal viewer. Bytes are kept down by scaling the
-//!   image to the cells it will occupy instead (see [`super::image`]).
+//!   image to the cells it will occupy (see [`super::image`]) and by deflating
+//!   what is left ([`Encoding`]).
+//! * **Compression is probed, not assumed.** `o=z` is part of the protocol and
+//!   every implementation is expected to have it, but `q=2` means a terminal
+//!   that does not would fail *silently* — a blank pane and no diagnosis, which
+//!   is the one failure shape this viewer must not have. So the probe asks
+//!   twice, once raw and once deflated, and frames are compressed only when the
+//!   terminal said `OK` to the second question ([`accepts_zlib`]).
 //! * **Explicit deletion of the previous frame.** Every frame is a new image,
 //!   and a terminal asked to hold thousands of them will hold them. The
 //!   previous id is deleted *after* the new one is placed, so the viewport
@@ -42,6 +49,56 @@ const CHUNK: usize = 4096;
 /// its replacement exists, which is visible as a flicker on every frame.
 const IDS: [u32; 2] = [7311, 7312];
 
+/// zlib level for frame payloads.
+///
+/// Level 1, and the gap is not close. Measured through this path on a real
+/// decoded frame scaled to 891x504, which is what a 120x30 pane asks for:
+///
+/// | level | ratio | cost   |
+/// |-------|-------|--------|
+/// | 1     | 6.2x  | 3.6 ms |
+/// | 6     | 6.9x  | 21 ms  |
+/// | 9     | 7.0x  | 63 ms  |
+///
+/// Level 1 takes essentially all of the win. The other two spend a frame budget
+/// that also has to hold a JPEG decode and a box filter, to save a few percent
+/// of a payload that is already an order of magnitude smaller than it was.
+const ZLIB_LEVEL: u8 = 1;
+
+/// How a frame's pixels are encoded before base64.
+///
+/// Not a tuning knob: it records what *this terminal* answered to the probe.
+/// Raw is what a terminal always accepts and costs about six times the bytes,
+/// so it is the answer only when nothing told us otherwise.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Encoding {
+    /// Tightly packed 8-bit RGB, exactly as the decoder handed it over.
+    #[default]
+    Raw,
+    /// The same bytes, RFC 1950 deflated. `o=z` in the control block.
+    Zlib,
+}
+
+impl Encoding {
+    /// The control key this encoding adds, if any.
+    fn key(self) -> &'static str {
+        match self {
+            Encoding::Raw => "",
+            Encoding::Zlib => ",o=z",
+        }
+    }
+
+    /// Encode one frame's pixels for transmission.
+    fn apply(self, rgb: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+        match self {
+            Encoding::Raw => std::borrow::Cow::Borrowed(rgb),
+            Encoding::Zlib => std::borrow::Cow::Owned(
+                miniz_oxide::deflate::compress_to_vec_zlib(rgb, ZLIB_LEVEL),
+            ),
+        }
+    }
+}
+
 /// Builds the escape sequences for successive frames.
 #[derive(Debug, Default)]
 pub struct Placer {
@@ -49,6 +106,8 @@ pub struct Placer {
     next: usize,
     /// The id currently on screen, if any.
     live: Option<u32>,
+    /// What this terminal accepts, from the probe.
+    encoding: Encoding,
 }
 
 /// Where and how large a frame should be drawn, in terminal cells.
@@ -63,8 +122,12 @@ pub struct Placement {
 }
 
 impl Placer {
-    pub fn new() -> Self {
-        Placer::default()
+    /// A placer for a terminal that encodes frames this way.
+    pub fn new(encoding: Encoding) -> Self {
+        Placer {
+            encoding,
+            ..Placer::default()
+        }
     }
 
     /// The full byte sequence that draws one RGB frame at `at`.
@@ -83,8 +146,8 @@ impl Placer {
         // the same spot without any further positioning.
         out.extend_from_slice(cursor_to(at.row, at.col).as_bytes());
 
-        let payload = base64_of(rgb);
-        for chunk in transmit_chunks(id, width, height, at.cols, at.rows, &payload) {
+        let payload = base64_of(&self.encoding.apply(rgb));
+        for chunk in transmit_chunks(id, width, height, at.cols, at.rows, &payload, self.encoding) {
             out.extend_from_slice(chunk.as_bytes());
         }
 
@@ -133,6 +196,7 @@ pub fn transmit_chunks(
     cols: u16,
     rows: u16,
     payload: &str,
+    encoding: Encoding,
 ) -> Vec<String> {
     let mut chunks: Vec<&str> = payload
         .as_bytes()
@@ -145,6 +209,7 @@ pub fn transmit_chunks(
     }
 
     let last = chunks.len() - 1;
+    let o = encoding.key();
     chunks
         .into_iter()
         .enumerate()
@@ -155,11 +220,13 @@ pub fn transmit_chunks(
                     // a=T   transmit and display in one command
                     // f=24  8-bit RGB, which is what the JPEG decoder hands us
                     // t=d   the payload is right here, not a path we hand over
-                    // s,v   source pixel dimensions
+                    // o=z   deflated, when the terminal said it accepts that
+                    // s,v   source pixel dimensions — of the *decompressed*
+                    //       pixels, which is how the terminal sizes its buffer
                     // c,r   the cell box to scale into
                     // C=1   leave the cursor alone, so the status line stays put
                     // q=2   no reply on stdin (see the module docs)
-                    "\x1b_Ga=T,f=24,t=d,i={id},s={width},v={height},c={cols},r={rows},C=1,q=2,m={more};{chunk}\x1b\\"
+                    "\x1b_Ga=T,f=24,t=d{o},i={id},s={width},v={height},c={cols},r={rows},C=1,q=2,m={more};{chunk}\x1b\\"
                 )
             } else {
                 format!("\x1b_Gm={more};{chunk}\x1b\\")
@@ -180,12 +247,23 @@ pub fn transmit_chunks(
 /// reply means yes, a device-attributes reply arriving *first* means the
 /// graphics query was silently dropped, which means no.
 ///
+/// It asks two questions rather than one. The second is the same pixel under
+/// `o=z`, and its answer is what licenses compressing frames: the render path
+/// suppresses replies, so a terminal that does not understand `o=z` would drop
+/// every frame in silence. Answering the raw query and erroring the compressed
+/// one is a perfectly good terminal — it just has to be sent more bytes.
+///
 /// `q=0` here, unlike every render command: this is the one place a reply is
 /// what we are after.
 pub fn probe_sequence() -> String {
     // A 1x1 RGB pixel, transmitted but not displayed (`a=q` is query-only).
-    let pixel = base64_of(&[0u8, 0, 0]);
-    format!("\x1b_Gi=1,s=1,v=1,a=q,t=d,f=24;{pixel}\x1b\\\x1b[c")
+    let raw = base64_of(&[0u8, 0, 0]);
+    let deflated = base64_of(&Encoding::Zlib.apply(&[0u8, 0, 0]));
+    format!(
+        "\x1b_Gi=1,s=1,v=1,a=q,t=d,f=24;{raw}\x1b\\\
+         \x1b_Gi=2,s=1,v=1,a=q,t=d,f=24,o=z;{deflated}\x1b\\\
+         \x1b[c"
+    )
 }
 
 /// What a terminal said in response to [`probe_sequence`].
@@ -208,14 +286,53 @@ pub fn classify_probe(seen: &[u8]) -> Support {
     if find(seen, b"\x1b_G").is_some() {
         return Support::Yes;
     }
-    // CSI ? ... c — the device-attributes reply, and our "nothing else is
-    // coming" marker.
-    if let Some(start) = find(seen, b"\x1b[?") {
-        if seen[start..].contains(&b'c') {
-            return Support::No;
-        }
+    if probe_done(seen) {
+        return Support::No;
     }
     Support::Undecided
+}
+
+/// Has the device-attributes reply arrived?
+///
+/// It is the probe's barrier: every terminal since the VT100 answers it, and it
+/// is queued behind both graphics queries, so its arrival means every answer
+/// this terminal intends to give has been given. The read loop stops on it
+/// rather than on the first graphics reply, because stopping early would mean
+/// deciding [`accepts_zlib`] before the second answer had been read.
+pub fn probe_done(seen: &[u8]) -> bool {
+    // CSI ? ... c
+    match find(seen, b"\x1b[?") {
+        Some(start) => seen[start..].contains(&b'c'),
+        None => false,
+    }
+}
+
+/// Did the terminal accept the deflated half of the probe?
+///
+/// Only an explicit `OK` against the compressed query's own id counts. Silence
+/// is not consent here: this decides whether every subsequent frame is sent in
+/// a form the terminal may not understand, and `q=2` means being wrong about it
+/// is a blank pane with nothing on stdin to explain it.
+pub fn accepts_zlib(seen: &[u8]) -> bool {
+    replies(seen)
+        .iter()
+        .any(|(control, message)| control.split(',').any(|k| k == "i=2") && message == "OK")
+}
+
+/// Split whatever arrived into `(control, message)` for each APC reply.
+fn replies(seen: &[u8]) -> Vec<(String, String)> {
+    let text = String::from_utf8_lossy(seen);
+    let mut rest: &str = &text;
+    let mut out = Vec::new();
+    while let Some(start) = rest.find("\x1b_G") {
+        rest = &rest[start + 3..];
+        let Some(end) = rest.find("\x1b\\") else { break };
+        let (block, after) = (&rest[..end], &rest[end + 2..]);
+        rest = after;
+        let (control, message) = block.split_once(';').unwrap_or((block, ""));
+        out.push((control.to_string(), message.to_string()));
+    }
+    out
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -241,7 +358,7 @@ mod tests {
     fn every_render_command_silences_the_terminals_reply() {
         // The reply would arrive on stdin, in the middle of the keystrokes this
         // viewer is translating into page input. `q=2` is not a preference.
-        let mut p = Placer::new();
+        let mut p = Placer::new(Encoding::Zlib);
         let frame = p.draw(&[0u8; 12], 2, 2, Placement { row: 2, col: 1, cols: 10, rows: 5 });
         let text = String::from_utf8(frame).unwrap();
         for seq in text.split_inclusive("\x1b\\") {
@@ -256,13 +373,14 @@ mod tests {
         // Fixed by the protocol: control keys on continuation chunks are an
         // error, and a chunk over 4096 bytes is rejected outright.
         let payload = "A".repeat(CHUNK * 2 + 10);
-        let chunks = transmit_chunks(9, 4, 4, 20, 10, &payload);
+        let chunks = transmit_chunks(9, 4, 4, 20, 10, &payload, Encoding::Raw);
         assert_eq!(chunks.len(), 3);
 
         let first = control_of(&chunks[0]);
         assert!(first.contains("a=T"), "{first}");
         assert!(first.contains("f=24"), "{first}");
         assert!(first.contains("t=d"), "{first}");
+        assert!(!first.contains("o=z"), "raw must not claim compression: {first}");
         assert!(first.contains("s=4,v=4"), "{first}");
         assert!(first.contains("c=20,r=10"), "{first}");
         assert!(first.contains("C=1"), "the cursor must not move: {first}");
@@ -279,15 +397,107 @@ mod tests {
 
     #[test]
     fn a_single_chunk_frame_ends_the_command_immediately() {
-        let chunks = transmit_chunks(1, 1, 1, 1, 1, "AAAA");
+        let chunks = transmit_chunks(1, 1, 1, 1, 1, "AAAA", Encoding::Raw);
         assert_eq!(chunks.len(), 1);
         assert!(control_of(&chunks[0]).ends_with("m=0"));
+    }
+
+    /// Reassemble a drawn frame's payload: every chunk's base64, concatenated
+    /// and decoded, which is exactly what the terminal does with it.
+    fn payload_of(frame: &[u8]) -> Vec<u8> {
+        use base64::Engine as _;
+        let text = String::from_utf8(frame.to_vec()).unwrap();
+        let mut b64 = String::new();
+        for block in text.split("\x1b_G").skip(1) {
+            let block = block.split("\x1b\\").next().unwrap_or_default();
+            let Some((control, body)) = block.split_once(';') else { continue };
+            // Transmission chunks only: the trailing delete carries no payload.
+            if control.contains("a=d") {
+                continue;
+            }
+            b64.push_str(body);
+        }
+        base64::engine::general_purpose::STANDARD.decode(&b64).unwrap()
+    }
+
+    #[test]
+    fn a_compressed_frame_inflates_back_to_exactly_the_pixels_it_was_given() {
+        // The assertion that matters. Everything else about compression is a
+        // control key being present; this is whether the terminal, doing what
+        // the protocol says, gets the frame back. `q=2` means being wrong here
+        // is a blank pane with nothing on stdin to explain it.
+        let (w, h) = (64u32, 48u32);
+        let rgb: Vec<u8> = (0..(w * h * 3) as usize)
+            .map(|i| ((i * 7 + i / 191) % 256) as u8)
+            .collect();
+        let at = Placement { row: 3, col: 1, cols: 8, rows: 4 };
+
+        let mut z = Placer::new(Encoding::Zlib);
+        let compressed = z.draw(&rgb, w, h, at);
+        let inflated =
+            miniz_oxide::inflate::decompress_to_vec_zlib(&payload_of(&compressed)).unwrap();
+        assert_eq!(inflated, rgb, "the frame must survive the round trip");
+
+        // Raw is unchanged and still the byte-for-byte pixels, so the two
+        // encodings are the same frame said two ways.
+        let mut r = Placer::new(Encoding::Raw);
+        let raw = r.draw(&rgb, w, h, at);
+        assert_eq!(payload_of(&raw), rgb);
+
+        // `s` and `v` describe the *decompressed* image. A terminal sizes its
+        // buffer from them and then inflates into it, so quietly reporting the
+        // payload's length instead would be a frame that decodes into nothing.
+        let control = String::from_utf8(compressed.clone())
+            .unwrap()
+            .split_once("\x1b_G")
+            .unwrap()
+            .1
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(control.contains("o=z"), "{control}");
+        assert!(control.contains("s=64,v=48"), "{control}");
+
+        // And it is the smaller of the two, which is the entire reason the key
+        // is there.
+        assert!(
+            compressed.len() < raw.len(),
+            "compressed {} vs raw {}",
+            compressed.len(),
+            raw.len()
+        );
+    }
+
+    #[test]
+    fn compression_is_used_only_when_the_terminal_said_ok_to_it() {
+        // The probe asks twice. Silence about the second question, or an error
+        // against it, means raw frames — a terminal that draws is not a
+        // terminal that inflates, and `q=2` would make the difference invisible.
+        assert!(accepts_zlib(b"\x1b_Gi=1;OK\x1b\\\x1b_Gi=2;OK\x1b\\"));
+        assert!(!accepts_zlib(b"\x1b_Gi=1;OK\x1b\\\x1b_Gi=2;EINVAL:o\x1b\\"));
+        assert!(!accepts_zlib(b"\x1b_Gi=1;OK\x1b\\"), "no answer is not a yes");
+        assert!(!accepts_zlib(b""));
+        // The id must match exactly: `i=2` answering is not `i=21` answering,
+        // and a substring test would confuse them.
+        assert!(!accepts_zlib(b"\x1b_Gi=21;OK\x1b\\"));
+        // A reply carrying more keys than the id is still that reply.
+        assert!(accepts_zlib(b"\x1b_GI=7,i=2;OK\x1b\\"));
+    }
+
+    #[test]
+    fn the_probe_reads_on_until_the_device_attributes_reply() {
+        // Stopping at the first graphics reply would decide compression before
+        // the compressed query had been answered — always "no", every time.
+        assert!(!probe_done(b"\x1b_Gi=1;OK\x1b\\"));
+        assert!(!probe_done(b"\x1b_Gi=1;OK\x1b\\\x1b[?"), "reply still arriving");
+        assert!(probe_done(b"\x1b_Gi=1;OK\x1b\\\x1b[?62;1;6c"));
     }
 
     #[test]
     fn the_previous_frame_is_deleted_only_after_the_new_one_is_placed() {
         // Deleting first is a blink on every single frame.
-        let mut p = Placer::new();
+        let mut p = Placer::new(Encoding::Raw);
         let at = Placement { row: 2, col: 1, cols: 8, rows: 4 };
 
         let first = String::from_utf8(p.draw(&[0u8; 3], 1, 1, at)).unwrap();
@@ -312,7 +522,7 @@ mod tests {
 
     #[test]
     fn the_frame_is_positioned_before_it_is_drawn() {
-        let mut p = Placer::new();
+        let mut p = Placer::new(Encoding::Raw);
         let seq = String::from_utf8(p.draw(&[0u8; 3], 1, 1, Placement { row: 3, col: 1, cols: 2, rows: 2 })).unwrap();
         // Row 3, because row 1 is the status line the viewer owns and row 2 is
         // the separator. The image must never start at row 1.
@@ -321,7 +531,7 @@ mod tests {
 
     #[test]
     fn leaving_removes_the_last_frame() {
-        let mut p = Placer::new();
+        let mut p = Placer::new(Encoding::Raw);
         assert!(p.clear().is_empty(), "nothing drawn, nothing to clear");
         p.draw(&[0u8; 3], 1, 1, Placement { row: 1, col: 1, cols: 1, rows: 1 });
         let out = String::from_utf8(p.clear()).unwrap();
@@ -356,5 +566,20 @@ mod tests {
         assert!(p.contains("a=q"), "query only, nothing is displayed: {p:?}");
         assert!(!p.contains("q=2"), "this is the one place we want an answer");
         assert!(p.ends_with("\x1b[c"), "the device-attributes barrier: {p:?}");
+
+        // Two questions, and the second one has to actually be compressed —
+        // asking about `o=z` with a raw payload would be answered `OK` by a
+        // terminal that cannot inflate anything.
+        assert_eq!(p.matches("a=q").count(), 2, "raw and deflated: {p:?}");
+        let deflated = p.split("i=2,").nth(1).unwrap();
+        assert!(deflated.contains("o=z"), "{deflated:?}");
+        let body = deflated.split_once(';').unwrap().1.split("\x1b").next().unwrap();
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(body).unwrap();
+        assert_eq!(
+            miniz_oxide::inflate::decompress_to_vec_zlib(&bytes).unwrap(),
+            vec![0u8, 0, 0],
+            "the compressed query must carry a real deflate stream"
+        );
     }
 }

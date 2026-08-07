@@ -183,7 +183,9 @@ pub enum BoxCommands {
         /// Frame-rate ceiling asked of the box, for `--term`
         #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u32).range(1..=60))]
         fps: u32,
-        /// Skip the graphics probe and render anyway, for `--term`
+        /// Skip the graphics probe and render anyway, for `--term`. Frames are
+        /// then sent uncompressed (about six times the bytes), because the
+        /// probe is also what asks whether this terminal accepts deflated ones
         #[arg(long)]
         assume_graphics: bool,
     },

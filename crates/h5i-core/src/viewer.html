@@ -44,7 +44,10 @@
 const params = new URLSearchParams(location.search);
 const token = params.get("token") || "";
 const canvas = document.getElementById("screen");
-const ctx = canvas.getContext("2d");
+// `alpha: false` because a page is opaque and compositing a transparent layer
+// every frame is work for nothing. `desynchronized` lets the browser skip a
+// compositor round trip, which is latency a person driving the page feels.
+const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
 const statusEl = document.getElementById("status");
 const urlEl = document.getElementById("url");
 
@@ -60,7 +63,11 @@ function connect() {
   ws.binaryType = "arraybuffer";
   ws.onopen = () => {
     statusEl.textContent = "connected";
-    // Ask for a frame rate rather than taking whatever the box produces.
+    // Ask for a frame rate rather than taking whatever the box produces. This
+    // is a `config` message, and the forward has to let it past the control
+    // lock for it to mean anything — it did not, for a while, and the cap was
+    // being dropped on every agent-held session in silence. See `classify` in
+    // `view.rs`.
     send({ type: "config", maxFps: 30, pacing: "push" });
   };
   ws.onclose = () => { statusEl.textContent = "disconnected"; setTimeout(connect, 1500); };
@@ -72,7 +79,7 @@ function connect() {
     if (typeof ev.data === "string") {
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
-      if (msg.type === "frame" && msg.data) draw("data:image/jpeg;base64," + msg.data);
+      if (msg.type === "frame" && msg.data) draw(bytesOfBase64(msg.data));
       else if (msg.type === "status") {
         if (msg.viewportWidth) viewport = { w: msg.viewportWidth, h: msg.viewportHeight };
         statusEl.textContent = msg.screencasting ? "connected" : "not streaming";
@@ -84,22 +91,58 @@ function connect() {
       }
       return;
     }
-    const blob = new Blob([ev.data], { type: "image/jpeg" });
-    const url = URL.createObjectURL(blob);
-    draw(url, () => URL.revokeObjectURL(url));
+    draw(new Uint8Array(ev.data));
   };
 }
 
-function draw(src, done) {
-  const img = new Image();
-  img.onload = () => {
-    if (canvas.width !== img.width || canvas.height !== img.height) {
-      canvas.width = img.width; canvas.height = img.height;
+function bytesOfBase64(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+// Frames are decoded off the main thread and painted at most once per animation
+// frame. Both halves matter, and the shape they replace was the reason the
+// viewer stuttered.
+//
+// `createImageBitmap` decodes on a worker the browser owns; the previous
+// `new Image()` with a `data:` URL built a ~70 KB string, parsed a URL and
+// decoded on the main thread, per frame, and allocated a fresh element to do
+// it. And painting on arrival means a tab that cannot keep up queues every
+// frame it was sent; painting on `requestAnimationFrame` means it draws the
+// newest one and drops the rest, which is what "latest frame wins" has to mean
+// on this side of the socket too. A hidden tab decodes nothing at all.
+let pending = null;   // the newest frame not yet painted
+let scheduled = false;
+
+function draw(bytes) {
+  if (document.hidden) return;
+  createImageBitmap(new Blob([bytes], { type: "image/jpeg" })).then((bitmap) => {
+    // A frame that arrived while an older one was still waiting replaces it.
+    // Closing the loser explicitly: bitmaps hold decoded pixels and waiting for
+    // the collector to notice is how a long session grows to a gigabyte.
+    if (pending) pending.close();
+    pending = bitmap;
+    if (!scheduled) {
+      scheduled = true;
+      requestAnimationFrame(paint);
     }
-    ctx.drawImage(img, 0, 0);
-    if (done) done();
-  };
-  img.src = src;
+  }).catch(() => {
+    // A frame the box produced by crashing mid-encode. Dropped, never fatal.
+  });
+}
+
+function paint() {
+  scheduled = false;
+  const bitmap = pending;
+  pending = null;
+  if (!bitmap) return;
+  if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+    canvas.width = bitmap.width; canvas.height = bitmap.height;
+  }
+  ctx.drawImage(bitmap, 0, 0);
+  bitmap.close();
 }
 
 // The URL comes from the page inside the box, so it is untrusted text. It is
@@ -144,11 +187,37 @@ function mouse(e, eventType, extra) {
   }, at(e), extra || {}));
 }
 
-canvas.addEventListener("mousedown", (e) => { canvas.focus(); mouse(e, "mousePressed"); });
-canvas.addEventListener("mouseup", (e) => mouse(e, "mouseReleased"));
-canvas.addEventListener("mousemove", (e) => mouse(e, "mouseMoved"));
+// Moves are coalesced to one per animation frame. A mouse crossing the canvas
+// fires hundreds of events a second, and each one that gets sent is a WebSocket
+// frame, a CDP dispatch inside the box and a hover recomputation on the page —
+// for a position that was already stale when it was sent. Only the newest
+// position carries any information.
+//
+// Presses flush the pending move first. Ordering is the one thing coalescing
+// must not break: a press that overtook the move that positioned it is a click
+// at the wrong place, and the box has no way to notice.
+let pendingMove = null;
+let moveScheduled = false;
+
+function flushMove() {
+  const e = pendingMove;
+  pendingMove = null;
+  if (e) mouse(e, "mouseMoved");
+}
+
+canvas.addEventListener("mousemove", (e) => {
+  pendingMove = e;
+  if (moveScheduled) return;
+  moveScheduled = true;
+  requestAnimationFrame(() => { moveScheduled = false; flushMove(); });
+});
+canvas.addEventListener("mousedown", (e) => { canvas.focus(); flushMove(); mouse(e, "mousePressed"); });
+canvas.addEventListener("mouseup", (e) => { flushMove(); mouse(e, "mouseReleased"); });
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("wheel", (e) => {
+  // Not coalesced: a wheel event's delta is a quantity, and dropping one loses
+  // scroll distance rather than a stale position.
+  flushMove();
   mouse(e, "mouseWheel", { deltaX: e.deltaX, deltaY: e.deltaY });
 }, { passive: true });
 
