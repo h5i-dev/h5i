@@ -28,14 +28,14 @@
   <meta property="article:tag" content="seccomp">
   <meta property="article:tag" content="namespaces">
   <meta property="article:published_time" content="2026-06-12">
-  <meta property="article:modified_time" content="2026-06-26">
+  <meta property="article:modified_time" content="2026-08-07">
   <meta property="article:author" content="Koukyosyumei">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Sandboxing AI Agents, Part 2: Implementing Kernel-Tier Confinement">
   <meta name="twitter:description" content="Probe, self-test, fail closed. A worked walkthrough of a rootless Linux agent sandbox: Landlock, seccomp, namespaces, rlimits, and the traps.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-series-card.png">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 2: Implementing Kernel-Tier Confinement","description":"How to implement a kernel-tier Linux sandbox for AI agents: probe Landlock/seccomp/namespaces, run a functional self-test, and fail closed instead of silently downgrading.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-26","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-implementation/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":2700,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox implementation","Landlock","seccomp","Linux namespaces","network egress allowlist"],"keywords":"Landlock, seccomp, namespaces, capability probing, fail closed, RLIMIT, AI agent sandbox"}
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 2: Implementing Kernel-Tier Confinement","description":"How to implement a kernel-tier Linux sandbox for AI agents: probe Landlock/seccomp/namespaces, run a functional self-test, and fail closed instead of silently downgrading.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-08-07","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-implementation/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":2700,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox implementation","Landlock","seccomp","Linux namespaces","network egress allowlist"],"keywords":"Landlock, seccomp, namespaces, capability probing, fail closed, RLIMIT, AI agent sandbox"}
   </script>
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://h5i.dev/blog/"},{"@type":"ListItem","position":3,"name":"Sandboxing AI Agents, Part 2","item":"https://h5i.dev/blog/sandboxing-ai-agents-implementation/"}]}
@@ -65,7 +65,7 @@
 <main class="article-wrap">
   <article class="post">
     <header>
-      <div class="post-eyebrow">Sandbox Series · Part 2 · 2026-06-12</div>
+      <div class="post-eyebrow">Sandbox Series · Part 2 · 2026-06-12 · updated 2026-08-07</div>
       <h1>Sandboxing AI Agents, Part 2: How to Implement Kernel-Tier Confinement</h1>
       <p class="post-deck">The hard part of a Linux agent sandbox isn't choosing primitives. It's that a kernel advertising Landlock, seccomp, and user namespaces can still refuse to confine a process, so you probe capabilities, run a functional self-test, and fail closed rather than silently downgrade.</p>
       <div class="post-meta">
@@ -93,7 +93,7 @@
     </p>
 
     <div class="callout">
-      <strong>Series map.</strong> Start with the <a href="/blog/sandboxing-ai-agents-foundations/">foundations</a> (the threat model and why a worktree isn't a boundary), read this part for implementation, then compare designs in the <a href="/blog/sandboxing-ai-agents-landscape/">sandbox landscape</a> and see how it composes with provenance in <a href="/blog/sandboxing-ai-agents-h5i/">h5i's env design</a>.
+      <strong>Series map.</strong> Start with the <a href="/blog/sandboxing-ai-agents-foundations/">foundations</a> (the threat model and why a worktree isn't a boundary), read this part for implementation, then compare designs in the <a href="/blog/sandboxing-ai-agents-landscape/">sandbox landscape</a> and see how it composes with provenance in <a href="/blog/sandboxing-ai-agents-h5i/">h5i's box design</a>.
     </div>
 
     <h2>A sandbox is a launch protocol, not a mechanism</h2>
@@ -129,7 +129,7 @@
     </div>
 
     <p>
-      Everything is fail-closed by default: an unparseable field, an unknown isolation claim, or a tool not on the <code>tools</code> allowlist is a refusal, not a warning. Two built-in profiles need no file: <code>default</code> (deny-home build/test confinement) and <code>agent</code> (agent-in-box, only on tiers that can enforce it).
+      Everything is fail-closed by default: an unparseable field, an unknown isolation claim, or a tool not on the <code>tools</code> allowlist is a refusal, not a warning. Four built-in profiles need no file: <code>default</code> (deny-home build and test confinement), <code>agent</code> and its runtime-pinned <code>agent-claude</code> and <code>agent-codex</code> variants, and <code>browser</code> (the agent profile plus headless Chrome).
     </p>
 
     <h2>Probe the host: capabilities, carefully</h2>
@@ -172,7 +172,7 @@ if missing:
       Here is the part that most write-ups skip. Every probe above can pass and the sandbox can still be broken. The bits report kernel <em>support</em>; they do not report that a process confined this way can <em>run</em>. On a host where AppArmor restricts unprivileged user namespaces, <code>unshare(CLONE_NEWUSER)</code> may even succeed in the probe yet the full confined launch fails at <code>exec</code> with <code>EACCES</code>, and you would only discover it when the first real command dies.
     </p>
     <p>
-      The defense is a <strong>functional self-test</strong>. After resolution, before accepting an environment, actually run a trivial command (<code>true</code>) through the entire process-tier boundary in a throwaway directory and confirm it exits 0. h5i's <code>verify_exec</code> gates <code>env create</code> on exactly this. If the self-test cannot run, creation refuses with a message that explains the likely cause and tells the operator to re-request a weaker, explicit tier. It does not hand back a weaker sandbox.
+      The defense is a <strong>functional self-test</strong>. After resolution, before accepting an environment, actually run a trivial command (<code>true</code>) through the entire process-tier boundary in a throwaway directory and confirm it exits 0. h5i's <code>verify_exec</code> gates <code>h5i box create</code> on exactly this. If the self-test cannot run, creation refuses with a message that explains the likely cause and tells the operator to re-request a weaker, explicit tier. It does not hand back a weaker sandbox.
     </p>
 
     <div class="terminal">
@@ -183,7 +183,7 @@ if missing:
 probe = policy.with_tools_cleared()
 
 match run(probe, tmpdir, [<span class="t-cmd">"true"</span>]):
-    exit 0    -&gt; <span class="t-pass">Ok</span>                 <span class="t-cmt"># confinement can exec — create the env</span>
+    exit 0    -&gt; <span class="t-pass">Ok</span>                 <span class="t-cmt"># confinement can exec — create the box</span>
     exit n    -&gt; <span class="t-red">refuse("self-test exited n; re-request --isolation workspace")</span>
     error e   -&gt; <span class="t-red">refuse("not functional: {e} (e.g. AppArmor-restricted userns)")</span></pre></div>
     </div>
@@ -271,7 +271,7 @@ reboot, swapon/off, settimeofday, …       <span class="t-cmt"># host / time / 
 
     <h2>Network egress, briefly</h2>
     <p>
-      Deny mode (empty netns) is airtight and cheap, and it is the right default. Allowlisting specific destinations is far harder to get right and, at the kernel/process tier, h5i deliberately does not attempt it: a proxy-only allowlist is bypassed by any program that ignores <code>HTTP_PROXY</code> and opens a raw socket, and DNS filtering alone leaks (IP literals, cached addresses, data tunneled in queries). A serious egress allowlist needs packet-level enforcement plus name resolution that can't become a side channel: create a netns, attach a userspace NAT (<code>slirp4netns</code>), install default-drop <code>nftables</code> inside it, pin allowlisted hostnames into a private <code>/etc/hosts</code>, and block route/firewall edits afterward. h5i ships that as the <code>container</code> tier's domain allowlist (a host-side DNS-pinned CONNECT proxy); the static <code>process</code> tier honestly only offers deny or host, and says so rather than shipping an advisory allowlist.
+      Deny mode (empty netns) is airtight and cheap, and it is the right default. Allowlisting specific destinations is far harder to get right and, at the kernel/process tier, h5i deliberately does not attempt it: a proxy-only allowlist is bypassed by any program that ignores <code>HTTP_PROXY</code> and opens a raw socket, and DNS filtering alone leaks (IP literals, cached addresses, data tunneled in queries). A serious egress allowlist needs packet-level enforcement plus name resolution that can't become a side channel: create a netns, attach a userspace NAT (<code>slirp4netns</code>), install default-drop <code>nftables</code> inside it, pin allowlisted hostnames into a private hosts file, and block route and firewall edits afterward. h5i ships exactly that as the <code>supervised</code> tier, with a seccomp-notify gate on <code>socket()</code> denying <code>AF_NETLINK</code> so <code>nft</code> and <code>ip</code> cannot open the control channel they would need. The <code>container</code> tier offers a weaker claim on purpose, a host-side DNS-pinned CONNECT proxy, which is L7 and binds proxy-respecting tooling only. The static <code>process</code> tier offers deny or host and nothing between, and refuses a profile that sets <code>net.egress</code> rather than shipping an advisory allowlist.
     </p>
 
     <h2>Launch order, end to end</h2>
@@ -295,7 +295,7 @@ reboot, swapon/off, settimeofday, …       <span class="t-cmt"># host / time / 
       A design is only trustworthy if it names what it does not do. This one has real edges:
     </p>
     <ul>
-      <li><strong>One shared kernel.</strong> A seccomp deny-list plus Landlock plus namespaces reduces and bounds the attack surface; it does not prove every permitted syscall is safe against a kernel bug. For untrusted code with an exploit budget, the right boundary is a separate kernel: a microVM (Firecracker/Kata) or gVisor's user-space kernel. The deny-list is a floor, not a ceiling.</li>
+      <li><strong>One shared kernel.</strong> A seccomp deny-list plus Landlock plus namespaces reduces and bounds the attack surface; it does not prove every permitted syscall is safe against a kernel bug. For untrusted code with an exploit budget, the right boundary is a separate kernel. h5i's answer is the <code>microvm</code> tier, which boots the same OCI images into a hardware-isolated guest through <a href="https://microsandbox.dev">microsandbox</a>; gVisor's user-space kernel and Kata are the other shapes of the same idea. The deny-list is a floor, not a ceiling.</li>
       <li><strong>The <code>supervised</code> tier is partial.</strong> It now runs with a PID namespace like the process tier, but per-command <code>execve</code> observation via seccomp-notify is still <em>deferred</em>: notifying <code>execve</code> makes the bootstrap exec block on the supervisor, which deadlocks against the egress bring-up handshake. In-box observation ships through other mechanisms (a container tee-shim, a Bash hook) rather than execve notification.</li>
       <li><strong>The PID namespace and the egress handshake have an ordering constraint.</strong> A PID namespace claims the <em>next</em> child as its init, and on the egress path that child is the short-lived <code>nft</code> helper. Unshare <code>CLONE_NEWPID</code> too early and the helper becomes PID 1, exits as soon as the ruleset loads, and leaves a dead namespace in which the workload's own fork fails with <code>ENOMEM</code>. The unshare has to happen after the helper has come and gone.</li>
       <li><strong>Hosts vary, and some can't run this at all.</strong> AppArmor-restricted unprivileged user namespaces (common on CI) break the process tier even when the capability bits look present, which is the entire reason the functional self-test exists. The correct behavior there is to refuse and let the operator choose <code>workspace</code> explicitly, not to pretend.</li>

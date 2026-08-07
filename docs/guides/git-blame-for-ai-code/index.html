@@ -3,45 +3,93 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>git blame for AI-generated code | h5i</title>
-  <meta name="description" content="git blame gives you a name and a date. For AI-written lines you need the prompt, the model, the agent, and the test result. h5i recall blame adds all four, with the same command shape.">
-  <meta name="keywords" content="git blame ai code, ai blame, git blame for ai generated code, who wrote this line ai, ai authorship blame, claude code blame, per line prompt history, h5i blame">
+  <title>Find Out What Actually Ran in a Box | h5i</title>
+  <meta name="description" content="Four commands that answer what an agent did: the event log, the enforced policy, one run's full record, and the whole receipt as JSON. None of them needs the agent to cooperate.">
+  <meta name="keywords" content="what did the agent run, h5i box log, box inspect capture, execution receipt, agent audit trail, host observed lane">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
-  <meta name="robots" content="noindex, follow">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
   <link rel="canonical" href="https://h5i.dev/guides/git-blame-for-ai-code/">
+  <link rel="alternate" type="application/rss+xml" title="h5i Blog" href="/feed.xml">
   <link rel="icon" type="image/png" href="/_static/logo.png">
   <link rel="apple-touch-icon" href="/_static/logo.png">
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="git blame for AI-generated code">
-  <meta property="og:description" content="Per-line provenance for AI-written code: the prompt, the model, the agent, and the captured test result, with the same command shape as git blame.">
+  <meta property="og:title" content="Find Out What Actually Ran in a Box">
+  <meta property="og:description" content="Four commands for what an agent actually did, and how to tell host-observed evidence from the box's own account.">
   <meta property="og:url" content="https://h5i.dev/guides/git-blame-for-ai-code/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="article:published_time" content="2026-06-02">
+  <meta property="article:modified_time" content="2026-08-07">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="git blame for AI-generated code">
-  <meta name="twitter:description" content="git blame gives a name and a date. h5i recall blame adds the prompt, model, agent, and test result per line.">
+  <meta name="twitter:title" content="Find Out What Actually Ran in a Box">
+  <meta name="twitter:description" content="Four commands for what an agent actually did, and how to tell host-observed evidence from the box's own account.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "TechArticle",
-    "headline": "git blame for AI-generated code",
-    "description": "How to get git blame-style per-line provenance for AI-generated code with h5i: prompt, model, agent, and test result per commit boundary.",
-    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
-    "datePublished": "2026-06-02",
-    "dateModified": "2026-06-02",
-    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/guides/git-blame-for-ai-code/"},
-    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-    "keywords": "git blame ai code, ai blame, git blame for ai generated code, who wrote this line ai, ai authorship blame, claude code blame, per line prompt history, h5i blame"
-  }
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Find Out What Actually Ran in a Box",
+  "description": "Four commands that answer what an agent did: the event log, the enforced policy, one run's full record, and the whole receipt as JSON. None of them needs the agent to cooperate.",
+  "author": {
+    "@type": "Person",
+    "name": "Koukyosyumei",
+    "url": "https://github.com/Koukyosyumei"
+  },
+  "datePublished": "2026-06-02",
+  "dateModified": "2026-08-07",
+  "publisher": {
+    "@type": "Organization",
+    "name": "h5i",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://h5i.dev/_static/logo.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://h5i.dev/guides/git-blame-for-ai-code/"
+  },
+  "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+  "keywords": "what did the agent run, h5i box log, box inspect capture, execution receipt, agent audit trail, host observed lane"
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "How do I see what commands an agent ran in a box?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "h5i box log for the event log, h5i box inspect --capture for one run in full, and h5i box export to write the whole receipt out as JSON. None of it needs the agent to cooperate."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What is the difference between the lanes?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "host-env-run and viewer are observed by h5i from outside: exits and resource usage from the supervisor's wait4, egress from the allowlist proxy's log. tee-shim and inbox-capture come from inside the box and are its own account of itself."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why does h5i box status mark some limits with an asterisk?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Because it reports the policy actually enforced. On macOS at the kernel tiers, memory and process-count limits cannot be held, so h5i declines to apply them and marks them rather than claiming enforcement it does not have."
+      }
+    }
+  ]
+}
   </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -51,11 +99,8 @@
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}, {"@type": "ListItem", "position": 3, "name": "git blame for AI-generated code", "item": "https://h5i.dev/guides/git-blame-for-ai-code/"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}, {"@type": "ListItem", "position": 3, "name": "Find Out What Actually Ran in a Box", "item": "https://h5i.dev/guides/git-blame-for-ai-code/"}]}
   </script>
-  <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How is h5i recall blame different from git blame?", "acceptedAnswer": {"@type": "Answer", "text": "It keeps the same command shape but adds AI provenance at each commit boundary: the agent, the model, the exact prompt, and the captured test result, fields git blame has no place to store. Use --show-prompt to annotate each boundary with its prompt."}}, {"@type": "Question", "name": "Where does the prompt and test data come from?", "acceptedAnswer": {"@type": "Answer", "text": "From the provenance recorded at commit time (h5i capture commit) and stored in refs/h5i/notes, keyed by commit OID. If a line's commit had no AI metadata, blame falls back to ordinary author/date for that line."}}, {"@type": "Question", "name": "Can I see every prompt that ever touched one line?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i recall log --ancestry <file>:<line> walks the history of that specific line and prints the prompt behind each change, so you get the full intent trail rather than just the most recent commit."}}, {"@type": "Question", "name": "Does it work for code written by humans too?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Human-authored commits show normal author and date with no AI badge; AI-assisted commits add the agent, model, prompt, and tests. The two coexist line-by-line in the same blame output."}}]}
-</script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
 <body>
@@ -68,112 +113,107 @@
     <li><a href="/">Home</a></li>
     <li><a href="/guides/">Guides</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &#8594;</a></li>
   </ul>
 </nav>
 
 <main class="article-wrap">
-  <aside style="max-width:760px;margin:0 auto 2rem;padding:1rem 1.2rem;border:1px solid #D21C1C;border-left-width:4px;border-radius:6px;background:rgba(210,28,28,0.06);">
-    <strong>This guide describes features h5i no longer has.</strong>
-    h5i began as a provenance system for AI coding work — prompt versioning, AI-aware blame, an
-    audit scan, a multi-agent orchestra. It has been rebuilt around the boundary instead: a
-    disposable, confined box that an agent works inside, with a reviewed patch and an execution
-    receipt as the only way out. The commands below are gone.
-    See <a href="/manual/" style="color:#D21C1C">the manual</a> for what h5i does now, or
-    <a href="https://github.com/h5i-dev/h5i/blob/main/ROADMAP.md" style="color:#D21C1C">ROADMAP.md</a>
-    for what was cut and why.
-  </aside>
-
   <article class="post">
     <header>
-      <div class="post-eyebrow">Guide · Blame</div>
-      <h1>git blame for AI-generated code</h1>
-      <p class="post-deck"><code>git blame</code> answers “who and when.” For a line a model wrote, you need “from what prompt, which model, and did the tests pass?” h5i recall blame adds those, with the same ergonomics.</p>
+      <div class="post-eyebrow">Guide &#183; Receipts</div>
+      <h1>Find out what actually ran in a box</h1>
+      <p class="post-deck">Not what the agent says it did. What a supervisor watched it do, what a proxy refused it, and which of those two grades of evidence each line came from.</p>
       <div class="post-meta">
-        <span><strong>Guide</strong> h5i</span>
-        <span><strong>Reading time</strong> 6 min</span>
-        <span><strong>Tags</strong> Blame · Provenance · Debugging</span>
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 5 min</span>
+        <span><strong>Tags</strong> Receipts &#183; Observability &#183; Review</span>
       </div>
     </header>
 
-    <p>
-      <code>git blame</code> is muscle memory: see a suspicious line, blame it, read the commit message, understand
-      the change. It works because in a pre-AI codebase the author's name plus the message is enough: the
-      human wrote the line and knew why. The moment a model wrote it, that chain snaps. The blame names the
-      human who pressed commit; the message lost the prompt, the model, and the tests.
-    </p>
+<div class="callout">
+  <strong>The gotcha up front.</strong> Every record carries a <strong>lane</strong>, and the lane
+  decides what the record is worth. <code>host-env-run</code> and <code>viewer</code> are
+  host-observed. <code>tee-shim</code> and <code>inbox-capture</code> are the box's own account of
+  itself. Read them as different grades of evidence, because they are.
+</div>
 
-    <h2>The problem: a name and a date aren't enough anymore</h2>
-    <p>
-      At 2am, the difference between "Alice, 2026" and "Alice prompted claude-sonnet-4-6 with <em>'add
-      exponential backoff'</em>, and 42 tests passed after" is the difference between an hour of guessing and a
-      one-line confirmation. Standard blame can't give you the second one.
-    </p>
 
-    <h2>How h5i solves it</h2>
-    <p>
-      <code>h5i recall blame</code> keeps git's blame shape and adds the AI fields per commit boundary: agent, model,
-      the exact prompt, and the captured test result. It blames by line and pulls the data straight from the
-      provenance stored in <code>refs/h5i/notes</code>.
-    </p>
-
-    <h2>Commands</h2>
-    <p>Blame a file with the prompt annotated at each commit boundary:</p>
+    <h2>1. The event log</h2>
     <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/http_client.rs --show-prompt</span>
-
-<span class="t-bold">STAT COMMIT   AUTHOR/AGENT     | CONTENT</span>
-<span class="t-pass">✅</span> <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code     </span> | <span class="t-out">async fn send_with_retry(req: Request) -&gt; Result&lt;Response&gt; {</span>
-<span class="t-pass">✅</span> <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code     </span> | <span class="t-out">    let mut delay = Duration::from_millis(100);</span>
-
-<span class="t-bold">─── boundary at a3f9c2b ─────────────────────────────────────</span>
-<span class="t-ai">  Agent:   claude-code (claude-sonnet-4-6) ✨</span>
-<span class="t-warn">  Prompt:  "add exponential backoff with jitter — cap retries at 5"</span>
-<span class="t-pass">  Tests:   ✔ 42 passed, 0 failed, 1.23s [pytest]</span></pre></div>
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box log fix-auth</span></pre></div>
     </div>
-    <p>Trace the full prompt history of a single line:</p>
+
+    <h2>2. The policy that was actually enforced</h2>
     <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --ancestry src/http_client.rs:88</span>      <span class="t-cmt"># every prompt that shaped this line</span>
-<span class="t-warn">  a3f9c2b  "add exponential backoff with jitter"</span>
-<span class="t-warn">  7c1d9f0  "extract retry into send_with_retry helper"</span></pre></div>
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box status fix-auth</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box capabilities fix-auth --json</span></pre></div>
     </div>
-    <h2>Worked example: triaging an incident</h2>
     <p>
-      A retry storm hits production. You blame the hot path and immediately see the line came from
-      <code>claude-code</code>, the prompt was "add exponential backoff", and the tests that ran didn't cover the
-      jitter cap. That's not a guess about intent. It's the recorded intent, next to the code, with the test
-      evidence attached. Fix, re-prompt, recommit with provenance, done.
+      <code>status</code> reports what was enforced, not what was requested. A limit the host cannot
+      hold is marked with <code>*</code> and explained rather than listed as enforced, which matters
+      on macOS at the kernel tiers where <code>mem</code> and <code>procs</code> cannot be held at
+      all. It also reports base drift.
     </p>
-    <div class="callout">
-      <strong>Provenance, not just authorship.</strong> Plain <code>git blame</code> stops at "who and when".
-      <code>h5i recall blame</code> adds the prompt that drove each change and the test result captured at commit
-      time, so the intent and the evidence sit next to the code.
+
+    <h2>3. One run, in full</h2>
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box inspect fix-auth --capture c4a91f</span></pre></div>
+    </div>
+    <p>
+      The capture id comes from the log or from a row in <code>h5i ui</code>. Each record carries the
+      command (secret-redacted), the exit code, wall and CPU time, peak RSS, the git tree it ran
+      against, the policy digest in force, and, when relevant, an egress summary and what the browser
+      reported.
+    </p>
+
+    <h2>4. Everything, as files</h2>
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box export fix-auth --out ./review</span>
+<span class="t-prompt">$</span> <span class="t-cmd">jq '.[] | select(.source == "host-env-run")' ./review/receipt.json</span></pre></div>
+    </div>
+
+    <h2>What to look for</h2>
+    <ul>
+      <li><strong>Denied egress, first.</strong> It is the only signal that makes a claim about the boundary, and the proxy observed it host-side.</li>
+      <li><strong>A gap between lanes.</strong> A long host-observed process with nothing claimed during it, or more commands reported than exits observed. Not proof of anything, and worth a question.</li>
+      <li><strong>Work that never happened.</strong> A build with no test run, under a summary saying the tests pass, is a four-second catch.</li>
+    </ul>
+
+    <div class="callout warn">
+      <strong>The claim stops here.</strong> An agent can stage extra records or stop writing them.
+      Both are visible as a gap against host-observed exits, and that visibility is the whole claim.
+      It does not extend to the log being complete.
     </div>
 
 
-<h2 id="faq">Frequently asked questions</h2>
-    <h3>How is h5i recall blame different from git blame?</h3>
-    <p>It keeps the same command shape but adds AI provenance at each commit boundary: the agent, the model, the exact prompt, and the captured test result, fields git blame has no place to store. Use --show-prompt to annotate each boundary with its prompt.</p>
-    <h3>Where does the prompt and test data come from?</h3>
-    <p>From the provenance recorded at commit time (h5i capture commit) and stored in refs/h5i/notes, keyed by commit OID. If a line's commit had no AI metadata, blame falls back to ordinary author/date for that line.</p>
-    <h3>Can I see every prompt that ever touched one line?</h3>
-    <p>Yes. h5i recall log --ancestry <file>:<line> walks the history of that specific line and prints the prompt behind each change, so you get the full intent trail rather than just the most recent commit.</p>
-    <h3>Does it work for code written by humans too?</h3>
-    <p>Yes. Human-authored commits show normal author and date with no AI badge; AI-assisted commits add the agent, model, prompt, and tests. The two coexist line-by-line in the same blame output.</p>
+    <h2>FAQ</h2>
+    <div class="faq">
+      <h3>How do I see what commands an agent ran in a box?</h3>
+      <p><code>h5i box log &lt;name&gt;</code> for the event log, <code>h5i box inspect &lt;name&gt; --capture &lt;id&gt;</code> for one run in full, and <code>h5i box export</code> to write the whole receipt out as JSON. None of it needs the agent to cooperate, because none of it is a hook.</p>
+
+      <h3>What is the difference between the lanes?</h3>
+      <p>host-env-run and viewer are observed by h5i from outside: exits and resource usage from the supervisor's wait4, egress from the allowlist proxy's log. tee-shim and inbox-capture come from inside the box and are its own account of itself.</p>
+
+      <h3>Why does h5i box status mark some limits with an asterisk?</h3>
+      <p>Because it reports the policy actually enforced. On macOS at the kernel tiers, memory and process-count limits cannot be held, so h5i declines to apply them and marks them rather than claiming enforcement it does not have.</p>
+
+    </div>
 
     <div class="next-up">
-      <span class="label">Go deeper</span>
-      <a href="/blog/from-git-blame-to-ai-blame/">
-        <h3>From git blame to AI blame</h3>
-        <p>Where the data lives and the usage patterns for incident triage and inherited code.</p>
+      <span class="label">Read next</span>
+      <a href="/blog/structured-tool-output-schema/">
+        <h3>What is inside a receipt record</h3>
+        <p>The full field list, and the flags that exist so absence is never ambiguous.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Try h5i in your repo</h3>
-      <p>One <code>cargo install</code>, then <code>h5i init</code>. Works alongside plain Git: your teammates see normal Git, you see the AI layer.</p>
+      <h3>Look at a real one</h3>
+      <p><code>h5i box export &lt;name&gt; --out ./review</code> writes <code>receipt.json</code> next to the patch.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/guides/" class="btn btn-ghost">All guides</a>
     </div>
@@ -190,7 +230,7 @@
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
       <a href="/manual/">Manual</a>
     </nav>
-    <div class="legal">Apache 2.0 · Built with Rust</div>
+    <div class="legal">Apache 2.0 &#183; Built with Rust</div>
   </div>
 </footer>
 

@@ -3,38 +3,44 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Run many agents, merge one auditable result - h5i workflow</title>
-  <meta name="description" content="The end-to-end h5i workflow for Claude Code and Codex: install, wire the hooks, track every prompt and context step, sandbox each agent, then run an ensemble — peer review, a neutral verifier replays and tests every candidate, and the one result that passes is merged. Lives in your Git, no SaaS.">
-  <meta name="keywords" content="run many coding agents, agent ensemble, sandboxed agent worktree, h5i env, neutral verifier, prompt-aware commits, compressed tool logs, agent handoffs, Git sidecar">
+  <title>The h5i workflow: box, work, export, apply</title>
+  <meta name="description" content="The end-to-end h5i loop for Claude Code and Codex: copy the code into a disposable box, let the agent build and test and drive a browser inside it, then export a patch, a report and an execution receipt and decide what to take.">
+  <meta name="keywords" content="h5i workflow, agent sandbox workflow, h5i box, coding agent loop, export patch receipt, claude code sandbox, codex sandbox, disposable dev environment">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
-  <meta name="robots" content="noindex, follow">
+  <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://h5i.dev/workflows/">
   <link rel="icon" type="image/png" href="/_static/logo.png">
   <link rel="apple-touch-icon" href="/_static/logo.png">
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="Run many agents, merge one auditable result - h5i workflow">
-  <meta property="og:description" content="The end-to-end h5i flow: install, wire the hooks, track every prompt and context step, sandbox each agent, then run an ensemble — peer review, a neutral verifier, and merge the one result that passes. Lives in your Git, no SaaS.">
+  <meta property="og:title" content="The h5i workflow: box, work, export, apply">
+  <meta property="og:description" content="Copy the code into a disposable box, let the agent work inside it, then read a patch, a report and a receipt before anything touches your machine.">
   <meta property="og:url" content="https://h5i.dev/workflows/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Run many agents, merge one auditable result - h5i workflow">
-  <meta name="twitter:description" content="The end-to-end h5i flow: install, wire the hooks, track every prompt and context step, sandbox each agent, then run an ensemble — peer review, a neutral verifier, and merge the one result that passes. Lives in your Git, no SaaS.">
+  <meta name="twitter:title" content="The h5i workflow: box, work, export, apply">
+  <meta name="twitter:description" content="Four steps. Nothing of your machine goes in, and nothing comes out but a patch you have read.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "TechArticle",
-    "headline": "Run many agents, merge one auditable result",
-    "description": "The end-to-end h5i workflow for Claude Code and Codex: install, wire the hooks, track every prompt and context step, sandbox each agent, then run an ensemble — peer review, a neutral verifier replays and tests every candidate, and the one result that passes is merged.",
+    "@type": "HowTo",
+    "name": "The h5i workflow: box, work, export, apply",
+    "description": "Give a coding agent a disposable, confined development environment and get back a reviewed patch, a report of what ran, and an execution receipt.",
     "url": "https://h5i.dev/workflows/",
-    "author": {"@type": "Organization", "name": "h5i"},
-    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}}
+    "totalTime": "PT10M",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "step": [
+      {"@type": "HowToStep", "name": "Install", "text": "Install the binary with the install script or cargo install, then run h5i skill install so your agent knows how to use it.", "url": "https://h5i.dev/workflows/#install"},
+      {"@type": "HowToStep", "name": "Make a box", "text": "h5i box . snapshots this repository at HEAD. h5i box --pr 1234 takes a pull request, a URL clones an external repository, and --new starts empty. The policy is resolved and hashed before any state exists on disk.", "url": "https://h5i.dev/workflows/#box"},
+      {"@type": "HowToStep", "name": "Work in it", "text": "h5i box shell drops you or an agent into the box with stdio inherited, so every command the session spawns is contained. Build, test, start the dev server, drive the browser.", "url": "https://h5i.dev/workflows/#work"},
+      {"@type": "HowToStep", "name": "Export and apply", "text": "h5i box export writes patch.diff, report.md and receipt.json. Read the report, starting with denied egress attempts, then git apply --3way the patch wherever you want it.", "url": "https://h5i.dev/workflows/#export"}
+    ]
   }
   </script>
 
@@ -50,16 +56,6 @@
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
 <body>
-  <aside style="max-width:860px;margin:0 auto 2rem;padding:1rem 1.2rem;border:1px solid #D21C1C;border-left-width:4px;border-radius:6px;background:rgba(210,28,28,0.06);">
-    <strong>This page describes features h5i no longer has.</strong>
-    h5i has been rebuilt around the boundary: a disposable, confined box that an agent works
-    inside, with a reviewed patch and an execution receipt as the only way out. Provenance,
-    the audit scan, the multi-agent orchestra and the dashboard are gone.
-    See <a href="/manual/" style="color:#D21C1C">the manual</a> for what h5i does now, or
-    <a href="https://github.com/h5i-dev/h5i/blob/main/ROADMAP.md" style="color:#D21C1C">ROADMAP.md</a>
-    for what was cut and why.
-  </aside>
-
 
 <div class="bg-grid"></div>
 
@@ -70,7 +66,7 @@
     <li><a href="/guides/">Guides</a></li>
     <li><a href="/manual/">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub -></a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub -&gt;</a></li>
   </ul>
 </nav>
 
@@ -78,124 +74,209 @@
   <article class="post">
     <header>
       <div class="post-eyebrow">h5i Workflow</div>
-      <h1>Run many agents, merge one auditable result</h1>
-      <p class="post-deck">The end-to-end h5i flow, the way you actually run it: install and wire the hooks, track every prompt and context step, give each agent a sealed sandbox, then run an ensemble — agents peer-review, a neutral verifier replays and tests each candidate, and the one result that passes is merged. <strong>It all lives in your Git (<code>refs/h5i/*</code>), no SaaS.</strong></p>
+      <h1>Box, work, export, apply</h1>
+      <p class="post-deck">
+        The whole loop on one page. Copy the code into a disposable box that holds the agent, the
+        toolchain, the dev server and a browser; let it work; then read a patch, a report and an
+        execution receipt and decide what to take. <strong>Nothing of your machine goes in, and
+        nothing comes out that you have not looked at.</strong>
+      </p>
       <div class="post-meta">
-        <span><strong>Updated</strong> 2026-06-26</span>
-        <span><strong>Scope</strong> the README 60-second flow</span>
-        <span><strong>Tool</strong> Git sidecar (Rust CLI + Git refs)</span>
+        <span><strong>Updated</strong> 2026-08-07</span>
+        <span><strong>Scope</strong> the whole product, end to end</span>
+        <span><strong>Tool</strong> one Rust binary, no daemon, no SaaS</span>
       </div>
     </header>
 
     <div class="callout">
-      This is the same flow as the project README, end to end: <strong>install → setup → track prompts and contexts → sandbox each agent → run an ensemble → merge the verified winner.</strong> The whole run — prompts, models, commands, logs, policies, messages, and the verdict — is versioned in your repo under <code>refs/h5i/*</code>. No SaaS, no lock-in, works offline.
+      <strong>The four commands.</strong> <code>h5i box .</code> makes one.
+      <code>h5i box shell &lt;name&gt;</code> is where the agent runs.
+      <code>h5i box export &lt;name&gt; --out ./review</code> is the only way out.
+      <code>git apply --3way ./review/patch.diff</code> lands it. Everything below is those four with
+      the reasoning attached.
     </div>
 
-    <h2>1. Install</h2>
-    <p>One install script, or build from source. h5i works alongside plain Git — teammates who don't use it just see ordinary commits.</p>
+    <h2 id="install">1. Install</h2>
+    <p>
+      One binary. It works on Linux and macOS, which confine by different means: Landlock, seccomp and
+      namespaces on Linux, Seatbelt on macOS. Two optional runtimes add tiers on top of either.
+    </p>
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">install</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</span>
-<span class="t-cmt"># or build from source</span>
-<span class="t-prompt">$</span> <span class="t-cmd">cargo install --git https://github.com/h5i-dev/h5i h5i-core</span></pre></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">curl -fsSL https://h5i.dev/install.sh | sh</span>
+<span class="t-cmt"># or from source</span>
+<span class="t-prompt">$</span> <span class="t-cmd">cargo install --path .</span></pre></div>
     </div>
 
-    <h2>2. Setup</h2>
-    <p>Initialize h5i and wire the Claude Code / Codex hooks. After this one-time setup the agents capture prompts, context steps, commits, and handoffs on their own — you don't run those commands by hand.</p>
+    <p>Then tell your agent how to use it. The skill is embedded in the binary, so it can never document a version you do not have.</p>
 
     <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">setup</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i init</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup --write --wrap-bash --team</span>
-<span class="t-prompt">$</span> <span class="t-cmd">git add . &amp;&amp; git commit -m "wire h5i hooks"</span></pre></div>
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">skill</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i skill install</span>            <span class="t-cmt"># writes into ~/.claude/skills/h5i (or ~/.codex)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box probe</span>                <span class="t-cmt"># what this host can actually enforce</span></pre></div>
     </div>
 
-    <h2>3. Track prompts and contexts</h2>
-    <p>Once the hooks are registered, h5i versions your human prompts and every agent context step (reads, writes, thinking) as Git objects, trimming noisy tool output along the way — for <code>pytest</code>, just the failures — to cut up to 95% of the tokens while keeping the raw output recoverable.</p>
+    <p>
+      Run the probe before you rely on anything. It executes a functional self-test rather than
+      reading capability bits, because a hardened kernel or an AppArmor profile can deny confined
+      exec while Landlock, seccomp and user namespaces all report present.
+    </p>
+
+    <h2 id="box">2. Make a box</h2>
+    <p>
+      Where the code comes from decides the shape of the box, and the difference matters more than
+      the syntax suggests.
+    </p>
 
     <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">track</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context show</span>   <span class="t-cmt"># replay captured prompts + agent context steps</span></pre></div>
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">create</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box .</span>                          <span class="t-cmt"># this repository at HEAD</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box --pr 1234</span>                  <span class="t-cmt"># a pull request head</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box https://github.com/o/r</span>     <span class="t-cmt"># an external repository</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box --new</span>                      <span class="t-cmt"># empty; the agent builds from nothing</span></pre></div>
     </div>
 
-    <p>Share it with teammates, or post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) onto the pull request.</p>
+    <p>
+      <strong>This repository</strong> gives you a real git worktree on its own branch, sharing the
+      object store, which is what lets <code>h5i box apply</code> land the work back locally.
+      <strong>A URL, a pull request, or <code>--new</code></strong> gives you a
+      <strong>detached</strong> box: its own repository, your repository neither read nor written
+      after creation, and the inherited <code>origin</code> remote dropped so the box arrives holding
+      no network handle. <code>apply</code> and <code>rebase</code> refuse there and point at
+      <code>export</code>. External code should always arrive in that shape.
+    </p>
+
+    <p>
+      At creation the policy is resolved, written to <code>policy.resolved.toml</code> and hashed
+      <em>before</em> any state exists on disk, so a request the host cannot satisfy fails closed
+      rather than leaving half a box behind. The base revision is pinned immutably at the same moment.
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Tier</th><th>What confines the code</th><th>Egress scoping</th></tr></thead>
+        <tbody>
+          <tr><td><code>workspace</code></td><td>A separate worktree, no confinement</td><td>none</td></tr>
+          <tr><td><code>process</code></td><td>Landlock, seccomp, namespaces; a supervisor and a private pid namespace</td><td>deny or host</td></tr>
+          <tr><td><code>supervised</code></td><td>The above plus a private netns and a seccomp-notify gate on <code>socket()</code></td><td><strong>L3/L4</strong></td></tr>
+          <tr><td><code>container</code></td><td>Rootless Podman on a portable image</td><td>L7 proxy</td></tr>
+          <tr><td><code>microvm</code></td><td>A guest with its own kernel, booted by microsandbox</td><td><strong>L3/L4</strong> in the guest</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <code>auto</code> is the default and picks the strongest tier this host can run. Naming a tier
+      explicitly makes it <strong>fail closed</strong> rather than downgrade, which is the behaviour
+      you want, because a silent downgrade puts a claim in the record the run never had.
+    </p>
+
+    <h2 id="work">3. Work in it</h2>
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">work</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box shell fix-auth</span>
+<span class="t-ai">box$</span> <span class="t-cmd">claude</span>                          <span class="t-cmt"># or codex; this is the agent-in-box</span>
+<span class="t-ai">box$</span> <span class="t-cmd">npm ci &amp;&amp; npm test</span>
+<span class="t-ai">box$</span> <span class="t-cmd">npm run dev &amp;</span>
+<span class="t-ai">box$</span> <span class="t-cmd">agent-browser open http://localhost:3000</span>
+<span class="t-ai">box$</span> <span class="t-cmd">exit</span></pre></div>
+    </div>
+
+    <p>
+      <code>shell</code> inherits stdio, so every command the session spawns is contained by the box
+      rather than by the agent choosing to wrap each call. That is the difference between confinement
+      that holds and confinement that depends on cooperation. For a single non-interactive command,
+      <code>h5i box run &lt;name&gt; -- cargo test</code> does the same and passes the exit code
+      through.
+    </p>
+
+    <p>
+      No credential goes in. The model API key stays on the host and a reverse proxy injects it into
+      outbound requests, scoped per runtime, so a Claude box cannot reach the OpenAI credential. The
+      per-box HOME state is a copy of your agent's config with credential-shaped entries stripped at
+      any depth.
+    </p>
+
+    <p>Watch it work, and take over when you want to:</p>
 
     <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">share</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i share push</span>      <span class="t-cmt"># push the h5i metadata (refs/h5i/*) to your teammates</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post</span>   <span class="t-cmt"># post the AI-usage summary to the PR (needs `gh`)</span></pre></div>
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">watch</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box view fix-auth</span>          <span class="t-cmt"># the box's page, on a loopback-only forward</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box view fix-auth --term</span>   <span class="t-cmt"># draw it in this terminal instead</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i ui</span>                          <span class="t-cmt"># the whole fleet, read-only, every route a GET</span></pre></div>
     </div>
 
-    <h2>4. Give each agent a sandboxed environment</h2>
-    <p>h5i gives each agent a secure, sandboxed worktree. Let it run with permissions off <em>inside the box</em>, then review its diff before anything lands on your branch. <code>h5i env create</code> picks the strongest isolation the host can enforce — Landlock + seccomp on the kernel tiers, a network egress allowlist on the container tier.</p>
+    <h2 id="export">4. Export, read, apply</h2>
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">export</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box diff fix-auth</span>                    <span class="t-cmt"># against the pinned base</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box export fix-auth --out ./review</span>
+  <span class="t-out">wrote ./review/patch.diff, ./review/report.md, ./review/receipt.json</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">$EDITOR ./review/report.md</span>              <span class="t-cmt"># read this first</span>
+<span class="t-prompt">$</span> <span class="t-cmd">git apply --3way ./review/patch.diff</span></pre></div>
+    </div>
+
+    <p>
+      <code>report.md</code> is ordered by how much you should trust each section. Denied egress
+      attempts come first, because a box that tried to reach a host the policy refused is the most
+      interesting thing a review can contain, and it was observed host-side by the allowlist proxy
+      rather than reported by anything inside the box. Then every command with its lane and exit
+      code, then what the page said back, then whether a human took the controls, and last the
+      agent's own proposal, because that is the only section written by the thing being reviewed.
+    </p>
+
+    <p>
+      For the local case, where the box came from this repository and landing it here is what you
+      meant, <code>h5i box apply fix-auth</code> does it in one step. It refuses on a detached box.
+    </p>
+
+    <h2>Cleaning up</h2>
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">lifecycle</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box ls</span>                  <span class="t-cmt"># every box on this clone</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box status fix-auth</span>     <span class="t-cmt"># policy enforced, evidence, base drift</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box rebase fix-auth</span>     <span class="t-cmt"># re-pin onto the parent's current tip</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box abort fix-auth</span>      <span class="t-cmt"># stop, preserving it for forensics</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box rm fix-auth</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box gc</span>                  <span class="t-cmt"># reclaim finished workspaces</span></pre></div>
+    </div>
+
+    <h2>Making it cheap enough to do constantly</h2>
+    <p>
+      A disposable environment stops being disposable at four minutes of cold dependency install. One
+      cache per project and ecosystem, keyed by lockfile digest, mounted read-only into agent boxes,
+      and written only by a box with no agent in it.
+    </p>
 
     <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">sandbox</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create claude-env --profile agent-claude</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell claude-env</span>
-<span class="t-prompt">box$</span> <span class="t-cmd">claude --dangerously-skip-permissions</span>
-<span class="t-prompt">box$</span> <span class="t-cmd">exit</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env diff claude-env</span>      <span class="t-cmt"># review what the agent changed in the box</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env propose claude-env</span>   <span class="t-cmt"># turn the box's work into a reviewable proposal</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env apply claude-env</span>     <span class="t-cmt"># merge the reviewed changes onto your branch</span></pre></div>
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">cache</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box cache refresh npm</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box cache ls</span>            <span class="t-cmt"># which are stale, and therefore unused</span></pre></div>
     </div>
 
-    <h2>5. Run an ensemble</h2>
-    <p>Independent attempts beat isolated guesses. Give the <em>same</em> task to two agents, each in its own sealed sandbox, let them peer-review, then a neutral verifier replays every candidate, runs the tests itself, and merges the one that actually passes.</p>
-
-    <p>Create two sandboxed agent environments, then a team that registers both:</p>
-    <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">team-setup</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create claude-env --profile agent-claude</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env create codex-env  --profile agent-codex</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team create  qsort-demo --base HEAD</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env qsort-demo env/human/claude-env --runtime claude</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env qsort-demo env/human/codex-env  --runtime codex</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team status  qsort-demo</span>   <span class="t-cmt"># note the generated agent ids</span></pre></div>
+    <div class="callout warn">
+      <strong>Two limits worth knowing before you rely on this.</strong> Containment stops the agent
+      touching your host; it does not stop it putting private source into a model prompt, which is a
+      separate control. And four of the five tiers share the host kernel, which is strong against a
+      runaway agent and careless dependency code and is not a claim against a targeted kernel
+      exploit. <code>microvm</code> is the tier where the boundary is a hypervisor.
     </div>
 
-    <p>Dispatch one task to every agent, then launch each in its own sandboxed env — each starts on the dispatched task automatically:</p>
-    <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">dispatch</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">echo "Implement Quick Sort from scratch in Python." | h5i team dispatch qsort-demo</span>
-
-<span class="t-cmt"># Terminal 1: Claude, inside its own h5i sandboxed env</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell env/human/claude-env -- claude --dangerously-skip-permissions "$(h5i team bootstrap)"</span>
-
-<span class="t-cmt"># Terminal 2: Codex, inside its own h5i sandboxed env</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell env/human/codex-env  -- codex  --sandbox danger-full-access "$(h5i team bootstrap)"</span></pre></div>
+    <div class="next-up">
+      <span class="label">Go deeper</span>
+      <a href="/blog/agent-sandbox-env/">
+        <h3>The agent sandbox with an output gate</h3>
+        <p>The same loop with the reasoning: what the policy pins, what the receipt records, and why export is the only door.</p>
+      </a>
     </div>
 
-    <p>With both agents resident, one command drives the rest. It seals the independent attempts, runs the peer-review and revise rounds, replays every candidate through a neutral sandboxed verifier, records the verdict, and merges the winner behind it:</p>
-    <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">team run</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i team run qsort-demo --verify-cmd "pytest" --apply</span>
-<span class="t-cmt"># attempts, freeze, mutual review, revise, neutral verify, verdict, apply.</span>
-<span class="t-cmt"># journal-backed: re-run to resume; drop --apply to review the verdict first,</span>
-<span class="t-cmt"># or use --gate for a durable human approval before the merge.</span></pre></div>
-    </div>
-
-    <p>Watch the whole run — candidates, peer reviews, and the verdict — in the dashboard:</p>
-    <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">monitor</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i serve</span></pre></div>
-    </div>
-
-    <h2>What you get</h2>
-    <p>Everything the run touched is recoverable later, without taking any agent's word for it. Reviewers and follow-up agents pull the sidecar (<code>h5i share pull</code>) and read the provable record Git can't show by itself:</p>
-    <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">recall</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --limit 10</span>                  <span class="t-cmt"># per-commit provenance: prompt, model, agent, tests</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/sort.py --show-prompt</span>  <span class="t-cmt"># per-line: who/what/why</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i audit review --limit 50</span>                <span class="t-cmt"># deterministic risk signals, no model in the loop</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context show --depth 2</span></pre></div>
-    </div>
-
-    <div class="callout">
-      <strong>Rule of thumb:</strong> wire the hooks once, sandbox every agent, run an ensemble when the task is worth more than one attempt, and let the neutral verifier pick the winner. It all lives in your Git (<code>refs/h5i/*</code>), no SaaS, no lock-in.
+    <div class="post-cta">
+      <h3>Start with one box</h3>
+      <p><code>h5i box probe</code> to see what your host can enforce, then <code>h5i box .</code>.</p>
+      <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/guides/" class="btn btn-ghost">All guides</a>
     </div>
   </article>
 </main>
@@ -210,7 +291,7 @@
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
       <a href="/manual/">Manual</a>
     </nav>
-    <div class="legal">Apache 2.0 / Built with Rust</div>
+    <div class="legal">Apache 2.0 &#183; Built with Rust</div>
   </div>
 </footer>
 

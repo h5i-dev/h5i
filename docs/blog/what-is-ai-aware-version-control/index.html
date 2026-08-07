@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>What Is AI-Aware Version Control? The Record a Diff Can't Hold</title>
-  <meta name="description" content="AI-aware version control adds the record a diff structurally cannot hold: which agent and model, from what prompt, with what context observed, verified by what tests, flagged by what review, captured as Git-native data, not a separate SaaS.">
-  <meta name="keywords" content="ai-aware version control, ai code provenance, version control for ai agents, git ai provenance, ai coding agents, agent authorship, h5i, git sidecar">
+  <title>What Is a Contained Agentic Development Environment? | h5i</title>
+  <meta name="description" content="A contained agentic development environment holds the code, the coding agent, the toolchain, the dev server and a browser inside one enforced boundary, with nothing of the host inside it and nothing leaving it but a reviewed patch.">
+  <meta name="keywords" content="contained agentic development environment, agent sandbox, disposable dev environment, coding agent containment, ai agent isolation, agent workspace, h5i box">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -17,31 +17,32 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="What Is AI-Aware Version Control? The Record a Diff Can't Hold">
-  <meta property="og:description" content="Version control answers what changed. AI-aware version control adds which agent and model, from what prompt, with what context, verified by what tests, flagged by what review, as Git-native data.">
+  <meta property="og:title" content="What Is a Contained Agentic Development Environment?">
+  <meta property="og:description" content="The category, defined: one boundary around the code, the agent, the toolchain, the dev server and the browser, with a single human-operated exit.">
   <meta property="og:url" content="https://h5i.dev/blog/what-is-ai-aware-version-control/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta property="article:published_time" content="2026-06-03">
+  <meta property="article:published_time" content="2026-06-01">
+  <meta property="article:modified_time" content="2026-08-07">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="What Is AI-Aware Version Control? The Record a Diff Can't Hold">
-  <meta name="twitter:description" content="Version control answers what changed. AI-aware version control adds which agent and model, from what prompt, with what context, verified by what tests, flagged by what review, as Git-native data.">
+  <meta name="twitter:title" content="What Is a Contained Agentic Development Environment?">
+  <meta name="twitter:description" content="The category, defined: one boundary around the code, the agent, the toolchain, the dev server and the browser, with a single human-operated exit.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "TechArticle",
-  "headline": "What Is AI-Aware Version Control? The Record a Diff Can't Hold",
-  "description": "AI-aware version control adds the record a diff structurally cannot hold: which agent and model, from what prompt, with what context observed, verified by what tests, flagged by what review, captured as Git-native data, not a separate SaaS.",
+  "headline": "What Is a Contained Agentic Development Environment?",
+  "description": "A contained agentic development environment holds the code, the coding agent, the toolchain, the dev server and a browser inside one enforced boundary, with nothing of the host inside it and nothing leaving it but a reviewed patch.",
   "author": {
     "@type": "Person",
     "name": "Koukyosyumei",
     "url": "https://github.com/Koukyosyumei"
   },
-  "datePublished": "2026-06-03",
-  "dateModified": "2026-06-26",
+  "datePublished": "2026-06-01",
+  "dateModified": "2026-08-07",
   "publisher": {
     "@type": "Organization",
     "name": "h5i",
@@ -55,7 +56,55 @@
     "@id": "https://h5i.dev/blog/what-is-ai-aware-version-control/"
   },
   "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-  "keywords": "ai-aware version control, ai code provenance, version control for ai agents, git ai provenance, ai coding agents, agent authorship, h5i, git sidecar"
+  "keywords": "contained agentic development environment, agent sandbox, disposable dev environment, coding agent containment, ai agent isolation, agent workspace, h5i box"
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What is a contained agentic development environment?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "A contained agentic development environment is a disposable environment that holds the code, the coding agent, the toolchain, the dependencies, the dev server and a browser inside one enforced boundary. Nothing of the host is inside it: no SSH key, no cloud credential, no personal browser profile. Nothing leaves it except through one deliberate step, which produces a patch, a report and a record of what actually ran."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How is it different from running an agent in a container?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Scope. A container isolates the process; a contained agentic development environment isolates the whole workflow. The dev server runs inside rather than on a published host port, credentials never enter at all rather than being passed as environment variables, and there is no automatic write path back to the host."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is a git worktree enough?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. A worktree isolates the checkout, not the process. The agent still runs with your filesystem access, your network and your credentials, and its branch merges like any other. A worktree answers where the edits go and says nothing about what else the process can touch."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does containment stop the agent leaking my code?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Not to the model. Containment stops the agent touching your machine and stops it reaching hosts outside the egress allowlist. It does not stop it putting private source into a model prompt. That needs a separate control such as a self-hosted model or no model egress at all."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What should the environment do if the host cannot enforce the boundary I asked for?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Refuse. A sandbox that silently downgrades produces a security claim the run never had, which is worse than no sandbox, because the record then attests to a boundary that was not there. h5i fails closed on an explicit tier and runs a functional self-test rather than trusting capability bits."
+      }
+    }
+  ]
 }
   </script>
 
@@ -66,16 +115,7 @@
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "What Is AI-Aware Version Control?", "item": "https://h5i.dev/blog/what-is-ai-aware-version-control/"}]}
-  </script>
-  <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
-    {"@type": "Question", "name": "What is AI-aware version control?", "acceptedAnswer": {"@type": "Answer", "text": "AI-aware version control is version control that records not only what changed but who and what produced the change when an AI agent is the author: the agent identity, the model, the prompt, the context the agent observed, the actions it took, the tests that verified it, and the review or risk signals. Plain Git records content, author, and message; a diff structurally cannot hold the rest. AI-aware version control captures it as Git-native data, git notes plus sidecar refs, not a separate SaaS."}},
-    {"@type": "Question", "name": "How is AI-aware version control different from plain Git?", "acceptedAnswer": {"@type": "Answer", "text": "It is a layer on top of Git, not a replacement. Commits, branches, git log, git diff, pull requests, and CI keep working unchanged. The difference is that AI-specific provenance (model, prompt, observed context, test evidence, review signals) is stored in durable, queryable records (git notes and sidecar refs) tied to each commit, so the answer to why did the agent do this travels with the repo."}},
-    {"@type": "Question", "name": "What are the six fields AI-aware version control records?", "acceptedAnswer": {"@type": "Answer", "text": "Agent identity, model, prompt or intent, the context the agent actually observed, the action or tool trace, test evidence, and review or risk signals. The commit author and message no longer identify the real author or explain the change once an agent acts on a prompt, so the record has to follow the new unit of authorship."}},
-    {"@type": "Question", "name": "Isn't a green CI run enough provenance for AI-generated code?", "acceptedAnswer": {"@type": "Answer", "text": "No. A green CI run proves the tests passed at a point in time, but it is tied to a run, not to the prompt and intent that motivated the change. It cannot tell a reviewer which files the agent inspected, what it assumed, or where it flagged uncertainty. AI-aware version control ties test evidence to the prompt and context, not just to a pipeline run."}},
-    {"@type": "Question", "name": "Can I get AI-aware version control without adopting a new system of record?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. You can get it today on top of Git using git notes for per-commit provenance and sidecar refs (refs/h5i/*) for reasoning and coordination. h5i is one open-source implementation: it captures the record automatically via hooks and shares it with h5i share push and h5i share pull, since refs/h5i/* are not moved by a plain git push."}}
-  ]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "What Is a Contained Agentic Development Environment?", "item": "https://h5i.dev/blog/what-is-ai-aware-version-control/"}]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -88,163 +128,174 @@
   <ul class="nav-links">
     <li><a href="/">Home</a></li>
     <li><a href="/guides/">Guides</a></li>
-    <li><a href="/manual/">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &#8594;</a></li>
   </ul>
 </nav>
 
 <main class="article-wrap">
   <article class="post">
     <header>
-      <div class="post-eyebrow">Pillar · AI-aware version control</div>
-      <h1>What Is AI-Aware Version Control? The Record a Diff Can't Hold</h1>
-      <p class="post-deck"><strong>AI-aware version control is version control that records who and what produced a change, not just what changed.</strong> When an agent is the author, the diff is the smallest part of the story. AI-aware version control adds the rest: which agent and model, from what prompt, with what context observed, verified by what tests, flagged by what review, all as Git-native data with no separate SaaS.</p>
+      <div class="post-eyebrow">Explainer &#183; 2026-06-01 &#183; rewritten 2026-08-07</div>
+      <h1>What is a contained agentic development environment?</h1>
+      <p class="post-deck">Sandboxing one command was the right idea applied at the wrong scale. An agent's work is not one command: it is a shell, a package manager, a build, a test run, a dev server and a browser, all of which have to be inside the same boundary or the boundary is decorative.</p>
       <div class="post-meta">
-        <span><strong>Published</strong> 2026-06-03</span>
-        <span><strong>Updated</strong> 2026-06-26</span>
-        <span><strong>Reading time</strong> 12 min read</span>
-        <span><strong>Tags</strong> Version control · Provenance · AI agents</span>
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 8 min</span>
+        <span><strong>Tags</strong> Explainer &#183; Containment &#183; Definitions</span>
       </div>
     </header>
 
-
-<div class="callout kt-takeaways">
-  <strong>Key takeaways</strong>
-  <ul>
-        <li>Authorship shifted from a human typing lines to an agent acting on a prompt with context, so the version-control record must follow.</li>
-        <li>The missing record is six fields: agent, model, prompt, context observed, action trace, and test/review evidence.</li>
-        <li>You can capture all of it today on top of Git (notes plus sidecar refs) with no new system of record.</li>
-  </ul>
-</div>
 <div class="callout">
-  <strong>In one line:</strong> Version control answers <em>what changed</em>. AI-aware version control adds the record a diff structurally cannot hold: <strong>which agent and model, from what prompt, with what context observed, verified by what tests, flagged by what review</strong>, captured as Git-native data (notes plus sidecar refs), not a separate system of record. h5i is one open-source implementation: code stays in normal commits and branches, while the AI provenance lives in git notes and <code>refs/h5i/*</code> and travels with the repo.
+  <strong>Definition.</strong> A <strong>contained agentic development environment</strong> is a
+  disposable environment that holds everything a coding agent needs to do real work, the code, the
+  agent process, the toolchain, the dependencies, the dev server and a browser, inside a single
+  enforced boundary. Nothing of the host machine is inside it: no SSH key, no cloud credential, no
+  personal browser profile. Nothing leaves it except through one deliberate step, which produces a
+  patch, a report and a record of what actually ran. <strong>h5i</strong> is one implementation, and
+  it calls the unit a <strong>box</strong>.
 </div>
 
-<h2>Why this question matters now</h2>
-<p>For thirty years, a Git commit carried a safe assumption: the person in the <code>author</code> field typed the lines, understood them, and could explain them in review. That assumption is breaking. When Claude Code, Codex, or another coding agent writes a patch, the commit author is still a human email, but that human may have typed one sentence of intent and approved a multi-file change they did not read line by line. The committer no longer reliably identifies the real author, and review can no longer assume the committer understood the change.</p>
-<p>This is not a forecast; it is the daily texture of agentic development. A single agent session can read a dozen files, edit several, run a test suite, and open a pull request, all from a one-line prompt. The diff that lands is real and reviewable. But the diff is the smallest part of the reviewable artifact. The prompt that started the task, the files the agent actually inspected, the assumptions it made, the tests it ran, the uncertainty it flagged, the handoffs it exchanged with another agent: that is what review, audit, and rollback depend on, and it is exactly what a diff structurally cannot hold.</p>
-<p><strong>AI-aware version control is the response: version control that records who and what produced a change, not just what changed.</strong> The unit of authorship has shifted from a human typing lines to an agent acting on a prompt with observed context. The version-control record has to follow that shift. This post defines the missing record precisely, separates what you already know about Git from what you may not have considered, shows how the record can be implemented on top of Git today, and compares the approach fairly to the adjacent tools you may already use.</p>
 
-<h2>What Git records, and what it never has</h2>
-<p>Git is an excellent content-addressed history. It records snapshots, the parent graph, an author, a committer, a timestamp, and a message. None of that is wrong, and AI-aware version control does not replace any of it. The point is narrower and more specific: <em>Git records the artifact, not the process that produced it.</em></p>
-<p>Git does not know a change was generated from a prompt. It does not know whether the agent read the migration file before editing the model, or the interface before editing a caller. It does not know the agent chose a smaller refactor because the larger one looked risky. The commit message can describe some of this, but a message is a hand-written summary, not evidence, and when an agent writes the message, it is the same model summarizing its own work.</p>
-<p>That gap is invisible until something forces the question <em>why did this change happen?</em> A human reviewer needs to know where to focus. A compliance reviewer needs to know whether AI participated and under what controls. A maintainer bisecting a regression needs to know which intent introduced the behavior. A second agent resuming the work needs the previous agent's working memory, not only the final patch. In every case the answer existed at the moment the change was made and was discarded because the diff had nowhere to put it.</p>
+    <p>
+      Most sandboxing tools were designed for a smaller problem: run <em>this untrusted command</em>
+      safely. That framing works when the untrusted thing is a single process with a beginning and an
+      end. It breaks the moment the untrusted thing is a coding agent, because an agent's work is not
+      a command. It is an open-ended sequence of them, chosen at runtime, some of which start
+      long-lived processes.
+    </p>
 
-<h2>The missing record: six fields</h2>
-<p>The record a diff cannot hold reduces to six fields. Each one answers a question review and audit actually ask, and each one is useless reconstructed after the fact. It has to be captured when the change is made.</p>
-<ul>
-  <li><strong>Agent identity.</strong> Which agent acted: Claude Code, Codex, a CI bot, a human. Without it, <code>git author</code> conflates the person who approved the change with the system that produced it. Rollback and incident response need to know whether a class of changes came from one agent configuration.</li>
-  <li><strong>Model.</strong> Which model and version produced the patch. Model behavior changes across releases; "all of agent X's changes during the week of a known-bad model revision" is a query you want to be able to run, and it is impossible if the model was never recorded.</li>
-  <li><strong>Prompt / intent.</strong> The request the change was meant to fulfill. This is the difference between reviewing <em>code</em> and reviewing <em>whether the code does what was asked</em>. A diff can be internally correct and still answer the wrong question; only the prompt reveals the mismatch.</li>
-  <li><strong>Context observed.</strong> What the agent actually read before editing. Did it open the interface, the tests, the caller, the migration? This is the field most reviewers do not think to ask for and the one that most often explains a bad change. An edit to a function whose callers the agent never opened is a different risk than the same edit made after reading every call site.</li>
-  <li><strong>Action / tool trace.</strong> The sequence of tool calls and commands the agent ran. It distinguishes a focused edit from a thrash of attempts, and it is the record that lets you reproduce or distrust a result.</li>
-  <li><strong>Test evidence.</strong> Which tests ran, their result, and the output, tied to <em>this</em> change and the prompt behind it, not floating in a CI dashboard. The question is not "is the build green" but "did the change that claimed to fix X actually exercise X".</li>
-  <li><strong>Review / risk signals.</strong> Flags worth a reviewer's attention first: blind edits to unobserved files, large churn, scope creep beyond the prompt, recorded uncertainty, prompt-injection indicators in observed content. These turn a flat diff into a triaged one.</li>
-</ul>
-<p>Six fields, one rule: capture at the moment of authorship, store next to the commit, make it queryable. That is the whole idea.</p>
+    <p>
+      Wrap each command and you have built something that depends on the agent choosing to be
+      wrapped. Wrap the shell instead, and everything the session spawns is inside by construction.
+      That shift, from confining a command to confining a workspace, is the whole category.
+    </p>
 
-<h2>What you already know vs what you may not have considered</h2>
-<p>You already know Git tracks content, author, and a message, and that pull requests and CI sit on top. You may have assumed that between commit metadata, the PR description, and a green pipeline, the provenance question is basically covered.</p>
-<p>It is not, and the gaps are specific. The commit author records who <em>ran</em> Git, not which model wrote the lines. The commit message is a summary an agent can write about itself, not evidence of what it observed. The PR description lives out of band from the per-commit history and is rarely queryable. And a green CI run, the part teams lean on most, proves the tests passed at a moment in time, but it is bound to a pipeline run, not to the prompt and intent that motivated the change. None of your existing records connect "the agent was asked to fix X" to "these tests, exercising X, passed." That join is the thing AI-aware version control adds, and it is the thing nothing in the default stack provides.</p>
+    <h2>What has to be inside the boundary</h2>
 
-<h2>How AI-aware version control works on top of Git</h2>
-<p>The encouraging part of the third takeaway is that you do not need a new system of record to get this. Git already has the storage primitives. <a href="https://git-scm.com/docs/git-notes">Git notes</a> attach arbitrary data to an existing commit without rewriting it, and refs outside <code>refs/heads/*</code> can carry structured history that travels with the repo. AI-aware version control is what you get when you put the six fields there. <a href="../auditable-workspaces-for-ai-agents/">h5i</a> is one open-source implementation of exactly this; the mechanics are worth seeing concretely.</p>
-<ul>
-  <li><strong>Per-commit provenance in git notes.</strong> <code>h5i capture commit</code> writes an <code>H5iCommitRecord</code> (model, agent, prompt, token count, test metrics, and an integrity report of Valid, Warning, or Violation) as JSON in a git note attached to the commit. The commit object is untouched; <code>git log</code> and <code>git diff</code> are unchanged.</li>
-  <li><strong>Reasoning and context in <code>refs/h5i/context</code>.</strong> A context DAG records OBSERVE / THINK / ACT / NOTE / MERGE entries, a goal, and milestones, pinned to commit SHAs. This is the "context observed" and "action trace" record, recoverable per commit, not lost when the session ends.</li>
-  <li><strong>Coordination in <code>refs/h5i/msg</code>.</strong> When multiple agents collaborate, handoffs, review requests, risk flags, and acknowledgements live in a shareable ref rather than in chat scrollback.</li>
-  <li><strong>Captured automatically by hooks.</strong> This is what keeps it from being manual bookkeeping. In Claude Code, <code>h5i hook setup --write</code> wires SessionStart, PostToolUse, Stop, and UserPromptSubmit hooks; the verbatim human prompt is captured by the UserPromptSubmit hook (and wins over any agent-supplied <code>--intent</code>), while Reads become OBSERVE traces and Edits become ACT traces. Codex integrates through its own SessionStart and Stop hooks and mines its session log. The record accrues as a byproduct of work.</li>
-  <li><strong>Shareable like any Git data, but only on purpose.</strong> Because the data lives in <code>refs/h5i/*</code>, a plain <code>git push</code> does <em>not</em> move it. You publish it explicitly with <code>h5i share push</code> and fetch it with <code>h5i share pull</code>. (That property is also the first failure mode below.)</li>
-</ul>
+    <p>
+      Five things, and the value is in their sharing one boundary rather than in any of them
+      individually.
+    </p>
 
-<h2>How it compares to adjacent approaches</h2>
-<p>Several existing practices touch parts of this problem. Each does something well; none closes the per-commit, agent-authorship gap on its own.</p>
-<ul>
-  <li><strong>Commit-message conventions and trailers</strong> (Conventional Commits, <code>Co-authored-by:</code>, <code>Assisted-by:</code> trailers). Good: zero new infrastructure, lives in the commit, human-readable. Gap: human-authored, unstructured, and gameable. A trailer is a claim, not evidence, and it cannot record what the agent observed or which tests tied to the intent.</li>
-  <li><strong>PR templates and descriptions.</strong> Good: a natural place for intent and a reviewer checklist, and people already read them. Gap: out of band from the per-commit history, written once per PR rather than per change, and not queryable across a repo's history.</li>
-  <li><strong>MLOps / experiment lineage</strong> (MLflow, DVC, Weights &amp; Biases). Good: rigorous lineage for model and data (runs, parameters, datasets, metrics) and the mature answer for <em>training</em> reproducibility. Gap: it tracks the lifecycle of a model being built, not the per-commit provenance of a coding agent changing your application source.</li>
-  <li><strong>CI artifacts and test reports.</strong> Good: trustworthy, machine-generated evidence that tests ran and what they produced. Gap: the evidence is bound to a pipeline run and a ref, not to the prompt or intent. It answers "did the build pass" but not "did the change that claimed to fix X exercise X."</li>
-  <li><strong>Vendor session transcripts.</strong> Good: the richest raw record of what the agent did, straight from the tool. Gap: per-vendor, often ephemeral, and not in your repository. You cannot <code>git log</code> it, review it next to the diff, or guarantee it survives the session. The useful abstraction is not one vendor's transcript format; it is a stable record of the six fields, stored where your code is.</li>
-</ul>
-<p>The honest summary: AI-aware version control is not a new category competing with these. It is the per-commit, repo-resident join the others leave out, connecting agent and prompt to the context observed and the tests that verified it, in a form normal Git tooling can carry.</p>
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Part</th><th>What it means in practice</th></tr></thead>
+        <tbody>
+          <tr><td><strong>A disposable workspace</strong></td><td>The code is copied in, along with everything it pulls. No host directory is mounted read-write into the agent's reach, so there is no path from a bad edit to your working tree.</td></tr>
+          <tr><td><strong>A sandboxed agent</strong></td><td>Claude Code or Codex, its child processes, its MCP servers, its package managers, builds, tests and dev server, all under the same policy. A runaway agent stays inside.</td></tr>
+          <tr><td><strong>A credential and network broker</strong></td><td>No SSH key, GitHub token, model API key, cloud credential or personal browser profile goes in. A host-side proxy authenticates the calls the policy allows; egress is an allowlist.</td></tr>
+          <tr><td><strong>A browser, with two interfaces</strong></td><td>Chrome and a fresh profile live inside. The agent drives it; a human can watch the same viewport and take the controls. The host browser never connects to the app under test.</td></tr>
+          <tr><td><strong>An output gate</strong></td><td>A patch, a report and an execution receipt, after inspection. The agent has no direct write path to the host.</td></tr>
+        </tbody>
+      </table>
+    </div>
 
-<h2>Failure modes and tradeoffs</h2>
-<p>A page that only listed benefits would be the kind of marketing this approach is supposed to make obsolete. The real limits:</p>
-<ul>
-  <li><strong>Provenance rot if refs are not shared.</strong> Because <code>refs/h5i/*</code> is not moved by a plain <code>git push</code>, a team that never runs <code>h5i share push</code> ends up with provenance trapped on one laptop. The sidecar design that keeps the record out of your branches is the same design that lets you forget to publish it.</li>
-  <li><strong>Gaming.</strong> Captured prompts and intents are not proof of good faith. A model can write a tidy prompt and a clean message around a careless change. The deterministic fields (was the file observed before it was edited, did the diff exceed the prompt's scope, did the tests actually run) resist gaming better than free text, but no record makes review optional.</li>
-  <li><strong>Rebase and squash lose per-commit notes.</strong> Git notes attach to a specific commit SHA. Squash-merging or rewriting history orphans the notes on the original commits, so a squash-heavy workflow has to decide what provenance survives the collapse. This is a real interaction cost, not a footnote.</li>
-  <li><strong>Discipline and tooling cost.</strong> The capture is automatic only after the hooks are wired and only for the agents that are integrated; manual commits and unintegrated tools fall back to a fallback <code>--intent</code> flag or nothing. There is a setup step, and there is a habit to maintain.</li>
-</ul>
-<p>These are tradeoffs, not disqualifiers. They argue for treating the provenance refs as first-class shared state, pushed, reviewed, and backed up like any other branch, rather than as a local convenience.</p>
+    <h2>Why each of the obvious alternatives falls short</h2>
 
-<h2>A worked example</h2>
-<p>Concretely, the workflow is a one-time human setup followed by automatic capture. After the two setup commands, no one types the record by hand; it accrues as the agent works, and the six fields surface on demand.</p>
-<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre># --- one-time human setup ---
-$ h5i init                      # attach the sidecar: .git/.h5i/ + refs/h5i/*
-$ h5i hook setup --write        # wire Claude Code hooks (idempotent)
-                                #   Codex: h5i hook setup --target codex
+    <p>
+      Every team reaching for this arrives having already tried one of three things, and each fails
+      in a different place.
+    </p>
 
-# --- then, during a normal Claude Code or Codex session, capture is automatic ---
-#   agent identity + model + prompt  ← UserPromptSubmit hook (verbatim prompt)
-#   context observed                 ← OBSERVE traces from each Read
-#   action / tool trace              ← ACT traces from each Edit / Write
-#   the agent records the commit with provenance and test metrics:
-$ h5i capture commit -m "fix: validate token expiry" \
-      --model claude-sonnet-4-6 --agent claude-code --tests --audit
+    <p>
+      <strong>A git worktree</strong> isolates the checkout and nothing else. The agent still runs
+      with your filesystem, your network and your credentials, and its branch merges like any other.
+      A worktree answers "where do the edits go?" and has nothing to say about "what else can this
+      process touch?"
+    </p>
 
-# --- surfacing the six-field record ---
-$ h5i recall log --limit 5      # AI history: agent + model + prompt + test result
-$ h5i recall blame src/auth/token.py --show-prompt
-                                # per-line authorship with the prompt behind each commit
-$ h5i audit review              # triage funnel: uncertainty, churn, scope, risk flags
-$ h5i share push                # publish refs/h5i/* (plain git push does NOT)
-$ h5i share pr post             # sticky GitHub PR comment: context + tests + review</pre></div></div>
-<p>The output of those <code>recall</code> and <code>audit</code> commands is the point. Instead of asking a reviewer to infer intent from a patch, AI-aware version control hands them the patch, the prompt it was meant to satisfy, the context the agent observed, the tests tied to that intent, and the risk signals that say which parts deserve attention first. It is not a replacement for review; it is a better review packet, and a queryable audit trail when someone later asks why a change happened.</p>
+    <p>
+      <strong>A container you exec into</strong> isolates the process and usually stops there. The
+      dev server ends up on the host or on a published port, the credentials get passed in as
+      environment variables because that was easiest, and the record of what happened is whatever
+      the agent wrote in the chat transcript. It contains the process without containing the
+      <em>workflow</em>.
+    </p>
 
-<h2>When you need it</h2>
-<p>The threshold is simple. One-off autocomplete survives on ordinary Git hygiene. You need AI-aware version control when AI-generated change becomes routine: when an agent edits multiple files, runs tools, hands off work, and makes architectural choices across a long session, often enough that "why did the agent do this?" is a question your team will actually ask after a bad merge. If it is, capture the answer before the merge, not after.</p>
+    <p>
+      <strong>A permission prompt</strong> is not a boundary at all. It asks a human to approve a
+      tool call, which is a useful workflow control and depends entirely on a person catching the
+      right moment. Once a command is approved, or once untrusted text has steered the agent toward
+      approvable-looking commands, the prompt has nothing left to enforce.
+    </p>
 
-<h2>FAQ</h2>
-<h3>What is AI-aware version control?</h3>
-<p>AI-aware version control is version control that records not only what changed but who and what produced the change when an AI agent is the author: the agent identity, the model, the prompt, the context the agent observed, the actions it took, the tests that verified it, and the review or risk signals. Plain Git records content, author, and message; a diff structurally cannot hold the rest. AI-aware version control captures it as Git-native data, git notes plus sidecar refs, not a separate SaaS.</p>
-<h3>How is AI-aware version control different from plain Git?</h3>
-<p>It is a layer on top of Git, not a replacement. Commits, branches, <code>git log</code>, <code>git diff</code>, pull requests, and CI keep working unchanged. The difference is that AI-specific provenance (model, prompt, observed context, test evidence, review signals) is stored in durable, queryable records (git notes and sidecar refs) tied to each commit, so the answer to "why did the agent do this?" travels with the repo.</p>
-<h3>What are the six fields AI-aware version control records?</h3>
-<p>Agent identity, model, prompt or intent, the context the agent actually observed, the action or tool trace, test evidence, and review or risk signals. The commit author and message no longer identify the real author or explain the change once an agent acts on a prompt, so the record has to follow the new unit of authorship.</p>
-<h3>Isn't a green CI run enough provenance for AI-generated code?</h3>
-<p>No. A green CI run proves the tests passed at a point in time, but it is tied to a run, not to the prompt and intent that motivated the change. It cannot tell a reviewer which files the agent inspected, what it assumed, or where it flagged uncertainty. AI-aware version control ties test evidence to the prompt and context, not just to a pipeline run.</p>
-<h3>Can I get AI-aware version control without adopting a new system of record?</h3>
-<p>Yes. You can get it today on top of Git using git notes for per-commit provenance and sidecar refs (<code>refs/h5i/*</code>) for reasoning and coordination. h5i is one open-source implementation: it captures the record automatically via hooks and shares it with <code>h5i share push</code> and <code>h5i share pull</code>, since <code>refs/h5i/*</code> are not moved by a plain <code>git push</code>.</p>
-<h3>Does AI-aware version control work with both Claude Code and Codex?</h3>
-<p>Yes. The useful abstraction is not one vendor's transcript format; it is a stable record of agent, prompt, context, action, test, and review. h5i integrates with Claude Code via hooks and MCP, and with Codex via its SessionStart and Stop hooks plus the <code>prelude</code>, <code>sync</code>, and <code>finish</code> commands.</p>
+    <h2>Everything rests on the output gate</h2>
 
-<h2>Conclusion</h2>
-<p>The diff was never the whole story; it was just the part Git could store. For decades that was enough, because the author in the commit was also the author in fact. Coding agents broke that equivalence. The unit of authorship is now an agent acting on a prompt with observed context, and the version-control record has to follow it. The missing record is concrete and small: six fields, captured at the moment of authorship, stored next to the commit, queryable later. You do not need a new system of record to hold them; Git notes and sidecar refs already can. The work that remains is not inventing a category but adopting the discipline of capturing what review and audit will eventually need, then sharing it so it does not rot on one machine.</p>
+    <p>
+      If you take one structural idea from the category, take this one: <strong>the environment has
+      no write path to the host, and getting work out is a step a human performs.</strong>
+    </p>
 
+    <p>
+      That single constraint is what makes the rest coherent. Because there is no automatic path
+      out, there is no need to decide which automatic paths are safe. Because export is explicit,
+      it has somewhere to put the things a reviewer should see before deciding: the path-validated
+      patch, a report whose first section is every destination the boundary refused, and a receipt
+      of every observed execution stamped with the digest of the policy that was in force.
+    </p>
 
-    <h2>Sources and verification</h2>
-    <p>This article avoids vendor-specific claims that were not checked against primary docs or local h5i CLI behavior.</p>
+    <p>
+      An environment with an automatic write-back is a different category with a different name. It
+      is a build system.
+    </p>
+
+    <h2>What it is not</h2>
+
     <ul>
-        <li><a href="https://git-scm.com/docs/git-notes">Git notes documentation</a></li>
-        <li><a href="https://git-scm.com/docs/githooks">Git hooks documentation</a></li>
-        <li><a href="https://code.claude.com/docs/en/hooks">Claude Code hooks reference</a></li>
+      <li><strong>Not a provenance system.</strong> The question is what the code can reach and what it did, not who wrote which line.</li>
+      <li><strong>Not a defence against a targeted kernel exploit</strong>, unless the tier is a microVM with its own kernel. Shared-kernel containment is strong against a runaway agent and careless dependency code, and that is a different claim.</li>
+      <li><strong>Not a control on what the agent tells the model.</strong> Containment stops the agent touching your machine. It does not stop it putting private source in a prompt, and any tool implying otherwise is overselling.</li>
+      <li><strong>Not a review.</strong> A clean report and a correct patch are unrelated properties.</li>
     </ul>
 
+    <h2>How to tell a real one from a label</h2>
+
+    <p>
+      The category is new enough that the phrase will get attached to things that are not it. Four
+      questions separate them, and all four have short answers:
+    </p>
+
+    <ol>
+      <li><strong>Where does the dev server run?</strong> If it runs on the host, or on a published port, the boundary has a hole shaped exactly like the thing you were testing.</li>
+      <li><strong>What happens when the host cannot enforce the requested boundary?</strong> The only acceptable answer is that it refuses. A silent downgrade produces a false claim you will later rely on, which is worse than no sandbox.</li>
+      <li><strong>Who wrote the record of what happened?</strong> If the log is the agent's account of itself, it is testimony. Ask which parts were observed from outside.</li>
+      <li><strong>How does work get out?</strong> If the answer is "it commits for you", the gate is not a gate.</li>
+    </ol>
+
+
+    <h2>FAQ</h2>
+    <div class="faq">
+      <h3>What is a contained agentic development environment?</h3>
+      <p>A disposable environment that holds the code, the coding agent, the toolchain, the dependencies, the dev server and a browser inside one enforced boundary, with nothing of the host machine inside it and one deliberate, human-operated exit that produces a patch, a report and a record of what ran.</p>
+
+      <h3>How is it different from running an agent in a container?</h3>
+      <p>Scope. A container isolates the process; the category isolates the whole workflow. In practice the difference shows up in three places: the dev server runs inside rather than on a published host port, the credentials never enter at all rather than being passed as environment variables, and there is no automatic write path back to the host.</p>
+
+      <h3>Is a git worktree enough?</h3>
+      <p>No. A worktree isolates the checkout, not the process. The agent still runs with your filesystem access, your network and your credentials. A worktree answers where the edits go and says nothing about what else the process can touch.</p>
+
+      <h3>Does containment stop the agent leaking my code?</h3>
+      <p>Not to the model. Containment stops the agent touching your machine and stops it reaching hosts outside the egress allowlist. It does not stop it putting private source into a model prompt, which needs a separate control: a self-hosted model, or no model egress at all.</p>
+
+      <h3>What should the environment do if the host cannot enforce the boundary I asked for?</h3>
+      <p>Refuse. A sandbox that silently downgrades produces a security claim the run never had, which is worse than no sandbox, because the record then attests to a boundary that was not there. h5i fails closed on an explicit tier and probes functionally rather than trusting capability bits.</p>
+
+    </div>
+
     <div class="next-up">
-      <span class="label">Next in the cluster</span>
-      <a href="/blog/why-git-diffs-are-not-enough-for-ai-generated-code/">
-        <h3>Why Git Diffs Are Not Enough for AI-Generated Code</h3>
-        <p>Continue with the next focused workflow in the auditable workspace series.</p>
+      <span class="label">Read next</span>
+      <a href="/blog/agent-sandbox-env/">
+        <h3>The agent sandbox with an output gate</h3>
+        <p>The same idea in detail: how a box is made, what the policy pins, and what comes out of it.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Build your first auditable workspace</h3>
-      <p>Try h5i on your next AI-assisted branch: create a sandboxed workspace, capture the run, and post a review-ready PR brief.</p>
+      <h3>See what your machine can enforce</h3>
+      <p><code>h5i box probe</code> reports the boundary this host can actually hold, then <code>h5i box .</code> uses it.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
-      <a href="/guides/" class="btn btn-ghost">Read the guides</a>
+      <a href="/manual/" class="btn btn-ghost">Read the manual</a>
     </div>
   </article>
 </main>
@@ -254,12 +305,11 @@ $ h5i share pr post             # sticky GitHub PR comment: context + tests + re
     <div class="brand">h5i<span class="red"> / high-five</span></div>
     <nav class="links">
       <a href="/">Home</a>
-      <a href="/guides/">Guides</a>
       <a href="/blog/">Blog</a>
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
       <a href="/manual/">Manual</a>
     </nav>
-    <div class="legal">Apache 2.0 · Built with Rust</div>
+    <div class="legal">Apache 2.0 &#183; Built with Rust</div>
   </div>
 </footer>
 

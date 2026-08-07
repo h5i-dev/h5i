@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Claude Code Uncertainty Heatmap for AI Code Review: h5i</title>
-  <meta name="description" content="Mine the hedges in an AI agent's reasoning trace (assuming, might break, not sure) into a per-file uncertainty heatmap that routes reviewer attention to risky AI-assisted edits.">
-  <meta name="keywords" content="claude code uncertainty, ai code review, agent reasoning trace, lexical uncertainty detection, claude code thinking blocks, h5i notes uncertainty, ai-generated code review, claude code self-doubt">
+  <title>The Flight Recorder: Five Lanes and Three Colours | h5i</title>
+  <meta name="description" content="The h5i console draws one row per receipt across five lanes. Red means the egress allowlist refused a destination. Amber means look at this. Grey means the evidence is weak, which is the most useful thing a dashboard can say.">
+  <meta name="keywords" content="agent dashboard, boundary pressure, flight recorder, sandbox observability, weak evidence, h5i ui, agent monitoring console">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -17,60 +17,87 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="Claude Code Uncertainty Heatmap for AI Code Review">
-  <meta property="og:description" content="Turn captured uncertainty signals into a per-file heatmap for AI-assisted code review.">
+  <meta property="og:title" content="The Flight Recorder: Five Lanes and Three Colours">
+  <meta property="og:description" content="Five lanes, three colours, and why grey (the evidence is weak) is the most useful signal on the screen.">
   <meta property="og:url" content="https://h5i.dev/blog/uncertainty-heatmap/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta property="article:published_time" content="2026-04-15">
+  <meta property="article:published_time" content="2026-05-08">
+  <meta property="article:modified_time" content="2026-08-07">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Claude Code Uncertainty Heatmap for AI Code Review">
-  <meta name="twitter:description" content="Turn captured uncertainty signals into a per-file heatmap for AI-assisted code review.">
+  <meta name="twitter:title" content="The Flight Recorder: Five Lanes and Three Colours">
+  <meta name="twitter:description" content="Five lanes, three colours, and why grey (the evidence is weak) is the most useful signal on the screen.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "TechArticle",
-    "headline": "Claude Code Uncertainty Heatmap for AI Code Review",
-    "description": "Mine the hedges in an AI agent's reasoning trace into a per-file uncertainty heatmap that routes reviewer attention to risky AI-assisted edits.",
-    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
-    "datePublished": "2026-04-15",
-    "dateModified": "2026-06-26",
-    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/uncertainty-heatmap/"},
-    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-    "keywords": "claude code uncertainty, ai code review, agent reasoning trace, h5i notes uncertainty"
-  }
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "The Flight Recorder: Five Lanes and Three Colours",
+  "description": "The h5i console draws one row per receipt across five lanes. Red means the egress allowlist refused a destination. Amber means look at this. Grey means the evidence is weak, which is the most useful thing a dashboard can say.",
+  "author": {
+    "@type": "Person",
+    "name": "Koukyosyumei",
+    "url": "https://github.com/Koukyosyumei"
+  },
+  "datePublished": "2026-05-08",
+  "dateModified": "2026-08-07",
+  "publisher": {
+    "@type": "Organization",
+    "name": "h5i",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://h5i.dev/_static/logo.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://h5i.dev/blog/uncertainty-heatmap/"
+  },
+  "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+  "keywords": "agent dashboard, boundary pressure, flight recorder, sandbox observability, weak evidence, h5i ui, agent monitoring console"
+}
   </script>
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "FAQPage",
-    "mainEntity": [
-      {
-        "@type": "Question",
-        "name": "How does h5i detect uncertainty in AI-generated code?",
-        "acceptedAnswer": {"@type": "Answer", "text": "It runs a lexical scan over the agent's reasoning stream (the thinking and assistant text blocks recorded in the Claude Code session .jsonl) matching a fixed table of about 30 hedge phrases such as \"not sure\", \"might break\", \"assuming\", and \"should verify\". Each phrase carries a static weight that h5i renders as a confidence score. It does not read the diff, and it does not call a second model."}
-      },
-      {
-        "@type": "Question",
-        "name": "Is the confidence score the model's actual probability?",
-        "acceptedAnswer": {"@type": "Answer", "text": "No. The percentage shown in the heatmap is a fixed weight h5i assigns to each hedge phrase, not a logprob or the model's self-reported probability. It measures expressed doubt, which correlates with risk but is not a calibrated estimate of correctness. A model can be wrong with no hedge at all, so an absence of signals is not evidence of safety."}
-      },
-      {
-        "@type": "Question",
-        "name": "Does lexical detection produce false positives?",
-        "acceptedAnswer": {"@type": "Answer", "text": "Yes. Substring matching on phrases like \"maybe\" or \"assuming\" fires on casual usage as well as real doubt, so the signal is high-recall and low-precision by design. Because detection reads only the reasoning trace and never the code, a \"// risky\" comment in the diff is not a false positive, but a throwaway hedge in the agent's narration can be. The heatmap is a triage router, not a verdict; every signal carries the verbatim snippet so a reviewer can dismiss it in seconds."}
-      },
-      {
-        "@type": "Question",
-        "name": "How is uncertainty mining different from an LLM judge scoring the diff?",
-        "acceptedAnswer": {"@type": "Answer", "text": "An LLM judge reasons about the finished code and can flag problems the agent never verbalized, but it costs an extra inference call, is nondeterministic, and scores the artifact rather than the process. Lexical uncertainty mining is deterministic, free of extra inference, explainable down to the exact phrase, and recovers doubt the agent expressed during the run that never survives into the diff. They are complementary: mining is a cheap pre-filter, a judge is a deeper second pass."}
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What do red, amber and grey mean in the h5i console?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Red means the egress allowlist refused a destination, observed host-side by the proxy, and it is the only colour that makes a claim about the boundary. Amber means something to look at, such as a non-zero exit, a wall-clock kill or browser errors, and says nothing about containment. Grey means the evidence is weak."
       }
-    ]
-  }
+    },
+    {
+      "@type": "Question",
+      "name": "Why is grey the most useful colour?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Because it says you cannot tell from here. It fires when the tier was workspace so nothing was confined, or when every receipt came from the in-box shim so everything shown is the box's own account. Without it, an unconfined box would render identically to a confined one with nothing to report."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What are the five lanes?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "FS for filesystem activity, NET for egress verdicts, PROC for commands and exit codes, RES for usage against the profile's limits, and PAGE for what the in-box browser reported. Only NET can go red."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can the console change anything about a box?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. Every route is a GET, and shell, run, export, propose, apply and remove all stay in the CLI. The server binds loopback only and the URL carries a session token kept in memory rather than on disk, so no box can read it."
+      }
+    }
+  ]
+}
   </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -80,7 +107,7 @@
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Claude Code Uncertainty Heatmap for AI Code Review", "item": "https://h5i.dev/blog/uncertainty-heatmap/"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "The Flight Recorder: Five Lanes and Three Colours", "item": "https://h5i.dev/blog/uncertainty-heatmap/"}]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -94,505 +121,196 @@
     <li><a href="/">Home</a></li>
     <li><a href="/guides/">Guides</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &#8594;</a></li>
   </ul>
 </nav>
 
 <main class="article-wrap">
   <article class="post">
     <header>
-      <div class="post-eyebrow">Code Review · 2026-04-15</div>
-      <h1>Claude Code Uncertainty Heatmap for AI Code Review</h1>
-      <p class="post-deck">
-        Turn captured uncertainty signals into a per-file heatmap for focused human review.
-      </p>
+      <div class="post-eyebrow">Feature &#183; 2026-05-08 &#183; rewritten 2026-08-07</div>
+      <h1>The flight recorder: five lanes and three colours</h1>
+      <p class="post-deck">Most dashboards use colour to tell you how worried to be. This one uses it to tell you how much the screen actually knows, which turns out to be the more useful question and a much harder one to design for.</p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
-        <span><strong>Reading time</strong> 10 min</span>
-        <span><strong>Tags</strong> Claude Code · Code Review · Uncertainty</span>
+        <span><strong>Reading time</strong> 7 min</span>
+        <span><strong>Tags</strong> Console &#183; Evidence &#183; Design</span>
       </div>
     </header>
 
-
-<div class="callout kt-takeaways">
-  <strong>Key takeaways</strong>
-  <ul>
-        <li>The heatmap is a deterministic router for reviewer attention, not a bug detector, and the signal lives in the trace, not the diff.</li>
-        <li>The confidence percentage is a fixed per-phrase weight h5i assigns, not the model's probability, so an empty heatmap is not proof of safety.</li>
-        <li>Detection is high-recall and low-precision (substring match over ~30 hedge phrases): false positives cost a sentence, false negatives are the expensive failure.</li>
-  </ul>
+<div class="callout">
+  <strong>How to read it.</strong> <code>h5i ui</code> shows every box on the left and the selected
+  box on the right, with a flight recorder of one row per receipt across five lanes: FS, NET, PROC,
+  RES, PAGE. <strong>Red</strong> means the egress allowlist refused a destination, host-observed.
+  <strong>Amber</strong> means something to look at that says nothing about containment.
+  <strong>Grey</strong> means the evidence itself is weak. Clicking a row shows the rendered receipt,
+  the same text <code>h5i box inspect</code> prints.
 </div>
+
+
     <p>
-      An AI agent can produce a 1,400-line diff across 23 files in a single sitting. A human reviewer
-      still reads at human speed. The usual response is to read uniformly: start at line 1, give
-      every hunk the same scrutiny, and hope the one dangerous change isn't buried in the
-      middle. That worked when humans wrote code at the same rate humans review it. It does not scale
-      to machine-speed authorship.
+      Here is the design problem. You are showing a reviewer twenty boxes and you have, for each one,
+      a pile of execution records of varying reliability. Colour is the strongest signal a screen
+      has, and there is exactly one convention for it: red is bad, green is fine, amber is in
+      between.
     </p>
 
     <p>
-      What you probably already know: AI-generated diffs need <em>targeted</em> review, and reviewer
-      attention is the scarce resource. What you may not have considered: the agent already told you
-      where it was nervous, just not in the diff. It told you in its <em>reasoning</em>. Somewhere in
-      the session trace it wrote "I'm not sure this is the right migration path," or "this might break
-      if the buffer is partially written." Then it kept going, and that flag disappeared into a
-      <code>.jsonl</code> file you have never opened.
+      That convention is wrong for this data, in a way that is worth being specific about. It maps
+      colour to <em>severity</em>, and severity is a judgement. The moment a dashboard renders a
+      judgement it has to defend the judgement, and the first surprising red becomes an argument
+      about the thresholds rather than an investigation.
     </p>
 
     <p>
-      The uncertainty heatmap recovers those flags. It is a reviewable output of an
-      <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>: the agent's own hedges,
-      mined from its reasoning during the run and ranked into a per-file review agenda. The key claim
-      is narrow and worth stating precisely up front. This is a <em>router for attention</em>, not a
-      bug detector, and the signal lives in the trace, not the diff.
+      So the console maps colour to something else.
     </p>
 
-    <h2>Uncertainty signals inside AI-assisted edits</h2>
+    <h2>Red is one claim, and only one</h2>
 
     <p>
-      When Claude Code works on your codebase, it narrates as it goes, in thinking blocks and
-      assistant text that explain what it is doing and why. h5i reads that narration. Inside it you
-      find sentences like:
-    </p>
-
-    <blockquote>
-      <p>"I'm not sure this is the right migration path for the foreign key constraint…"</p>
-      <p>"This might break the async flush if the buffer is partially written, need to verify."</p>
-      <p>"Tricky, the lock order here assumes single-threaded initialization, which may not hold."</p>
-    </blockquote>
-
-    <p>
-      The agent is hedging, waving a small flag that says <em>a human should look here</em>, and then
-      burying it in the log. This is different from a code comment. The agent did not write
-      <code>// not sure about this</code> into the file; it said so to itself while working, and that
-      sentence never makes it into the diff a reviewer sees. It is recoverable only from the trace.
+      Red appears when the <strong>egress allowlist refused a destination</strong>, observed
+      host-side by the proxy. That is the only thing on the screen that makes a claim about the
+      boundary, so it is the only thing that gets the strongest colour.
     </p>
 
     <p>
-      <strong><code>h5i recall notes uncertainty</code> surfaces those flags for review.</strong>
-    </p>
-
-    <h2>What it looks like in practice</h2>
-
-    <p>
-      Say Claude just refactored your database layer. You run two commands:
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes analyze</span>    <span class="t-cmt"># parses the session log, links to HEAD</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes uncertainty</span></pre></div>
-    </div>
-
-    <p>You get this:</p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">uncertainty heatmap</span></div>
-      <div class="terminal-body"><pre><span class="t-bold">── Uncertainty Heatmap ─────────────────────────────────────────────</span>
-  <span class="t-out">9 signals  ·  session a3f8c12d  ·  4 files</span>
-
-  <span class="t-bold">Risk Map</span>
-  <span class="t-out">──────────────────────────────────────────────────────────────────────────</span>
-  <span class="t-red">src/db/migrations.rs        ████████████░░░░  ●●●  3 signals  avg  28%</span>
-  <span class="t-warn">src/db/connection_pool.rs   ██████░░░░░░░░░░  ●●   2 signals  avg  38%</span>
-  <span class="t-out">src/repository.rs           ████░░░░░░░░░░░░  ●    1 signal   avg  45%</span>
-  <span class="t-out">tests/integration_test.rs   ░░░░░░░░░░░░░░░░  ●    1 signal   avg  62%</span>
-
-  <span class="t-bold">Timeline</span>
-  <span class="t-out">t:12 ──────────────────────────────────────────────────────────── t:87</span>
-  <span class="t-out">··············█···············▓·········█··█·····················░·····</span>
-               <span class="t-out">↑t:18           ↑t:34     ↑t:52↑t:55</span>
-
-  <span class="t-bold">Signals</span>
-  <span class="t-out">──────────────────────────────────────────────────────────────────────────</span>
-  <span class="t-red">⚠ HIGH  src/db/migrations.rs · t:18 · "might break" · 20% confidence</span>
-       <span class="t-out">"…might break the rollback if the constraint was partially applied</span>
-        <span class="t-out">on a previous failed run…"</span>
-
-  <span class="t-red">⚠ HIGH  src/db/migrations.rs · t:52 · "not sure" · 25% confidence</span>
-       <span class="t-out">"…not sure whether the index creation here should be inside or</span>
-        <span class="t-out">outside the transaction boundary…"</span>
-
-  <span class="t-warn">▲ MOD   src/db/connection_pool.rs · t:34 · "assuming" · 50% confidence</span>
-       <span class="t-out">"…assuming the pool max is set before the first acquire call,</span>
-        <span class="t-out">but I should verify this…"</span></pre></div>
-    </div>
-
-    <p>
-      In under three seconds, you know exactly where to focus your review.
-    </p>
-
-    <ul>
-      <li><code>migrations.rs</code> is where the AI was most nervous, two high-risk signals, average confidence 28%</li>
-      <li>The timeline shows signals clustered around turns 18, 52, and 55, a burst of uncertainty mid-session, not at the end</li>
-      <li>The individual snippets give you the <em>reason</em> for the doubt, quoted verbatim from the AI's thinking</li>
-    </ul>
-
-    <p>
-      You didn't have to read a single line of diff to know where to start.
-    </p>
-
-    <h2>Why this changes code review</h2>
-
-    <p>
-      The standard review process is symmetric: every line costs the same amount of reviewer
-      attention. But AI-generated code isn't symmetric. Some of it the model wrote with total
-      confidence, patterns it has seen ten thousand times. Some of it the model wrote while
-      silently hedging, reaching into unfamiliar territory, making assumptions it flagged to
-      itself as unverified.
+      A failing test is not red. A crash is not red. A command with a suspicious-looking name is not
+      red. Those are all things a reasonable person might want highlighted, and every one of them
+      would dilute the single signal that means the containment boundary was touched.
     </p>
 
     <p>
-      Treating those two categories identically is a waste of your most limited resource: focused
-      human attention.
+      The discipline here is unglamorous and it is the whole value. A colour that means five things
+      means nothing.
+    </p>
+
+    <h2>Amber is "look at this", explicitly not "this is unsafe"</h2>
+
+    <p>
+      Amber covers a run that exited non-zero, a run the wall-clock limit killed, and browser errors
+      reported from inside the box. Useful, frequently something to act on, and carrying no information about
+      containment whatsoever.
     </p>
 
     <p>
-      <code>h5i recall notes uncertainty</code> makes the review process <em>asymmetric in the right direction</em>.
-      Code the agent wrote without hedging gets a normal pass; the spots the agent itself flagged get
-      read first and read hardest.
+      Keeping that separate from red is what stops a busy screen from teaching people to ignore
+      colour. A build that fails twice a day is amber twice a day, and it never trains anyone to
+      scroll past the thing that means something else.
+    </p>
+
+    <h2>Grey is the interesting one</h2>
+
+    <p>
+      Grey means <strong>the evidence is weak</strong>, and it fires in two cases: the tier was
+      <code>workspace</code>, so nothing was confined at all, or every receipt came from the in-box
+      shim, so everything you are looking at is the box's own account of itself.
     </p>
 
     <p>
-      The result is not "fewer bugs"; that depends on your review, not on a tool. It is better
-      ordering: your first and freshest attention lands where the agent's own doubt is concentrated,
-      instead of being spent uniformly and running out before you reach the dangerous hunk.
-    </p>
-
-    <h2>How the signal is detected</h2>
-
-    <p>
-      There is no model-in-the-loop here, and it helps to be exact about that. h5i walks the session
-      <code>.jsonl</code> line by line, pulls out the assistant's reasoning (thinking blocks where
-      they are present, and assistant text blocks, which matter because Claude Code often redacts the
-      raw thinking content), and runs a case-insensitive substring match against a fixed table of
-      roughly thirty hedge phrases. Each phrase carries a hand-assigned weight between 0.20 and 0.50
-      that h5i renders as a "confidence" percentage. Lower weight, brighter red.
+      Grey is not "fine". It is <em>"you cannot tell from here"</em>, and a dashboard that can say
+      that is doing something most cannot. The failure mode it prevents is specific and common: a
+      box that ran unconfined produces a clean-looking screen, because nothing was blocked, because
+      nothing was blocking. Without a grey state that box would render identically to one that
+      passed through a real boundary with nothing to report.
     </p>
 
     <p>
-      That is the whole mechanism: a lexical scan with a lookup table. It is deterministic, runs
-      offline in milliseconds, costs no inference, and every signal it emits can be traced to the
-      exact phrase that triggered it plus a verbatim ±150-character snippet. The price of that
-      simplicity is everything a substring match cannot do, covered honestly below.
+      The same idea repeats at row level. Every run row is labelled <code>host-observed</code> or
+      <code>box-claimed</code>, so the grade of the evidence travels with the event instead of being
+      inferred from a legend somewhere else.
     </p>
 
-    <h2>The signal table</h2>
-
-    <p>
-      The vocabulary of self-doubt phrases h5i matches, each mapped to its assigned weight:
-    </p>
+    <h2>The five lanes</h2>
 
     <div class="tbl-wrap">
       <table class="data">
-        <thead>
-          <tr><th>Phrase</th><th class="num">Confidence</th></tr>
-        </thead>
+        <thead><tr><th>Lane</th><th>What lands there</th><th>Can it be red?</th></tr></thead>
         <tbody>
-          <tr><td><code>"might be wrong"</code>, <code>"could be wrong"</code></td><td class="num">20%</td></tr>
-          <tr><td><code>"not sure"</code>, <code>"i'm unsure"</code>, <code>"not confident"</code></td><td class="num">25%</td></tr>
-          <tr><td><code>"unclear"</code>, <code>"not certain"</code></td><td class="num">30%</td></tr>
-          <tr><td><code>"might break"</code>, <code>"could break"</code>, <code>"risky"</code></td><td class="num">30–35%</td></tr>
-          <tr><td><code>"need to verify"</code>, <code>"should verify"</code>, <code>"double-check"</code></td><td class="num">40%</td></tr>
-          <tr><td><code>"assuming"</code>, <code>"i'll assume"</code>, <code>"maybe"</code></td><td class="num">40–50%</td></tr>
-          <tr><td><code>"perhaps"</code>, <code>"let me verify"</code></td><td class="num">45%</td></tr>
+          <tr><td><strong>FS</strong></td><td>Filesystem activity inside the policy's grants.</td><td>No</td></tr>
+          <tr><td><strong>NET</strong></td><td>Egress verdicts, including every refused destination.</td><td>Yes, this is the only one</td></tr>
+          <tr><td><strong>PROC</strong></td><td>Commands and exit codes, each with its observing lane.</td><td>No, amber on non-zero</td></tr>
+          <tr><td><strong>RES</strong></td><td>Usage against the profile's limits, including a wall-clock kill.</td><td>No, amber on a kill</td></tr>
+          <tr><td><strong>PAGE</strong></td><td>Console errors, uncaught exceptions and failed requests from the in-box browser.</td><td>No, amber on errors</td></tr>
         </tbody>
       </table>
     </div>
 
     <p>
-      The lower the weight, the brighter the red in the heatmap. The higher the density of signals on
-      a given file, the more its risk bar fills. The Risk Map sorts files by lowest average weight
-      first, so the file the agent hedged about most rises to the top.
+      Alongside the recorder, the right-hand pane shows the policy that was <em>actually</em>
+      enforced, the services the box declares, and its diffstat against the pinned base. Actually
+      enforced matters: on macOS at the kernel tiers a memory limit cannot be held, so it is marked
+      rather than listed, and a screen showing the requested policy would be showing a wish.
     </p>
 
-    <h2>Uncertainty is not the same as confidence</h2>
+    <h2>Nothing on the screen is a score</h2>
 
     <p>
-      The single most important thing to understand about this table is what the percentage is
-      <em>not</em>. It is not the model's probability of being correct. It is not a logprob, not a
-      self-reported confidence the model emitted, and not a statistical calibration. It is a fixed
-      weight a human picked for each phrase. Calling it "confidence" is a display convenience.
-    </p>
-
-    <p>
-      That distinction has teeth. A model can be confidently wrong, writing a subtly broken lock
-      ordering with no hedge at all, and that change produces <em>zero</em> signals. The heatmap
-      measures <strong>expressed doubt</strong>, which is correlated with risk but is a different
-      quantity. Expressed doubt is a leading indicator the agent generously volunteered; the absence
-      of it tells you only that the agent did not say it was unsure, which is not the same as the code
-      being safe. Treat a clean heatmap as "no volunteered flags," never as "reviewed and approved."
+      There is no composite number, no letter grade, and no ranking. Counting is arithmetic over
+      receipts and stays checkable; a score is a compression using weights nobody can audit, which
+      turns a surprising result into something to explain away.
     </p>
 
     <p>
-      Why is expressed doubt still worth surfacing? Because it is nearly free to collect and it points
-      at exactly the places where the agent was reaching beyond familiar patterns: the migration it
-      had not seen before, the concurrency assumption it could not check. Those are disproportionately
-      where real bugs in AI-generated code live, and a reviewer who starts there spends scarce
-      attention well even though the score itself is only a heuristic.
+      h5i shipped a scoring module once. It was deleted, and the console was rebuilt on counting. If
+      you want a ranking, you write it yourself out of counts you can see, which means you can also
+      state it and change it.
     </p>
 
-    <h2>The false-positive problem</h2>
+    <h2>It cannot press anything</h2>
 
     <p>
-      A substring match does not understand sentences. <code>"assuming"</code> fires on "assuming the
-      pool is initialized" (real doubt) and on "assuming good faith from the caller" (a figure of
-      speech). <code>"maybe"</code> and <code>"perhaps"</code> are weak hedges that often mean nothing.
-      The detector is deliberately <em>high-recall and low-precision</em>: it would rather show you a
-      harmless hedge than miss a real one.
-    </p>
-
-    <p>
-      Two design choices keep that from becoming noise. First, detection reads <em>only the reasoning
-      trace, never the diff</em>, so a <code>// this is risky</code> comment in the code is never a
-      false positive, because the matcher never looks at code. The classic "marker in a comment vs.
-      real doubt" confusion does not arise; the only text scanned is the agent's own narration.
-      Second, every signal ships with its verbatim snippet and turn number, so triage is a glance: you
-      read the quoted sentence, decide in two seconds whether it is real, and move on. The heatmap is a
-      <em>router for attention</em>, not an adjudicator. A false positive costs you one sentence of
-      reading; a false negative, a real doubt you never saw, is the expensive failure, which is why
-      the recall bias is the right one.
-    </p>
-
-    <h2>Mapping signals to files</h2>
-
-    <p>
-      Each signal is tagged with the file the agent was editing at that moment in the session, so the
-      Risk Map can group doubt by path. This association is temporal, not semantic: h5i attributes the
-      hedge to whatever file was most recently being touched, not by parsing which file the sentence is
-      <em>about</em>. Usually those coincide, since the agent hedges while working on the thing it is unsure
-      of. Sometimes they don't, and a signal shows up against a neighbouring file or as
-      <code>(no file)</code> when the doubt was expressed during pure reasoning with no edit in flight.
-      Read the file column as "where the agent was when it hedged," which is a strong prior for "where
-      to look," not a guarantee.
-    </p>
-
-    <h2>Compared with LLM-scoring the diff and sentiment analysis</h2>
-
-    <p>
-      Two adjacent approaches are worth giving their due, because they catch things lexical mining
-      cannot.
-    </p>
-
-    <div class="tbl-wrap">
-      <table class="data">
-        <thead>
-          <tr><th>Approach</th><th>Good</th><th>Gap</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Lexical uncertainty mining<br>(this heatmap)</td>
-            <td>Deterministic, free of extra inference, runs offline, explainable to the exact phrase. Recovers doubt expressed <em>during</em> the run that never reaches the diff.</td>
-            <td>Low precision (casual hedges). Fixed English phrase list, so it misses doubt phrased a way it doesn't list and any non-English reasoning. No semantic understanding of the code.</td>
-          </tr>
-          <tr>
-            <td>LLM judge scoring the diff</td>
-            <td>Reasons about the actual code; can flag problems the agent never verbalized at all. Catches confidently-wrong changes the heatmap is blind to.</td>
-            <td>Costs an inference call per review, nondeterministic, can hallucinate concern or false calm. Scores the <em>artifact</em>, so it can't recover the process: what the agent was unsure of mid-run isn't in the diff.</td>
-          </tr>
-          <tr>
-            <td>Sentiment analysis</td>
-            <td>Mature tooling for emotional tone.</td>
-            <td>Wrong axis. It measures affect, not epistemic hedging. "This is frustrating" is sentiment; "this might break the rollback" is the signal you want, and tone classifiers don't separate them.</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p>
-      These are complementary, not competing. Lexical mining is a cheap pre-filter that runs on every
-      session and routes a human's eyes; an LLM judge is a deeper, costlier second pass you might
-      reserve for the files the heatmap already flagged. The honest framing: the heatmap raises the
-      probability that you look at the right file first, for almost no cost. It does not promise the
-      file is buggy, and it cannot promise the unflagged files are clean.
-    </p>
-
-    <h2>Filter by file</h2>
-
-    <p>
-      Already know which module worries you? You can filter signals to a specific path:
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes uncertainty --file src/db/migrations.rs</span></pre></div>
-    </div>
-
-    <p>
-      Useful when you're reviewing a PR and want to jump straight to the model's doubts about the
-      file you're responsible for, without wading through signals from unrelated parts of the diff.
-    </p>
-
-    <h2>The workflow</h2>
-
-    <p>
-      Here's how it fits into a natural AI-assisted development cycle:
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">review workflow</span></div>
-      <div class="terminal-body"><pre><span class="t-cmt"># 1. Claude finishes a task and you're ready to review</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes analyze</span>              <span class="t-cmt"># parse the session, link to HEAD</span>
-
-<span class="t-cmt"># 2. Get the 10,000-foot view of what the AI touched</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes show</span>                 <span class="t-cmt"># footprint: consulted vs. edited files</span>
-
-<span class="t-cmt"># 3. Find the risky spots</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes uncertainty</span>          <span class="t-cmt"># heatmap + timeline + verbatim snippets</span>
-
-<span class="t-cmt"># 4. Now open your diff viewer — but start with migrations.rs, turn 18</span></pre></div>
-    </div>
-
-    <p>
-      The whole thing takes ten seconds. What you get back is a prioritized review agenda, assembled
-      from uncertainty signals captured during the AI-assisted edit.
-    </p>
-
-    <h2>Under the hood</h2>
-
-    <p>
-      h5i reads Claude Code's session logs, <code>.jsonl</code> files that record every message, tool call,
-      and thinking block in a session. It auto-detects the latest session for your repository, so
-      you rarely need to pass a path manually.
+      Every route is a <code>GET</code>. <code>shell</code>, <code>run</code>, <code>export</code>,
+      <code>propose</code>, <code>apply</code> and <code>rm</code> stay in the CLI where a human
+      types them. The server binds <code>127.0.0.1</code> and nothing else, and the URL carries a
+      token minted for the session and kept in memory, never written to disk, so no box can read it.
+      The page trades it for a strict same-site cookie on first load and cross-origin requests are
+      refused.
     </p>
 
     <p>
-      After analysis, the results are persisted in <code>.git/.h5i/</code> and linked to the commit OID, so
-      you can revisit the uncertainty map for any past commit:
+      A console with no mutating surface has no mutating surface to guard, which is a smaller and
+      more defensible thing to have built.
     </p>
 
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes uncertainty --commit a3f8c12</span></pre></div>
-    </div>
-
-    <p>
-      Because the analysis is content-addressed and lives under <code>refs/h5i/*</code>, it does not
-      travel with a plain <code>git push</code>. Team members who pull your h5i data
-      (<code>h5i share pull</code>) can run the same query on sessions they weren't present for, so
-      the reviewer reads the author's agent's doubts without having watched the session.
-    </p>
-
-    <h2>Failure modes and honest limits</h2>
-
-    <p>
-      A tool you trust to route attention deserves a clear account of when it goes quiet or misleads:
-    </p>
+    <h2>What it will not tell you</h2>
 
     <ul>
-      <li><strong>Redacted or absent reasoning.</strong> Claude Code frequently redacts raw thinking
-        content; h5i falls back to assistant text blocks, but a model that works silently, with extended
-        thinking off and terse narration, leaves little to match. Fewer words, fewer signals, regardless
-        of actual risk.</li>
-      <li><strong>Absence of signals is not safety.</strong> The single most important caveat, worth
-        repeating: a clean heatmap means "no volunteered hedges," not "reviewed and correct."
-        Confidently-wrong code is invisible here.</li>
-      <li><strong>Fixed English vocabulary.</strong> Doubt phrased in a way the table doesn't list, or
-        in another language, is missed. The list is a floor, not a model of how doubt can be expressed.</li>
-      <li><strong>Substring matching is literal.</strong> It cannot tell a real hedge from a figure of
-        speech; the verbatim snippet is your filter for that.</li>
-      <li><strong>File attribution is temporal.</strong> A signal is tagged with the file in flight,
-        which is a strong prior but not proof of what the sentence is about.</li>
+      <li><strong>Whether a change is safe.</strong> The screen shows boundary events. Whether what you find is malicious, careless or entirely normal is your call.</li>
+      <li><strong>That a quiet box is a good box.</strong> The most dangerous diff in a release can come out of a box that did nothing unusual.</li>
+      <li><strong>Anything at all about egress at the microvm tier.</strong> The guest's netstack drops packets without reporting them, so NET has nothing to draw.</li>
     </ul>
 
-    <p>
-      None of these are bugs to be fixed away. They are the shape of what a fast, deterministic
-      lexical pass can and cannot do. Knowing the edges is what lets you use the signal without
-      over-trusting it.
-    </p>
 
-    <h2>Getting started</h2>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">install &amp; run</span></div>
-      <div class="terminal-body"><pre><span class="t-cmt"># Install h5i (see github.com/h5i-dev/h5i for build instructions)</span>
-<span class="t-prompt">$</span> <span class="t-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</span>
-
-<span class="t-cmt"># Initialize in your repo</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i init</span>
-
-<span class="t-cmt"># Install the hooks that capture every session (idempotent)</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup --write</span>
-
-<span class="t-cmt"># After your next Claude Code session:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes analyze</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes uncertainty</span></pre></div>
-    </div>
-
-    <p>
-      The <code>h5i hook setup --write</code> step wires in the SessionStart, PostToolUse, Stop, and
-      UserPromptSubmit hooks that passively capture the prompts, traces, and test evidence the heatmap
-      reads &mdash; so you never have to run those captures by hand.
-    </p>
-
-    <h2>Conclusion</h2>
-
-    <p>
-      The uncertainty heatmap rests on one observation: AI agents leak their doubt in plain text while
-      they work, and that text is review signal. A grep-grade lexical pass over the reasoning trace is
-      enough to recover it, rank it by file, and put the agent's nervous moments at the top of a
-      reviewer's queue, for no inference cost and with full traceability back to the exact sentence.
-    </p>
-
-    <p>
-      What it is honestly worth: a cheap, deterministic <em>router</em> for scarce attention. What it
-      is not: a measure of correctness, a calibrated probability, or a guarantee that the unflagged
-      files are safe. Expressed doubt correlates with risk; it does not define it, and silence is not
-      a clean bill of health. Used with that framing, a first pass to order your review rather than the last word
-      on whether the code is right, it changes where your freshest attention lands, which is most of
-      what review triage is. Pair it with an <a href="/blog/review-code-written-by-ai-agents/">agent-aware
-      review pass</a> and the broader <a href="/blog/auditing-ai-generated-code/">risk framework</a>,
-      and the heatmap becomes the cheapest of several signals rather than a single thing you over-trust.
-    </p>
-
-    <p>
-      The practical takeaway is small and durable: when the agent told you it was nervous, don't make
-      that the one thing you never read.
-    </p>
-
-    <h2>Frequently asked questions</h2>
-
+    <h2>FAQ</h2>
     <div class="faq">
-      <p><strong>How does h5i detect uncertainty in AI-generated code?</strong> It runs a
-        case-insensitive substring match over the agent's reasoning (the thinking and assistant text
-        blocks in the Claude Code session <code>.jsonl</code>) against a fixed table of about thirty
-        hedge phrases (<code>"not sure"</code>, <code>"might break"</code>, <code>"assuming"</code>,
-        <code>"should verify"</code>, …). Each phrase has a static weight rendered as a "confidence"
-        score. It never reads the diff and never calls a second model.</p>
+      <h3>What do red, amber and grey mean in the h5i console?</h3>
+      <p>Red means the egress allowlist refused a destination, observed host-side by the proxy, and it is the only signal that makes a claim about the boundary. Amber means something to look at, such as a non-zero exit, a wall-clock kill or browser errors, with no containment meaning. Grey means the evidence is weak.</p>
 
-      <p><strong>Is the confidence score the model's actual probability?</strong> No. The percentage is
-        a fixed weight h5i assigns to each phrase, not a logprob or a self-reported probability. It
-        measures <em>expressed doubt</em>, which correlates with risk but is not a calibrated estimate
-        of correctness. A model can be wrong with no hedge at all, so an empty heatmap is not evidence
-        of safety.</p>
+      <h3>Why is grey the most useful colour?</h3>
+      <p>Because it says you cannot tell from here, which most dashboards cannot express. It fires when the tier was <code>workspace</code> so nothing was confined, or when every receipt came from the in-box shim so everything shown is the box's own account. Without it, an unconfined box would render identically to a confined one with nothing to report.</p>
 
-      <p><strong>Does lexical detection produce false positives?</strong> Yes, by design: it is
-        high-recall, low-precision, so phrases like <code>"maybe"</code> fire on casual usage too.
-        Because detection reads only the reasoning trace and never the code, a <code>// risky</code>
-        comment in the diff is not a false positive; a throwaway hedge in the agent's narration can be.
-        Every signal carries its verbatim snippet, so dismissing a false positive takes one sentence of
-        reading.</p>
+      <h3>What are the five lanes?</h3>
+      <p>FS for filesystem activity, NET for egress verdicts, PROC for commands and exit codes, RES for usage against the profile's limits, and PAGE for what the in-box browser reported. Only NET can go red.</p>
 
-      <p><strong>How is this different from an LLM judge scoring the diff?</strong> An LLM judge reasons
-        about the finished code and can flag problems the agent never verbalized, but it costs an
-        inference call, is nondeterministic, and scores the artifact rather than the process. Lexical
-        mining is deterministic, free, explainable to the exact phrase, and recovers doubt that lived
-        only in the run. They are complementary: mining pre-filters, a judge digs.</p>
+      <h3>Can the console change anything about a box?</h3>
+      <p>No. Every route is a GET, and shell, run, export, propose, apply and remove all stay in the CLI. The server binds loopback only and the URL carries a session token kept in memory rather than on disk, so no box can read it.</p>
+
     </div>
 
     <div class="next-up">
       <span class="label">Read next</span>
       <a href="/blog/auditing-ai-generated-code/">
-        <h3>Auditing AI-Generated Code: A Practical Framework</h3>
-        <p>Uncertainty is one of four risk vectors. Here's the full framework, with all four producing a single ranked review queue.</p>
+        <h3>Triaging a fleet of agent boxes</h3>
+        <p>Turning those counts into a review order you can state out loud and change.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Read what the AI didn't tell you</h3>
-      <p>Try h5i on your next AI-assisted branch: create a sandboxed workspace, capture the run, and post a review-ready PR brief.</p>
+      <h3>Look at the fleet</h3>
+      <p><code>h5i ui</code>, or <code>h5i ui --open</code> to hand the URL to your browser.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
-      <a href="/" class="btn btn-ghost">Back to docs</a>
+      <a href="/manual/" class="btn btn-ghost">Read the manual</a>
     </div>
   </article>
 </main>
@@ -606,7 +324,7 @@
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
       <a href="/manual/">Manual</a>
     </nav>
-    <div class="legal">Apache 2.0 · Built with Rust</div>
+    <div class="legal">Apache 2.0 &#183; Built with Rust</div>
   </div>
 </footer>
 

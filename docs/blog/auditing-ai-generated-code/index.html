@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Auditing AI-Generated Code at Scale: A Practical Framework: h5i</title>
-  <meta name="description" content="Auditing AI-generated code is a provenance-aggregation problem. Score four deterministic risk vectors (blind edits, uncertainty, scope creep, prompt injection) across many commits to produce a ranked review queue and a compliance report.">
-  <meta name="keywords" content="audit ai generated code, ai code review at scale, ai provenance, ai code governance, claude code review, blind edits, ai code compliance, prompt injection audit">
+  <title>Triaging a Fleet of Agent Boxes | h5i</title>
+  <meta name="description" content="One agent branch you can read closely. Thirty is a triage problem. The h5i console counts receipts across five lanes and refuses to turn them into a score, because a number would be the first thing anyone stopped checking.">
+  <meta name="keywords" content="audit ai generated code, agent triage, ai code audit, boundary pressure, agent fleet review, risk score, h5i ui console">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -17,32 +17,87 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="Auditing AI-Generated Code: A Practical Framework">
-  <meta property="og:description" content="A four-vector framework, blind edits, uncertainty, scope creep, prompt injection, for finding the AI commits that actually need human eyes.">
+  <meta property="og:title" content="Triaging a Fleet of Agent Boxes">
+  <meta property="og:description" content="Thirty agent branches is a triage problem. What the console counts, what the colours mean, and why there is deliberately no risk score.">
   <meta property="og:url" content="https://h5i.dev/blog/auditing-ai-generated-code/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta property="article:published_time" content="2026-05-06">
+  <meta property="article:published_time" content="2026-05-12">
+  <meta property="article:modified_time" content="2026-08-07">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Auditing AI-Generated Code: A Practical Framework">
-  <meta name="twitter:description" content="A four-vector framework for the AI commits that actually need human eyes.">
+  <meta name="twitter:title" content="Triaging a Fleet of Agent Boxes">
+  <meta name="twitter:description" content="Thirty agent branches is a triage problem. What the console counts, what the colours mean, and why there is deliberately no risk score.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "TechArticle",
-    "headline": "Auditing AI-Generated Code at Scale: A Practical Framework",
-    "description": "Auditing agent-written code is a provenance-aggregation problem: score four deterministic risk vectors (blind edits, uncertainty, scope creep, prompt injection) across many commits from captured evidence, instead of eyeballing diffs.",
-    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
-    "datePublished": "2026-05-06",
-    "dateModified": "2026-06-26",
-    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/auditing-ai-generated-code/"},
-    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-    "keywords": "audit ai generated code, ai code review, ai provenance, blind edits, ai compliance"
-  }
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Triaging a Fleet of Agent Boxes",
+  "description": "One agent branch you can read closely. Thirty is a triage problem. The h5i console counts receipts across five lanes and refuses to turn them into a score, because a number would be the first thing anyone stopped checking.",
+  "author": {
+    "@type": "Person",
+    "name": "Koukyosyumei",
+    "url": "https://github.com/Koukyosyumei"
+  },
+  "datePublished": "2026-05-12",
+  "dateModified": "2026-08-07",
+  "publisher": {
+    "@type": "Organization",
+    "name": "h5i",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://h5i.dev/_static/logo.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://h5i.dev/blog/auditing-ai-generated-code/"
+  },
+  "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+  "keywords": "audit ai generated code, agent triage, ai code audit, boundary pressure, agent fleet review, risk score, h5i ui console"
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Why does h5i's console not show a risk score?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Because a score compresses incomparable signals using weights nobody can audit, which makes a high score something to explain away and a low score an all-clear it never had the information to give. h5i deleted its scoring module. The console counts receipts instead, and a count is checkable."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What do the colours in the h5i console mean?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Red makes exactly one claim: the egress allowlist refused a destination, observed host-side by the proxy. Amber means something to look at, such as a non-zero exit, a wall-clock kill, or browser errors, and says nothing about containment. Grey means the evidence is weak, either because the tier was workspace or because every receipt came from the in-box shim."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can the console run commands on a box?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. Every route is a GET. Shell, run, export, propose, apply and remove all stay in the CLI, so there is no mutating surface to guard and no way to turn the console into a remote control for someone's boxes."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What are the five lanes?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Filesystem, network, process, resources and page. Each receipt lands in one, and each row is separately labelled host-observed or box-claimed so the grade of the evidence stays visible next to the event."
+      }
+    }
+  ]
+}
   </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -52,37 +107,9 @@
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Auditing AI-Generated Code: A Practical Framework", "item": "https://h5i.dev/blog/auditing-ai-generated-code/"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Triaging a Fleet of Agent Boxes", "item": "https://h5i.dev/blog/auditing-ai-generated-code/"}]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "FAQPage",
-    "mainEntity": [
-      {
-        "@type": "Question",
-        "name": "Does h5i audit replace human code review?",
-        "acceptedAnswer": {"@type": "Answer", "text": "No. It ranks commits, it does not approve them. h5i audit review produces a triage queue so reviewers spend their scarcest attention on the riskiest AI commits first; a human still reads the diff. Every signal is a heuristic (a regex, a tool-call sequence comparison, or a diff-vs-prompt overlap) so it surfaces suspicion, not proof."}
-      },
-      {
-        "@type": "Question",
-        "name": "How is auditing AI-generated code different from SAST or secret scanning?",
-        "acceptedAnswer": {"@type": "Answer", "text": "SAST tools (CodeQL, Semgrep) and secret scanners (gitleaks, trufflehog) read the committed code. h5i audits the provenance: what the model read before editing, where it hedged, whether it stayed in scope, and whether its reasoning trace contains an injection. A blind edit and a high-uncertainty refactor are invisible to a code scanner because the diff itself looks clean. The two are complementary: run both."}
-      },
-      {
-        "@type": "Question",
-        "name": "What is the default risk threshold for h5i audit review?",
-        "acceptedAnswer": {"@type": "Answer", "text": "The default min-score is 0.5 (REVIEW_THRESHOLD in review.rs). The score is the clamped sum of weighted triggers: blind edits, scope expansion, test regression, credential leak, large diff, AI-with-no-prompt, and others. Lower the threshold to widen the net and accept more false positives; raise it to flag only the highest-signal commits."}
-      },
-      {
-        "@type": "Question",
-        "name": "Does the audit work retroactively on commits I already merged?",
-        "acceptedAnswer": {"@type": "Answer", "text": "Only for commits that already carry h5i session evidence. The capture hooks (installed by h5i hook setup --write) record the prompts, traces, and test metrics as you work; the audit scores that recorded evidence. A plain Git commit with no session note has nothing for the blind-edit, uncertainty, or injection vectors to read."}
-      }
-    ]
-  }
-  </script>
 </head>
 <body>
 
@@ -94,524 +121,191 @@
     <li><a href="/">Home</a></li>
     <li><a href="/guides/">Guides</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &#8594;</a></li>
   </ul>
 </nav>
 
 <main class="article-wrap">
   <article class="post">
     <header>
-      <div class="post-eyebrow">Practice · 2026-05-06</div>
-      <h1>Auditing AI-Generated Code at Scale: A Practical Framework</h1>
-      <p class="post-deck">
-        Your team merges 50 PRs a week. Thirty are AI-assisted. You don't have the bandwidth to
-        read them all carefully, so which ones do you scrutinize? Auditing agent code is a
-        provenance-aggregation problem: you score a handful of risk vectors across many commits from
-        evidence captured at write time, instead of eyeballing diffs one by one.
-      </p>
+      <div class="post-eyebrow">Practice &#183; 2026-05-12 &#183; rewritten 2026-08-07</div>
+      <h1>Triaging a fleet of agent boxes</h1>
+      <p class="post-deck">Reading one export carefully is a solved problem. Deciding which of thirty to read carefully is the actual job, and the obvious solution, a risk score, is the one that quietly stops working the week after you ship it.</p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
-        <span><strong>Reading time</strong> 11 min</span>
-        <span><strong>Tags</strong> Code Review · Compliance · AI Governance</span>
+        <span><strong>Reading time</strong> 8 min</span>
+        <span><strong>Tags</strong> Audit &#183; Triage &#183; Honesty</span>
       </div>
     </header>
 
-
-<div class="callout kt-takeaways">
-  <strong>Key takeaways</strong>
-  <ul>
-        <li>Auditing agent code is a provenance-aggregation problem: score risk vectors across many commits instead of eyeballing each diff.</li>
-        <li>h5i audit review ranks commits for triage, h5i audit compliance aggregates the vectors over a date range, and companion scans deepen a single commit.</li>
-        <li>The audit surfaces heuristic signals, not proofs, so expect false positives and treat it as a complement to human review.</li>
-  </ul>
+<div class="callout">
+  <strong>The position.</strong> <code>h5i ui</code> draws every box on one screen with a flight
+  recorder across five lanes: filesystem, network, process, resources and page. It counts receipts.
+  It does not score them. Red makes exactly one claim, that the egress allowlist refused a
+  destination and the proxy observed it. Amber means look at this. Grey means the evidence is weak.
+  Nothing on the screen is a number you can rank by, and that is a decision rather than an omission.
 </div>
+
+
     <p>
-      "Treat AI-generated code like junior-engineer code" is a popular maxim and a useless one.
-      A junior engineer's output is uniform, uniformly cautious, uniformly inexperienced.
-      AI output isn't. The same model produces faultless boilerplate and dangerously confident
-      hallucinations in the same PR. Review both halves with the same intensity and you waste the
-      half of your reviewer attention that is worth most. At ten AI PRs a day, that waste compounds
-      until careful review stops happening at all.
+      The first agent branch gets a careful review. So does the second. By the time a team is running
+      boxes in parallel across a backlog, careful review of everything has stopped being a plan and
+      started being a thing people say in retrospectives.
     </p>
 
     <p>
-      What you actually want is asymmetry. Spend ten seconds on the trivial half. Spend twenty
-      minutes on the dangerous half. The trick is knowing which is which <strong>before</strong> you start
-      reading. This is the governance pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>:
-      every prompt, decision, command, and file touch is recorded in your repo and provable after the fact,
-      so the triage path is deterministic, with no model in the loop.
+      Which makes the real question one of allocation. You have a fixed amount of attention and a
+      growing number of exports. What signal decides where it goes?
     </p>
 
-    <h2>What the diff doesn't carry</h2>
+    <h2>The obvious answer and why it fails</h2>
 
     <p>
-      You already know how to audit code: read the diff, run the scanners, check the tests. That
-      machinery is unchanged. What's new is that the most useful audit signals for agent-written
-      code aren't <em>in</em> the diff. What did the model read before editing? Where did it hedge in
-      its own reasoning? Did it stay inside the scope you asked for? Did anything in its trace look
-      like an injected instruction? Git records none of that. A commit is just a tree and a message.
+      Every version of this problem invites the same solution: compute a risk score per box, sort
+      descending, review from the top. It is easy to build, it demos well, and it fails in a
+      specific and predictable way.
     </p>
 
     <p>
-      h5i records it. It is a Git sidecar that, at commit time, captures the AI provenance (the
-      prompt, the tool-call sequence, the reasoning trace, the test metrics) as a JSON note on
-      <code>refs/h5i/notes</code>. Auditing then becomes aggregation: you compute a few deterministic
-      signals over that captured evidence and rank commits by risk. No second model sits in the
-      audit path, so the audit itself stays reproducible and reviewable.
+      A score is a compression of several incomparable signals into one number, using weights
+      somebody guessed. Nobody can audit the weights, so nobody trusts a surprising result, so a
+      high score becomes something to explain away rather than something to investigate. Meanwhile a
+      low score gets read as an all-clear, which is the worst possible outcome, because the score
+      never had the information to make that claim.
     </p>
 
-    <h2>Four risk vectors that matter</h2>
+    <p>
+      h5i shipped a scoring module once. It was deleted, and it stayed deleted.
+    </p>
+
+    <h2>Counting instead of scoring</h2>
 
     <p>
-      A practical AI-code audit can start with four recurring failure modes. Each has a
-      deterministic signal extracted from the captured session: a tool-call comparison, a phrase
-      lexicon, a diff-vs-prompt overlap, or a regex pass, never another model's judgment.
+      What replaced it is arithmetic over receipts. The console groups each box's records into five
+      lanes and shows one row per receipt:
     </p>
 
     <div class="tbl-wrap">
       <table class="data">
-        <thead>
-          <tr><th>Vector</th><th>What it looks like</th><th>Detector</th></tr>
-        </thead>
+        <thead><tr><th>Lane</th><th>What lands there</th></tr></thead>
         <tbody>
-          <tr><td><strong>Blind edits</strong></td><td>File modified with no preceding Read</td><td>Tool-call sequence analysis</td></tr>
-          <tr><td><strong>Uncertainty</strong></td><td>Hedge phrases inside thinking blocks</td><td>Calibrated phrase lexicon</td></tr>
-          <tr><td><strong>Scope creep</strong></td><td>Edits to files unrelated to the prompt</td><td>Diff-vs-prompt overlap</td></tr>
-          <tr><td><strong>Prompt injection</strong></td><td>Override / exfiltration patterns in trace</td><td>Regex over OBSERVE/THINK/ACT</td></tr>
+          <tr><td><strong>FS</strong></td><td>Filesystem activity within the policy's grants.</td></tr>
+          <tr><td><strong>NET</strong></td><td>Egress, including every destination the allowlist refused.</td></tr>
+          <tr><td><strong>PROC</strong></td><td>Commands, their exit codes, and the lane that observed each one.</td></tr>
+          <tr><td><strong>RES</strong></td><td>Resource usage against the profile's limits, including a wall-clock kill.</td></tr>
+          <tr><td><strong>PAGE</strong></td><td>What the in-box browser reported: console errors, uncaught exceptions, failed requests.</td></tr>
         </tbody>
       </table>
     </div>
 
     <p>
-      Two of these vectors fold directly into the <code>h5i audit review</code> triage score (blind edits and
-      scope creep), and two are companion scans you run on the commits that triage flags (the
-      uncertainty heatmap and the prompt-injection trace scan). The date-ranged
-      <code>h5i audit compliance</code> report pulls all four together per commit. We'll walk each vector,
-      then show how they aggregate, and be precise about where each signal is strong and where it
-      lies to you.
+      A count is auditable in a way a score is not. Seven refused connections means seven refused
+      connections, and clicking the row shows the rendered receipt, the same text
+      <code>h5i box inspect</code> prints. There is no weighting step to disagree with, because there
+      is no weighting step.
     </p>
 
-    <h2>Vector 1: Blind edits</h2>
+    <h2>The colours are narrower than they look</h2>
 
     <p>
-      A <em>blind edit</em> is a Write or Edit call to a file with no preceding Read of the same file in
-      the session. It's the single highest-precision indicator of a model writing from training-data
-      memory rather than from the file's current state. In practice, blind edits are the leading
-      cause of "the AI deleted my comment / regressed my fix / used the old API."
+      The one place a UI could smuggle a judgement back in is the colour palette, so the palette is
+      constrained on purpose.
     </p>
 
     <p>
-      h5i extracts the tool-call sequence from the session log and surfaces blind edits as a single
-      number plus a list:
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes coverage --max-ratio 0.5</span>
-
-<span class="t-bold">── Attention Coverage ─────────────────────────────────────</span>
-  <span class="t-out">files edited:           7</span>
-  <span class="t-out">files edited blindly:   2</span>
-
-  <span class="t-red">⚠ src/billing/token.rs    2 edits  ·  0 reads  ·  100% blind</span>
-  <span class="t-warn">▲ src/api/checkout.rs     3 edits  ·  1 read   ·  67%  blind</span>
-  <span class="t-pass">✔ src/auth.rs             4 edits  ·  4 reads  ·  0%   blind</span></pre></div>
-    </div>
-
-    <p>
-      The interpretation: <code>billing/token.rs</code> was modified twice with the model never having looked
-      at the file in this session. Whatever it wrote, it wrote from memory. That edit deserves human
-      eyes regardless of how clean the diff looks.
+      <strong>Red</strong> makes exactly one claim about the boundary: the egress allowlist
+      <em>refused</em> a destination, host-observed by the proxy. Nothing else is ever red. Not a
+      failing test, not a crash, not a suspicious-looking command.
     </p>
 
     <p>
-      <strong>How the signal is computed:</strong> h5i walks the recorded tool-call stream and, per file,
-      computes a read-before-edit ratio. A file with edits but zero prior reads has a 0% ratio: a
-      pure blind edit. <code>h5i audit review</code> turns this into a <code>BLIND_EDIT</code> trigger weighted
-      <code>0.10</code> per blind file, capped at <code>0.30</code>, so it nudges a commit up the queue without
-      ever flagging it on its own.
+      <strong>Amber</strong> means something is worth looking at and says nothing about containment: a
+      run exited non-zero, the wall-clock limit killed one, or the in-box browser reported errors.
+      Useful, and not a security signal.
     </p>
 
     <p>
-      <strong>Failure mode, stated plainly:</strong> the signal is session-scoped. If the model read the file in
-      an <em>earlier</em> session, or still remembered its current contents, the "blind" edit was
-      actually safe: a false positive. Conversely, a single token Read of a 2,000-line file counts
-      as "read" even though the model attended to almost none of it. Blind edits are a high-precision
-      flag for the failure they name, not a proof of damage.
-    </p>
-
-    <h2>Vector 2: Uncertainty</h2>
-
-    <p>
-      Models hedge in their thinking blocks. The hedges don't appear in the chat output, by the time
-      the model addresses you, it's converged on a confident-sounding answer, but they're recorded
-      in the session log.
+      <strong>Grey</strong> is the one people misread, and it is the most interesting. Grey means the
+      <em>evidence</em> is weak: either the tier was <code>workspace</code> and nothing was confined,
+      or every receipt came from the in-box shim and so is the box's own account of itself. Grey is
+      not "fine". It is "you cannot tell from here", which is a different and more useful thing for a
+      dashboard to be able to say.
     </p>
 
     <p>
-      h5i scans every thinking block for a calibrated vocabulary of self-doubt phrases, each mapped
-      to a confidence score (e.g. <em>"not sure"</em> → 0.25, <em>"might break"</em> → 0.30,
-      <em>"perhaps"</em> → 0.45, <em>"assuming"</em> → 0.50). It groups the annotations by the file being
-      edited at the moment of the hedge and sorts files by lowest average confidence. Files where
-      uncertainty concentrates are the files the model itself flagged as risky.
+      Each run row is separately labelled <code>host-observed</code> or <code>box-claimed</code> for
+      the same reason.
+    </p>
+
+    <h2>The console cannot do anything</h2>
+
+    <p>
+      Every route in <code>h5i ui</code> is a <code>GET</code>. There is no button that runs a
+      command, applies a patch, or removes a box. <code>shell</code>, <code>run</code>,
+      <code>export</code>, <code>propose</code>, <code>apply</code> and <code>rm</code> stay in the
+      CLI, where a human types them.
     </p>
 
     <p>
-      <strong>Failure mode:</strong> this is a lexicon, not a model, so it sees verbalized doubt only. A
-      model that hallucinates with total confidence leaves no hedge to catch (recall floor, not
-      ceiling), and a rhetorical "I'm not sure that's the cleanest name" can fire on a cosmetic
-      decision. Read it as "the model told on itself here," not "there is a bug here."
+      That is a smaller product and a much smaller attack surface. A read-only server has no mutating
+      surface to guard and cannot be turned into a remote control for somebody's boxes. It binds
+      <code>127.0.0.1</code> and nothing else, the URL carries a token minted for the session and
+      kept in memory so no box can read it, and requests from another origin are refused outright.
     </p>
+
+    <h2>A triage order that survives contact</h2>
 
     <p>
-      We covered this detector in detail in
-      <a href="/blog/uncertainty-heatmap/">Claude Code Uncertainty Heatmap for AI Code Review</a>.
-      The short version is: <code>h5i recall notes uncertainty</code> turns a session's hidden hedges into a heatmap
-      that tells you where to start reading. It is a companion scan, not part of the
-      <code>audit review</code> score, so run it on the commits triage surfaces.
+      With counts rather than a score, the ranking is something you do yourself, which means you can
+      state it and change it. A reasonable default:
     </p>
 
-    <h2>Vector 3: Scope creep</h2>
+    <ol>
+      <li><strong>Any red.</strong> A refused destination is the only thing on the screen making a claim about the boundary. Investigate all of them, every time.</li>
+      <li><strong>Grey on an untrusted source.</strong> A box holding external code that produced only box-claimed evidence is the combination where you know least about the thing you trust least.</li>
+      <li><strong>A gap between lanes.</strong> More commands reported than exits observed, or a long host-observed process with nothing claimed during it.</li>
+      <li><strong>Amber with a browser.</strong> Console errors on a changed user-facing flow are cheap to check and often real.</li>
+      <li><strong>Everything else, by diff size</strong>, which is the weakest signal in the list and is fine once the four above are clear.</li>
+    </ol>
 
-    <p>
-      The user asked Claude to fix a bug in <code>parser.rs</code>. The PR touches eleven files. Maybe that's
-      fine, the parser is a hub. Maybe it's not, five of those files are unrelated and the model
-      "noticed" minor issues while it was there.
-    </p>
-
-    <p>
-      h5i records the user prompt that opened each session, then compares it against the diff. The
-      <code>SCOPE_EXPANSION</code> rule fires when the prompt names a specific file but the commit touches
-      others beyond it. It is a <code>Warning</code>-severity integrity finding, so it adds weight
-      <code>0.20</code> to the <code>h5i audit review</code> score: enough to lift a commit into the queue, not
-      enough to fail it alone.
-    </p>
-
-    <p>
-      <strong>Failure mode:</strong> the rule is <em>dormant</em> when the prompt names no file at all
-      ("clean up the parser package") there is no declared scope to exceed, so it stays silent.
-      That is deliberate (no scope claim, no violation), but it means scope-creep detection rewards
-      precise prompts and goes quiet on vague ones. You can tighten enforcement with
-      <code>h5i audit policy</code>: per-path rules support <code>require_audit</code> (auth changes must pass
-      <code>--audit</code>) and <code>max_blind_edit_ratio</code>, both checked at commit time.
-    </p>
-
-    <h2>Vector 4: Prompt injection</h2>
-
-    <p>
-      An agent that reads a poisoned README, scrapes a malicious doc, or follows a hostile link can
-      have an injected instruction sitting in its reasoning trace right now. The output looks normal.
-      The trace doesn't.
-    </p>
-
-    <p>
-      <code>h5i audit scan</code> runs eight deterministic regex rules over the OBSERVE/THINK/ACT trace:
-      <code>override_instructions</code>, <code>role_hijack</code>, <code>exfiltration_attempt</code>,
-      <code>bypass_safety</code> (High), <code>indirect_injection_marker</code>, <code>hidden_command</code>,
-      <code>prompt_delimiter_escape</code> (Medium), and <code>credential_request</code> (Low). It reports a
-      <code>0.0–1.0</code> risk score (the clamped sum of per-hit severity weights) with line-level hits.
-      We go deep on the detector design in
-      <a href="/blog/prompt-injection-in-agent-traces/">Detecting Prompt Injection in Agent Reasoning Traces</a>.
-    </p>
-
-    <p>
-      <strong>Failure mode:</strong> regexes match phrasings, and a paraphrased injection ("disregard the
-      earlier guidance" instead of "ignore previous instructions") slips past until the lexicon
-      learns it. Treat a non-zero score as a reason to read the trace, not a verdict. Like
-      uncertainty, the injection scan is a standalone command; its hits also roll into the
-      <code>h5i audit compliance</code> report, but they are <em>not</em> part of the <code>audit review</code> queue
-      score.
-    </p>
-
-    <h2>The triage score: <code>h5i audit review</code></h2>
-
-    <p>
-      <code>h5i audit review</code> is the funnel. For each commit it sums a set of weighted, deterministic
-      triggers and ranks the result. The triggers are structural and provenance signals: blind edits
-      (<code>BLIND_EDIT</code>), scope expansion, test regression, large diff, wide impact, AI commits with
-      no recorded prompt (<code>AI_NO_PROMPT</code>), and the integrity rules from <code>rules.rs</code>
-      (<code>CREDENTIAL_LEAK</code>, <code>CODE_EXECUTION</code>, <code>SENSITIVE_FILE_MODIFIED</code>, …). Each adds a
-      weight; the sum is clamped to <code>[0.0, 1.0]</code>:
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit review --limit 10 --min-score 0.5</span>
-
-<span class="t-bold">Suggested Review Points — 3 commits flagged (scanned 50, min_score=0.50)</span>
-<span class="t-out">──────────────────────────────────────────────────────────────────</span>
-  <span class="t-red">#1</span>  <span class="t-out">a3f8c12  score 0.80  ████████░░</span>
-       <span class="t-out">Alice · 2026-05-06 14:02 UTC</span>
-       <span class="t-out">refactor billing token refresh</span>
-       <span class="t-red">⚠ BLIND_EDIT (2 files) · SCOPE_EXPANSION · WIDE_IMPACT</span>
-
-  <span class="t-warn">#2</span>  <span class="t-out">9e21b04  score 0.60  ██████░░░░</span>
-       <span class="t-out">Bob · 2026-05-05 11:45 UTC</span>
-       <span class="t-out">add retry to http client</span>
-       <span class="t-warn">▲ TEST_REGRESSION (coverage −6%) · SCOPE_EXPANSION</span>
-
-  <span class="t-out">#3  c1a2b3d  score 0.50  █████░░░░░</span>
-       <span class="t-out">AI_NO_PROMPT · LARGE_DIFF</span></pre></div>
-    </div>
-
-    <p>
-      Reviewer workflow: open the flagged commits first, then let the rest pass through your normal
-      allocation. The bottom of the list isn't unreviewed; it just gets one fewer pair of eyes than
-      the commits the score lifted up. To complete the picture on a flagged commit, run the two
-      companion scans, <code>h5i recall notes uncertainty</code> and <code>h5i audit scan</code>, which sit
-      outside this score by design.
-    </p>
-
-    <div class="callout">
-      <strong>On the threshold and false positives.</strong> The default <code>--min-score</code> is
-      <code>0.5</code> (<code>REVIEW_THRESHOLD</code> in <code>review.rs</code>). We don't publish a true-positive
-      rate, and you shouldn't trust one that isn't measured on <em>your</em> repo: precision depends
-      entirely on your team's prompt discipline and how the rule weights line up with your codebase.
-      Calibrate empirically: start at <code>0.5</code>, look at a week of flags, then lower it to widen
-      the net (more false positives, higher recall) or raise it to flag only the loudest commits. The
-      score is a sort key, not a gate.
-    </div>
-
-    <h2>The aggregate view: <code>h5i audit compliance</code></h2>
-
-    <p>
-      Triage answers "which commit do I read next." Governance asks a different question: "over this
-      quarter, how much of our code was AI-written, how often did agents edit blind, and did anything
-      injection-shaped slip in?" That is where the four vectors aggregate.
-      <code>h5i audit compliance</code> walks a date range and, per commit, records the AI/human split,
-      policy violations, blind-edit count, uncertainty count, and injection hits/risk, then rolls them
-      into a report with an AI percentage and a policy pass rate:
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit compliance --since 2026-04-01 --until 2026-06-30 \
-      --format html --output q2-audit.html</span>
-<span class="t-out">  scanned 612 commits · 388 AI · 224 human</span>
-<span class="t-out">  policy pass rate: 96.4%  ·  injection hits: 0</span>
-<span class="t-out">  wrote q2-audit.html</span></pre></div>
-    </div>
-
-    <p>
-      The HTML form is the artifact you hand an auditor or attach to a release; <code>--format json</code>
-      feeds a dashboard, and the default text form is for the terminal. Because every number derives
-      from evidence captured in <code>refs/h5i/notes</code> at commit time and not recomputed by a model at
-      audit time, the same range produces the same report on any clone that has pulled the notes
-      (<code>h5i share pull</code>).
-    </p>
-
-    <h2>Per-commit integrity, captured at write time</h2>
-
-    <p>
-      Under the triage and the report sits a per-commit primitive. Every <code>h5i capture commit</code>
-      runs the <code>rules.rs</code> checks against its own diff and stores an <code>IntegrityReport</code> in the
-      commit's note with one of three levels: <code>Valid</code>, <code>Warning</code>, or <code>Violation</code>.
-      A <code>Violation</code> (a credential-shaped string, an <code>eval</code>/<code>os.system</code> sink, a CI/CD
-      file change) contributes weight <code>0.40</code> to that commit's review score; a <code>Warning</code>
-      contributes <code>0.20</code>. The audit doesn't re-derive these later; it reads the verdict the
-      commit already carries, which is what keeps the audit path reproducible.
-    </p>
-
-    <h2>Wiring it into your CI</h2>
-
-    <p>
-      <code>h5i audit review</code> emits JSON with <code>--json</code>, so the simplest integration is a GitHub
-      Actions step that pulls the notes, ranks the branch, and posts a review-ready PR comment with
-      <code>h5i share pr body --style review</code> (which renders the provenance brief as markdown):
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">.github/workflows/ai-audit.yml</span></div>
-      <div class="terminal-body"><pre><span class="t-cmt"># Runs on every PR; comments the provenance + triage brief.</span>
-<span class="t-cmd">- name: h5i audit
-  run: |
-    h5i share pull
-    h5i audit review --limit 5 --json &gt; review.json   # ranked queue, machine-readable
-    h5i share pr body --style review &gt; review.md      # reviewer-first PR brief
-- uses: actions/github-script@v7
-  with:
-    script: |
-      const fs = require('fs');
-      const body = fs.readFileSync('review.md', 'utf8');
-      github.rest.issues.createComment({
-        ...context.repo,
-        issue_number: context.issue.number,
-        body,
-      });</span></pre></div>
-    </div>
-
-    <p>
-      A stricter integration makes <code>h5i audit policy check</code> a required status check. Define a
-      <code>.h5i/policy.toml</code> (scaffold it with <code>h5i audit policy init</code>) whose per-path rules set
-      <code>require_audit = true</code> on protected paths (auth, billing) and a <code>max_blind_edit_ratio</code>
-      ceiling, plus a global <code>require_ai_provenance</code>. <code>policy check</code> exits non-zero on a
-      violation, and CI blocks the merge. Note what policy <em>doesn't</em> gate: it enforces provenance
-      and blind-edit limits, not the uncertainty or injection scans. Those inform a reviewer; they
-      don't fail a build, because a hedge or a fuzzy regex hit is too noisy to block merges on.
-    </p>
-
-    <h2>How this compares to SAST, secret scanners, and manual review</h2>
-
-    <p>
-      Provenance auditing is not a replacement for the tools you already run. It sees a different
-      layer. The honest comparison:
-    </p>
-
-    <div class="tbl-wrap">
-      <table class="data">
-        <thead>
-          <tr><th>Approach</th><th>Good</th><th>Gap for AI code</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><strong>SAST</strong> (CodeQL, Semgrep)</td>
-            <td>Sound dataflow on the committed code; finds real vulnerability classes regardless of who wrote them.</td>
-            <td>Reads the diff, not the process. A blind edit or a scope-creep change that is individually valid code passes clean.</td>
-          </tr>
-          <tr>
-            <td><strong>Secret scanners</strong> (gitleaks, trufflehog)</td>
-            <td>High-precision on credential patterns; the right tool for leaked keys.</td>
-            <td>One narrow vector. Silent on uncertainty, blind edits, and injected reasoning. (h5i's <code>CREDENTIAL_LEAK</code> rule overlaps here but is coarser, so keep the dedicated scanner.)</td>
-          </tr>
-          <tr>
-            <td><strong>Manual review</strong></td>
-            <td>The only thing that actually judges correctness and intent.</td>
-            <td>Doesn't scale to 30 AI PRs a week, and reviewers can't see what the model read or hedged on, and that context isn't in the diff.</td>
-          </tr>
-          <tr>
-            <td><strong>h5i provenance audit</strong></td>
-            <td>Scores the <em>process</em> (read-before-edit, hedges, scope, injected trace) and ranks where human attention should go first.</td>
-            <td>Heuristics, not proofs; false positives; only scores commits that carry captured session evidence.</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p>
-      The layers are orthogonal: SAST and secret scanners read the code, h5i reads the provenance,
-      and the human reads the diff the queue points them at. Run all three. The audit's job is to
-      tell the human <em>where</em> to spend the scarcest of the three.
-    </p>
-
-    <h2>What this isn't</h2>
-
-    <p>
-      A few things the framework does not do, stated plainly:
-    </p>
+    <h2>What this does not give you</h2>
 
     <ul>
-      <li>It does not approve PRs. It ranks them. Humans still review.</li>
-      <li>It does not catch bugs the model never noticed. Uncertainty signals are a recall floor, not a ceiling.</li>
-      <li>It does not score human-written commits. It scores AI-tagged commits with associated session logs.</li>
-      <li>It does not call another model. Every signal is a regex, a tool-call sequence comparison, or a diff-vs-prompt analysis. The audit path is fully deterministic, by design, so the audit itself can be audited.</li>
+      <li><strong>It is not a security verdict.</strong> Counting boundary events tells you where to look. It does not tell you whether what you find is malicious, careless, or entirely normal.</li>
+      <li><strong>A quiet box is not a safe change.</strong> The most dangerous diff in a release can come out of a box that did nothing unusual at all.</li>
+      <li><strong>It does not scale to inattention.</strong> Triage reallocates review; it does not remove it. A team that reads nothing gets no benefit from a better order.</li>
     </ul>
 
-    <h2>Try it on your repo</h2>
-
-    <p>
-      Setup is a couple of minutes. The audit can only score commits that carry session evidence, so
-      the first step is to start capturing it. Triage and report then read from what's captured:
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/your-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i init</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup --write</span> <span class="t-cmt"># installs the capture hooks (idempotent)</span>
-
-<span class="t-cmt"># ...let your agents work for a few days; the hooks capture</span>
-<span class="t-cmt"># prompts, traces, and test metrics into refs/h5i/notes...</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i audit review --limit 50</span>          <span class="t-cmt"># ranked triage queue</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes uncertainty</span>          <span class="t-cmt"># heatmap on a flagged commit</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i audit scan</span>                        <span class="t-cmt"># injection scan over the trace</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i audit compliance --since 2026-06-01 \
-      --until 2026-06-30 --format html --output audit.html</span></pre></div>
-    </div>
-
-    <p>
-      The <code>h5i hook setup --write</code> step installs the SessionStart, PostToolUse, Stop, and
-      UserPromptSubmit hooks that passively capture the prompts, traces, and test evidence every audit
-      vector scores &mdash; once wired, they run on their own with nothing more to type. (For an
-      already-instrumented repo, link a specific session to a commit with
-      <code>h5i recall notes analyze</code>.)
-    </p>
-
-    <p>
-      The first time you do this, you'll likely find one or two flagged commits you remember as
-      "weird, something felt off in review but I couldn't pin it." Equally, you'll find flags that
-      are plainly benign. Both are the point: the queue surfaces candidates for attention, and you
-      stay the judge.
-    </p>
-
-    <h2>The shift: from reading diffs to scoring provenance</h2>
-
-    <p>
-      The volume problem doesn't go away. Agents will keep producing more code than anyone can read.
-      What changes is what you read it <em>with</em>. When every commit carries its own provenance,
-      the prompt, what the model consulted, where it hedged, whether it stayed in scope, whether its
-      trace was clean, auditing stops being a per-diff act of attention and becomes aggregation over
-      recorded evidence. <code>h5i audit review</code> ranks it, <code>h5i audit compliance</code> sums it across a
-      quarter, the companion scans deepen any single commit, and <code>h5i audit policy</code> draws the few
-      hard lines worth blocking a merge for.
-    </p>
-
-    <p>
-      None of these signals proves a bug, and several will be wrong on any given commit. That is the
-      honest framing: they are heuristics over provenance, tuned for recall, that point scarce human
-      attention at the commits most likely to repay it. The deciding still belongs to the reviewer;
-      the audit just stops them from spending the first twenty minutes deciding <em>where</em> to look.
-    </p>
 
     <h2>FAQ</h2>
-
     <div class="faq">
-      <h3>Does h5i audit replace human code review?</h3>
-      <p>
-        No. It ranks commits, it doesn't approve them. <code>h5i audit review</code> builds a triage queue
-        so reviewers spend their scarcest attention on the riskiest AI commits first; a human still
-        reads the diff. Every signal is a heuristic (a regex, a tool-call sequence comparison, or a
-        diff-vs-prompt overlap) so it surfaces suspicion, not proof.
-      </p>
+      <h3>Why does h5i's console not show a risk score?</h3>
+      <p>Because a score compresses incomparable signals using weights nobody can audit, which makes a high score something to explain away and a low score an all-clear the number never had the information to give. h5i shipped a scoring module once and deleted it. The console counts receipts instead, and a count is checkable.</p>
 
-      <h3>How is this different from SAST or secret scanning?</h3>
-      <p>
-        SAST (CodeQL, Semgrep) and secret scanners (gitleaks, trufflehog) read the committed code.
-        h5i audits the <em>provenance</em>: what the model read before editing, where it hedged,
-        whether it stayed in scope, whether its trace contained an injection. A blind edit or a
-        high-uncertainty refactor is invisible to a code scanner because the diff itself looks clean.
-        The two are complementary; run both.
-      </p>
+      <h3>What do the colours in the h5i console mean?</h3>
+      <p>Red makes exactly one claim: the egress allowlist refused a destination, observed host-side by the proxy. Amber means something to look at, such as a non-zero exit, a wall-clock kill, or browser errors, and says nothing about containment. Grey means the evidence is weak, either because the tier was <code>workspace</code> or because every receipt came from the in-box shim.</p>
 
-      <h3>What's the default risk threshold?</h3>
-      <p>
-        The default <code>--min-score</code> for <code>h5i audit review</code> is <code>0.5</code>
-        (<code>REVIEW_THRESHOLD</code>). The score is the clamped sum of weighted triggers: blind edits,
-        scope expansion, test regression, credential leak, large diff, AI-with-no-prompt, and more.
-        Lower it to widen the net (more false positives); raise it to flag only the loudest commits.
-      </p>
+      <h3>Can the console run commands on a box?</h3>
+      <p>No. Every route is a GET. Shell, run, export, propose, apply and remove all stay in the CLI, where a human types them, so there is no mutating surface to guard and no way to turn the console into a remote control for someone's boxes.</p>
 
-      <h3>Does the audit work on commits I already merged?</h3>
-      <p>
-        Only for commits that already carry h5i session evidence. The capture hooks
-        (<code>h5i hook setup --write</code>) record prompts, traces, and test metrics as you work, and the
-        audit scores that recorded evidence. A plain Git commit with no session note has nothing for
-        the blind-edit, uncertainty, or injection vectors to read.
-      </p>
+      <h3>What are the five lanes?</h3>
+      <p>Filesystem, network, process, resources and page. Each receipt lands in one, and each row is separately labelled host-observed or box-claimed so the grade of the evidence stays visible next to the event.</p>
+
     </div>
 
     <div class="next-up">
       <span class="label">Read next</span>
-      <a href="/blog/prompt-injection-in-agent-traces/">
-        <h3>Detecting Prompt Injection in Agent Reasoning Traces</h3>
-        <p>Vector 4, in depth: the eight regex rules and why scanning the trace beats scanning the output.</p>
+      <a href="/blog/uncertainty-heatmap/">
+        <h3>What the flight recorder is actually showing you</h3>
+        <p>The five lanes in detail, and how to read a grey box without over- or under-reacting.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Make AI code review asymmetric in the right direction</h3>
-      <p>Try h5i on your next AI-assisted branch: create a <a href="../../features/">sandboxed workspace</a>, capture the run, and post a review-ready PR brief.</p>
+      <h3>Open the console</h3>
+      <p><code>h5i ui</code> binds loopback only and mints a session token held in memory. Every route is a GET.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
-      <a href="/" class="btn btn-ghost">Back to docs</a>
+      <a href="/manual/" class="btn btn-ghost">Read the manual</a>
     </div>
   </article>
 </main>
@@ -625,7 +319,7 @@
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
       <a href="/manual/">Manual</a>
     </nav>
-    <div class="legal">Apache 2.0 · Built with Rust</div>
+    <div class="legal">Apache 2.0 &#183; Built with Rust</div>
   </div>
 </footer>
 

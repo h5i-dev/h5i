@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cut Agent Token Usage 95% with h5i Capture: h5i</title>
-  <meta name="description" content="A content-addressed object store keeps raw tool output out of agent context, cutting tokens about 95% while staying recoverable.">
-  <meta name="keywords" content="reduce agent token usage, claude code context, tool output filtering, token reduction, content-addressed store, structured tool output, h5i capture run, rtk alternative, agent context window, git lfs, git-lfs backend, git lfs batch api">
+  <title>Making Boxes Start in Seconds, Not Minutes | h5i</title>
+  <meta name="description" content="Cold dependency install is the difference between a 20-second box and a four-minute one. h5i's cache is keyed by lockfile digest, mounted read-only, and written only by a box with no agent in it.">
+  <meta name="keywords" content="dependency cache, warm cache sandbox, fast agent sandbox, npm cache agent, cargo cache sandbox, h5i box cache, lockfile digest">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -17,32 +17,87 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="Cut Agent Token Usage 95% with h5i Capture">
-  <meta property="og:description" content="A content-addressed object store + structured summaries keep raw tool output out of context, ~95% fewer tokens, fully recoverable.">
+  <meta property="og:title" content="Making Boxes Start in Seconds, Not Minutes">
+  <meta property="og:description" content="Three rules that make a warm dependency cache safe rather than merely fast, and the failure each one prevents.">
   <meta property="og:url" content="https://h5i.dev/blog/token-reduction-object-store/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta property="article:published_time" content="2026-06-05">
+  <meta property="article:published_time" content="2026-05-26">
+  <meta property="article:modified_time" content="2026-08-07">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Cut Agent Token Usage 95% with h5i Capture">
-  <meta name="twitter:description" content="A content-addressed object store + structured summaries keep raw tool output out of context, ~95% fewer tokens, fully recoverable.">
+  <meta name="twitter:title" content="Making Boxes Start in Seconds, Not Minutes">
+  <meta name="twitter:description" content="Three rules that make a warm dependency cache safe rather than merely fast, and the failure each one prevents.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "TechArticle",
-    "headline": "Cut Agent Token Usage 95% with h5i Capture",
-    "description": "A content-addressed object store keeps raw tool output out of agent context, cutting tokens about 95% while staying recoverable.",
-    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
-    "datePublished": "2026-06-05",
-    "dateModified": "2026-06-26",
-    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/token-reduction-object-store/"},
-    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
-    "keywords": "agent token usage, tool output, context window, content-addressed store, structured output, h5i capture run"
-  }
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Making Boxes Start in Seconds, Not Minutes",
+  "description": "Cold dependency install is the difference between a 20-second box and a four-minute one. h5i's cache is keyed by lockfile digest, mounted read-only, and written only by a box with no agent in it.",
+  "author": {
+    "@type": "Person",
+    "name": "Koukyosyumei",
+    "url": "https://github.com/Koukyosyumei"
+  },
+  "datePublished": "2026-05-26",
+  "dateModified": "2026-08-07",
+  "publisher": {
+    "@type": "Organization",
+    "name": "h5i",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://h5i.dev/_static/logo.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://h5i.dev/blog/token-reduction-object-store/"
+  },
+  "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+  "keywords": "dependency cache, warm cache sandbox, fast agent sandbox, npm cache agent, cargo cache sandbox, h5i box cache, lockfile digest"
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "How does h5i speed up box creation?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "A warm dependency cache, one per project and ecosystem, keyed by a digest of that ecosystem's lockfiles and mounted read-only into agent boxes. Cold dependency install is the difference between a twenty-second box and a four-minute one."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What happens when the lockfile changes?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The cache key no longer matches, so the cache is listed as stale and never handed to a box. Packages resolved for a different dependency set are a silent wrong answer, and a slower box is a better outcome than a mystery."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why is the cache read-only?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Because a writable shared cache is a mutable surface two boxes can both reach, so one box could plant something the next picks up. Read-only costs nothing in correctness, because every package manager falls back to fetching what it cannot find."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What writes the cache if agent boxes cannot?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "h5i box cache refresh, which runs the install step alone with egress narrowed to the registry hosts and no agent inside. It needs a project-declared profile with exactly that egress, and prints one ready to paste when there is not one."
+      }
+    }
+  ]
+}
   </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -52,20 +107,7 @@
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Cut Agent Token Usage 95% with h5i Capture", "item": "https://h5i.dev/blog/token-reduction-object-store/"}]}
-  </script>
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "FAQPage",
-    "mainEntity": [
-      {"@type": "Question", "name": "How much does keeping tool output out of context cut tokens?", "acceptedAnswer": {"@type": "Answer", "text": "About 95% across a mixed matrix of test runs, builds, JSON payloads, and noisy logs. The cut is set by how much noise surrounds the signal: tests and logs are mostly noise and reduce 90–100%, while a linter with many real diagnostics has little to drop and reduces far less."}},
-      {"@type": "Question", "name": "Is the raw output lost when h5i reduces it?", "acceptedAnswer": {"@type": "Answer", "text": "No. The full bytes are content-addressed by SHA-256 and written to a local store at .git/.h5i/objects/ab/cd/<sha256>. The agent reads only a small structured summary; the raw is one command away with h5i recall object <id>, returned byte-for-byte."}},
-      {"@type": "Question", "name": "How is this different from truncating or tailing a log?", "acceptedAnswer": {"@type": "Answer", "text": "Truncation discards information. The object store keeps every byte and just moves the bulk out of the context window, leaving a durable, queryable address behind. An evicted blob degrades to a clear absent message, never a silent loss, and captures stay searchable across runs."}},
-      {"@type": "Question", "name": "Do the raw blobs get pushed to my Git remote?", "acceptedAnswer": {"@type": "Answer", "text": "Not by default. h5i share push carries only the tiny manifests (pointers plus summaries). When you want to share raw bytes, h5i objects push uploads them via the native Git LFS Batch API on HTTP(S) remotes, falling back to a content-addressed git ref for SSH or file:// remotes."}},
-      {"@type": "Question", "name": "Does token-reducing capture work with both Claude Code and Codex?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The optional wrap-bash hook (h5i hook setup --write --wrap-bash) rewrites the agent's Bash commands into h5i capture run for both Claude Code and Codex (--target codex), so the agent gets the reduced summary automatically while the raw bytes are stored for recall."}}
-    ]
-  }
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Making Boxes Start in Seconds, Not Minutes", "item": "https://h5i.dev/blog/token-reduction-object-store/"}]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -79,389 +121,157 @@
     <li><a href="/">Home</a></li>
     <li><a href="/guides/">Guides</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &#8594;</a></li>
   </ul>
 </nav>
 
 <main class="article-wrap">
   <article class="post">
     <header>
-      <div class="post-eyebrow">Benchmark · 2026-06-05</div>
-      <h1>Cutting Agent Token Usage 95% by Keeping Tool Output Out of Context</h1>
-      <p class="post-deck">
-        A 4&nbsp;MB <code>pytest</code> log is mostly noise: the agent needs the two failures and the
-        summary line, not the 3,000 <code>PASSED</code> rows. h5i keeps the full raw output
-        out-of-band, hands the agent a small structured summary, and keeps the original one command
-        away. Here's the design, and the reproducible experiment that measures it.
-      </p>
+      <div class="post-eyebrow">Feature &#183; 2026-05-26 &#183; rewritten 2026-08-07</div>
+      <h1>Making boxes start in seconds, not minutes</h1>
+      <p class="post-deck">A disposable environment is only disposable if creating one is cheap, and cold dependency install is what makes it expensive. The cache that fixes it has three rules, and each one exists because the obvious version is subtly wrong.</p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
-        <span><strong>Reading time</strong> 8 min</span>
-        <span><strong>Tags</strong> Token reduction · Context window · Tooling</span>
+        <span><strong>Reading time</strong> 7 min</span>
+        <span><strong>Tags</strong> Performance &#183; Caching &#183; Design</span>
       </div>
     </header>
 
-
-<div class="callout kt-takeaways">
-  <strong>Key takeaways</strong>
-  <ul>
-        <li>The win is the split: a tiny typed summary in the agent's context plus the full raw bytes as a durable, content-addressed record.</li>
-        <li>The ~95% reduction is real but bounded by noise ratio: signal-dense diagnostic output reduces far less.</li>
-        <li>Content-addressing gives dedupe across runs, conflict-free set-union merge, and fetch-time verification for free.</li>
-  </ul>
+<div class="callout">
+  <strong>Three rules.</strong> One cache per project and ecosystem, keyed by a digest of that
+  ecosystem's lockfiles; a cache whose key no longer matches is listed as stale and never handed to a
+  box. Mounted <strong>read-only</strong> into an agent box, which costs nothing because every
+  package manager falls back to fetching what it cannot find. Written <strong>only</strong> by
+  <code>h5i box cache refresh</code>, which runs the install step alone, with egress narrowed to the
+  registry hosts and no agent inside.
 </div>
+
+
     <p>
-      The <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>
-      keeps raw logs out of context, recoverable on demand, and this post explains exactly how.
-      Coding agents drown in their own tool output. A test run, a build, a linter, a
-      <code>kubectl get -o json</code>, each can dump thousands of lines into the context window,
-      and the agent pays for every one on every subsequent turn (the prompt cache makes re-sending
-      cheaper, not the original ingestion). The signal an agent actually needs, <em>which test
-      failed, on what line, with what assertion</em>, is usually a few lines buried in a flood of
-      progress bars and passing rows.
+      The pitch for disposable environments assumes creating one is cheap. If a fresh box costs four
+      minutes of <code>npm ci</code>, people stop making fresh boxes, and the property that made the
+      design safe quietly stops being used.
     </p>
 
     <p>
-      The fix is structural, and it borrows from a solved problem: large files in Git. Tools like
-      <strong>git-annex</strong> and <strong>git-lfs</strong> split a big file into a small tracked
-      <em>pointer</em> and an out-of-band <em>blob</em>. h5i does the same for tool output.
+      So warm caches are in scope. The interesting part is not that they exist. It is that a shared
+      mutable cache between boxes would undo most of the isolation, and each of the three rules below
+      is what stops it.
     </p>
 
-    <h2>The design: a pointer and a blob</h2>
+    <h2>Rule one: keyed by the lockfile, and stale means unused</h2>
 
-    <p>
-      <code>h5i capture run -- &lt;command&gt;</code> runs the command and splits its output in two:
-    </p>
-
-    <div class="tbl-wrap">
-      <table class="data">
-        <thead><tr><th>Artifact</th><th>Where it lives</th><th>Size</th><th>Travels with <code>h5i share push</code>?</th></tr></thead>
-        <tbody>
-          <tr><td>Raw blob (full bytes)</td><td><code>.git/.h5i/objects/ab/cd/&lt;sha256&gt;</code> (local)</td><td>huge</td><td>No by default, only via <code>h5i objects push</code> (Git LFS / git ref)</td></tr>
-          <tr><td>Manifest (pointer + structured summary)</td><td><code>refs/h5i/objects</code> (git ref, JSONL)</td><td>tiny</td><td>Yes</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="callout">
-      <p><strong>Who runs this?</strong> In practice the agent does, not a human. With the optional
-      <code>wrap-bash</code> hook installed (<code>h5i hook setup --write --wrap-bash</code>), a
-      <code>PreToolUse</code> handler transparently rewrites every Bash command the agent runs into
-      <code>h5i capture run …</code>, so the agent gets the token-reduced summary automatically while
-      the full raw bytes are stored for <code>h5i recall</code>. This wiring works for
-      <strong>both</strong> Claude Code and Codex (<code>--target codex</code> writes the same
-      <code>PreToolUse</code> / <code>Bash</code> hook into <code>.codex/config.toml</code>). You can of
-      course also run <code>h5i capture run</code> by hand.</p>
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box cache ls</span>          <span class="t-cmt"># caches for this project, and whether they are stale</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box cache mounts</span>      <span class="t-cmt"># exactly what a box would get</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box cache refresh npm</span>  <span class="t-cmt"># populate one</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box cache rm npm</span></pre></div>
     </div>
 
     <p>
-      The agent reads only the manifest's summary. The full bytes are content-addressed by SHA-256
-      and one command away (<code>h5i recall object &lt;id&gt;</code>), so the output is
-      <strong>reduced and losslessly recoverable at the same time</strong>. Output below
-      <strong>2&nbsp;KB</strong> (the default <code>DEFAULT_CAPTURE_MIN_BYTES = 2048</code>) on a
-      <em>successful</em> command passes straight through unstored, while a failing command is always
-      captured regardless of size, so wrapping anything is safe.
+      One cache per project and ecosystem, keyed by a digest of that ecosystem's lockfiles. When the
+      lockfiles change, the key no longer matches, and the cache is listed as stale and <em>never
+      handed to a box</em>.
     </p>
-
-    <h3>What content-addressing buys you</h3>
 
     <p>
-      The blob's name <em>is</em> its SHA-256. The local store is sharded by the first four hex
-      digits, as in <code>.git/.h5i/objects/&lt;ab&gt;/&lt;cd&gt;/&lt;full-hex&gt;</code>, so a directory
-      never fills with millions of siblings. Three properties fall out of this for free:
+      Not "refreshed automatically", not "used with a warning". Unused. Packages resolved for a
+      different dependency set are a silent, hard-to-explain wrong answer, the kind that produces a
+      build that works on one machine and fails on another for reasons nobody can reconstruct. A
+      slower box is a much better outcome than a mystery.
     </p>
+
+    <h2>Rule two: read-only, which costs nothing</h2>
+
+    <p>
+      The cache is mounted read-only into an agent box. That sounds like it should break the package
+      manager, and it does not, for a reason worth stating because it makes the whole design cheap:
+      <strong>every package manager falls back to fetching what it cannot find.</strong>
+    </p>
+
+    <p>
+      So a read-only cache is a pure accelerator. On a hit it saves the download; on a miss the tool
+      does what it would have done anyway. There is no correctness cost to pay for the isolation.
+    </p>
+
+    <p>
+      What it buys is the important half. A writable shared cache is a mutable surface two boxes can
+      both reach, which means one box can plant something the next one picks up. That is a
+      cross-contamination channel between environments whose entire point is not having one, and it
+      would be reintroduced purely to save a second write.
+    </p>
+
+    <p>
+      The general rule underneath: <strong>no mutable surface is ever shared between an agent box and
+      anything else.</strong>
+    </p>
+
+    <h2>Rule three: written only by a box with no agent in it</h2>
+
+    <p>
+      If agent boxes cannot write the cache, something has to. That something is
+      <code>h5i box cache refresh</code>, and it is deliberately not a normal box.
+    </p>
+
+    <p>
+      It runs the install step <em>alone</em>, with egress narrowed to the registry hosts and nothing
+      else, and with no agent inside. The thing that populates a shared artefact is the most
+      constrained process in the system, which is the correct way round and the opposite of how these
+      things usually evolve.
+    </p>
+
+    <p>
+      It also refuses rather than guesses. <code>refresh</code> needs a project-declared profile whose
+      egress is the registry hosts and nothing more, and when there is not one it <strong>prints that
+      profile ready to paste</strong> instead of creating a box whose fetch could not have worked.
+    </p>
+
+    <p>
+      That last behaviour is a small thing that changes how the feature feels. The failure mode of a
+      strict tool is usually an error you have to go and research. Here the error is the fix.
+    </p>
+
+    <h2>What this does not solve</h2>
 
     <ul>
-      <li><strong>Dedupe across runs.</strong> Writing a blob whose hash already exists is a no-op
-      (<code>if path.is_file() { return Ok(()) }</code>). Re-run the same failing test ten times and
-      the identical output is stored <em>once</em>; the manifest records ten captures pointing at one
-      blob.</li>
-      <li><strong>Merge is set union.</strong> Two clones that capture different output can be merged
-      by taking the union of blobs; there are no conflicts when names are derived from content.</li>
-      <li><strong>Verification is built in.</strong> A fetched blob is checked against the hash you
-      asked for; a tampered or truncated transfer is rejected, never cached. The summary you read and
-      the bytes you rehydrate provably came from the same run.</li>
+      <li><strong>The first box is still cold.</strong> Somebody pays for the initial <code>refresh</code>, and after a lockfile change somebody pays again.</li>
+      <li><strong>It is per project.</strong> Two projects on the same ecosystem do not share, which is the same isolation argument costing you disk.</li>
+      <li><strong>A poisoned package is cached like any other.</strong> The cache accelerates fetching; it makes no claim about what was fetched. That is the egress allowlist's job on the way in and the receipt's job afterwards.</li>
+      <li><strong>Container and microvm tiers still pull an image.</strong> Images are pre-pulled and runs never pull, so that cost lands at setup rather than at box creation.</li>
     </ul>
 
-    <div class="callout">
-      <p><strong>Why not just truncate?</strong> Truncation throws information away. The object
-      store keeps every byte; it just moves the bulk out of the context window and leaves a durable
-      address behind. An evicted blob degrades to a clear "absent" message, never a silent loss.</p>
-    </div>
 
-    <h2>Structured output, not a log excerpt</h2>
-
-    <p>
-      The summary isn't a trimmed log, it's a normalized, machine-readable result:
-      <a href="../structured-tool-output-schema/">one schema across test runners, compilers, linters,
-      and type checkers</a>, so an agent learns <em>one</em> shape instead of N. The default render is
-      compact (one line per finding):
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
-      <div class="terminal-body"><pre>$ h5i capture run -- pytest -q
-pytest test failed · 1 failed, 120 passed (exit 1)
-  F tests/test_auth.py::test_refresh  assert 0 == 100</pre></div>
-    </div>
-
-    <p>
-      The agent can branch on <code>status</code>, jump to the <code>location</code>, and dedupe by
-      a stable <code>fingerprint</code>. A failing run is never reported as <code>passed</code>, the
-      status is derived from the exit code, never guessed from text, and a parser that can't find
-      its anchors <em>declines</em> to a generic result rather than inventing structure. The full
-      typed result is available with <code>--format structured</code> (YAML) or <code>--format
-      json</code>, and is stored in the manifest so captures are queryable:
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
-      <div class="terminal-body"><pre>$ h5i recall objects --status failed --tool pytest
-$ h5i recall object 0bb827e4 --summary     # the reduced summary
-$ h5i recall object 0bb827e4               # the full raw bytes, exactly</pre></div>
-    </div>
-
-    <h2>What's measured, and how to reproduce it</h2>
-
-    <p>
-      The reduction is a property the test suite enforces, not a marketing number.
-      <code>tests/filter_quality.rs</code> (run it yourself with <code>cargo test --test
-      filter_quality</code>) pushes realistic fixtures (a <code>pytest</code> failure, an all-pass
-      run, a <code>cargo test</code> panic, a noisy service log with one buried error, a large JSON
-      payload, a <code>gcc</code> error wall) through the same filter the CLI uses, then asserts
-      three things on each: the summary stays under a fixed fraction of the raw tokens (the
-      pytest-failure fixture must land under 35% of raw, an all-pass run under 5%), the signal
-      survives (the failing test, the panic, the buried error all appear in the summary), and the
-      summary <em>never</em> inflates the token count. Token counts use the same tiktoken-based
-      counter h5i records in every manifest, so the numbers match what an agent actually pays.
-    </p>
-
-    <p>
-      Tokenizing a representative capture run across common tools the same way gives the agent-facing
-      vs. raw comparison below:
-    </p>
-
-    <div class="tbl-wrap">
-      <table class="data">
-        <thead><tr><th>Fixture</th><th>Raw (tok)</th><th>Summary (tok)</th><th>Cut</th></tr></thead>
-        <tbody>
-          <tr><td>pytest (1 fail / 124)</td><td>1424</td><td>30</td><td>98%</td></tr>
-          <tr><td>cargo test (1 fail)</td><td>1397</td><td>39</td><td>97%</td></tr>
-          <tr><td>tsc (2 errors)</td><td>544</td><td>63</td><td>88%</td></tr>
-          <tr><td>go build failure</td><td>624</td><td>21</td><td>97%</td></tr>
-          <tr><td>noisy service log (1 buried error)</td><td>17223</td><td>79</td><td>100%</td></tr>
-          <tr><td>big JSON (402-item array)</td><td>5625</td><td>61</td><td>99%</td></tr>
-          <tr><td><strong>Total</strong></td><td><strong>27942</strong></td><td><strong>1176</strong></td><td><strong>95.8%</strong></td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p>
-      Across the matrix, <strong>~95% of tokens never enter the context window</strong>, and in
-      every case the failing test, the error, and its location survive into the summary, the status
-      is honest, and <code>recall object</code> returns the raw bytes exactly.
-    </p>
-
-    <h2>An honest limit: signal-dense output</h2>
-
-    <p>
-      Token reduction works by dropping noise, so its ceiling is set by how much noise there is.
-      Tests, builds, and logs are mostly noise around a little signal, which is why they reduce
-      90–100%. A linter or type-checker with many issues is the opposite: <em>every</em> line is a
-      real diagnostic, with nothing to drop. There the compact render still beats raw (by capping
-      the list and dropping summary chatter), but only modestly, and the full structured YAML is
-      actually <em>larger</em> than raw, because it adds a keyed field per finding. That's why the
-      compact format is the default, and why <code>--format summary</code> exists for the
-      absolute-smallest text when you only want the diagnostics. Structure has a cost; h5i spends it
-      where it buys machine-actionability, not on already-compact output.
-    </p>
-
-    <h2>How this compares to the alternatives</h2>
-
-    <p>
-      Keeping output out of context is not a new instinct; most teams already do <em>something</em>.
-      The difference is what survives. Lay the common approaches side by side and the axis that
-      matters isn't "how few tokens" but "what can you get back later":
-    </p>
-
-    <div class="tbl-wrap">
-      <table class="data">
-        <thead><tr><th>Approach</th><th>Tokens in context</th><th>Signal kept</th><th>Raw recoverable</th><th>Queryable later</th></tr></thead>
-        <tbody>
-          <tr><td>Raw logs piped to the agent</td><td>full (every turn)</td><td>yes, but buried</td><td>—</td><td>no</td></tr>
-          <tr><td><code>head</code>/<code>tail</code>/truncate</td><td>bounded</td><td>only if it sits at the ends</td><td>no (discarded)</td><td>no</td></tr>
-          <tr><td>Standalone filter (rtk, headroom)</td><td>reduced</td><td>yes (rule-matched)</td><td>no (filtered text <em>is</em> the output)</td><td>no</td></tr>
-          <tr><td><code>h5i capture run</code></td><td>reduced ~95%</td><td>yes (typed result)</td><td>yes (content-addressed)</td><td>yes (<code>recall objects</code>/<code>search</code>)</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p>
-      <strong>Good:</strong> the text-filter tools h5i builds on, rtk's declarative TOML filter
-      engine and headroom's log line-folding (both Apache-2.0), are well-tuned at exactly the
-      job of squeezing a noisy stream down to its diagnostics, and h5i reuses them rather than
-      reinventing that work. <strong>Gap:</strong> a standalone filter's reduced text is also its
-      only output: once the bulk is gone it's gone, and nothing indexes yesterday's run. Naive
-      truncation is worse: it bounds tokens but bets the signal lives at the head or tail, which a
-      buried error violates. h5i's contribution is the <em>second half</em>: the same reduction, but
-      the raw stays addressable and the captures stay searchable across runs and machines.
-    </p>
-
-    <h2>Sharing the raw bytes: Git LFS by default</h2>
-
-    <p>
-      The split has a nice consequence for teams: <code>h5i share push</code> carries only the tiny
-      <em>manifests</em> (pointers + summaries), the huge raw bytes <strong>never travel by
-      default</strong>. When you do want to share them, <code>h5i objects push</code> uploads them,
-      and the backend is chosen automatically:
-    </p>
-
-    <div class="tbl-wrap">
-      <table class="data">
-        <thead><tr><th><code>--backend</code></th><th>Stores raw blobs in</th><th>When</th></tr></thead>
-        <tbody>
-          <tr><td><code>lfs</code></td><td>the remote's <strong>Git LFS</strong> server (by sha256)</td><td>default for HTTP(S) remotes</td></tr>
-          <tr><td><code>git-ref</code></td><td><code>refs/h5i/objects-data</code> (a content-addressed git ref)</td><td>fallback for SSH / <code>file://</code> remotes</td></tr>
-          <tr><td><code>auto</code></td><td>LFS when the remote is HTTP(S), else git-ref</td><td>the default</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p>
-      The LFS backend is <strong>native</strong>, h5i speaks the LFS Batch API directly (no
-      <code>git lfs</code> CLI, no pointer files), reusing your git host's LFS storage and auth, and
-      keyed by the same sha256 as everything else. So huge tool output lives on the LFS server and
-      never bloats the git object database. With LFS, <code>h5i recall object &lt;id&gt;</code>
-      <strong>lazily fetches</strong> a blob from the server only when it's actually needed, and
-      every transfer is content-address-verified, so a tampered or mismatched blob is rejected, never
-      cached. Credentials are scoped to the LFS host, never leaked to presigned transfer URLs.
-    </p>
-
-    <h2>When recovery can fail (and how it fails)</h2>
-
-    <p>
-      A recoverable record is only as good as its failure behavior. The honest cases:
-    </p>
-
-    <ul>
-      <li><strong>The blob is gone locally and was never shared.</strong> If you garbage-collect the
-      local store, or move to a machine that only pulled the manifests, <code>recall object</code>
-      reports a clear "absent" result. It never fabricates output or silently returns a stale
-      summary as if it were the raw.</li>
-      <li><strong>The remote doesn't speak LFS.</strong> The <code>auto</code> backend only chooses
-      LFS for HTTP(S) remotes and falls back to a content-addressed git ref for SSH or
-      <code>file://</code>. If you force <code>--backend lfs</code> at a host without it, the Batch
-      endpoint returns 404/501 and h5i raises an explicit "remote does not speak LFS" error rather
-      than appearing to succeed.</li>
-      <li><strong>You're offline.</strong> The lazy LFS fetch is best-effort network, so rehydrating
-      a not-yet-local blob fails loudly when the server is unreachable, but the manifest summary,
-      status, and findings still read fine offline, because they live in the git ref you already
-      pulled.</li>
-    </ul>
-
-    <p>
-      The common thread: the working context (summary) and the durable record (raw) fail
-      <em>independently</em>. Losing access to the bytes never corrupts the summary, and a missing
-      blob is always an explicit absence, never a quiet substitution.
-    </p>
-
-    <h2>It shows up in the PR, too</h2>
-
-    <p>
-      When a branch has captures, <code>h5i share pr post</code> folds in a one-line scorecard, how many tokens of raw tool output the agent kept out of context on this branch, with a
-      per-tool breakdown, so reviewers can see the saving without running anything.
-    </p>
-
-    <h2>Try it</h2>
-
-    <p>
-      These are the commands the agent runs; with the <code>wrap-bash</code> hook installed
-      (<code>h5i hook setup --write --wrap-bash</code>) they're invoked automatically on every Bash
-      call, so the agent never has to remember to wrap anything, but each works typed by hand too:
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
-      <div class="terminal-body"><pre># wrap the noisy commands an agent runs
-h5i capture run -- pytest -q
-h5i capture run -- cargo build
-h5i capture run --file src/auth.rs -- pytest tests/test_auth.py
-
-# come back to anything later — by status, tool, branch, or file
-h5i recall objects --status failed
-h5i recall object &lt;id&gt;        # full raw output, byte-for-byte
-
-# share the raw blobs with the team (Git LFS by default on HTTP(S) remotes)
-h5i objects push               # h5i share push already carried the summaries
-h5i objects pull               # fetch shared blobs you don't have locally
-
-# wire it into a project so agents do it automatically
-h5i objects setup</pre></div>
-    </div>
-
-    <p>
-      In Claude Code the same behavior is a native MCP tool (<code>h5i_capture_run</code>) that
-      returns the structured result directly, no shell, no quoting. The declarative filter engine
-      (ported from <a href="https://github.com/rtk-ai/rtk">rtk</a>, Apache-2.0) and the
-      log line-folding (from <a href="https://github.com/chopratejas/headroom">headroom</a>,
-      Apache-2.0) cover the long tail of commands; h5i adds what they don't: the raw stays
-      content-addressed, recoverable, and queryable across captures and machines.
-    </p>
-
-    <h2>Frequently asked questions</h2>
-
+    <h2>FAQ</h2>
     <div class="faq">
-      <p><strong>How much does this actually cut?</strong> About 95% across a mixed matrix of test
-      runs, builds, JSON payloads, and noisy logs. The ceiling is set by how much noise surrounds the
-      signal: tests and logs reduce 90–100%; a linter where every line is a real diagnostic reduces
-      far less, which the honest-limit section above spells out.</p>
+      <h3>How does h5i speed up box creation?</h3>
+      <p>A warm dependency cache, one per project and ecosystem, keyed by a digest of that ecosystem's lockfiles and mounted read-only into agent boxes. Cold dependency install is the difference between a twenty-second box and a four-minute one.</p>
 
-      <p><strong>Is the raw output lost?</strong> No. The full bytes are content-addressed by SHA-256
-      under <code>.git/.h5i/objects/ab/cd/&lt;sha256&gt;</code> and returned byte-for-byte by
-      <code>h5i recall object &lt;id&gt;</code>. The agent just doesn't carry them in context.</p>
+      <h3>What happens when the lockfile changes?</h3>
+      <p>The cache key no longer matches, so the cache is listed as stale and never handed to a box. Not refreshed automatically and not used with a warning. Packages resolved for a different dependency set are a silent wrong answer, and a slower box is a better outcome than a mystery.</p>
 
-      <p><strong>How is it different from truncating a log?</strong> Truncation discards; the object
-      store moves the bulk out of context but keeps a durable, queryable address. An evicted blob
-      degrades to a clear "absent" message, never a silent loss.</p>
+      <h3>Why is the cache read-only?</h3>
+      <p>Because a writable shared cache is a mutable surface two boxes can both reach, so one box could plant something the next picks up. Read-only costs nothing in correctness, because every package manager falls back to fetching what it cannot find, so a hit saves the download and a miss behaves normally.</p>
 
-      <p><strong>Do raw blobs get pushed to my Git remote?</strong> Not by default:
-      <code>h5i share push</code> carries only manifests. <code>h5i objects push</code> uploads the
-      bytes via the native Git LFS Batch API on HTTP(S) remotes, falling back to a content-addressed
-      git ref for SSH or <code>file://</code>.</p>
+      <h3>What writes the cache if agent boxes cannot?</h3>
+      <p>h5i box cache refresh, which runs the install step alone with egress narrowed to the registry hosts and no agent inside. It needs a project-declared profile with exactly that egress, and when there is not one it prints the profile ready to paste rather than creating a box whose fetch could not have worked.</p>
 
-      <p><strong>Does it work with Codex as well as Claude Code?</strong> Yes. The
-      <code>wrap-bash</code> hook (<code>h5i hook setup --write --wrap-bash</code>, or
-      <code>--target codex</code>) rewrites the agent's Bash into <code>h5i capture run</code> for
-      both.</p>
     </div>
-
-    <h2>The point isn't smaller logs</h2>
-
-    <p>
-      It's worth being precise about what changed. The reduction number is real and reproducible, but
-      it's the consequence, not the design. The design is a <strong>split</strong>: the agent's
-      working context becomes a tiny typed summary it can branch on, while the durable record stays
-      the full raw bytes, content-addressed, deduplicated, verified on fetch, and recoverable on
-      demand. Those two halves fail independently, travel separately (manifests by default, bytes only
-      when you ask), and answer different questions: the summary tells the agent what happened now;
-      the store lets a reviewer, a later session, or another machine ask what happened then. Filtering
-      logs saves tokens. Separating the context from the record is what makes a noisy tool run both
-      cheap to read and impossible to lose.
-    </p>
 
     <div class="next-up">
       <span class="label">Read next</span>
-      <a href="/guides/token-reduction-capture-run/">
-        <h3>Guide: keep tool output out of your agent's context</h3>
-        <p>A task-oriented walkthrough of <code>h5i capture run</code>, recall, GC, trust, and project setup.</p>
+      <a href="/blog/orchestration-patterns-beyond-ensemble/">
+        <h3>Four shapes a box can take</h3>
+        <p>Where the cache-refresh box fits among the other things a box can be.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Try h5i on your next AI-assisted branch</h3>
-      <p>Create a sandboxed workspace, capture the run, and post a review-ready PR brief. h5i is open source, the store is a content-addressed directory + a git ref, and there's no service to subscribe to.</p>
+      <h3>Warm it once</h3>
+      <p><code>h5i box cache refresh &lt;ecosystem&gt;</code>, then <code>h5i box cache mounts</code> to see exactly what a box would get.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
-      <a href="/" class="btn btn-ghost">Back to docs</a>
+      <a href="/manual/" class="btn btn-ghost">Read the manual</a>
     </div>
   </article>
 </main>
@@ -475,7 +285,7 @@ h5i objects setup</pre></div>
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
       <a href="/manual/">Manual</a>
     </nav>
-    <div class="legal">Apache 2.0 · Built with Rust</div>
+    <div class="legal">Apache 2.0 &#183; Built with Rust</div>
   </div>
 </footer>
 
