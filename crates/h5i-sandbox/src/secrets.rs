@@ -492,19 +492,31 @@ const REDACTION_MARKER: &str = "‹redacted›";
 ///
 /// The guillemet marker is intentionally free of Markdown/HTML metacharacters so
 /// it survives a later escaping pass unchanged.
+/// Redact every line, preserving the payload's exact framing.
+///
+/// Line endings and a trailing newline are kept byte-for-byte. `lines()` would
+/// fold `\r\n` into `\n` and drop a trailing newline, which mattered little
+/// while redaction was conditional but rewrites every receipt now that it is
+/// unconditional — and `raw_oid`/`raw_size` are supposed to describe the bytes
+/// the run actually produced.
 pub fn redact_text(text: &str) -> String {
-    let mut lines = text.lines().map(redact_line);
-    match lines.next() {
-        None => String::new(),
-        Some(first) => {
-            let mut out = first;
-            for line in lines {
-                out.push('\n');
-                out.push_str(&line);
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while !rest.is_empty() {
+        let (line, sep, tail) = match rest.find('\n') {
+            Some(i) => {
+                let (l, t) = rest.split_at(i);
+                let l = l.strip_suffix('\r').unwrap_or(l);
+                let sep = &rest[l.len()..i + 1];
+                (l, sep, &t[1..])
             }
-            out
-        }
+            None => (rest, "", ""),
+        };
+        out.push_str(&redact_line(line));
+        out.push_str(sep);
+        rest = tail;
     }
+    out
 }
 
 /// Redact one line. Mirrors the per-line *matching* in [`scan_lines`] but
@@ -634,6 +646,28 @@ mod tests {
         assert_eq!(lines[0], "key = your-key-here");
         assert!(!lines[1].contains("AKIAZZZZZZZZZZZZZZZZ"));
         assert!(lines[1].contains(REDACTION_MARKER));
+    }
+
+    #[test]
+    fn redact_text_preserves_framing() {
+        // Unconditional redaction means every receipt goes through here, so the
+        // payload's exact framing has to survive: CRLF stays CRLF, a trailing
+        // newline stays, and a payload with nothing to scrub is unchanged.
+        for text in [
+            "alpha\r\nbeta\r\n",
+            "alpha\nbeta\n",
+            "alpha\nbeta",
+            "\n\n",
+            "",
+            "no trailing newline",
+        ] {
+            assert_eq!(redact_text(text), text, "framing changed for {text:?}");
+        }
+        // And it still scrubs, without disturbing the line endings around it.
+        let token = format!("ghp_{}", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8");
+        let out = redact_text(&format!("x\r\ntoken={token}\r\ny\r\n"));
+        assert!(!out.contains(&token), "{out}");
+        assert!(out.starts_with("x\r\n") && out.ends_with("y\r\n"), "{out:?}");
     }
 
     #[test]

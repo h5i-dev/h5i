@@ -246,17 +246,23 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
     let redacted_holder;
     let raw: &[u8] = match std::str::from_utf8(raw) {
         Ok(text) => {
+            // Redaction is UNCONDITIONAL. `scan_text` applies a placeholder
+            // stoplist (`example`, `dummy`, `fake`, …) and skips the whole line
+            // when it hits one, which is right for detection and fail-open for
+            // publication: a box printing `example config: ghp_<real>` produced
+            // no findings, so the credential was stored verbatim. `redact_line`
+            // deliberately has no stoplist for exactly this reason, and there is
+            // a regression test pinning that — gating the call on the detector
+            // put the hole back one level up.
+            //
+            // So scan only to name the rules that fired, and always scrub.
             let findings = crate::secrets::scan_text(Path::new("<receipt>"), text);
-            if findings.is_empty() {
-                raw
-            } else {
-                let mut ids: Vec<String> = findings.iter().map(|f| f.rule_id.to_string()).collect();
-                ids.sort();
-                ids.dedup();
-                redactions = ids;
-                redacted_holder = crate::secrets::redact_text(text).into_bytes();
-                &redacted_holder[..]
-            }
+            let mut ids: Vec<String> = findings.iter().map(|f| f.rule_id.to_string()).collect();
+            ids.sort();
+            ids.dedup();
+            redactions = ids;
+            redacted_holder = crate::secrets::redact_text(text).into_bytes();
+            &redacted_holder[..]
         }
         // Binary payloads are left as-is: the secret scanner is line oriented.
         Err(_) => raw,
@@ -624,6 +630,37 @@ mod tests {
         let rec = append(td.path(), input(), &big).unwrap();
         assert!(rec.raw_truncated);
         assert_eq!(rec.raw_size, RAW_CAP as u64);
+    }
+
+    /// The advisory case: a box prints a credential on a line that also carries
+    /// a placeholder word. `scan_text` skips that line via its stoplist, so
+    /// gating redaction on "did the scanner find anything" stored the token
+    /// verbatim in `<env>/raw/<id>.raw` and in the published evidence.
+    #[test]
+    fn a_stoplist_word_cannot_smuggle_a_credential_into_the_raw_store() {
+        let td = TempDir::new().unwrap();
+        let token = format!("ghp_{}", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8");
+        for line in [
+            format!("example config: {token}"),
+            format!("dummy value {token}"),
+            format!("# fake, do not use: {token}"),
+            format!("${{PLACEHOLDER}} {token}"),
+        ] {
+            let rec = append(td.path(), input(), line.as_bytes()).unwrap();
+            let stored = String::from_utf8(raw_bytes(td.path(), &rec.id).unwrap()).unwrap();
+            assert!(!stored.contains(&token), "stored verbatim: {stored}");
+        }
+    }
+
+    /// Redaction is unconditional now, so a payload with nothing to scrub must
+    /// still round-trip byte for byte.
+    #[test]
+    fn a_clean_payload_is_stored_unchanged() {
+        let td = TempDir::new().unwrap();
+        let body = b"line one\r\nline two\n";
+        let rec = append(td.path(), input(), body).unwrap();
+        assert_eq!(raw_bytes(td.path(), &rec.id).unwrap(), body);
+        assert!(rec.redactions.is_empty());
     }
 
     #[test]
