@@ -109,7 +109,14 @@ pub struct BoxArgs {
     name: Option<String>,
 
     /// Base revision, when the source is this repository. Pinned immutably.
-    #[arg(long)]
+    ///
+    /// Same conflicts as the explicit `box create` form. Without them the short
+    /// form parsed `--new --from <rev>` and `--pr N --from <rev>` happily and
+    /// then discarded the base: `into_command()` builds `Create` *after* clap
+    /// has validated, so the explicit form's rules never applied. A silently
+    /// unpinned base is an integrity gap in a tool whose pitch is that the base
+    /// is pinned immutably.
+    #[arg(long, conflicts_with_all = ["pr", "new"])]
     from: Option<String>,
 
     /// Remote to fetch a pull request head from.
@@ -167,6 +174,14 @@ impl BoxArgs {
                  pull request, or `--new` for an empty box."
             ),
         };
+        // clap covers `--from` with `--pr`/`--new`, but a URL source becomes
+        // `clone` only here, after validation — and a detached box never reads
+        // `from`. Refuse rather than accept a pin and drop it.
+        if self.from.is_some() && clone.is_some() {
+            anyhow::bail!(
+                "`--from` pins a base revision in *this* repository, but '{source}' is an                  external source, so the box is detached and has no such base. Drop `--from`,                  or pin the revision in the URL if the host supports it."
+            );
+        }
         let name = match (self.name, &pr, &clone) {
             (Some(n), _, _) => n,
             // From the PR *number*, not the spec: a URL spec would otherwise

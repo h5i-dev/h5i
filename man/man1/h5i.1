@@ -58,7 +58,9 @@ Start from an empty box instead of any source
 Name for the box. Derived from the source when omitted
 .TP
 \fB\-\-from\fR \fI<FROM>\fR
-Base revision, when the source is this repository. Pinned immutably
+Base revision, when the source is this repository. Pinned immutably.
+
+Same conflicts as the explicit `box create` form. Without them the short form parsed `\-\-new \-\-from <rev>` and `\-\-pr N \-\-from <rev>` happily and then discarded the base: `into_command()` builds `Create` *after* clap has validated, so the explicit form\*(Aqs rules never applied. A silently unpinned base is an integrity gap in a tool whose pitch is that the base is pinned immutably.
 .TP
 \fB\-\-remote\fR \fI<REMOTE>\fR [default: origin]
 Remote to fetch a pull request head from

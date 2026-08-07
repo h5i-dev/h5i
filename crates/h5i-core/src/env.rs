@@ -2253,7 +2253,20 @@ fn prepare_private_tmp(
     if let Some(parent) = backing.parent() {
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
-    reset_private_tmp(&backing)?;
+    // Wiping the shared per-env scratch out from under a running service would
+    // delete a live dev server's `/tmp` mid-flight: services outlive the
+    // session that started them, and nothing else coordinates the two. Reuse
+    // the directory instead — the point of the reset is a clean slate per run,
+    // and a box with a service running is by definition not starting clean.
+    //
+    // A per-session observer backing (`backing_override`) is nobody else's, so
+    // it is always reset.
+    let shared = backing_override.is_none();
+    if shared && service_status(h5i_root, m).iter().any(|s| s.alive) {
+        std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
+    } else {
+        reset_private_tmp(&backing)?;
+    }
     policy.profile.fs_read.retain(|p| p != "/tmp");
     policy.profile.fs_write.retain(|p| p != "/tmp");
     policy.profile.fs_write.push(backing.display().to_string());
@@ -3523,11 +3536,6 @@ pub fn write_team_reply_spool(
 
 const PROTECTED_HOOK_CONFIGS: &[&str] = &[".claude/settings.json", ".codex/config.toml"];
 
-enum ProtectedHookScope {
-    Worktree,
-    Home,
-}
-
 struct ProtectedHookConfig {
     label: String,
     path: PathBuf,
@@ -3553,20 +3561,25 @@ impl ProtectedHookConfigGuard {
                 rel.to_string(),
                 path,
                 claim,
-                ProtectedHookScope::Worktree,
             )?;
         }
-        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-            for rel in PROTECTED_HOOK_CONFIGS {
-                push_protected_hook_config(
-                    &mut files,
-                    format!("~/{rel}"),
-                    home.join(rel),
-                    claim,
-                    ProtectedHookScope::Home,
-                )?;
-            }
-        }
+        // Deliberately NOT the host's own `~/.claude` / `~/.codex`.
+        //
+        // The box cannot write them in the first place: at the kernel tiers
+        // `prepare_home_state` has already bind-redirected those directories to
+        // a per-env copy, and the container tiers never mount host $HOME. So a
+        // difference at exit could only ever be a *host-side* change — the
+        // operator using Claude Code on the same machine during a long box
+        // session, or a second box's guard.
+        //
+        // What the guard then did with that difference was destructive: restore
+        // the pre-session content over the operator's edit, or, if the file had
+        // not existed at session start, delete it outright — and fail the
+        // session with a sandbox-violation error for something the sandbox
+        // never did. Two concurrent boxes did it to each other.
+        //
+        // Worktree scope stays: `$WORK` is genuinely box-writable, and that is
+        // the file the observation hook is defined in.
         Ok(Self { files })
     }
 
@@ -3620,13 +3633,11 @@ fn push_protected_hook_config(
     label: String,
     path: PathBuf,
     claim: IsolationClaim,
-    scope: ProtectedHookScope,
 ) -> Result<(), H5iError> {
     let original = std::fs::read(&path).ok();
     let mut sentinel_created = false;
     let mut parent_created = false;
     if claim.image_backed()
-        && matches!(scope, ProtectedHookScope::Worktree)
         && original.is_none()
     {
         if let Some(parent) = path.parent() {
@@ -10190,6 +10201,34 @@ mod tests {
         copy_tree(&src, &dst).unwrap();
         let mode = std::fs::metadata(&dst).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700, "copied dir must not widen, got {mode:o}");
+    }
+
+    /// The host's own `~/.claude` / `~/.codex` must not be snapshotted and
+    /// restored: the box cannot write them (they are bind-redirected at the
+    /// kernel tiers and unmounted at the container tiers), so any difference at
+    /// exit is the operator's own edit — which the guard used to overwrite, or
+    /// delete outright, and then blame on the sandbox.
+    #[test]
+    fn the_hook_guard_leaves_the_operators_own_config_alone() {
+        let td = tempfile::tempdir().unwrap();
+        let home = td.path().join("home");
+        let work = td.path().join("work");
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        let host_cfg = home.join(".claude/settings.json");
+        std::fs::write(&host_cfg, b"{\"before\":1}").unwrap();
+
+        // Safety: single-threaded test.
+        unsafe { std::env::set_var("HOME", &home) };
+        let guard = ProtectedHookConfigGuard::prepare(&work, IsolationClaim::Process).unwrap();
+        // The operator edits their own config during the session.
+        std::fs::write(&host_cfg, b"{\"after\":2}").unwrap();
+        guard.finish().expect("a host-side edit is not a sandbox violation");
+        assert_eq!(
+            std::fs::read(&host_cfg).unwrap(),
+            b"{\"after\":2}",
+            "the operator's edit must survive"
+        );
     }
 
     /// The spool is written by the box and is therefore untrusted. A reader
