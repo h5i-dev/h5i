@@ -645,6 +645,68 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     Ok(())
 }
 
+/// Create the directory chain for `rel` under `work` without ever traversing a
+/// symlink, and return the joined path. `keep_last` decides whether the final
+/// component is created too (the Linux bind mountpoint) or left for the caller
+/// (the macOS redirect, which puts a symlink there).
+///
+/// `validate_private_paths` rejects a leading `/`, `..` and `,`, but it never
+/// *resolves* the path — and both `private_paths` and the worktree contents are
+/// repo-supplied. A branch shipping `a` as a symlink to `$HOME` turns a
+/// perfectly valid `a/bin` entry into a write outside `$WORK`: on Linux
+/// `create_dir_all` makes the mountpoint at the link's target and the bind
+/// grants the box rw there; on macOS `apply_symlinks` plants its redirect there
+/// instead. Walking component by component refuses both.
+fn create_dirs_within(work: &Path, rel: &str, keep_last: bool) -> Result<PathBuf, H5iError> {
+    let comps: Vec<&str> = rel
+        .trim_matches('/')
+        .split('/')
+        .filter(|c| !c.is_empty())
+        .collect();
+    let stop = if keep_last {
+        comps.len()
+    } else {
+        comps.len().saturating_sub(1)
+    };
+    let mut cur = work.to_path_buf();
+    for (i, c) in comps.iter().enumerate() {
+        cur.push(c);
+        if i >= stop {
+            break;
+        }
+        match std::fs::symlink_metadata(&cur) {
+            Ok(md) if md.file_type().is_symlink() => {
+                return Err(H5iError::Metadata(format!(
+                    "private_paths '{rel}': '{}' is a symlink, and h5i will not follow one out \
+                     of the workspace to place a private path (fail-closed). Remove it from the \
+                     branch, or point the entry somewhere else.",
+                    cur.display()
+                )))
+            }
+            Ok(md) if md.is_dir() => {}
+            Ok(_) => {
+                return Err(H5iError::Metadata(format!(
+                    "private_paths '{rel}': '{}' exists and is not a directory (fail-closed)",
+                    cur.display()
+                )))
+            }
+            Err(_) => std::fs::create_dir(&cur).map_err(|e| H5iError::with_path(e, &cur))?,
+        }
+    }
+    Ok(cur)
+}
+
+/// Create the mountpoint for a private bind, refusing a symlinked ancestor.
+pub fn create_private_mountpoint(work: &Path, rel: &str) -> Result<PathBuf, H5iError> {
+    create_dirs_within(work, rel, true)
+}
+
+/// Create the *parent* directories for a private path, refusing a symlinked
+/// ancestor, and return the path the caller should place there.
+pub fn prepare_private_link_site(work: &Path, rel: &str) -> Result<PathBuf, H5iError> {
+    create_dirs_within(work, rel, false)
+}
+
 /// Validate `private_paths` (Idea 3), fail-closed: each path is
 /// workspace-relative, free of `..` traversal, has a known `kind`, and no two
 /// paths overlap (a parent would shadow the nested child's bind). Mirrors the

@@ -211,6 +211,10 @@ pub struct SeatbeltPlan {
     /// `(link, target)` pairs to materialize before the run: the workspace-relative
     /// private paths, which Linux gets via bind mounts.
     pub symlinks: Vec<(PathBuf, PathBuf)>,
+    /// The workspace root every `symlinks` link must stay inside. Carried so
+    /// `apply_symlinks` can create the parents without following a repo-planted
+    /// symlink out of the box.
+    pub work: PathBuf,
     /// Redirects with no macOS equivalent, reported rather than silently dropped
     /// (h5i never downgrades quietly). Surfaced by `env probe` and the run's
     /// diagnostics.
@@ -845,6 +849,7 @@ pub fn plan(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOptions) -> Sea
         env,
         symlinks,
         unmapped,
+        work: work.to_path_buf(),
     }
 }
 
@@ -897,9 +902,18 @@ fn apply_symlinks(plan: &SeatbeltPlan) -> Result<(), H5iError> {
             }
             None => {}
         }
-        if let Some(parent) = link.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
-        }
+        // Create the parents component by component rather than with
+        // `create_dir_all`, which would happily follow a repo-planted symlink
+        // at any level and plant this redirect — a box-writable path — outside
+        // the workspace entirely.
+        let rel = link.strip_prefix(&plan.work).map_err(|_| {
+            H5iError::Metadata(format!(
+                "private_paths: redirect '{}' is not inside the workspace '{}' (fail-closed)",
+                link.display(),
+                plan.work.display()
+            ))
+        })?;
+        crate::sandbox::prepare_private_link_site(&plan.work, &rel.to_string_lossy())?;
         std::os::unix::fs::symlink(target, link).map_err(|e| H5iError::with_path(e, link))?;
     }
     Ok(())
@@ -1616,9 +1630,10 @@ mod tests {
 
     /// A helper that builds a plan with one private-path redirect from `link`
     /// to a fresh backing dir.
-    fn symlink_plan(link: &Path, backing: &Path) -> SeatbeltPlan {
+    fn symlink_plan(work: &Path, link: &Path, backing: &Path) -> SeatbeltPlan {
         SeatbeltPlan {
             symlinks: vec![(link.to_path_buf(), backing.to_path_buf())],
+            work: work.to_path_buf(),
             ..Default::default()
         }
     }
@@ -1630,7 +1645,7 @@ mod tests {
         let backing = tmp.path().join("backing");
         std::fs::create_dir_all(&link).unwrap();
         std::fs::create_dir_all(&backing).unwrap();
-        apply_symlinks(&symlink_plan(&link, &backing)).unwrap();
+        apply_symlinks(&symlink_plan(tmp.path(), &link, &backing)).unwrap();
         assert_eq!(std::fs::read_link(&link).unwrap(), backing);
     }
 
@@ -1640,7 +1655,7 @@ mod tests {
         let link = tmp.path().join("target");
         let backing = tmp.path().join("backing");
         std::fs::create_dir_all(&backing).unwrap();
-        let plan = symlink_plan(&link, &backing);
+        let plan = symlink_plan(tmp.path(), &link, &backing);
         apply_symlinks(&plan).unwrap();
         apply_symlinks(&plan).unwrap();
         assert_eq!(std::fs::read_link(&link).unwrap(), backing);
@@ -1656,7 +1671,7 @@ mod tests {
         std::fs::create_dir_all(&link).unwrap();
         std::fs::create_dir_all(&backing).unwrap();
         std::fs::write(link.join("artifact.o"), b"precious").unwrap();
-        let err = apply_symlinks(&symlink_plan(&link, &backing)).unwrap_err();
+        let err = apply_symlinks(&symlink_plan(tmp.path(), &link, &backing)).unwrap_err();
         assert!(err.to_string().contains("not empty"), "{err}");
         assert!(link.join("artifact.o").exists(), "must not have been deleted");
     }
@@ -1670,7 +1685,46 @@ mod tests {
         std::fs::create_dir_all(&old).unwrap();
         std::fs::create_dir_all(&backing).unwrap();
         std::os::unix::fs::symlink(&old, &link).unwrap();
-        apply_symlinks(&symlink_plan(&link, &backing)).unwrap();
+        apply_symlinks(&symlink_plan(tmp.path(), &link, &backing)).unwrap();
+        assert_eq!(std::fs::read_link(&link).unwrap(), backing);
+    }
+
+    /// `private_paths` and the worktree are both repo-supplied. A branch that
+    /// ships `a` as a symlink to somewhere outside the workspace would, with
+    /// `create_dir_all`, have h5i plant the redirect at the link's target — a
+    /// box-writable path on the operator's filesystem, e.g. a directory on
+    /// their PATH. Refuse instead of following it.
+    #[test]
+    fn redirect_refuses_a_symlinked_ancestor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        let outside = tmp.path().join("outside");
+        let backing = tmp.path().join("backing");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&backing).unwrap();
+        // The repo ships `a` as a symlink pointing out of the workspace.
+        std::os::unix::fs::symlink(&outside, work.join("a")).unwrap();
+
+        let link = work.join("a/bin");
+        let err = apply_symlinks(&symlink_plan(&work, &link, &backing)).unwrap_err();
+        assert!(err.to_string().contains("symlink"), "{err}");
+        assert!(
+            !outside.join("bin").exists(),
+            "must not have created the redirect outside the workspace"
+        );
+    }
+
+    /// The same walk still creates honest nested parents inside the workspace.
+    #[test]
+    fn redirect_creates_real_nested_parents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        let backing = tmp.path().join("backing");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(&backing).unwrap();
+        let link = work.join("a/b/cache");
+        apply_symlinks(&symlink_plan(&work, &link, &backing)).unwrap();
         assert_eq!(std::fs::read_link(&link).unwrap(), backing);
     }
 

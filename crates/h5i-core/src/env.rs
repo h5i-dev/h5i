@@ -2088,9 +2088,11 @@ fn prepare_private_paths(
             let _ = std::fs::remove_dir_all(&backing);
         }
         std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
-        // The mountpoint must exist inside the worktree.
-        let target = work.join(&rel);
-        std::fs::create_dir_all(&target).map_err(|e| H5iError::with_path(e, &target))?;
+        // The mountpoint must exist inside the worktree — and *stay* inside it.
+        // `rel` and the worktree are both repo-supplied, so a symlinked
+        // ancestor would otherwise put the mountpoint (and the bind's rw grant)
+        // on an arbitrary host path.
+        sandbox::create_private_mountpoint(work, &rel)?;
         // The image-backed tiers carry the backing dir as a mount *spec string*,
         // and each runtime's syntax reserves a separator its paths cannot
         // contain: Podman's `--mount` splits on ',', microsandbox's
