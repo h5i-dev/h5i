@@ -1411,6 +1411,16 @@ mod tests {
         // Decoded pixels are held by the bitmap; a session that never closes
         // them grows without bound.
         assert!(page.contains(".close()"), "decoded frames must be released");
+
+        // Dropping has to happen before the decode as well as after it. The box
+        // does not wait for this page, so a decode started per arriving frame
+        // queues jobs and their blobs for as long as decoding is slower than the
+        // frame rate — and that version still *looks* like it drops frames,
+        // because it does, one stage too late to matter.
+        assert!(
+            page.contains("queuedBytes") && page.contains("decoding"),
+            "only the newest undecoded frame may be held, and one decode at a time"
+        );
     }
 
     #[test]
