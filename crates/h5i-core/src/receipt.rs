@@ -194,6 +194,37 @@ fn raw_path(env_dir: &Path, id: &str) -> PathBuf {
     env_dir.join(RAW_DIR).join(format!("{id}.raw"))
 }
 
+/// Redact the decodable runs of a non-UTF-8 payload, preserving every other
+/// byte exactly. Splitting on the invalid sequences is what keeps a credential
+/// from hiding behind one stray byte.
+fn redact_binary(raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(raw.len());
+    let mut rest = raw;
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(text) => {
+                out.extend_from_slice(crate::secrets::redact_text(text).as_bytes());
+                return out;
+            }
+            Err(e) => {
+                let good = e.valid_up_to();
+                if good > 0 {
+                    let text = std::str::from_utf8(&rest[..good]).unwrap_or_default();
+                    out.extend_from_slice(crate::secrets::redact_text(text).as_bytes());
+                }
+                // Copy the invalid sequence through untouched and carry on.
+                let skip = e.error_len().unwrap_or(rest.len() - good).max(1);
+                let end = (good + skip).min(rest.len());
+                out.extend_from_slice(&rest[good..end]);
+                if end >= rest.len() {
+                    return out;
+                }
+                rest = &rest[end..];
+            }
+        }
+    }
+}
+
 /// Record ids are lowercase hex. Checking that before a handle becomes a path
 /// keeps `../..` out of the join. No caller can reach it with hostile input
 /// today — `env::inspect` is gated by `find` succeeding on the same handle —
@@ -273,8 +304,15 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
             redacted_holder = crate::secrets::redact_text(text).into_bytes();
             &redacted_holder[..]
         }
-        // Binary payloads are left as-is: the secret scanner is line oriented.
-        Err(_) => raw,
+        // Binary payloads: the pattern scanner is line oriented and cannot run
+        // here, but leaving them wholly untouched meant a box could defeat the
+        // scrub by interleaving one invalid byte with a credential. Redact the
+        // valid UTF-8 runs and leave the rest byte-for-byte, so the payload
+        // stays faithful while known secret shapes still go.
+        Err(_) => {
+            redacted_holder = redact_binary(raw);
+            &redacted_holder[..]
+        }
     };
 
     let raw_truncated = raw.len() > RAW_CAP;
@@ -664,6 +702,25 @@ mod tests {
             let stored = String::from_utf8(raw_bytes(td.path(), &rec.id).unwrap()).unwrap();
             assert!(!stored.contains(&token), "stored verbatim: {stored}");
         }
+    }
+
+    /// One stray non-UTF-8 byte used to skip redaction for the whole payload,
+    /// so a box could smuggle a credential past the scrub by interleaving one.
+    #[test]
+    fn an_invalid_byte_does_not_disable_redaction_for_the_payload() {
+        let td = TempDir::new().unwrap();
+        let token = format!("ghp_{}", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8");
+        let mut raw: Vec<u8> = Vec::new();
+        raw.extend_from_slice(b"before\xff\xfe binary\n");
+        raw.extend_from_slice(format!("token={token}\n").as_bytes());
+        let rec = append(td.path(), input(), &raw).unwrap();
+        let stored = raw_bytes(td.path(), &rec.id).unwrap();
+        assert!(
+            !String::from_utf8_lossy(&stored).contains(&token),
+            "credential survived behind an invalid byte"
+        );
+        // The undecodable bytes are still carried through untouched.
+        assert!(stored.windows(2).any(|w| w == [0xff, 0xfe]));
     }
 
     /// Redaction is unconditional now, so a payload with nothing to scrub must

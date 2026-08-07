@@ -583,6 +583,21 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
         }
     }
 
+    // An [[auth]] grant that cannot hand the box its gate token is inert: the
+    // proxy refuses every request with 403 and the agent sees a broken client
+    // with no explanation. Refuse at load instead.
+    for g in &p.auth {
+        if g.token_var.trim().is_empty() {
+            return Err(H5iError::Metadata(format!(
+                "profile '{}': auth grant for '{}' has no `token_var`. The proxy gates each \
+                 request on a per-run token, so the box must be given it in the variable its \
+                 client already sends as a credential (e.g. token_var = \"GH_TOKEN\"). \
+                 Refusing rather than running a grant that answers 403 forever (fail-closed).",
+                p.name, g.host
+            )));
+        }
+    }
+
     // Secret grants are brokered (docs/secrets-broker-design.md). Validate the
     // *config* here (names + source/inject syntax); values are resolved
     // fail-closed at run time, never at policy-load time.

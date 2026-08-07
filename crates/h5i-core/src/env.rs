@@ -3904,6 +3904,29 @@ fn announce_egress(policy: &sandbox::ResolvedPolicy) {
     }
 }
 
+/// Engage the profile's `[[auth]]` grants for a session, at the address this
+/// tier can actually reach. Shared by `run` and `shell` — `shell` did not call
+/// this at all, so an interactive agent silently lost the authenticated egress
+/// a captured `box run` was given, which is backwards: the interactive session
+/// is where the agent works.
+fn engage_grants_for(
+    policy: &sandbox::ResolvedPolicy,
+) -> Result<crate::container::AuthGrantEngagement, H5iError> {
+    if policy.profile.auth.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    match crate::container::grant_host_addr(policy.claim) {
+        Some(addr) => crate::container::engage_auth_grants(&policy.profile, true, addr),
+        None => Err(H5iError::Metadata(format!(
+            "profile '{}' declares an [[auth]] grant, but a box at isolation '{}' cannot reach \
+             a host-side grant proxy on this platform — the netns jail opens no port for it. \
+             Use isolation=container (or microvm), or drop the grant (fail-closed).",
+            policy.profile.name,
+            policy.claim.as_str()
+        ))),
+    }
+}
+
 /// Run `argv` inside the env's worktree under its pinned policy, and record
 /// the execution as evidence (a tagged capture). Every exec is captured —
 /// provenance is the point (§8) — regardless of output size.
@@ -4024,10 +4047,7 @@ fn run_inner(
     // Authenticated egress the profile declares (5.5). Host-side credentials
     // resolve here and stay here; the box only ever learns the proxy's origin.
     // Held for the run: dropping a handle shuts its proxy down.
-    let (_auth_handles, auth_env) = crate::container::engage_auth_grants(
-        &policy.profile,
-        policy.claim >= IsolationClaim::Supervised,
-    )?;
+    let (_auth_handles, auth_env) = engage_grants_for(&policy)?;
 
     let injected_env = merged_env(
         &merged_env(
@@ -4397,10 +4417,15 @@ pub fn shell(
         &crate::secrets_broker::fingerprint_key(h5i_root)?,
     )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
+    // The interactive session gets the profile's declared authenticated egress
+    // too — this is where the agent actually works, and `run` had it while
+    // `shell` silently did not. Held for the session: dropping a handle shuts
+    // its proxy down.
+    let (_auth_handles, auth_env) = engage_grants_for(&policy)?;
     let injected_env = merged_env(
         &merged_env(
             &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
-            &env_inbox_env,
+            &merged_env(&env_inbox_env, &auth_env),
         ),
         &merged_env(
             &team_identity_env(m, h5i_root),

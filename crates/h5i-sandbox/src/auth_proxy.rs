@@ -101,8 +101,18 @@ pub fn runtime_proxy(rt: AgentRuntime) -> RuntimeProxy {
 }
 
 /// A non-empty, non-whitespace host env var, or `None`.
+/// Read a credential from the host environment, **trimmed**.
+///
+/// Trimming is not cosmetic: `export TOKEN="$(cat ~/key)"` carries a trailing
+/// newline, `HeaderValue` rejects it, and `send()` then fails for every request
+/// — surfacing as a permanent 502 whose cause is deliberately not printed (the
+/// right call for an upstream error, wrong for a local one). The sibling
+/// `engage_grant_at` already trimmed; this path did not.
 fn nonempty_env(key: &str) -> Option<String> {
-    std::env::var(key).ok().filter(|v| !v.trim().is_empty())
+    std::env::var(key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 /// Resolve the genuine upstream credential from *h5i's own* host environment,
@@ -255,6 +265,9 @@ pub fn engage_grant_at(
             grant.base_url_var.clone(),
             format!("http://{host}:{}", handle.port),
         ),
+        // The gate token. Without it the box presents no credential, every
+        // request is refused with 403, and the grant does nothing at all.
+        (grant.token_var.clone(), token.clone()),
         ("NO_PROXY".to_string(), no_proxy.clone()),
         ("no_proxy".to_string(), no_proxy),
     ];
@@ -924,6 +937,7 @@ mod tests {
             host: "api.example.com".into(),
             credential_env: "H5I_TEST_ABSENT_CREDENTIAL".into(),
             base_url_var: "EXAMPLE_BASE_URL".into(),
+            token_var: "EXAMPLE_TOKEN".into(),
         };
         std::env::remove_var("H5I_TEST_ABSENT_CREDENTIAL");
         let err = match engage_grant(&grant, true) {
@@ -943,6 +957,7 @@ mod tests {
             host: "api.example.com".into(),
             credential_env: "H5I_TEST_ABSENT_CREDENTIAL".into(),
             base_url_var: "EXAMPLE_BASE_URL".into(),
+            token_var: "EXAMPLE_TOKEN".into(),
         };
         // No proxy path from the box → no engagement, and notably no error
         // about the missing credential: there was nothing to authenticate.
