@@ -34,7 +34,23 @@ main() {
   case "${os}-${arch}" in
     linux-x86_64)  target="x86_64-unknown-linux-musl" ;;
     linux-aarch64) target="aarch64-unknown-linux-musl" ;;
-    macos-x86_64 | macos-aarch64) target="aarch64-apple-darwin" ;;
+    macos-aarch64) target="aarch64-apple-darwin" ;;
+    # Rosetta 2 translates x86_64 to arm64, not the reverse, so the published
+    # Apple Silicon archive cannot run here. Fail before the download rather
+    # than install a binary that will not execute.
+    macos-x86_64)
+      echo "Unsupported platform: macos-x86_64." >&2
+      echo "Only Apple Silicon macOS builds are published; Rosetta 2 cannot run a native arm64 binary on an Intel Mac." >&2
+      echo "Build from source instead: cargo install --git https://github.com/${REPO}" >&2
+      exit 1
+      ;;
+    # Unreachable while the two cases above cover every os/arch pair, but an
+    # unmatched pair would otherwise leave `target` empty and request a
+    # nonsense archive URL.
+    *)
+      echo "Unsupported platform: ${os}-${arch}" >&2
+      exit 1
+      ;;
   esac
 
   # ── resolve latest version ─────────────────────────────────────────────────
