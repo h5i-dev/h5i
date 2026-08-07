@@ -1763,6 +1763,84 @@ fn no_workspace_err(m: &EnvManifest, op: &str) -> H5iError {
     ))
 }
 
+// ─── opening the env worktree (host side) ────────────────────────────────────
+
+/// Open the env's worktree repository, refusing any handle that is not this
+/// box's own.
+///
+/// Plain `Repository::open(work)` trusts two things the box can write: the
+/// `$WORK/.git` pointer file, which lives in the box's rw workspace, and the
+/// worktree admin dir (`HEAD`, `commondir`, `gitdir`), which [`box_git_plumbing`]
+/// grants rw so in-box git keeps working. A box that rewrites either one
+/// redirects every host-side git operation that follows. The consequence is
+/// worst in [`mediated_commit`], which would stage the box's tree into whatever
+/// repository the pointer names and commit it onto whatever ref its HEAD names
+/// — landing unreviewed work on the parent branch without `apply` ever running.
+///
+/// So the invariant [`box_git_plumbing`] states for grant computation — never
+/// derive host behaviour from box-writable state — is enforced here for every
+/// host-side open: the handle must sit on the manifest's branch, and its object
+/// store must be the one this box was created against.
+fn open_env_worktree(h5i_root: &Path, m: &EnvManifest) -> Result<Repository, H5iError> {
+    let work = m.work_dir(h5i_root);
+    let wt_repo = Repository::open(&work)?;
+    verify_env_worktree(h5i_root, &wt_repo, m)?;
+    Ok(wt_repo)
+}
+
+/// The two checks behind [`open_env_worktree`], split out so the refusal can be
+/// unit-tested against a deliberately redirected worktree.
+fn verify_env_worktree(
+    h5i_root: &Path,
+    wt_repo: &Repository,
+    m: &EnvManifest,
+) -> Result<(), H5iError> {
+    // Canonicalize both sides: the comparison has to survive symlinked repo
+    // paths (`/tmp` on macOS is the standing example) without being loosened
+    // into a prefix match.
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let got = canon(wt_repo.commondir());
+
+    // 1. Same object store. An attached box is a worktree of this repository,
+    //    so it shares the common dir; a detached box carries its own repository
+    //    inside the env directory and must stay inside it.
+    let ok = if is_detached(m) {
+        got.starts_with(canon(&m.dir(h5i_root)))
+    } else {
+        // `h5i_root` is `<repo>/.git/.h5i` (see `storage::h5i_root_for_repo`),
+        // so its parent is the common dir this box belongs to.
+        h5i_root.parent().is_some_and(|d| got == canon(d))
+    };
+    if !ok {
+        return Err(H5iError::Metadata(format!(
+            "{}: the box's worktree points at a git directory that is not this box's \
+             ({}). `$WORK/.git` and the worktree admin dir are writable inside the box, so \
+             h5i refuses to run a host-side git operation through a redirected pointer \
+             (fail-closed). Recreate the box to continue.",
+            m.id,
+            got.display()
+        )));
+    }
+
+    // 2. On its own branch. Without this a rewritten worktree HEAD would let a
+    //    mediated commit land on the parent branch.
+    let head_ref = wt_repo
+        .head()
+        .ok()
+        .and_then(|h| h.name().map(str::to_string));
+    if head_ref.as_deref() != Some(m.branch.as_str()) {
+        return Err(H5iError::Metadata(format!(
+            "{}: the box's worktree is on {} but this box owns {}. The worktree HEAD is \
+             writable inside the box, so h5i refuses to commit through it (fail-closed). \
+             Recreate the box to continue.",
+            m.id,
+            head_ref.as_deref().unwrap_or("a detached HEAD"),
+            m.branch
+        )));
+    }
+    Ok(())
+}
+
 // ─── in-box git plumbing grants ──────────────────────────────────────────────
 
 /// The repo-`.git` plumbing surface that makes the env's worktree a
@@ -4017,7 +4095,7 @@ fn run_inner(
         });
 
     // Read HEAD from the WORKTREE repo so the tree recorded is the env's.
-    let wt_repo = Repository::open(&work)?;
+    let wt_repo = open_env_worktree(h5i_root, m)?;
     let head_tree = wt_repo
         .head()
         .ok()
@@ -4493,7 +4571,7 @@ fn capture_shell_egress(
             h.host, h.port, h.allowed, h.denied
         ));
     }
-    let wt_repo = Repository::open(work)?;
+    let wt_repo = open_env_worktree(h5i_root, m)?;
     let head_tree = wt_repo
         .head()
         .ok()
@@ -4889,7 +4967,7 @@ fn ingest_shell_spool(
         return Ok(0);
     }
     let work = m.work_dir(h5i_root);
-    let wt_repo = Repository::open(&work)?;
+    let wt_repo = open_env_worktree(h5i_root, m)?;
     let head_tree = wt_repo
         .head()
         .ok()
@@ -5131,7 +5209,7 @@ pub fn diff(
 
     let work = m.work_dir(h5i_root);
     if work.is_dir() {
-        let wt_repo = Repository::open(&work)?;
+        let wt_repo = open_env_worktree(h5i_root, m)?;
         let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
         let mut opts = git2::DiffOptions::new();
         opts.include_untracked(true)
@@ -5220,7 +5298,7 @@ pub fn diffstat_report(
 
     let work = m.work_dir(h5i_root);
     if work.is_dir() {
-        let wt_repo = Repository::open(&work)?;
+        let wt_repo = open_env_worktree(h5i_root, m)?;
         let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
         let mut opts = git2::DiffOptions::new();
         opts.include_untracked(true)
@@ -6197,7 +6275,7 @@ pub fn service_stop(
         if let Ok(raw) = std::fs::read(&log_path) {
             if !raw.is_empty() {
                 let work = m.work_dir(h5i_root);
-                if let Ok(wt_repo) = Repository::open(&work) {
+                if let Ok(wt_repo) = open_env_worktree(h5i_root, m) {
                     let head_tree = wt_repo
                         .head()
                         .ok()
@@ -6724,7 +6802,7 @@ pub fn mediated_commit(
     if !work.is_dir() {
         return Err(no_workspace_err(m, "propose/rebase"));
     }
-    let wt_repo = Repository::open(&work)?;
+    let wt_repo = open_env_worktree(h5i_root, m)?;
     let canon_work = work
         .canonicalize()
         .map_err(|e| H5iError::with_path(e, &work))?;
@@ -7409,8 +7487,7 @@ pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result
     // Snapshot the worktree onto the env branch (host-side, path-allowlisted).
     mediated_commit(repo, h5i_root, m)?;
 
-    let work = m.work_dir(h5i_root);
-    let wt_repo = Repository::open(&work)?;
+    let wt_repo = open_env_worktree(h5i_root, m)?;
     let env_tip = wt_repo.head()?.peel_to_commit()?;
     let parent_tip = repo
         .find_reference(&format!("refs/heads/{}", m.parent_branch))?
@@ -9955,5 +10032,110 @@ mod tests {
 
         // A missing source fails closed.
         assert!(materialize_persona(work, &["plugin/persona/nope.md".to_string()]).is_err());
+    }
+
+    /// Build a manifest for an attached box on `refs/heads/h5i/env/<agent>/<slug>`.
+    fn wt_manifest(agent: &str, slug: &str) -> EnvManifest {
+        EnvManifest {
+            id: format!("env/{agent}/{slug}"),
+            agent: agent.into(),
+            slug: slug.into(),
+            base_commit: String::new(),
+            base_tree: String::new(),
+            parent_branch: "main".into(),
+            branch: format!("refs/heads/{BRANCH_PREFIX}{agent}/{slug}"),
+            source: "repo".into(),
+            profile: "default".into(),
+            policy_digest: String::new(),
+            isolation_claim: "workspace".into(),
+            backend: "worktree".into(),
+            created_at: now_ts(),
+            updated_at: now_ts(),
+            status: ST_CREATED.into(),
+            captures: Vec::new(),
+            service_digest: None,
+            persona_digest: None,
+            pr: None,
+            pr_head_ref: None,
+        }
+    }
+
+    /// A host repo with one commit, plus a real worktree for the env branch.
+    /// Returns (tempdir, h5i_root, manifest).
+    fn worktree_fixture() -> (tempfile::TempDir, PathBuf, EnvManifest) {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("host");
+        std::fs::create_dir_all(&host).unwrap();
+        let repo = Repository::init(&host).unwrap();
+        let sig = git2::Signature::now("t", "t@example.com").unwrap();
+        let tree = repo.find_tree(repo.treebuilder(None).unwrap().write().unwrap()).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "base", &tree, &[]).unwrap();
+
+        let m = wt_manifest("human", "t");
+        let h5i_root = repo.commondir().join(".h5i");
+        let work = m.work_dir(&h5i_root);
+        std::fs::create_dir_all(work.parent().unwrap()).unwrap();
+
+        let out = std::process::Command::new("git")
+            .current_dir(&host)
+            .args(["worktree", "add", "-b", m.branch_short()])
+            .arg(&work)
+            .arg("HEAD")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        (dir, h5i_root, m)
+    }
+
+    #[test]
+    fn open_env_worktree_accepts_the_box_it_belongs_to() {
+        let (_d, h5i_root, m) = worktree_fixture();
+        let wt = open_env_worktree(&h5i_root, &m).expect("the box's own worktree opens");
+        assert_eq!(wt.head().unwrap().name(), Some(m.branch.as_str()));
+    }
+
+    /// The advisory case: the box rewrites `$WORK/.git` to point at the host
+    /// repository, so a later `propose`/`rebase` would stage the box tree onto
+    /// whatever the host has checked out (`main`) instead of the env branch.
+    /// The object store still matches — only HEAD gives it away.
+    #[test]
+    fn open_env_worktree_refuses_a_pointer_redirected_at_the_host_repo() {
+        let (_d, h5i_root, m) = worktree_fixture();
+        let work = m.work_dir(&h5i_root);
+        let host_git = h5i_root.parent().unwrap().to_path_buf();
+        std::fs::write(work.join(".git"), format!("gitdir: {}\n", host_git.display())).unwrap();
+
+        let err = open_env_worktree(&h5i_root, &m).map(|_| ()).expect_err("must fail closed");
+        let msg = err.to_string();
+        assert!(msg.contains(&m.branch), "should name the branch it owns: {msg}");
+        assert!(msg.contains("fail-closed"), "{msg}");
+    }
+
+    /// The same pointer rewritten at an unrelated repository: caught by the
+    /// object-store check rather than the branch check.
+    #[test]
+    fn open_env_worktree_refuses_a_pointer_redirected_at_a_foreign_repo() {
+        let (d, h5i_root, m) = worktree_fixture();
+        let other = d.path().join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        let orepo = Repository::init(&other).unwrap();
+        let sig = git2::Signature::now("t", "t@example.com").unwrap();
+        let tree = orepo.find_tree(orepo.treebuilder(None).unwrap().write().unwrap()).unwrap();
+        orepo.commit(Some("HEAD"), &sig, &sig, "other", &tree, &[]).unwrap();
+        // Give the foreign repo the same branch name, so only the object-store
+        // check can distinguish it.
+        let head = orepo.head().unwrap().peel_to_commit().unwrap();
+        orepo.branch(m.branch_short(), &head, false).unwrap();
+        orepo.set_head(&m.branch).unwrap();
+
+        let work = m.work_dir(&h5i_root);
+        std::fs::write(
+            work.join(".git"),
+            format!("gitdir: {}\n", orepo.path().display()),
+        )
+        .unwrap();
+
+        let err = open_env_worktree(&h5i_root, &m).map(|_| ()).expect_err("must fail closed");
+        assert!(err.to_string().contains("not this box's"), "{err}");
     }
 }
