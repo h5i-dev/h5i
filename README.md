@@ -44,10 +44,7 @@ Or build from source:
 ```bash
 cargo install --path .
 ```
-
-Linux and macOS. The two confine by different means: Linux uses Landlock,
-seccomp and namespaces, macOS uses Seatbelt. Two optional runtimes add 
-tiers on top of either: rootless [Podman](https://podman.io/) gives 
+Two optional runtimes add tiers on top of either: rootless [Podman](https://podman.io/) gives 
 you `container`, and [microsandbox](https://microsandbox.dev) (`msb`) 
 gives you `microvm` on a host with hardware virtualization (`/dev/kvm` 
 on Linux, Apple Silicon on macOS).
