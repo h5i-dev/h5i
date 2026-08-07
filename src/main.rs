@@ -259,6 +259,10 @@ fn maybe_version_json(argv: &[String]) {
 }
 
 /// Compiled feature flags for this binary, sorted so JSON output is diffable.
+// One cfg-gated `push` per feature, so a new feature is a one-line addition.
+// clippy sees `Vec::new()` + `push` and suggests `vec![]`, but the pushes are
+// conditional — collapsing them would reintroduce paired cfg/cfg(not) bindings.
+#[allow(clippy::vec_init_then_push)]
 fn compiled_features() -> Vec<&'static str> {
     #[allow(unused_mut)]
     let mut features: Vec<&str> = Vec::new();
