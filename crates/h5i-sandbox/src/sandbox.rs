@@ -659,11 +659,26 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
         )));
     }
     // fs.deny preflight lint: Landlock has no deny rules, so a granted parent
-    // must never contain a denied child. Compare on expanded, normalized text.
+    // must never contain a denied child.
+    //
+    // Compare on *resolved* paths, not on expanded text. Landlock grants follow
+    // symlinks — the builder opens the grant path and hands the result to
+    // `path_beneath_rules` — so a grant of `~/work-tools` on a host where that
+    // is a symlink to `$HOME` really grants the whole home directory. A textual
+    // prefix check never saw `~/.ssh` underneath it and let the policy load.
+    // Canonicalization is best-effort: a path that does not exist yet cannot be
+    // resolved, and the expanded text is the right fallback there (a
+    // non-existent grant is skipped by the Landlock builder anyway).
+    let resolve = |s: &str| -> String {
+        let expanded = expand_tilde(s);
+        std::fs::canonicalize(&expanded)
+            .map(|p| p.display().to_string())
+            .unwrap_or(expanded)
+    };
     for grant in p.fs_read.iter().chain(p.fs_write.iter()) {
-        let g = expand_tilde(grant);
+        let g = resolve(grant);
         for deny in &p.fs_deny {
-            let d = expand_tilde(deny);
+            let d = resolve(deny);
             if d == g || d.starts_with(&format!("{}/", g.trim_end_matches('/'))) {
                 return Err(H5iError::Metadata(format!(
                     "policy refused: granted path '{grant}' contains denied child '{deny}' \
@@ -3076,9 +3091,43 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
         arch,
     )
     .map_err(|e| H5iError::Metadata(format!("seccomp filter build failed: {e}")))?;
-    filter
+    let program: seccompiler::BpfProgram = filter
         .try_into()
-        .map_err(|e: seccompiler::BackendError| H5iError::Metadata(format!("seccomp compile failed: {e}")))
+        .map_err(|e: seccompiler::BackendError| {
+            H5iError::Metadata(format!("seccomp compile failed: {e}"))
+        })?;
+    Ok(prepend_x32_guard(program))
+}
+
+/// Refuse the x32 ABI before the deny-list runs.
+///
+/// On x86_64, x32 reports `AUDIT_ARCH_X86_64` in `seccomp_data.arch` — so
+/// seccompiler's own arch check passes — but ORs `X32_SYSCALL_BIT` into `nr`.
+/// Every syscall-number comparison in the compiled deny-list therefore misses,
+/// and an x32 `mount`/`ptrace`/`unshare` falls through to the default Allow.
+/// seccompiler has no knob for this, so the guard is prepended to the compiled
+/// program: BPF jumps are relative, so shifting the original block is safe.
+///
+/// Architecture-independent by construction — no aarch64 syscall number comes
+/// near `0x4000_0000`, so the comparison never fires there.
+fn prepend_x32_guard(program: seccompiler::BpfProgram) -> seccompiler::BpfProgram {
+    use seccompiler::sock_filter;
+    const BPF_LD_W_ABS: u16 = 0x00 | 0x00 | 0x20; // BPF_LD | BPF_W | BPF_ABS
+    const BPF_JMP_JGE_K: u16 = 0x05 | 0x30 | 0x00; // BPF_JMP | BPF_JGE | BPF_K
+    const BPF_RET_K: u16 = 0x06;
+    const OFF_NR: u32 = 0;
+    const X32_SYSCALL_BIT: u32 = 0x4000_0000;
+    const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
+
+    let mut out: seccompiler::BpfProgram = vec![
+        // A = nr
+        sock_filter { code: BPF_LD_W_ABS, jt: 0, jf: 0, k: OFF_NR },
+        // nr >= X32 bit → fall through to the kill; otherwise skip it.
+        sock_filter { code: BPF_JMP_JGE_K, jt: 0, jf: 1, k: X32_SYSCALL_BIT },
+        sock_filter { code: BPF_RET_K, jt: 0, jf: 0, k: SECCOMP_RET_KILL_PROCESS },
+    ];
+    out.extend(program);
+    out
 }
 
 /// Spawn `cmd`, stream stdout/stderr off-thread, and enforce `wall` as a hard
@@ -3668,6 +3717,30 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         // The default deny set survives and no grant contains a denied child
         // (validate_profile ran inside load_profile).
         assert!(p.fs_deny.iter().any(|s| s == "~/.ssh"));
+    }
+
+    /// Landlock grants follow symlinks, so the lint has to as well. A grant of
+    /// a symlink into `$HOME` really grants the home directory, and a textual
+    /// prefix check never saw the denied child underneath it.
+    #[test]
+    #[cfg(unix)]
+    fn fs_deny_lint_sees_through_a_symlinked_grant() {
+        let td = tempfile::tempdir().unwrap();
+        let home = td.path().join("home");
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        // The grant is a symlink to the directory that holds the denied child.
+        let tools = td.path().join("work-tools");
+        std::os::unix::fs::symlink(&home, &tools).unwrap();
+
+        let mut p = Profile::builtin("default", IsolationClaim::Process);
+        p.fs_read = vec![tools.display().to_string()];
+        p.fs_deny = vec![home.join(".ssh").display().to_string()];
+        let err = validate_profile(&p).map(|_| ()).unwrap_err();
+        assert!(err.to_string().contains("denied child"), "{err}");
+
+        // An unrelated grant still loads.
+        p.fs_read = vec![td.path().join("elsewhere").display().to_string()];
+        assert!(validate_profile(&p).is_ok());
     }
 
     /// Host-side scratch must not be pre-plantable. The nftables ruleset lands
