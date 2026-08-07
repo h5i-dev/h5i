@@ -689,6 +689,16 @@ pub fn pump_input(
     env_dir: &Path,
 ) -> Pump {
     let mut pump = Pump::default();
+    // Whether a fragmented message is currently being forwarded.
+    //
+    // The forward/drop decision is per *message*, not per frame. Deciding per
+    // frame meant that if the control lock changed hands mid-message, the first
+    // fragment went upstream and its continuations did not (or the reverse) —
+    // leaving agent-browser's parser mid-message, so the next frame it saw was
+    // a protocol violation that could kill the stream out from under the
+    // watching human. Browsers rarely fragment small frames, but the forward
+    // accepts any token-holding client.
+    let mut forwarding_fragmented: Option<bool> = None;
     loop {
         match read_frame(&mut from_client) {
             Ok(None) => return pump,
@@ -699,8 +709,23 @@ pub fn pump_input(
             Ok(Some(frame)) => {
                 let is_input =
                     classify(frame.opcode, frame.fin, &frame.payload) == FrameVerdict::Input;
-                let allowed = !is_input
-                    || crate::control::read(env_dir).holder == crate::control::Holder::Human;
+                // A continuation (opcode 0) inherits the decision made for the
+                // message's first frame; anything else decides afresh. Control
+                // frames may be interleaved mid-message and carry their own
+                // verdict, so they never touch the fragmentation state.
+                let is_continuation = frame.opcode == 0;
+                let control_frame = frame.opcode >= 0x8;
+                let allowed = match (is_continuation, forwarding_fragmented) {
+                    (true, Some(decided)) => decided,
+                    _ => {
+                        !is_input
+                            || crate::control::read(env_dir).holder
+                                == crate::control::Holder::Human
+                    }
+                };
+                if !control_frame {
+                    forwarding_fragmented = if frame.fin { None } else { Some(allowed) };
+                }
                 if allowed {
                     if let Err(e) = to_box.write_all(&frame.raw).and_then(|()| to_box.flush()) {
                         pump.error = Some(e.to_string());
@@ -1316,6 +1341,59 @@ mod tests {
         // And nothing a human typed reached the page, which is what the
         // session record reports.
         assert_eq!(pumped.input_frames, 0);
+    }
+
+    /// A fragmented message must be forwarded or dropped whole. Deciding per
+    /// frame left agent-browser's parser mid-message when the control lock
+    /// changed hands, and the next frame it saw was a protocol violation.
+    #[test]
+    fn a_fragmented_message_is_forwarded_or_dropped_whole() {
+        // Non-final text frame, then a final continuation (opcode 0).
+        let frag = |opcode: u8, payload: &[u8], fin: bool| -> Vec<u8> {
+            let mut f = vec![if fin { 0x80 | opcode } else { opcode }, 0x80 | payload.len() as u8];
+            let key = [0xAA, 0xBB, 0xCC, 0xDD];
+            f.extend_from_slice(&key);
+            f.extend(payload.iter().enumerate().map(|(i, b)| b ^ key[i % 4]));
+            f
+        };
+
+        // Agent-held: the whole message is dropped, continuation included.
+        let td = TempDir::new().unwrap();
+        let mut input = Vec::new();
+        input.extend_from_slice(&frag(0x1, b"cli", false));
+        input.extend_from_slice(&frag(0x0, b"ck", true));
+        let mut forwarded = Vec::new();
+        pump_input(&input[..], &mut forwarded, td.path());
+        assert!(forwarded.is_empty(), "no fragment may leak: {forwarded:?}");
+
+        // Human-held: the whole message goes.
+        let td2 = TempDir::new().unwrap();
+        crate::control::take(td2.path()).unwrap();
+        let mut forwarded2 = Vec::new();
+        pump_input(&input[..], &mut forwarded2, td2.path());
+        assert_eq!(forwarded2, input, "both fragments must be forwarded");
+    }
+
+    /// A control frame may be interleaved inside a fragmented message; it
+    /// carries its own verdict and must not disturb the message's.
+    #[test]
+    fn an_interleaved_control_frame_does_not_break_fragment_tracking() {
+        let td = TempDir::new().unwrap();
+        crate::control::take(td.path()).unwrap();
+        let frag = |opcode: u8, payload: &[u8], fin: bool| -> Vec<u8> {
+            let mut f = vec![if fin { 0x80 | opcode } else { opcode }, 0x80 | payload.len() as u8];
+            let key = [0xAA, 0xBB, 0xCC, 0xDD];
+            f.extend_from_slice(&key);
+            f.extend(payload.iter().enumerate().map(|(i, b)| b ^ key[i % 4]));
+            f
+        };
+        let mut input = Vec::new();
+        input.extend_from_slice(&frag(0x1, b"cli", false));
+        input.extend_from_slice(&client_frame(0x9, b"ping"));
+        input.extend_from_slice(&frag(0x0, b"ck", true));
+        let mut forwarded = Vec::new();
+        pump_input(&input[..], &mut forwarded, td.path());
+        assert_eq!(forwarded, input, "everything goes when the human holds control");
     }
 
     #[test]
