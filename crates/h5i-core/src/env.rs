@@ -5693,6 +5693,19 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
                 .unwrap_or_default(),
             p.cpu_secs.map(|s| format!(" cpu={s}s")).unwrap_or_default(),
         ));
+        // The line above is the DIGESTED policy — what `policy.resolved.toml`
+        // pinned. Every session then adds structural grants after that digest
+        // is verified (`grant_box_git`, the spool, the per-env HOME, cache
+        // mounts, the private /tmp), and they are not re-digested. A reviewer
+        // asking "what could this box touch?" was being shown an fs.write list
+        // that omits the git object store and the box's own worktree admin dir
+        // — the grants that matter most. Name them, as a separate section so it
+        // stays clear which half is digest-pinned.
+        out.push_str(
+            "  + at run : <env>/spool, <env>/home, <env>/tmp, cache mounts, and the box's git              plumbing (.git/objects rw, .git/worktrees/<wt> rw, refs/heads/h5i/env/<agent> rw,              .git/config ro)
+             these are added per session, after the policy digest              is checked, and are not part of it
+",
+        );
         // One footnote beats a caveat on every number, and it names the reason
         // rather than leaving the reader to infer it from a marker.
         let declared_unenforced = (!limits.mem && p.mem_bytes.is_some())
