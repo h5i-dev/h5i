@@ -289,7 +289,6 @@ pub enum BoxCommands {
     /// Snapshot the worktree (mediated commit, path-allowlist enforced) and
     /// mark the box proposed — produces a review brief. Never writes the
     /// parent branch. `export` runs this as its freeze step.
-    #[command(hide = true)]
     Propose { name: String },
 
     /// Apply a proposed environment onto its parent branch (reviewer-selected,

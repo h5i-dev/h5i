@@ -539,6 +539,21 @@ Print help
 .TP
 <\fINAME\fR>
 
+.SH "H5I BOX PROPOSE"
+Snapshot the worktree (mediated commit, path-allowlist enforced) and mark the box proposed \(em produces a review brief. Never writes the parent branch. `export` runs this as its freeze step
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpropose\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
 .SH "H5I BOX APPLY"
 Apply a proposed environment onto its parent branch (reviewer-selected, never automatic). Default is a merge (fast-forward when possible)
 .ie \n(.g .ds Aq \(aq

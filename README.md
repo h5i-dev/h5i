@@ -46,28 +46,80 @@ cargo install --path .
 ```
 
 Linux and macOS. The two confine by different means: Linux uses Landlock,
-seccomp and namespaces, macOS uses Seatbelt. What that buys you is close but not
-identical, so run `h5i box probe`. It reports the mechanism your host actually
-has and what it can enforce, rather than a tier name that means different things
-in different places. Two optional runtimes add tiers on top of either: rootless
-[Podman](https://podman.io/) gives you `container`, and
-[microsandbox](https://microsandbox.dev) (`msb`) gives you `microvm` on a host
-with hardware virtualization (`/dev/kvm` on Linux, Apple Silicon on macOS).
+seccomp and namespaces, macOS uses Seatbelt. Two optional runtimes add 
+tiers on top of either: rootless [Podman](https://podman.io/) gives 
+you `container`, and [microsandbox](https://microsandbox.dev) (`msb`) 
+gives you `microvm` on a host with hardware virtualization (`/dev/kvm` 
+on Linux, Apple Silicon on macOS).
+
+---
 
 ## Use it
 
+- **Create a sandboxed**
+
 ```bash
-h5i box                          # a box from this repository
-h5i box --pr 1234                # a box from pull request #1234
+h5i box create <name> --profile agent-claude            # a sandboxed Git worktree from this repository
+h5i box create <name> --profile agent-claude --pr 1234  # a sandbox from pull request #1234
 ```
 
-Work in it. Every command is policy-enforced and recorded:
+- **Run a single command**
 
 ```bash
 h5i box run <name> -- cargo test # one command; the exit code passes through
+```
+
+- **Work in it interactively**
+
+```bash
 h5i box shell <name>             # an interactive confined session
+                                 # every command is policy-enforced and recorded:
+```
+
+- **Watch the browser it drives**
+
+```bash
+h5i box view <name>              # the box's page, on a forward only your host can reach
+h5i box view <name> --term       # draw it in this terminal instead (needs kitty)
+```
+
+<p align="center">
+  <img src="./docs/_static/browser-demo.gif" width="99%" />
+</p>
+
+- **Review the work, then take it**
+
+```bash
+h5i box propose <name>           # freeze the worktree into a reviewable snapshot
+h5i box apply   <name>           # merge that snapshot onto the parent branch
+```
+
+- **Keep the record of what happened**
+
+```bash
+h5i box export <name>            # freeze the box and write a bundle you can read
+# → h5i-export/<name>/patch.diff    the change, path-validated
+#   h5i-export/<name>/report.md     what ran, what was denied, what was redacted
+#   h5i-export/<name>/receipt.json  the records, with the enforced policy digest
+```
+
+- **See where your boxes stand**
+
+```bash
+h5i box ls                       # every box on this clone, and how far each has drifted
 h5i box status <name>            # the policy that was actually enforced
 h5i box diff <name>              # what changed against the pinned base
+```
+
+- **Throw a box away**
+
+```bash
+h5i box rm <name>                # prune the worktree, delete its branches, erase its manifest
+```
+
+- **Watch the whole fleet in a browser**
+
+```bash
 h5i ui                           # the whole fleet on one screen, read-only
 ```
 
@@ -75,16 +127,7 @@ h5i ui                           # the whole fleet on one screen, read-only
   <img src="./docs/_static/sandbox-ui-demo.png" width="99%" />
 </p>
 
-Get the work out through the gate, which is deliberately a human step:
-
-```bash
-h5i box export <name>
-# → h5i-export/<name>/patch.diff    the change, path-validated
-#   h5i-export/<name>/report.md     what ran, what was denied, what was redacted
-#   h5i-export/<name>/receipt.json  the records, with the enforced policy digest
-```
-
-Nothing writes into your repository until you apply that patch.
+---
 
 ## What confinement means here
 
@@ -103,6 +146,7 @@ microvm is the strongest tier and the only one that does not share the host kern
 
 No credentials enter a box. A runtime-scoped host proxy injects model API keys outside the boundary, preventing cross-runtime access. Each box receives a one-time copy of HOME state that is never written back.
 
+---
 
 ## Skill
 
@@ -114,6 +158,8 @@ h5i skill show policy            # or just read a page
 npx skills add h5i-dev/h5i       # if you do not have the binary yet
 ```
 
+---
+
 ## Documentation
 
 - [ROADMAP.md](ROADMAP.md): where this is going, and what was cut to get there
@@ -121,6 +167,8 @@ npx skills add h5i-dev/h5i       # if you do not have the binary yet
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
 - [CONTRIBUTING.md](CONTRIBUTING.md): we welcome contributions of any kind
 - `h5i man > ~/.local/share/man/man1/h5i.1`: install the man page (generated from the CLI)
+
+---
 
 ## What h5i does not claim
 
@@ -134,6 +182,8 @@ npx skills add h5i-dev/h5i       # if you do not have the binary yet
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
   it binds proxy-respecting tooling only. `supervised` and `microvm` enforce at
   L3/L4 and do not have that hole.
+
+---
 
 ## License
 
