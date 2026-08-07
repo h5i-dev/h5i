@@ -731,9 +731,11 @@ fn setup_egress(
     let slirp = slirp4netns_path()
         .ok_or_else(|| H5iError::Metadata("`slirp4netns` not found on PATH".into()))?;
 
-    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = std::env::temp_dir().join(format!("h5i-egress-{}-{seq}", std::process::id()));
-    std::fs::create_dir_all(&tmp).map_err(H5iError::Io)?;
+    // Unguessable and 0700: the ruleset written here is handed to `nft -f` by a
+    // child holding CAP_NET_ADMIN, so a pre-planted directory or symlink at a
+    // predictable path would let another local user choose the box's egress
+    // policy outright.
+    let tmp = crate::sandbox::private_scratch_dir("h5i-egress")?;
     // No resolver port: DNS is pinned via /etc/hosts, so port 53 stays closed.
     let rules = build_nft_ruleset(&dests, None);
     let rules_path = tmp.join("egress.nft");

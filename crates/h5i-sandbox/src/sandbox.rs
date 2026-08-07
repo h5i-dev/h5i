@@ -645,6 +645,42 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     Ok(())
 }
 
+/// 16 hex chars of OS entropy — enough that no other local user can guess or
+/// pre-plant a scratch path before we create it.
+fn random_suffix() -> Result<String, H5iError> {
+    let mut raw = [0u8; 8];
+    getrandom::fill(&mut raw).map_err(|e| {
+        H5iError::Metadata(format!(
+            "no OS entropy for a private scratch path ({e}) — refusing to fall back to a \
+             guessable one (fail-closed)"
+        ))
+    })?;
+    Ok(raw.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// A private scratch directory under the system temp dir.
+///
+/// `<tmp>/<prefix>-<pid>-<seq>` was guessable, and both `create_dir_all` and
+/// `fs::write` are happy to land inside a directory (or through a symlink)
+/// another user pre-created. That matters most for the nftables ruleset, which
+/// a child then `execve`s `nft -f` on with CAP_NET_ADMIN: an attacker-supplied
+/// ruleset becomes the box's entire L3/L4 egress policy.
+///
+/// So: an unguessable name, and `mkdir(0700)` — which fails if the path exists,
+/// and sets the mode atomically rather than leaving a window at the umask
+/// default.
+pub fn private_scratch_dir(prefix: &str) -> Result<PathBuf, H5iError> {
+    let dir = std::env::temp_dir().join(format!("{prefix}-{}", random_suffix()?));
+    let mut b = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        b.mode(0o700);
+    }
+    b.create(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+    Ok(dir)
+}
+
 /// Create the directory chain for `rel` under `work` without ever traversing a
 /// symlink, and return the joined path. `keep_last` decides whether the final
 /// component is created too (the Linux bind mountpoint) or left for the caller
@@ -1940,7 +1976,7 @@ fn augment_injected_env(
     env
 }
 
-/// Monotonic counter so concurrent functional probes get distinct temp dirs.
+/// Monotonic counter so concurrent runs get distinct per-run cgroup names.
 static PROBE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static VERIFIED_EXEC_POLICIES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
@@ -1968,9 +2004,7 @@ pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
             return Ok(());
         }
     }
-    let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("h5i-exec-probe-{}-{seq}", std::process::id()));
-    std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+    let dir = private_scratch_dir("h5i-exec-probe")?;
     // Clone the profile but clear the tools allowlist so our internal probe
     // command isn't rejected by a user-pinned list that omits `true`.
     let mut profile = policy.profile.clone();
@@ -3602,6 +3636,28 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         // The default deny set survives and no grant contains a denied child
         // (validate_profile ran inside load_profile).
         assert!(p.fs_deny.iter().any(|s| s == "~/.ssh"));
+    }
+
+    /// Host-side scratch must not be pre-plantable. The nftables ruleset lands
+    /// in one of these and is then executed by a child with CAP_NET_ADMIN, so a
+    /// guessable path let another local user pick the box's egress policy.
+    #[test]
+    fn private_scratch_is_unguessable_and_owner_only() {
+        let a = private_scratch_dir("h5i-test-scratch").unwrap();
+        let b = private_scratch_dir("h5i-test-scratch").unwrap();
+        assert_ne!(a, b, "two scratch dirs must not collide");
+        // Not derived from the pid: that is what made the old name guessable.
+        assert!(!a.to_string_lossy().contains(&std::process::id().to_string()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&a).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "scratch dir must be 0700, got {mode:o}");
+        }
+        // Never reuses an existing directory.
+        assert!(std::fs::DirBuilder::new().create(&a).is_err());
+        let _ = std::fs::remove_dir_all(&a);
+        let _ = std::fs::remove_dir_all(&b);
     }
 
     #[test]
