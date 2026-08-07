@@ -25,10 +25,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
-// PathBuf is only referenced from the confinement paths (Landlock grants,
-// config-lock, the Seatbelt plan); gate the import so targets with neither
-// backend don't see it as unused under `-D warnings`.
-#[cfg(unix)]
+// Used on every target now: the private-path and scratch-dir helpers below
+// return PathBuf regardless of which confinement backend (if any) this target
+// has.
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -3101,6 +3100,8 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
 
 /// Refuse the x32 ABI before the deny-list runs.
 ///
+/// Linux only, like `seccompiler` and its caller.
+///
 /// On x86_64, x32 reports `AUDIT_ARCH_X86_64` in `seccomp_data.arch` — so
 /// seccompiler's own arch check passes — but ORs `X32_SYSCALL_BIT` into `nr`.
 /// Every syscall-number comparison in the compiled deny-list therefore misses,
@@ -3110,6 +3111,7 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
 ///
 /// Architecture-independent by construction — no aarch64 syscall number comes
 /// near `0x4000_0000`, so the comparison never fires there.
+#[cfg(target_os = "linux")]
 fn prepend_x32_guard(program: seccompiler::BpfProgram) -> seccompiler::BpfProgram {
     use seccompiler::sock_filter;
     // Spelled as literals: the classic-BPF opcode components (BPF_LD|BPF_W|
