@@ -517,9 +517,27 @@ pub enum FrameVerdict {
     /// Connection management: forwarded regardless of who holds the lock, or
     /// the socket would stall and time out while a human watches.
     Control,
+    /// A request about frame *delivery* — how fast, and how many in flight.
+    /// Forwarded regardless of the lock, because it drives nothing on the page
+    /// and gating it breaks watching, which never needed the lock.
+    Pacing,
     /// Actual input — a click, a keystroke. Forwarded only for the lock holder.
     Input,
 }
+
+/// The two message names that ask about delivery rather than about the page.
+///
+/// An allowlist of exact strings, and it has to stay one. The reason
+/// [`classify_opcode`] refuses to look at payloads is that guessing "probably
+/// harmless" is how gates get bypassed; the answer to a message that genuinely
+/// must pass is not to guess more loosely but to *name* it.
+const PACING_MESSAGES: [&str; 2] = ["config", "ack"];
+
+/// Largest text frame worth parsing to see whether it is a pacing message.
+/// `{"type":"config","maxFps":30,"pacing":"ack"}` is 44 bytes; anything in this
+/// neighbourhood is generous, and it stops a hostile client from making the
+/// forward parse a megabyte of JSON per frame for free.
+const MAX_PACING_FRAME: usize = 4096;
 
 /// Classify a frame by its opcode.
 ///
@@ -539,11 +557,55 @@ pub fn classify_opcode(opcode: u8) -> FrameVerdict {
     }
 }
 
-/// Read one WebSocket frame from `r`, returning its opcode and the exact bytes
-/// as they arrived (so a forwarded frame is byte-identical to the original).
+/// Classify a frame, looking at the payload only far enough to spot the two
+/// messages that must not be gated.
+///
+/// Gating those two is not a conservative default, it is a broken viewer, and
+/// it was: the page asks for a frame-rate cap the moment it connects, that ask
+/// is a text frame, every text frame was `Input`, and a box is agent-held by
+/// default — so the cap was dropped on essentially every session and the box
+/// streamed uncapped. Silent, because a dropped `config` looks exactly like a
+/// `config` that was honoured. It is also what blocks ack pacing on this path
+/// entirely: acks would be dropped too, and frames would simply stop.
+pub fn classify(opcode: u8, fin: bool, payload: &[u8]) -> FrameVerdict {
+    if classify_opcode(opcode) == FrameVerdict::Control {
+        return FrameVerdict::Control;
+    }
+    // Text only, and only a whole message. A fragment cannot be judged from the
+    // fragment in hand, so it is input.
+    if opcode == 0x1 && fin && payload.len() <= MAX_PACING_FRAME && is_pacing(payload) {
+        return FrameVerdict::Pacing;
+    }
+    FrameVerdict::Input
+}
+
+fn is_pacing(payload: &[u8]) -> bool {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(payload) else {
+        return false;
+    };
+    v.get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|t| PACING_MESSAGES.contains(&t))
+}
+
+/// One frame from the client, as read.
+struct ClientFrame {
+    opcode: u8,
+    /// The final fragment of its message? A partial message cannot be judged
+    /// from the part in hand.
+    fin: bool,
+    /// The exact bytes as they arrived, so a forwarded frame is byte-identical
+    /// to the original — mask and all.
+    raw: Vec<u8>,
+    /// The same payload with the client's mask removed, which is the only form
+    /// [`classify`] can read.
+    payload: Vec<u8>,
+}
+
+/// Read one WebSocket frame from `r`.
 ///
 /// `None` at a clean end of stream; an error for a truncated or absurd frame.
-fn read_frame(r: &mut impl Read) -> std::io::Result<Option<(u8, Vec<u8>)>> {
+fn read_frame(r: &mut impl Read) -> std::io::Result<Option<ClientFrame>> {
     let mut head = [0u8; 2];
     match r.read_exact(&mut head) {
         Ok(()) => {}
@@ -552,6 +614,7 @@ fn read_frame(r: &mut impl Read) -> std::io::Result<Option<(u8, Vec<u8>)>> {
     }
     let mut raw = head.to_vec();
     let opcode = head[0] & 0x0f;
+    let fin = head[0] & 0x80 != 0;
     let masked = head[1] & 0x80 != 0;
     let len7 = head[1] & 0x7f;
 
@@ -578,15 +641,26 @@ fn read_frame(r: &mut impl Read) -> std::io::Result<Option<(u8, Vec<u8>)>> {
             "oversized websocket frame",
         ));
     }
+    let mut key = [0u8; 4];
     if masked {
-        let mut key = [0u8; 4];
         r.read_exact(&mut key)?;
         raw.extend_from_slice(&key);
     }
     let mut payload = vec![0u8; payload_len as usize];
     r.read_exact(&mut payload)?;
+    // Appended before unmasking: what is forwarded is what arrived.
     raw.extend_from_slice(&payload);
-    Ok(Some((opcode, raw)))
+    if masked {
+        for (i, b) in payload.iter_mut().enumerate() {
+            *b ^= key[i % 4];
+        }
+    }
+    Ok(Some(ClientFrame {
+        opcode,
+        fin,
+        raw,
+        payload,
+    }))
 }
 
 /// Cap on a single inbound frame. Input events are tiny; this only has to be
@@ -599,6 +673,10 @@ const MAX_FRAME: u64 = 1 << 20;
 /// Dropping rather than closing is deliberate. A human who clicks before taking
 /// control should see nothing happen and still have a live viewer, not a
 /// connection that died on them.
+///
+/// Control frames and the two pacing messages pass whoever holds the lock: one
+/// keeps the socket alive, the other keeps frames arriving at a rate the viewer
+/// can draw. Neither touches the page. See [`classify`].
 ///
 /// Returns how many **input** frames actually reached the page. That count is
 /// the honest answer to "did a human drive this box?", and it is worth
@@ -618,12 +696,13 @@ pub fn pump_input(
                 pump.error = Some(e.to_string());
                 return pump;
             }
-            Ok(Some((opcode, raw))) => {
-                let is_input = classify_opcode(opcode) == FrameVerdict::Input;
+            Ok(Some(frame)) => {
+                let is_input =
+                    classify(frame.opcode, frame.fin, &frame.payload) == FrameVerdict::Input;
                 let allowed = !is_input
                     || crate::control::read(env_dir).holder == crate::control::Holder::Human;
                 if allowed {
-                    if let Err(e) = to_box.write_all(&raw).and_then(|()| to_box.flush()) {
+                    if let Err(e) = to_box.write_all(&frame.raw).and_then(|()| to_box.flush()) {
                         pump.error = Some(e.to_string());
                         return pump;
                     }
@@ -1137,6 +1216,67 @@ mod tests {
     }
 
     #[test]
+    fn asking_about_frame_delivery_is_not_input_and_is_never_gated() {
+        // The bug this exists to pin. The page sends `config` the moment it
+        // connects, a box is agent-held by default, and every text frame used
+        // to be input — so the frame-rate cap was dropped on essentially every
+        // session and nothing anywhere said so.
+        let td = TempDir::new().unwrap();
+        let config = br#"{"type":"config","maxFps":30,"pacing":"ack"}"#;
+        let ack = br#"{"type":"ack","seq":41}"#;
+
+        let mut input = Vec::new();
+        input.extend_from_slice(&client_frame(0x1, config));
+        input.extend_from_slice(&client_frame(0x1, ack));
+        input.extend_from_slice(&client_frame(0x1, br#"{"type":"input_mouse","x":1}"#));
+
+        let mut forwarded = Vec::new();
+        let pumped = pump_input(&input[..], &mut forwarded, td.path());
+
+        let mut expected = client_frame(0x1, config);
+        expected.extend_from_slice(&client_frame(0x1, ack));
+        assert_eq!(forwarded, expected, "pacing passes, the click does not");
+        // And neither is counted as a human driving the box. Only the click
+        // would have been, and it was dropped.
+        assert_eq!(pumped.input_frames, 0);
+    }
+
+    #[test]
+    fn the_pacing_allowlist_is_two_exact_names_and_nothing_near_them() {
+        let whole = |p: &[u8]| classify(0x1, true, p);
+        assert_eq!(whole(br#"{"type":"config","maxFps":10}"#), FrameVerdict::Pacing);
+        assert_eq!(whole(br#"{"type":"ack","seq":1}"#), FrameVerdict::Pacing);
+
+        // Everything else is input, including things that merely mention the
+        // allowed names. An allowlist that matches substrings is not one.
+        assert_eq!(whole(br#"{"type":"input_keyboard","key":"config"}"#), FrameVerdict::Input);
+        assert_eq!(whole(br#"{"type":"configure"}"#), FrameVerdict::Input);
+        assert_eq!(whole(br#"{"type":"input_mouse"}"#), FrameVerdict::Input);
+        assert_eq!(whole(b"not json"), FrameVerdict::Input);
+        assert_eq!(whole(b""), FrameVerdict::Input);
+        assert_eq!(whole(br#"{"no":"type"}"#), FrameVerdict::Input);
+        // A null or non-string type must not panic its way past the gate.
+        assert_eq!(whole(br#"{"type":null}"#), FrameVerdict::Input);
+        assert_eq!(whole(br#"{"type":7}"#), FrameVerdict::Input);
+
+        // Binary is never pacing, whatever it contains.
+        assert_eq!(classify(0x2, true, br#"{"type":"ack"}"#), FrameVerdict::Input);
+        // Nor is a fragment: the rest of the message has not been seen, and a
+        // judgement on a prefix is a judgement on nothing.
+        assert_eq!(classify(0x1, false, br#"{"type":"ack"}"#), FrameVerdict::Input);
+        assert_eq!(classify(0x0, true, br#"{"type":"ack"}"#), FrameVerdict::Input);
+
+        // A payload too large to be a pacing message is not parsed at all.
+        let mut fat = br#"{"type":"ack","pad":""#.to_vec();
+        fat.resize(MAX_PACING_FRAME + 64, b'x');
+        fat.extend_from_slice(br#""}"#);
+        assert_eq!(whole(&fat), FrameVerdict::Input);
+
+        // And control frames are still control, whatever they carry.
+        assert_eq!(classify(0x9, true, b"ping"), FrameVerdict::Control);
+    }
+
+    #[test]
     fn input_is_dropped_while_the_agent_holds_control() {
         let td = TempDir::new().unwrap();
         // A fresh box is agent-held.
@@ -1252,6 +1392,35 @@ mod tests {
         assert!(page.contains("clickCount"), "{}", "a press needs a click count");
         assert!(page.contains("mousePressed") && page.contains("mouseReleased"));
         assert!(page.contains("windowsVirtualKeyCode"));
+    }
+
+    #[test]
+    fn the_web_viewer_decodes_off_the_main_thread_and_paints_the_newest_frame() {
+        // Both halves of what makes the page smooth, pinned because the page is
+        // a string in this file and nothing else compiles it. Decoding through
+        // a `data:` URL and an `Image` element put a 70 KB string parse and a
+        // decode on the main thread for every frame; painting on arrival queued
+        // frames a slow tab could never catch up with.
+        let page = viewer_page(crate::control::Holder::Agent);
+        assert!(page.contains("createImageBitmap"), "frames must decode off the main thread");
+        assert!(page.contains("requestAnimationFrame"), "frames must paint on a frame boundary");
+        assert!(
+            !page.contains("data:image/jpeg;base64,"),
+            "a data URL per frame is the shape this replaced"
+        );
+        // Decoded pixels are held by the bitmap; a session that never closes
+        // them grows without bound.
+        assert!(page.contains(".close()"), "decoded frames must be released");
+
+        // Dropping has to happen before the decode as well as after it. The box
+        // does not wait for this page, so a decode started per arriving frame
+        // queues jobs and their blobs for as long as decoding is slower than the
+        // frame rate — and that version still *looks* like it drops frames,
+        // because it does, one stage too late to matter.
+        assert!(
+            page.contains("queuedBytes") && page.contains("decoding"),
+            "only the newest undecoded frame may be held, and one decode at a time"
+        );
     }
 
     #[test]

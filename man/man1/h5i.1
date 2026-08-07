@@ -271,7 +271,7 @@ Draw the page in this terminal instead of serving it to a browser
 Frame\-rate ceiling asked of the box, for `\-\-term`
 .TP
 \fB\-\-assume\-graphics\fR
-Skip the graphics probe and render anyway, for `\-\-term`
+Skip the graphics probe and render anyway, for `\-\-term`. Frames are then sent uncompressed (about six times the bytes), because the probe is also what asks whether this terminal accepts deflated ones
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
