@@ -696,6 +696,7 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
 /// on top. Without a deadline a helper that exits without signalling wedges the
 /// run forever, because the pipe's write end is held by the live `EgressNetns`
 /// and the wall clock is not armed until `spawn()` returns.
+#[cfg(target_os = "linux")]
 pub(crate) const EGRESS_READY_TIMEOUT_MS: libc::c_int = 15_000;
 
 /// 16 hex chars of OS entropy — enough that no other local user can guess or
