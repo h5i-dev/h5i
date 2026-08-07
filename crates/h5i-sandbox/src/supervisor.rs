@@ -846,6 +846,19 @@ fn run_supervised(
     use std::io::Read;
     use std::process::Stdio;
 
+    // Check the notify ABI *before* committing to this tier. The module doc
+    // promises the `seccomp_notif` structs are validated against
+    // SECCOMP_GET_NOTIF_SIZES and refused on mismatch, but nothing called the
+    // validator on any production path — so on a kernel with a different layout
+    // the listener installed fine and then `ioctl(NOTIF_RECV)`, whose request
+    // number embeds our struct size, failed with an unexpected errno. The serve
+    // loop broke on the first notification and the box's first socket() blocked
+    // unanswered: a hang where a refusal was documented.
+    //
+    // Here rather than at `install_listener`, which runs in the forked child
+    // and must not allocate an error.
+    crate::seccomp_notify::validate_notif_sizes()?;
+
     // A CLOEXEC socketpair for the SCM_RIGHTS listener handoff: the child sends
     // its seccomp listener fd over `sv[1]`; we receive it on `sv[0]`. CLOEXEC so
     // neither end leaks into the exec'd (untrusted) program.
@@ -1126,7 +1139,13 @@ fn run_supervised(
     // narrows the nftables ruleset to the auth proxy alone in that case).
     let mut env = effective_env;
     let (_egress_proxy, egress_port) = if has_egress && auth_port.is_none() {
-        let mut allow = crate::container::AllowList::parse(&policy.profile.net_egress)?;
+        // Through `effective_egress`, like every other tier: parsing the profile
+        // list directly meant `h5i box allow` extras applied on container and
+        // microvm but silently did nothing here.
+        let mut allow = crate::container::AllowList::parse(&crate::container::effective_egress(
+            &policy.profile.net_egress,
+            &policy.user_egress_allow,
+        ))?;
         // Pin now, so a later DNS answer cannot move the allowlist under us.
         allow.pin_dns();
         // On the pinned port when the box has one: a `browser` box's Chrome

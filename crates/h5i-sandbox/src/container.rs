@@ -559,6 +559,19 @@ impl AllowList {
     }
 }
 
+/// Resource caps this tier cannot apply, named so a run can say so instead of
+/// silently dropping them. Mirrors the honesty machinery Seatbelt already uses
+/// for the same situation.
+pub fn unmapped_resources(profile: &Profile) -> Vec<String> {
+    let mut out = Vec::new();
+    if profile.cpu_secs.is_some() {
+        out.push(
+            "resources.cpu (a CPU-seconds budget; podman caps CPU rate, not total)".to_string(),
+        );
+    }
+    out
+}
+
 /// Most bytes the tee shim records per stream, per command. The box decides how
 /// much it writes, so this is a disk bound on the host, not a display limit —
 /// the command's own output still passes through in full.
@@ -1321,6 +1334,15 @@ pub fn build_run_argv(
     if let Some(n) = profile.max_procs {
         a.push("--pids-limit".into());
         a.push(n.to_string());
+    }
+    // `resources.cpu` as a CPU-seconds budget has no podman equivalent (podman
+    // caps *rate*, not total), and `--ulimit fsize` is the file-size cap. Map
+    // what maps; the caller reports the rest through `unmapped_resources`
+    // rather than letting a profile written to bound a runaway build quietly
+    // get no bound at all.
+    if let Some(bytes) = profile.fsize_bytes {
+        a.push("--ulimit".into());
+        a.push(format!("fsize={bytes}"));
     }
 
     // Network.
