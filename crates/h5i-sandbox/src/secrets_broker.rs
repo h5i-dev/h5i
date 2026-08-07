@@ -323,23 +323,54 @@ pub fn broker(
 }
 
 /// Write a secret to `secret_dir/<name>` with mode `0600` (dir `0700`).
+///
+/// Fail-closed against a pre-planted path. `inject=file` is only permitted on
+/// the workspace tier, which applies no kernel confinement, so the box — or any
+/// same-uid process — can create `<env>/secrets/<name>` before the run. Without
+/// `O_NOFOLLOW|O_EXCL` the open would follow a symlink and write the plaintext
+/// credential to its target, and `mode()` is ignored for a file that already
+/// exists, so a pre-created 0644 file would keep those permissions. `TempFiles`
+/// would then unlink only the link, leaving the secret behind.
 fn write_secret_file(secret_dir: &Path, name: &str, value: &str) -> Result<PathBuf, H5iError> {
     std::fs::create_dir_all(secret_dir).map_err(|e| H5iError::with_path(e, secret_dir))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(secret_dir, std::fs::Permissions::from_mode(0o700));
+        // Propagated, not swallowed: a directory left at the umask default is
+        // a readable secret store, which is the thing this function exists to
+        // prevent.
+        std::fs::set_permissions(secret_dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| H5iError::with_path(e, secret_dir))?;
+        if std::fs::symlink_metadata(secret_dir)
+            .map_err(|e| H5iError::with_path(e, secret_dir))?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(H5iError::Metadata(format!(
+                "secrets: '{}' is a symlink — refusing to materialize a credential through it \
+                 (fail-closed)",
+                secret_dir.display()
+            )));
+        }
     }
     let path = secret_dir.join(name);
     #[cfg(unix)]
     {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
+        // A leftover from an earlier run is ours to clear; `create_new` then
+        // guarantees we created this file, so its mode was never wider than
+        // 0600 and it is not a link to somewhere else.
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(H5iError::with_path(e, &path)),
+        }
         let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .write(true)
             .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
             .open(&path)
             .map_err(|e| H5iError::with_path(e, &path))?;
         f.write_all(value.as_bytes()).map_err(|e| H5iError::with_path(e, &path))?;
@@ -354,6 +385,52 @@ fn write_secret_file(secret_dir: &Path, name: &str, value: &str) -> Result<PathB
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `inject=file` runs on the workspace tier, which confines nothing, so the
+    /// destination can be pre-planted. Writing through a symlink would put the
+    /// plaintext credential wherever the link pointed and leave it there after
+    /// teardown (TempFiles unlinks only the link).
+    #[test]
+    #[cfg(unix)]
+    fn a_planted_symlink_cannot_capture_a_brokered_secret() {
+        let td = tempfile::tempdir().unwrap();
+        let secrets = td.path().join("secrets");
+        let stolen = td.path().join("stolen");
+        std::fs::create_dir_all(&secrets).unwrap();
+        std::os::unix::fs::symlink(&stolen, secrets.join("DEPLOY_KEY")).unwrap();
+
+        let err = write_secret_file(&secrets, "DEPLOY_KEY", "s3cret").map(|_| ());
+        // Either refused, or replaced with a fresh 0600 regular file — never
+        // written through to the link's target.
+        assert!(
+            !stolen.exists(),
+            "credential was written through the planted symlink"
+        );
+        if err.is_ok() {
+            let md = std::fs::symlink_metadata(secrets.join("DEPLOY_KEY")).unwrap();
+            assert!(md.file_type().is_file());
+        }
+    }
+
+    /// A pre-created world-readable file must not keep its mode: `mode()` on
+    /// `OpenOptions` is ignored when the file already exists.
+    #[test]
+    #[cfg(unix)]
+    fn a_pre_created_loose_mode_file_is_replaced_not_reused() {
+        use std::os::unix::fs::PermissionsExt;
+        let td = tempfile::tempdir().unwrap();
+        let secrets = td.path().join("secrets");
+        std::fs::create_dir_all(&secrets).unwrap();
+        let victim = secrets.join("TOKEN");
+        std::fs::write(&victim, "").unwrap();
+        std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let p = write_secret_file(&secrets, "TOKEN", "s3cret").unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "secret file must be 0600, got {mode:o}");
+        let dmode = std::fs::metadata(&secrets).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dmode, 0o700, "secret dir must be 0700, got {dmode:o}");
+    }
 
     fn grant(name: &str, source: Option<&str>, inject: Option<&str>) -> SecretGrant {
         SecretGrant {
