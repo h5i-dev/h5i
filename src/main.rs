@@ -260,10 +260,10 @@ fn maybe_version_json(argv: &[String]) {
 
 /// Compiled feature flags for this binary, sorted so JSON output is diffable.
 fn compiled_features() -> Vec<&'static str> {
-    #[cfg(feature = "web")]
-    let mut features: Vec<&str> = vec!["web"];
-    #[cfg(not(feature = "web"))]
+    #[allow(unused_mut)]
     let mut features: Vec<&str> = Vec::new();
+    #[cfg(feature = "web")]
+    features.push("web");
     features.sort_unstable();
     features
 }
