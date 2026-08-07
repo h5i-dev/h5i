@@ -31,7 +31,15 @@ esac
 case "${os}-${arch}" in
   linux-x86_64)  target="x86_64-unknown-linux-musl" ;;
   linux-aarch64) target="aarch64-unknown-linux-musl" ;;
-  macos-x86_64 | macos-aarch64) target="aarch64-apple-darwin" ;;
+  macos-aarch64) target="aarch64-apple-darwin" ;;
+  macos-x86_64)
+    echo "Unsupported platform: macos-x86_64 — only Apple Silicon macOS builds are published today. Rosetta 2 cannot run a native arm64 binary on an Intel Mac. Build from source with: cargo install --path ." >&2
+    exit 1
+    ;;
+  *)
+    echo "Unsupported platform: ${os}-${arch}" >&2
+    exit 1
+    ;;
 esac
 
 # ── resolve latest version ───────────────────────────────────────────────────
