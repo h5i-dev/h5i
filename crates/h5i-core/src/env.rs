@@ -4018,6 +4018,7 @@ fn run_inner(
         &secret_dir,
         is_workspace,
         policy.profile.allow_command_extractors,
+        &crate::secrets_broker::fingerprint_key(h5i_root)?,
     )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
     // Authenticated egress the profile declares (5.5). Host-side credentials
@@ -4393,6 +4394,7 @@ pub fn shell(
         &secret_dir,
         is_workspace,
         policy.profile.allow_command_extractors,
+        &crate::secrets_broker::fingerprint_key(h5i_root)?,
     )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
     let injected_env = merged_env(
@@ -5825,14 +5827,18 @@ pub struct SecretStatus {
     pub ttl: Option<String>,
     /// `ok` | `command (not evaluated)` | `error: …`.
     pub status: String,
-    /// `sha256:<12>` when resolvable (env:/file:), else `None`.
+    /// `fp:<12>` (keyed, see [`crate::secrets_broker::fingerprint`]) when
+    /// resolvable (env:/file:), else `None`.
     pub fingerprint: Option<String>,
 }
 
 /// Resolve each declared grant's *status* without injecting it — the read-only
 /// surface behind `h5i box secrets`. `command:` extractors are never executed
 /// here (they have host-side side effects); they show as "not evaluated".
-pub fn secrets_status(policy: &ResolvedPolicy) -> Vec<SecretStatus> {
+pub fn secrets_status(h5i_root: &Path, policy: &ResolvedPolicy) -> Vec<SecretStatus> {
+    // Best-effort: a fingerprint the reviewer cannot compare is better than one
+    // they can grind, so a key we cannot mint drops the fingerprint entirely.
+    let fp_key = crate::secrets_broker::fingerprint_key(h5i_root).ok();
     policy
         .profile
         .secret_grants
@@ -5848,7 +5854,9 @@ pub fn secrets_status(policy: &ResolvedPolicy) -> Vec<SecretStatus> {
                 match crate::secrets_broker::resolve_value(g, false) {
                     Ok(v) => (
                         "ok".to_string(),
-                        Some(crate::secrets_broker::fingerprint(&v)),
+                        fp_key
+                            .as_ref()
+                            .map(|k| crate::secrets_broker::fingerprint(k, &v)),
                     ),
                     Err(e) => (format!("error: {e}"), None),
                 }

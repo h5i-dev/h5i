@@ -1306,7 +1306,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                 BoxCommands::Secrets { name, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     let policy = h5i_core::env::load_policy(&h5i_root, &m)?;
-                    let rows = h5i_core::env::secrets_status(&policy);
+                    let rows = h5i_core::env::secrets_status(&h5i_root, &policy);
                     if json {
                         println!("{}", serde_json::to_string_pretty(&rows)?);
                     } else {
