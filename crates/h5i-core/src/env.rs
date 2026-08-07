@@ -2998,20 +2998,35 @@ pub struct BrowserShim {
     pub port: u16,
 }
 
+/// The two directories a `browser` box uses, and the trust line between them.
+///
+/// `state` is granted **write**: it is where the box's own Chrome records its
+/// pid and port. `dir` is granted **read** only, and is where the host keeps
+/// the loopback ports it reserved — those decide what
+/// `policy.loopback_ports` will grant, so they must not be box-writable.
+fn browser_dirs(h5i_root: &Path, m: &EnvManifest) -> (PathBuf, PathBuf) {
+    let dir = m.dir(h5i_root).join("browser");
+    let state = dir.join("state");
+    (dir, state)
+}
+
 /// A loopback port held for the life of the env: read back from `file` when it
 /// is already there, otherwise reserved once and written down. Both ports a
 /// browser box depends on are memorised by something that outlives a single run
 /// (Chrome's CDP endpoint, and the proxy address Chrome was launched with), so
 /// neither can be re-drawn per run.
 fn remembered_port(file: &Path, what: &str, avoid: &[u16]) -> Result<u16, H5iError> {
-    // The file lives under `<env>/browser/state`, which the box is granted write
-    // on (it is where the box's own Chrome records its pid and port), so the
-    // value read back here is box-controlled. Nothing catastrophic follows from
-    // that — a port the box picks is one it could bind itself, and the policy
-    // only ever grants the port the host actually bound — but a `0` would ask
-    // for an ephemeral port under the name of a pinned one, and a privileged
-    // port would fail to bind on every run. Both are rejected in favour of
-    // drawing a fresh port, which is also what a corrupt file gets.
+    // `file` MUST live outside every write grant the box holds. The value read
+    // back here is pushed into `policy.loopback_ports`, which Seatbelt renders
+    // as `(allow network-outbound (remote ip "localhost:<port>"))` — so a box
+    // that could write it would be choosing which host loopback service its own
+    // next session may reach (the operator's Postgres, another box's dev
+    // server). That is why these files sit in `<env>/browser`, which the box is
+    // granted read on, and not in `<env>/browser/state`, which it can write.
+    //
+    // A `0` would still ask for an ephemeral port under the name of a pinned
+    // one and a privileged port would fail to bind on every run, so both are
+    // rejected in favour of drawing a fresh port — as is a corrupt file.
     //
     // `avoid` is the ports this env already holds. A drawn port is found by
     // binding an ephemeral listener and dropping it, so the next draw can be
@@ -3214,8 +3229,7 @@ fn prepare_browser_shim(
     let Some(real) = sandbox::agent_browser_binary() else {
         return Ok(None);
     };
-    let dir = m.dir(h5i_root).join("browser");
-    let state = dir.join("state");
+    let (dir, state) = browser_dirs(h5i_root, m);
     std::fs::create_dir_all(&state).map_err(|e| H5iError::with_path(e, &state))?;
     // Before anything else: a browser the last run found stranded on an old
     // route is stopped here, so the shim launches a fresh one below.
@@ -3226,14 +3240,17 @@ fn prepare_browser_shim(
     // the next run would be a port the still-running Chrome is not listening on
     // — and, worse, the only port the policy grants. Allocated once, then read
     // back for the life of the env.
-    let port = remembered_port(&state.join("cdp-port"), "the box's browser", &[])?;
+    // Reserved in `dir`, not `state`: the box has write on `state` and only read
+    // on `dir`, and these two numbers decide which host loopback ports the
+    // policy will grant.
+    let port = remembered_port(&dir.join("cdp-port"), "the box's browser", &[])?;
     policy.loopback_ports.push(port);
     // The egress allowlist proxy is remembered for the same reason, in the
     // other direction: that surviving Chrome memorises the proxy address it was
     // launched with, and on the macOS supervised tier that proxy is the box's
     // only route out. See [`sandbox::ResolvedPolicy::egress_proxy_port`].
     policy.egress_proxy_port = Some(remembered_port(
-        &state.join("egress-port"),
+        &dir.join("egress-port"),
         "the box's egress proxy",
         &[port],
     )?);
@@ -10034,6 +10051,31 @@ mod tests {
 
         // A missing source fails closed.
         assert!(materialize_persona(work, &["plugin/persona/nope.md".to_string()]).is_err());
+    }
+
+    /// The remembered loopback ports decide what `policy.loopback_ports` grants,
+    /// which macOS turns into `(allow network-outbound (remote ip
+    /// "localhost:<port>"))`. They must therefore live outside the one browser
+    /// directory the box can write, or a box picks the host service its own
+    /// next session may reach.
+    #[test]
+    fn remembered_browser_ports_are_not_box_writable() {
+        let td = tempfile::tempdir().unwrap();
+        let m = wt_manifest("human", "b");
+        let (dir, state) = browser_dirs(td.path(), &m);
+        for f in ["cdp-port", "egress-port"] {
+            assert!(
+                !dir.join(f).starts_with(&state),
+                "{f} must not sit under the box-writable state dir"
+            );
+        }
+        // And the port that is read back is still validated.
+        std::fs::create_dir_all(&dir).unwrap();
+        for bad in ["0", "80", "-1", "not a port", ""] {
+            std::fs::write(dir.join("cdp-port"), bad).unwrap();
+            let got = remembered_port(&dir.join("cdp-port"), "test", &[]).unwrap();
+            assert!(got >= 1024, "{bad:?} yielded {got}");
+        }
     }
 
     /// Build a manifest for an attached box on `refs/heads/h5i/env/<agent>/<slug>`.
