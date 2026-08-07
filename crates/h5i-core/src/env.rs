@@ -1930,7 +1930,6 @@ fn box_git_plumbing(repo: &Repository, m: &EnvManifest) -> Result<Vec<BoxGitPath
         git_dir.join("objects"),
         git_dir.join(&branch_parent),
         git_dir.join("logs").join(&branch_parent),
-        git_dir.join("refs/h5i/context"),
     ];
     for d in &rw {
         std::fs::create_dir_all(d).map_err(|e| H5iError::with_path(e, d))?;
@@ -3238,6 +3237,14 @@ fn prepare_browser_shim(
     if policy.profile.name != "browser" {
         return Ok(None);
     }
+    // Not on an image-backed tier. The shim lives host-side and is not mounted
+    // into the image, and `browser_env` prepends the *host* PATH, whose entries
+    // do not exist in the guest — so a container browser box started with dead
+    // leading PATH entries and a shim it could not execute. `create` allows
+    // this configuration, so it has to be handled rather than assumed away.
+    if policy.claim.image_backed() {
+        return Ok(None);
+    }
     let Some(real) = sandbox::agent_browser_binary() else {
         return Ok(None);
     };
@@ -3861,6 +3868,18 @@ fn apply_user_egress(policy: &mut sandbox::ResolvedPolicy) {
 /// holes, *how* it is enforced. A `403` from a proxy and a dropped packet are
 /// diagnosed differently, and the line is the only place the box's operator is
 /// told which one to expect.
+/// Say which declared resource caps this tier cannot apply. h5i's rule is that
+/// it never silently downgrades; a profile written to bound a runaway build
+/// should not discover at 3am that the bound was dropped on this backend.
+fn announce_unmapped_resources(policy: &sandbox::ResolvedPolicy) {
+    if policy.claim != IsolationClaim::Container {
+        return;
+    }
+    for note in crate::container::unmapped_resources(&policy.profile) {
+        eprintln!("⦿ note: {note} is not enforceable at isolation=container and was not applied");
+    }
+}
+
 fn announce_egress(policy: &sandbox::ResolvedPolicy) {
     const SHOW: usize = 8;
     let profile = &policy.profile.net_egress;
@@ -4029,6 +4048,7 @@ fn run_inner(
     let cargo_env = prepare_cargo_env(&work, &policy)?;
     // Host-side `h5i box allow` extras + the explained-egress line.
     apply_user_egress(&mut policy);
+    announce_unmapped_resources(&policy);
 
     // Broker any declared secrets BEFORE marking the env running, so a
     // fail-closed grant (missing source, unsupported inject) aborts cleanly
@@ -4438,6 +4458,7 @@ pub fn shell(
     );
     // Host-side `h5i box allow` extras + the explained-egress line.
     apply_user_egress(&mut policy);
+    announce_unmapped_resources(&policy);
 
     // No command given → launch an interactive shell. Rather than inherit the
     // host `~/.bashrc` (which, under confinement, routinely references tools the
@@ -7307,7 +7328,7 @@ pub fn propose(
     brief.push_str(&format!("── Proposal: {} ──\n", m.id));
     brief.push_str(&format!(
         "  base    : {} (from {})\n",
-        &m.base_commit[..12],
+        &m.base_commit[..12.min(m.base_commit.len())],
         m.parent_branch
     ));
     brief.push_str(&format!("  branch  : {}\n", m.branch));
@@ -7729,6 +7750,17 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
         // the prune must not yank the directory out from under it. Non-blocking:
         // if observers are attached we skip this env and reclaim it on a later
         // sweep, exactly as we do on a failed prune.
+        //
+        // Both locks, in the documented order (run.lock then observers.lock) —
+        // see the invariant at the top of this module. `gc` took only the
+        // teardown lock, so it could prune and `remove_dir_all` an env while a
+        // writer held `run.lock` for it. The window was narrow (only applied or
+        // aborted envs are swept) but that was incidental, not designed.
+        #[cfg(unix)]
+        let _run_lock = match RunLock::acquire(&m.dir(h5i_root)) {
+            Ok(g) => g,
+            Err(_) => continue,
+        };
         #[cfg(unix)]
         let _teardown = match RunLock::acquire_teardown(&m.dir(h5i_root)) {
             Ok(g) => g,
@@ -7757,9 +7789,14 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
 }
 
 /// Permanently remove an environment from this clone: prune its worktree,
-/// delete its code branch (`refs/heads/h5i/env/…`) and reasoning branch
-/// (`refs/h5i/context/env/…`), and erase its on-disk dir (manifest, policy,
-/// status). Unlike `gc` (workspace only) and `abort` (status only), this
+/// delete its code branch (`refs/heads/h5i/env/…`), and erase its on-disk dir
+/// (manifest, policy, status).
+///
+/// There is no reasoning branch to delete. `refs/h5i/context/*` was a pre-pivot
+/// namespace; nothing in the workspace reads or writes it any more, and the
+/// structural grant that still handed the box rw on it (letting a box create
+/// arbitrary refs in the host repo, pinning objects against gc, for a feature
+/// that no longer exists) is gone with this change. Unlike `gc` (workspace only) and `abort` (status only), this
 /// destroys the *local* provenance — the env's manifest + policy lines are
 /// stripped from `refs/h5i/env` (otherwise [`materialize_from_ref`], run at the
 /// top of every `env` command, would rewrite the on-disk manifest right back),
@@ -8536,9 +8573,12 @@ mod tests {
             .iter()
             .position(|p| !p.rw && p.host.ends_with("refs"))
             .unwrap();
+        // The env's own branch namespace is the rw entry nested under `refs`.
+        // (`refs/h5i/context` used to be a second one; that grant is gone —
+        // nothing reads or writes the namespace any more.)
         let nested_pos = paths
             .iter()
-            .position(|p| p.host.ends_with("refs/h5i/context"))
+            .position(|p| p.rw && p.host.to_string_lossy().contains("refs/heads/h5i/env/"))
             .unwrap();
         assert!(
             refs_pos < nested_pos,
@@ -8560,10 +8600,16 @@ mod tests {
             "/objects",
             "/refs/heads/h5i/env/claude",
             "/logs/refs/heads/h5i/env/claude",
-            "/refs/h5i/context",
         ] {
             assert!(has(&rw, want), "rw grant {want} missing: {rw:?}");
         }
+        // And the pre-pivot reasoning namespace is granted no longer: nothing
+        // reads or writes it, and rw there let a box create arbitrary refs in
+        // the host repository.
+        assert!(
+            !rw.iter().any(|p| p.contains("refs/h5i/context")),
+            "the dead refs/h5i/context grant must be gone: {rw:?}"
+        );
         // Protected surfaces stay out of every grant.
         for never in ["hooks", "refs/h5i/env", "manifest", "policy"] {
             assert!(

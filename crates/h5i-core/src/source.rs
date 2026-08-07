@@ -69,7 +69,9 @@ pub fn resolve_pr_base(workdir: &Path, spec: &str, remote: &str) -> Result<PrBas
     let tmp_ref = format!("refs/h5i/_incoming/pr-{number}");
     let refspec = format!("+refs/pull/{number}/head:{tmp_ref}");
     let out = Command::new("git")
-        .args(["fetch", "--no-write-fetch-head", remote, &refspec])
+        // `--end-of-options` before the remote: `--remote` is user-supplied, and
+        // git would otherwise read `--upload-pack=<cmd>` as an option and run it.
+        .args(["fetch", "--no-write-fetch-head", "--end-of-options", remote, &refspec])
         .current_dir(workdir)
         .output()
         .map_err(|e| H5iError::Metadata(format!("failed to invoke git fetch: {e}")))?;
