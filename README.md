@@ -92,12 +92,6 @@ h5i box propose <name>           # freeze the worktree into a reviewable snapsho
 h5i box apply   <name>           # merge that snapshot onto the parent branch
 ```
 
-**Throw a box away**
-
-```bash
-h5i box rm <name>                # prune the worktree, delete its branches, erase its manifest
-```
-
 **Keep the record of what happened**
 
 ```bash
@@ -115,6 +109,13 @@ h5i box status <name>            # the policy that was actually enforced
 h5i box diff <name>              # what changed against the pinned base
 ```
 
+**Throw a box away**
+
+```bash
+h5i box rm <name>                # prune the worktree, delete its branches, erase its manifest
+```
+
+
 **Watch the whole fleet in a browser**
 
 ```bash
@@ -125,8 +126,6 @@ h5i ui                           # the whole fleet on one screen, read-only
   <img src="./docs/_static/sandbox-ui-demo.png" width="99%" />
 </p>
 
-
-Nothing writes into your repository until you apply that patch.
 
 ## What confinement means here
 
