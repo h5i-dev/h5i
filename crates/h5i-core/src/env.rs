@@ -1429,6 +1429,53 @@ fn init_detached_workspace(
     }
 }
 
+/// The registered worktree name for an env, matching `EnvManifest::worktree_name`
+/// before a manifest exists to ask.
+fn manifest_worktree_name(agent: &str, slug: &str) -> String {
+    format!("h5i-env-{agent}-{slug}")
+}
+
+/// Undo a half-built env if `create` fails before the manifest exists.
+///
+/// Only that window needs it: once `manifest.json` is on disk the env is
+/// resolvable by name and `h5i box rm` can finish the job.
+struct CreateRollback<'a> {
+    repo: &'a Repository,
+    h5i_root: &'a Path,
+    dir: PathBuf,
+    work: PathBuf,
+    worktree: String,
+    /// The env branch, when `create` made one (a detached box's repository
+    /// lives inside `work` and goes with the directory).
+    branch: Option<String>,
+    armed: bool,
+}
+
+impl Drop for CreateRollback<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // Best effort throughout: this runs while another error is propagating,
+        // and a failed cleanup must not mask it.
+        if let Ok(wt) = self.repo.find_worktree(&self.worktree) {
+            let _ = wt.unlock();
+        }
+        let _ = std::fs::remove_dir_all(&self.work);
+        let _ = std::process::Command::new("git")
+            .args(["worktree", "prune", "--expire=now"])
+            .current_dir(self.repo.commondir())
+            .output();
+        if let Some(b) = &self.branch {
+            if let Ok(mut r) = self.repo.find_branch(b, git2::BranchType::Local) {
+                let _ = r.delete();
+            }
+        }
+        let _ = std::fs::remove_dir_all(&self.dir);
+        let _ = self.h5i_root;
+    }
+}
+
 pub fn create(
     repo: &Repository,
     h5i_root: &Path,
@@ -1600,6 +1647,26 @@ pub fn create(
         (base_commit.id(), base_tree, parent_branch)
     };
 
+    // From here on the worktree, the branch and `<env>/` all exist, but the
+    // manifest — the thing `list`/`find`/`rm` resolve an env *through* — does
+    // not yet. Several fail-closed steps sit in between (a malformed
+    // `[service.*]` table, a persona source missing at the base revision), and
+    // without a rollback their failure left a registered+locked worktree and a
+    // branch that `create` refuses to reuse and `rm` cannot see, recoverable
+    // only by hand with `git worktree prune` and `git branch -D`.
+    //
+    // `CreateRollback` undoes exactly what has been built so far unless it is
+    // disarmed once the manifest lands.
+    let mut rollback = CreateRollback {
+        repo,
+        h5i_root,
+        dir: dir.clone(),
+        work: work_path.clone(),
+        worktree: manifest_worktree_name(agent, slug),
+        branch: (!opts.source.is_detached()).then(|| branch_short.clone()),
+        armed: true,
+    };
+
     // Pin service declarations from the base worktree into an env-local,
     // box-immutable manifest, recording its digest (review #1). Always Some for
     // new envs (even pinned-empty), so the legacy fallback below never applies.
@@ -1645,6 +1712,9 @@ pub fn create(
     let policy_path = dir.join(POLICY_RESOLVED_FILE);
     std::fs::write(&policy_path, &policy_toml).map_err(|e| H5iError::with_path(e, &policy_path))?;
     save_manifest(h5i_root, &manifest)?;
+    // The env is resolvable now: `rm` and `gc` can clean up anything that fails
+    // after this point, so stop unwinding on drop.
+    rollback.armed = false;
     // Mirror the manifest AND the resolved policy into refs/h5i/env so the
     // whole environment is shareable from creation.
     append_env_commit(
