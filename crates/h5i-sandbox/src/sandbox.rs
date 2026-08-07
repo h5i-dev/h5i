@@ -193,12 +193,18 @@ struct ContainerToml {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FsToml {
+    // `Option`, like `net.egress`, so an author can tell h5i "nothing" and be
+    // believed. Omitted (`None`) inherits the built-in base, which is what
+    // makes a partial overlay usable; an explicit `read = []` means the empty
+    // list. Treating `[]` as "omitted" turned a narrowing into a widening: a
+    // profile written as `fs.write = []` to get a read-only box was handed
+    // `$WORK`, `~/.claude`, `/tmp` and `/dev/tty` instead.
     #[serde(default)]
-    read: Vec<String>,
+    read: Option<Vec<String>>,
     #[serde(default)]
-    write: Vec<String>,
+    write: Option<Vec<String>>,
     #[serde(default)]
-    deny: Vec<String>,
+    deny: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -234,8 +240,10 @@ struct ResourcesToml {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EnvVarsToml {
+    /// `Option` for the same reason as [`FsToml`]: an explicit `pass = []`
+    /// means an empty environment, not "inherit PATH/HOME/LANG/TERM/…".
     #[serde(default)]
-    pass: Vec<String>,
+    pass: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -383,9 +391,11 @@ pub fn load_profile(
             Profile {
                 name: name.to_string(),
                 isolation,
-                fs_read: if t.fs.read.is_empty() { base.fs_read } else { t.fs.read },
-                fs_write: if t.fs.write.is_empty() { base.fs_write } else { t.fs.write },
-                fs_deny: if t.fs.deny.is_empty() { base.fs_deny } else { t.fs.deny },
+                // Omitted → inherit the base; explicit `[]` → empty. Same rule
+                // as `net.egress` below, so narrowing a profile never widens it.
+                fs_read: t.fs.read.unwrap_or(base.fs_read),
+                fs_write: t.fs.write.unwrap_or(base.fs_write),
+                fs_deny: t.fs.deny.unwrap_or(base.fs_deny),
                 net_mode: match t.net.mode {
                     Some(ref s) => NetMode::parse(s)?,
                     None => base.net_mode,
@@ -422,7 +432,7 @@ pub fn load_profile(
                 },
                 tools: t.tools,
                 image: t.container.image.or(base.image),
-                env_pass: if t.env.pass.is_empty() { base.env_pass } else { t.env.pass },
+                env_pass: t.env.pass.unwrap_or(base.env_pass),
                 private_paths: if t.private_paths.is_empty() {
                     base.private_paths
                 } else {
@@ -3815,6 +3825,39 @@ net.egress = []
 "#;
         let p = load_from_str(toml_text, "agent-claude", None).unwrap();
         assert!(p.net_egress.is_empty(), "explicit [] must stay empty");
+    }
+
+    /// The same opt-out rule for the filesystem and environment lists. Treating
+    /// `[]` as "omitted" inverted a narrowing into a widening: an author asking
+    /// for a read-only box with `fs.write = []` was handed the builtin base
+    /// ($WORK, ~/.claude, ~/.cache, /tmp, /dev/tty) instead.
+    #[test]
+    fn explicit_empty_fs_and_env_lists_are_not_re_widened() {
+        let toml_text = r#"
+[profile.agent-claude]
+isolation = "supervised"
+net.egress = ["api.anthropic.com"]
+fs.write = []
+fs.read = []
+env.pass = []
+"#;
+        let p = load_from_str(toml_text, "agent-claude", None).unwrap();
+        assert!(p.fs_write.is_empty(), "explicit fs.write = [] must stay empty: {:?}", p.fs_write);
+        assert!(p.fs_read.is_empty(), "explicit fs.read = [] must stay empty: {:?}", p.fs_read);
+        assert!(p.env_pass.is_empty(), "explicit env.pass = [] must stay empty: {:?}", p.env_pass);
+    }
+
+    /// Omitting them still inherits the base, so a partial overlay stays usable.
+    #[test]
+    fn omitted_fs_and_env_lists_still_inherit_the_builtin_base() {
+        let toml_text = r#"
+[profile.agent-claude]
+isolation = "supervised"
+"#;
+        let p = load_from_str(toml_text, "agent-claude", None).unwrap();
+        assert!(!p.fs_write.is_empty(), "omitted fs.write inherits the base");
+        assert!(!p.env_pass.is_empty(), "omitted env.pass inherits the base");
+        assert!(p.env_pass.iter().any(|k| k == "PATH"));
     }
 
     #[test]
