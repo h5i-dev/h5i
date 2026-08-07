@@ -1116,7 +1116,7 @@ fn run_supervised(
     // narrows the nftables ruleset to the auth proxy alone in that case).
     let mut env = effective_env;
     let (_egress_proxy, egress_port) = if has_egress && auth_port.is_none() {
-        let mut allow = crate::container::AllowList::parse(&policy.profile.net_egress);
+        let mut allow = crate::container::AllowList::parse(&policy.profile.net_egress)?;
         // Pin now, so a later DNS answer cannot move the allowlist under us.
         allow.pin_dns();
         // On the pinned port when the box has one: a `browser` box's Chrome

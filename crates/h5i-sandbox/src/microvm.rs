@@ -269,65 +269,17 @@ pub fn egress_rule_tokens(egress: &[String]) -> Result<Vec<String>, H5iError> {
     };
 
     for raw in egress {
-        let raw = raw.trim();
-        if raw.is_empty() {
+        // One grammar for every tier: `container::parse_egress_rule` is the
+        // single definition, so the strictness here and the allowlist the
+        // container proxy enforces cannot drift apart again.
+        let Some((host, wildcard, port)) = crate::container::parse_egress_rule(raw)? else {
             continue;
-        }
-        if raw.contains(',') || raw.contains('@') {
-            return Err(H5iError::Metadata(format!(
-                "net.egress entry '{raw}' contains ',' or '@', which the microvm tier's rule \
-                 grammar reserves — refusing rather than emitting a rule that means something \
-                 else (fail-closed). Split it into separate entries."
-            )));
-        }
-        // An IPv6 literal is full of colons, and the port split below cannot tell
-        // one from a `host:port`: `2001:db8::1` used to come out as
-        // `allow@2001:db8::tcp:1` — a rule that means nothing anyone asked for.
-        // The grammar has no unambiguous spelling for one here, so refuse it
-        // rather than translate it wrong.
-        if raw.matches(':').count() > 1 {
-            return Err(H5iError::Metadata(format!(
-                "net.egress entry '{raw}' looks like an IPv6 literal (more than one ':'), which \
-                 the microvm tier's rule grammar cannot carry unambiguously — refusing rather \
-                 than emitting a rule that means something else (fail-closed). Use a hostname, \
-                 or an IPv4 address or CIDR."
-            )));
-        }
-        // Only a trailing all-digit segment is a port.
-        let (host_part, port) = match raw.rsplit_once(':') {
-            Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
-                // Out of range is an error, never a silent widening: `.ok()` here
-                // turned `example.com:99999` into `allow@example.com`, which is
-                // *every* port — the opposite of what the entry asked for.
-                let port = p.parse::<u16>().map_err(|_| {
-                    H5iError::Metadata(format!(
-                        "net.egress entry '{raw}' has a port outside 1-65535 — refusing rather \
-                         than falling back to an any-port rule (fail-closed)."
-                    ))
-                })?;
-                (h, Some(port))
-            }
-            _ => (raw, None),
         };
-        let lower = host_part.to_ascii_lowercase();
-        let (host, wildcard) = match lower.strip_prefix("*.").or_else(|| lower.strip_prefix('.')) {
-            Some(rest) => (rest.to_string(), true),
-            None => (lower, false),
-        };
-        if host.is_empty() {
-            continue;
-        }
         let qualifier = match port {
             Some(p) => format!(":tcp:{p}"),
             None => String::new(),
         };
         if wildcard {
-            if host.split('.').filter(|l| !l.is_empty()).count() < 2 {
-                return Err(H5iError::Metadata(format!(
-                    "net.egress wildcard '{raw}' covers a single label — a suffix rule must name \
-                     at least two (e.g. '*.example.com', not '*.com'). Refusing (fail-closed)."
-                )));
-            }
             push(format!("allow@domain={host}{qualifier}"), &mut tokens);
             push(format!("allow@suffix={host}{qualifier}"), &mut tokens);
         } else {

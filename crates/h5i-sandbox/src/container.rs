@@ -281,6 +281,68 @@ struct AllowEntry {
     pinned: Vec<IpAddr>,
 }
 
+/// Parse one `net.egress` entry into `(host, wildcard, port)`, fail-closed.
+///
+/// This is the single definition of the grammar. It used to exist twice — here
+/// and in `microvm::egress_rule_tokens` — and the copies drifted: the microvm
+/// side refused an out-of-range port, a single-label wildcard, an IPv6 literal
+/// and the reserved `,`/`@`, while this side silently widened or mangled all
+/// four. `example.com:99999` in particular became an *any-port* rule, the exact
+/// opposite of what the entry asked for.
+///
+/// `Ok(None)` is a blank entry (skip it); anything malformed is an error.
+pub fn parse_egress_rule(raw: &str) -> Result<Option<(String, bool, Option<u16>)>, H5iError> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    if raw.contains(',') || raw.contains('@') {
+        return Err(H5iError::Metadata(format!(
+            "net.egress entry '{raw}' contains ',' or '@', which the rule grammar reserves — \
+             refusing rather than emitting a rule that means something else (fail-closed). \
+             Split it into separate entries."
+        )));
+    }
+    // An IPv6 literal is full of colons and the port split cannot tell one from
+    // a `host:port`: `2001:db8::1` came out as host `2001:db8:` port 1. There is
+    // no unambiguous spelling here, so refuse rather than translate it wrong.
+    if raw.matches(':').count() > 1 {
+        return Err(H5iError::Metadata(format!(
+            "net.egress entry '{raw}' looks like an IPv6 literal (more than one ':'), which the \
+             rule grammar cannot carry unambiguously — refusing rather than emitting a rule that \
+             means something else (fail-closed). Use a hostname, or an IPv4 address or CIDR."
+        )));
+    }
+    let (host_part, port) = match raw.rsplit_once(':') {
+        // Only a trailing all-digit segment is a port.
+        Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
+            let port = p.parse::<u16>().map_err(|_| {
+                H5iError::Metadata(format!(
+                    "net.egress entry '{raw}' has a port outside 1-65535 — refusing rather than \
+                     falling back to an any-port rule (fail-closed)."
+                ))
+            })?;
+            (h, Some(port))
+        }
+        _ => (raw, None),
+    };
+    let lower = host_part.to_ascii_lowercase();
+    let (host, wildcard) = match lower.strip_prefix("*.").or_else(|| lower.strip_prefix('.')) {
+        Some(rest) => (rest.to_string(), true),
+        None => (lower, false),
+    };
+    if host.is_empty() {
+        return Ok(None);
+    }
+    if wildcard && host.split('.').filter(|l| !l.is_empty()).count() < 2 {
+        return Err(H5iError::Metadata(format!(
+            "net.egress wildcard '{raw}' covers a single label — a suffix rule must name at \
+             least two (e.g. '*.example.com', not '*.com'). Refusing (fail-closed)."
+        )));
+    }
+    Ok(Some((host, wildcard, port)))
+}
+
 impl AllowEntry {
     /// Does this entry open `port`? `None` means any.
     fn port_ok(&self, port: u16) -> bool {
@@ -407,30 +469,13 @@ pub struct AllowList {
 }
 
 impl AllowList {
-    /// Parse `net.egress` entries (no DNS yet — pure, for tests).
-    pub fn parse(egress: &[String]) -> AllowList {
+    /// Parse `net.egress` entries through [`parse_egress_rule`] (no DNS yet —
+    /// pure, for tests). Fail-closed: a malformed entry is an error, never a
+    /// rule that means something wider than what was written.
+    pub fn parse(egress: &[String]) -> Result<AllowList, H5iError> {
         let mut entries = Vec::new();
         for raw in egress {
-            let raw = raw.trim();
-            if raw.is_empty() {
-                continue;
-            }
-            let (host_part, port) = match raw.rsplit_once(':') {
-                // Only treat the suffix as a port if it's numeric (IPv6 has colons).
-                Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty() => {
-                    (h, p.parse::<u16>().ok())
-                }
-                _ => (raw, None),
-            };
-            let lower = host_part.to_ascii_lowercase();
-            let (host, wildcard) = if let Some(s) = lower.strip_prefix("*.") {
-                (s.to_string(), true)
-            } else if let Some(s) = lower.strip_prefix('.') {
-                (s.to_string(), true)
-            } else {
-                (lower, false)
-            };
-            if !host.is_empty() {
+            if let Some((host, wildcard, port)) = parse_egress_rule(raw)? {
                 entries.push(AllowEntry {
                     host,
                     wildcard,
@@ -439,7 +484,7 @@ impl AllowList {
                 });
             }
         }
-        AllowList { entries }
+        Ok(AllowList { entries })
     }
 
     /// Resolve every exact allowed host and pin the answers onto its entry.
@@ -1407,7 +1452,7 @@ pub fn run(
     let egress_rules = effective_egress(&p.net_egress, &policy.user_egress_allow);
     let mut _proxy: Option<ProxyHandle> = None;
     let net = if !egress_rules.is_empty() {
-        let mut allow = AllowList::parse(&egress_rules);
+        let mut allow = AllowList::parse(&egress_rules)?;
         allow.pin_dns();
         let handle = spawn_proxy(allow)?;
         let port = handle.port;
@@ -1517,7 +1562,7 @@ pub fn run_interactive(
     let egress_rules = effective_egress(&p.net_egress, &policy.user_egress_allow);
     let mut _proxy: Option<ProxyHandle> = None;
     let net = if !egress_rules.is_empty() {
-        let mut allow = AllowList::parse(&egress_rules);
+        let mut allow = AllowList::parse(&egress_rules)?;
         allow.pin_dns();
         let handle = spawn_proxy(allow)?;
         let port = handle.port;
@@ -1772,7 +1817,7 @@ mod tests {
             "github.com:443".into(),
             ".githubusercontent.com".into(),
             "*.pythonhosted.org".into(),
-        ]);
+        ]).unwrap();
         // Exact host, any port.
         assert!(a.allows("pypi.org", 443));
         assert!(a.allows("pypi.org", 80));
@@ -1796,14 +1841,14 @@ mod tests {
 
     #[test]
     fn empty_allowlist_denies_everything() {
-        let a = AllowList::parse(&[]);
+        let a = AllowList::parse(&[]).unwrap();
         assert!(!a.allows("anything.com", 443));
     }
 
     /// Build an allowlist with a hand-placed pin, so the pinning behaviour is
     /// testable without touching the network.
     fn pinned(rule: &str, ips: &[&str]) -> AllowList {
-        let mut a = AllowList::parse(&[rule.to_string()]);
+        let mut a = AllowList::parse(&[rule.to_string()]).unwrap();
         a.entries[0].pinned = ips.iter().map(|i| i.parse().unwrap()).collect();
         a
     }
@@ -1896,12 +1941,40 @@ mod tests {
         }
     }
 
+    /// The container tier used to widen or mangle four inputs the microvm tier
+    /// already refused. One parser now, so they cannot disagree again.
+    #[test]
+    fn the_egress_grammar_is_fail_closed_for_both_tiers() {
+        // An out-of-range port became an ANY-port rule — the opposite of the ask.
+        for bad in [
+            "example.com:99999",
+            "*.com",                  // a whole TLD
+            "2001:db8::1",            // mangled into host "2001:db8:" port 1
+            "a,b.example.com",        // reserved separator
+            "user@example.com",
+        ] {
+            assert!(
+                AllowList::parse(&[bad.to_string()]).is_err(),
+                "container tier accepted {bad:?}"
+            );
+            assert!(
+                crate::microvm::egress_rule_tokens(&[bad.to_string()]).is_err(),
+                "microvm tier accepted {bad:?}"
+            );
+        }
+        // And the well-formed shapes still parse on both.
+        for good in ["example.com", "example.com:443", ".example.com", "*.example.com"] {
+            assert!(AllowList::parse(&[good.to_string()]).is_ok(), "{good}");
+            assert!(crate::microvm::egress_rule_tokens(&[good.to_string()]).is_ok(), "{good}");
+        }
+    }
+
     /// An operator may list a literal address. That entry must keep matching
     /// itself even though nothing pinned it (the proxy's relay tests dial a
     /// local upstream this way).
     #[test]
     fn a_literal_ip_entry_still_matches_itself() {
-        let a = AllowList::parse(&["127.0.0.1:8080".into()]);
+        let a = AllowList::parse(&["127.0.0.1:8080".into()]).unwrap();
         assert!(a.allows("127.0.0.1", 8080));
         assert!(!a.allows("127.0.0.1", 9090), "the port on the entry still binds");
         assert_eq!(a.dial_addrs("127.0.0.1", 8080)[0].to_string(), "127.0.0.1:8080");
@@ -1910,7 +1983,7 @@ mod tests {
     /// Wildcard matching stays anchored on a label boundary.
     #[test]
     fn wildcard_matching_is_label_anchored() {
-        let a = AllowList::parse(&[".githubusercontent.com".into()]);
+        let a = AllowList::parse(&[".githubusercontent.com".into()]).unwrap();
         assert!(a.allows("raw.githubusercontent.com", 443));
         assert!(a.allows("githubusercontent.com", 443));
         assert!(!a.allows("evilgithubusercontent.com", 443));
@@ -1937,7 +2010,7 @@ mod tests {
     #[test]
     fn allowlist_does_not_treat_ipv6_as_port() {
         // A bare IPv6-ish string must not be mis-split on its colons.
-        let a = AllowList::parse(&["example.org".into()]);
+        let a = AllowList::parse(&["example.org".into()]).unwrap();
         assert!(a.allows("example.org", 443));
     }
 
@@ -2789,7 +2862,7 @@ mod tests {
 
         // Allow only an unreachable host so we never actually open egress; we
         // only assert the gate's accept/deny verdict.
-        let allow = AllowList::parse(&["allowed.invalid:443".into()]);
+        let allow = AllowList::parse(&["allowed.invalid:443".into()]).unwrap();
         let proxy = spawn_proxy(allow).unwrap();
 
         // Denied host → 403, fail-closed.
@@ -2844,7 +2917,7 @@ mod tests {
             s.write_all(b"PONG").unwrap();
         });
 
-        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]);
+        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]).unwrap();
         let proxy = spawn_proxy(allow).unwrap();
         let mut c = TcpStream::connect(("127.0.0.1", proxy.port)).unwrap();
         c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
@@ -2900,7 +2973,7 @@ mod tests {
         // One connection into `handle_proxy_client`, no accept loop involved.
         let front = TcpListener::bind("127.0.0.1:0").unwrap();
         let front_port = front.local_addr().unwrap().port();
-        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]);
+        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]).unwrap();
         std::thread::spawn(move || {
             let (s, _) = front.accept().unwrap();
             let tally = Arc::new(Mutex::new(EgressTally::default()));
@@ -2954,7 +3027,7 @@ mod tests {
 
         let front = TcpListener::bind("127.0.0.1:0").unwrap();
         let front_port = front.local_addr().unwrap().port();
-        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]);
+        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]).unwrap();
         std::thread::spawn(move || {
             let (s, _) = front.accept().unwrap();
             s.set_nonblocking(true).unwrap();
@@ -2999,7 +3072,7 @@ mod tests {
     /// ephemeral-fallback note on success; that stderr line is expected here.
     #[test]
     fn proxy_binds_the_requested_port_and_falls_back_when_it_cannot() {
-        let allow = || AllowList::parse(&["allowed.invalid".into()]);
+        let allow = || AllowList::parse(&["allowed.invalid".into()]).unwrap();
 
         let mut honoured = None;
         for _ in 0..5 {
