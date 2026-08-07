@@ -74,6 +74,39 @@ h5i box shell <name>             # an interactive confined session
                                  # every command is policy-enforced and recorded:
 ```
 
+**Isolated browser in a sandbox**
+
+```bash
+h5i box view <name>
+h5i box view <name> --term       # in-terminal browser (needs kitty)
+```
+
+<p align="center">
+  <img src="./docs/_static/browser-demo.gif" width="99%" />
+</p>
+
+**Apply the proposed diff from a sandbox to the parent env**
+
+```bash
+h5i box propose <name>
+h5i box apply   <name>
+```
+
+**Destory a box**
+
+```bash
+h5i box rm <name>
+```
+
+**Export the execution summary**
+
+```bash
+h5i box export <name>
+# → h5i-export/<name>/patch.diff    the change, path-validated
+#   h5i-export/<name>/report.md     what ran, what was denied, what was redacted
+#   h5i-export/<name>/receipt.json  the records, with the enforced policy digest
+```
+
 **Show the sandbox status**
 
 ```bash
@@ -92,18 +125,6 @@ h5i ui                           # the whole fleet on one screen, read-only
   <img src="./docs/_static/sandbox-ui-demo.png" width="99%" />
 </p>
 
-**Export the execution summary**
-
-```bash
-h5i box export <name>
-# → h5i-export/<name>/patch.diff    the change, path-validated
-#   h5i-export/<name>/report.md     what ran, what was denied, what was redacted
-#   h5i-export/<name>/receipt.json  the records, with the enforced policy digest
-```
-
-<p align="center">
-  <img src="./docs/_static/browser-demo.gif" width="99%" />
-</p>
 
 Nothing writes into your repository until you apply that patch.
 
