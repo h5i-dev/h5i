@@ -1313,26 +1313,32 @@ pub fn build_run_argv(
 /// stays host-side in the proxy; the box never receives it — this is "option 2":
 /// the box can authenticate to its provider API without ever holding the token.
 ///
-/// Returns `None` (keeping the box on its existing in-box-login path) when: the
-/// net plan has no proxy to reach the host loopback, the profile is not a known
-/// agent runtime, no host credential is available, or the proxy fails to spawn.
-/// We never *downgrade* an active protection, and never break a working
-/// interactive-login flow that has no host token to broker.
+/// `Ok(None)` (keeping the box on its existing in-box-login path) when: the net
+/// plan has no proxy to reach the host loopback, the profile is not a known
+/// agent runtime, or no host credential is available. Those never break a
+/// working interactive-login flow that has no host token to broker.
+///
+/// A proxy that was supposed to start and could not is an `Err`, not a `None`:
+/// falling back would leave the real credential in the box while also widening
+/// its egress, which is the opposite of what this exists to do.
 fn maybe_auth_proxy(
     profile: &Profile,
     net: &NetPlan,
-) -> Option<(crate::auth_proxy::AuthProxyHandle, Vec<(String, String)>)> {
+) -> Result<Option<(crate::auth_proxy::AuthProxyHandle, Vec<(String, String)>)>, H5iError> {
     // The box reaches the host proxy only on the egress-proxy net plan, and at
     // whichever address this platform routes to the host ([`HOST_ROUTE`]).
     // `engage_at` handles opt-out + runtime + credential resolution; the
     // container tier ignores the returned runtime (there is no per-env HOME copy
     // to scrub — the rootfs never mounts host HOME).
-    let e = crate::auth_proxy::engage_at(
+    let Some(e) = crate::auth_proxy::engage_at(
         &profile.name,
         matches!(net, NetPlan::Proxy(_)),
         HOST_ROUTE.host_addr,
-    )?;
-    Some((e.handle, e.box_env))
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((e.handle, e.box_env)))
 }
 
 /// Live proxies for a box's authenticated-egress grants, and the env the box
@@ -1416,7 +1422,7 @@ pub fn run(
     // Credential-injecting auth proxy (option 2): held for the container's
     // lifetime. When engaged, the real API token stays host-side and the box is
     // handed only a base-URL override + per-run dummy (appended to the env).
-    let (_auth_proxy, effective_env) = match maybe_auth_proxy(p, &net) {
+    let (_auth_proxy, effective_env) = match maybe_auth_proxy(p, &net)? {
         Some((handle, extra)) => {
             let mut env = injected_env.to_vec();
             env.extend(extra);
@@ -1524,7 +1530,7 @@ pub fn run_interactive(
     };
 
     // Credential-injecting auth proxy (option 2), held for the session lifetime.
-    let (_auth_proxy, effective_env) = match maybe_auth_proxy(p, &net) {
+    let (_auth_proxy, effective_env) = match maybe_auth_proxy(p, &net)? {
         Some((handle, extra)) => {
             let mut env = injected_env.to_vec();
             env.extend(extra);

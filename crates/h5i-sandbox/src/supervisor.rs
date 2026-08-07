@@ -858,7 +858,7 @@ fn run_supervised(
     // and the real credential is scrubbed from the box's per-env HOME copy, so
     // the token is absent from the box entirely.
     let auth = if !policy.profile.net_egress.is_empty() {
-        crate::auth_proxy::engage(&policy.profile.name, true)
+        crate::auth_proxy::engage(&policy.profile.name, true)?
     } else {
         None
     };
@@ -1095,7 +1095,7 @@ fn run_supervised(
     // Credential-injecting auth proxy (option 2). `tier_ok` is true because the
     // box shares the host's loopback and the profile will open exactly this port.
     let auth = if has_egress {
-        crate::auth_proxy::engage_at(&policy.profile.name, true, LOOPBACK_HOST)
+        crate::auth_proxy::engage_at(&policy.profile.name, true, LOOPBACK_HOST)?
     } else {
         None
     };
