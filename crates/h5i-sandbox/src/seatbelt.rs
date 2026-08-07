@@ -593,6 +593,21 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     // session looks alive while `ls` and everything else does nothing. The same
     // EPERM denies `tcsetattr`, so raw mode is gone too and ZLE and every TUI
     // degrade with it.
+    //
+    // The grant names exactly the nodes the two rules above it name, so the
+    // ioctl reach can never exceed the path reach. `/dev/tty` is spelled out
+    // even though `^/dev/tty[a-z0-9]*$` already subsumes it (the `*` matches
+    // empty): it is the node a program actually opens, it is granted by literal
+    // in `MACOS_DEV_NODES`/`MACOS_DEV_WRITE`, and a reader comparing the three
+    // rules should see one node set rather than have to derive it. `/dev/ptmx`
+    // is not optional — `^/dev/pty…$` does not match it (`ptm` ≠ `pty`) — and
+    // without it `posix_openpt`'s `TIOCPTYGRANT`/`TIOCPTYUNLK` fail, so a box
+    // could open a pty master and never unlock its slave.
+    //
+    // This is the only rule the generator emits with more than one filter
+    // clause; `every_sbpl_construct_we_emit_is_accepted` hands it to the real
+    // parser, and `the_generated_profile_is_accepted_by_sandbox_exec` compiles
+    // the interactive profile it lands in.
     if opts.interactive {
         s.push_str("(allow file-write* file-read* (regex #\"^/dev/tty[a-z0-9]*$\"))\n");
         s.push_str("(allow file-write* file-read* (regex #\"^/dev/pty[a-z0-9]*$\"))\n");
@@ -1386,11 +1401,17 @@ mod tests {
         let ioctl = s
             .find("(allow file-ioctl")
             .unwrap_or_else(|| panic!("interactive sessions need tty ioctls\n{s}"));
+        // Every node the interactive session already holds read/write on, and no
+        // other: an ioctl grant wider than the path grant it accompanies would
+        // be reach this rule never intended to add. `/dev/ptmx` is the one that
+        // needs naming — `^/dev/pty…$` does not match it (`ptm` ≠ `pty`), and it
+        // is granted by literal above for the same reason.
         let rule = s[ioctl..].lines().next().unwrap();
         for f in [
             "(literal \"/dev/tty\")",
             "(literal \"/dev/ptmx\")",
             "(regex #\"^/dev/tty[a-z0-9]*$\")",
+            "(regex #\"^/dev/pty[a-z0-9]*$\")",
         ] {
             assert!(rule.contains(f), "tty ioctl grant misses {f}\n{rule}");
         }
@@ -2031,23 +2052,38 @@ mod tests {
             return;
         }
         let (_tmp, work, pol) = functional_env();
-        let plan = plan(&pol, &work, &SeatbeltOptions::default());
-        let file = ProfileFile::write(&plan.profile).unwrap();
-        let out = std::process::Command::new(SANDBOX_EXEC)
-            .arg("-f")
-            .arg(file.path())
-            .arg("/usr/bin/true")
-            .output()
-            .expect("run sandbox-exec");
-        assert!(
-            out.status.success(),
-            "sandbox-exec rejected the generated profile.\n\
-             status: {:?}\nstderr: {}\nstdout: {}\n--- profile ---\n{}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr),
-            String::from_utf8_lossy(&out.stdout),
-            plan.profile
-        );
+        // Both option sets, because they generate *different* profiles: the
+        // interactive one adds the tty grants (including the only rule this
+        // generator emits with more than one filter clause) and the
+        // agent-config lockdown, and a rule the parser rejects takes the whole
+        // profile with it. Checking only the captured shape would leave every
+        // interactive box shell resting on `String::contains`.
+        for opts in [
+            SeatbeltOptions::default(),
+            SeatbeltOptions {
+                interactive: true,
+                ..SeatbeltOptions::default()
+            },
+        ] {
+            let interactive = opts.interactive;
+            let plan = plan(&pol, &work, &opts);
+            let file = ProfileFile::write(&plan.profile).unwrap();
+            let out = std::process::Command::new(SANDBOX_EXEC)
+                .arg("-f")
+                .arg(file.path())
+                .arg("/usr/bin/true")
+                .output()
+                .expect("run sandbox-exec");
+            assert!(
+                out.status.success(),
+                "sandbox-exec rejected the generated profile (interactive={interactive}).\n\
+                 status: {:?}\nstderr: {}\nstdout: {}\n--- profile ---\n{}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr),
+                String::from_utf8_lossy(&out.stdout),
+                plan.profile
+            );
+        }
     }
 
     #[test]

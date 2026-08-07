@@ -718,13 +718,32 @@ Being explicit about these is a feature, since the claim is a security claim.
 - **An interactive session at a kernel tier shares your terminal.** `box shell`
   hands the box the terminal you launched it from, because that is what makes
   job control and every TUI work — a box shell is a nested shell, not a
-  connection to somewhere else. A terminal is a two-way device, so a box that
-  can drive it can in principle push characters into its *input* queue
-  (`TIOCSTI`), which your own shell would then read as typing after the session
-  ends. Both kernel tiers close that particular door — macOS by refusing that
-  one ioctl in the profile, Linux by the kernel's `CONFIG_LEGACY_TIOCSTI`
-  default — but the terminal is still shared. Giving the box its own pty and
-  proxying it is the airtight fix, and it is not built. The container and
+  connection to somewhere else. A terminal is a two-way device, and the box gets
+  both directions of it, so the residual is a list rather than a single door:
+    - **Typing at your shell** (`TIOCSTI` pushes characters into the terminal's
+      *input* queue, which your shell reads as if you had typed them, after the
+      session ends). On macOS the profile subtracts that one ioctl, so it is
+      refused. On Linux it is **your kernel's setting, not ours**: 6.2 made it
+      disableable via `CONFIG_LEGACY_TIOCSTI` and `dev.tty.legacy_tiocsti`, but
+      upstream defaults that *open* — many distros ship it closed, and a kernel
+      older than 6.2 cannot close it at all. h5i does not assume:
+      `h5i box probe` reads the sysctl and prints `tty-injection = blocked` or
+      `possible`, and says how to close it. h5i does no ioctl filtering of its
+      own on Linux.
+    - **Reading what you type next.** The session's read grant on the terminal
+      is not revoked when the shell exits, so a box process that outlives the
+      session — a stray background job — can read the terminal it still holds
+      open. This predates the tty ioctl grant; it is a property of sharing the
+      device.
+    - **Leaving the terminal in a state.** A box can set raw mode, turn echo
+      off, change the line discipline, or take the terminal exclusive so other
+      programs cannot open it. Recoverable (`stty sane`, or a new terminal), not
+      an escape, but it is yours to recover.
+
+  What is *not* reachable, checked rather than assumed: `TIOCCONS` (redirecting
+  console output to the box's terminal) is refused by Darwin for a non-root
+  process with or without a sandbox. Giving the box its own pty and proxying it
+  is the fix that ends the whole list, and it is not built. The container and
   microVM tiers do not share a terminal at all.
 - **Chrome runs with its own sandbox off.** On Linux, h5i's seccomp deny-list
   blocks the namespace syscalls Chrome's sandbox needs, at every tier. h5i's box

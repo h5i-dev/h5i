@@ -7957,6 +7957,44 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout), "/tmp/o'clock.zshrc");
     }
 
+    /// A box shell must not answer `zsh: nice(5) failed: operation not
+    /// permitted` on every `cmd &`: zsh renices background jobs by default and
+    /// no box can call `setpriority(2)`, so the generated rc turns the renice
+    /// off. Put to zsh itself where there is one — an option name is only right
+    /// if zsh accepts it, and a typo here would be silently inert.
+    #[test]
+    fn the_generated_zshrc_turns_off_the_background_renice() {
+        let h5i_root = tempfile::tempdir().unwrap();
+        let m = canonical_manifest("claude", "demo");
+        let z = write_plain_zshrc(h5i_root.path(), &m, None).unwrap();
+        let rc = Path::new(&z.zdotdir).join(".zshrc");
+        let body = std::fs::read_to_string(&rc).unwrap();
+        assert!(body.contains("\nunsetopt bgnice\n"), "the rc must disable bgnice:\n{body}");
+
+        // `-f` so the host's own zsh startup cannot decide the answer; the rc
+        // under test is sourced explicitly.
+        let out = std::process::Command::new("zsh")
+            .arg("-f")
+            .arg("-c")
+            .arg(format!(
+                "source {}; [[ -o bgnice ]] && print ON || print OFF",
+                sq(&rc.display().to_string())
+            ))
+            .output();
+        match out {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("SKIP the_generated_zshrc_turns_off_the_background_renice: no zsh here");
+            }
+            Err(e) => panic!("run zsh: {e}"),
+            Ok(out) => assert_eq!(
+                String::from_utf8_lossy(&out.stdout).trim(),
+                "OFF",
+                "zsh still renices background jobs after sourcing the rc\nstderr: {}",
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        }
+    }
+
     // zsh has no `--rcfile`, so a profile's `[shell] rcfile` reaches it by being
     // sourced from the generated rc — last, so it wins over the plain defaults.
     #[test]

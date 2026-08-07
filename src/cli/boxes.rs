@@ -987,6 +987,30 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         println!("  userns       = {}", caps.userns);
                         println!("  seccomp      = {}", caps.seccomp);
                     }
+                    // An interactive box shell shares the operator's terminal
+                    // (that is what makes job control work), so whether the box
+                    // can type into it is part of what this host enforces —
+                    // and on Linux it is the host's setting, not h5i's. Say
+                    // which it is rather than let the manual assume.
+                    let inject = h5i_core::sandbox::tty_input_injection();
+                    println!(
+                        "  tty-injection= {}",
+                        if inject {
+                            style("possible (a box shell can type at your terminal)").red()
+                        } else {
+                            style("blocked").green()
+                        }
+                    );
+                    if inject && caps.os == "linux" {
+                        println!(
+                            "    {}",
+                            style(
+                                "set dev.tty.legacy_tiocsti=0 (or build with \
+                                 CONFIG_LEGACY_TIOCSTI=n) to close it; upstream defaults it open"
+                            )
+                            .dim()
+                        );
+                    }
                     println!(
                         "  container    = {}",
                         caps.container_runtime.as_deref().unwrap_or("none")

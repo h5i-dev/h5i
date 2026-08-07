@@ -807,6 +807,50 @@ impl HostCaps {
     }
 }
 
+/// Can a box at a kernel tier push characters into the **input** queue of the
+/// terminal it shares with the operator (`TIOCSTI`)? An interactive session
+/// keeps the caller's session and controlling terminal — that is what makes job
+/// control work — so this is a real residual of the shared tty, and it is a
+/// property of the *host*, not of h5i's policy. Hence a probe rather than a
+/// claim: reported by `box probe` and disclosed in the manual's Limits.
+///
+/// - **macOS**: `false`. The Seatbelt profile subtracts that one ioctl from the
+///   tty grant (`seatbelt::build_profile`), so it is refused by policy — and
+///   Darwin appears to refuse it under any deny-default profile besides.
+/// - **Linux**: `dev.tty.legacy_tiocsti`. Kernel 6.2 made TIOCSTI disableable
+///   (`CONFIG_LEGACY_TIOCSTI`, default **`y`** upstream) and exposed this
+///   sysctl. A missing file means a kernel older than that, where TIOCSTI is
+///   unconditionally available. Fails **open** in its reporting — anything we
+///   cannot read is reported as injectable, because telling an operator a door
+///   is shut when we could not check is worse than telling them to look.
+///
+/// This never gates a tier. A stock kernel would otherwise stop being able to
+/// run a box at all, and the shared terminal is a disclosed limit, not a
+/// regression — so it informs the operator instead of refusing on their behalf.
+pub fn tty_input_injection() -> bool {
+    if cfg!(target_os = "macos") {
+        return false;
+    }
+    if !cfg!(target_os = "linux") {
+        return true;
+    }
+    tty_injection_from_sysctl(
+        std::fs::read_to_string("/proc/sys/dev/tty/legacy_tiocsti")
+            .ok()
+            .as_deref(),
+    )
+}
+
+/// The reading half of [`tty_input_injection`], split out so the fail-open rule
+/// is testable on a host whose own answer we do not control (and on macOS, where
+/// the file does not exist at all). `None` is an unreadable or absent sysctl.
+fn tty_injection_from_sysctl(v: Option<&str>) -> bool {
+    match v {
+        Some(s) => s.trim() != "0",
+        None => true,
+    }
+}
+
 /// Process-wide memoization of the host capability probe. Kernel features
 /// (Landlock ABI, unprivileged userns, seccomp) and the rootless-Podman probe
 /// are effectively immutable for the life of a process, yet `probe_host` is
@@ -2228,9 +2272,14 @@ pub(crate) fn build_confined_command(
             //    control and every TUI ("cannot set terminal process group").
             //    They keep the caller's session — exactly how a nested shell
             //    runs — and have no wall-clock kill (operator-bounded), so the
-            //    killpg guarantee isn't needed. (TIOCSTI keystroke injection
-            //    via the shared tty is gated off by default since kernel 6.2,
-            //    CONFIG_LEGACY_TIOCSTI; a PTY-proxy is the airtight follow-up.)
+            //    killpg guarantee isn't needed. The residual is TIOCSTI
+            //    keystroke injection through the shared tty. Kernel 6.2 made it
+            //    *disableable* — CONFIG_LEGACY_TIOCSTI, and the
+            //    `dev.tty.legacy_tiocsti` sysctl — but upstream defaults that
+            //    option to `y`, so whether the door is shut is the host's
+            //    choice, not ours. h5i reads the sysctl and reports it
+            //    (`tty_input_injection`) rather than assuming a hardened
+            //    kernel; a pty proxy is the fix that would not have to ask.
             if !interactive && libc::setsid() == -1 {
                 return Err(Error::last_os_error());
             }
@@ -4006,6 +4055,29 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let err = resolve(&p, &mac_caps(false)).unwrap_err();
         assert!(err.to_string().contains("Seatbelt"), "{err}");
         assert!(!err.to_string().contains("Landlock"), "{err}");
+    }
+
+    /// An interactive box shell shares the operator's terminal, so whether a box
+    /// can type into it is a disclosed limit — and on Linux it is the *host's*
+    /// setting. Report it wrong in the safe direction and an operator trusts a
+    /// door that is open, so the unreadable case must read as injectable.
+    #[test]
+    fn tty_injection_reporting_fails_open() {
+        assert!(tty_injection_from_sysctl(None), "an unreadable sysctl must read as open");
+        assert!(
+            tty_injection_from_sysctl(Some("1\n")),
+            "upstream's default (y → 1) leaves TIOCSTI available"
+        );
+        assert!(!tty_injection_from_sysctl(Some("0\n")), "0 means the kernel refuses TIOCSTI");
+        assert!(!tty_injection_from_sysctl(Some("0")), "no trailing newline is still 0");
+        assert!(
+            tty_injection_from_sysctl(Some("banana")),
+            "anything we cannot read as a definite 0 must read as open"
+        );
+        // macOS answers from the profile, not from a file that is not there.
+        if cfg!(target_os = "macos") {
+            assert!(!tty_input_injection(), "the Seatbelt profile subtracts TIOCSTI");
+        }
     }
 
     #[test]
