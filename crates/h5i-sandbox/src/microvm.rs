@@ -688,22 +688,93 @@ struct SandboxGuard {
 
 impl SandboxGuard {
     fn new(bin: &str) -> Self {
-        SandboxGuard {
+        let g = SandboxGuard {
             bin: bin.to_string(),
             name: format!(
                 "h5i-{}-{}",
                 std::process::id(),
                 RUN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ),
+        };
+        // Drop alone cannot cover SIGKILL, SIGTERM, or a panic=abort build, and
+        // a *named* msb sandbox survives us — unlike the container tier, which
+        // has `--rm` as a backstop. Leave a marker so a later run can reap what
+        // an abnormal exit left behind.
+        if let Some(m) = marker_path(&g.name) {
+            if let Some(d) = m.parent() {
+                let _ = std::fs::create_dir_all(d);
+            }
+            let _ = std::fs::write(&m, b"");
         }
+        g
     }
 
     fn remove(&self) {
-        let _ = std::process::Command::new(&self.bin)
-            .args(["remove", "--force", &self.name])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        remove_named(&self.bin, &self.name);
+        if let Some(m) = marker_path(&self.name) {
+            let _ = std::fs::remove_file(m);
+        }
+    }
+}
+
+fn remove_named(bin: &str, name: &str) {
+    let _ = std::process::Command::new(bin)
+        .args(["remove", "--force", name])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Where the marker for a live named sandbox lives.
+fn marker_path(name: &str) -> Option<PathBuf> {
+    Some(std::env::temp_dir().join("h5i-msb-live").join(name))
+}
+
+/// Reap named sandboxes an earlier h5i left behind.
+///
+/// Keyed on the pid embedded in the name (`h5i-<pid>-<seq>`): a marker whose
+/// process is gone can only be a leftover, because a live run holds its own
+/// marker until Drop removes it. Best-effort throughout — a failed sweep must
+/// never turn a good run into an error.
+pub fn reap_orphaned_sandboxes(bin: &str) {
+    let Some(dir) = marker_path("").and_then(|p| p.parent().map(PathBuf::from)) else {
+        return;
+    };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(pid) = name
+            .strip_prefix("h5i-")
+            .and_then(|r| r.split('-').next())
+            .and_then(|p| p.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if pid == std::process::id() as i32 || pid_alive(pid) {
+            continue;
+        }
+        remove_named(bin, &name);
+        let _ = std::fs::remove_file(e.path());
+    }
+}
+
+/// Is `pid` still around? `kill(pid, 0)` reports EPERM for a live process we do
+/// not own, which still means "do not reap".
+fn pid_alive(pid: i32) -> bool {
+    #[cfg(unix)]
+    {
+        if pid <= 0 {
+            return true; // never interpret a bad pid as reapable
+        }
+        let rc = unsafe { libc::kill(pid, 0) };
+        rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
     }
 }
 
@@ -745,6 +816,8 @@ pub fn run(
 
     let net = net_plan(policy)?;
     let preload = write_preload(work, &guest_env(policy, injected_env))?;
+    // Sweep leftovers from an h5i that died without running Drop.
+    reap_orphaned_sandboxes(&rt.bin);
     let sandbox = SandboxGuard::new(&rt.bin);
     let full = build_run_argv(
         &rt,
@@ -801,6 +874,8 @@ pub fn run_interactive(
     // Only ask for a pseudo-TTY when we have one on both ends — msb rejects
     // `--tty` under a pipe, which would turn a CI `env shell` into a hard error.
     let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    // Sweep leftovers from an h5i that died without running Drop.
+    reap_orphaned_sandboxes(&rt.bin);
     let sandbox = SandboxGuard::new(&rt.bin);
     let full = build_run_argv(
         &rt,
@@ -954,6 +1029,32 @@ mod tests {
     }
 
     // ─── version parsing ────────────────────────────────────────────────────
+
+    /// A named msb sandbox outlives us, and Drop cannot run on SIGKILL. The
+    /// sweep reaps a marker whose pid is gone and leaves a live one alone.
+    #[test]
+    fn orphan_sweep_only_targets_dead_pids() {
+        // Our own pid is alive, so it must never be swept.
+        assert!(pid_alive(std::process::id() as i32));
+        // pid 1 always exists; kill(1,0) is EPERM for a normal user, which the
+        // helper must read as "alive" rather than "reapable".
+        assert!(pid_alive(1));
+        // A bad pid is never treated as reapable.
+        assert!(pid_alive(0));
+        assert!(pid_alive(-1));
+        // A pid that cannot exist is reapable.
+        assert!(!pid_alive(0x7fff_fffe));
+    }
+
+    #[test]
+    fn a_guard_leaves_a_marker_and_clears_it() {
+        let g = SandboxGuard::new("true");
+        let m = marker_path(&g.name).unwrap();
+        assert!(m.exists(), "a live sandbox records a marker");
+        assert!(g.name.starts_with(&format!("h5i-{}-", std::process::id())));
+        drop(g);
+        assert!(!m.exists(), "Drop clears the marker");
+    }
 
     #[test]
     fn version_is_parsed_from_the_banner_shapes_msb_prints() {

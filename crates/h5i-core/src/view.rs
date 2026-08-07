@@ -856,12 +856,23 @@ impl Forward {
 
         // Out: frames to the human, unconditionally. Watching never collides,
         // so this direction has no policy at all.
+        //
+        // When the BOX's stream ends first (its browser exits, or `stream
+        // disable` runs), this copy returns and the client must be shut down
+        // too — the page has no way to learn the stream is gone, so it holds
+        // the socket open and `pump_input` below blocks on a peer that will
+        // never close. `serve()` takes one connection at a time, so that
+        // stopped the forward serving anything until the human closed the tab.
+        let client_shutdown = client.try_clone()?;
         let out = std::thread::spawn(move || {
-            std::io::copy(&mut upstream, &mut client_out).unwrap_or(0)
+            let n = std::io::copy(&mut upstream, &mut client_out).unwrap_or(0);
+            let _ = client_shutdown.shutdown(std::net::Shutdown::Read);
+            n
         });
         // In: gated by the control lock.
         let pumped = pump_input(&mut client, &mut upstream_out, &env_dir);
-        // Closing our end unblocks the outbound copy so the thread can finish.
+        // And the mirror image: closing our end unblocks the outbound copy when
+        // the HUMAN disconnects first.
         let _ = upstream_out.shutdown(std::net::Shutdown::Both);
         let bytes_out = out.join().unwrap_or(0);
 
@@ -1006,6 +1017,18 @@ pub fn record_session(
 
 /// Read up to the end of the HTTP headers.
 fn read_head(s: &mut TcpStream) -> std::io::Result<String> {
+    // Bounded in time as well as size. `serve()` handles one connection at a
+    // time, so a peer that connects and sends nothing — a browser's speculative
+    // preconnect is the ordinary case — used to stall every later viewer until
+    // it went away on its own.
+    let prev = s.read_timeout()?;
+    s.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
+    let out = read_head_inner(s);
+    let _ = s.set_read_timeout(prev);
+    out
+}
+
+fn read_head_inner(s: &mut TcpStream) -> std::io::Result<String> {
     let mut buf = Vec::new();
     let mut byte = [0u8; 1];
     // Bounded: a header block this large is a client we do not want to serve.

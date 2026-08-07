@@ -538,9 +538,23 @@ fn client_authorized(head: &[u8], client_token: &str) -> bool {
 
 /// Read the request head (request line + headers) up to the blank line, capped.
 fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
+    // Bounded overall, not just per read(). The socket's read timeout bounds a
+    // single syscall, so a client dribbling one header byte just under that
+    // interval held its in-flight slot indefinitely. Sixty-four such clients
+    // — any local process, which is the actor the token gate exists for —
+    // exhausted MAX_IN_FLIGHT and the agent's own API call got a 503 for the
+    // life of the box, with no fallback because its only credential is the
+    // dummy.
+    let deadline = std::time::Instant::now() + HEAD_DEADLINE;
     let mut buf = Vec::with_capacity(512);
     let mut byte = [0u8; 1];
     loop {
+        if std::time::Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request head exceeded its deadline",
+            ));
+        }
         let n = s.read(&mut byte)?;
         if n == 0 {
             break;
@@ -552,6 +566,10 @@ fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
     }
     Ok(buf)
 }
+
+/// Whole-head deadline. Generous for a real client on a slow link, short enough
+/// that a stalled connection cannot hold an in-flight slot for a session.
+const HEAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 fn write_status(client: &mut TcpStream, code: u16, reason: &str) {
     let _ = client.write_all(format!("HTTP/1.1 {code} {reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").as_bytes());
