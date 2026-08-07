@@ -807,6 +807,71 @@ impl HostCaps {
     }
 }
 
+/// Can a box push characters into the **input** queue of the terminal it shares
+/// with the operator (`TIOCSTI`)? An interactive session at a kernel tier keeps
+/// the caller's session and controlling terminal — that is what makes job
+/// control work — so this is a real residual of the shared tty. Reported by
+/// `box probe` and disclosed in the manual's Limits.
+///
+/// The two platforms answer from different places, and that asymmetry is why
+/// this takes both the probed host **and** the tier rather than collapsing to a
+/// constant:
+///
+/// - **Linux**: `dev.tty.legacy_tiocsti`, a kernel-global property that is the
+///   same at every tier — h5i's seccomp policy does not filter `ioctl`, so the
+///   kernel's own setting is the whole answer. 6.2 made TIOCSTI disableable
+///   (`CONFIG_LEGACY_TIOCSTI`, default **`y`** upstream) and exposed this
+///   sysctl; a missing file means an older kernel, where it cannot be closed.
+/// - **macOS**: a property of the Seatbelt **profile**, which subtracts that one
+///   ioctl from the tty grant (`seatbelt::build_profile`) — so it holds exactly
+///   where a profile is applied. `isolation=workspace` applies none by design,
+///   and a host whose Seatbelt is unusable applies none either; in both cases
+///   nothing stands between the box and the operator's terminal, and answering
+///   "blocked" from a compile-time `cfg` would assert what this cannot know.
+///
+/// Fails **open** throughout: anything we cannot positively establish is
+/// reported as injectable, because telling an operator a door is shut when we
+/// could not check is worse than telling them to look.
+///
+/// This never gates a tier. A stock kernel would otherwise stop being able to
+/// run a box at all, and the shared terminal is a disclosed limit, not a
+/// regression — so it informs the operator instead of refusing on their behalf.
+pub fn tty_input_injection(caps: &HostCaps, claim: IsolationClaim) -> bool {
+    // These tiers give the box a terminal of its own (Podman's `-t`, the guest's
+    // console) rather than the operator's, so its input queue is its own too.
+    if matches!(
+        claim,
+        IsolationClaim::Container | IsolationClaim::HardenedContainer | IsolationClaim::Microvm
+    ) {
+        return false;
+    }
+    match caps.os.as_str() {
+        "macos" => {
+            !(caps.seatbelt
+                && matches!(
+                    claim,
+                    IsolationClaim::Process | IsolationClaim::Supervised
+                ))
+        }
+        "linux" => tty_injection_from_sysctl(
+            std::fs::read_to_string("/proc/sys/dev/tty/legacy_tiocsti")
+                .ok()
+                .as_deref(),
+        ),
+        _ => true,
+    }
+}
+
+/// The reading half of [`tty_input_injection`], split out so the fail-open rule
+/// is testable on a host whose own answer we do not control (and on macOS, where
+/// the file does not exist at all). `None` is an unreadable or absent sysctl.
+fn tty_injection_from_sysctl(v: Option<&str>) -> bool {
+    match v {
+        Some(s) => s.trim() != "0",
+        None => true,
+    }
+}
+
 /// Process-wide memoization of the host capability probe. Kernel features
 /// (Landlock ABI, unprivileged userns, seccomp) and the rootless-Podman probe
 /// are effectively immutable for the life of a process, yet `probe_host` is
@@ -2228,9 +2293,14 @@ pub(crate) fn build_confined_command(
             //    control and every TUI ("cannot set terminal process group").
             //    They keep the caller's session — exactly how a nested shell
             //    runs — and have no wall-clock kill (operator-bounded), so the
-            //    killpg guarantee isn't needed. (TIOCSTI keystroke injection
-            //    via the shared tty is gated off by default since kernel 6.2,
-            //    CONFIG_LEGACY_TIOCSTI; a PTY-proxy is the airtight follow-up.)
+            //    killpg guarantee isn't needed. The residual is TIOCSTI
+            //    keystroke injection through the shared tty. Kernel 6.2 made it
+            //    *disableable* — CONFIG_LEGACY_TIOCSTI, and the
+            //    `dev.tty.legacy_tiocsti` sysctl — but upstream defaults that
+            //    option to `y`, so whether the door is shut is the host's
+            //    choice, not ours. h5i reads the sysctl and reports it
+            //    (`tty_input_injection`) rather than assuming a hardened
+            //    kernel; a pty proxy is the fix that would not have to ask.
             if !interactive && libc::setsid() == -1 {
                 return Err(Error::last_os_error());
             }
@@ -4006,6 +4076,63 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let err = resolve(&p, &mac_caps(false)).unwrap_err();
         assert!(err.to_string().contains("Seatbelt"), "{err}");
         assert!(!err.to_string().contains("Landlock"), "{err}");
+    }
+
+    /// An interactive box shell shares the operator's terminal, so whether a box
+    /// can type into it is a disclosed limit — and on Linux it is the *host's*
+    /// setting. Report it wrong in the safe direction and an operator trusts a
+    /// door that is open, so the unreadable case must read as injectable.
+    #[test]
+    fn tty_injection_reporting_fails_open() {
+        assert!(tty_injection_from_sysctl(None), "an unreadable sysctl must read as open");
+        assert!(
+            tty_injection_from_sysctl(Some("1\n")),
+            "upstream's default (y → 1) leaves TIOCSTI available"
+        );
+        assert!(!tty_injection_from_sysctl(Some("0\n")), "0 means the kernel refuses TIOCSTI");
+        assert!(!tty_injection_from_sysctl(Some("0")), "no trailing newline is still 0");
+        assert!(
+            tty_injection_from_sysctl(Some("banana")),
+            "anything we cannot read as a definite 0 must read as open"
+        );
+    }
+
+    /// macOS answers from the Seatbelt *profile*, so the answer is tier-shaped:
+    /// the subtraction exists only where a profile is applied. Reporting one
+    /// constant for the host would claim the door is shut on exactly the paths
+    /// that apply no profile — the direction the fail-open rule forbids.
+    #[test]
+    fn tty_injection_on_macos_follows_the_profile_not_the_platform() {
+        // A kernel tier on a working Seatbelt: the profile subtracts it.
+        assert!(!tty_input_injection(&mac_caps(true), IsolationClaim::Process));
+        assert!(!tty_input_injection(&mac_caps(true), IsolationClaim::Supervised));
+
+        // `workspace` runs unconfined by design — no profile, no subtraction.
+        assert!(
+            tty_input_injection(&mac_caps(true), IsolationClaim::Workspace),
+            "an unconfined session applies no profile; nothing subtracts TIOCSTI"
+        );
+        // A host whose Seatbelt is unusable applies no profile either. The
+        // kernel tiers refuse there, but the report must not say "blocked".
+        assert!(
+            tty_input_injection(&mac_caps(false), IsolationClaim::Process),
+            "no working Seatbelt means no profile to subtract with"
+        );
+
+        // The image-backed tiers hand the box its own terminal, so its input
+        // queue is its own — true whatever the host underneath.
+        for claim in [
+            IsolationClaim::Container,
+            IsolationClaim::HardenedContainer,
+            IsolationClaim::Microvm,
+        ] {
+            assert!(!tty_input_injection(&mac_caps(false), claim), "{claim:?} has its own tty");
+        }
+
+        // An OS with no backend at all: nothing is known, so nothing is claimed.
+        let mut unknown = mac_caps(true);
+        unknown.os = "windows".into();
+        assert!(tty_input_injection(&unknown, IsolationClaim::Process));
     }
 
     #[test]

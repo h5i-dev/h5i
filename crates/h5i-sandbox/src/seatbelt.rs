@@ -574,11 +574,47 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
         s.push_str(&r);
         s.push('\n');
     }
-    // Pseudo-terminals: an interactive session allocates one, and the pty pair
-    // lives outside every path grant.
+    // Terminals: an interactive session inherits the operator's, and a program
+    // in the box may allocate its own pty pair — neither lives under any path
+    // grant. A captured run reaches none of this: it gets `setsid`, so it has no
+    // controlling terminal and `/dev/tty` cannot be opened at all.
+    //
+    // `file-ioctl` is a *separate* SBPL operation: `file-write*` does not imply
+    // it, so without this rule every terminal ioctl returns EPERM under
+    // `(deny default)`. That is not a cosmetic gap. An interactive zsh puts
+    // itself in its own process group and calls `tcsetpgrp` to make that group
+    // the terminal's foreground one; the EPERM surfaces as
+    //
+    //     zsh: can't set tty pgrp: operation not permitted
+    //
+    // and leaves the shell in a *background* process group, where reading the
+    // terminal raises SIGTTIN and no line ever reaches it. The box prompt
+    // renders and keystrokes echo (the tty driver does both regardless), so the
+    // session looks alive while `ls` and everything else does nothing. The same
+    // EPERM denies `tcsetattr`, so raw mode is gone too and ZLE and every TUI
+    // degrade with it.
+    //
+    // The grant names exactly the nodes the two rules above it name, so the
+    // ioctl reach can never exceed the path reach. `/dev/tty` is spelled out
+    // even though `^/dev/tty[a-z0-9]*$` already subsumes it (the `*` matches
+    // empty): it is the node a program actually opens, it is granted by literal
+    // in `MACOS_DEV_NODES`/`MACOS_DEV_WRITE`, and a reader comparing the three
+    // rules should see one node set rather than have to derive it. `/dev/ptmx`
+    // is not optional — `^/dev/pty…$` does not match it (`ptm` ≠ `pty`) — and
+    // without it `posix_openpt`'s `TIOCPTYGRANT`/`TIOCPTYUNLK` fail, so a box
+    // could open a pty master and never unlock its slave.
+    //
+    // This is the only rule the generator emits with more than one filter
+    // clause; `every_sbpl_construct_we_emit_is_accepted` hands it to the real
+    // parser, and `the_generated_profile_is_accepted_by_sandbox_exec` compiles
+    // the interactive profile it lands in.
     if opts.interactive {
         s.push_str("(allow file-write* file-read* (regex #\"^/dev/tty[a-z0-9]*$\"))\n");
         s.push_str("(allow file-write* file-read* (regex #\"^/dev/pty[a-z0-9]*$\"))\n");
+        s.push_str(
+            "(allow file-ioctl (literal \"/dev/tty\") (literal \"/dev/ptmx\") \
+             (regex #\"^/dev/tty[a-z0-9]*$\") (regex #\"^/dev/pty[a-z0-9]*$\"))\n",
+        );
     }
     s.push('\n');
 
@@ -594,6 +630,19 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
         s.push_str(&format!("(deny sysctl-read (sysctl-name \"{name}\"))\n"));
     }
     s.push_str("(deny process-info* (target others))\n");
+    // TIOCSTI (`_IOW('t', 114, char)` = 0x80017472) pushes a byte into the
+    // terminal's *input* queue rather than reading or writing it. An interactive
+    // session shares the operator's terminal, so a box able to issue it would be
+    // typing at the host shell — a command that runs outside the box, after the
+    // session ends. The tty grant above is what puts that ioctl in reach, so the
+    // subtraction ships with it. (Darwin appears to refuse TIOCSTI under a
+    // deny-default profile even without this rule; containment must not rest on
+    // an observation of undocumented behaviour, and this is the same residual
+    // the Linux tier notes at its own shared-tty comment — there it is the
+    // kernel's CONFIG_LEGACY_TIOCSTI default that closes it. A pty proxy, which
+    // would stop handing the box the operator's terminal at all, is the airtight
+    // fix on both.)
+    s.push_str("(deny file-ioctl (ioctl-command #x80017472))\n");
 
     // Defence in depth, not a new capability: `validate_profile` refuses a
     // policy whose granted parent contains a denied child, so anything left in
@@ -1334,6 +1383,50 @@ mod tests {
         assert!(deny_at > allow_at, "the subtraction must come after");
     }
 
+    /// Job control is what makes a box shell usable, and it rests on one
+    /// operation the write grant does not confer. Without `file-ioctl` the
+    /// session's `tcsetpgrp` fails, zsh warns "can't set tty pgrp" and is left in
+    /// a background process group where no typed line ever reaches it.
+    #[test]
+    fn interactive_session_may_drive_its_terminal() {
+        let p = policy(IsolationClaim::Supervised);
+        let s = build_profile(
+            &p,
+            Path::new("/w"),
+            &SeatbeltOptions {
+                interactive: true,
+                ..opts()
+            },
+        );
+        let ioctl = s
+            .find("(allow file-ioctl")
+            .unwrap_or_else(|| panic!("interactive sessions need tty ioctls\n{s}"));
+        // Every node the interactive session already holds read/write on, and no
+        // other: an ioctl grant wider than the path grant it accompanies would
+        // be reach this rule never intended to add. `/dev/ptmx` is the one that
+        // needs naming — `^/dev/pty…$` does not match it (`ptm` ≠ `pty`), and it
+        // is granted by literal above for the same reason.
+        let rule = s[ioctl..].lines().next().unwrap();
+        for f in [
+            "(literal \"/dev/tty\")",
+            "(literal \"/dev/ptmx\")",
+            "(regex #\"^/dev/tty[a-z0-9]*$\")",
+            "(regex #\"^/dev/pty[a-z0-9]*$\")",
+        ] {
+            assert!(rule.contains(f), "tty ioctl grant misses {f}\n{rule}");
+        }
+        // TIOCSTI types at the *host* shell through the shared terminal; the
+        // subtraction must come after the grant, or last-match-wins re-allows it.
+        let deny = s.find("(deny file-ioctl (ioctl-command #x80017472))").unwrap();
+        assert!(deny > ioctl, "the TIOCSTI subtraction must come after\n{s}");
+
+        // A captured run has no terminal to drive (it gets its own session), so
+        // it gets neither the tty paths nor the ioctl.
+        let s = build_profile(&p, Path::new("/w"), &opts());
+        assert!(!s.contains("(allow file-ioctl"), "captured runs get no tty ioctl\n{s}");
+        assert!(!s.contains("/dev/tty[a-z0-9]"), "captured runs get no tty paths\n{s}");
+    }
+
     #[test]
     fn interactive_locks_agent_config() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1727,6 +1820,9 @@ mod tests {
             "(deny file-read* file-write* (subpath \"/Users/nobody/.ssh\"))",
             "(deny file-write* (subpath \"/tmp/x/.claude\"))",
             "(allow file-write* file-read* (regex #\"^/dev/tty[a-z0-9]*$\"))",
+            "(allow file-ioctl (literal \"/dev/tty\") (literal \"/dev/ptmx\") \
+             (regex #\"^/dev/tty[a-z0-9]*$\") (regex #\"^/dev/pty[a-z0-9]*$\"))",
+            "(deny file-ioctl (ioctl-command #x80017472))",
             "(allow process-fork)",
             "(allow process-exec*)",
             "(allow signal (target same-sandbox))",
@@ -1956,23 +2052,71 @@ mod tests {
             return;
         }
         let (_tmp, work, pol) = functional_env();
-        let plan = plan(&pol, &work, &SeatbeltOptions::default());
-        let file = ProfileFile::write(&plan.profile).unwrap();
-        let out = std::process::Command::new(SANDBOX_EXEC)
-            .arg("-f")
-            .arg(file.path())
-            .arg("/usr/bin/true")
-            .output()
-            .expect("run sandbox-exec");
-        assert!(
-            out.status.success(),
-            "sandbox-exec rejected the generated profile.\n\
-             status: {:?}\nstderr: {}\nstdout: {}\n--- profile ---\n{}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr),
-            String::from_utf8_lossy(&out.stdout),
-            plan.profile
-        );
+        // Both option sets, because they generate *different* profiles: the
+        // interactive one adds the tty grants (including the only rule this
+        // generator emits with more than one filter clause) and the
+        // agent-config lockdown, and a rule the parser rejects takes the whole
+        // profile with it. Checking only the captured shape would leave every
+        // interactive box shell resting on `String::contains`.
+        // The interactive lockdown comes from `config_lock_paths(work, home)`,
+        // which lists only paths that *exist* — so `home: None` (or a home with
+        // nothing in it) yields an empty lockdown and the rules production
+        // actually generates never reach the parser. Create both scopes.
+        let home = work.join("home");
+        std::fs::create_dir_all(work.join(".claude")).unwrap();
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::write(home.join(".claude/settings.json"), "{}").unwrap();
+        let home = Some(home);
+        for opts in [
+            SeatbeltOptions {
+                home: home.clone(),
+                ..SeatbeltOptions::default()
+            },
+            SeatbeltOptions {
+                interactive: true,
+                home: home.clone(),
+                ..SeatbeltOptions::default()
+            },
+        ] {
+            let interactive = opts.interactive;
+            let plan = plan(&pol, &work, &opts);
+            if interactive {
+                // Guard the setup, not the parser: a profile that quietly lost
+                // the tty grant or the lockdown would still compile, and this
+                // test would pass while covering less than it says it does.
+                for expected in [
+                    "(allow file-ioctl",
+                    "(deny file-ioctl (ioctl-command #x80017472))",
+                    &format!("(subpath \"{}\")", work.join(".claude").display()),
+                    &format!(
+                        "(subpath \"{}\")",
+                        work.join("home/.claude/settings.json").display()
+                    ),
+                ] {
+                    assert!(
+                        plan.profile.contains(expected),
+                        "the interactive profile handed to the parser is missing {expected}\n{}",
+                        plan.profile
+                    );
+                }
+            }
+            let file = ProfileFile::write(&plan.profile).unwrap();
+            let out = std::process::Command::new(SANDBOX_EXEC)
+                .arg("-f")
+                .arg(file.path())
+                .arg("/usr/bin/true")
+                .output()
+                .expect("run sandbox-exec");
+            assert!(
+                out.status.success(),
+                "sandbox-exec rejected the generated profile (interactive={interactive}).\n\
+                 status: {:?}\nstderr: {}\nstdout: {}\n--- profile ---\n{}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr),
+                String::from_utf8_lossy(&out.stdout),
+                plan.profile
+            );
+        }
     }
 
     #[test]

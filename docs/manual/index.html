@@ -922,11 +922,52 @@ not claim more than that.</p>
   not built.</li>
 <li><strong>The container tier's egress scoping is L7.</strong> Its allowlist is a proxy, so it
   binds proxy-respecting tooling only.</li>
-<li><strong>Chrome runs with its own sandbox off.</strong> On Linux, h5i's seccomp deny-list
+<li>
+<p><strong>An interactive session at a kernel tier shares your terminal.</strong> <code>box shell</code>
+  hands the box the terminal you launched it from, because that is what makes
+  job control and every TUI work — a box shell is a nested shell, not a
+  connection to somewhere else. A terminal is a two-way device, and the box gets
+  both directions of it, so the residual is a list rather than a single door:</p>
+<ul>
+<li><strong>Typing at your shell</strong> (<code>TIOCSTI</code> pushes characters into the terminal's
+  <em>input</em> queue, which your shell reads as if you had typed them, after the
+  session ends). Whether that is closed is not h5i's to assert, and the two
+  platforms answer from different places. On macOS it is the Seatbelt
+  profile that subtracts the ioctl — so it holds at <code>process</code> and
+  <code>supervised</code>, and <strong>not</strong> at <code>isolation=workspace</code>, which applies no
+  profile by design, nor on a host whose Seatbelt is unusable. On Linux it
+  is <strong>your kernel's setting</strong>, the same at every tier, since h5i does no
+  ioctl filtering of its own there: 6.2 made TIOCSTI disableable via
+  <code>CONFIG_LEGACY_TIOCSTI</code> and <code>dev.tty.legacy_tiocsti</code>, but upstream
+  defaults that <em>open</em> — many distros ship it closed, and a kernel older
+  than 6.2 cannot close it at all. So h5i measures instead of claiming.
+  <code>h5i box probe</code> prints one of:</li>
+</ul>
+<p><code>tty-injection= blocked at every tier
+    tty-injection= blocked at the kernel tiers, possible at isolation=workspace
+    tty-injection= possible at every tier</code></p>
+<p>and, when anything is open, how to close it.
+- <strong>Reading what you type next.</strong> The session's read grant on the terminal
+  is not revoked when the shell exits, so a box process that outlives the
+  session — a stray background job — can read the terminal it still holds
+  open. This predates the tty ioctl grant; it is a property of sharing the
+  device.
+- <strong>Leaving the terminal in a state.</strong> A box can set raw mode, turn echo
+  off, change the line discipline, or take the terminal exclusive so other
+  programs cannot open it. Recoverable (<code>stty sane</code>, or a new terminal), not
+  an escape, but it is yours to recover.</p>
+</li>
+</ul>
+<p>What is <em>not</em> reachable, checked rather than assumed: <code>TIOCCONS</code> (redirecting
+  console output to the box's terminal) is refused by Darwin for a non-root
+  process with or without a sandbox. Giving the box its own pty and proxying it
+  is the fix that ends the whole list, and it is not built. The container and
+  microVM tiers do not share a terminal at all.
+- <strong>Chrome runs with its own sandbox off.</strong> On Linux, h5i's seccomp deny-list
   blocks the namespace syscalls Chrome's sandbox needs, at every tier. h5i's box
   is the boundary; Chrome's is not available inside it. That is one layer fewer
-  than a browser on the host has.</li>
-<li><strong>A dev server the box runs is reachable only if its port is declared.</strong> On
+  than a browser on the host has.
+- <strong>A dev server the box runs is reachable only if its port is declared.</strong> On
   macOS the box shares the <em>host's</em> loopback, so h5i denies outbound to it
   wholesale — otherwise a box could reach a database or a dev server belonging
   to the host. A box that runs its own dev server and wants to point its own
@@ -935,8 +976,8 @@ not claim more than that.</p>
   undeclared port fails with <code>net::ERR_ACCESS_DENIED</code>. The port a declared
   <code>[service]</code> is running on is granted automatically while that service is
   alive, so this is only needed for a server started by hand. On Linux the box
-  has its own network namespace and none of this applies.</li>
-<li><strong>On macOS the browser has no in-process domain check.</strong> agent-browser cannot
+  has its own network namespace and none of this applies.
+- <strong>On macOS the browser has no in-process domain check.</strong> agent-browser cannot
   start Chrome from inside a Seatbelt sandbox — the failure reproduces under a
   fully permissive <code>sandbox-exec</code> profile and disappears without the sandbox, so
   it is not something a grant fixes. h5i therefore launches Chrome itself and
@@ -944,8 +985,8 @@ not claim more than that.</p>
   with <code>--allowed-domains</code>. So that flag is not set for a macOS browser box: the
   tier's own egress enforcement is unchanged and still the boundary, but
   agent-browser's second, in-process domain list is gone. A page on a
-  non-allowlisted host fails inside Chrome with <code>net::ERR_ACCESS_DENIED</code>.</li>
-<li><strong>A browser box's Chrome is restarted when its route out changes.</strong> Chrome
+  non-allowlisted host fails inside Chrome with <code>net::ERR_ACCESS_DENIED</code>.
+- <strong>A browser box's Chrome is restarted when its route out changes.</strong> Chrome
   outlives the run that started it, and it takes its proxy address once, at
   launch — so a browser started before the box's current route (an upgrade, or a
   run whose proxy port moved) cannot reach the network through it. The box
@@ -954,8 +995,8 @@ not claim more than that.</p>
   It is detected in the box and stopped host-side at the start of the next run,
   so the fix costs one extra run and says so rather than failing with a proxy
   error that reads like a page problem. The relaunch starts from a clean profile
-  directory, so anything the old browser held — cookies, logins — is gone.</li>
-<li><strong>Two kernel mechanisms, not one.</strong> Linux confines with Landlock, seccomp and
+  directory, so anything the old browser held — cookies, logins — is gone.
+- <strong>Two kernel mechanisms, not one.</strong> Linux confines with Landlock, seccomp and
   namespaces. macOS confines with Seatbelt, which is default deny across
   filesystem, network, mach and sysctl in one policy, and which (unlike
   Landlock) can subtract a child from a granted parent, so the agent config lock
@@ -969,20 +1010,19 @@ not claim more than that.</p>
   user rather than to one box (applying it would cap your machine, not the
   box). <code>h5i box probe</code> names the mechanism and the gaps.
   Rootless Podman runs on Linux and WSL2 natively, and on macOS through a
-  <code>podman machine</code> VM.</li>
-<li><strong>A macOS box shares the host's loopback.</strong> A Linux box gets its own network
+  <code>podman machine</code> VM.
+- <strong>A macOS box shares the host's loopback.</strong> A Linux box gets its own network
   namespace, so its loopback is private. macOS has no namespaces, so a box binds
   the host's loopback (deliberately: it is the only way a dev server in a box is
   reachable). h5i closes the outbound half of this, denying the box every
   outbound loopback destination except its own egress proxy, but the box's own
-  listening ports are reachable by any local process.</li>
-<li><strong>Cost.</strong> A Chrome sidecar is real RAM and CPU, even headless. Headless boxes
-  stay first class, and the browser is opt-in per box.</li>
-<li><strong>The viewport is not a desktop.</strong> CDP screencast shows the page. Native
-  dialogs, browser chrome and anything outside the tab are invisible.</li>
-<li><strong>A dependency on the critical path.</strong> <code>agent-browser</code> is someone else's
-  release cadence. Pinned, CLI-boundary, forkable, but not ours.</li>
-</ul>
+  listening ports are reachable by any local process.
+- <strong>Cost.</strong> A Chrome sidecar is real RAM and CPU, even headless. Headless boxes
+  stay first class, and the browser is opt-in per box.
+- <strong>The viewport is not a desktop.</strong> CDP screencast shows the page. Native
+  dialogs, browser chrome and anything outside the tab are invisible.
+- <strong>A dependency on the critical path.</strong> <code>agent-browser</code> is someone else's
+  release cadence. Pinned, CLI-boundary, forkable, but not ours.</p>
 <hr />
 <h2 id="files">Files</h2>
 <table>
