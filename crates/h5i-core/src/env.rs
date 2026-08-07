@@ -1135,12 +1135,27 @@ pub fn build_branch_scoped_merge(
 pub fn save_manifest(h5i_root: &Path, m: &EnvManifest) -> Result<(), H5iError> {
     let dir = m.dir(h5i_root);
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
-    let path = dir.join(MANIFEST_FILE);
-    std::fs::write(&path, serde_json::to_string_pretty(m)?)
-        .map_err(|e| H5iError::with_path(e, &path))?;
-    std::fs::write(dir.join(STATUS_FILE), format!("{}\n", m.status))
-        .map_err(|e| H5iError::with_path(e, dir.join(STATUS_FILE)))?;
+    atomic_write(&dir.join(MANIFEST_FILE), serde_json::to_string_pretty(m)?.as_bytes())?;
+    atomic_write(&dir.join(STATUS_FILE), format!("{}\n", m.status).as_bytes())?;
     Ok(())
+}
+
+/// Write a state file so a reader sees either the old contents or the new ones,
+/// never a truncated middle.
+///
+/// `fs::write` truncates first, and every reader of these files is
+/// unsynchronised: `list`/`find`/`status`/the console all read them, and
+/// `materialize_from_ref` runs at the top of every env command. A torn
+/// `manifest.json` made `load_manifest_at` fail, which `list` turns into
+/// "environment does not exist" for a live box — and worse, in
+/// `materialize_from_ref` it reads as "local is not newer", so the on-disk
+/// manifest is overwritten from the ref copy and local status/captures are
+/// lost. Rename is atomic within a filesystem, and these files never leave the
+/// env directory.
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), H5iError> {
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    std::fs::write(&tmp, bytes).map_err(|e| H5iError::with_path(e, &tmp))?;
+    std::fs::rename(&tmp, path).map_err(|e| H5iError::with_path(e, path))
 }
 
 fn load_manifest_at(dir: &Path) -> Result<EnvManifest, H5iError> {
@@ -6042,7 +6057,11 @@ impl LiveGuard {
             command,
         };
         if let Ok(json) = serde_json::to_string(&rec) {
-            let _ = std::fs::write(&path, json);
+            // Atomic: `live_sessions` unlinks anything it cannot parse, so a
+            // reader catching a half-written record would delete a healthy
+            // session's registration and leave the box reported as "stale — no
+            // live session holds this env" for the rest of its life.
+            let _ = atomic_write(&path, json.as_bytes());
         }
         LiveGuard { path }
     }
@@ -6069,13 +6088,26 @@ pub fn live_sessions(env_dir: &Path) -> Vec<LiveSession> {
         if p.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
+        // A record whose name is a live pid is not ours to delete, whatever it
+        // parses as: writes are atomic now, but a half-written file from an
+        // older h5i (or any transient read error) must not cost a running
+        // session its registration. Reap only what is provably gone.
+        let owner = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.parse::<u32>().ok());
         let parsed = std::fs::read_to_string(&p)
             .ok()
             .and_then(|text| serde_json::from_str::<LiveSession>(&text).ok());
         match parsed {
             Some(rec) if pid_alive(rec.pid) => out.push(rec),
-            _ => {
+            Some(_) => {
                 let _ = std::fs::remove_file(&p);
+            }
+            None => {
+                if !owner.is_some_and(pid_alive) {
+                    let _ = std::fs::remove_file(&p);
+                }
             }
         }
     }
@@ -6190,8 +6222,7 @@ fn pinned_services_path(h5i_root: &Path, m: &EnvManifest) -> PathBuf {
 fn pin_services_at_create(work_path: &Path, env_dir: &Path) -> Result<String, H5iError> {
     let defs = parse_services_file(&work_path.join(".h5i/env.toml"))?;
     let json = serde_json::to_string_pretty(&defs)?;
-    let path = env_dir.join("services.json");
-    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
+    atomic_write(&env_dir.join("services.json"), json.as_bytes())?;
     Ok(service_defs_digest(&defs))
 }
 
@@ -6322,11 +6353,10 @@ pub fn service_start(
         dynamic_port,
         log: log.display().to_string(),
     };
-    std::fs::write(
-        service_record_path(&svc_dir, name),
-        serde_json::to_string_pretty(&rec)?,
-    )
-    .map_err(|e| H5iError::with_path(e, service_record_path(&svc_dir, name)))?;
+    atomic_write(
+        &service_record_path(&svc_dir, name),
+        serde_json::to_string_pretty(&rec)?.as_bytes(),
+    )?;
 
     let port_note = dynamic_port
         .map(|p| format!(" port={p}"))
@@ -10201,6 +10231,45 @@ mod tests {
         copy_tree(&src, &dst).unwrap();
         let mode = std::fs::metadata(&dst).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700, "copied dir must not widen, got {mode:o}");
+    }
+
+    /// State files are read by unsynchronised readers on every env command, so
+    /// a truncate-then-write window turned a live box into "does not exist" —
+    /// and in `materialize_from_ref` into "local is not newer", overwriting the
+    /// on-disk manifest from the ref copy.
+    #[test]
+    fn state_writes_are_atomic_and_leave_no_temp_behind() {
+        let td = tempfile::tempdir().unwrap();
+        let p = td.path().join("state.json");
+        atomic_write(&p, b"first").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"first");
+        atomic_write(&p, b"second").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"second");
+        let leftovers: Vec<_> = std::fs::read_dir(td.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains("tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+    }
+
+    /// `live_sessions` unlinks what it cannot parse. A record whose pid is still
+    /// alive must survive that, or a healthy session loses its registration and
+    /// the box reads as stale for the rest of its life.
+    #[test]
+    fn an_unparseable_live_record_for_a_running_pid_is_kept() {
+        let td = tempfile::tempdir().unwrap();
+        let live = td.path().join(LIVE_DIR);
+        std::fs::create_dir_all(&live).unwrap();
+        let mine = live.join(format!("{}.json", std::process::id()));
+        std::fs::write(&mine, b"{\"pid\": ").unwrap(); // torn
+        let dead = live.join("4294967294.json");
+        std::fs::write(&dead, b"{\"pid\": ").unwrap();
+
+        let _ = live_sessions(td.path());
+        assert!(mine.exists(), "a live pid's record must not be reaped");
+        assert!(!dead.exists(), "a dead pid's torn record is reapable");
     }
 
     /// The host's own `~/.claude` / `~/.codex` must not be snapshotted and
