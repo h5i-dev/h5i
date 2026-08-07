@@ -4970,11 +4970,22 @@ const SPOOL_MAX_CMD_BYTES: u64 = 64 * 1024;
 /// capped at `cap` bytes with an explicit truncation marker.
 fn read_spool_capped(p: &Path, cap: u64) -> Option<Vec<u8>> {
     use std::io::Read as _;
-    let meta = std::fs::symlink_metadata(p).ok()?;
+    // `symlink_metadata` then `open` would be two resolutions of a path in a
+    // directory the box writes: it can stat as a regular file and be a symlink
+    // by the time we open it. Open first with O_NOFOLLOW, then `fstat` that
+    // descriptor, so the thing we check is the thing we read.
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW);
+    }
+    let f = opts.open(p).ok()?;
+    let meta = f.metadata().ok()?;
     if !meta.file_type().is_file() {
         return None;
     }
-    let f = std::fs::File::open(p).ok()?;
     let mut buf = Vec::new();
     f.take(cap).read_to_end(&mut buf).ok()?;
     if meta.len() > cap {
@@ -6520,8 +6531,11 @@ fn scan_spool_pending(h5i_root: &Path, m: &EnvManifest) -> SpoolPending {
         let name = e.file_name().to_string_lossy().into_owned();
         if let Some(base) = name.strip_suffix(".json") {
             if base.starts_with("cap-") {
-                let cmd = std::fs::read(e.path())
-                    .ok()
+                // Through the same capped, symlink-refusing reader the ingest
+                // path uses. A plain `fs::read` here followed a symlink to
+                // /dev/zero and had no size cap, so a box could hang or OOM
+                // `h5i box status` — which the console polls.
+                let cmd = read_spool_capped(&e.path(), SPOOL_MAX_CMD_BYTES)
                     .and_then(|b| serde_json::from_slice::<InboxCaptureMeta>(&b).ok())
                     .map(|meta| meta.cmd)
                     .unwrap_or_default();
@@ -10066,6 +10080,32 @@ mod tests {
 
         // A missing source fails closed.
         assert!(materialize_persona(work, &["plugin/persona/nope.md".to_string()]).is_err());
+    }
+
+    /// The spool is written by the box and is therefore untrusted. A reader
+    /// that follows a symlink there can be pointed at any host file — or at
+    /// /dev/zero, which with no size cap hangs the host process. `box status`
+    /// (which the console polls every 8s) used a plain `fs::read`.
+    #[test]
+    #[cfg(unix)]
+    fn spool_reads_refuse_symlinks_and_stay_capped() {
+        let td = tempfile::tempdir().unwrap();
+        let spool = td.path().join("spool");
+        std::fs::create_dir_all(&spool).unwrap();
+
+        // A symlink is refused outright, even to a perfectly ordinary file.
+        let real = td.path().join("host-secret");
+        std::fs::write(&real, "PRIVATE").unwrap();
+        std::os::unix::fs::symlink(&real, spool.join("cap-1.json")).unwrap();
+        assert_eq!(read_spool_capped(&spool.join("cap-1.json"), 1024), None);
+
+        // A regular file is read, and a large one is capped rather than
+        // pulled into memory whole.
+        let big = spool.join("cmd-1-0.out");
+        std::fs::write(&big, vec![b'x'; 4096]).unwrap();
+        let got = read_spool_capped(&big, 512).unwrap();
+        assert!(got.starts_with(&[b'x'; 512][..]));
+        assert!(String::from_utf8_lossy(&got).contains("truncated"));
     }
 
     /// The remembered loopback ports decide what `policy.loopback_ports` grants,
