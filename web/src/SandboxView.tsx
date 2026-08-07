@@ -56,6 +56,8 @@ export function SandboxView() {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("all");
+  // Bumped on every successful fleet poll, so the detail pane refreshes with it.
+  const [tick, setTick] = useState(0);
 
   const load = useCallback(() => {
     api
@@ -63,6 +65,7 @@ export function SandboxView() {
       .then((b) => {
         setBoxes(b);
         setError(null);
+        setTick((t) => t + 1);
       })
       .catch((e) => setError(String(e instanceof Error ? e.message : e)));
   }, []);
@@ -123,7 +126,7 @@ export function SandboxView() {
           selectedId={selectedId}
           onSelect={setSelectedId}
         />
-        <DetailPane box={selected} />
+        <DetailPane box={selected} tick={tick} />
       </div>
     </div>
   );
@@ -470,7 +473,7 @@ function SignalBadge({ signals }: { signals: Signals }) {
 
 // ── right: one box ───────────────────────────────────────────────────────────
 
-function DetailPane({ box }: { box: BoxRow | null }) {
+function DetailPane({ box, tick }: { box: BoxRow | null; tick: number }) {
   const [detail, setDetail] = useState<BoxDetail | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -498,7 +501,10 @@ function DetailPane({ box }: { box: BoxRow | null }) {
     return () => {
       live = false;
     };
-  }, [agent, slug]);
+    // `tick` advances with the fleet poll: without it the detail pane fetched
+    // once per selection while the row beside it kept updating, so an open box
+    // drifted behind its own signal badge.
+  }, [agent, slug, tick]);
 
   if (!box) {
     return (
