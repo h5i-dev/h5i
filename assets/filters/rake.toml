@@ -1,0 +1,55 @@
+[filters.rake]
+description = "Compact Rake output — drop verbose task traversal and blank lines while preserving application output, failures, and abort summaries"
+match_command = "^(?:(?:bundle\\s+exec|bin/)\\s*)?rake(?:\\s|$)"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^\\*\\* (?:Invoke|Execute|First invoke) ",
+]
+truncate_lines_at = 240
+max_lines = 120
+on_empty = "rake: completed without output"
+
+[[tests.rake]]
+name = "drops verbose task traversal but keeps useful task output"
+input = """
+** Invoke db:migrate (first_time)
+** Invoke environment (first_time)
+** Execute environment
+** Execute db:migrate
+Migrating CreateUsers (20260722080000)
+== 20260722080000 CreateUsers: migrated (0.0123s) ====================
+"""
+expected = """
+Migrating CreateUsers (20260722080000)
+== 20260722080000 CreateUsers: migrated (0.0123s) ====================
+"""
+
+[[tests.rake]]
+name = "preserves abort reason and trace while dropping invocation chatter"
+input = """
+** Invoke test (first_time)
+** Invoke environment (first_time)
+** Execute environment
+** Execute test
+rake aborted!
+ActiveRecord::StatementInvalid: relation "users" does not exist
+/work/Rakefile:12:in `block in <top (required)>'
+Tasks: TOP => test
+(See full trace by running task with --trace)
+"""
+expected = """
+rake aborted!
+ActiveRecord::StatementInvalid: relation "users" does not exist
+/work/Rakefile:12:in `block in <top (required)>'
+Tasks: TOP => test
+(See full trace by running task with --trace)
+"""
+
+[[tests.rake]]
+name = "task chatter alone collapses to a completion message"
+input = """
+** Invoke assets:precompile (first_time)
+** Execute assets:precompile
+"""
+expected = "rake: completed without output"
