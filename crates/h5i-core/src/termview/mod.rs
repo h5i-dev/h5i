@@ -126,6 +126,12 @@ pub struct Options {
 /// missing socket directory before it ever reaches the question they asked. The
 /// viewer stays engine-agnostic everywhere else; this is the one place the
 /// difference is the user's problem rather than ours.
+///
+/// Unix-gated with the `run` that calls it, following this file's rule: the
+/// non-unix `run` is a stub that refuses before it could ever need advice about
+/// streaming, so an ungated helper here is dead code on Windows and `-D
+/// warnings` is right to say so.
+#[cfg(unix)]
 fn not_streaming_hint(engine: Option<&str>) -> String {
     match engine {
         Some("h5i-light") => "the box's browser is not streaming. Inside the box, run \
