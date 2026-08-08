@@ -712,6 +712,14 @@ article.post .post-cta .btn { margin: 0; }
 .cta-glow, .hero-glow { display: none; }
 #cta .container { max-width: none; }
 
+/* `.cta-slim` is the home page's close: a band of two buttons with no
+   headline above them. The 90/100 above is sized for a 44px display title,
+   which here would leave the buttons swimming in it. Opt-in rather than a
+   change to `#cta`, because /features/ still closes with a title, a
+   paragraph and three buttons and wants the taller scale. */
+#cta.cta-slim { padding: 52px var(--gut) 58px; }
+#cta.cta-slim .hero-actions { margin-top: 0; }
+
 /* ── Footer ──────────────────────────────────────────────────
    One row: identity, links, then the legal line pushed right. */
 footer.blog-footer,
@@ -1002,6 +1010,7 @@ section .usecase:last-child { border-bottom: 0; padding-bottom: 0; }
   .article-wrap .toc { display: none; }
   #hero { padding: 56px var(--gut) 48px; }
   #cta { padding: 60px var(--gut) 68px; }
+  #cta.cta-slim { padding: 40px var(--gut) 46px; }
   body > section, main > section { padding: 34px var(--gut) 40px; }
   .index-hero, .page-head { padding: 52px var(--gut) 36px; }
 }
