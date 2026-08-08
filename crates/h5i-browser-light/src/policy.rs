@@ -162,10 +162,23 @@ impl Policy {
 }
 
 fn is_loopback(host: &str) -> bool {
-    // `[::1]` arrives with brackets stripped by `host_str`.
-    matches!(host, "localhost" | "127.0.0.1" | "::1")
-        || host.starts_with("127.")
-        || host.ends_with(".localhost")
+    // `localhost` and its subdomains resolve to loopback by convention.
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+
+    // Everything else must be an *address*, parsed, not string-matched. A
+    // literal `127.` prefix looks like the 127.0.0.0/8 loopback block but also
+    // matches the perfectly public DNS name `127.evil.com`, which would hand an
+    // allowlist bypass to any page that references it. And IPv6 loopback
+    // arrives from `host_str` as `[::1]` *with* the brackets, so a bare `::1`
+    // comparison never fires. Parsing settles both.
+    let literal = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    match literal.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v4)) => v4.octets()[0] == 127, // 127.0.0.0/8
+        Ok(std::net::IpAddr::V6(v6)) => v6.is_loopback(),       // ::1
+        Err(_) => false,
+    }
 }
 
 /// Reduce anything origin-shaped to `scheme://host[:port]`.
@@ -218,6 +231,28 @@ mod tests {
         // ...and can be taken away for a run that should reach nothing local.
         let strict = Policy::new().set_allow_loopback(false);
         assert!(!strict.check(&url("http://localhost:3000/")).is_allowed());
+    }
+
+    #[test]
+    fn a_dns_name_that_looks_like_loopback_is_not_loopback() {
+        // `127.evil.com` is a valid public hostname. Treating it as loopback
+        // because it starts with "127." hands an allowlist bypass to any page
+        // that references it.
+        let policy = Policy::new();
+        assert!(!policy.check(&url("http://127.evil.com/exfil")).is_allowed());
+        assert!(!policy.check(&url("http://127.0.0.1.evil.com/")).is_allowed());
+        // ...while the real 127/8 block stays loopback.
+        assert!(policy.check(&url("http://127.0.0.1:8080/")).is_allowed());
+        assert!(policy.check(&url("http://127.9.9.9/")).is_allowed());
+    }
+
+    #[test]
+    fn ipv6_loopback_is_recognised_despite_the_brackets() {
+        // host_str returns `[::1]` with brackets; a bare `::1` comparison
+        // never matches, so an IPv6-only dev server would be denied.
+        let policy = Policy::new();
+        assert!(policy.check(&url("http://[::1]:3000/app")).is_allowed());
+        assert!(policy.check(&url("http://[::1]/")).is_allowed());
     }
 
     #[test]

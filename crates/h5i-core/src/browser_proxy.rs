@@ -468,13 +468,14 @@ pub fn spawn(
                         std::thread::spawn(move || {
                             let _ = client.set_nonblocking(false);
                             let Some(daemon) = connect_upstream(&upstream) else {
-                                // Nothing came up. Say so in the daemon's own
-                                // shape rather than hanging: a client waiting
-                                // forever on a reply is the worst of the
-                                // available failures.
-                                let _ = (&client).write_all(
-                                    b"{\"success\":false,\"error\":\"h5i: no browser daemon answered; is one starting?\"}\n",
-                                );
+                                // Nothing came up. Answer in the daemon's own
+                                // shape rather than hanging — but carry the
+                                // request's id, or a CLI that correlates
+                                // replies by id ignores this line and stalls
+                                // until its own timeout, which is exactly the
+                                // hang this branch exists to avoid. So we read
+                                // the first request to learn its id first.
+                                refuse_no_daemon(&client);
                                 return;
                             };
                             let (Ok(client_read), Ok(daemon_read)) =
@@ -559,6 +560,31 @@ pub fn record_actions(
     if let Err(e) = crate::receipt::append(env_dir, input, body.as_bytes()) {
         eprintln!("browser mediation: could not record the actions: {e}");
     }
+}
+
+/// Tell a client that no daemon answered, echoing the id of its first request
+/// so a CLI correlating replies by id matches the reply rather than hanging.
+fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
+    use std::io::{BufRead, Write};
+
+    // Read one line — the request the client is waiting on a reply to. Best
+    // effort: if it sent nothing, a null id is the honest answer.
+    let mut first = String::new();
+    let _ = std::io::BufReader::new(client).read_line(&mut first);
+    let id = serde_json::from_str::<Value>(&first)
+        .ok()
+        .and_then(|v| v.get("id").cloned())
+        .unwrap_or(Value::Null);
+
+    let refusal = serde_json::json!({
+        "id": id,
+        "success": false,
+        "error": "h5i: no browser daemon answered; is one starting?",
+    });
+    // `&UnixStream` implements `Write`; a mutable binding lets `writeln!`
+    // autoref it.
+    let mut out = client;
+    let _ = writeln!(out, "{refusal}");
 }
 
 /// Connect to the daemon, waiting for it to appear.
@@ -826,6 +852,32 @@ mod tests {
             actions.iter().any(|a| a.action == "evaluate" && !a.forwarded),
             "{actions:?}"
         );
+    }
+
+    #[test]
+    fn the_no_daemon_refusal_echoes_the_request_id() {
+        // Without the id, a CLI that correlates replies by id ignores this
+        // line and hangs until its own timeout — the exact failure this
+        // refusal exists to prevent.
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::net::UnixStream;
+
+        let (client, server) = UnixStream::pair().expect("socketpair");
+        // The mediator's side reads the request and answers; drive it on a
+        // thread because both halves are synchronous.
+        let handle = std::thread::spawn(move || refuse_no_daemon(&server));
+
+        let mut writer = client.try_clone().unwrap();
+        writeln!(writer, r#"{{"id":"42","action":"launch"}}"#).unwrap();
+        writer.flush().unwrap();
+
+        let mut reply = String::new();
+        BufReader::new(client).read_line(&mut reply).unwrap();
+        handle.join().unwrap();
+
+        let parsed: Value = serde_json::from_str(&reply).expect("a JSON reply");
+        assert_eq!(parsed["id"], "42", "the reply must carry the request id");
+        assert_eq!(parsed["success"], false);
     }
 
     #[test]

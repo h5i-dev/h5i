@@ -179,11 +179,21 @@ pub fn read_message(reader: &mut impl Read) -> Result<Incoming, H5iError> {
             }
         }
 
-        // Control frames may arrive between fragments and are never fragmented.
+        // Control frames are never fragmented and may interleave a fragmented
+        // data message (RFC 6455 §5.4). At a message boundary we surface them
+        // so the caller can pong; *between* fragments we must not — returning
+        // here would discard `assembled` and corrupt the message into its tail
+        // alone. We cannot pong from inside this read, so an interleaved ping
+        // is skipped and reassembly continues: preserving the in-flight
+        // message beats answering one keep-alive, and a dropped ping is benign
+        // for these short sessions. Close always surfaces — discarding a
+        // partial message on close is correct.
+        let at_boundary = assembled.is_empty() && message_opcode.is_none();
         match opcode {
             0x8 => return Ok(Incoming::Close),
-            0x9 => return Ok(Incoming::Ping(payload)),
-            0xA => return Ok(Incoming::Pong),
+            0x9 if at_boundary => return Ok(Incoming::Ping(payload)),
+            0xA if at_boundary => return Ok(Incoming::Pong),
+            0x9 | 0xA => continue, // interleaved: skip without touching `assembled`
             0x0 => {} // continuation: keep the opcode we started with
             other => message_opcode = Some(other),
         }
@@ -281,6 +291,38 @@ mod tests {
 
         let message = read_message(&mut frame.as_slice()).expect("decodes");
         assert_eq!(message, Incoming::Text("{\"a\":1}".to_string()));
+    }
+
+    #[test]
+    fn a_ping_between_fragments_does_not_corrupt_the_message() {
+        // RFC 6455 allows a control frame between fragments. It must not throw
+        // away the fragment already assembled — the whole message must survive.
+        let mut frame = Vec::new();
+        // Fragment 1: text, FIN clear.
+        frame.extend_from_slice(&[0x01, 4]);
+        frame.extend_from_slice(b"{\"a\"");
+        // An interleaved ping (FIN set, unmasked, tiny payload).
+        frame.extend_from_slice(&[0x89, 2]);
+        frame.extend_from_slice(b"hi");
+        // Fragment 2: continuation, FIN set.
+        frame.extend_from_slice(&[0x80, 3]);
+        frame.extend_from_slice(b":1}");
+
+        let message = read_message(&mut frame.as_slice()).expect("decodes");
+        assert_eq!(
+            message,
+            Incoming::Text("{\"a\":1}".to_string()),
+            "the ping must not have eaten the first fragment"
+        );
+    }
+
+    #[test]
+    fn a_ping_at_a_boundary_is_still_surfaced_so_it_can_be_ponged() {
+        let frame = [0x89u8, 3, b'a', b'b', b'c'];
+        assert_eq!(
+            read_message(&mut frame.as_slice()).expect("decodes"),
+            Incoming::Ping(b"abc".to_vec())
+        );
     }
 
     #[test]
