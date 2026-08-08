@@ -1352,6 +1352,80 @@ agent edits code -> starts dev server -> opens the app with h5i browser
   -> export patch, report, screenshots, receipt
 ```
 
+**M11a. The browser terminal in the console — proposed, 2026-08-08.** M11 put
+the developer view in the terminal; this puts the full one where it can
+actually breathe, inside `h5i ui`. The design motif is a trading terminal —
+Hyperliquid is the reference, the way terminal-browser was for 5.10: what we
+take is the information model (peer panes of equal rank, change-driven row
+highlights, an always-on status bar), not the skin. The reasoning is the same
+one M11 recorded: for an agent's overseer the rendered page is the *least*
+informative pane, so page viewport, accessibility snapshot, agent actions,
+network requests, console, and policy verdicts sit side by side at equal rank
+— what the agent saw, what it did, what moved on the wire, and what h5i
+refused, in one view.
+
+**One web surface, not a second one.** This lives in the existing console:
+same axum server, same embedded bundle, same `web` feature, same loopback
+bind. The console's own rule — every route is a GET — stands; the live data
+and the input direction ride the per-box forward that already exists (5.9),
+with its per-box token and its lock check on input. The console gains a view,
+not a write path.
+
+**Not a read-only browser.** The viewer is read-only by default, interactive
+only while holding the control lock (5.4), and taking the lock is itself a
+recorded policy event — the takeover and the window in which human input
+flowed belong in the receipt next to the verbs the mediator refused during
+it. This is the terminal viewer's VIEW/INTERACT model (5.10) given a second
+skin, not a new input policy; a viewer that could never take over would
+delete M5's takeover story, and one that could always type would delete the
+lock.
+
+**The durable half is the event model, and it lands first.** One stream from
+the browser runtime — frames, snapshots, actions, requests, console, policy
+verdicts, metrics — with every event stamped with its session, ordinal,
+timestamp, kind, a `caused_by` back-reference, and its **lane**:
+host-observed or box-claimed, the same two kinds of claim the receipt
+already keeps apart. The web view, the terminal view, and the exported
+receipt all read this one stream, which is what makes the viewer a live
+receipt rather than a dashboard that happens to resemble one: selecting an
+action shows the request, console output, and verdict that carry its id.
+The panes inherit the honesty rules with the data: the status bar shows
+host-derived values only (box-claimed metrics are labeled, not promoted),
+and the network pane names its evidence grade per engine — h5i-light's
+fail-closed request log is authoritative, the Chromium path's Fetch lane is
+best-effort, and a pane that showed both alike would read as enforcement
+where there is none. Update budgets are per pane, not global: the viewport
+is change-driven (the light engine idles at zero frames by design; ~30fps
+is a Chromium screencast ceiling, not a target), status ticks slowly, rows
+batch, histories are bounded rings.
+
+The host browser trusts this page with nothing new: it renders pixels and
+structured events, target HTML never enters the viewer's DOM, box strings
+render as text (`sanitize_display`'s rule, applied in a second place), and
+the CSP names no external origin.
+
+Exit criteria: the console shows a live box with every pane labeled by lane;
+selecting an action surfaces its correlated request, console output, and
+verdict; a takeover started from the viewer types into the page and lands in
+the receipt as a policy event alongside the agent verbs refused during it;
+the network pane states its evidence grade per engine; and the TUI showing
+the same session shows the same events, because divergence between the two
+viewers is a bug in the model, not a difference of skin.
+
+Gated on the shared event stream existing (this milestone's own first half)
+and on M10's open item being closed first — the live view driven by a real
+`h5i box view` against a real box — because a polished terminal over a
+stream never exercised end to end inverts this file's own priorities.
+
+**M11b. Terminal watch mode — proposed, 2026-08-08.** The shipped terminal
+viewer (5.10, M7, M11) re-pointed at the same event stream and kept,
+deliberately smaller: viewport, trusted status row, latest actions, console
+errors, denied requests, panes cycled rather than tiled. It is the SSH and
+demo surface — "or stay entirely inside the terminal" — and it does not
+chase pane parity with M11a: the investment moves to the web view, and the
+TUI's job is to watch, take the lock when a login wall demands it, and prove
+the event model has two independent readers. Nothing shipped is discarded.
+
 ## 9. Limits we state up front
 
 Being explicit about these is a feature, since the claim is a security claim.
