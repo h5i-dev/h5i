@@ -131,6 +131,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
+  <link rel="stylesheet" href="/_static/console-mock.css">
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://h5i.dev/features/"}]}
   </script>
@@ -436,12 +437,160 @@
       <p class="section-sub">Run <code style="font-family:var(--mono);color:var(--red-text)">h5i ui</code> for a loopback-only console at <code style="font-family:var(--mono);color:var(--red-text)">http://127.0.0.1:8765</code>. Every route is a <code style="font-family:var(--mono);color:var(--red-text)">GET</code>.</p>
       <div class="divider"></div>
     </div>
-    <div class="dashboard-wrap reveal">
-      <img src="/_static/screenshot_h5i_server.png" width="2257" height="1222" alt="The h5i box console: every box with its tier and status on the left, and on the right the enforced policy and a flight recorder of one row per receipt" loading="lazy" style="height:auto;">
+    <div class="console-plate">
+      <div class="console" role="img" aria-label="The h5i box console: a top strip of what this host can enforce and fleet vitals, the fleet on the left with each box's tier, status and one signal, and on the right one box's findings, its flight recorder across five lanes, and the policy that was actually enforced.">
+
+        <!-- top strip: what the host can actually enforce, then fleet vitals -->
+        <div class="console-strip">
+          <div class="grp">
+            <span class="console-label">host</span>
+            <span class="console-tag ok">workspace &#10003;</span>
+            <span class="console-tag ok">process &#10003;</span>
+            <span class="console-tag ok">supervised &#10003;</span>
+            <span class="console-tag ok">container &#10003;</span>
+            <span class="console-tag off">microvm &#10007;</span>
+            <span class="console-tag ok">egress &#10003;</span>
+            <span class="console-tag ok">limits &#10003;</span>
+            <span class="console-tag">strongest: supervised</span>
+          </div>
+          <div class="console-vitals">
+            <span class="console-vital"><b>4</b><span>boxes</span></span>
+            <span class="console-vital"><b>2</b><span>active</span></span>
+            <span class="console-vital"><b>1</b><span>proposed</span></span>
+            <span class="console-vital alert"><b>1</b><span>denials</span></span>
+            <span class="console-vital"><b>31</b><span>runs</span></span>
+          </div>
+        </div>
+
+        <div class="console-body">
+
+          <!-- left: the fleet -->
+          <div class="console-fleet">
+            <div class="console-head">Boxes <span class="count">4</span></div>
+            <div class="console-chips">
+              <span class="console-chip active">all</span>
+              <span class="console-chip">running</span>
+              <span class="console-chip">proposed</span>
+              <span class="console-chip">pressure</span>
+              <span class="console-chip">drifted</span>
+              <span class="console-chip">container</span>
+              <span class="console-chip">supervised</span>
+              <span class="console-chip">process</span>
+              <span class="console-chip">workspace</span>
+            </div>
+            <div class="console-colhead"><span>Box</span><span>Isolation</span><span>Signal</span></div>
+
+            <div class="console-row selected">
+              <span class="name">claude/fix-auth</span>
+              <span class="console-tag ok">supervised</span>
+              <span class="sig blocked">&#9940; blocked</span>
+              <span class="sub">14 runs &#183; 6f +212/&#8722;48</span>
+            </div>
+            <div class="console-row">
+              <span class="name">codex/pr-1234</span>
+              <span class="console-tag ok">container</span>
+              <span class="sig attention">&#9888; 2 kinds</span>
+              <span class="sub">9 runs &#183; 3f +61/&#8722;7 &#183; detached</span>
+            </div>
+            <div class="console-row">
+              <span class="name">claude/cache-refresh</span>
+              <span class="console-tag">process</span>
+              <span class="sig clean">clean</span>
+              <span class="sub">8 runs &#183; no agent inside</span>
+            </div>
+            <div class="console-row">
+              <span class="name">codex/spike-ui</span>
+              <span class="console-tag off">workspace</span>
+              <span class="sig weak">&#9676; box-claimed</span>
+              <span class="sub">0 runs &#183; proposed</span>
+            </div>
+          </div>
+
+          <!-- right: one box -->
+          <div class="console-detail">
+            <div class="console-head">
+              claude/fix-auth
+              <span class="console-tag ok">supervised</span>
+              <span class="console-tag">agent-claude</span>
+              <span class="digest">a1f4c9e70b32</span>
+            </div>
+
+            <div class="console-note bad">
+              <b>The egress allowlist refused 3 requests</b> to <code>paste.example.invalid:443</code>.
+              This is host-observed: the proxy recorded it, not the box.
+            </div>
+
+            <div class="console-panel">
+              <div class="console-panel-head">Flight recorder &#183; 14 records &#183; 9 older folded</div>
+              <div class="lane-row head">
+                <div><span class="lane-name">policy allows &#8594;</span></div>
+                <div><div class="lane-name">FS</div><div class="lane-allow">$WORK</div></div>
+                <div><div class="lane-name">NET</div><div class="lane-allow">3 hosts</div></div>
+                <div><div class="lane-name">PROC</div><div class="lane-allow">any</div></div>
+                <div><div class="lane-name">RES</div><div class="lane-allow">wall 1800s</div></div>
+                <div><div class="lane-name">PAGE</div><div class="lane-allow">in-box</div></div>
+              </div>
+              <div class="lane-row">
+                <div>
+                  <div class="run-cmd">npm ci &amp;&amp; npm test</div>
+                  <div class="run-meta"><span class="src observed">host-observed</span> exit 0 &#183; 48.2s &#183; 11:04:19</div>
+                </div>
+                <div><span class="v info">31 files</span></div>
+                <div><span class="v ok">&#10003; 42</span></div>
+                <div><span class="v ok">&#10003;</span></div>
+                <div><span class="v info">412 MB</span></div>
+                <div><span class="v none">&#183;</span></div>
+              </div>
+              <div class="lane-row">
+                <div>
+                  <div class="run-cmd">curl https://paste.example.invalid</div>
+                  <div class="run-meta"><span class="src observed">host-observed</span> exit 7 &#183; 0.3s &#183; 11:07:02</div>
+                </div>
+                <div><span class="v none">&#183;</span></div>
+                <div><span class="v bad">&#9940; 3 refused</span></div>
+                <div><span class="v warn">&#9888; exit 7</span></div>
+                <div><span class="v none">&#183;</span></div>
+                <div><span class="v none">&#183;</span></div>
+              </div>
+              <div class="lane-row">
+                <div>
+                  <div class="run-cmd">agent-browser open http://localhost:3000</div>
+                  <div class="run-meta"><span class="src claimed">box-claimed</span> exit 0 &#183; 1.9s &#183; 11:09:44</div>
+                </div>
+                <div><span class="v none">&#183;</span></div>
+                <div><span class="v ok">&#10003; 6</span></div>
+                <div><span class="v ok">&#10003;</span></div>
+                <div><span class="v none">&#183;</span></div>
+                <div><span class="v warn">&#9888; 2 console</span></div>
+              </div>
+            </div>
+
+            <div class="console-panel">
+              <div class="console-panel-head">Enforced policy &#183; what was actually allowed</div>
+              <div class="pol">
+                <div><span class="k">isolation</span><span class="val on">supervised</span></div>
+                <div><span class="k">net.mode</span><span class="val">allowlist</span></div>
+                <div><span class="k">net.egress</span><span class="val">api.anthropic.com, registry.npmjs.org, github.com</span></div>
+                <div><span class="k">fs.write</span><span class="val">$WORK</span></div>
+                <div><span class="k">fs.read</span><span class="val">$WORK, /usr, /etc/ssl</span></div>
+                <div><span class="k">secrets</span><span class="val">GITHUB_TOKEN (brokered)</span></div>
+                <div><span class="k">wall</span><span class="val">1800s</span></div>
+                <div><span class="k">mem</span><span class="val">4.0G</span></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
     </div>
     <p class="dashboard-caption reveal">
-      Left, every box with its tier, status and one signal. Right, the policy actually enforced, the services it declares, its diffstat against the pinned base, and a flight recorder across five lanes.<br>
-      <strong>Red</strong> means the egress allowlist refused a destination &#183; <strong>amber</strong> means look at this &#183; <strong>grey</strong> means the evidence is weak. Nothing on the screen is a score.
+      Left, every box with its tier, status and one signal. Right, the findings for the box you picked, a flight
+      recorder with one row per receipt across five lanes, and the policy that was actually enforced. Every run row
+      is labelled <strong>host-observed</strong> or <strong>box-claimed</strong>, because who saw a thing is part of
+      the thing.<br>
+      <strong>Red</strong> means the egress allowlist refused a destination &#183; <strong>amber</strong> means look
+      at this &#183; <strong>grey</strong> means the evidence is weak. Nothing on the screen is a score. The console
+      above is the real layout, drawn in HTML; the fleet in it is an example.
     </p>
   </div>
 </section>

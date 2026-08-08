@@ -1,0 +1,192 @@
+/* h5i box console — an HTML rendering of the `h5i ui` screen.
+ *
+ * This replaces a PNG. A screenshot goes stale the moment the console changes,
+ * and the one it replaced was still showing a command surface that no longer
+ * exists. Built from the site's own tokens it stays sharp at any density, it
+ * costs a few kilobytes instead of a megabyte, and it is real text: selectable,
+ * searchable, and readable by a screen reader.
+ *
+ * Structure and labels follow web/src/SandboxView.tsx. The colour rules are the
+ * console's own: red is enforcement that fired, amber is something to look at,
+ * grey is weak evidence. The fleet in it is illustrative, which the caption
+ * says; the shapes are not.
+ *
+ * Everything is sized in `em` off one root font-size, and that root scales with
+ * the plate's width in `cqw`. One clamp resizes the whole console, so it holds
+ * its proportions from a phone to a wide display without a media query.
+ */
+
+.console-plate {
+  container-type: inline-size;
+  border: 1px solid var(--line2);
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.console {
+  /* the one control: everything below is em-relative to this */
+  font-size: clamp(5.5px, 1.02cqw, 13px);
+  font-family: var(--mono);
+  line-height: 1.5;
+  color: var(--dim);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  user-select: none;
+}
+
+/* ── top strip: what the host can enforce, then fleet vitals ── */
+.console-strip {
+  display: flex; align-items: center; gap: 1.2em; flex-wrap: wrap;
+  padding: 0.9em 1.2em;
+  border-bottom: 1px solid var(--line2);
+  background: var(--bg);
+}
+.console-strip .grp { display: flex; align-items: center; gap: 0.5em; flex-wrap: wrap; }
+.console-label {
+  color: var(--faint); font-size: 0.85em;
+  letter-spacing: 0.16em; text-transform: uppercase;
+}
+.console-tag {
+  border: 1px solid var(--line2); padding: 0.15em 0.55em;
+  color: var(--dim); font-size: 0.92em; white-space: nowrap;
+}
+.console-tag.ok  { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
+.console-tag.off { color: var(--faint); }
+.console-vitals { display: flex; gap: 1.4em; margin-left: auto; }
+.console-vital { text-align: right; }
+.console-vital b {
+  display: block; font-family: var(--disp); font-weight: 900;
+  font-size: 1.7em; line-height: 1; letter-spacing: -0.04em; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.console-vital.alert b { color: var(--danger); }
+.console-vital span {
+  display: block; margin-top: 0.35em;
+  color: var(--faint); font-size: 0.82em;
+  letter-spacing: 0.16em; text-transform: uppercase;
+}
+
+/* ── body: fleet on the left, one box on the right ── */
+.console-body {
+  display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 6fr);
+  min-height: 0;
+}
+.console-fleet { border-right: 1px solid var(--line2); min-width: 0; }
+.console-detail { min-width: 0; }
+
+.console-head {
+  display: flex; align-items: center; gap: 0.7em;
+  padding: 0.8em 1.1em; border-bottom: 1px solid var(--line);
+  color: var(--ink); font-size: 0.95em;
+}
+.console-head .count {
+  border: 1px solid var(--line2); padding: 0 0.5em; color: var(--faint);
+}
+.console-head .digest { margin-left: auto; color: var(--faint); font-size: 0.9em; }
+
+.console-chips {
+  display: flex; flex-wrap: wrap; gap: 0.4em;
+  padding: 0.7em 1.1em; border-bottom: 1px solid var(--line);
+}
+.console-chip {
+  border: 1px solid var(--line2); padding: 0.12em 0.6em;
+  color: var(--faint); font-size: 0.88em;
+}
+.console-chip.active { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+
+/* Fleet rows. The header and the rows share one track list, so the column
+   labels sit over their columns; `auto` tracks sized to each row's own content
+   and left the labels floating between them. */
+.console-row, .console-colhead {
+  display: grid; grid-template-columns: minmax(0, 1fr) 8em 8em;
+  gap: 0.4em 0.8em; align-items: baseline;
+}
+.console-row { padding: 0.75em 1.1em; border-bottom: 1px solid var(--line); }
+.console-row.selected { background: color-mix(in srgb, var(--spot-solid) 7%, transparent); }
+.console-row .name { color: var(--ink); font-size: 0.98em; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.console-row .sub { grid-column: 1 / -1; color: var(--faint); font-size: 0.85em; }
+.console-row .console-tag { justify-self: start; }
+.console-row .sig, .console-colhead > :last-child { justify-self: end; }
+.console-colhead {
+  padding: 0.55em 1.1em;
+  border-bottom: 1px solid var(--line);
+  color: var(--faint); font-size: 0.8em;
+  letter-spacing: 0.16em; text-transform: uppercase;
+}
+
+/* the signal badge: never a score, only what was recorded */
+.sig { font-size: 0.9em; white-space: nowrap; }
+.sig.blocked { color: var(--danger); }
+.sig.attention { color: var(--warn); }
+.sig.clean { color: var(--green); }
+.sig.weak, .sig.none { color: var(--faint); }
+
+/* ── detail pane ── */
+.console-note {
+  margin: 1.1em; padding: 0.7em 0.9em;
+  border: 1px solid var(--line2); border-left: 2px solid var(--faint);
+  color: var(--dim); font-size: 0.92em; line-height: 1.6;
+}
+.console-note.bad  { border-left-color: var(--spot-solid); }
+.console-note.bad b  { color: var(--danger); font-weight: 400; }
+.console-note.good { border-left-color: var(--green); }
+.console-note.good b { color: var(--green); font-weight: 400; }
+
+.console-panel { margin: 1.1em; border: 1px solid var(--line2); }
+.console-panel-head {
+  padding: 0.55em 0.9em; border-bottom: 1px solid var(--line2);
+  background: var(--bg);
+  color: var(--faint); font-size: 0.82em;
+  letter-spacing: 0.16em; text-transform: uppercase;
+}
+
+/* the flight recorder: one row per receipt, five lanes */
+.lane-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.6fr) repeat(5, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line);
+}
+.lane-row:last-child { border-bottom: 0; }
+.lane-row.head { background: var(--bg); }
+.lane-row > div { padding: 0.55em 0.7em; min-width: 0; border-left: 1px solid var(--line); }
+.lane-row > div:first-child { border-left: 0; }
+.lane-name { color: var(--faint); font-size: 0.8em; letter-spacing: 0.14em; }
+.lane-allow { color: var(--dim); font-size: 0.85em; margin-top: 0.2em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-cmd { color: var(--ink); font-size: 0.95em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-meta { color: var(--faint); font-size: 0.82em; margin-top: 0.2em; }
+/* the most load-bearing label on the screen: who observed this run */
+.src { border: 1px solid var(--line2); padding: 0 0.35em; margin-right: 0.4em; }
+.src.observed { color: var(--dim); }
+.src.claimed { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.v { font-size: 0.88em; }
+.v.ok { color: var(--green); }
+.v.bad { color: var(--danger); }
+.v.warn { color: var(--warn); }
+.v.info { color: var(--dim); }
+.v.none { color: var(--line2); }
+
+/* enforced policy */
+.pol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pol div {
+  display: flex; gap: 0.7em; padding: 0.45em 0.9em;
+  border-top: 1px solid var(--line); border-left: 1px solid var(--line);
+  font-size: 0.9em; min-width: 0;
+}
+.pol div:nth-child(-n + 2) { border-top: 0; }
+.pol div:nth-child(odd) { border-left: 0; }
+.pol .k { color: var(--faint); flex: 0 0 7.5em; }
+.pol .val { color: var(--dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pol .val.on { color: var(--green); }
+
+/* Below the point where five lanes stop being legible, the console becomes the
+   fleet alone. A shrunken-to-illegible screenshot is worse than a smaller one
+   that still says something. */
+@container (max-width: 620px) {
+  .console-body { grid-template-columns: minmax(0, 1fr); }
+  .console-detail { display: none; }
+  .console { font-size: clamp(8px, 2.1cqw, 13px); }
+  .console-vitals { margin-left: 0; }
+}
