@@ -1,7 +1,7 @@
 # h5i Manual
 
 Command reference for h5i. **New here? Read [What h5i is](#what-h5i-is) and
-[The loop](#the-loop) first** — they give the mental model before the
+[The loop](#the-loop) first**: they give the mental model before the
 per-command reference.
 
 `h5i <command> --help` is always authoritative for flags. This manual explains
@@ -25,8 +25,8 @@ It is one Rust binary. No server, no daemon, no SaaS.
 
 Everything h5i does maps to one of these:
 
-1. **A disposable workspace.** The code is copied into the box — a pull request,
-   an existing repository, a fresh project — along with everything it pulls in.
+1. **A disposable workspace.** The code is copied into the box (a pull request,
+   an existing repository, a fresh project) along with everything it pulls in.
    No host directory is mounted read-write into the agent's reach.
 2. **A sandboxed coding agent.** Claude Code or Codex, its child processes, its
    package managers, builds, tests and dev server all run inside the same
@@ -211,11 +211,11 @@ replace). Secret redaction and size caps apply to all three.
 
 Read `report.md` before applying. It surfaces, in this order:
 
-- **denied egress attempts** — the box tried to reach hosts the policy refused
-- **what ran** — every command, its lane, its exit code
-- **what the browser saw** — console errors, uncaught exceptions and failed
+- **denied egress attempts**: the box tried to reach hosts the policy refused
+- **what ran**: every command, its lane, its exit code
+- **what the browser saw**: console errors, uncaught exceptions and failed
   requests, observed by h5i rather than reported by the agent
-- **viewer sessions** — including whether a human took the controls
+- **viewer sessions**: including whether a human took the controls
 - the agent's proposal
 
 Then apply it where you want:
@@ -246,7 +246,7 @@ Rules that make this safe rather than merely fast:
   lockfiles. A cache whose key no longer matches is listed as stale and never
   handed to a box: packages resolved for a different dependency set are a
   silent, hard-to-explain wrong answer.
-- Mounted **read-only** into an agent box. That costs nothing in correctness —
+- Mounted **read-only** into an agent box. That costs nothing in correctness:
   every package manager falls back to fetching what it cannot find.
 - Written **only** by `h5i box cache refresh`, which runs the install step alone,
   with egress narrowed to the registry hosts and no agent inside. `refresh`
@@ -368,7 +368,7 @@ h5i ui --open           # hand the URL to this desktop's browser too
 
 The box console: the same fleet the commands above report on, drawn as one
 screen. Left is every box with its tier, status and one signal; right is the box
-you picked — the policy that was actually enforced, the services it declares,
+you picked: the policy that was actually enforced, the services it declares,
 its diffstat against the pinned base, and a flight recorder with one row per
 receipt across five lanes (FS, NET, PROC, RES, PAGE). Click a row for the
 rendered receipt, the same text `h5i box inspect` prints.
@@ -379,21 +379,21 @@ is no mutating surface to guard and no way to turn the console into a remote
 control for someone's boxes.
 
 **What guards it.** The server binds `127.0.0.1` and nothing else. The URL
-carries a token minted for this session and kept in memory — never written to
-disk, so no box can read it — which the page trades for a `SameSite=Strict`
+carries a token minted for this session and kept in memory (never written to
+disk, so no box can read it), which the page trades for a `SameSite=Strict`
 cookie on first load. Requests from another origin are refused outright.
 
 **What the colours mean.** Red is the only one that makes a claim about the
 boundary: the egress allowlist *refused* a destination, host-observed by the
-proxy. Amber is something to look at — a run exited non-zero, the wall-clock
-limit killed one, or the in-box browser reported errors — and says nothing about
+proxy. Amber is something to look at (a run exited non-zero, the wall-clock
+limit killed one, or the in-box browser reported errors) and says nothing about
 containment. Grey means the evidence is weak: either the tier is `workspace` and
 nothing was confined, or every receipt came from the in-box shim and so is the
 box's own account. Each run row is labelled `host-observed` or `box-claimed` for
 the same reason. Nothing on the screen is a score.
 
 The console is a default-on cargo feature. `cargo build --no-default-features`
-drops it, along with axum, tokio and the build script's need for Node — and the
+drops it, along with axum, tokio and the build script's need for Node, and the
 `h5i ui` command with it.
 
 ---
@@ -452,7 +452,7 @@ What the `browser` profile does to Chrome, and why:
   (`/var/folders/<xx>/<yy>/T`), read and write. This is the widest thing any
   profile asks for and it is worth understanding before you use it. Chrome puts
   its ProcessSingleton lock socket there, and it finds that directory through
-  `confstr(_CS_DARWIN_USER_TEMP_DIR)` rather than `TMPDIR` — so the per-env
+  `confstr(_CS_DARWIN_USER_TEMP_DIR)` rather than `TMPDIR`, so the per-env
   `/tmp` redirect cannot move it, and without the grant Chrome will not start.
   The cost is that the directory is shared: a browser box can read what other
   host processes leave there and can plant files they will pick up. That is
@@ -461,12 +461,12 @@ What the `browser` profile does to Chrome, and why:
   every profile on Linux, are unaffected.
 
     Two consequences of that grant being a machine-specific absolute path. The
-    pinned policy digest differs between two Macs for the same profile — harmless,
-    because `policy.resolved.toml` is verified against the digest stored beside
-    it, and both are written together at create time; nothing re-resolves the
-    profile and compares. But a `browser` env created on one machine and pulled to
-    another carries a grant for a directory that does not exist there, so Chrome
-    will fail to start until the env is recreated.
+    pinned policy digest differs between two Macs for the same profile. That is
+    harmless, because `policy.resolved.toml` is verified against the digest
+    stored beside it, and both are written together at create time; nothing
+    re-resolves the profile and compares. But a `browser` env created on one
+    machine and pulled to another carries a grant for a directory that does not
+    exist there, so Chrome will fail to start until the env is recreated.
 
 ---
 
@@ -536,7 +536,7 @@ scopes `RLIMIT_NPROC` to the whole user rather than to one box, so h5i declines
 to apply a limit it cannot hold. `h5i box status` marks such a value with `*`
 and says so underneath, rather than listing it as enforced. Use
 `isolation = "container"` or `isolation = "microvm"` where you need a real
-ceiling — both cap memory and process count in the runtime itself.
+ceiling: both cap memory and process count in the runtime itself.
 
 ### Isolation tiers
 
@@ -549,7 +549,7 @@ ceiling — both cap memory and process count in the runtime itself.
 | `microvm` | A hardware-isolated guest with its own kernel, booted by [microsandbox](https://microsandbox.dev) (`msb`) from the same OCI images. Egress rules are evaluated by the VM's network stack. | **L3/L4** |
 
 `auto` (the default) picks the strongest tier the host can actually run. An
-explicit tier **fails closed** if the host cannot satisfy it — h5i never
+explicit tier **fails closed** if the host cannot satisfy it: h5i never
 silently downgrades.
 
 Worth being clear about, because two drafts of the design got it backwards: the
@@ -571,7 +571,7 @@ Requirements, all three, or the tier refuses:
 - Host virtualization: `/dev/kvm` openable on Linux, Apple Silicon on macOS.
   A stock WSL2 kernel and most cloud CI runners have neither.
 - A base image, from `--image`, the profile's `container.image`, or the
-  repo-level `[container] image` — the same images the container tier runs,
+  repo-level `[container] image`, the same images the container tier runs,
   pre-pulled with `msb pull`.
 
 `h5i box probe` reports which of the three is missing, since "install a package"
@@ -601,7 +601,7 @@ smuggling.
 
 What the grant does *not* open, which is why it can exist at all: abstract
 sockets are scoped by the box's private netns; filesystem-bound ones are scoped
-by Landlock; and `/tmp` — where `.X11-unix`, `tmux-*` and an ssh-agent live — is
+by Landlock; and `/tmp`, where `.X11-unix`, `tmux-*` and an ssh-agent live, is
 a per-box scratch at the kernel tiers. What is left is a host socket sitting
 inside a granted path, so the grant is opt-in per profile and pinned in the
 digest.
@@ -640,7 +640,7 @@ socket is a filesystem-bound `AF_UNIX` listener.
 
 - **Per-box HOME state** is a copy of the host agent's config, seeded once and
   never written back, with credential-shaped entries stripped at any depth
-  (`credentials*`, `.netrc`, ssh keys, `*.pem`/`*.key`/`*.p12`) — keeping only
+  (`credentials*`, `.netrc`, ssh keys, `*.pem`/`*.key`/`*.p12`), keeping only
   the runtime's own token, which it cannot function without.
 
 ### Secrets
@@ -692,7 +692,7 @@ never blur:
 
 A run that drove the browser also carries what the page said back: console
 errors, uncaught exceptions, and requests that failed. h5i collects these itself,
-right after the command, in the same box under the same policy — so the timing
+right after the command, in the same box under the same policy, so the timing
 is not the agent's to choose. Only what is new since the last drain is recorded.
 
 A browser command with **no browser to ask** is recorded as `unavailable`, not as
@@ -723,20 +723,20 @@ Being explicit about these is a feature, since the claim is a security claim.
   binds proxy-respecting tooling only.
 - **An interactive session at a kernel tier shares your terminal.** `box shell`
   hands the box the terminal you launched it from, because that is what makes
-  job control and every TUI work — a box shell is a nested shell, not a
+  job control and every TUI work. A box shell is a nested shell, not a
   connection to somewhere else. A terminal is a two-way device, and the box gets
   both directions of it, so the residual is a list rather than a single door:
     - **Typing at your shell** (`TIOCSTI` pushes characters into the terminal's
       *input* queue, which your shell reads as if you had typed them, after the
       session ends). Whether that is closed is not h5i's to assert, and the two
       platforms answer from different places. On macOS it is the Seatbelt
-      profile that subtracts the ioctl — so it holds at `process` and
+      profile that subtracts the ioctl, so it holds at `process` and
       `supervised`, and **not** at `isolation=workspace`, which applies no
       profile by design, nor on a host whose Seatbelt is unusable. On Linux it
       is **your kernel's setting**, the same at every tier, since h5i does no
       ioctl filtering of its own there: 6.2 made TIOCSTI disableable via
       `CONFIG_LEGACY_TIOCSTI` and `dev.tty.legacy_tiocsti`, but upstream
-      defaults that *open* — many distros ship it closed, and a kernel older
+      defaults that *open*. Many distros ship it closed, and a kernel older
       than 6.2 cannot close it at all. So h5i measures instead of claiming.
       `h5i box probe` prints one of:
 
@@ -749,7 +749,7 @@ Being explicit about these is a feature, since the claim is a security claim.
       and, when anything is open, how to close it.
     - **Reading what you type next.** The session's read grant on the terminal
       is not revoked when the shell exits, so a box process that outlives the
-      session — a stray background job — can read the terminal it still holds
+      session (a stray background job) can read the terminal it still holds
       open. This predates the tty ioctl grant; it is a property of sharing the
       device.
     - **Leaving the terminal in a state.** A box can set raw mode, turn echo
@@ -768,7 +768,7 @@ Being explicit about these is a feature, since the claim is a security claim.
   than a browser on the host has.
 - **A dev server the box runs is reachable only if its port is declared.** On
   macOS the box shares the *host's* loopback, so h5i denies outbound to it
-  wholesale — otherwise a box could reach a database or a dev server belonging
+  wholesale. Otherwise a box could reach a database or a dev server belonging
   to the host. A box that runs its own dev server and wants to point its own
   browser at it names the port: `[profile.X.net] loopback = [3000]`. Exactly
   that port is granted; everything else on loopback stays denied, and an
@@ -777,7 +777,7 @@ Being explicit about these is a feature, since the claim is a security claim.
   alive, so this is only needed for a server started by hand. On Linux the box
   has its own network namespace and none of this applies.
 - **On macOS the browser has no in-process domain check.** agent-browser cannot
-  start Chrome from inside a Seatbelt sandbox — the failure reproduces under a
+  start Chrome from inside a Seatbelt sandbox. The failure reproduces under a
   fully permissive `sandbox-exec` profile and disappears without the sandbox, so
   it is not something a grant fixes. h5i therefore launches Chrome itself and
   attaches agent-browser to it with `--cdp`, which upstream refuses to combine
@@ -787,14 +787,14 @@ Being explicit about these is a feature, since the claim is a security claim.
   non-allowlisted host fails inside Chrome with `net::ERR_ACCESS_DENIED`.
 - **A browser box's Chrome is restarted when its route out changes.** Chrome
   outlives the run that started it, and it takes its proxy address once, at
-  launch — so a browser started before the box's current route (an upgrade, or a
+  launch, so a browser started before the box's current route (an upgrade, or a
   run whose proxy port moved) cannot reach the network through it. The box
   cannot restart it itself: a browser from a previous run is in a previous
   sandbox instance, which Seatbelt's same-sandbox signal grant does not reach.
   It is detected in the box and stopped host-side at the start of the next run,
   so the fix costs one extra run and says so rather than failing with a proxy
   error that reads like a page problem. The relaunch starts from a clean profile
-  directory, so anything the old browser held — cookies, logins — is gone.
+  directory, so anything the old browser held (cookies, logins) is gone.
 - **Two kernel mechanisms, not one.** Linux confines with Landlock, seccomp and
   namespaces. macOS confines with Seatbelt, which is default deny across
   filesystem, network, mach and sysctl in one policy, and which (unlike
@@ -874,8 +874,8 @@ Read these to detect that you are in one; do not set them yourself.
 
 ## See also
 
-- `h5i <command> --help` — the authoritative flag reference
-- `man h5i` — the terse CLI reference
-- [`skills/h5i/`](skills/h5i/) — the agent-facing skill (`h5i skill show`)
-- [`ROADMAP.md`](ROADMAP.md) — what is built and what is not
-- [`SECURITY.md`](SECURITY.md) — reporting a vulnerability
+- `h5i <command> --help`: the authoritative flag reference
+- `man h5i`: the terse CLI reference
+- [`skills/h5i/`](skills/h5i/): the agent-facing skill (`h5i skill show`)
+- [`ROADMAP.md`](ROADMAP.md): what is built and what is not
+- [`SECURITY.md`](SECURITY.md): reporting a vulnerability
