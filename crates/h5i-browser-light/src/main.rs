@@ -174,6 +174,22 @@ enum SessionVerb {
         #[command(flatten)]
         at: SessionArgs,
     },
+    /// Put text into a field, replacing what was there.
+    Type {
+        /// `e3` or `@e3`, from a `snapshot`.
+        reference: String,
+        /// The text to put in it.
+        text: String,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+    /// Submit the form containing a `@ref`.
+    Submit {
+        /// Any `@ref` inside the form — the submit button, or a field.
+        reference: String,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
     /// Follow a `@ref` from the last snapshot.
     Click {
         /// `e3` or `@e3`, from a `snapshot`.
@@ -393,6 +409,13 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             (at, serde_json::json!({"verb": "navigate", "url": url}))
         }
         SessionVerb::Scroll { by, at } => (at, serde_json::json!({"verb": "scroll", "by": by})),
+        SessionVerb::Type { reference, text, at } => (
+            at,
+            serde_json::json!({"verb": "type", "ref": reference, "text": text}),
+        ),
+        SessionVerb::Submit { reference, at } => {
+            (at, serde_json::json!({"verb": "submit", "ref": reference}))
+        }
         SessionVerb::Click { reference, at } => {
             (at, serde_json::json!({"verb": "click", "ref": reference}))
         }
@@ -433,6 +456,12 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         );
     } else if let Some(url) = reply.get("url").and_then(serde_json::Value::as_str) {
         println!("url: {url}");
+    } else if let Some(reference) = reply.get("ref").and_then(serde_json::Value::as_str) {
+        // A verb that printed nothing read as a verb that did nothing. The
+        // typed text is deliberately not echoed: it may be a password, and the
+        // engine's whole posture is that a credential does not travel back out
+        // through a surface an agent or a log can read.
+        println!("typed into {reference}");
     }
     Ok(())
 }

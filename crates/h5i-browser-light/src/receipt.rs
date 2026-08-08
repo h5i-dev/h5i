@@ -68,6 +68,14 @@ pub struct RequestRecord {
     pub duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// How many cookies this request carried. **A count, never a value.** The
+    /// log is read by people and shipped in exports, and a credential in a
+    /// receipt is a credential in a bug report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cookies_sent: Option<usize>,
+    /// How many the response stored, after the jar refused what it refuses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cookies_stored: Option<usize>,
 }
 
 impl RequestRecord {
@@ -85,6 +93,8 @@ impl RequestRecord {
             bytes: None,
             duration_ms: None,
             error: None,
+            cookies_sent: None,
+            cookies_stored: None,
         }
     }
 

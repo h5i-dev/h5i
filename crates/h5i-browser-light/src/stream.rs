@@ -639,6 +639,11 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 "ok": true,
                 "url": session.page.url().to_string(),
                 "engine": "h5i-browser-light",
+                // How many, never which. An agent can see that it is logged in
+                // without being able to read the credential that makes it so,
+                // which is what keeps a stolen snapshot worth less than a
+                // stolen jar.
+                "cookies": session.factory.broker().jar().len(),
             }),
             false,
         ),
@@ -692,6 +697,66 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             }
         }
 
+        // Typing and submitting are the pair that make a login reachable: a
+        // session an agent cannot type into stops at the first form, so these
+        // ship together or neither is worth having.
+        "type" => {
+            let Some(reference) = request.get("ref").and_then(Value::as_str) else {
+                return (error_reply("type needs a `ref`"), false);
+            };
+            let Some(text) = request.get("text").and_then(Value::as_str) else {
+                return (error_reply("type needs `text`"), false);
+            };
+            let snapshot = session.page.snapshot();
+            let Some(entry) = snapshot.resolve(reference) else {
+                return (
+                    error_reply(&format!("no such ref `{reference}` on this page")),
+                    false,
+                );
+            };
+            let node_id = entry.node_id;
+            let role = entry.role.clone();
+            if !session.page.type_into(node_id, text) {
+                return (
+                    error_reply(&format!("`{reference}` is a {role}, not a field to type into")),
+                    false,
+                );
+            }
+            (json!({"ok": true, "ref": reference}), true)
+        }
+
+        "submit" => {
+            let Some(reference) = request.get("ref").and_then(Value::as_str) else {
+                return (error_reply("submit needs a `ref` inside the form"), false);
+            };
+            let snapshot = session.page.snapshot();
+            let Some(entry) = snapshot.resolve(reference) else {
+                return (
+                    error_reply(&format!("no such ref `{reference}` on this page")),
+                    false,
+                );
+            };
+            let node_id = entry.node_id;
+            let submission = match session.page.submit_form(node_id) {
+                Ok(submission) => submission,
+                Err(error) => return (error_reply(&format!("{error}")), false),
+            };
+            match session.factory.open_submission(&submission) {
+                Ok(page) => {
+                    session.page = page;
+                    (
+                        json!({
+                            "ok": true,
+                            "url": session.page.url().to_string(),
+                            "method": submission.method,
+                        }),
+                        true,
+                    )
+                }
+                Err(error) => (error_reply(&format!("{error}")), false),
+            }
+        }
+
         "click" => {
             let Some(reference) = request.get("ref").and_then(Value::as_str) else {
                 return (error_reply("click needs a `ref`"), false);
@@ -724,7 +789,8 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 
         other => (
             error_reply(&format!(
-                "`{other}` is not a verb this engine has (status, snapshot, navigate, click)"
+                "`{other}` is not a verb this engine has (status, snapshot, navigate, \
+                 scroll, type, submit, click)"
             )),
             false,
         ),
@@ -1208,6 +1274,47 @@ mod tests {
         let (reply, changed) = recorded_verb(&mut session, &json!({"verb": "scroll", "by": 300.0}));
         assert_eq!(reply["ok"], true);
         assert!(changed);
+    }
+
+    #[test]
+    fn typing_names_what_went_wrong_rather_than_failing_silently() {
+        let mut session = session_with(
+            "<!doctype html><body><a href='/next'>a link</a>             <form><input type='text' placeholder='name'></form></body>",
+        );
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "type", "ref": "e1"}));
+        assert_eq!(reply["ok"], false, "text is required: {reply:?}");
+
+        let (reply, changed) = control_verb(
+            &mut session,
+            &json!({"verb": "type", "ref": "e404", "text": "x"}),
+        );
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"].as_str().unwrap().contains("e404"));
+        assert!(!changed);
+
+        // The link is @e1; typing into it must say *why* it cannot be typed
+        // into, not merely that it failed.
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "type", "ref": "e1", "text": "x"}),
+        );
+        assert_eq!(reply["ok"], false);
+        assert!(
+            reply["error"].as_str().unwrap().contains("not a field"),
+            "{reply:?}"
+        );
+    }
+
+    #[test]
+    fn a_status_reports_how_many_cookies_it_holds_and_never_which() {
+        let mut session = session_with(tall_page());
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "status"}));
+        assert_eq!(reply["cookies"], 0);
+        // The shape of the answer is the guarantee: there is no field here a
+        // value could travel in.
+        let keys: Vec<&str> = reply.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        assert!(!keys.iter().any(|k| k.contains("value")), "{keys:?}");
     }
 
     #[test]

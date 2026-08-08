@@ -39,6 +39,11 @@ parley = { version = "0.10", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 url = "2.5"
 
+# Already in the tree via reqwest, so this adds no package: it is here to parse
+# `Set-Cookie`'s `Expires`, where hand-rolling the format would mean a cookie
+# that outlives its deletion.
+httpdate = "1"
+
 # Blocking client on purpose: `NetProvider::fetch` is called synchronously
 # from Blitz's parse/resolve, there is no runtime to await on, and a browser
 # that fetches one subresource at a time is a browser whose receipt order is

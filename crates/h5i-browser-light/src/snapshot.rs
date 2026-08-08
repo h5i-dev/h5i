@@ -424,6 +424,18 @@ fn accessible_name(tag: &str, node: &Node) -> String {
     match tag {
         "img" => from_attr(&["alt", "title"]).unwrap_or_default(),
         "input" | "textarea" => {
+            // What the field *holds* comes first, and it is read from the
+            // editor rather than the `value` attribute: typing updates the
+            // editor and leaves the attribute at whatever the HTML served. An
+            // outline built from the attribute would show an agent the value it
+            // was given rather than the one it just typed, so `type` then
+            // `snapshot` would look like it had silently failed.
+            if let Some(input) = node.element_data().and_then(|el| el.text_input_data()) {
+                let typed = collapse(&input.editor.text().to_string());
+                if !typed.is_empty() {
+                    return typed;
+                }
+            }
             from_attr(&["aria-label", "placeholder", "value", "title", "name"]).unwrap_or_default()
         }
         _ => {

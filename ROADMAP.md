@@ -1318,15 +1318,49 @@ Measured before shipping, because it sits on the verb path: **7µs per verb**
 against **42ms** for the single frame encode a scroll triggers when a viewer is
 attached. 0.017% of one frame.
 
-**Still open, and now the whole gap (§11 items 5.2a and 5.4):** no typing, no
-form submission, and **no cookies of any kind**. An agent with a session it
-cannot type into still cannot get past a login form, so the session buys less
-than it looks like. `blitz_dom::BaseDocument::with_text_input` makes typing
-reachable; form submission additionally needs POST in the broker, which today
-fetches with GET only — a change to the fail-closed receipt path, not a verb.
-Cookies stay deliberately unstarted: §11 item 5.5 says LOGIN mode has to land
-*with* them rather than after, because a session with cookies is the first
-version of this browser where a stolen credential is worth having.
+**§11 items 5.2a and 5.5 built, 2026-08-08.** Typing, form submission and a
+cookie jar, shipped together because separately none of them reaches a login.
+Verified end to end against a real login site: type into two fields, submit a
+POST, follow the 303, hold the session cookie, and come back to `welcome alice`
+on a later navigate.
+
+Blitz owns the form submission algorithm and dispatches to a navigation
+provider, so the engine hands it one that *captures* the request rather than
+performing it — the encoding is upstream's, the wire stays ours, and a
+submission is policy-checked and receipted like everything else. `Broker::send`
+generalises `fetch` rather than sitting beside it, because every guarantee lives
+in that loop and a POST that took a shortcut would be the one request with no
+receipt.
+
+The cookie jar is deliberately narrower than a browser's, and item 5.5's warning
+is why the narrowings arrived with it rather than after:
+
+- **Host-only.** `Domain` is ignored. Honouring it correctly needs a public
+  suffix list; without one, `evil.co.uk` can set a cookie for `co.uk`. The cost
+  is that cross-subdomain logins do not persist. That is a missing feature;
+  sending a session cookie to the wrong origin would be a vulnerability.
+- **In memory only**, so restarting the session is a complete logout.
+- **Never readable by the agent**: no verb returns a value, `status` reports a
+  count, and the request log records how many cookies crossed rather than which.
+  A credential in a receipt is a credential in every export it reaches.
+- `Secure` and the `__Secure-`/`__Host-` prefixes enforced, and a redirected
+  POST downgraded to a bodyless GET on 301/302/303 so a password is not replayed
+  to whatever a server names next.
+
+Two bugs the tests caught rather than review. The request-path matcher used
+RFC 6265's *default-path* derivation — which exists only to fill in a missing
+`Path` attribute — so a cookie set at `Path=/admin` was never sent to `/admin`.
+And `scroll_height` was tried for the scroll range before the fix above: taffy
+measures overflow *within* a box, which is zero for an unstyled page whose root
+simply grew.
+
+**Still open. LOGIN mode is not built**, and it is the one item this entry was
+warned about: §11 item 5.5 pairs it with cookies precisely because a session
+with cookies is the first version of this browser where a stolen credential is
+worth having. Until it lands, a human taking over to type a password does so on
+a page the agent can still snapshot. File uploads are dropped rather than read,
+which is a deliberate refusal to acquire filesystem reach. Tier 3 (policy-gated
+script) stays unbuilt for the reasons in §11 item 5.6.
 
 **Corrected 2026-08-08.** This entry also said "nothing wires h5i to this
 engine yet — M9's `--engine` knob does not exist, so using it in a box is

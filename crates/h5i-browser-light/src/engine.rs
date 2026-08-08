@@ -42,11 +42,74 @@ impl Default for PageOptions {
     }
 }
 
+/// A request a form asked for, caught on its way to the network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Submission {
+    pub url: Url,
+    /// `GET` or `POST`. Anything else never reaches here: Blitz's own
+    /// submission algorithm declines to produce it.
+    pub method: String,
+    /// The encoded body, for `POST`. Empty for `GET`, whose fields are already
+    /// in the URL's query by the time it arrives.
+    pub body: Vec<u8>,
+    pub content_type: Option<String>,
+}
+
+/// A [`NavigationProvider`] that catches the request instead of following it.
+///
+/// Blitz calls this from inside `submit_form`, so the request arrives on the
+/// same thread and is picked up immediately afterwards. The `Mutex` is here to
+/// satisfy the trait's `Send + Sync` bound rather than to guard a race — the
+/// page has exactly one owner (see `stream`'s module docs).
+#[derive(Default)]
+struct CapturedNavigation {
+    slot: Arc<std::sync::Mutex<Option<Submission>>>,
+}
+
+impl blitz_traits::navigation::NavigationProvider for CapturedNavigation {
+    fn navigate_to(&self, options: blitz_traits::navigation::NavigationOptions) {
+        let (body, content_type) = match &options.document_resource {
+            blitz_traits::net::Body::Form(form) => {
+                let mut encoded = String::new();
+                url::form_urlencoded::Serializer::new(&mut encoded).extend_pairs(
+                    form.iter().filter_map(|entry| match &entry.value {
+                        blitz_traits::net::EntryValue::String(value) => {
+                            Some((entry.name.clone(), value.clone()))
+                        }
+                        // A file upload has no bytes this engine ever had: it
+                        // would have to read the box's filesystem to fill one
+                        // in, which is a capability a browser should not
+                        // quietly acquire. Dropped, and the field is absent
+                        // rather than empty so a server can tell.
+                        _ => None,
+                    }),
+                );
+                (
+                    encoded.into_bytes(),
+                    Some("application/x-www-form-urlencoded".to_string()),
+                )
+            }
+            _ => (Vec::new(), options.content_type.clone()),
+        };
+
+        if let Ok(mut slot) = self.slot.lock() {
+            *slot = Some(Submission {
+                url: options.url.clone(),
+                method: format!("{:?}", options.method).to_uppercase(),
+                body,
+                content_type,
+            });
+        }
+    }
+}
+
 /// A loaded, resolved document.
 pub struct Page {
     doc: BaseDocument,
     url: Url,
     options: PageOptions,
+    /// Where [`CapturedNavigation`] leaves whatever the last form asked for.
+    pending_navigation: Arc<std::sync::Mutex<Option<Submission>>>,
 }
 
 impl Page {
@@ -93,6 +156,9 @@ impl Page {
             ColorScheme::Light,
         );
 
+        let captured = CapturedNavigation::default();
+        let pending_navigation = captured.slot.clone();
+
         let mut doc: BaseDocument = HtmlDocument::from_html(
             html,
             DocumentConfig {
@@ -100,6 +166,10 @@ impl Page {
                 base_url: Some(base_url.to_string()),
                 net_provider: Some(Arc::new(BrokerNet::new(broker))),
                 font_ctx: Some(fonts.context),
+                // Forms dispatch through this. Without it Blitz's default
+                // provider does nothing at all, and a submit would look like a
+                // page that simply ignored the button.
+                navigation_provider: Some(Arc::new(captured)),
                 ..Default::default()
             },
         )
@@ -116,6 +186,7 @@ impl Page {
             doc,
             url: base_url.clone(),
             options,
+            pending_navigation,
         }
     }
 
@@ -164,6 +235,106 @@ impl Page {
         );
 
         encode_jpeg(&rgba, width, height, quality)
+    }
+
+    /// Put `text` into a text field, replacing whatever was there.
+    ///
+    /// Replace rather than append, because the verb an agent reaches for is
+    /// "this field should say X" and a verb that appended would make retrying
+    /// after a failed submit produce `alicealice`.
+    ///
+    /// Returns `false` when the node is not something that takes text, so the
+    /// caller can say which of "no such ref" and "that is a link, not a field"
+    /// happened.
+    pub fn type_into(&mut self, node_id: usize, text: &str) -> bool {
+        let Some(node) = self.doc.get_node(node_id) else {
+            return false;
+        };
+        if node
+            .element_data()
+            .and_then(|el| el.text_input_data())
+            .is_none()
+        {
+            return false;
+        }
+
+        // Focus first: the caret is drawn from it, so a viewer watching sees
+        // the field an agent is typing into rather than text appearing in a
+        // box nothing is pointing at.
+        self.doc.set_focus_to(node_id);
+        self.doc.with_text_input(node_id, |mut driver| {
+            driver.select_all();
+            driver.insert_or_replace_selection(text);
+        });
+        // Typing changes layout — a longer value can reflow the form — and
+        // nothing else in this file re-resolves on the agent's behalf.
+        self.doc.resolve(0.0);
+        true
+    }
+
+    /// What a text field currently holds.
+    ///
+    /// Read from the editor rather than the `value` attribute, because typing
+    /// updates the former and leaves the latter at whatever the HTML said. A
+    /// snapshot built from the attribute would show an agent the value it was
+    /// served rather than the one it just typed.
+    pub fn field_value(&self, node_id: usize) -> Option<String> {
+        let node = self.doc.get_node(node_id)?;
+        let input = node.element_data()?.text_input_data()?;
+        Some(input.editor.text().to_string())
+    }
+
+    /// Submit the form that owns `node_id`, and return the request it produced.
+    ///
+    /// Blitz owns the hard part — the HTML form submission algorithm, which
+    /// decides what is in the entry list, how it is encoded, and whether the
+    /// method turns it into a query or a body. It dispatches the result to a
+    /// [`blitz_traits::navigation::NavigationProvider`], so what this does is
+    /// hand it a provider that captures the request instead of performing it,
+    /// then return that request for the broker to police like any other.
+    ///
+    /// The alternative was reimplementing form encoding here, which is a spec
+    /// with more corners than it looks and no security benefit: the boundary
+    /// that matters is the wire, and the wire is still ours.
+    pub fn submit_form(&mut self, node_id: usize) -> Result<Submission, H5iError> {
+        // Blitz keeps a control-to-form map but does not expose it, so the
+        // owner is found by walking up. That misses the `form=` attribute's
+        // remote-owner case, which is rare enough to be a stated limit rather
+        // than a reimplementation of the association algorithm.
+        let form_id = self
+            .enclosing_form(node_id)
+            .ok_or_else(|| {
+                H5iError::Metadata("that control is not inside a form this page defines".into())
+            })?;
+
+        self.doc.submit_form(form_id, node_id);
+
+        self.pending_navigation
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
+            .ok_or_else(|| {
+                H5iError::Metadata(
+                    "the form produced no request — its method or scheme is not one this \
+                     engine submits (http and https, GET and POST)"
+                        .into(),
+                )
+            })
+    }
+
+    /// Walk up for a `<form>`, for controls Blitz's owner map does not cover.
+    fn enclosing_form(&self, node_id: usize) -> Option<usize> {
+        let mut current = self.doc.get_node(node_id)?;
+        for _ in 0..64 {
+            if current
+                .element_data()
+                .is_some_and(|el| el.name.local.as_ref() == "form")
+            {
+                return Some(current.id);
+            }
+            current = self.doc.get_node(current.parent?)?;
+        }
+        None
     }
 
     /// How far down the document the viewport currently sits.
@@ -302,6 +473,32 @@ impl PageFactory {
 
     fn fonts(&self) -> FontSetup {
         crate::fonts::load(&self.font_sources, &[], Some(self.font_sources.len()))
+    }
+
+    /// Load whatever a form asked for, through the same broker as everything
+    /// else. A refused submission is an error the agent reads, not a blank page.
+    pub fn open_submission(&self, submission: &Submission) -> Result<Page, H5iError> {
+        let outcome = self.broker.send(
+            &submission.url,
+            Initiator::Navigation,
+            &submission.method,
+            &submission.body,
+            submission.content_type.as_deref(),
+        );
+        if let Some(error) = outcome.error {
+            return Err(H5iError::Metadata(format!(
+                "could not submit to {}: {error}",
+                submission.url
+            )));
+        }
+        let html = String::from_utf8_lossy(&outcome.body).into_owned();
+        Ok(Page::from_html(
+            &html,
+            &outcome.final_url,
+            self.broker.clone(),
+            self.fonts(),
+            self.options.clone(),
+        ))
     }
 
     pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
@@ -648,5 +845,116 @@ mod tests {
         let text = page.text();
         assert!(text.contains("Title"));
         assert!(text.contains("Body copy."));
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    use crate::policy::Policy;
+    use crate::receipt::MemorySink;
+
+    fn page_with(html: &str) -> Page {
+        let broker = Arc::new(
+            Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+        );
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory = PageFactory::new(broker, fonts.sources.clone(), PageOptions::default());
+        factory.from_html(html, &Url::parse("https://site.example/page").unwrap())
+    }
+
+    fn ref_node(page: &Page, name: &str) -> usize {
+        let snapshot = page.snapshot();
+        snapshot
+            .refs
+            .iter()
+            .find(|r| r.name == name)
+            .unwrap_or_else(|| panic!("no ref named {name} in {:?}", snapshot.refs))
+            .node_id
+    }
+
+    const LOGIN: &str = "<html><body><form method='post' action='/session'>\
+        <input type='text' name='user' placeholder='username'>\
+        <input type='password' name='password' placeholder='password'>\
+        <input type='submit' value='Go'></form></body></html>";
+
+    #[test]
+    fn typing_replaces_the_field_rather_than_appending_to_it() {
+        // Append semantics would turn a retry after a failed submit into
+        // `alicealice`, which is the kind of bug an agent cannot see.
+        let mut page = page_with(LOGIN);
+        let user = ref_node(&page, "username");
+
+        assert!(page.type_into(user, "alice"));
+        assert_eq!(page.field_value(user).as_deref(), Some("alice"));
+        assert!(page.type_into(user, "bob"));
+        assert_eq!(page.field_value(user).as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn the_snapshot_shows_what_was_typed_not_what_was_served() {
+        // Read from the editor, not the `value` attribute: an outline built
+        // from the attribute would make `type` look like it silently failed.
+        let mut page = page_with(LOGIN);
+        let user = ref_node(&page, "username");
+        page.type_into(user, "alice");
+
+        let rendered = page.snapshot().render();
+        assert!(rendered.contains("\"alice\""), "{rendered}");
+    }
+
+    #[test]
+    fn typing_into_something_that_is_not_a_field_is_refused() {
+        let mut page = page_with("<html><body><a href='/x'>a link</a></body></html>");
+        let link = ref_node(&page, "a link");
+        assert!(!page.type_into(link, "nope"));
+    }
+
+    #[test]
+    fn a_post_form_becomes_a_post_with_the_typed_values_in_its_body() {
+        let mut page = page_with(LOGIN);
+        let user = ref_node(&page, "username");
+        let password = ref_node(&page, "password");
+        page.type_into(user, "alice");
+        page.type_into(password, "hunter2");
+
+        let submission = page.submit_form(ref_node(&page, "Go")).expect("submits");
+        assert_eq!(submission.method, "POST");
+        assert_eq!(submission.url.as_str(), "https://site.example/session");
+        let body = String::from_utf8(submission.body).unwrap();
+        assert!(body.contains("user=alice"), "{body}");
+        assert!(body.contains("password=hunter2"), "{body}");
+        assert_eq!(
+            submission.content_type.as_deref(),
+            Some("application/x-www-form-urlencoded")
+        );
+    }
+
+    #[test]
+    fn a_get_form_puts_its_fields_in_the_query_and_carries_no_body() {
+        let mut page = page_with(
+            "<html><body><form method='get' action='/search'>\
+             <input type='text' name='q' placeholder='query'>\
+             <input type='submit' value='Find'></form></body></html>",
+        );
+        let q = ref_node(&page, "query");
+        page.type_into(q, "kelp forests");
+
+        let submission = page.submit_form(ref_node(&page, "Find")).expect("submits");
+        assert_eq!(submission.method, "GET");
+        assert!(submission.body.is_empty(), "a GET carries no body");
+        assert!(
+            submission.url.query().unwrap_or_default().contains("q=kelp+forests"),
+            "{}",
+            submission.url
+        );
+    }
+
+    #[test]
+    fn a_control_outside_any_form_says_so_rather_than_submitting_nothing() {
+        let mut page = page_with("<html><body><input type='text' placeholder='loose'></body></html>");
+        let loose = ref_node(&page, "loose");
+        let error = page.submit_form(loose).expect_err("nothing to submit");
+        assert!(format!("{error}").contains("not inside a form"), "{error}");
     }
 }

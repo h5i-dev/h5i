@@ -95,7 +95,8 @@ h5i-browser-light open  <url|path> [--allow ORIGIN]... [--screenshot PATH]
                                    [--receipts PATH] [--text] [--json]
 h5i-browser-light serve <url|path> [--addr 127.0.0.1:0] [--stream-file PATH]
                                    [--control-file PATH]
-h5i-browser-light session status | snapshot | navigate <url> | click <@ref>
+h5i-browser-light session status | snapshot | navigate <url> | scroll <px>
+                           | type <@ref> <text> | submit <@ref> | click <@ref>
 h5i-browser-light capabilities     # what this engine can do, as JSON
 h5i-browser-light doctor           # fonts, proxy, allowlist, client
 ```
@@ -145,6 +146,61 @@ accident — a bad path, a full disk — not against a box that has decided to l
 It costs **7µs per verb**, measured against the **42ms** a single frame encode
 takes (debug build, same host): 0.017% of one frame, on a path that already
 does a policy check and a layout pass. Agent verbs arrive at agent pace.
+
+### Logging in
+
+Typing and form submission arrived together, because a session you cannot type
+into stops at the first login form:
+
+```
+$ h5i-browser-light session snapshot
+- textbox "username" [ref=e1]
+- textbox "password" [ref=e2]
+- button "Sign in" [ref=e3]
+$ h5i-browser-light session type @e1 alice
+$ h5i-browser-light session type @e2 hunter2
+$ h5i-browser-light session submit @e3
+url: http://localhost:8123/members
+```
+
+Blitz owns the HTML form submission algorithm — what is in the entry list, how
+it is encoded, whether the method makes a query or a body — and dispatches the
+result to a navigation provider. This engine hands it a provider that *captures*
+the request instead of performing it, so the wire stays ours: a submission is
+policy-checked and receipted like any other request. File inputs are dropped
+rather than read, because filling one would mean this browser quietly acquiring
+the ability to read the box's filesystem.
+
+`type` replaces the field rather than appending, so retrying after a failed
+submit does not produce `alicealice`. The snapshot reads values back from the
+editor rather than the `value` attribute, or `type` then `snapshot` would look
+like it had silently failed.
+
+### Cookies, and the four narrowings that make them safe
+
+Cookies are the first thing this engine holds that is worth stealing, so the
+limits arrived with them rather than after:
+
+- **Host-only, always.** The `Domain` attribute is ignored. Honouring it needs a
+  public suffix list, and without one a page on `evil.co.uk` can set a cookie
+  for `co.uk`. The cost is real — a site that logs you in at `example.com` and
+  serves from `www.example.com` will not stay logged in — and it is the trade
+  this engine takes, because the alternative failure is a credential sent to an
+  attacker's neighbour.
+- **In memory, never on disk.** The jar dies with the process; restarting the
+  session is a complete logout.
+- **Never readable by the agent.** No verb returns a value. `session status`
+  reports a *count*, and the request log records how many cookies crossed
+  rather than which — a credential in a receipt is a credential in every export
+  that receipt reaches.
+- **`Secure` enforced**, `__Secure-`/`__Host-` prefixes enforced at store time,
+  and a redirected POST is downgraded to a bodyless GET on 301/302/303 so a
+  password is not replayed to wherever a server points next.
+
+Not built: **LOGIN mode** (5.10) — withholding frames and snapshots from the
+agent while a human types a credential. ROADMAP §11 item 5.5 says it should
+land with cookies rather than after. It has not, and until it does a human
+taking over to type a password is doing so on a page the agent can still read.
 
 ### The snapshot is fenced
 
@@ -226,7 +282,7 @@ out of that run and are fixed: a relative path failed when the working
 directory could not be resolved by name, and `serve` accepted only one viewer at
 a time, so opening the console silently blocked `h5i box view`.
 
-Not yet done: **no typing and no form submission**, so an agent cannot get past
-a login form; and **no cookies of any kind**, so there is no session anywhere.
-Those two are what stand between this and an engine an agent can use for
-anything behind a login.
+Not yet done: **LOGIN mode**, so a human taking over to type a password does so
+on a page the agent can still read; **no `Domain` cookies**, so cross-subdomain
+sessions do not persist; and no file uploads, which are dropped rather than
+read. Tier 3 (policy-gated script) remains deliberately unbuilt.
