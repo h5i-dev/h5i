@@ -40,13 +40,9 @@ pub fn run(port: u16, open: bool) -> anyhow::Result<()> {
 /// Hand the URL to the desktop's browser. Best-effort and non-fatal: the URL
 /// is already on screen, so a host without a handler loses nothing.
 fn launch_browser(url: &str) {
-    let opener = if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    if let Err(e) = std::process::Command::new(opener)
-        .arg(url)
+    let mut command = browser_command(url);
+    let opener = command.get_program().to_string_lossy().into_owned();
+    if let Err(e) = command
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -55,5 +51,47 @@ fn launch_browser(url: &str) {
             "{} could not run {opener}: {e} — open the URL above yourself",
             style("warning:").yellow()
         );
+    }
+}
+
+fn browser_command(url: &str) -> std::process::Command {
+    browser_command_for(url, std::env::consts::OS)
+}
+
+fn browser_command_for(url: &str, target_os: &str) -> std::process::Command {
+    let (program, args) = match target_os {
+        "macos" => ("open", vec![url]),
+        "windows" => ("cmd", vec!["/C", "start", "", url]),
+        _ => ("xdg-open", vec![url]),
+    };
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::browser_command_for;
+
+    #[test]
+    fn browser_command_uses_platform_opener() {
+        let url = "http://127.0.0.1:8080/?token=test";
+        let cases = [
+            ("macos", "open", vec![url]),
+            ("windows", "cmd", vec!["/C", "start", "", url]),
+            ("linux", "xdg-open", vec![url]),
+        ];
+
+        for (target_os, expected_program, expected_args) in cases {
+            let command = browser_command_for(url, target_os);
+            let program = command.get_program().to_string_lossy();
+            let args: Vec<_> = command
+                .get_args()
+                .map(|arg| arg.to_string_lossy())
+                .collect();
+
+            assert_eq!(program, expected_program);
+            assert_eq!(args, expected_args);
+        }
     }
 }
