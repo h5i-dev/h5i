@@ -36,7 +36,7 @@ anyrender_vello_cpu = "0.14"
 # engine can report rather than a blank page nobody can explain.
 parley = { version = "0.10", default-features = false, features = ["std"] }
 
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 url = "2.5"
 
 # Blocking client on purpose: `NetProvider::fetch` is called synchronously
@@ -49,6 +49,12 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 
 clap = { version = "4.5.60", features = ["derive"] }
+
+# The live view speaks RFC 6455 directly (see `ws`): one handshake, four
+# opcodes, no extensions. These are the same two crates h5i-core uses for the
+# client half, kept at the same versions so the workspace holds one copy.
+sha1 = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3.8"

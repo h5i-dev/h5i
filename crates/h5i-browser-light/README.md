@@ -41,6 +41,40 @@ leave gaps. Here the engine *is* the HTTP client, so:
   commonest delivery channel for injected instructions is absent rather than
   filtered.
 
+## Measurements
+
+Same machine (aarch64, WSL2), median of 5 runs after a warm-up, load a
+self-contained local page and write an image. Memory is the peak **summed** RSS
+across the whole process tree, sampled every 10ms — `/usr/bin/time -v` reports
+only the largest single process and badly undercounts a multi-process browser.
+
+| | small page (2 KB) | docs page (39 KB) |
+| --- | --- | --- |
+| h5i-browser-light | **42 ms / 31 MB** | **72 ms / 33 MB** |
+| chromium `headless_shell` | 339 ms / 472 MB | 356 ms / 479 MB |
+| chromium (full) | 655 ms / 797 MB | 644 ms / 799 MB |
+
+Holding a page open with a viewer attached and nothing happening:
+
+| | idle RSS |
+| --- | --- |
+| h5i-browser-light (viewer attached) | **37.5 MB** |
+| chromium `headless_shell` (page loaded) | 383.8 MB |
+
+So roughly **5x faster and 15x lighter** than `headless_shell` for a one-shot
+read, and **10x lighter** sitting idle. Three caveats, because the numbers are
+flattering and should not be quoted without them:
+
+1. **Cold start is included**, and Chromium's process startup dominates its
+   time figure. That is the honest shape of a one-shot agent invocation, but it
+   is *not* a steady-state rendering throughput comparison, and this engine
+   would not win one by that margin.
+2. **The pages have no JavaScript.** Chromium is carrying a JS engine it is not
+   using. On a script-driven page the comparison is meaningless in the other
+   direction: this engine renders nothing at all.
+3. Rendering here is software, not JIT-accelerated. Complex CSS will narrow
+   the time gap.
+
 ## What it is not
 
 Honest limits, because the claims above are security claims:
@@ -57,11 +91,27 @@ Honest limits, because the claims above are security claims:
 ## Usage
 
 ```
-h5i-browser-light open <url|path> [--allow ORIGIN]... [--screenshot PATH]
-                                  [--receipts PATH] [--text] [--json]
+h5i-browser-light open  <url|path> [--allow ORIGIN]... [--screenshot PATH]
+                                   [--receipts PATH] [--text] [--json]
+h5i-browser-light serve <url|path> [--addr 127.0.0.1:0] [--stream-file PATH]
 h5i-browser-light capabilities     # what this engine can do, as JSON
 h5i-browser-light doctor           # fonts, proxy, allowlist, client
 ```
+
+### The live view
+
+`serve` opens a WebSocket that speaks the format h5i's viewers already use, so
+`h5i box view` and `h5i box view --term` attach to this engine unchanged:
+base64 JPEG frames in a JSON envelope, a `status` message carrying the viewport,
+and `config`/`ack` pacing. `--stream-file` writes the bound port where the
+viewers look for it (`<env>/tmp/agent-browser/*.stream`).
+
+Frames are driven by change, not by a clock. Tier 1 runs no script, so nothing
+moves on its own: a frame is produced when a scroll actually moved or a
+navigation landed, and at rest the process is idle rather than re-encoding an
+identical JPEG thirty times a second. Scrolling (wheel, PageUp/Down, arrows,
+Home/End) and clicking a link both work; a click on a link the policy refuses
+returns a `page_error` and keeps the current page rather than going blank.
 
 The allowlist is fail-closed: with no `--allow`, nothing remote is reachable.
 Loopback is allowed by default because it is the dev server; `--no-loopback`
@@ -95,6 +145,12 @@ receipts, the fail-closed broker, and the agent-facing snapshot.
 
 ## Status
 
-Tier 1 of ROADMAP M10: static render, snapshot, screenshot, receipts. Tier 2
-(live view via the CDP screencast domain, so the existing viewer stack follows
-this engine unchanged) and Tier 3 (policy-gated script) are not built.
+Tiers 1 and 2 of ROADMAP M10: static render, snapshot, screenshot, receipts,
+and a live view h5i's viewers can attach to. Tier 3 (policy-gated script) is
+not built.
+
+Not yet done at this tier: the live view has been driven by a protocol-level
+test client, not by `h5i box view` against a real box; there is no input beyond
+scrolling and link clicks (no typing, no form submission); and h5i does not yet
+launch this engine — nothing sets `--engine` (ROADMAP M9), so using it inside a
+box is still manual.

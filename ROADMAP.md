@@ -1210,10 +1210,39 @@ Two findings from driving it, neither available by reading:
    discovered and registered at runtime instead, which also makes "no fonts"
    a state `doctor` reports rather than a blank screenshot nobody can explain.
 
-Still open at this tier: no live view (that is tier 2's screencast domain, and
-until it exists the viewer stack cannot follow this engine), no script, and
-the numeric exit criteria below are unmeasured — nothing has been benchmarked
-against headless Chromium yet, so "lighter" remains a hypothesis.
+**Tier 2 built, same day.** `h5i-browser-light serve`: a WebSocket that speaks
+the viewers' own format (base64 JPEG in a JSON envelope, `status` carrying the
+viewport, `config`/`ack` pacing), plus a `.stream` file so the existing
+discovery finds it. Scroll and link-click work; a click on a refused link
+returns `page_error` and keeps the page. Frames are driven by change, not by a
+clock: with no script, at rest the process sends nothing, and an `ack` alone
+never produces a frame. Verified with a protocol-level client that does its own
+handshake and masking, so the compatibility check is against the spec rather
+than against our own encoder.
+
+**The numbers, measured rather than hoped for.** Median of 5 after a warm-up,
+same host, self-contained local pages, peak summed RSS across the process tree:
+
+| | one-shot, 39 KB docs page | idle with a page held open |
+| --- | --- | --- |
+| h5i-browser-light | 72 ms / 33 MB | 37.5 MB |
+| chromium `headless_shell` | 356 ms / 479 MB | 383.8 MB |
+| chromium (full) | 644 ms / 799 MB | — |
+
+That is ~5x faster and ~15x lighter one-shot, ~10x lighter at rest, so the
+memory exit criterion is met in both the states it named. Three caveats travel
+with it and belong in any repetition of it: cold start is included and
+dominates Chromium's time (fair for a one-shot agent invocation, not a
+steady-state throughput claim); the pages carry no JavaScript, so Chromium is
+paying for an engine it is not using and a script-driven page would reverse the
+comparison entirely; and software rasterisation will narrow the time gap on
+heavy CSS.
+
+Still open at this tier: no script; the live view has been driven by a test
+client rather than by `h5i box view` against a real box; input stops at
+scrolling and link clicks (no typing, no form submission); and **nothing wires
+h5i to this engine yet** — M9's `--engine` knob does not exist, so using it in
+a box is still manual.
 
 The original entry follows.
 

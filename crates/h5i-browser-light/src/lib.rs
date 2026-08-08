@@ -36,8 +36,10 @@ pub mod net;
 pub mod policy;
 pub mod receipt;
 pub mod snapshot;
+pub mod stream;
+pub mod ws;
 
-pub use engine::{Page, PageOptions};
+pub use engine::{Page, PageFactory, PageOptions};
 pub use policy::{Policy, Verdict};
 pub use receipt::{JsonlSink, MemorySink, RequestRecord, Sink};
 
@@ -54,6 +56,9 @@ pub struct Capabilities {
     pub javascript: bool,
     pub screenshot: bool,
     pub snapshot: bool,
+    /// A live view h5i's existing viewers can attach to, frames driven by
+    /// change rather than by a clock.
+    pub live_view: bool,
     /// Deliberately absent, and owned by the Chromium path instead.
     pub video: bool,
     pub webgl: bool,
@@ -70,6 +75,7 @@ impl Capabilities {
             javascript: false,
             screenshot: true,
             snapshot: true,
+            live_view: true,
             video: false,
             webgl: false,
             downloads: false,

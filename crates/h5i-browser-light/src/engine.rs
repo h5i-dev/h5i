@@ -145,6 +145,91 @@ impl Page {
         encode_png(&rgba, width, height)
     }
 
+    /// Rasterise the viewport and encode it as a JPEG.
+    ///
+    /// The live view wants JPEG rather than PNG: the viewers expect it, and a
+    /// photographic-quality frame every scroll costs far less on the wire than
+    /// a lossless one nobody is diffing.
+    pub fn screenshot_jpeg(&mut self, quality: u8) -> Result<Vec<u8>, H5iError> {
+        let width = self.options.width;
+        let height = self.options.height;
+        let scale = self.options.scale as f64;
+
+        let mut renderer = VelloCpuImageRenderer::new(width, height);
+        let mut rgba: Vec<u8> = Vec::new();
+        let doc = &mut self.doc;
+        renderer.render_to_vec(
+            |scene| paint_scene(scene, doc, scale, width, height, 0, 0),
+            &mut rgba,
+        );
+
+        encode_jpeg(&rgba, width, height, quality)
+    }
+
+    /// How far down the document the viewport currently sits.
+    pub fn scroll_offset(&self) -> (f64, f64) {
+        let scroll = self.doc.viewport_scroll();
+        (scroll.x, scroll.y)
+    }
+
+    /// The laid-out height of the document, used to clamp scrolling.
+    pub fn content_height(&self) -> f64 {
+        self.doc.root_element().final_layout.size.height as f64
+    }
+
+    /// Scroll, clamped to the document.
+    ///
+    /// Returns whether anything moved, which is what lets the live view stay
+    /// at zero frames per second: a scroll at the bottom of the page is not a
+    /// reason to encode and send an identical frame.
+    pub fn scroll_by(&mut self, dx: f64, dy: f64) -> bool {
+        let (x, y) = self.scroll_offset();
+        let max_y = (self.content_height() - self.options.height as f64).max(0.0);
+        let next_x = (x + dx).max(0.0);
+        let next_y = (y + dy).clamp(0.0, max_y);
+
+        if (next_x - x).abs() < f64::EPSILON && (next_y - y).abs() < f64::EPSILON {
+            return false;
+        }
+        self.doc.set_viewport_scroll(blitz_dom::Point {
+            x: next_x,
+            y: next_y,
+        });
+        true
+    }
+
+    /// The link at a viewport coordinate, resolved against the page's base.
+    ///
+    /// Hit-testing takes the scroll offset into account because the viewer
+    /// reports where the human clicked on screen, not where that is in the
+    /// document.
+    pub fn link_at(&self, x: f32, y: f32) -> Option<Url> {
+        let (scroll_x, scroll_y) = self.scroll_offset();
+        let hit = self
+            .doc
+            .hit(x + scroll_x as f32, y + scroll_y as f32)?;
+
+        // The hit lands on whatever box is topmost — often a text run inside
+        // the anchor rather than the anchor itself — so walk up for the href.
+        let mut node_id = hit.node_id;
+        for _ in 0..16 {
+            let node = self.doc.get_node(node_id)?;
+            if let Some(href) = node
+                .attrs()
+                .and_then(|attrs| {
+                    attrs
+                        .iter()
+                        .find(|attr| attr.name.local.as_ref() == "href")
+                })
+                .map(|attr| attr.value.as_str())
+            {
+                return self.url.join(href).ok();
+            }
+            node_id = node.parent?;
+        }
+        None
+    }
+
     /// The document's visible text, for the case where the caller wants prose
     /// rather than structure.
     pub fn text(&self) -> String {
@@ -156,6 +241,94 @@ impl Page {
             .collect::<Vec<_>>()
             .join("\n")
     }
+}
+
+/// Builds pages, so a session can navigate.
+///
+/// It exists because a `Page` consumes its `FontContext`, and parley's is not
+/// cloneable — so following a link needs the ingredients kept aside rather
+/// than the previous page's leftovers. Rebuilding registers the same font
+/// files again, which costs a few milliseconds per navigation and buys a much
+/// simpler ownership story than sharing a collection across documents.
+pub struct PageFactory {
+    broker: Arc<Broker>,
+    font_sources: Vec<std::path::PathBuf>,
+    options: PageOptions,
+}
+
+impl PageFactory {
+    pub fn new(
+        broker: Arc<Broker>,
+        font_sources: Vec<std::path::PathBuf>,
+        options: PageOptions,
+    ) -> Self {
+        Self {
+            broker,
+            font_sources,
+            options,
+        }
+    }
+
+    pub fn options(&self) -> &PageOptions {
+        &self.options
+    }
+
+    pub fn broker(&self) -> &Arc<Broker> {
+        &self.broker
+    }
+
+    fn fonts(&self) -> FontSetup {
+        crate::fonts::load(&self.font_sources, &[], Some(self.font_sources.len()))
+    }
+
+    pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
+        Page::open(
+            url,
+            self.broker.clone(),
+            self.fonts(),
+            self.options.clone(),
+        )
+    }
+
+    pub fn from_html(&self, html: &str, base_url: &Url) -> Page {
+        Page::from_html(
+            html,
+            base_url,
+            self.broker.clone(),
+            self.fonts(),
+            self.options.clone(),
+        )
+    }
+}
+
+fn encode_jpeg(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+) -> Result<Vec<u8>, H5iError> {
+    use image::codecs::jpeg::JpegEncoder;
+
+    let expected = width as usize * height as usize * 4;
+    if rgba.len() < expected {
+        return Err(H5iError::Internal(format!(
+            "renderer produced {} bytes for a {width}x{height} frame, expected {expected}",
+            rgba.len()
+        )));
+    }
+
+    // JPEG has no alpha, and the frame is opaque anyway: drop the channel
+    // rather than let the encoder guess.
+    let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
+    for pixel in rgba[..expected].chunks_exact(4) {
+        rgb.extend_from_slice(&pixel[..3]);
+    }
+
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpeg, quality.clamp(1, 100))
+        .encode(&rgb, width, height, image::ExtendedColorType::Rgb8)
+        .map_err(|e| H5iError::Metadata(format!("failed to encode the frame: {e}")))?;
+    Ok(jpeg)
 }
 
 fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, H5iError> {

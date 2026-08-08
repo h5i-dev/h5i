@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{Args, Parser, Subcommand};
-use h5i_browser_light::engine::{Page, PageOptions};
+use h5i_browser_light::engine::{Page, PageFactory, PageOptions};
 use h5i_browser_light::net::Broker;
 use h5i_browser_light::policy::Policy;
 use h5i_browser_light::receipt::{JsonlSink, MemorySink, RequestRecord, Sink};
@@ -57,6 +57,38 @@ enum Command {
         /// Emit one JSON object instead of human output.
         #[arg(long)]
         json: bool,
+    },
+
+    /// Serve a live view of a page over WebSocket.
+    ///
+    /// Speaks the format h5i's viewers already use, so `h5i box view` and
+    /// `h5i box view --term` attach to this engine unchanged.
+    Serve {
+        /// A URL, or a path to a local HTML file.
+        target: String,
+
+        #[command(flatten)]
+        net: NetArgs,
+
+        #[command(flatten)]
+        view: ViewArgs,
+
+        /// Address to listen on. Port 0 picks a free one.
+        #[arg(long, default_value = "127.0.0.1:0")]
+        addr: String,
+
+        /// JPEG quality for frames.
+        #[arg(long, default_value_t = 80)]
+        quality: u8,
+
+        /// Advertise the bound port here. h5i's viewers look for
+        /// `<env>/tmp/agent-browser/*.stream`.
+        #[arg(long, value_name = "PATH")]
+        stream_file: Option<PathBuf>,
+
+        /// Serve one viewer, then exit.
+        #[arg(long)]
+        once: bool,
     },
 
     /// Report what this engine can and cannot do, as JSON.
@@ -162,7 +194,78 @@ fn run() -> Result<(), H5iError> {
             text,
             json,
         } => open(&target, &net, &view, screenshot, text, json),
+        Command::Serve {
+            target,
+            net,
+            view,
+            addr,
+            quality,
+            stream_file,
+            once,
+        } => serve(&target, &net, &view, addr, quality, stream_file, once),
     }
+}
+
+/// Build the factory and load the first page, shared by `open` and `serve`.
+fn load(
+    target: &str,
+    net: &NetArgs,
+    view: &ViewArgs,
+) -> Result<(Arc<MemorySink>, PageFactory, Page), H5iError> {
+    let policy = build_policy(net);
+    let (display, sink) = build_sinks(net)?;
+    let broker = Arc::new(Broker::new(policy, sink, proxy_of(net).as_deref())?);
+    let font_setup = load_fonts(view);
+    if font_setup.is_empty() {
+        eprintln!("h5i-browser-light: no fonts registered; text will not be drawn.");
+        eprintln!("      pass --font-file <path.ttf> or --font-dir <dir>.");
+    }
+
+    let factory = PageFactory::new(
+        broker,
+        font_setup.sources.clone(),
+        PageOptions {
+            width: view.width,
+            height: view.height,
+            scale: view.scale,
+            max_snapshot_lines: view.max_snapshot_lines,
+        },
+    );
+
+    let page = match parse_target(target)? {
+        Target::Remote(url) => factory.open(&url)?,
+        Target::Local(path) => {
+            let html = std::fs::read_to_string(&path).map_err(|e| H5iError::with_path(e, &path))?;
+            let base = Url::from_file_path(path.canonicalize().unwrap_or(path.clone()))
+                .map_err(|_| H5iError::InvalidPath(path.display().to_string()))?;
+            factory.from_html(&html, &base)
+        }
+    };
+
+    Ok((display, factory, page))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn serve(
+    target: &str,
+    net: &NetArgs,
+    view: &ViewArgs,
+    addr: String,
+    quality: u8,
+    stream_file: Option<PathBuf>,
+    once: bool,
+) -> Result<(), H5iError> {
+    let (_display, factory, page) = load(target, net, view)?;
+    h5i_browser_light::stream::serve(
+        factory,
+        page,
+        h5i_browser_light::stream::ServeOptions {
+            addr,
+            quality,
+            stream_file,
+            once,
+        },
+    )
 }
 
 fn build_policy(net: &NetArgs) -> Policy {
@@ -254,29 +357,7 @@ fn open(
     as_text: bool,
     as_json: bool,
 ) -> Result<(), H5iError> {
-    let policy = build_policy(net);
-    let (display, sink) = build_sinks(net)?;
-    let broker = Arc::new(Broker::new(policy, sink, proxy_of(net).as_deref())?);
-    let font_setup = load_fonts(view);
-    let fonts_were_empty = font_setup.is_empty();
-
-    let options = PageOptions {
-        width: view.width,
-        height: view.height,
-        scale: view.scale,
-        max_snapshot_lines: view.max_snapshot_lines,
-    };
-
-    let mut page = match parse_target(target)? {
-        Target::Remote(url) => Page::open(&url, broker, font_setup, options)?,
-        Target::Local(path) => {
-            let html = std::fs::read_to_string(&path).map_err(|e| H5iError::with_path(e, &path))?;
-            let base = Url::from_file_path(path.canonicalize().unwrap_or(path.clone()))
-                .map_err(|_| H5iError::InvalidPath(path.display().to_string()))?;
-            Page::from_html(&html, &base, broker, font_setup, options)
-        }
-    };
-
+    let (display, _factory, mut page) = load(target, net, view)?;
     let snapshot = page.snapshot();
 
     let screenshot_bytes = match &screenshot {
@@ -327,11 +408,6 @@ fn open(
     if let Some((path, len)) = screenshot_bytes {
         eprintln!("\nscreenshot: {} ({len} bytes)", path.display());
     }
-    if fonts_were_empty {
-        eprintln!("\nnote: no fonts were registered, so no text was drawn in the screenshot.");
-        eprintln!("      pass --font-file <path.ttf> or --font-dir <dir>.");
-    }
-
     Ok(())
 }
 

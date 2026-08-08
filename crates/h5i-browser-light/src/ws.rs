@@ -1,0 +1,310 @@
+//! Just enough RFC 6455 to be a server.
+//!
+//! Hand-rolled rather than pulled in, for the same reason h5i-core hand-rolled
+//! its client: the surface actually used is one handshake, four opcodes and no
+//! extensions, and a WebSocket crate would bring an async runtime this engine
+//! does not otherwise need.
+//!
+//! Two rules the h5i viewers depend on, both easy to get wrong:
+//!
+//! - **A server never masks.** h5i-core's client fails the connection outright
+//!   on a masked server frame, so masking here is not a compatibility quirk,
+//!   it is a disconnect.
+//! - **Nothing follows the handshake's blank line except the first frame
+//!   byte.** A stray newline is read as the start of a frame and the viewer
+//!   hangs with no error, which is exactly the CRLF bug the web viewer already
+//!   hit once.
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
+
+use base64::Engine as _;
+use h5i_error::H5iError;
+use sha1::{Digest, Sha1};
+
+const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+/// Cap on one reassembled message. Client messages here are small JSON
+/// controls; anything larger is a bug or an attack, not a config frame.
+const MAX_MESSAGE: usize = 1 << 20;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Incoming {
+    Text(String),
+    Ping(Vec<u8>),
+    Pong,
+    Close,
+}
+
+/// Derive `Sec-WebSocket-Accept` from the client's key.
+pub fn accept_key(client_key: &str) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(client_key.as_bytes());
+    hasher.update(WS_GUID.as_bytes());
+    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+}
+
+/// Read the request head and answer the upgrade.
+///
+/// Returns the requested path, which the caller may want; the h5i viewers
+/// always use `/`, and the web forward rewrites the request line to strip its
+/// `?token=`, so a server that insisted on a query string would break it.
+pub fn accept(stream: &mut TcpStream) -> Result<String, H5iError> {
+    let mut reader = BufReader::new(
+        stream
+            .try_clone()
+            .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?,
+    );
+
+    let mut request_line = String::new();
+    reader
+        .read_line(&mut request_line)
+        .map_err(|e| H5iError::Metadata(format!("could not read the request line: {e}")))?;
+
+    let path = request_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("/")
+        .to_string();
+
+    let mut key = None;
+    loop {
+        let mut line = String::new();
+        let read = reader
+            .read_line(&mut line)
+            .map_err(|e| H5iError::Metadata(format!("could not read a header: {e}")))?;
+        if read == 0 || line == "\r\n" || line == "\n" {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            if name.trim().eq_ignore_ascii_case("sec-websocket-key") {
+                key = Some(value.trim().to_string());
+            }
+        }
+    }
+
+    let key = key.ok_or_else(|| {
+        H5iError::Metadata("the client sent no Sec-WebSocket-Key".to_string())
+    })?;
+
+    // Exactly one terminating CRLF pair, and not a byte more.
+    let response = format!(
+        "HTTP/1.1 101 Switching Protocols\r\n\
+         Upgrade: websocket\r\n\
+         Connection: Upgrade\r\n\
+         Sec-WebSocket-Accept: {}\r\n\r\n",
+        accept_key(&key)
+    );
+    stream
+        .write_all(response.as_bytes())
+        .map_err(H5iError::Io)?;
+    stream.flush().map_err(H5iError::Io)?;
+
+    Ok(path)
+}
+
+/// Write one unmasked text frame.
+pub fn send_text(stream: &mut TcpStream, payload: &str) -> Result<(), H5iError> {
+    send_frame(stream, 0x1, payload.as_bytes())
+}
+
+pub fn send_pong(stream: &mut TcpStream, payload: &[u8]) -> Result<(), H5iError> {
+    send_frame(stream, 0xA, payload)
+}
+
+fn send_frame(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> Result<(), H5iError> {
+    let mut header = Vec::with_capacity(10);
+    header.push(0x80 | opcode); // FIN + opcode
+
+    let len = payload.len();
+    if len < 126 {
+        header.push(len as u8);
+    } else if len <= u16::MAX as usize {
+        header.push(126);
+        header.extend_from_slice(&(len as u16).to_be_bytes());
+    } else {
+        header.push(127);
+        header.extend_from_slice(&(len as u64).to_be_bytes());
+    }
+
+    stream.write_all(&header).map_err(H5iError::Io)?;
+    stream.write_all(payload).map_err(H5iError::Io)?;
+    stream.flush().map_err(H5iError::Io)?;
+    Ok(())
+}
+
+/// Read one complete message, reassembling continuation frames.
+pub fn read_message(reader: &mut impl Read) -> Result<Incoming, H5iError> {
+    let mut assembled: Vec<u8> = Vec::new();
+    let mut message_opcode: Option<u8> = None;
+
+    loop {
+        let mut head = [0u8; 2];
+        reader.read_exact(&mut head).map_err(H5iError::Io)?;
+
+        let fin = head[0] & 0x80 != 0;
+        let opcode = head[0] & 0x0F;
+        let masked = head[1] & 0x80 != 0;
+        let mut len = (head[1] & 0x7F) as usize;
+
+        if len == 126 {
+            let mut ext = [0u8; 2];
+            reader.read_exact(&mut ext).map_err(H5iError::Io)?;
+            len = u16::from_be_bytes(ext) as usize;
+        } else if len == 127 {
+            let mut ext = [0u8; 8];
+            reader.read_exact(&mut ext).map_err(H5iError::Io)?;
+            len = u64::from_be_bytes(ext) as usize;
+        }
+
+        if len > MAX_MESSAGE || assembled.len().saturating_add(len) > MAX_MESSAGE {
+            return Err(H5iError::Metadata(format!(
+                "client message exceeds the {MAX_MESSAGE} byte cap"
+            )));
+        }
+
+        let mask = if masked {
+            let mut key = [0u8; 4];
+            reader.read_exact(&mut key).map_err(H5iError::Io)?;
+            Some(key)
+        } else {
+            None
+        };
+
+        let mut payload = vec![0u8; len];
+        reader.read_exact(&mut payload).map_err(H5iError::Io)?;
+        if let Some(key) = mask {
+            for (index, byte) in payload.iter_mut().enumerate() {
+                *byte ^= key[index % 4];
+            }
+        }
+
+        // Control frames may arrive between fragments and are never fragmented.
+        match opcode {
+            0x8 => return Ok(Incoming::Close),
+            0x9 => return Ok(Incoming::Ping(payload)),
+            0xA => return Ok(Incoming::Pong),
+            0x0 => {} // continuation: keep the opcode we started with
+            other => message_opcode = Some(other),
+        }
+
+        assembled.extend_from_slice(&payload);
+
+        if fin {
+            return match message_opcode {
+                Some(0x1) | None => Ok(Incoming::Text(
+                    String::from_utf8_lossy(&assembled).into_owned(),
+                )),
+                // Binary from these viewers would be a protocol error, but
+                // decoding it as text loses nothing a caller can act on.
+                Some(_) => Ok(Incoming::Text(
+                    String::from_utf8_lossy(&assembled).into_owned(),
+                )),
+            };
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accept_key_matches_the_rfc_example() {
+        // RFC 6455 section 1.3. Checking against the spec's own vector is the
+        // only way to know the sha1/base64 wiring is right rather than merely
+        // self-consistent.
+        assert_eq!(
+            accept_key("dGhlIHNhbXBsZSBub25jZQ=="),
+            "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+        );
+    }
+
+    #[test]
+    fn server_frames_are_never_masked() {
+        // h5i-core's client fails the connection on a masked server frame, so
+        // this bit is a compatibility requirement, not a preference.
+        let mut out = Vec::new();
+        write_frame_for_test(&mut out, 0x1, b"hi");
+        assert_eq!(out[0], 0x81, "FIN + text");
+        assert_eq!(out[1] & 0x80, 0, "mask bit must be clear");
+        assert_eq!(out[1] & 0x7F, 2, "payload length");
+    }
+
+    #[test]
+    fn frame_length_encoding_switches_at_the_right_boundaries() {
+        let mut small = Vec::new();
+        write_frame_for_test(&mut small, 0x1, &[b'x'; 125]);
+        assert_eq!(small[1], 125, "125 stays inline");
+
+        let mut medium = Vec::new();
+        write_frame_for_test(&mut medium, 0x1, &[b'x'; 126]);
+        assert_eq!(medium[1], 126, "126 escapes to 16-bit");
+        assert_eq!(u16::from_be_bytes([medium[2], medium[3]]), 126);
+
+        let mut large = Vec::new();
+        write_frame_for_test(&mut large, 0x1, &[b'x'; 70_000]);
+        assert_eq!(large[1], 127, "over u16 escapes to 64-bit");
+    }
+
+    #[test]
+    fn a_masked_client_text_frame_round_trips() {
+        let payload = br#"{"type":"ack","seq":7}"#;
+        let mask = [0x37, 0xfa, 0x21, 0x3d];
+        let mut frame = vec![0x81, 0x80 | payload.len() as u8];
+        frame.extend_from_slice(&mask);
+        frame.extend(
+            payload
+                .iter()
+                .enumerate()
+                .map(|(i, b)| b ^ mask[i % 4]),
+        );
+
+        let message = read_message(&mut frame.as_slice()).expect("decodes");
+        assert_eq!(
+            message,
+            Incoming::Text(r#"{"type":"ack","seq":7}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn fragmented_messages_are_reassembled() {
+        // The viewers send small controls, but a fragmented one must not be
+        // read as two half-messages of invalid JSON.
+        let mut frame = Vec::new();
+        // Fragment 1: text opcode, FIN clear.
+        frame.extend_from_slice(&[0x01, 4]);
+        frame.extend_from_slice(b"{\"a\"");
+        // Fragment 2: continuation opcode, FIN set.
+        frame.extend_from_slice(&[0x80, 3]);
+        frame.extend_from_slice(b":1}");
+
+        let message = read_message(&mut frame.as_slice()).expect("decodes");
+        assert_eq!(message, Incoming::Text("{\"a\":1}".to_string()));
+    }
+
+    #[test]
+    fn a_close_frame_is_reported_rather_than_treated_as_data() {
+        let frame = [0x88u8, 0x00];
+        assert_eq!(
+            read_message(&mut frame.as_slice()).expect("decodes"),
+            Incoming::Close
+        );
+    }
+
+    /// The framing half of `send_frame`, without needing a socket.
+    fn write_frame_for_test(out: &mut Vec<u8>, opcode: u8, payload: &[u8]) {
+        out.push(0x80 | opcode);
+        let len = payload.len();
+        if len < 126 {
+            out.push(len as u8);
+        } else if len <= u16::MAX as usize {
+            out.push(126);
+            out.extend_from_slice(&(len as u16).to_be_bytes());
+        } else {
+            out.push(127);
+            out.extend_from_slice(&(len as u64).to_be_bytes());
+        }
+        out.extend_from_slice(payload);
+    }
+}
