@@ -1245,6 +1245,67 @@ What is missing in that last one is the run, not the plumbing —
 `H5I_BROWSER_STREAM_FILE` puts the `.stream` under the box's `agent-browser`
 directory, which is where the viewers' discovery already scans.
 
+**Tier 2's open item closed, 2026-08-08.** The live view has now been driven by
+`h5i box view` against a real `h5i-light` box rather than by a protocol-level
+client: the forward attaches and renders, the console's frame relay pulls a
+1280x720 JPEG through the same session, input is dropped while the agent holds
+the control lock and flows the moment a human takes it — so the lock is enforced
+on an engine with no mediator behind it, which had never been checked. Two
+defects fell out of the run, both fixed:
+
+1. **A readable file could fail to open.** `open ./page.html` reported "invalid
+   path" when `canonicalize` failed, because the fallback handed a *relative*
+   path to `Url::from_file_path`, which refuses one. The walk fails for a
+   working directory the box can reach by fd and not by name — which is any
+   repo under `/tmp`, since that is the directory the supervised tier
+   overmounts. The message named the path when the problem was the walk.
+2. **`serve` accepted one viewer at a time.** The accept loop handled
+   connections sequentially, so opening the console's page tab left
+   `h5i box view` hanging in the backlog with no error. Two viewers could not
+   coexist, which nothing had tried.
+3. **Scrolling only ever worked on unstyled pages.** The scroll range came from
+   the root element's `size.height`, which a stylesheet saying
+   `html, body { height: 100% }` pins to the viewport while the article
+   overflows it — so Blitz reported Wikipedia's 16477px page as 720px and every
+   scroll clamped to zero. The fix reads `size.height.max(content_size.height)`,
+   which is the same formula Blitz's own `scroll_viewport_by` uses. Every local
+   test page was unstyled, so the whole suite agreed with the bug. Found by
+   pointing the thing at Wikipedia, which is the entire argument for doing that.
+
+**The resident session, 2026-08-08 (§11 item 5.1).** `serve` now holds a page
+that several viewers and a control channel share, and
+`h5i-browser-light session status|snapshot|navigate|click` drives it. A control
+verb that moves the page broadcasts to every viewer, so the live view shows the
+page *the agent* is driving — the caveat M11a's page pane had to print is gone
+for this engine. Ack pacing moved from a structural accident ("one frame per
+client message") to per-viewer state, holding the *newest* frame rather than
+queueing a backlog, and nothing is encoded at all when no one is watching.
+
+The architecture was chosen by the compiler, not by preference: **`Page` is not
+`Send`** — `BaseDocument` holds an `Arc<dyn HtmlParserProvider>` and a
+`Box<dyn FontMetricsProvider>` — so the obvious `Arc<Mutex<Session>>` does not
+exist. One thread owns the page and everything else reaches it by channel. That
+is the shape a multi-driver session wants regardless; here it was not optional.
+
+**Untrusted-content marking, 2026-08-08 (§11 item 5.4).** The rendered snapshot
+now fences page content and names it as data. Pulled ahead of its position in
+the list because §11 called it "the only item on this list whose absence is a
+live hole rather than a missing feature" while ranking it fourth, and it depends
+on nothing. Writing the test found the hole that made the fence worth having:
+`href` was the one page-derived field the walker did not collapse, and an HTML
+attribute value may contain a literal newline — so the field that could forge
+the fence was the field nobody had thought of as text.
+
+**Still open, and now the whole gap (§11 items 5.2a and 5.4):** no typing, no
+form submission, and **no cookies of any kind**. An agent with a session it
+cannot type into still cannot get past a login form, so the session buys less
+than it looks like. `blitz_dom::BaseDocument::with_text_input` makes typing
+reachable; form submission additionally needs POST in the broker, which today
+fetches with GET only — a change to the fail-closed receipt path, not a verb.
+Cookies stay deliberately unstarted: §11 item 5.5 says LOGIN mode has to land
+*with* them rather than after, because a session with cookies is the first
+version of this browser where a stolen credential is worth having.
+
 **Corrected 2026-08-08.** This entry also said "nothing wires h5i to this
 engine yet — M9's `--engine` knob does not exist, so using it in a box is
 still manual", which was true the day tier 2 shipped and stopped being true

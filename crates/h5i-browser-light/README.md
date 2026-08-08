@@ -94,9 +94,53 @@ Honest limits, because the claims above are security claims:
 h5i-browser-light open  <url|path> [--allow ORIGIN]... [--screenshot PATH]
                                    [--receipts PATH] [--text] [--json]
 h5i-browser-light serve <url|path> [--addr 127.0.0.1:0] [--stream-file PATH]
+                                   [--control-file PATH]
+h5i-browser-light session status | snapshot | navigate <url> | click <@ref>
 h5i-browser-light capabilities     # what this engine can do, as JSON
 h5i-browser-light doctor           # fonts, proxy, allowlist, client
 ```
+
+### The resident session
+
+`open` renders its own page and exits, so two `open`s share nothing. `serve`
+holds a page open and is the thing an agent drives:
+
+```
+$ h5i-browser-light serve http://localhost:3000 &
+$ h5i-browser-light session snapshot
+$ h5i-browser-light session click @e1
+```
+
+Those verbs act on the same page the viewers are watching, which is what makes
+the live view show the page *the agent* is driving rather than the one the
+serving process happened to open. Several viewers and several control clients
+can be attached at once.
+
+The control port is advertised beside the stream port — `<name>.control` next to
+`<name>.stream` — so inside a box, where h5i sets `H5I_BROWSER_STREAM_FILE`,
+these verbs need no flags.
+
+One constraint shapes all of this: **`Page` is not `Send`.** Blitz's
+`BaseDocument` holds an `Arc<dyn HtmlParserProvider>` and a
+`Box<dyn FontMetricsProvider>`, so there is no `Arc<Mutex<Session>>` to be had.
+The page has exactly one owning thread and everything else reaches it by
+channel — which is the right shape for a session with several drivers anyway,
+because it leaves no interleaving to reason about.
+
+### The snapshot is fenced
+
+Page content is wrapped in `--- BEGIN/END UNTRUSTED PAGE CONTENT ---` and
+labelled as data. This is the point where attacker-controlled text reaches a
+model that is deciding what to do next, and the engine's other defences do not
+cover it: `sanitize_display` protects a viewer's chrome, and running no script
+removes the commonest delivery *channel*. Neither says anything at the moment of
+reading.
+
+The fence rests on a tested property rather than a secret: no page-derived value
+may span a line, so a page that writes the closing marker into its own text gets
+it back as quoted content on a `- ` line. A marker written inline is replaced
+with `[fence marker removed]` — the only content this engine removes, and the
+words around it survive.
 
 ### The live view
 
@@ -146,8 +190,8 @@ receipts, the fail-closed broker, and the agent-facing snapshot.
 ## Status
 
 Tiers 1 and 2 of ROADMAP M10: static render, snapshot, screenshot, receipts,
-and a live view h5i's viewers can attach to. Tier 3 (policy-gated script) is
-not built.
+and a live view h5i's viewers can attach to. Plus the resident session and its
+verbs (ROADMAP §11 item 5.1). Tier 3 (policy-gated script) is not built.
 
 h5i can pin a box to this engine: `h5i box create --profile browser --engine
 h5i-light`, or `[profile.browser] engine = "h5i-light"`. A box pinned to it
@@ -155,6 +199,15 @@ gets `H5I_BROWSER_ALLOW` (its own `net.egress`, so the engine's allowlist is
 the box's) and `H5I_BROWSER_RECEIPTS` (a path inside the box), and none of
 agent-browser's variables, which this engine would not read.
 
-Not yet done at this tier: the live view has been driven by a protocol-level
-test client, not by `h5i box view` against a real box; and there is no input
-beyond scrolling and link clicks (no typing, no form submission).
+Driven against a real box on 2026-08-08: `h5i box view`'s forward and the
+console's frame relay both attach to an `h5i-light` box and render, input is
+dropped while the agent holds the control lock and flows once a human takes it,
+and a control-channel navigation reaches every attached viewer. Two defects came
+out of that run and are fixed: a relative path failed when the working
+directory could not be resolved by name, and `serve` accepted only one viewer at
+a time, so opening the console silently blocked `h5i box view`.
+
+Not yet done: **no typing and no form submission**, so an agent cannot get past
+a login form; and **no cookies of any kind**, so there is no session anywhere.
+Those two are what stand between this and an engine an agent can use for
+anything behind a login.

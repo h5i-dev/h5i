@@ -1288,14 +1288,24 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         // The status line reports what the box may reach. It is
                         // read from the *enforced* policy, not from the profile
                         // as written, so it describes the box that is running.
-                        let egress = h5i_core::env::load_policy(&h5i_root, &m)
+                        let enforced = h5i_core::env::load_policy(&h5i_root, &m);
+                        let egress = enforced
+                            .as_ref()
                             .map(|p| egress_summary(&p.profile.net_egress))
                             .unwrap_or_default();
+                        // Same source as the egress line, for the same reason:
+                        // what is running, not what was written.
+                        let engine = enforced
+                            .as_ref()
+                            .ok()
+                            .and_then(|p| p.profile.engine)
+                            .map(|e| e.as_str().to_string());
                         h5i_core::termview::run(h5i_core::termview::Options {
                             env_dir: dir,
                             env_id: m.id.clone(),
                             policy_digest: m.policy_digest.clone(),
                             egress,
+                            engine,
                             max_fps: fps,
                             assume_graphics,
                         })?;

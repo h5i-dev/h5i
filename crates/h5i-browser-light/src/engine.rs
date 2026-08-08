@@ -172,9 +172,32 @@ impl Page {
         (scroll.x, scroll.y)
     }
 
-    /// The laid-out height of the document, used to clamp scrolling.
+    /// The height of the document including whatever overflows the root box.
+    ///
+    /// Not `size.height`, and the difference is the whole page on a real site.
+    /// A stylesheet that says `html, body { height: 100% }` — which is most of
+    /// the web, Wikipedia included — sizes the root box to the viewport and
+    /// lets the article overflow it. Reading `size.height` there reports a
+    /// 40-screen article as exactly one screen tall, so `scroll_by` clamped
+    /// every scroll to zero and the engine could only scroll unstyled pages.
+    /// That is what the local test pages were, which is why nothing caught it
+    /// until this ran against Wikipedia.
     pub fn content_height(&self) -> f64 {
-        self.doc.root_element().final_layout.size.height as f64
+        let layout = &self.doc.root_element().final_layout;
+        layout.size.height.max(layout.content_size.height) as f64
+    }
+
+    /// How far this document can scroll: everything below the fold.
+    ///
+    /// Deliberately not taffy's `Layout::scroll_height`, which was tried and is
+    /// the wrong question. That measures overflow *within* an element's own
+    /// box, so it reads zero for an unstyled page whose root box simply grew to
+    /// 4000px — there is no overflow inside the root, the overflow is past the
+    /// viewport. The scrollable range of a document is its height minus the
+    /// window, and the only thing that was ever wrong here is what "its height"
+    /// meant.
+    fn max_scroll_y(&self) -> f64 {
+        (self.content_height() - self.options.height as f64).max(0.0)
     }
 
     /// Scroll, clamped to the document.
@@ -184,7 +207,7 @@ impl Page {
     /// reason to encode and send an identical frame.
     pub fn scroll_by(&mut self, dx: f64, dy: f64) -> bool {
         let (x, y) = self.scroll_offset();
-        let max_y = (self.content_height() - self.options.height as f64).max(0.0);
+        let max_y = self.max_scroll_y();
         let next_x = (x + dx).max(0.0);
         let next_y = (y + dy).clamp(0.0, max_y);
 

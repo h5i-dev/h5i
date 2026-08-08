@@ -112,6 +112,29 @@ pub struct Options {
     /// else's terminal, and being wrong about it must not be the end of the
     /// road for a user who knows better than we do.
     pub assume_graphics: bool,
+    /// The engine this box is pinned to, when it has one. Read only to tell
+    /// someone how to start a stream — the viewer itself is engine-agnostic,
+    /// and adding this must not become the start of engine-specific rendering.
+    pub engine: Option<String>,
+}
+
+/// What to tell someone whose box has no `.stream` file yet.
+///
+/// The advice is engine-specific because the command is: an `h5i-light` box has
+/// no agent-browser daemon to enable streaming on, and telling its owner to run
+/// `agent-browser stream enable` sends them to a CLI that will fail on a
+/// missing socket directory before it ever reaches the question they asked. The
+/// viewer stays engine-agnostic everywhere else; this is the one place the
+/// difference is the user's problem rather than ours.
+fn not_streaming_hint(engine: Option<&str>) -> String {
+    match engine {
+        Some("h5i-light") => "the box's browser is not streaming. Inside the box, run \
+                              `h5i-browser-light serve <url>`, then try again."
+            .into(),
+        _ => "the box's browser is not streaming. Inside the box, run \
+              `agent-browser stream enable`, then try again."
+            .into(),
+    }
 }
 
 /// The render loop's own clock.
@@ -202,13 +225,8 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
                 .into(),
         )
     })?;
-    let port = crate::view::stream_port(&opts.env_dir).ok_or_else(|| {
-        H5iError::Metadata(
-            "the box's browser is not streaming. Inside the box, run \
-             `agent-browser stream enable`, then try again."
-                .into(),
-        )
-    })?;
+    let port = crate::view::stream_port(&opts.env_dir)
+        .ok_or_else(|| H5iError::Metadata(not_streaming_hint(opts.engine.as_deref())))?;
 
     let mut guard = term::Guard::enter(stdin).map_err(H5iError::Io)?;
     // Skipping the probe means skipping the answer about compression too. Raw
@@ -874,6 +892,21 @@ mod tests {
 
         // And nothing is owed before the deadline.
         assert_eq!(ticker.due(t0 + Duration::from_millis(600)), None);
+    }
+
+    #[test]
+    fn the_start_a_stream_hint_names_the_engine_the_box_actually_runs() {
+        // An h5i-light box has no agent-browser daemon, so the old advice sent
+        // its owner to a CLI that fails on a missing socket directory before it
+        // can answer the question they asked.
+        let light = not_streaming_hint(Some("h5i-light"));
+        assert!(light.contains("h5i-browser-light serve"), "{light}");
+        assert!(!light.contains("agent-browser"), "{light}");
+
+        for other in [Some("chromium"), Some("lightpanda"), None] {
+            let msg = not_streaming_hint(other);
+            assert!(msg.contains("agent-browser stream enable"), "{msg}");
+        }
     }
 
     #[test]
