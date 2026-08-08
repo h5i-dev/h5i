@@ -45,7 +45,10 @@ export function BrowserTerminal({
 }) {
   const [events, setEvents] = useState<ViewerEvent[]>([]);
   const [meta, setMeta] = useState<
-    Pick<BrowserStream, "cursor" | "dropped" | "engine" | "live_view">
+    Pick<
+      BrowserStream,
+      "cursor" | "dropped" | "engine" | "live_view" | "frame_seq" | "frame_error"
+    >
   >({
     cursor: 0,
     dropped: 0,
@@ -67,6 +70,8 @@ export function BrowserTerminal({
         dropped: next.dropped,
         engine: next.engine,
         live_view: next.live_view,
+        frame_seq: next.frame_seq,
+        frame_error: next.frame_error,
       });
       setError(null);
       if (next.events.length > 0) {
@@ -117,10 +122,13 @@ export function BrowserTerminal({
       />
 
       <PagePane
+        agent={agent}
+        slug={slug}
         engine={meta.engine}
         liveView={meta.live_view === true}
+        frameSeq={meta.frame_seq}
+        frameError={meta.frame_error}
         url={lastUrl(events)}
-        slug={slug}
       />
 
       <div className="bterm-tabs" role="tablist">
@@ -323,51 +331,91 @@ function StatusBar({
  * on the screen.
  */
 function PagePane({
+  agent,
+  slug,
   engine,
   liveView,
+  frameSeq,
+  frameError,
   url,
-  slug,
 }: {
+  agent: string;
+  slug: string;
   engine?: string;
   liveView: boolean;
+  frameSeq?: number;
+  frameError?: string;
   url?: string;
-  slug: string;
 }) {
   const light = engine === "h5i-light";
   return (
     <div className="bterm-pane bterm-page">
       <header>
         <h3>page</h3>
-        <p>{url ? "last page h5i saw this box open" : "no page opened yet"}</p>
+        <p>
+          {frameSeq !== undefined
+            ? "box-claimed: the box's own rendering of its page"
+            : url
+              ? "last page h5i saw this box open"
+              : "no page opened yet"}
+        </p>
       </header>
       <div className="bterm-page-body">
         <p className="bterm-page-url">{url ?? "—"}</p>
+
+        {frameSeq !== undefined ? (
+          <figure className="bterm-frame">
+            {/*
+              An <img> rather than a canvas or a data: URL, so the browser
+              decodes the JPEG and the bytes never become a string in this app.
+              The seq in the URL is a cache key: unchanged seq, unchanged
+              picture, no request — the same change-driven rule the engine
+              follows, rather than a timer redrawing a still page.
+            */}
+            <img
+              src={api.browserFrameUrl(agent, slug, frameSeq)}
+              alt="the box's current page"
+            />
+            <figcaption>
+              frame #{frameSeq} · pixels the box rendered and reported. Nothing
+              derived from this reaches the trusted row above.
+            </figcaption>
+          </figure>
+        ) : null}
+
         {liveView ? (
-          <p className="bterm-page-state live">
-            A live view is running in this box. The console watches and never
-            drives, so frames and input go through the forward:
-            <code>h5i box view {slug}</code>
-            <span>
-              {" "}
-              (add <code>--term</code> to stay in the terminal). Taking the
-              control lock there is what lets a human type into the page.
-            </span>
-          </p>
+          frameSeq === undefined ? (
+            <p className="bterm-page-state live">
+              {frameError
+                ? `Attached to this box's live view, but no frame arrived: ${frameError}`
+                : "Attached to this box's live view. Frames are change-driven, so a page at rest sends none — the picture appears when something moves."}
+            </p>
+          ) : null
         ) : (
           <p className="bterm-page-state">
             No live view is running in this box, so there are no frames to show.
             Start one with <code>h5i-browser-light serve &lt;page&gt;</code>{" "}
-            inside the box, then attach with <code>h5i box view {slug}</code>.
+            inside the box.
           </p>
         )}
+
+        {/* Watching is this surface's whole job; typing is the forward's. Said
+            here because a picture is exactly what makes someone try to click. */}
+        <p className="bterm-page-state">
+          The console watches and never drives. To take the control lock and type
+          into the page, use <code>h5i box view {slug}</code> (add{" "}
+          <code>--term</code> to stay in the terminal).
+        </p>
+
         {light ? (
           <p className="bterm-page-caveat">
             This box is pinned to <code>h5i-light</code>, which has no resident
-            session: each <code>open</code> renders its own page and exits. A
-            live view therefore shows the page <em>it</em> was started on, not
-            the one the agent is driving. Watching the agent's own browsing needs
-            the engine to grow a session mode (ROADMAP M10); until then the panes
-            below are the record of what the agent actually did.
+            session: each <code>open</code> renders its own page and exits. Any
+            frame above is therefore the page the <em>serving</em> process was
+            started on, not necessarily the one the agent is driving. Watching
+            the agent's own browsing needs the engine to grow a session mode
+            (ROADMAP M10); the panes below are the record of what it actually
+            did.
           </p>
         ) : null}
       </div>

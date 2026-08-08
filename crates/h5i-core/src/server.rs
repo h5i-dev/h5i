@@ -90,6 +90,12 @@ pub struct AppState {
     /// [`STREAM_CAP`] events — and it is derived from files on disk, so losing
     /// it costs nothing but a re-read.
     browser: Arc<std::sync::Mutex<std::collections::HashMap<String, crate::browser_events::BoxStream>>>,
+    /// One live-view reader per box currently being watched. Separate from
+    /// `browser` because their lifetimes differ: the event stream is cheap and
+    /// kept, while a relay holds a socket into a box and is dropped as soon as
+    /// the box stops serving a view.
+    frames:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, crate::browser_frames::FrameRelay>>>,
 }
 
 impl AppState {
@@ -98,6 +104,7 @@ impl AppState {
             repo_path,
             token,
             browser: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            frames: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 }
@@ -641,13 +648,20 @@ pub struct BrowserStream {
     /// Whether a live view is being served inside the box right now — a
     /// `.stream` file next to the daemon socket, the same discovery
     /// `h5i box view` uses.
-    ///
-    /// The console does not relay those frames (it watches; the forward is what
-    /// carries pixels and input, with its own token and the control lock). It
-    /// reports the state so the page pane can say which of "no live view is
-    /// running" and "a live view is running, attach with `h5i box view`" is
-    /// true, instead of showing an empty rectangle that reads as broken.
     pub live_view: bool,
+    /// Sequence number of the newest frame the console holds, or `None` when it
+    /// holds none.
+    ///
+    /// The page re-fetches the frame only when this changes, which is what keeps
+    /// a still page at zero requests instead of on a timer — the same
+    /// change-driven rule the engine itself follows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_seq: Option<u64>,
+    /// Why there is no picture, when there is a live view but no frame. Shown
+    /// rather than swallowed: a viewer that cannot say why it is blank is
+    /// indistinguishable from one that is broken.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_error: Option<String>,
 }
 
 /// How many events one box's stream holds. A page pulling in subresources makes
@@ -670,6 +684,7 @@ async fn api_browser(
 ) -> Response {
     let path = state.repo_path.clone();
     let streams = state.browser.clone();
+    let frames = state.frames.clone();
     let stream = blocking(move || {
         let (_git, h5i_root) = open(&path)?;
         let want = format!("env/{agent}/{slug}");
@@ -691,12 +706,25 @@ async fn api_browser(
         entry.poll(&h5i_root, &m);
         let log = entry.log();
 
+        let events: Vec<_> = log.since(query.since).into_iter().cloned().collect();
+        let (cursor, dropped) = (log.cursor(), log.dropped());
+        drop(held);
+
+        // Looking at the browser tab is what starts a reader; closing the
+        // console is what ends it. Kept off the `browser` lock because a
+        // namespace entry is slow and the event stream should not wait on it.
+        let env_dir = m.dir(&h5i_root);
+        let located = crate::browser_frames::locate(&env_dir);
+        let (frame_seq, frame_error) = tend_relay(&frames, &m.id, located);
+
         Some(BrowserStream {
-            events: log.since(query.since).into_iter().cloned().collect(),
-            cursor: log.cursor(),
-            dropped: log.dropped(),
+            events,
+            cursor,
+            dropped,
             engine,
-            live_view: crate::view::stream_port(&m.dir(&h5i_root)).is_some(),
+            live_view: located.is_some(),
+            frame_seq,
+            frame_error,
         })
     })
     .await;
@@ -711,6 +739,83 @@ async fn api_browser(
 pub struct BrowserQuery {
     #[serde(default)]
     pub since: u64,
+}
+
+type Relays = std::sync::Mutex<std::collections::HashMap<String, crate::browser_frames::FrameRelay>>;
+
+/// Keep the live-view reader for one box in step with reality, and report what
+/// it has.
+///
+/// Three transitions, all driven by the box rather than by a user action: a
+/// view appears and a reader starts; a view goes away and the reader is dropped
+/// (which closes the socket into the box — a console tab left open must not pin
+/// a connection to a box that stopped serving); a reader dies on its own and is
+/// replaced, but not faster than its retry delay.
+fn tend_relay(
+    relays: &Arc<Relays>,
+    box_id: &str,
+    located: Option<(u32, u16)>,
+) -> (Option<u64>, Option<String>) {
+    let mut held = relays.lock().unwrap_or_else(|e| e.into_inner());
+
+    let Some((pid, port)) = located else {
+        held.remove(box_id);
+        return (None, None);
+    };
+
+    if held.get(box_id).is_some_and(|r| r.spent()) {
+        held.remove(box_id);
+    }
+    let relay = held
+        .entry(box_id.to_string())
+        .or_insert_with(|| crate::browser_frames::FrameRelay::start(pid, port));
+
+    let seq = relay.latest().map(|f| f.seq);
+    // Only worth reporting while there is nothing to show. A relay that died
+    // after delivering frames still leaves the last one on screen, and an error
+    // beside a picture that is visibly there reads as a bug in the console.
+    let error = (seq.is_none() && !relay.connected())
+        .then(|| relay.error())
+        .flatten();
+    (seq, error)
+}
+
+/// `GET /api/box/:agent/:slug/browser/frame` — the newest frame the console
+/// holds for this box, as a JPEG.
+///
+/// A `GET` that returns an image, so the console's "every route is a GET" rule
+/// is untouched and the page can point an `<img>` at it. The bytes are the
+/// box's, which is why two headers are not optional: `nosniff` so a crafted
+/// payload cannot be re-interpreted as anything but an image, and `no-store` so
+/// a frame of somebody's page does not settle into a disk cache.
+async fn api_browser_frame(
+    State(state): State<Arc<AppState>>,
+    Path((agent, slug)): Path<(String, String)>,
+) -> Response {
+    let id = format!("env/{agent}/{slug}");
+    let relays = state.frames.clone();
+    let frame = tokio::task::spawn_blocking(move || {
+        let held = relays.lock().unwrap_or_else(|e| e.into_inner());
+        held.get(&id).and_then(|r| r.latest())
+    })
+    .await
+    .ok()
+    .flatten();
+
+    match frame {
+        Some(f) => (
+            [
+                (header::CONTENT_TYPE, "image/jpeg"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            f.jpeg,
+        )
+            .into_response(),
+        // Not an error: a box with no live view, or one whose page has not
+        // changed since the reader attached, simply has no frame.
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
 }
 
 /// `GET /api/probe` — what this host can actually enforce. The same report
@@ -737,6 +842,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/box/:agent/:slug", get(api_box))
         .route("/api/box/:agent/:slug/receipts/:id", get(api_receipt))
         .route("/api/box/:agent/:slug/browser", get(api_browser))
+        .route("/api/box/:agent/:slug/browser/frame", get(api_browser_frame))
         .layer(axum::middleware::from_fn_with_state(state.clone(), gate))
         .with_state(state)
 }

@@ -269,6 +269,13 @@ export interface BrowserStream {
    * control lock — so this only tells the page pane which state to describe.
    */
   live_view: boolean;
+  /**
+   * Sequence number of the newest frame the console holds. The page re-fetches
+   * the image only when this changes, so a still page costs nothing.
+   */
+  frame_seq?: number;
+  /** Why there is no picture, when a live view exists but no frame arrived. */
+  frame_error?: string;
 }
 
 // ── transport ────────────────────────────────────────────────────────────────
@@ -301,4 +308,12 @@ export const api = {
     get<BrowserStream>(
       `/api/box/${encodeURIComponent(agent)}/${encodeURIComponent(slug)}/browser?since=${since}`,
     ),
+  /**
+   * URL of the newest frame, for an `<img>` rather than a fetch — the browser
+   * decodes the JPEG, so the bytes never become a string in this app. `seq` is
+   * in the URL purely as a cache key: the same seq is the same picture, and a
+   * changed seq is what makes the element reload.
+   */
+  browserFrameUrl: (agent: string, slug: string, seq: number) =>
+    `/api/box/${encodeURIComponent(agent)}/${encodeURIComponent(slug)}/browser/frame?seq=${seq}`,
 };

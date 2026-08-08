@@ -1437,12 +1437,44 @@ one layer down, moved one layer up. Found by grepping the *served bundle* for
 the divider text rather than by trusting a green typecheck, which could not see
 it: an unknown variant simply matched no case.
 
-**Still open, and none of it is dressing.** There are still no pixels in the
-console — the page pane describes the live view, it does not carry it, so the
-frame lane of 5.9's forward is unjoined. Joining it is worth doing for Chromium
-boxes, where agent-browser is one daemon owning one session and a viewer really
-is watching the agent's page; for `h5i-light` it needs the engine to grow a
-resident session first (M10), or the viewport is honest only by caveat. The
+**Third pass: the console carries pixels.** The page pane shows the box's page,
+rendered by our own engine inside the box. The frame lane is joined, and the way
+it is joined is the point:
+
+* **A reader, not a proxy.** A background thread per watched box enters the
+  box's user and network namespaces by pid, connects to the stream server, and
+  reads — the same route `h5i box view --term` takes (`view::connect_in_netns`),
+  reusing the same hardened WebSocket client (`termview::ws`, which refuses
+  reserved opcodes, masked server frames and oversized lengths). Nothing new
+  listens; the box gains no reachability it did not have.
+* **The console's structural guarantee survives.** Every route is still a `GET`,
+  because the frame is served *as* a `GET` returning `image/jpeg` — `nosniff` so
+  crafted bytes cannot be re-read as anything else, `no-store` so a frame of
+  somebody's page does not settle into a disk cache. And the relay is
+  one-directional by construction: the only messages it can send upstream are
+  `config` and `ack`, there is no path from an HTTP request to a write on that
+  socket, and a test greps this module for `input_*` so the day someone adds one
+  the build says so. Typing into a page still has exactly one door: the forward,
+  which enforces the control lock.
+* **Change-driven, end to end.** The stream reports the newest frame's sequence
+  number and the page keys its `<img>` on it, so an unchanged page is zero
+  requests rather than a timer redrawing a still picture — the engine's own rule,
+  carried up to the browser.
+* **The picture is labelled.** A frame is **box-claimed**: the box's rendering of
+  its own page. Nothing derived from it reaches the trusted status row, and the
+  `h5i-light` caveat sits under the image rather than being left for a reader to
+  infer — that engine has no resident session, so a served view shows the page
+  the *serving* process opened, which need not be the one the agent is driving.
+
+Driven end to end rather than asserted: the engine served a page inside a
+supervised box, the console found the `.stream`, crossed the namespace, and
+returned a 1280×720 JPEG at `frame_seq 2` with the right headers; stopping the
+in-box server flipped `live_view` to false, dropped the relay, and the frame
+route went to 204. One test was rewritten on the way — clippy caught it
+comparing two constants, which is a tautology that would have passed with the
+size check deleted; it now drives the real decoder with real base64.
+
+**Still open, and none of it is dressing.** The
 accessibility snapshot has no live source (it is a CLI verb today). Takeover is
 not wired here: the console remains read-only and input still goes through
 `h5i box view`, so the read-only-by-default / interact-under-the-lock rule below

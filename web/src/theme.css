@@ -836,3 +836,28 @@ pre,
   color: var(--bp-violet);
   letter-spacing: 0.04em;
 }
+/* The frame. Checkerboard behind it so a page with transparent or unpainted
+   regions is visibly the page's doing rather than the console's. */
+.bterm-frame {
+  margin: 0;
+}
+.bterm-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 46vh;
+  object-fit: contain;
+  object-position: top center;
+  background: repeating-conic-gradient(
+      var(--bp-surface-2) 0% 25%,
+      var(--bp-bg) 0% 50%
+    )
+    50% / 16px 16px;
+  border: 1px solid var(--bp-border-strong);
+  border-radius: 2px;
+}
+.bterm-frame figcaption {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--bp-text-dim);
+}
