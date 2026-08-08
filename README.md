@@ -21,10 +21,11 @@ When the work is done, h5i exports a reviewable patch and execution logs.
 
 h5i gives you:
 
-- **Lightweight sandboxes** that start in under 200 ms for everyday agent tasks
-- **MicroVM isolation** with a separate kernel when stronger boundaries matter
+- **A self-contained sandbox with multiple isolation tiers** for the agent, toolchain, dependencies, and browser
+  - **Lightweight OS-level isolation** that starts in under 200 ms, with filesystem, syscall, and network controls
+  - **Rootless containers** for portable, image-based environments
+  - **MicroVM isolation** with a separate kernel when stronger boundaries matter
 - **Isolated browsers** that agents can securely control from inside the sandbox
-- **Self-contained environments** with the agent, toolchain, dependencies, and browser in one boundary
 - **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
 
 **Local-first. No hosted sandbox. No SaaS account required.**
