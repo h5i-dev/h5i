@@ -58,6 +58,11 @@ pub struct Broker {
     sink: Arc<dyn Sink>,
     client: reqwest::blocking::Client,
     seq: AtomicU64,
+    /// The session's cookies. Attached here rather than by the HTTP client so
+    /// that sending one is a decision this broker makes and records, like every
+    /// other thing it does with the wire. `reqwest`'s own cookie store would
+    /// have done the matching for us and taken that with it.
+    jar: crate::cookies::Jar,
 }
 
 impl Broker {
@@ -95,6 +100,7 @@ impl Broker {
             sink,
             client,
             seq: AtomicU64::new(0),
+            jar: crate::cookies::Jar::new(),
         })
     }
 
@@ -102,10 +108,43 @@ impl Broker {
         &self.policy
     }
 
+    /// The session's jar, for the things that may legitimately touch it:
+    /// counting it, and clearing it. There is deliberately no accessor that
+    /// returns a cookie's value.
+    pub fn jar(&self) -> &crate::cookies::Jar {
+        &self.jar
+    }
+
     /// Fetch a URL, following redirects by hand and checking policy on each hop.
     pub fn fetch(&self, url: &Url, initiator: Initiator) -> FetchOutcome {
+        self.send(url, initiator, "GET", &[], None)
+    }
+
+    /// Send a request that may carry a body — what a form submission needs.
+    ///
+    /// One function rather than a second path beside [`Self::fetch`], because
+    /// every guarantee this broker makes lives in that loop: the policy check,
+    /// the record before the wire, the hand-followed redirects. A POST that
+    /// took a shortcut around it would be the one request in the engine with no
+    /// receipt, which is precisely the hole the whole design exists to close.
+    ///
+    /// The redirect rule is the browser's, and it is a security rule rather
+    /// than a convenience: a 301/302/303 turns a POST into a GET and drops the
+    /// body, so a form's credentials are not replayed to wherever a server
+    /// points next. 307/308 preserve the method, and each hop is still checked
+    /// against the allowlist like any other.
+    pub fn send(
+        &self,
+        url: &Url,
+        initiator: Initiator,
+        method: &str,
+        body: &[u8],
+        content_type: Option<&str>,
+    ) -> FetchOutcome {
         let mut current = url.clone();
         let mut initiator = initiator;
+        let mut method = method.to_ascii_uppercase();
+        let mut body = body.to_vec();
 
         for hop in 0..=self.policy.max_redirects() {
             let seq = self.seq.fetch_add(1, Ordering::Relaxed);
@@ -114,8 +153,8 @@ impl Broker {
             //    so the log shows what was attempted, not only what succeeded.
             let verdict = self.policy.check(&current);
             if let Some(reason) = verdict.reason() {
-                let record =
-                    RequestRecord::request(seq, initiator, "GET", current.as_str()).denied(reason);
+                let record = RequestRecord::request(seq, initiator, &method, current.as_str())
+                    .denied(reason);
                 if let Err(e) = self.record_pair(&record) {
                     return FetchOutcome::failed(current, format!("receipt sink refused: {e}"));
                 }
@@ -125,7 +164,7 @@ impl Broker {
             // 2. The decision record, before any bytes move. If this cannot be
             //    written, the fetch does not happen — this is the fail-closed
             //    guarantee, and it is why `Sink::append` returns a Result.
-            let record = RequestRecord::request(seq, initiator, "GET", current.as_str());
+            let record = RequestRecord::request(seq, initiator, &method, current.as_str());
             if let Err(e) = self.sink.append(&record) {
                 return FetchOutcome::failed(
                     current,
@@ -133,9 +172,25 @@ impl Broker {
                 );
             }
 
-            // 3. The wire.
+            // 3. The wire. Cookies are attached here, after the policy check
+            //    and after the record: a request that policy refuses must never
+            //    have carried a credential anywhere, not even into a log line.
             let started = Instant::now();
-            let response = self.client.get(current.clone()).send();
+            let verb = reqwest::Method::from_bytes(method.as_bytes())
+                .unwrap_or(reqwest::Method::GET);
+            let mut request = self.client.request(verb, current.clone());
+            if !body.is_empty() {
+                if let Some(kind) = content_type {
+                    request = request.header(reqwest::header::CONTENT_TYPE, kind);
+                }
+                request = request.body(body.clone());
+            }
+            let mut cookies_sent = 0;
+            if let Some((header, count)) = self.jar.header_for(&current) {
+                request = request.header(reqwest::header::COOKIE, header);
+                cookies_sent = count;
+            }
+            let response = request.send();
             let elapsed = started.elapsed().as_millis() as u64;
 
             let response = match response {
@@ -143,6 +198,7 @@ impl Broker {
                 Err(e) => {
                     let mut outcome_record = record.response();
                     outcome_record.duration_ms = Some(elapsed);
+                    outcome_record.cookies_sent = Some(cookies_sent);
                     outcome_record.error = Some(e.to_string());
                     let _ = self.sink.append(&outcome_record);
                     return FetchOutcome::failed(current, e.to_string());
@@ -150,6 +206,18 @@ impl Broker {
             };
 
             let status = response.status();
+
+            // Before the redirect branch, deliberately: a login flow sets its
+            // session cookie on the 302 itself, so a jar that only looked at
+            // final responses would never see the thing it exists to hold.
+            let cookies_stored = self.jar.store(
+                &current,
+                response
+                    .headers()
+                    .get_all(reqwest::header::SET_COOKIE)
+                    .iter()
+                    .filter_map(|v| v.to_str().ok()),
+            );
 
             if status.is_redirection() {
                 let location = response
@@ -161,6 +229,8 @@ impl Broker {
                 let mut outcome_record = record.response();
                 outcome_record.status = Some(status.as_u16());
                 outcome_record.duration_ms = Some(elapsed);
+                outcome_record.cookies_sent = Some(cookies_sent);
+                outcome_record.cookies_stored = Some(cookies_stored);
                 if location.is_none() {
                     outcome_record.error = Some("redirect without a usable Location".to_string());
                 }
@@ -170,6 +240,14 @@ impl Broker {
                     Some(next) if hop < self.policy.max_redirects() => {
                         current = next;
                         initiator = Initiator::Redirect;
+                        // 303 always, and 301/302 by universal practice, turn
+                        // the follow-up into a bodyless GET. Carrying a form
+                        // body onward would replay a password to whatever the
+                        // server named next.
+                        if matches!(status.as_u16(), 301..=303) {
+                            method = "GET".to_string();
+                            body.clear();
+                        }
                         continue;
                     }
                     Some(_) => {
@@ -191,6 +269,8 @@ impl Broker {
             let mut outcome_record = record.response();
             outcome_record.status = Some(status.as_u16());
             outcome_record.duration_ms = Some(elapsed);
+            outcome_record.cookies_sent = Some(cookies_sent);
+            outcome_record.cookies_stored = Some(cookies_stored);
 
             return match body {
                 Ok(body) => {
@@ -393,5 +473,196 @@ mod tests {
         let sink = Arc::new(MemorySink::new());
         let result = Broker::new(Policy::new(), sink, Some("not a url"));
         assert!(result.is_err(), "a malformed proxy must fail loudly, early");
+    }
+}
+
+#[cfg(test)]
+mod cookie_wire_tests {
+    use super::*;
+    use crate::receipt::MemorySink;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    /// A server that sets a cookie, then reports what came back.
+    fn login_server() -> (u16, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut sent_cookie = String::new();
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(rest) = header.to_ascii_lowercase().strip_prefix("cookie:") {
+                        sent_cookie = rest.trim().to_string();
+                    }
+                }
+                let mut stream = stream;
+                if path == "/login" {
+                    let body = "<html><body>ok</body></html>";
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nSet-Cookie: sid=s3cr3t-value; Path=/\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    ).unwrap();
+                } else {
+                    let body = format!("<html><body>saw:{sent_cookie}</body></html>");
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    ).unwrap();
+                }
+                let _ = stream.flush();
+            }
+        });
+        (port, handle)
+    }
+
+    /// Redirects a POST once, then reports what the follow-up looked like.
+    fn redirecting_server(status: u16) -> (u16, std::thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let mut second = String::new();
+            for hop in 0..2 {
+                let Ok((stream, _)) = listener.accept() else { break };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let method = line.split_whitespace().next().unwrap_or("").to_string();
+                let mut length = 0usize;
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(v) = header.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0u8; length];
+                if length > 0 {
+                    use std::io::Read;
+                    let _ = reader.read_exact(&mut body);
+                }
+                let mut stream = stream;
+                if hop == 0 {
+                    write!(
+                        stream,
+                        "HTTP/1.1 {status} Moved
+Location: /after
+Content-Length: 0
+Connection: close
+
+"
+                    ).unwrap();
+                } else {
+                    second = format!("{method} body={}", String::from_utf8_lossy(&body));
+                    let page = "<html><body>done</body></html>";
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK
+Content-Length: {}
+Connection: close
+
+{page}",
+                        page.len()
+                    ).unwrap();
+                }
+                let _ = stream.flush();
+            }
+            second
+        });
+        (port, handle)
+    }
+
+    #[test]
+    fn a_redirected_post_does_not_replay_its_body_to_the_next_host() {
+        // The browser rule, and it is a security rule: 301/302/303 turn the
+        // follow-up into a bodyless GET, so a password typed into one form is
+        // not re-sent to wherever that server points next.
+        for status in [301u16, 302, 303] {
+            let (port, server) = redirecting_server(status);
+            let broker = Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+            let target = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+
+            let outcome = broker.send(
+                &target,
+                Initiator::Navigation,
+                "POST",
+                b"password=hunter2",
+                Some("application/x-www-form-urlencoded"),
+            );
+            assert!(outcome.is_ok(), "{status}: {:?}", outcome.error);
+
+            let followed = server.join().unwrap();
+            assert_eq!(
+                followed, "GET body=",
+                "{status} must downgrade to a bodyless GET, got {followed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_307_keeps_the_method_because_the_server_asked_for_that_explicitly() {
+        let (port, server) = redirecting_server(307);
+        let broker = Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+
+        broker.send(
+            &target,
+            Initiator::Navigation,
+            "POST",
+            b"password=hunter2",
+            Some("application/x-www-form-urlencoded"),
+        );
+
+        let followed = server.join().unwrap();
+        assert_eq!(followed, "POST body=password=hunter2", "got {followed:?}");
+    }
+
+    #[test]
+    fn a_session_survives_between_requests_and_never_reaches_the_log() {
+        let (port, server) = login_server();
+        let sink = Arc::new(MemorySink::new());
+        let broker = Broker::new(Policy::new(), sink.clone(), None).unwrap();
+
+        // Loopback is reachable without an allowlist entry, which is what lets
+        // this test exercise the wire without inventing a policy.
+        let login = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
+        let outcome = broker.fetch(&login, Initiator::Navigation);
+        assert!(outcome.is_ok(), "login failed: {:?}", outcome.error);
+        assert_eq!(broker.jar().len(), 1, "the session cookie was kept");
+
+        let page = Url::parse(&format!("http://127.0.0.1:{port}/app")).unwrap();
+        let outcome = broker.fetch(&page, Initiator::Navigation);
+        let body = String::from_utf8_lossy(&outcome.body).to_string();
+        assert!(
+            body.contains("saw:sid=s3cr3t-value"),
+            "the second request carried the session: {body}"
+        );
+
+        // The receipt says how many, and nothing more. A credential in a
+        // request log is a credential in every export that log ends up in.
+        let log = serde_json::to_string(&sink.records()).unwrap();
+        assert!(!log.contains("s3cr3t-value"), "a value reached the log:\n{log}");
+        assert!(log.contains("cookies_sent"), "the count is recorded:\n{log}");
+
+        let sent: Vec<usize> = sink
+            .records()
+            .into_iter()
+            .filter_map(|r| r.cookies_sent)
+            .collect();
+        assert_eq!(sent, vec![0, 1], "none on login, one on the page after it");
+
+        let _ = server.join();
     }
 }

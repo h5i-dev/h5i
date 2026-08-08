@@ -1245,6 +1245,123 @@ What is missing in that last one is the run, not the plumbing —
 `H5I_BROWSER_STREAM_FILE` puts the `.stream` under the box's `agent-browser`
 directory, which is where the viewers' discovery already scans.
 
+**Tier 2's open item closed, 2026-08-08.** The live view has now been driven by
+`h5i box view` against a real `h5i-light` box rather than by a protocol-level
+client: the forward attaches and renders, the console's frame relay pulls a
+1280x720 JPEG through the same session, input is dropped while the agent holds
+the control lock and flows the moment a human takes it — so the lock is enforced
+on an engine with no mediator behind it, which had never been checked. Two
+defects fell out of the run, both fixed:
+
+1. **A readable file could fail to open.** `open ./page.html` reported "invalid
+   path" when `canonicalize` failed, because the fallback handed a *relative*
+   path to `Url::from_file_path`, which refuses one. The walk fails for a
+   working directory the box can reach by fd and not by name — which is any
+   repo under `/tmp`, since that is the directory the supervised tier
+   overmounts. The message named the path when the problem was the walk.
+2. **`serve` accepted one viewer at a time.** The accept loop handled
+   connections sequentially, so opening the console's page tab left
+   `h5i box view` hanging in the backlog with no error. Two viewers could not
+   coexist, which nothing had tried.
+3. **Scrolling only ever worked on unstyled pages.** The scroll range came from
+   the root element's `size.height`, which a stylesheet saying
+   `html, body { height: 100% }` pins to the viewport while the article
+   overflows it — so Blitz reported Wikipedia's 16477px page as 720px and every
+   scroll clamped to zero. The fix reads `size.height.max(content_size.height)`,
+   which is the same formula Blitz's own `scroll_viewport_by` uses. Every local
+   test page was unstyled, so the whole suite agreed with the bug. Found by
+   pointing the thing at Wikipedia, which is the entire argument for doing that.
+
+**The resident session, 2026-08-08 (§11 item 5.1).** `serve` now holds a page
+that several viewers and a control channel share, and
+`h5i-browser-light session status|snapshot|navigate|click` drives it. A control
+verb that moves the page broadcasts to every viewer, so the live view shows the
+page *the agent* is driving — the caveat M11a's page pane had to print is gone
+for this engine. Ack pacing moved from a structural accident ("one frame per
+client message") to per-viewer state, holding the *newest* frame rather than
+queueing a backlog, and nothing is encoded at all when no one is watching.
+
+The architecture was chosen by the compiler, not by preference: **`Page` is not
+`Send`** — `BaseDocument` holds an `Arc<dyn HtmlParserProvider>` and a
+`Box<dyn FontMetricsProvider>` — so the obvious `Arc<Mutex<Session>>` does not
+exist. One thread owns the page and everything else reaches it by channel. That
+is the shape a multi-driver session wants regardless; here it was not optional.
+
+**Untrusted-content marking, 2026-08-08 (§11 item 5.4).** The rendered snapshot
+now fences page content and names it as data. Pulled ahead of its position in
+the list because §11 called it "the only item on this list whose absence is a
+live hole rather than a missing feature" while ranking it fourth, and it depends
+on nothing. Writing the test found the hole that made the fence worth having:
+`href` was the one page-derived field the walker did not collapse, and an HTML
+attribute value may contain a literal newline — so the field that could forge
+the fence was the field nobody had thought of as text.
+
+**The agent-actions pane had no source on this engine, 2026-08-08.** Found by
+someone running an agent in an `h5i-light` box and noticing the pane stayed
+empty while the agent worked. It was empty *by construction*: the pane is fed by
+`browser-actions.jsonl`, which the mediator writes, and
+`engage_browser_mediation` returns `None` for any engine agent-browser cannot
+drive. Before the resident session that was harmless — there were no verbs to
+miss. Adding verbs made it a monitoring surface that silently under-reported,
+which is the failure this codebase keeps writing tests against.
+
+`serve` now writes its own action log (`$H5I_BROWSER_ACTIONS`), ingested as a
+fourth source into `BoxStream::poll` and rendered **box-claimed**, not
+host-observed. That distinction is the point rather than a caveat: h5i sits on
+no socket between an agent and this engine because the engine *is* the browser,
+and a row claiming otherwise would launder the box's own account into evidence
+h5i gathered. The pane note is engine-aware for the same reason. Each verb is
+recorded before it runs and again after — no record, no action — which is a
+guarantee against accident, not against a box that has decided to lie.
+
+Measured before shipping, because it sits on the verb path: **7µs per verb**
+against **42ms** for the single frame encode a scroll triggers when a viewer is
+attached. 0.017% of one frame.
+
+**§11 items 5.2a and 5.5 built, 2026-08-08.** Typing, form submission and a
+cookie jar, shipped together because separately none of them reaches a login.
+Verified end to end against a real login site: type into two fields, submit a
+POST, follow the 303, hold the session cookie, and come back to `welcome alice`
+on a later navigate.
+
+Blitz owns the form submission algorithm and dispatches to a navigation
+provider, so the engine hands it one that *captures* the request rather than
+performing it — the encoding is upstream's, the wire stays ours, and a
+submission is policy-checked and receipted like everything else. `Broker::send`
+generalises `fetch` rather than sitting beside it, because every guarantee lives
+in that loop and a POST that took a shortcut would be the one request with no
+receipt.
+
+The cookie jar is deliberately narrower than a browser's, and item 5.5's warning
+is why the narrowings arrived with it rather than after:
+
+- **Host-only.** `Domain` is ignored. Honouring it correctly needs a public
+  suffix list; without one, `evil.co.uk` can set a cookie for `co.uk`. The cost
+  is that cross-subdomain logins do not persist. That is a missing feature;
+  sending a session cookie to the wrong origin would be a vulnerability.
+- **In memory only**, so restarting the session is a complete logout.
+- **Never readable by the agent**: no verb returns a value, `status` reports a
+  count, and the request log records how many cookies crossed rather than which.
+  A credential in a receipt is a credential in every export it reaches.
+- `Secure` and the `__Secure-`/`__Host-` prefixes enforced, and a redirected
+  POST downgraded to a bodyless GET on 301/302/303 so a password is not replayed
+  to whatever a server names next.
+
+Two bugs the tests caught rather than review. The request-path matcher used
+RFC 6265's *default-path* derivation — which exists only to fill in a missing
+`Path` attribute — so a cookie set at `Path=/admin` was never sent to `/admin`.
+And `scroll_height` was tried for the scroll range before the fix above: taffy
+measures overflow *within* a box, which is zero for an unstyled page whose root
+simply grew.
+
+**Still open. LOGIN mode is not built**, and it is the one item this entry was
+warned about: §11 item 5.5 pairs it with cookies precisely because a session
+with cookies is the first version of this browser where a stolen credential is
+worth having. Until it lands, a human taking over to type a password does so on
+a page the agent can still snapshot. File uploads are dropped rather than read,
+which is a deliberate refusal to acquire filesystem reach. Tier 3 (policy-gated
+script) stays unbuilt for the reasons in §11 item 5.6.
+
 **Corrected 2026-08-08.** This entry also said "nothing wires h5i to this
 engine yet — M9's `--engine` knob does not exist, so using it in a box is
 still manual", which was true the day tier 2 shipped and stopped being true

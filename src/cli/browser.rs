@@ -63,8 +63,9 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             );
             if c.needs_resnapshot {
                 println!(
-                    "  {}    the agent's @refs are stale — it must `agent-browser snapshot` \
-                     before acting",
+                    "  {}    the agent's @refs are stale — it must re-snapshot before acting \
+                     (`agent-browser snapshot`, or `h5i-browser-light session snapshot` on \
+                     the h5i-light engine)",
                     style("stale").yellow()
                 );
             }

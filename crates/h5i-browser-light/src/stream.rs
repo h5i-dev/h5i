@@ -15,13 +15,35 @@
 //! That falls out of the structure rather than being a special case, and it is
 //! most of why an engine like this is cheap to leave open.
 //!
-//! `pacing: "ack"` (what the terminal viewer asks for) is satisfied for free by
-//! the same shape: at most one frame is sent per client message, so the ack for
-//! frame N arrives before anything could send frame N+1.
+//! `pacing: "ack"` (what the terminal viewer asks for) is satisfied by tracking
+//! it per viewer: a viewer that owes an ack is marked dirty rather than sent a
+//! second frame, and gets the newest one when its ack arrives.
+//!
+//! # One thread owns the page
+//!
+//! Everything here is arranged around a constraint the type system enforces
+//! and no amount of design can wish away: **[`Page`] is not `Send`.** Blitz's
+//! `BaseDocument` holds an `Arc<dyn HtmlParserProvider>` and a
+//! `Box<dyn FontMetricsProvider>`, and neither is thread-safe, so there is no
+//! `Arc<Mutex<Session>>` to be had — the obvious shape for "several viewers
+//! plus a CLI share one page" does not compile.
+//!
+//! So the page has exactly one owner: [`run_session`], a loop on a single
+//! thread. Viewers and control clients each get a thread that owns only its
+//! socket, and they reach the page by sending it a [`Command`]. Replies and
+//! frames travel back over channels, which carry only JSON and are `Send`.
+//!
+//! That constraint bought the right architecture. A session that several
+//! things drive needs one serialisation point whether or not the DOM is
+//! thread-safe, and this is it: there is no interleaving to reason about,
+//! because a command is handled to completion before the next one starts.
 
-use std::io::BufReader;
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread;
 
 use base64::Engine as _;
 use h5i_error::H5iError;
@@ -29,6 +51,7 @@ use serde_json::{json, Value};
 use url::Url;
 
 use crate::engine::{Page, PageFactory};
+use crate::receipt::ActionLog;
 use crate::ws::{self, Incoming};
 
 /// How far a key scrolls, as a fraction of the viewport.
@@ -42,6 +65,20 @@ pub struct ServeOptions {
     /// `<env>/tmp/agent-browser/*.stream`, so writing one here is what makes
     /// this engine discoverable without changing the viewer.
     pub stream_file: Option<PathBuf>,
+    /// Where to advertise the control port, which is what makes the session
+    /// *resident*: a CLI that connects here drives the same page the viewers
+    /// are watching, instead of rendering its own copy and exiting.
+    ///
+    /// Loopback TCP rather than a Unix socket, for two reasons. It is the same
+    /// mechanism as the stream port, so there is one story about reachability
+    /// rather than two; and it needs no `cfg(unix)`, which a Unix socket would
+    /// bring to a crate that is otherwise portable. It grants nothing new
+    /// either way: anything that can reach this port is already inside the box
+    /// and could run the binary itself.
+    pub control_file: Option<PathBuf>,
+    /// Where to record the verbs an agent asks for. `None` on a bare host,
+    /// where there is no console to feed.
+    pub action_log: Option<PathBuf>,
     /// Serve one viewer and exit, which is what the tests and a one-shot
     /// demo want.
     pub once: bool,
@@ -53,8 +90,52 @@ impl Default for ServeOptions {
             addr: "127.0.0.1:0".to_string(),
             quality: 80,
             stream_file: None,
+            control_file: None,
+            action_log: None,
             once: false,
         }
+    }
+}
+
+/// What reaches the page's owning thread.
+///
+/// Every variant carries whatever the sender needs back, because the page
+/// thread must never block waiting on a socket: it answers into a channel and
+/// returns to the loop.
+enum Command {
+    /// A viewer connected. The reply channel is kept, not consumed.
+    Join { id: u64, tx: Sender<Outgoing> },
+    /// A viewer's socket ended, however it ended.
+    Leave { id: u64 },
+    /// One message from a viewer — input, pacing, or something to ignore.
+    Viewer { id: u64, message: Value },
+    /// One request from a control client, answered exactly once.
+    Control { request: Value, reply: Sender<Value> },
+}
+
+/// What a connection thread writes to its own socket.
+enum Outgoing {
+    Text(String),
+    Pong(Vec<u8>),
+    Close,
+}
+
+/// A connected viewer, as the page thread sees it.
+struct Viewer {
+    tx: Sender<Outgoing>,
+    /// The terminal viewer asks for `ack` pacing; the web viewer does not.
+    ack_pacing: bool,
+    /// A frame has been sent that this viewer has not acked yet.
+    awaiting_ack: bool,
+    /// The newest frame withheld while awaiting an ack. Held rather than
+    /// queued: a viewer that fell behind wants the current page, not a replay
+    /// of every scroll it missed.
+    pending: Option<Value>,
+}
+
+impl Viewer {
+    fn send(&self, message: &Value) {
+        let _ = self.tx.send(Outgoing::Text(message.to_string()));
     }
 }
 
@@ -64,6 +145,12 @@ struct Session {
     page: Page,
     quality: u8,
     seq: u64,
+    /// Where the agent's own verbs are recorded, when h5i asked for one.
+    ///
+    /// Optional because the engine runs on a bare host too, where there is no
+    /// console to feed and no claim to support. Inside a box it is set, and
+    /// then it is a precondition: see [`crate::receipt::ActionLog::begin`].
+    actions: Option<ActionLog>,
 }
 
 impl Session {
@@ -118,62 +205,239 @@ impl Session {
     }
 }
 
-/// Serve the live view until the viewer disconnects.
+/// Serve the live view and the control channel until the session ends.
+///
+/// The calling thread becomes the page's owner ([`run_session`]); the two
+/// listeners get accept threads of their own. That is the only arrangement
+/// available, because `page` cannot be moved to another thread — see the
+/// module docs.
 pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<(), H5iError> {
-    let listener = TcpListener::bind(&options.addr)
+    let viewers = TcpListener::bind(&options.addr)
         .map_err(|e| H5iError::Metadata(format!("could not bind {}: {e}", options.addr)))?;
-    let port = listener
-        .local_addr()
-        .map_err(|e| H5iError::Metadata(format!("could not read the bound address: {e}")))?
-        .port();
+    let port = local_port(&viewers)?;
+
+    // Bound before anything is advertised, so a client that finds one file and
+    // then the other never finds a port nobody is listening on.
+    let control = TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| H5iError::Metadata(format!("could not bind a control port: {e}")))?;
+    let control_port = local_port(&control)?;
 
     if let Some(path) = &options.stream_file {
-        write_stream_file(path, port)?;
+        write_port_file(path, port)?;
+    }
+    if let Some(path) = &options.control_file {
+        write_port_file(path, control_port)?;
     }
     eprintln!("h5i-browser-light: live view on 127.0.0.1:{port}");
+    eprintln!("h5i-browser-light: session control on 127.0.0.1:{control_port}");
 
-    let mut session = Session {
+    let (tx, rx) = channel::<Command>();
+
+    let viewer_tx = tx.clone();
+    let once = options.once;
+    thread::spawn(move || accept_viewers(viewers, viewer_tx, once));
+    thread::spawn(move || accept_control(control, tx));
+
+    // Opened before the listeners are advertised: a session that cannot record
+    // what it is asked to do should fail at startup, where someone is watching,
+    // rather than on the agent's first verb.
+    let actions = match &options.action_log {
+        Some(path) => Some(ActionLog::create(path)?),
+        None => None,
+    };
+
+    let session = Session {
         factory,
         page,
         quality: options.quality,
         seq: 0,
+        actions,
     };
+    run_session(session, rx, options.once);
 
-    for incoming in listener.incoming() {
-        let stream = incoming.map_err(H5iError::Io)?;
-        if let Err(error) = serve_one(&mut session, stream) {
-            // A viewer that closed its tab is not an error worth exiting on.
-            eprintln!("h5i-browser-light: viewer disconnected: {error}");
-        }
-        if options.once {
-            break;
-        }
-    }
-
-    if let Some(path) = &options.stream_file {
+    for path in [&options.stream_file, &options.control_file].into_iter().flatten() {
         let _ = std::fs::remove_file(path);
     }
     Ok(())
 }
 
-fn write_stream_file(path: &Path, port: u16) -> Result<(), H5iError> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
-        }
-    }
-    std::fs::write(path, port.to_string()).map_err(|e| H5iError::with_path(e, path))
+fn local_port(listener: &TcpListener) -> Result<u16, H5iError> {
+    Ok(listener
+        .local_addr()
+        .map_err(|e| H5iError::Metadata(format!("could not read the bound address: {e}")))?
+        .port())
 }
 
-fn serve_one(session: &mut Session, mut stream: TcpStream) -> Result<(), H5iError> {
+/// The page's owning thread: the one place a [`Session`] is touched.
+///
+/// Returns when every channel into it has closed, or — under `once` — when the
+/// first viewer has come and gone.
+fn run_session(mut session: Session, rx: Receiver<Command>, once: bool) {
+    let mut viewers: HashMap<u64, Viewer> = HashMap::new();
+    let mut had_viewer = false;
+
+    while let Ok(command) = rx.recv() {
+        match command {
+            Command::Join { id, tx } => {
+                let viewer = Viewer {
+                    tx,
+                    ack_pacing: false,
+                    awaiting_ack: false,
+                    pending: None,
+                };
+                // The viewport has to arrive before frames, or the viewer maps
+                // mouse coordinates against its 1280x720 default and clicks
+                // land elsewhere.
+                viewer.send(&session.status_message());
+                viewer.send(&session.url_message());
+                viewers.insert(id, viewer);
+                had_viewer = true;
+
+                match session.frame_message() {
+                    Ok(frame) => send_frame(viewers.get_mut(&id).expect("just inserted"), frame),
+                    Err(error) => {
+                        eprintln!("h5i-browser-light: could not render the first frame: {error}")
+                    }
+                }
+            }
+
+            Command::Leave { id } => {
+                viewers.remove(&id);
+                if once && had_viewer && viewers.is_empty() {
+                    break;
+                }
+            }
+
+            Command::Viewer { id, message } => {
+                // An ack is about one viewer's pacing, so it is answered here
+                // rather than in `handle`, which speaks for the whole session.
+                if message.get("type").and_then(Value::as_str) == Some("ack") {
+                    if let Some(viewer) = viewers.get_mut(&id) {
+                        viewer.awaiting_ack = false;
+                        if let Some(frame) = viewer.pending.take() {
+                            send_frame(viewer, frame);
+                        }
+                    }
+                    continue;
+                }
+                if message.get("type").and_then(Value::as_str) == Some("config") {
+                    if let Some(viewer) = viewers.get_mut(&id) {
+                        viewer.ack_pacing =
+                            message.get("pacing").and_then(Value::as_str) == Some("ack");
+                    }
+                }
+
+                match handle(&mut session, &message) {
+                    Ok(out) => dispatch(&mut viewers, id, out),
+                    Err(error) => {
+                        eprintln!("h5i-browser-light: {error}");
+                    }
+                }
+            }
+
+            Command::Control { request, reply } => {
+                let (answer, changed) = recorded_verb(&mut session, &request);
+                let _ = reply.send(answer);
+                // A control verb that moved the page is exactly the case the
+                // resident session exists for: every viewer sees what the
+                // agent did, rather than the page the server happened to open.
+                if changed {
+                    broadcast_change(&mut session, &mut viewers);
+                }
+            }
+        }
+    }
+}
+
+/// Route what `handle` produced.
+///
+/// A frame is a fact about the session, so it reaches every viewer; anything
+/// else answers the viewer that asked. The distinction matters for `config`,
+/// whose frame is a courtesy to one arriving client and would be an unasked-for
+/// frame for everybody else.
+fn dispatch(viewers: &mut HashMap<u64, Viewer>, actor: u64, out: Vec<Value>) {
+    for message in out {
+        if message.get("type").and_then(Value::as_str) == Some("frame") {
+            for viewer in viewers.values_mut() {
+                send_frame(viewer, message.clone());
+            }
+        } else if let Some(viewer) = viewers.get(&actor) {
+            viewer.send(&message);
+        }
+    }
+}
+
+/// Render one frame and give it to everyone watching.
+fn broadcast_change(session: &mut Session, viewers: &mut HashMap<u64, Viewer>) {
+    if viewers.is_empty() {
+        // Nobody is watching, so nothing is encoded. The "zero frames per
+        // second at rest" property has to survive the control channel, or a
+        // headless agent driving the page pays for JPEGs no one sees.
+        return;
+    }
+    let url = session.url_message();
+    match session.frame_message() {
+        Ok(frame) => {
+            for viewer in viewers.values_mut() {
+                viewer.send(&url);
+                send_frame(viewer, frame.clone());
+            }
+        }
+        Err(error) => eprintln!("h5i-browser-light: could not render a frame: {error}"),
+    }
+}
+
+/// Send a frame, or hold it if this viewer still owes an ack.
+fn send_frame(viewer: &mut Viewer, frame: Value) {
+    if viewer.ack_pacing && viewer.awaiting_ack {
+        viewer.pending = Some(frame);
+        return;
+    }
+    viewer.send(&frame);
+    if viewer.ack_pacing {
+        viewer.awaiting_ack = true;
+    }
+}
+
+/// Accept viewers until the listener dies, one thread each.
+fn accept_viewers(listener: TcpListener, tx: Sender<Command>, once: bool) {
+    let mut next_id = 0u64;
+    for incoming in listener.incoming() {
+        let Ok(stream) = incoming else { continue };
+        next_id += 1;
+        let id = next_id;
+        let tx = tx.clone();
+        thread::spawn(move || {
+            if let Err(error) = serve_viewer(id, stream, &tx) {
+                // A viewer that closed its tab is not an error worth reporting
+                // as one; the session outlives it either way.
+                eprintln!("h5i-browser-light: viewer {id} disconnected: {error}");
+            }
+            let _ = tx.send(Command::Leave { id });
+        });
+        if once {
+            break;
+        }
+    }
+}
+
+/// One viewer: a reader on this thread, a writer on another.
+///
+/// Split because both directions are blocking and the page thread must never
+/// wait on either. The writer thread is the only thing that touches the socket
+/// for output, which is what makes "several actors, one socket" safe without a
+/// lock around the stream.
+fn serve_viewer(id: u64, mut stream: TcpStream, tx: &Sender<Command>) -> Result<(), H5iError> {
     ws::accept(&mut stream)?;
 
-    // The viewport has to arrive before frames, or the viewer maps mouse
-    // coordinates against its 1280x720 default and clicks land elsewhere.
-    ws::send_text(&mut stream, &session.status_message().to_string())?;
-    ws::send_text(&mut stream, &session.url_message().to_string())?;
-    let first = session.frame_message()?;
-    ws::send_text(&mut stream, &first.to_string())?;
+    let (out_tx, out_rx) = channel::<Outgoing>();
+    let writer = stream
+        .try_clone()
+        .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?;
+    let pump = thread::spawn(move || write_outgoing(writer, out_rx));
+
+    tx.send(Command::Join { id, tx: out_tx.clone() })
+        .map_err(|_| H5iError::Metadata("the session ended".into()))?;
 
     let mut reader = BufReader::new(
         stream
@@ -181,23 +445,365 @@ fn serve_one(session: &mut Session, mut stream: TcpStream) -> Result<(), H5iErro
             .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?,
     );
 
-    loop {
-        match ws::read_message(&mut reader)? {
-            Incoming::Close => return Ok(()),
-            Incoming::Pong => continue,
-            Incoming::Ping(payload) => {
-                ws::send_pong(&mut stream, &payload)?;
+    let result = loop {
+        match ws::read_message(&mut reader) {
+            Ok(Incoming::Close) | Err(_) => break Ok(()),
+            Ok(Incoming::Pong) => continue,
+            Ok(Incoming::Ping(payload)) => {
+                let _ = out_tx.send(Outgoing::Pong(payload));
             }
-            Incoming::Text(text) => {
+            Ok(Incoming::Text(text)) => {
                 let Ok(message) = serde_json::from_str::<Value>(&text) else {
                     continue;
                 };
-                for outgoing in handle(session, &message)? {
-                    ws::send_text(&mut stream, &outgoing.to_string())?;
+                if tx.send(Command::Viewer { id, message }).is_err() {
+                    break Ok(());
                 }
             }
         }
+    };
+
+    let _ = out_tx.send(Outgoing::Close);
+    drop(out_tx);
+    let _ = pump.join();
+    result
+}
+
+/// The only writer on a viewer's socket.
+fn write_outgoing(mut stream: TcpStream, rx: Receiver<Outgoing>) {
+    while let Ok(message) = rx.recv() {
+        let sent = match message {
+            Outgoing::Text(text) => ws::send_text(&mut stream, &text),
+            Outgoing::Pong(payload) => ws::send_pong(&mut stream, &payload),
+            Outgoing::Close => break,
+        };
+        if sent.is_err() {
+            break;
+        }
     }
+}
+
+/// Accept control clients: one JSON request per line, one JSON reply per line.
+///
+/// Line-delimited rather than a framed protocol because the client is a CLI
+/// that connects, asks one thing and leaves, and a format a human can produce
+/// with `nc` is a format they can debug with `nc`.
+fn accept_control(listener: TcpListener, tx: Sender<Command>) {
+    for incoming in listener.incoming() {
+        let Ok(stream) = incoming else { continue };
+        let tx = tx.clone();
+        thread::spawn(move || {
+            if let Err(error) = serve_control(stream, &tx) {
+                eprintln!("h5i-browser-light: control client: {error}");
+            }
+        });
+    }
+}
+
+fn serve_control(stream: TcpStream, tx: &Sender<Command>) -> Result<(), H5iError> {
+    let mut writer = stream
+        .try_clone()
+        .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?;
+    let reader = BufReader::new(stream);
+
+    for line in reader.lines() {
+        let line = line.map_err(H5iError::Io)?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let answer = match serde_json::from_str::<Value>(&line) {
+            Ok(request) => {
+                let (reply_tx, reply_rx) = channel::<Value>();
+                if tx.send(Command::Control { request, reply: reply_tx }).is_err() {
+                    return Err(H5iError::Metadata("the session ended".into()));
+                }
+                reply_rx
+                    .recv()
+                    .unwrap_or_else(|_| error_reply("the session ended before it answered"))
+            }
+            Err(error) => error_reply(&format!("not JSON: {error}")),
+        };
+        writeln!(writer, "{answer}").map_err(H5iError::Io)?;
+        writer.flush().map_err(H5iError::Io)?;
+    }
+    Ok(())
+}
+
+fn error_reply(message: &str) -> Value {
+    json!({"ok": false, "error": message})
+}
+
+/// Read a port advertised in a file by [`write_port_file`].
+pub fn read_port_file(path: &Path) -> Result<u16, H5iError> {
+    let text = std::fs::read_to_string(path).map_err(|e| H5iError::with_path(e, path))?;
+    text.trim()
+        .parse()
+        .map_err(|_| H5iError::Metadata(format!("{} does not hold a port", path.display())))
+}
+
+/// Ask a resident session one thing, and read its answer.
+///
+/// A connection per request. The session is a long-lived thing but a CLI verb
+/// is not, and a pool would buy nothing on a loopback socket except a second
+/// lifetime to get wrong.
+pub fn ask(port: u16, request: &Value) -> Result<Value, H5iError> {
+    let stream = TcpStream::connect(("127.0.0.1", port)).map_err(|e| {
+        H5iError::Metadata(format!(
+            "no session answering on 127.0.0.1:{port} ({e}). Start one with \
+             `h5i-browser-light serve <url>`."
+        ))
+    })?;
+    let mut writer = stream
+        .try_clone()
+        .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?;
+    writeln!(writer, "{request}").map_err(H5iError::Io)?;
+    writer.flush().map_err(H5iError::Io)?;
+
+    let mut line = String::new();
+    BufReader::new(stream)
+        .read_line(&mut line)
+        .map_err(H5iError::Io)?;
+    if line.trim().is_empty() {
+        return Err(H5iError::Metadata(
+            "the session closed without answering".into(),
+        ));
+    }
+    serde_json::from_str(&line)
+        .map_err(|e| H5iError::Metadata(format!("the session answered with non-JSON: {e}")))
+}
+
+/// Record a verb, run it, record how it went.
+///
+/// Wrapped around [`control_verb`] rather than folded into it so the verbs stay
+/// testable without a file, and so there is exactly one place where "acted" and
+/// "recorded" can drift apart — this one.
+///
+/// The pane this feeds says *agent actions*, and until now it could only ever
+/// be filled by the mediated socket in front of agent-browser. There is no such
+/// socket here — the engine is the browser — so before this the console showed
+/// an empty pane for a session an agent was actively driving, which reads as
+/// "the agent did nothing" and is the one thing a monitoring surface must never
+/// say by accident.
+fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
+    let verb = request.get("verb").and_then(Value::as_str).unwrap_or("");
+    // Whatever the verb aims at, under one name, so a reader does not have to
+    // know which verbs take a URL and which take a ref.
+    let target = request
+        .get("url")
+        .or_else(|| request.get("ref"))
+        .or_else(|| request.get("by"))
+        .map(|v| match v.as_str() {
+            Some(s) => s.to_string(),
+            None => v.to_string(),
+        });
+
+    let Some(log) = &session.actions else {
+        return control_verb(session, request);
+    };
+
+    let seq = match log.begin(verb, target.as_deref()) {
+        Ok(seq) => seq,
+        // No record, no action. The agent is told why in the same shape as any
+        // other refusal, so this does not read as the verb having half-happened.
+        Err(error) => {
+            return (
+                error_reply(&format!(
+                    "refusing to act: the action could not be recorded: {error}"
+                )),
+                false,
+            )
+        }
+    };
+
+    let (answer, changed) = control_verb(session, request);
+
+    let ok = answer.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    let url = answer.get("url").and_then(Value::as_str);
+    let error = answer.get("error").and_then(Value::as_str);
+    if let Some(log) = &session.actions {
+        log.finish(seq, verb, target.as_deref(), ok, url, error);
+    }
+    (answer, changed)
+}
+
+/// Handle one control request against the resident page.
+///
+/// Returns the reply and whether the page moved, because the caller is the only
+/// thing that knows who else is watching.
+fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
+    let verb = request.get("verb").and_then(Value::as_str).unwrap_or("");
+    match verb {
+        // What the session is, for a client that just connected.
+        "status" => (
+            json!({
+                "ok": true,
+                "url": session.page.url().to_string(),
+                "engine": "h5i-browser-light",
+                // How many, never which. An agent can see that it is logged in
+                // without being able to read the credential that makes it so,
+                // which is what keeps a stolen snapshot worth less than a
+                // stolen jar.
+                "cookies": session.factory.broker().jar().len(),
+            }),
+            false,
+        ),
+
+        "snapshot" => {
+            let snapshot = session.page.snapshot();
+            (
+                json!({"ok": true, "url": session.page.url().to_string(), "text": snapshot.render()}),
+                false,
+            )
+        }
+
+        // Scrolling is the one thing a viewer could do that an agent could not,
+        // which made "look further down the page" a request only a human could
+        // make. `moved` is reported rather than assumed: a scroll at the bottom
+        // of a document changes nothing, and an agent that cannot tell will
+        // loop asking for more page that does not exist.
+        "scroll" => {
+            let by = request.get("by").and_then(Value::as_f64).unwrap_or(0.0);
+            let moved = session.page.scroll_by(0.0, by);
+            let (_, offset) = session.page.scroll_offset();
+            (
+                json!({
+                    "ok": true,
+                    "moved": moved,
+                    "offset": offset,
+                    "content_height": session.page.content_height(),
+                }),
+                moved,
+            )
+        }
+
+        "navigate" => {
+            let Some(target) = request.get("url").and_then(Value::as_str) else {
+                return (error_reply("navigate needs a `url`"), false);
+            };
+            // Resolved against the current page, so an agent may say
+            // `/docs` for the same reason a person may click one.
+            let resolved = match session.page.url().join(target) {
+                Ok(url) => url,
+                Err(error) => return (error_reply(&format!("`{target}` is not a URL: {error}")), false),
+            };
+            match session.factory.open(&resolved) {
+                Ok(page) => {
+                    session.page = page;
+                    (json!({"ok": true, "url": session.page.url().to_string()}), true)
+                }
+                // A refusal is an answer, not a crash: the allowlist saying no
+                // is the engine working, and the agent needs to read it as one.
+                Err(error) => (error_reply(&format!("{error}")), false),
+            }
+        }
+
+        // Typing and submitting are the pair that make a login reachable: a
+        // session an agent cannot type into stops at the first form, so these
+        // ship together or neither is worth having.
+        "type" => {
+            let Some(reference) = request.get("ref").and_then(Value::as_str) else {
+                return (error_reply("type needs a `ref`"), false);
+            };
+            let Some(text) = request.get("text").and_then(Value::as_str) else {
+                return (error_reply("type needs `text`"), false);
+            };
+            let snapshot = session.page.snapshot();
+            let Some(entry) = snapshot.resolve(reference) else {
+                return (
+                    error_reply(&format!("no such ref `{reference}` on this page")),
+                    false,
+                );
+            };
+            let node_id = entry.node_id;
+            let role = entry.role.clone();
+            if !session.page.type_into(node_id, text) {
+                return (
+                    error_reply(&format!("`{reference}` is a {role}, not a field to type into")),
+                    false,
+                );
+            }
+            (json!({"ok": true, "ref": reference}), true)
+        }
+
+        "submit" => {
+            let Some(reference) = request.get("ref").and_then(Value::as_str) else {
+                return (error_reply("submit needs a `ref` inside the form"), false);
+            };
+            let snapshot = session.page.snapshot();
+            let Some(entry) = snapshot.resolve(reference) else {
+                return (
+                    error_reply(&format!("no such ref `{reference}` on this page")),
+                    false,
+                );
+            };
+            let node_id = entry.node_id;
+            let submission = match session.page.submit_form(node_id) {
+                Ok(submission) => submission,
+                Err(error) => return (error_reply(&format!("{error}")), false),
+            };
+            match session.factory.open_submission(&submission) {
+                Ok(page) => {
+                    session.page = page;
+                    (
+                        json!({
+                            "ok": true,
+                            "url": session.page.url().to_string(),
+                            "method": submission.method,
+                        }),
+                        true,
+                    )
+                }
+                Err(error) => (error_reply(&format!("{error}")), false),
+            }
+        }
+
+        "click" => {
+            let Some(reference) = request.get("ref").and_then(Value::as_str) else {
+                return (error_reply("click needs a `ref`"), false);
+            };
+            let snapshot = session.page.snapshot();
+            let Some(entry) = snapshot.resolve(reference) else {
+                return (
+                    error_reply(&format!("no such ref `{reference}` on this page")),
+                    false,
+                );
+            };
+            let Some(href) = entry.href.clone() else {
+                return (
+                    error_reply(&format!("`{reference}` is a {} with nothing to follow", entry.role)),
+                    false,
+                );
+            };
+            let resolved = match session.page.url().join(&href) {
+                Ok(url) => url,
+                Err(error) => return (error_reply(&format!("`{href}` is not a URL: {error}")), false),
+            };
+            match session.factory.open(&resolved) {
+                Ok(page) => {
+                    session.page = page;
+                    (json!({"ok": true, "url": session.page.url().to_string()}), true)
+                }
+                Err(error) => (error_reply(&format!("{error}")), false),
+            }
+        }
+
+        other => (
+            error_reply(&format!(
+                "`{other}` is not a verb this engine has (status, snapshot, navigate, \
+                 scroll, type, submit, click)"
+            )),
+            false,
+        ),
+    }
+}
+
+fn write_port_file(path: &Path, port: u16) -> Result<(), H5iError> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+        }
+    }
+    std::fs::write(path, port.to_string()).map_err(|e| H5iError::with_path(e, path))
 }
 
 /// Handle one client message, returning what to send back.
@@ -301,6 +907,7 @@ mod tests {
             page,
             quality: 70,
             seq: 0,
+            actions: None,
         }
     }
 
@@ -388,6 +995,31 @@ mod tests {
     }
 
     #[test]
+    fn a_page_whose_css_pins_the_root_to_the_viewport_still_scrolls() {
+        // The regression found by pointing this at Wikipedia. `html, body {
+        // height: 100% }` sizes the root box to the viewport and lets the
+        // article overflow it, so measuring the root's own box reported a long
+        // page as exactly one screen and clamped every scroll to nothing. Every
+        // local test page was unstyled, which is why they all passed.
+        let mut session = session_with(
+            "<!doctype html><html><head><style>html,body{height:100%;margin:0}</style></head>\
+             <body><div style='height:4000px'>long</div></body></html>",
+        );
+
+        assert!(
+            session.page.content_height() > 200.0,
+            "the overflowing content counts toward the height: {}",
+            session.page.content_height()
+        );
+        assert!(
+            session.page.scroll_by(0.0, 300.0),
+            "a page taller than the viewport must scroll"
+        );
+        let (_, y) = session.page.scroll_offset();
+        assert!(y > 0.0, "scrolled to {y}");
+    }
+
+    #[test]
     fn keys_scroll_by_the_amounts_a_reader_expects() {
         assert_eq!(scroll_for_key("PageDown", 1000.0), Some(900.0));
         assert_eq!(scroll_for_key("PageUp", 1000.0), Some(-900.0));
@@ -437,7 +1069,304 @@ mod tests {
     fn the_stream_file_advertises_the_port_where_viewers_look_for_it() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("agent-browser").join("s1.stream");
-        write_stream_file(&path, 45123).expect("writes");
+        write_port_file(&path, 45123).expect("writes");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "45123");
+    }
+
+    // ── the resident session ────────────────────────────────────────────────
+
+    fn viewer(ack_pacing: bool) -> (Viewer, Receiver<Outgoing>) {
+        let (tx, rx) = channel();
+        (
+            Viewer {
+                tx,
+                ack_pacing,
+                awaiting_ack: false,
+                pending: None,
+            },
+            rx,
+        )
+    }
+
+    fn texts(rx: &Receiver<Outgoing>) -> Vec<Value> {
+        let mut out = Vec::new();
+        while let Ok(message) = rx.try_recv() {
+            if let Outgoing::Text(text) = message {
+                out.push(serde_json::from_str(&text).expect("json"));
+            }
+        }
+        out
+    }
+
+    fn kinds(messages: &[Value]) -> Vec<String> {
+        messages
+            .iter()
+            .filter_map(|m| m.get("type").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn a_frame_reaches_every_viewer_and_a_reply_reaches_only_the_asker() {
+        // The bug this pins was found by driving a real box: the old serve
+        // handled one connection at a time, so opening the console's page tab
+        // silently blocked `h5i box view` instead of showing both the page.
+        let mut viewers = HashMap::new();
+        let (a, a_rx) = viewer(false);
+        let (b, b_rx) = viewer(false);
+        viewers.insert(1u64, a);
+        viewers.insert(2u64, b);
+
+        dispatch(
+            &mut viewers,
+            1,
+            vec![
+                json!({"type": "frame", "seq": 7, "data": ""}),
+                json!({"type": "page_error", "text": "only the clicker cares"}),
+            ],
+        );
+
+        assert_eq!(kinds(&texts(&a_rx)), vec!["frame", "page_error"]);
+        assert_eq!(
+            kinds(&texts(&b_rx)),
+            vec!["frame"],
+            "a second viewer sees the page move, not the other viewer's error"
+        );
+    }
+
+    #[test]
+    fn a_viewer_that_owes_an_ack_gets_the_newest_frame_not_a_backlog() {
+        // Ack pacing used to fall out of "one frame per client message". With
+        // several actors on one session that no longer holds, so the pacing is
+        // tracked per viewer — and the held frame is the latest, because a
+        // viewer that fell behind wants the current page, not a replay.
+        let (mut v, rx) = viewer(true);
+
+        send_frame(&mut v, json!({"type": "frame", "seq": 1}));
+        assert!(v.awaiting_ack, "the first frame starts the wait");
+        send_frame(&mut v, json!({"type": "frame", "seq": 2}));
+        send_frame(&mut v, json!({"type": "frame", "seq": 3}));
+
+        let sent = texts(&rx);
+        assert_eq!(sent.len(), 1, "only the acked-for frame went out: {sent:?}");
+        assert_eq!(sent[0]["seq"], 1);
+        assert_eq!(
+            v.pending.as_ref().and_then(|f| f["seq"].as_u64()),
+            Some(3),
+            "the held frame is the newest, not the oldest"
+        );
+
+        // The ack releases exactly one frame, and it is the newest.
+        v.awaiting_ack = false;
+        let pending = v.pending.take().expect("a frame was held");
+        send_frame(&mut v, pending);
+        let sent = texts(&rx);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["seq"], 3);
+    }
+
+    #[test]
+    fn a_viewer_without_ack_pacing_is_never_throttled() {
+        let (mut v, rx) = viewer(false);
+        for seq in 1..=3 {
+            send_frame(&mut v, json!({"type": "frame", "seq": seq}));
+        }
+        assert_eq!(texts(&rx).len(), 3);
+        assert!(v.pending.is_none());
+    }
+
+    #[test]
+    fn control_verbs_answer_and_say_whether_the_page_moved() {
+        let mut session = session_with(tall_page());
+
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "status"}));
+        assert_eq!(reply["ok"], true);
+        assert_eq!(reply["engine"], "h5i-browser-light");
+        assert!(!changed, "asking what the page is does not move it");
+
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "snapshot"}));
+        assert_eq!(reply["ok"], true);
+        assert!(
+            reply["text"]
+                .as_str()
+                .unwrap()
+                .contains(crate::snapshot::CONTENT_BEGIN),
+            "an agent reading through the control channel gets the same fenced \
+             outline as one reading the CLI: {reply:?}"
+        );
+        assert!(!changed);
+    }
+
+    #[test]
+    fn scroll_reports_whether_it_actually_moved() {
+        let mut session = session_with(tall_page());
+
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "scroll", "by": 300.0}));
+        assert_eq!(reply["ok"], true);
+        assert_eq!(reply["moved"], true);
+        assert!(changed, "a scroll that moved is a frame for every viewer");
+
+        // At the top, scrolling up moves nothing — and an agent that cannot
+        // tell the difference will loop asking for page that is not there.
+        let (reply, changed) =
+            control_verb(&mut session, &json!({"verb": "scroll", "by": -100000.0}));
+        assert_eq!(reply["moved"], true, "it can still travel back to the top");
+        assert!(changed);
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "scroll", "by": -100.0}));
+        assert_eq!(reply["moved"], false, "already at the top: {reply:?}");
+        assert!(!changed, "a scroll that moved nothing encodes no frame");
+    }
+
+    #[test]
+    fn every_verb_that_reaches_the_session_is_recorded() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("browser-actions.jsonl");
+        let mut session = session_with(tall_page());
+        session.actions = Some(ActionLog::create(&path).expect("log"));
+
+        recorded_verb(&mut session, &json!({"verb": "snapshot"}));
+        recorded_verb(&mut session, &json!({"verb": "scroll", "by": 200.0}));
+        recorded_verb(&mut session, &json!({"verb": "click", "ref": "e404"}));
+
+        let text = std::fs::read_to_string(&path).expect("written");
+        let results: Vec<&str> = text
+            .lines()
+            .filter(|l| l.contains("\"phase\":\"result\""))
+            .collect();
+        assert_eq!(results.len(), 3, "one outcome per verb:\n{text}");
+
+        // A read is recorded as surely as a write. "The agent looked at this
+        // page" is exactly the kind of thing a reviewer is auditing for.
+        assert!(results[0].contains("\"verb\":\"snapshot\""), "{text}");
+        // The target travels whatever its spelling: a url, a ref, a distance.
+        assert!(results[1].contains("\"target\":\"200.0\""), "{text}");
+        assert!(results[2].contains("\"ok\":false"), "{text}");
+        assert!(results[2].contains("e404"), "{text}");
+    }
+
+    #[test]
+    fn a_verb_that_cannot_be_recorded_does_not_happen() {
+        // No record, no action. Proved by the page not moving, not merely by
+        // the reply: an agent that scrolled invisibly would be the bug.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("actions.jsonl");
+        let mut session = session_with(tall_page());
+        session.actions = Some(ActionLog::unwritable_for_test(&path).expect("log"));
+
+        let before = session.page.scroll_offset();
+        let (reply, changed) = recorded_verb(&mut session, &json!({"verb": "scroll", "by": 400.0}));
+
+        assert_eq!(reply["ok"], false);
+        assert!(
+            reply["error"].as_str().unwrap().contains("could not be recorded"),
+            "the agent is told why: {reply:?}"
+        );
+        assert!(!changed);
+        assert_eq!(session.page.scroll_offset(), before, "the page must not move");
+    }
+
+    #[test]
+    fn a_session_without_a_log_still_works() {
+        // The engine runs on a bare host too, where there is no console to feed
+        // and no claim to support.
+        let mut session = session_with(tall_page());
+        assert!(session.actions.is_none());
+        let (reply, changed) = recorded_verb(&mut session, &json!({"verb": "scroll", "by": 300.0}));
+        assert_eq!(reply["ok"], true);
+        assert!(changed);
+    }
+
+    #[test]
+    fn typing_names_what_went_wrong_rather_than_failing_silently() {
+        let mut session = session_with(
+            "<!doctype html><body><a href='/next'>a link</a>             <form><input type='text' placeholder='name'></form></body>",
+        );
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "type", "ref": "e1"}));
+        assert_eq!(reply["ok"], false, "text is required: {reply:?}");
+
+        let (reply, changed) = control_verb(
+            &mut session,
+            &json!({"verb": "type", "ref": "e404", "text": "x"}),
+        );
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"].as_str().unwrap().contains("e404"));
+        assert!(!changed);
+
+        // The link is @e1; typing into it must say *why* it cannot be typed
+        // into, not merely that it failed.
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "type", "ref": "e1", "text": "x"}),
+        );
+        assert_eq!(reply["ok"], false);
+        assert!(
+            reply["error"].as_str().unwrap().contains("not a field"),
+            "{reply:?}"
+        );
+    }
+
+    #[test]
+    fn a_status_reports_how_many_cookies_it_holds_and_never_which() {
+        let mut session = session_with(tall_page());
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "status"}));
+        assert_eq!(reply["cookies"], 0);
+        // The shape of the answer is the guarantee: there is no field here a
+        // value could travel in.
+        let keys: Vec<&str> = reply.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        assert!(!keys.iter().any(|k| k.contains("value")), "{keys:?}");
+    }
+
+    #[test]
+    fn an_unknown_verb_is_an_answer_rather_than_a_dropped_connection() {
+        let mut session = session_with(tall_page());
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "typewrite"}));
+        assert_eq!(reply["ok"], false);
+        assert!(
+            reply["error"].as_str().unwrap().contains("typewrite"),
+            "the answer names what was asked for: {reply:?}"
+        );
+        assert!(!changed);
+    }
+
+    #[test]
+    fn a_control_navigation_the_policy_refuses_reports_itself_and_keeps_the_page() {
+        // The same rule the viewer path already follows: a refusal is the
+        // engine working, and the page an agent was on must survive being told
+        // no — otherwise the next snapshot describes a blank it cannot explain.
+        let mut session = session_with(tall_page());
+        let before = session.page.url().to_string();
+
+        let (reply, changed) =
+            control_verb(&mut session, &json!({"verb": "navigate", "url": "https://denied.test/"}));
+
+        assert_eq!(reply["ok"], false);
+        assert!(!changed, "a refused navigation moved nothing");
+        assert_eq!(session.page.url().to_string(), before);
+    }
+
+    #[test]
+    fn a_control_click_needs_a_ref_that_exists_and_can_be_followed() {
+        let mut session = session_with(tall_page());
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "click"}));
+        assert_eq!(reply["ok"], false, "a click with no ref is refused");
+
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "click", "ref": "e404"}));
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"].as_str().unwrap().contains("e404"));
+        assert!(!changed);
+    }
+
+    #[test]
+    fn nothing_is_encoded_when_nobody_is_watching() {
+        // The property that makes this engine cheap to leave open has to
+        // survive the control channel: an agent driving a headless session must
+        // not pay for JPEGs that no viewer will ever receive.
+        let mut session = session_with(tall_page());
+        let mut nobody = HashMap::new();
+        let before = session.seq;
+        broadcast_change(&mut session, &mut nobody);
+        assert_eq!(session.seq, before, "no viewers, no frame");
     }
 }

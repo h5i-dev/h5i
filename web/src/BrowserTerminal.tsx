@@ -183,7 +183,16 @@ const PANE_TITLE: Record<PaneKey, string> = {
 // What each pane's evidence actually is. Stated in the pane rather than in
 // documentation nobody reads while looking at a refusal.
 const PANE_NOTE: Record<PaneKey, (engine?: string) => string> = {
-  actions: () => "host-observed: h5i watched these cross the mediated socket",
+  // Engine-aware, because the evidence really is different. Chromium is driven
+  // through a socket h5i owns, so every verb crosses it and the box cannot edit
+  // the record. The light engine *is* the browser — there is no socket between
+  // an agent and it — so the rows are the box's own account. Saying
+  // "host-observed" over those would claim a guarantee nothing provides. Each
+  // row carries its own lane badge regardless; this line says what to expect.
+  actions: (engine) =>
+    engine === "h5i-light"
+      ? "box-claimed: the engine reports its own verbs — there is no socket for h5i to watch"
+      : "host-observed: h5i watched these cross the mediated socket",
   network: (engine) =>
     engine === "h5i-light"
       ? "box-claimed, fail-closed: the engine will not fetch what it cannot record"
