@@ -1238,11 +1238,25 @@ paying for an engine it is not using and a script-driven page would reverse the
 comparison entirely; and software rasterisation will narrow the time gap on
 heavy CSS.
 
-Still open at this tier: no script; the live view has been driven by a test
-client rather than by `h5i box view` against a real box; input stops at
-scrolling and link clicks (no typing, no form submission); and **nothing wires
-h5i to this engine yet** — M9's `--engine` knob does not exist, so using it in
-a box is still manual.
+Still open at this tier: no script; input stops at scrolling and link clicks
+(no typing, no form submission); and the live view has been driven by a
+protocol-level test client rather than by `h5i box view` against a real box.
+What is missing in that last one is the run, not the plumbing —
+`H5I_BROWSER_STREAM_FILE` puts the `.stream` under the box's `agent-browser`
+directory, which is where the viewers' discovery already scans.
+
+**Corrected 2026-08-08.** This entry also said "nothing wires h5i to this
+engine yet — M9's `--engine` knob does not exist, so using it in a box is
+still manual", which was true the day tier 2 shipped and stopped being true
+three commits later on the same branch. `--engine h5i-light`, or
+`[profile.X] engine`, pins the engine in `policy.resolved.toml` and so in the
+digest; `browser_env` hands that engine `H5I_BROWSER_ALLOW` (the box's own
+`net.egress`, loopback included) and `H5I_BROWSER_RECEIPTS` pointing at the
+box's spool, and skips the agent-browser shim, whose job is to launch Chrome
+and attach a driver — neither of which applies to an engine h5i runs itself.
+Using this engine in a box is a create-time flag. The entry is left standing
+rather than edited away because the gap it records is the real lesson: a
+milestone's "still open" list ages against the commits that follow it.
 
 The original entry follows.
 
