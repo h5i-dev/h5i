@@ -1157,21 +1157,48 @@ initiator and a denied one with its verdict, marked best-effort. This closes
 open item 1 and is worth doing before any engine work, because the mediation
 layer is where origin routing (7.1) would live anyway.
 
-**M9. Second engine — proposed (7.1).** `engine` as a profile field passed
-through to agent-browser, Lightpanda as the first non-Chromium value. Exit
-criteria: a `browser-lite` box with no Chromium installed answers `doctor`,
-snapshots a real documentation site, and the full loop's failure modes on a
-light engine are written down here. No routing yet: one engine per box.
+**M9. Second engine — proposed (7.1).** `engine` as a profile field, pinned
+in the digest with its version like any other policy choice, Lightpanda as
+the first non-Chromium value. The knob's real shape is "any CDP endpoint",
+not "Lightpanda": agent-browser already drives engines over CDP, so this is
+the slot M10's binary later fills with no new plumbing, and agent-browser
+stays the one automation surface for every engine behind it. **No silent
+fallback**: an unsupported page fails closed and names the retry ("this page
+needs MediaSource; recreate with `--browser chromium`"), because a fallback
+to Chromium is not an optimization, it is a security-policy change: an API
+absent by construction in one engine exists in the other, so the box's
+capability surface must not move without a create. The engine and its
+version land in the receipt. Exit criteria: a `browser-lite` box with no
+Chromium installed answers `doctor`, snapshots a real documentation site,
+and the full loop's failure modes on a light engine are written down here.
+No routing yet: one engine per box.
 
-**M10. The reading engine — proposed, gated.** The h5i-native crate of 7.1
+**M10. The reading engine — proposed, gated.** The h5i-native engine of 7.1
 step 3. With M8's Fetch lane already delivering best-effort request receipts
 on Chromium, the engine's case is what mediation cannot give: fail-closed
 logging (no running log, no request), script absent by construction for
 untrusted origins, and the single-use form-submission capability with
-structural provenance. Gated on two things: M9's findings say a light engine
-is actually usable for the reading half of the loop, and Kitesurf's
-open-source release has landed so the build-versus-adopt call is made with the
-code on the table, not the blog post.
+structural provenance.
+
+The shape is a **standalone binary**, a workspace crate with its own bin,
+not a library h5i links. h5i launches it as a process, hands it the egress
+proxy endpoint and a receipts channel, and the engine answers with a
+capability manifest (`javascript`, `screenshot`, `video: false`, ...) so h5i
+never guesses at what is unimplemented. It speaks the CDP subset the M9 knob
+expects, so it plugs into the existing driver and the M8 mediation with no
+new plumbing, and fail-closed becomes a protocol property: no receipts
+channel, no fetch. This is the agent-browser pattern applied to our own
+component (a pinned binary behind a protocol boundary, section 7), and it
+prices the risk correctly: if the engine fails, h5i is untouched; if it
+succeeds, it can stand as a product of its own. One honesty requirement
+travels with the standalone story: bare on a host, outside a box, it is
+just a light browser, and its containment claims are made only where the
+proxy and the receipt store exist.
+
+Gated on two things: M9's findings say a light engine is actually usable for
+the reading half of the loop, and Kitesurf's open-source release has landed so
+the build-versus-adopt call is made with the code on the table, not the blog
+post.
 
 **M11. The developer-mode viewer — proposed, after M8.** The terminal
 viewer's default becomes a developer view rather than a page view: for a
@@ -1345,13 +1372,17 @@ Being explicit about these is a feature, since the claim is a security claim.
    `create`/`exec`/`browser`/`diff`/`export`/`close`, TypeScript only, binary
    fetched on postinstall. No `agent.run()` until the resident session shape is
    settled, and Python only when someone asks for it.
-4. **How origin routing selects an engine (7.1 step 2).** agent-browser is one
-   engine per daemon session, so "loopback gets Chromium, the web gets the
-   light engine" needs either two sessions with h5i choosing at navigate time,
-   or the mediation layer of 7.2 doing the choosing per action. The second is
-   cleaner and is one more reason M8 goes first, but neither is designed, and
-   the policy surface (where in the profile the routing rule lives, and what
-   its default is) is unwritten.
+4. **How engine selection grows from explicit to routed (7.1 step 2).** The
+   sequence is decided: create-time explicit choice first (M9, pinned in the
+   digest, no silent fallback), a `--browser auto` create-time heuristic as a
+   later explicit opt-in, and per-origin routing last. What is not designed
+   is the routing step itself: agent-browser is one engine per daemon
+   session, so "loopback gets Chromium, the web gets the light engine" needs
+   either two sessions with h5i choosing at navigate time, or the mediation
+   layer of 7.2 doing the choosing per action. The second is cleaner and is
+   one more reason M8 goes first. Wherever it lands, routing inherits M9's
+   rule: an engine switch is a policy change, so it belongs in the digest and
+   the receipt, never in a silent fallback.
 5. **Build versus adopt for the reading engine (M10).** Kitesurf's announced
    open-sourcing decides how much of the M10 crate is ours to write. Until
    that drop, the only commitment is the shape: fetch through our proxy,
