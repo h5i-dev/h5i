@@ -23,17 +23,17 @@
   <meta property="og:title" content="h5i Features: isolation tiers, isolated browser, and the output gate">
   <meta property="og:description" content="One boundary around the code, the agent, the toolchain, the dev server and a browser. Out of it comes a patch, a report and a receipt, after you look. No SaaS, no daemon.">
   <meta property="og:url" content="https://h5i.dev/features/">
-  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta property="og:image:width" content="2257">
-  <meta property="og:image:height" content="1222">
-  <meta property="og:image:alt" content="The h5i box console: every box with its tier and status, and a flight recorder of what ran inside">
+  <meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+  <meta property="og:image:width" content="2293">
+  <meta property="og:image:height" content="901">
+  <meta property="og:image:alt" content="The h5i box console: every box with its tier, status and one signal on the left, and on the right the refused-egress finding, a flight recorder of one row per receipt across five lanes, and the policy that was actually enforced">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i Features: isolation tiers, isolated browser, and the output gate">
   <meta name="twitter:description" content="Give a coding agent a disposable box instead of your shell. Five isolation tiers, an egress allowlist, and a sealed receipt of what ran.">
-  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
-  <meta name="twitter:image:alt" content="The h5i box console: every box with its tier and status, and a flight recorder of what ran inside">
+  <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+  <meta name="twitter:image:alt" content="The h5i box console: every box with its tier, status and one signal on the left, and on the right the refused-egress finding, a flight recorder of one row per receipt across five lanes, and the policy that was actually enforced">
 
   <!-- Structured data -->
   <script type="application/ld+json">
@@ -478,29 +478,33 @@
               <span class="console-chip">process</span>
               <span class="console-chip">workspace</span>
             </div>
-            <div class="console-colhead"><span>Box</span><span>Isolation</span><span>Signal</span></div>
+            <div class="console-colhead"><span>Box</span><span>Isolation</span><span>Status</span><span>Signal</span></div>
 
             <div class="console-row selected">
               <span class="name">claude/fix-auth</span>
               <span class="console-tag ok">supervised</span>
+              <span class="status">idle</span>
               <span class="sig blocked">&#9940; blocked</span>
               <span class="sub">14 runs &#183; 6f +212/&#8722;48</span>
             </div>
             <div class="console-row">
               <span class="name">codex/pr-1234</span>
               <span class="console-tag ok">container</span>
+              <span class="status">running</span>
               <span class="sig attention">&#9888; 2 kinds</span>
               <span class="sub">9 runs &#183; 3f +61/&#8722;7 &#183; detached</span>
             </div>
             <div class="console-row">
               <span class="name">claude/cache-refresh</span>
               <span class="console-tag">process</span>
+              <span class="status">idle</span>
               <span class="sig clean">clean</span>
               <span class="sub">8 runs &#183; no agent inside</span>
             </div>
             <div class="console-row">
               <span class="name">codex/spike-ui</span>
               <span class="console-tag off">workspace</span>
+              <span class="status">proposed</span>
               <span class="sig weak">&#9676; box-claimed</span>
               <span class="sub">0 runs &#183; proposed</span>
             </div>

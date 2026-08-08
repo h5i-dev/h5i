@@ -99,7 +99,7 @@
    labels sit over their columns; `auto` tracks sized to each row's own content
    and left the labels floating between them. */
 .console-row, .console-colhead {
-  display: grid; grid-template-columns: minmax(0, 1fr) 8em 8em;
+  display: grid; grid-template-columns: minmax(0, 1fr) 8em 5.5em 7.5em;
   gap: 0.4em 0.8em; align-items: baseline;
 }
 .console-row { padding: 0.75em 1.1em; border-bottom: 1px solid var(--line); }
@@ -107,6 +107,7 @@
 .console-row .name { color: var(--ink); font-size: 0.98em; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .console-row .sub { grid-column: 1 / -1; color: var(--faint); font-size: 0.85em; }
 .console-row .console-tag { justify-self: start; }
+.console-row .status { color: var(--dim); font-size: 0.92em; }
 .console-row .sig, .console-colhead > :last-child { justify-self: end; }
 .console-colhead {
   padding: 0.55em 1.1em;
