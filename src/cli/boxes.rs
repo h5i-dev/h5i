@@ -8,6 +8,10 @@ use console::style;
 use h5i_core::ui::{LOOKING, SUCCESS};
 
 #[derive(Subcommand)]
+// `Create` carries every create-time flag and dwarfs the other verbs; boxing
+// it would break clap's derive, and the enum is constructed once per process.
+// Same trade as `Commands` in main.rs.
+#[allow(clippy::large_enum_variant)]
 pub enum BoxCommands {
     /// Create a box explicitly. `h5i box [SOURCE]` is the short form and
     /// takes the same flags; this is what it dispatches to.
@@ -65,6 +69,14 @@ pub enum BoxCommands {
         /// makes both image-backed tiers candidates for the isolation auto-pick.
         #[arg(long)]
         image: Option<String>,
+
+        /// Browser engine for the `browser` profile: chromium (default),
+        /// lightpanda, or h5i-light. Overrides the profile's `engine`. Pinned
+        /// in the policy digest, and never falls back: a box whose engine
+        /// cannot serve a page fails and names the recreate, because switching
+        /// engine changes what a page is able to do.
+        #[arg(long)]
+        engine: Option<String>,
         /// Workspace backend (auto|worktree)
         #[arg(long, default_value = "auto")]
         backend: String,
@@ -651,6 +663,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     name,
                     from,
                     pr,
+                    engine,
                     clone,
                     new,
                     remote,
@@ -684,12 +697,20 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         (None, true) => h5i_core::env::BoxSource::New,
                         (None, false) => h5i_core::env::BoxSource::Repo,
                     };
+                    let engine = match &engine {
+                        Some(name) => Some(
+                            h5i_core::sandbox::BrowserEngine::parse(name)
+                                .map_err(h5i_core::error::H5iError::Metadata)?,
+                        ),
+                        None => None,
+                    };
                     let opts = h5i_core::env::CreateOpts {
                         source,
                         from: pr_base.as_ref().map(|b| b.oid.clone()).or(from),
                         profile,
                         isolation,
                         image,
+                        engine,
                         backend,
                         audit_capture: h5i_core::sandbox::AuditCapture::parse(&audit)?,
                         parent_branch: pr_base.as_ref().map(|b| b.local_branch.clone()),

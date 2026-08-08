@@ -137,6 +137,7 @@ Where the code comes from decides the shape of the box:
 ```
 h5i box create <NAME> [--from <rev>] [--pr <n>] [--clone <url>] [--new]
                       [--profile <p>] [--isolation <tier>] [--image <img>]
+                      [--engine <chromium|lightpanda|h5i-light>]
 ```
 
 The base revision is frozen at creation and pinned immutably. The policy is
@@ -152,6 +153,7 @@ unsatisfiable request fails closed rather than leaving half a box behind.
 | `--profile <p>` | See [Profiles](#profiles). |
 | `--isolation <tier>` | See [Isolation tiers](#isolation-tiers). |
 | `--image <img>` | Base image for `isolation=container` and `isolation=microvm`. Pre-pulled; runs never pull. |
+| `--engine <e>` | Browser engine for the `browser` profile: `chromium` (default), `lightpanda`, or `h5i-light`. Pinned in the digest; never falls back. |
 
 ### Working in a box
 

@@ -320,6 +320,7 @@ already spelled it as a flag.</p>
 <h3 id="h5i-box-create">h5i box create</h3>
 <pre><code>h5i box create &lt;NAME&gt; [--from &lt;rev&gt;] [--pr &lt;n&gt;] [--clone &lt;url&gt;] [--new]
                       [--profile &lt;p&gt;] [--isolation &lt;tier&gt;] [--image &lt;img&gt;]
+                      [--engine &lt;chromium|lightpanda|h5i-light&gt;]
 </code></pre>
 <p>The base revision is frozen at creation and pinned immutably. The policy is
 resolved, digested and stored <em>before</em> any state is created on disk, so an
@@ -359,6 +360,10 @@ unsatisfiable request fails closed rather than leaving half a box behind.</p>
 <tr>
 <td><code>--image &lt;img&gt;</code></td>
 <td>Base image for <code>isolation=container</code> and <code>isolation=microvm</code>. Pre-pulled; runs never pull.</td>
+</tr>
+<tr>
+<td><code>--engine &lt;e&gt;</code></td>
+<td>Browser engine for the <code>browser</code> profile: <code>chromium</code> (default), <code>lightpanda</code>, or <code>h5i-light</code>. Pinned in the digest; never falls back.</td>
 </tr>
 </tbody>
 </table>

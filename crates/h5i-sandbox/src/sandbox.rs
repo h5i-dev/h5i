@@ -45,8 +45,9 @@ use crate::error::H5iError;
 // imports them from `sandbox_policy` directly, breaking the `sandbox →
 // container → sandbox` dispatch cycle.
 pub use crate::sandbox_policy::{
-    agent_browser_binary, browser_read_grants, browser_tooling_present, chrome_binary,
-    chrome_exec_patterns, AgentRuntime, AuditCapture,
+    agent_browser_binary, browser_light_binary, browser_read_grants, browser_tooling_present,
+    chrome_binary, chrome_exec_patterns, engine_tooling_missing, AgentRuntime, AuditCapture,
+    BrowserEngine,
     AuditPolicy,
     BoxGitPath, ExecOutcome, HomeBind, InteractiveOutcome, IsolationClaim, NetMode, PrivateBind,
     PrivatePath, Profile, ResolvedPolicy, RoBind, SecretGrant, DEFAULT_WALL,
@@ -180,6 +181,12 @@ struct ProfileToml {
     /// Opt-in for the secrets broker's host-side `command:` extractor.
     #[serde(default)]
     allow_command_extractors: bool,
+    /// Which browser engine this profile runs: `[profile.browser] engine =
+    /// "h5i-light"`. Spellable because it is a decision an operator makes at
+    /// create; validated fail-closed, and pinned in the digest, because
+    /// changing engine changes what a page can do.
+    #[serde(default)]
+    engine: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -454,6 +461,15 @@ pub fn load_profile(
                 // it is not a policy dial an author picks, it is what the
                 // `browser` base needs in order to start a browser at all.
                 mach_iokit: base.mach_iokit,
+                // Declared or inherited. Parsed (and refused) in
+                // `validate_profile` so the error names the accepted set.
+                engine: match t.engine.as_deref() {
+                    Some(name) => Some(
+                        crate::sandbox_policy::BrowserEngine::parse(name)
+                            .map_err(H5iError::Metadata)?,
+                    ),
+                    None => base.engine,
+                },
             }
         }
     };

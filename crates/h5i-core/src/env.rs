@@ -1317,6 +1317,13 @@ pub struct CreateOpts {
     /// isolation auto-pick, so `--image` alone makes the container tier a
     /// candidate for an otherwise imageless profile.
     pub image: Option<String>,
+    /// `--engine`: which browser engine a `browser` box runs, overriding the
+    /// profile. Same precedence as `--image`: it lands in the profile before
+    /// resolve, so it is pinned in the digest. There is no `auto` and no
+    /// fallback — an engine that cannot serve a page fails and names the
+    /// recreate, because a silent switch would change the box's capability
+    /// surface without a decision.
+    pub engine: Option<sandbox::BrowserEngine>,
     /// Workspace backend. `auto` and `worktree` are accepted today.
     pub backend: String,
     /// Command evidence policy for wrapped in-env commands.
@@ -1339,6 +1346,7 @@ pub struct CreateOpts {
 impl Default for CreateOpts {
     fn default() -> Self {
         CreateOpts {
+            engine: None,
             from: None,
             profile: None,
             isolation: None,
@@ -1557,31 +1565,6 @@ pub fn create(
         None => sandbox::effective_auto(workdir, profile_name, false, opts.image.as_deref())?,
     };
 
-    // A browser box with no browser is a box whose first `agent-browser open`
-    // fails with a confusing "not found". Refuse at create, where the message
-    // can say what to install.
-    if profile_name == "browser" && claim < sandbox::IsolationClaim::Container {
-        // Kernel tiers reach the host filesystem, so the browser has to be
-        // there. A container box brings its own in the image, and is checked by
-        // the image existing at all.
-        let (chrome, driver) = sandbox::browser_tooling_present();
-        if !chrome || !driver {
-            let mut missing = Vec::new();
-            if !chrome {
-                missing.push("a Chrome/Chromium build");
-            }
-            if !driver {
-                missing.push("the `agent-browser` binary");
-            }
-            return Err(H5iError::Metadata(format!(
-                "the `browser` profile needs {} on this host, and it is not there.\n  \
-                 Install both with:  npm install -g agent-browser && agent-browser install\n  \
-                 (or `cargo install agent-browser`), then create the box again.",
-                missing.join(" and ")
-            )));
-        }
-    }
-
     // Policy first (fail closed BEFORE any state is created on disk).
     let mut profile = sandbox::load_profile(workdir, profile_name, Some(claim))?;
     // `--image` has the strongest precedence; it lands in the profile before
@@ -1590,6 +1573,42 @@ pub fn create(
     if let Some(img) = &opts.image {
         profile.image = Some(img.clone());
     }
+    // `--engine` has the same precedence as `--image`: it lands in the profile
+    // before resolve, so the engine a box runs is pinned in
+    // `policy.resolved.toml` and in the digest rather than being whatever
+    // happened to be installed on the day it ran.
+    if let Some(engine) = opts.engine {
+        profile.engine = Some(engine);
+    }
+
+    // A browser box with no browser is a box whose first `open` fails with a
+    // confusing "not found". Refuse at create, where the message can name what
+    // to install — and check the engine the profile actually pinned, because
+    // "a browser is present" is not the same question as "the engine this box
+    // is pinned to is present".
+    //
+    // Kernel tiers reach the host filesystem, so the engine has to be there. A
+    // container box brings its own in the image, and is checked by the image
+    // existing at all.
+    if claim < sandbox::IsolationClaim::Container {
+        if let Some(engine) = profile.engine {
+            let missing = sandbox::engine_tooling_missing(engine);
+            if !missing.is_empty() {
+                let (_, install) = engine.required_tooling();
+                return Err(H5iError::Metadata(format!(
+                    "the `{}` profile is pinned to the `{}` engine, which needs {} on this host, \
+                     and it is not there.\n  Install with:  {}\n  \
+                     Then create the box again, or pick another engine with \
+                     `--engine chromium` (fail-closed).",
+                    profile.name,
+                    engine.as_str(),
+                    missing.join(" and "),
+                    install
+                )));
+            }
+        }
+    }
+
     let caps = sandbox::probe_host_for(claim);
     let mut policy = sandbox::resolve(&profile, &caps)?;
     policy.audit.capture = opts.audit_capture;
