@@ -9013,6 +9013,30 @@ mod tests {
 
     // ─── read-only observer (`env shell --readonly`) ────────────────────────
 
+    /// Acquires a lock that *must* eventually become free, retrying briefly.
+    ///
+    /// A `flock` lives on the open file description, not the fd, and a `fork`
+    /// duplicates every OFD. Tests in this binary run in parallel and several
+    /// spawn `git`/`sh`/`ps`, so a child forked in the window where this test
+    /// holds a lock file inherits that OFD; the lock therefore outlives the
+    /// holder's `drop` until the child's `exec` closes the `O_CLOEXEC` fd. The
+    /// window is microseconds, but on a loaded CI box it is wide enough to lose
+    /// a race with the very next acquire. Assert the lock *becomes* free, not
+    /// that it is free instantly.
+    #[cfg(unix)]
+    fn acquire_eventually(acquire: impl Fn() -> Result<RunLock, H5iError>) -> RunLock {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match acquire() {
+                Ok(lock) => return lock,
+                Err(e) if std::time::Instant::now() >= deadline => {
+                    panic!("lock never became available within 10s: {e}")
+                }
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        }
+    }
+
     /// The two-lock model: one read-write session **plus** N observers coexist
     /// (independent lock files), two writers still exclude each other, and a
     /// worktree teardown (gc/rm) waits for every observer to drain.
@@ -9052,7 +9076,7 @@ mod tests {
         // Drain the observers → a teardown (and a fresh writer) can proceed.
         drop(r1);
         drop(r2);
-        let td = RunLock::acquire_teardown(env_dir).unwrap();
+        let td = acquire_eventually(|| RunLock::acquire_teardown(env_dir));
         // While a teardown holds observers.lock exclusively, a new observer is
         // refused (the worktree is being removed).
         assert!(
@@ -9061,7 +9085,7 @@ mod tests {
         );
         drop(td);
         // Once the teardown exits, an observer can attach again.
-        RunLock::acquire_observer(env_dir).unwrap();
+        acquire_eventually(|| RunLock::acquire_observer(env_dir));
     }
 
     /// A read-only observer's HOME redirect lands in the caller-supplied
