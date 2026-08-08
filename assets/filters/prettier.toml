@@ -1,0 +1,49 @@
+[filters.prettier]
+description = "Compact Prettier output — drop startup and blank-line noise while preserving changed files, warnings, errors, and summaries"
+match_command = "^(?:(?:npx|bunx|yarn\\s+dlx|pnpm\\s+(?:dlx|exec))\\s+)?prettier(?:\\s|$)"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^Checking formatting\\.\\.\\.$",
+]
+truncate_lines_at = 240
+max_lines = 120
+on_empty = "prettier: clean"
+
+[[tests.prettier]]
+name = "keeps changed files and the check summary"
+input = """
+Checking formatting...
+[warn] src/app.ts
+[warn] src/lib/format.ts
+[warn] Code style issues found in 2 files. Run Prettier with --write to fix.
+"""
+expected = """
+[warn] src/app.ts
+[warn] src/lib/format.ts
+[warn] Code style issues found in 2 files. Run Prettier with --write to fix.
+"""
+
+[[tests.prettier]]
+name = "preserves parser errors"
+input = """
+Checking formatting...
+[error] src/broken.ts: SyntaxError: Expression expected. (2:7)
+[error]   1 | const value =
+[error] > 2 | export default value
+[error]     |       ^
+"""
+expected = """
+[error] src/broken.ts: SyntaxError: Expression expected. (2:7)
+[error]   1 | const value =
+[error] > 2 | export default value
+[error]     |       ^
+"""
+
+[[tests.prettier]]
+name = "clean check keeps the success summary"
+input = """
+Checking formatting...
+All matched files use Prettier code style!
+"""
+expected = "All matched files use Prettier code style!"
