@@ -401,11 +401,23 @@ impl Drop for MediatorHandle {
     }
 }
 
+/// How long a connection waits for the daemon to appear before giving up.
+///
+/// The box's shim starts the daemon and connects in quick succession, so the
+/// mediator can be bound before an upstream exists. Waiting a little beats
+/// refusing a request that was always going to be servable a moment later.
+const UPSTREAM_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// Start mediating `socket_path` in front of `upstream`.
 ///
 /// Both are `AF_UNIX` paths. `socket_path` is what the box is told to use
-/// (`AGENT_BROWSER_SOCKET_DIR`); `upstream` is where h5i started the real
-/// daemon, on a path no profile grants.
+/// (`AGENT_BROWSER_SOCKET_DIR`); `upstream` is where the box's shim starts the
+/// real daemon.
+///
+/// The upstream need not exist yet: the mediator has to own its socket
+/// *before* the box runs, or the box's first `agent-browser` call finds
+/// nothing there and starts an unmediated daemon of its own on the very path
+/// we meant to hold.
 pub fn spawn(
     socket_path: &Path,
     upstream: &Path,
@@ -455,8 +467,14 @@ pub fn spawn(
                         let policy = policy.clone();
                         std::thread::spawn(move || {
                             let _ = client.set_nonblocking(false);
-                            let Ok(daemon) = std::os::unix::net::UnixStream::connect(&upstream)
-                            else {
+                            let Some(daemon) = connect_upstream(&upstream) else {
+                                // Nothing came up. Say so in the daemon's own
+                                // shape rather than hanging: a client waiting
+                                // forever on a reply is the worst of the
+                                // available failures.
+                                let _ = (&client).write_all(
+                                    b"{\"success\":false,\"error\":\"h5i: no browser daemon answered; is one starting?\"}\n",
+                                );
                                 return;
                             };
                             let (Ok(client_read), Ok(daemon_read)) =
@@ -540,6 +558,20 @@ pub fn record_actions(
     };
     if let Err(e) = crate::receipt::append(env_dir, input, body.as_bytes()) {
         eprintln!("browser mediation: could not record the actions: {e}");
+    }
+}
+
+/// Connect to the daemon, waiting for it to appear.
+fn connect_upstream(path: &Path) -> Option<std::os::unix::net::UnixStream> {
+    let deadline = std::time::Instant::now() + UPSTREAM_WAIT;
+    loop {
+        if let Ok(stream) = std::os::unix::net::UnixStream::connect(path) {
+            return Some(stream);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
 

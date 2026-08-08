@@ -32,6 +32,10 @@ const ALLOW_VAR: &str = "H5I_BROWSER_ALLOW";
 /// caller's: no writable log, no fetch.
 const RECEIPTS_VAR: &str = "H5I_BROWSER_RECEIPTS";
 
+/// Where h5i wants `serve` to advertise its port, so `h5i box view` finds it
+/// without being told this engine exists.
+const STREAM_FILE_VAR: &str = "H5I_BROWSER_STREAM_FILE";
+
 #[derive(Parser)]
 #[command(
     name = "h5i-browser-light",
@@ -266,6 +270,7 @@ fn serve(
     once: bool,
 ) -> Result<(), H5iError> {
     let (_display, factory, page) = load(target, net, view)?;
+    let stream_file = stream_file.or_else(|| std::env::var(STREAM_FILE_VAR).ok().map(PathBuf::from));
     h5i_browser_light::stream::serve(
         factory,
         page,

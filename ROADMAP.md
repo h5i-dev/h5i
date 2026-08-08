@@ -1484,12 +1484,32 @@ Being explicit about these is a feature, since the claim is a security claim.
      in front, provided h5i launches it with the environment the box's CLI
      will compute and mirrors `.version`/`.config` into the box-visible dir.
 
-   Still open: the **sidecar lifecycle**. h5i does not yet launch the daemon
-   on a private path and start the mediator for a run — the mediator is built
-   and proven, but wiring it into `run_inner` (step 4, beside the other RAII
-   handles) and into `shell` has not landed, so today it is reachable only by
-   a caller that sets it up. Until that lands the lock is enforceable but not
-   yet enforced by default.
+   **The lifecycle landed too, and is enforced by default.** The daemon is
+   started by the *shim* rather than by h5i directly, which is what makes the
+   split possible at all: the shim already runs inside the box and invokes the
+   real binary twice, so it starts the daemon on a private path
+   (`/tmp/agent-browser-daemon`), mirrors the `.version`/`.config`/`.stream`
+   files the CLI checks, and then execs the CLI against the mediated path.
+   h5i's listener binds *before* the box runs — waiting for a daemon first
+   would mean the box's own first call finds the mediated path empty and
+   starts an unmediated daemon on it — and connects upstream lazily.
+
+   Verified in a real supervised box: `agent-browser open` works through the
+   chain, the real daemon's socket lives in the private directory while the
+   visible one holds only mirrored files, a read passes through, and
+   `agent-browser eval` comes back
+   `✗ \`evaluate\` is denied for this box by its profile's browser action
+   policy (fail-closed)` with `browser mediation (2 action(s), 1 refused)` on
+   the receipt log.
+
+   Two more findings from that run. **Not every agent-browser word is a
+   command** — `url` and `status` are not, and using one to start the daemon
+   fails silently and leaves no daemon and no clue; `open about:blank` is the
+   cheap start that works. And **a box whose repo lives under `/tmp` cannot
+   see its own shim**: the per-env `/tmp` scratch shadows the host path the
+   shim sits on, `agent-browser` falls through to the system binary, and
+   mediation is bypassed with nothing to indicate it. That is the same
+   shadowing the M4 notes record, arriving somewhere new.
 
    Related and now much smaller: **snapshot handle staleness across a takeover**
    is modelled — `needs_resnapshot` is set on the take, survives a session that

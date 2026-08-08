@@ -3109,6 +3109,40 @@ alive || {{
   alive || {{ echo "h5i: Chrome did not come up on port $PORT" >&2; tail -5 "$STATE/chrome.log" >&2; exit 1; }}
 }}
 
+# The daemon goes where h5i is mediating, not where this CLI would put it.
+#
+# h5i owns the socket named by AGENT_BROWSER_SOCKET_DIR and forwards to the one
+# below, so every verb passes a policy check on the way through. Starting the
+# daemon here rather than letting the CLI start it is the whole trick: a daemon
+# the CLI starts binds the mediated path itself, and then there is nothing in
+# front of it.
+if [ -n "$H5I_BROWSER_DAEMON_DIR" ]; then
+  if [ ! -S "$H5I_BROWSER_DAEMON_DIR/default.sock" ]; then
+    mkdir -p "$H5I_BROWSER_DAEMON_DIR"
+    # `open about:blank` rather than a read verb: every agent-browser command
+    # starts the daemon, but only some of them are commands — `url` and
+    # `status` are not, and a failed start leaves no daemon and no clue.
+    AGENT_BROWSER_SOCKET_DIR="$H5I_BROWSER_DAEMON_DIR" \
+      "$REAL" --cdp "$PORT" open about:blank >/dev/null 2>&1 || true
+    i=0
+    while [ $i -lt 100 ] && [ ! -S "$H5I_BROWSER_DAEMON_DIR/default.sock" ]; do
+      i=$((i+1)); sleep 0.1
+    done
+  fi
+  # The CLI decides whether a daemon is already up by reading these beside the
+  # socket. Without them it concludes the mediator is a stale daemon, asks it
+  # to shut down, and starts its own — unmediated.
+  if [ -S "$H5I_BROWSER_DAEMON_DIR/default.sock" ]; then
+    mkdir -p "$AGENT_BROWSER_SOCKET_DIR"
+    for f in version config stream; do
+      if [ -f "$H5I_BROWSER_DAEMON_DIR/default.$f" ]; then
+        cp "$H5I_BROWSER_DAEMON_DIR/default.$f" \
+           "$AGENT_BROWSER_SOCKET_DIR/default.$f" 2>/dev/null || true
+      fi
+    done
+  fi
+fi
+
 exec "$REAL" --cdp "$PORT" "$@"
 "##,
         egress_var = sandbox::EGRESS_PROXY_VAR,
@@ -3508,6 +3542,14 @@ fn browser_env_inner(policy: &ResolvedPolicy, shimmed: bool) -> Vec<(String, Str
             "AGENT_BROWSER_SOCKET_DIR".to_string(),
             format!("{}/agent-browser", box_tmp_root(policy)),
         ),
+        // Where the shim puts the real daemon, so h5i's listener above it has
+        // something to forward to (M8). Box-visible because the daemon runs in
+        // the box; see `browser_proxy` on why that is enforcement rather than
+        // containment.
+        (
+            "H5I_BROWSER_DAEMON_DIR".to_string(),
+            format!("{}/{}", box_tmp_root(policy), DAEMON_DIR_NAME),
+        ),
         // Chat off. There is exactly one gate upstream and it is the presence
         // of `AI_GATEWAY_API_KEY`, so "off" is spelled by that variable being
         // absent: it is not in `env.pass` and nothing here injects it.
@@ -3566,6 +3608,14 @@ fn browser_light_env(policy: &ResolvedPolicy, allowed: &[String]) -> Vec<(String
         (
             "H5I_BROWSER_RECEIPTS".to_string(),
             format!("{}/browser-requests.jsonl", box_tmp_root(policy)),
+        ),
+        // Where `serve` should advertise its port. The viewers find a stream
+        // by scanning for `*.stream` under the socket directory, so writing it
+        // there is what lets `h5i box view` attach to this engine without
+        // knowing anything about it.
+        (
+            "H5I_BROWSER_STREAM_FILE".to_string(),
+            format!("{}/agent-browser/h5i-light.stream", box_tmp_root(policy)),
         ),
     ]
 }
@@ -3638,6 +3688,14 @@ mod browser_engine_env_tests {
 }
 
 
+/// The daemon's session name. agent-browser defaults to `default`, and h5i
+/// does not set one, so both sides can agree on it without a variable whose
+/// spelling nobody has verified.
+const DAEMON_SESSION: &str = "default";
+
+/// Directory (under the box's `/tmp`) where the shim starts the real daemon.
+const DAEMON_DIR_NAME: &str = "agent-browser-daemon";
+
 /// Start mediating the browser daemon's socket for the duration of a run.
 ///
 /// The daemon keeps running on a path the box has no grant for; the path the
@@ -3669,27 +3727,18 @@ fn engage_browser_mediation(
 
     // Where the box looks, and where h5i keeps the real one.
     let visible = env_dir.join("tmp").join("agent-browser");
-    let private = env_dir.join("browser-daemon");
+    let private = env_dir.join("tmp").join(DAEMON_DIR_NAME);
 
-    let session = crate::browser::session_id(env_dir)?;
-    let upstream = private.join(format!("{session}.sock"));
-    if !upstream.exists() {
-        // Nothing started by h5i to mediate. Mediating a socket the box's own
-        // CLI bound would mean fronting a daemon we do not control, so this
-        // stays off rather than half-on.
-        return None;
-    }
-
-    for suffix in ["version", "config", "stream"] {
-        let from = private.join(format!("{session}.{suffix}"));
-        let to = visible.join(format!("{session}.{suffix}"));
-        let _ = std::fs::copy(from, to);
-    }
+    // Bound before the box runs, and before any daemon exists. The shim starts
+    // the daemon on the private path and mirrors the files the CLI checks; if
+    // h5i waited for that to happen first, the box's own first call would find
+    // the mediated path empty and start an unmediated daemon on it.
+    let upstream = private.join(format!("{DAEMON_SESSION}.sock"));
 
     let policy_actions =
         crate::browser_proxy::ActionPolicy::deny_all_of(policy.profile.browser_deny.clone());
     match crate::browser_proxy::spawn(
-        &visible.join(format!("{session}.sock")),
+        &visible.join(format!("{DAEMON_SESSION}.sock")),
         &upstream,
         env_dir,
         policy_actions,
