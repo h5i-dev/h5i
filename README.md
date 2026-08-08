@@ -37,13 +37,8 @@ h5i gives you:
 
 ```bash
 curl -fsSL https://h5i.dev/install.sh | sh
-```
-
-The same script, straight from the repository, if you would rather not add a
-domain to the chain:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
+# if you would rather not add a domain to the chain:
+# curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
 ```
 
 Or build from source:
@@ -51,6 +46,7 @@ Or build from source:
 ```bash
 cargo install --path .
 ```
+
 Two optional runtimes add tiers on top of either: rootless [Podman](https://podman.io/) gives 
 you `container`, and [microsandbox](https://microsandbox.dev) (`msb`) 
 gives you `microvm` on a host with hardware virtualization (`/dev/kvm` 
