@@ -1777,3 +1777,79 @@ Being explicit about these is a feature, since the claim is a security claim.
    open-sourcing decides how much of the M10 crate is ours to write. Until
    that drop, the only commitment is the shape: fetch through our proxy,
    receipts as the network log, script off by default for untrusted origins.
+
+## 12. Finishing the browser: the order, and why it is this order
+
+Sections 7 and 8 say what the browser layer is; this says what is left before it
+is a **real, secure, agentic browser in a sandbox** rather than a fail-closed
+page fetcher with a good audit trail and a live view. Written as a sequence
+because the dependencies are real: taken out of order, several of these items
+either cannot be built or make the system less safe than it is today.
+
+Most of what follows is already recorded somewhere in this file; the sequence is
+the part that was not, along with items 1, 2b and 4, which were not written down
+at all.
+
+1. **A resident session for the engine.** The root gap, and the one that makes
+   four other things possible rather than being one of five equals. Today every
+   `h5i-browser-light open` renders its own page and exits, so there is no
+   continuity: no navigate-then-click-then-read, **no cookies at all**
+   (`net.rs` has no cookie handling of any kind), no login anywhere, and no way
+   for a live view to show the page *the agent* is driving rather than the page
+   the serving process happened to open — the caveat M11a's page pane has to
+   print today. Chromium does not have this problem, because agent-browser is
+   one daemon owning one browser; matching that shape is the work.
+
+2. **A real input surface, and an agent interface to reach it.** These ship
+   together or neither is usable.
+   - **(a)** Input stops at scrolling and link clicks (recorded in M10's tier 2
+     entry). With a session but no typing or form submission, an agent still
+     cannot get past a login form, so the session buys little on its own.
+   - **(b)** **There is no agent-facing interface for this engine, and the skill
+     currently tells an agent to do something that will fail.** `skills/h5i/`
+     teaches `agent-browser open/snapshot/click @e2/fill @e3` — the CDP surface.
+     `h5i-browser-light` does not speak CDP (§11 item 4), so in an
+     `h5i-light` box those verbs are wrong, and the skill says nothing about the
+     engine at all. Two engines means two agent interfaces and only one of them
+     is written down. Whether the answer is a verb set on our binary or a CDP
+     subset it learns to speak is open; that it is undocumented today is not.
+
+3. **Action-to-request correlation, at the sources.** Neither the mediator's
+   records nor the engine's request log carries the other's id, so nothing can
+   answer "what did this click fetch" (recorded in M11a's open list). Worth
+   doing while items 1 and 2 are already opening both files: the correlation has
+   to be *stamped* by whoever knows the causal link, because a viewer inferring
+   it from timing would be inventing evidence.
+
+4. **Marking page content as untrusted where the agent reads it.** The snapshot
+   and page text an agent consumes are attacker-controllable input that arrives
+   looking exactly like instructions, and nothing marks that boundary today.
+   Note what the existing defences do and do not cover: `sanitize_display`
+   protects the *viewer's* chrome from page strings (5.10), and no-script
+   removes the commonest *delivery channel* (7.1) — neither is a measure at the
+   point where an agent reads a page and decides what to do next. Cheap relative
+   to everything else here, and the only item on this list whose absence is a
+   live hole rather than a missing feature.
+
+5. **LOGIN mode, and takeover as a recorded policy event.** LOGIN mode —
+   withholding frames and snapshots from the agent while a human types a
+   credential — is described and deliberately unbuilt at 5.10; recording the
+   takeover window itself in the receipt is M11a's remaining exit criterion.
+   Both belong *after* item 1 and *before* item 6, and the reason is item 1: a
+   session with cookies is the first version of this browser where a stolen
+   credential is worth having, so the protection has to land with the thing it
+   protects rather than after it.
+
+6. **Script, policy-gated — last, and the trade stated plainly.** M10 tier 3 and
+   §11 item 5 already describe the shape: off by default, gated by policy before
+   evaluation, on for origins a human named. What belongs here is the cost. The
+   strongest security property this engine currently has is that no JavaScript
+   engine is linked into it at all, so page-borne prompt injection has no
+   delivery channel *by construction* rather than by filtering. Linking one
+   spends that, permanently, and the phrase "absent by construction" must stop
+   being used the moment it happens. Meanwhile the containment story underneath
+   is still the weaker one: the mediator is enforcement against a compliant
+   agent, not containment against an evasive one (7.2, §9), because the daemon
+   lives inside the box and Landlock grants are per-box. So this waits on the
+   microVM tier being real, or it is the one step in this list that makes the
+   system less safe than it was.
