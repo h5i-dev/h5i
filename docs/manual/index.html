@@ -256,6 +256,10 @@ git apply --3way ./review/patch.diff       # apply it where you want
 <pre><code class="language-bash">curl -fsSL https://h5i.dev/install.sh | sh     # prebuilt binary
 cargo install --path .                         # from source
 </code></pre>
+<p><code>h5i.dev/install.sh</code> and
+<code>raw.githubusercontent.com/h5i-dev/h5i/main/install.sh</code> are the same file, and
+CI fails if they ever stop being. Use the second one if you would rather the
+install path not depend on the domain.</p>
 <p>Then, so your agent knows how to use it:</p>
 <pre><code class="language-bash">h5i skill install           # writes the skill into ~/.claude/skills/h5i (or ~/.codex)
 npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
@@ -320,6 +324,7 @@ already spelled it as a flag.</p>
 <h3 id="h5i-box-create">h5i box create</h3>
 <pre><code>h5i box create &lt;NAME&gt; [--from &lt;rev&gt;] [--pr &lt;n&gt;] [--clone &lt;url&gt;] [--new]
                       [--profile &lt;p&gt;] [--isolation &lt;tier&gt;] [--image &lt;img&gt;]
+                      [--engine &lt;chromium|lightpanda|h5i-light&gt;]
 </code></pre>
 <p>The base revision is frozen at creation and pinned immutably. The policy is
 resolved, digested and stored <em>before</em> any state is created on disk, so an
@@ -360,8 +365,23 @@ unsatisfiable request fails closed rather than leaving half a box behind.</p>
 <td><code>--image &lt;img&gt;</code></td>
 <td>Base image for <code>isolation=container</code> and <code>isolation=microvm</code>. Pre-pulled; runs never pull.</td>
 </tr>
+<tr>
+<td><code>--engine &lt;e&gt;</code></td>
+<td>Browser engine for the <code>browser</code> profile: <code>chromium</code> (default), <code>lightpanda</code>, or <code>h5i-light</code>. Pinned in the digest; never falls back.</td>
+</tr>
 </tbody>
 </table>
+<p>A profile can also refuse individual browser actions, enforced by h5i on the
+daemon's control socket rather than advised:</p>
+<pre><code class="language-toml">[profile.browser.browser]
+deny = [&quot;evaluate&quot;, &quot;state&quot;]   # a bare family name covers state_save/state_load
+</code></pre>
+<p><code>evaluate</code> is arbitrary code in the page; <code>state_*</code> and <code>credentials_*</code> reach
+the browser's stored secrets. A denied verb never reaches the browser, and the
+refusal lands in the receipt's <code>browser-proxy</code> lane. This is enforcement
+against an agent using the documented path, not containment against one that
+goes looking: the daemon runs inside the box, and a box has no internal
+privilege boundary.</p>
 <h3 id="working-in-a-box">Working in a box</h3>
 <pre><code class="language-bash">h5i box ls                            # every box on this clone
 h5i box status &lt;name&gt;                 # policy actually enforced, evidence, base drift

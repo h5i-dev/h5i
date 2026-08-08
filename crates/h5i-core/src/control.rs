@@ -133,6 +133,15 @@ pub fn release(env_dir: &Path) -> Result<Control, H5iError> {
 /// The agent took a fresh snapshot, so its handles are current again.
 pub fn snapshotted(env_dir: &Path) -> Result<Control, H5iError> {
     let mut c = read(env_dir);
+    // Same read-modify-write hazard `release` guards: this rewrites the whole
+    // record, so a takeover landing between the read above and the write below
+    // would be erased — the file would say the agent holds control while a
+    // human is driving the page. Since the mediator now calls this on every
+    // forwarded snapshot (constantly), re-read and refuse to clear anything if
+    // a human has taken the wheel in the meantime.
+    if read(env_dir).holder == Holder::Human {
+        return Ok(read(env_dir));
+    }
     c.needs_resnapshot = false;
     write(env_dir, &c)?;
     Ok(c)

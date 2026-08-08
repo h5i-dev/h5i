@@ -135,6 +135,10 @@ pub struct BoxArgs {
     #[arg(long)]
     image: Option<String>,
 
+    /// Browser engine for the `browser` profile: chromium | lightpanda | h5i-light.
+    #[arg(long)]
+    engine: Option<String>,
+
     /// Emit the created box's manifest as JSON instead of the human summary.
     #[arg(long)]
     json: bool,
@@ -201,6 +205,7 @@ impl BoxArgs {
             profile: self.profile,
             isolation: self.isolation,
             image: self.image,
+            engine: self.engine,
             backend: "auto".into(),
             audit: "signal".into(),
             json: self.json,

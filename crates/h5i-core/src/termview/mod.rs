@@ -49,6 +49,7 @@ pub mod image;
 pub mod input;
 pub mod kitty;
 pub mod proto;
+pub mod panes;
 pub mod status;
 pub mod ws;
 
@@ -91,9 +92,10 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(600);
 #[cfg(unix)]
 const TICK: Duration = Duration::from_millis(250);
 
-/// Rows the viewer keeps for itself: the status line and a blank separator.
-#[cfg(unix)]
-const CHROME_ROWS: u16 = 2;
+// Rows the viewer keeps for itself (status line + separator) live in `panes`,
+// which is also what computes the split. Two copies of "how many rows the
+// chrome takes" is a screen that overlaps by one row the first time either
+// changes.
 
 /// What a viewer needs to know to attach to one box.
 pub struct Options {
@@ -404,6 +406,10 @@ struct App<'a> {
     /// The last frame, kept so a resize can redraw without waiting for the box
     /// to send another. A static page sends nothing at all.
     last_frame: Option<Vec<u8>>,
+    /// Developer layout: page plus what the page said.
+    developer: bool,
+    /// Console errors and page exceptions, bounded.
+    log: panes::LogBuffer,
     /// Where the page currently sits on screen, for mapping clicks back.
     mapping: Option<input::Mapping>,
     viewport: (u32, u32),
@@ -432,6 +438,10 @@ impl<'a> App<'a> {
             placer: kitty::Placer::new(encoding),
             mode: Mode::View,
             last_frame: None,
+            developer: false,
+            // Enough to see a failure loop's shape without holding a page's
+            // whole console in a viewer.
+            log: panes::LogBuffer::new(200),
             mapping: None,
             viewport: (1280, 720),
             url: None,
@@ -518,9 +528,19 @@ impl<'a> App<'a> {
                         self.url = Some(url);
                         self.draw_status();
                     }
-                    Some(proto::ServerMessage::ConsoleError(_) | proto::ServerMessage::PageError(_)) => {
+                    Some(proto::ServerMessage::ConsoleError(text)) => {
                         self.errors = self.errors.saturating_add(1);
+                        // Kept, not just counted: the count tells a supervisor
+                        // something is wrong, the text tells them what.
+                        self.log.push(panes::LogLine::console(text));
                         self.draw_status();
+                        self.redraw_log();
+                    }
+                    Some(proto::ServerMessage::PageError(text)) => {
+                        self.errors = self.errors.saturating_add(1);
+                        self.log.push(panes::LogLine::page_error(text));
+                        self.draw_status();
+                        self.redraw_log();
                     }
                     _ => {}
                 }
@@ -562,20 +582,20 @@ impl<'a> App<'a> {
         let Ok(frame) = image::decode(jpeg) else {
             return;
         };
-        let rows = self.size.rows.saturating_sub(CHROME_ROWS).max(1);
+        let regions = panes::layout(self.size.cols.max(1), self.size.rows, self.developer);
         let fit = image::fit(
             frame.width,
             frame.height,
-            self.size.cols.max(1),
-            rows,
+            regions.page.cols.max(1),
+            regions.page.rows.max(1),
             self.size.cell_w,
             self.size.cell_h,
         );
         let scaled = image::downscale(&frame, fit.pixel_width, fit.pixel_height);
 
         let at = kitty::Placement {
-            row: CHROME_ROWS + 1,
-            col: 1,
+            row: regions.page.row,
+            col: regions.page.col,
             cols: fit.cols,
             rows: fit.rows,
         };
@@ -618,6 +638,34 @@ impl<'a> App<'a> {
         // The lock can change under us — the agent's own tooling, or another
         // terminal — so it is read rather than remembered.
         self.draw_status();
+    }
+
+    /// Repaint the developer pane, if it is showing.
+    ///
+    /// Cursor position is saved and restored around it, the same way
+    /// `draw_status` does: the page image is placed by absolute position, but
+    /// anything else writing to the terminal would otherwise leave the cursor
+    /// wherever it finished.
+    fn redraw_log(&mut self) {
+        if !self.developer {
+            return;
+        }
+        let regions = panes::layout(self.size.cols.max(1), self.size.rows, true);
+        let Some(rect) = regions.log else {
+            return;
+        };
+        let rendered = panes::render_pane(&self.log, rect.cols, rect.rows);
+
+        let mut out = String::from("\x1b[s");
+        for (index, line) in rendered.iter().enumerate() {
+            out.push_str(&kitty::cursor_to(rect.row + index as u16, rect.col));
+            out.push_str(line);
+        }
+        out.push_str("\x1b[u");
+
+        let mut stdout = std::io::stdout();
+        let _ = stdout.write_all(out.as_bytes());
+        let _ = stdout.flush();
     }
 
     fn draw_status(&mut self) {
@@ -678,6 +726,20 @@ impl<'a> App<'a> {
             KeyCode::Char('c') if ctrl => true,
             KeyCode::Char('i') if !ctrl => {
                 self.enter_interact();
+                false
+            }
+            // Developer mode. Safe as a bare letter here: nothing typed in
+            // VIEW reaches the page.
+            KeyCode::Char('d') if !ctrl => {
+                self.developer = !self.developer;
+                // The split moves the page, so the old placement has to go
+                // before the new one is drawn or the two overlap.
+                let _ = std::io::stdout().write_all(b"\x1b[2J");
+                self.draw_status();
+                if let Some(frame) = self.last_frame.clone() {
+                    self.render(&frame);
+                }
+                self.redraw_log();
                 false
             }
             _ => false,
@@ -767,7 +829,7 @@ mod tests {
         // The page starts below the status line and its separator. If this ever
         // became 0 the page would be drawn over the one row it must never be
         // able to touch.
-        assert_eq!(CHROME_ROWS, 2, "row one is the status line, row two separates it");
+        assert_eq!(panes::CHROME_ROWS, 2, "row one is the status line, row two separates it");
     }
 
     #[test]

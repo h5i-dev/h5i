@@ -536,6 +536,246 @@ pub struct Profile {
     /// profile's canonical serialization — and its pinned digest — is unchanged.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub loopback_ports: Vec<u16>,
+
+    /// Which browser engine a `browser` box runs (`[profile.X] engine = "..."`).
+    ///
+    /// Declared rather than discovered, because **an engine change is a policy
+    /// change, not an optimization**: an API that is absent by construction in
+    /// one engine exists in another, so a box that silently fell back to
+    /// Chromium would widen its own capability surface without anyone deciding
+    /// to. It is pinned in the digest for the same reason `unix_sockets` is,
+    /// and there is deliberately no fallback: an engine that cannot serve a
+    /// page fails and names the recreate (see `engine_tooling_present`).
+    ///
+    /// `None` means the profile does not run a browser at all, which is every
+    /// profile but `browser`.
+    ///
+    /// Appended last, and serialized only when set, so every existing profile's
+    /// canonical serialization — and its pinned digest — is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
+
+    /// Browser actions this box may not perform
+    /// (`[profile.X.browser] deny = ["evaluate", "state"]`).
+    ///
+    /// Names are the *action* as it goes over the daemon socket, which is not
+    /// always the CLI verb: `agent-browser eval` sends `evaluate`. Entries are
+    /// validated against [`BROWSER_DENYABLE_ACTIONS`] at create.
+    ///
+    /// Enforced by the mediator that sits on the daemon's control socket, so
+    /// this is a real refusal rather than advice: the verb never reaches the
+    /// browser. A bare family name denies its members, so `state` covers
+    /// `state_save` and `state_load`. `evaluate` is the one most profiles want,
+    /// because it is arbitrary code in the page.
+    ///
+    /// Appended last, and serialized only when non-empty, so every existing
+    /// profile's canonical serialization — and its pinned digest — is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub browser_deny: Vec<String>,
+}
+
+/// The browser engines a `browser` box can be pinned to.
+///
+/// Two of these are Chromium-shaped and one is not, and the difference is the
+/// whole point of naming it in policy: `Chromium` runs the full engine through
+/// agent-browser and can do everything a browser does; `H5iLight` runs our own
+/// engine, which has no script, no video and no WebGL, and is therefore the
+/// safer place to read the untrusted web and the wrong place to verify a React
+/// app (ROADMAP 7.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BrowserEngine {
+    /// Chromium driven by agent-browser. The fidelity path; today's default.
+    Chromium,
+    /// Lightpanda, driven by agent-browser over CDP. Lighter than Chromium,
+    /// still runs script.
+    Lightpanda,
+    /// `h5i-browser-light`: our own engine. No script in this tier, and every
+    /// request is policy-checked and receipted before the wire.
+    H5iLight,
+}
+
+/// Browser actions (and action *families*) a profile may name in
+/// `[profile.X.browser] deny`.
+///
+/// A curated vocabulary rather than free text, because the deny list is
+/// fail-open by nature: an entry that matches nothing denies nothing, while
+/// `policy.resolved.toml` still reads as though the verb were blocked. A
+/// misspelling has to be refused at create, where the author is standing
+/// there, not discovered later by an agent successfully doing the thing.
+///
+/// Family entries (`state`, `credentials`, …) cover their `name_*` members —
+/// `state` denies `state_save` and `state_load` — which is why they are listed
+/// alongside the individual verbs rather than instead of them.
+///
+/// Adding an action upstream means adding it here. That is the cost of the
+/// guarantee, and it is the same trade the Chrome candidate tables make.
+pub const BROWSER_DENYABLE_ACTIONS: &[&str] = &[
+    // Families.
+    "cookies",
+    "credentials",
+    "profiler",
+    "react",
+    "recording",
+    "state",
+    "storage",
+    "tab",
+    "trace",
+    // Individual verbs.
+    "back",
+    "cdp_url",
+    "boundingbox",
+    "check",
+    "click",
+    "close",
+    "console",
+    "content",
+    "count",
+    "dblclick",
+    "diff_snapshot",
+    "diff_url",
+    "download",
+    "drag",
+    "evaluate",
+    "fill",
+    "focus",
+    "forward",
+    "geolocation",
+    "getattribute",
+    "gettext",
+    "headers",
+    "hover",
+    "innerhtml",
+    "inputvalue",
+    "ischecked",
+    "isenabled",
+    "isvisible",
+    "keyboard",
+    "launch",
+    "locale",
+    "navigate",
+    "network",
+    "offline",
+    "open",
+    "pdf",
+    "permissions",
+    "press",
+    "read",
+    "reload",
+    "screenshot",
+    "scroll",
+    "select",
+    "snapshot",
+    "styles",
+    "tap",
+    "timezone",
+    "title",
+    "type",
+    "uncheck",
+    "upload",
+    "url",
+    "useragent",
+    "viewport",
+    "wait",
+];
+
+/// Check one `[profile.X.browser] deny` entry, fail-closed.
+///
+/// The error names a near match when there is one, because the mistake this
+/// exists to catch is a plausible short spelling (`eval` for `evaluate`) that
+/// would otherwise silently deny nothing.
+pub fn validate_browser_deny(entry: &str) -> Result<(), String> {
+    let name = entry.trim();
+    if name.is_empty() {
+        return Err("`[profile.X.browser] deny` contains an empty entry (fail-closed)".to_string());
+    }
+    // `snapshot` is the one verb that clears the stale-handle latch a human
+    // takeover sets, so denying it means every mutating verb is refused with
+    // "run `agent-browser snapshot`" and that snapshot is refused too — the
+    // browser is unusable for the life of the box, with an error that reads as
+    // a malfunction.
+    if name == "snapshot" {
+        return Err(
+            "`snapshot` cannot be denied: it is how an agent recovers after a human takes and \
+             hands back browser control, so denying it would leave the browser permanently \
+             refusing every action (fail-closed)."
+                .to_string(),
+        );
+    }
+    if BROWSER_DENYABLE_ACTIONS.contains(&name) {
+        return Ok(());
+    }
+
+    // A near match is almost always the intent: `eval` -> `evaluate`,
+    // `cookie` -> `cookies`.
+    let lowered = name.to_ascii_lowercase();
+    let hint = BROWSER_DENYABLE_ACTIONS
+        .iter()
+        .find(|known| **known == lowered || known.starts_with(&lowered) || lowered.starts_with(*known))
+        .map(|known| format!(" — did you mean `{known}`?"))
+        .unwrap_or_default();
+
+    Err(format!(
+        "unknown browser action `{entry}` in `[profile.X.browser] deny`{hint}\n           An entry that matches no action denies nothing while the policy reads as if it did, \n           so it is refused here (fail-closed). Accepted names are the agent-browser verbs and \n           the families `cookies`, `credentials`, `state`, `storage`, `tab`, `trace`, `profiler`, \n           `react`, `recording` (a family covers its `name_*` members)."
+    ))
+}
+
+impl BrowserEngine {
+    /// The spelling used in `.h5i/env.toml` and on `--engine`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BrowserEngine::Chromium => "chromium",
+            BrowserEngine::Lightpanda => "lightpanda",
+            BrowserEngine::H5iLight => "h5i-light",
+        }
+    }
+
+    /// Parse a policy-declared engine name, fail-closed on anything else.
+    ///
+    /// The error names the accepted values rather than saying "invalid",
+    /// because the caller is someone editing a profile who needs the list.
+    pub fn parse(input: &str) -> Result<Self, String> {
+        match input.trim() {
+            "chromium" | "chrome" => Ok(BrowserEngine::Chromium),
+            "lightpanda" => Ok(BrowserEngine::Lightpanda),
+            "h5i-light" | "h5i_light" => Ok(BrowserEngine::H5iLight),
+            other => Err(format!(
+                "unknown browser engine `{other}` — expected one of: chromium, lightpanda, h5i-light (fail-closed)"
+            )),
+        }
+    }
+
+    /// Whether agent-browser drives this engine.
+    ///
+    /// `h5i-light` does not speak CDP, so agent-browser cannot drive it; h5i
+    /// runs that binary itself. Getting this backwards would mean injecting
+    /// `AGENT_BROWSER_*` variables for an engine that never reads them, which
+    /// reviews as enforcement while enforcing nothing.
+    pub fn driven_by_agent_browser(&self) -> bool {
+        match self {
+            BrowserEngine::Chromium | BrowserEngine::Lightpanda => true,
+            BrowserEngine::H5iLight => false,
+        }
+    }
+
+    /// The binaries this engine needs on a kernel-tier host, and the command
+    /// that installs them, for the create-time refusal.
+    pub fn required_tooling(&self) -> (&'static [&'static str], &'static str) {
+        match self {
+            BrowserEngine::Chromium => (
+                &["a Chrome/Chromium build", "the `agent-browser` binary"],
+                "npm install -g agent-browser && agent-browser install",
+            ),
+            BrowserEngine::Lightpanda => (
+                &["the `lightpanda` binary", "the `agent-browser` binary"],
+                "npm install -g agent-browser  # and install lightpanda from https://lightpanda.io",
+            ),
+            BrowserEngine::H5iLight => (
+                &["the `h5i-browser-light` binary"],
+                "cargo install --path crates/h5i-browser-light",
+            ),
+        }
+    }
 }
 
 /// Read-only system paths granted by default at the `process` tier — enough to
@@ -597,6 +837,8 @@ impl Profile {
             unix_sockets: false,
             mach_iokit: false,
             loopback_ports: Vec::new(),
+            engine: None,
+            browser_deny: Vec::new(),
         }
     }
 
@@ -759,6 +1001,9 @@ impl Profile {
         // are memory.
         p.mem_bytes = Some(12 * 1024 * 1024 * 1024);
         p.max_procs = Some(1024);
+        // Pinned, and never inferred. A box that quietly changed engine would
+        // change what the page can do without changing its digest.
+        p.engine = Some(BrowserEngine::Chromium);
         p
     }
 
@@ -895,6 +1140,26 @@ const AGENT_BROWSER_CANDIDATES: &[&str] = &[
     "/opt/homebrew/bin/agent-browser",
 ];
 
+/// Where `lightpanda` lands. Same shape as the agent-browser list, and for the
+/// same reason: a grant nobody looks in reads like support and supports
+/// nothing.
+const LIGHTPANDA_CANDIDATES: &[&str] = &[
+    "~/.cargo/bin/lightpanda",
+    "~/.local/bin/lightpanda",
+    "/usr/local/bin/lightpanda",
+    "/usr/bin/lightpanda",
+    "/opt/homebrew/bin/lightpanda",
+];
+
+/// Where our own engine lands.
+const BROWSER_LIGHT_CANDIDATES: &[&str] = &[
+    "~/.cargo/bin/h5i-browser-light",
+    "~/.local/bin/h5i-browser-light",
+    "/usr/local/bin/h5i-browser-light",
+    "/usr/bin/h5i-browser-light",
+    "/opt/homebrew/bin/h5i-browser-light",
+];
+
 /// Font and rendering support Chrome needs to start at all.
 const BROWSER_SUPPORT_PATHS: &[&str] = &[
     "/usr/share/fonts",
@@ -934,6 +1199,13 @@ pub fn browser_read_grants() -> Vec<String> {
     CHROME_CANDIDATES
         .iter()
         .chain(AGENT_BROWSER_CANDIDATES)
+        // Every engine's binaries are granted, not just the pinned one: the
+        // grant list is host discovery, and narrowing it per engine would make
+        // the digest depend on which engine a box happened to pick while
+        // buying nothing — the engine is enforced by what h5i launches, and
+        // only paths that exist are granted anyway.
+        .chain(LIGHTPANDA_CANDIDATES)
+        .chain(BROWSER_LIGHT_CANDIDATES)
         .chain(BROWSER_SUPPORT_PATHS)
         .filter(|c| expand_home(c).map(|p| p.exists()).unwrap_or(false))
         .map(|c| c.to_string())
@@ -1071,6 +1343,64 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 /// exists. `~/.cache/ms-playwright` is there on any host that ever installed
 /// Playwright for something else, and it may hold nothing but an ffmpeg build —
 /// which used to be enough to pass `create` and fail in the box.
+/// Which of an engine's required binaries are missing on this host.
+///
+/// Returns the human-readable names, so the caller's refusal can say what to
+/// install rather than "unsupported". Empty means the engine can run here.
+pub fn engine_tooling_missing(engine: BrowserEngine) -> Vec<&'static str> {
+    let any = |list: &[&str]| {
+        list.iter()
+            .any(|c| expand_home(c).map(|p| p.exists()).unwrap_or(false))
+    };
+    let agent_browser = any(AGENT_BROWSER_CANDIDATES);
+
+    let mut missing = Vec::new();
+    match engine {
+        BrowserEngine::Chromium => {
+            if chrome_binary().is_none() {
+                missing.push("a Chrome/Chromium build");
+            }
+            if !agent_browser {
+                missing.push("the `agent-browser` binary");
+            }
+        }
+        BrowserEngine::Lightpanda => {
+            if !any(LIGHTPANDA_CANDIDATES) {
+                missing.push("the `lightpanda` binary");
+            }
+            if !agent_browser {
+                missing.push("the `agent-browser` binary");
+            }
+            // Chrome too, and not as an oversight: h5i's launch shim starts
+            // Chrome and attaches agent-browser to it over `--cdp`, and that
+            // shim is installed for every engine agent-browser drives. Until
+            // the shim can launch lightpanda itself, a lightpanda box still
+            // needs a Chrome on the host — so demand it here rather than let
+            // create pass and every browser command afterwards fail.
+            if chrome_binary().is_none() {
+                missing.push("a Chrome/Chromium build (h5i's launch shim still starts Chrome)");
+            }
+        }
+        // Ours drives itself: agent-browser cannot speak to it, so requiring
+        // agent-browser here would refuse a box that would have worked.
+        BrowserEngine::H5iLight => {
+            if !any(BROWSER_LIGHT_CANDIDATES) {
+                missing.push("the `h5i-browser-light` binary");
+            }
+        }
+    }
+    missing
+}
+
+/// The `h5i-browser-light` binary on this host, if there is one.
+pub fn browser_light_binary() -> Option<String> {
+    BROWSER_LIGHT_CANDIDATES
+        .iter()
+        .filter_map(|c| expand_home(c))
+        .find(|p| p.exists())
+        .map(|p| p.display().to_string())
+}
+
 pub fn browser_tooling_present() -> (bool, bool) {
     let any = |list: &[&str]| {
         list.iter()
@@ -1088,6 +1418,152 @@ pub fn browser_tooling_present() -> (bool, bool) {
 #[cfg(test)]
 mod browser_discovery_tests {
     use super::*;
+
+    #[test]
+    fn a_misspelled_deny_entry_is_refused_and_the_error_suggests_the_real_name() {
+        // The failure this guards: `deny = ["eval"]` looks right, matches no
+        // action, and leaves arbitrary JS allowed while the resolved policy
+        // reads as though it were blocked.
+        let err = validate_browser_deny("eval").expect_err("must refuse");
+        assert!(err.contains("eval"), "{err}");
+        assert!(err.contains("did you mean `evaluate`"), "{err}");
+        assert!(err.contains("fail-closed"), "{err}");
+
+        assert!(validate_browser_deny("Evaluate").is_err(), "case matters");
+        assert!(validate_browser_deny("evaluate-js").is_err());
+        assert!(validate_browser_deny("  ").is_err(), "empty entries too");
+    }
+
+    #[test]
+    fn real_actions_and_families_are_accepted() {
+        for good in ["evaluate", "click", "state", "credentials", "cookies", "screenshot"] {
+            validate_browser_deny(good)
+                .unwrap_or_else(|e| panic!("`{good}` should be a valid deny entry: {e}"));
+        }
+        // Surrounding whitespace validates — and `load_profile` trims on the
+        // way in, so what enforcement matches is what was validated. This test
+        // previously stopped here, which pinned the fail-open: validation
+        // trimmed, storage did not, and the padded entry denied nothing.
+        assert!(validate_browser_deny(" evaluate ").is_ok());
+    }
+
+    #[test]
+    fn snapshot_cannot_be_denied_because_it_is_how_the_lock_releases() {
+        let err = validate_browser_deny("snapshot").expect_err("must refuse");
+        assert!(err.contains("snapshot"), "{err}");
+        assert!(err.contains("fail-closed"), "{err}");
+    }
+
+    #[test]
+    fn every_read_only_action_the_mediator_knows_is_deniable() {
+        // Drift guard. The mediator enumerates actions it treats as read-only;
+        // if one of them is missing here, `validate_profile` hard-refuses a
+        // profile that names it — a regression for a config that loaded
+        // before — and, for `cdp_url`, removes the only way to close a
+        // mediation bypass (it hands out the raw CDP endpoint).
+        for action in [
+            "cdp_url",
+            "console",
+            "network",
+            "diff_snapshot",
+            "diff_url",
+            "read",
+            "screenshot",
+            "url",
+            "title",
+        ] {
+            validate_browser_deny(action)
+                .unwrap_or_else(|e| panic!("`{action}` is a real action and must be deniable: {e}"));
+        }
+    }
+
+    #[test]
+    fn the_engine_is_in_the_digest_and_only_when_a_profile_runs_a_browser() {
+        // Same discipline as the AF_UNIX grant: appended last and skipped when
+        // absent, so every existing profile's canonical TOML — and its pinned
+        // digest — is byte-identical to before this field existed.
+        let plain = Profile::builtin("default", IsolationClaim::Process);
+        let rendered = toml::to_string(&plain).expect("serializes");
+        assert!(
+            !rendered.contains("engine"),
+            "a profile that runs no browser must not mention an engine: {rendered}"
+        );
+
+        let browser = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
+        let rendered = toml::to_string(&browser).expect("serializes");
+        assert!(
+            rendered.contains("engine = \"chromium\""),
+            "the browser profile must pin its engine: {rendered}"
+        );
+    }
+
+    #[test]
+    fn changing_engine_changes_the_digest() {
+        // The whole point of declaring it: an engine switch is a policy change,
+        // so two boxes that differ only by engine must not share a digest.
+        let mut a = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
+        let mut b = a.clone();
+        a.engine = Some(BrowserEngine::Chromium);
+        b.engine = Some(BrowserEngine::H5iLight);
+        assert_ne!(
+            toml::to_string(&a).expect("a"),
+            toml::to_string(&b).expect("b"),
+            "engine must be part of what gets hashed"
+        );
+    }
+
+    #[test]
+    fn an_unknown_engine_is_refused_by_name_with_the_accepted_set() {
+        let err = BrowserEngine::parse("firefox").expect_err("must refuse");
+        assert!(err.contains("firefox"), "{err}");
+        assert!(err.contains("chromium"), "the message must list what works: {err}");
+        assert!(err.contains("fail-closed"), "{err}");
+
+        // Spellings a person actually types.
+        assert_eq!(BrowserEngine::parse("chrome").unwrap(), BrowserEngine::Chromium);
+        assert_eq!(BrowserEngine::parse(" h5i-light ").unwrap(), BrowserEngine::H5iLight);
+    }
+
+    #[test]
+    fn only_chromium_shaped_engines_are_driven_by_agent_browser() {
+        // Getting this wrong means injecting AGENT_BROWSER_* variables for an
+        // engine that never reads them, which reviews as enforcement while
+        // enforcing nothing.
+        assert!(BrowserEngine::Chromium.driven_by_agent_browser());
+        assert!(BrowserEngine::Lightpanda.driven_by_agent_browser());
+        assert!(!BrowserEngine::H5iLight.driven_by_agent_browser());
+    }
+
+    #[test]
+    fn lightpanda_still_demands_chrome_because_the_shim_launches_it() {
+        // The create-time guard used to require Chrome for every browser box.
+        // Making it per-engine dropped that for lightpanda while
+        // `prepare_browser_shim` kept installing the Chrome-launching shim —
+        // so create passed and every browser command then failed, or worse,
+        // silently ran full Chromium under a digest that said "lightpanda".
+        let (_, install) = BrowserEngine::Lightpanda.required_tooling();
+        assert!(!install.is_empty());
+        // The check must ask about Chrome at all; whether it is present here
+        // depends on the host, so assert on the question, not the answer.
+        let missing = engine_tooling_missing(BrowserEngine::Lightpanda);
+        if chrome_binary().is_none() {
+            assert!(
+                missing.iter().any(|m| m.contains("Chrome")),
+                "lightpanda must not pass create on a host with no Chrome: {missing:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn our_own_engine_does_not_require_agent_browser_to_be_installed() {
+        // It drives itself, so demanding agent-browser would refuse a box that
+        // would have worked.
+        let missing = engine_tooling_missing(BrowserEngine::H5iLight);
+        assert!(
+            !missing.iter().any(|m| m.contains("agent-browser")),
+            "h5i-light must not demand agent-browser: {missing:?}"
+        );
+    }
 
     /// Path-segment-aware prefix: `/usr/bin/chromium` covers
     /// `/usr/bin/chromium/…` and itself, but not `/usr/bin/chromium-browser`.

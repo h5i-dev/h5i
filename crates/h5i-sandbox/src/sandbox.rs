@@ -45,8 +45,9 @@ use crate::error::H5iError;
 // imports them from `sandbox_policy` directly, breaking the `sandbox →
 // container → sandbox` dispatch cycle.
 pub use crate::sandbox_policy::{
-    agent_browser_binary, browser_read_grants, browser_tooling_present, chrome_binary,
-    chrome_exec_patterns, AgentRuntime, AuditCapture,
+    agent_browser_binary, browser_light_binary, browser_read_grants, browser_tooling_present,
+    chrome_binary, chrome_exec_patterns, engine_tooling_missing, AgentRuntime, AuditCapture,
+    BrowserEngine,
     AuditPolicy,
     BoxGitPath, ExecOutcome, HomeBind, InteractiveOutcome, IsolationClaim, NetMode, PrivateBind,
     PrivatePath, Profile, ResolvedPolicy, RoBind, SecretGrant, DEFAULT_WALL,
@@ -180,6 +181,23 @@ struct ProfileToml {
     /// Opt-in for the secrets broker's host-side `command:` extractor.
     #[serde(default)]
     allow_command_extractors: bool,
+    /// Which browser engine this profile runs: `[profile.browser] engine =
+    /// "h5i-light"`. Spellable because it is a decision an operator makes at
+    /// create; validated fail-closed, and pinned in the digest, because
+    /// changing engine changes what a page can do.
+    #[serde(default)]
+    engine: Option<String>,
+    /// `[profile.X.browser]` — what the box may do with the browser.
+    #[serde(default)]
+    browser: BrowserToml,
+}
+
+/// `[profile.X.browser] deny = ["evaluate"]`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BrowserToml {
+    #[serde(default)]
+    deny: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -454,6 +472,29 @@ pub fn load_profile(
                 // it is not a policy dial an author picks, it is what the
                 // `browser` base needs in order to start a browser at all.
                 mach_iokit: base.mach_iokit,
+                // Declared or inherited. Parsed (and refused) in
+                // `validate_profile` so the error names the accepted set.
+                // Checked against the known action vocabulary in
+                // `validate_profile` below, so a misspelling is refused at
+                // create rather than silently denying nothing.
+                // Trimmed on the way in, so what enforcement matches is what
+                // validation checked. Validating `entry.trim()` while storing
+                // the raw string meant `deny = [" evaluate "]` passed create
+                // and then matched no action — the exact fail-open the
+                // validator exists to prevent.
+                browser_deny: t
+                    .browser
+                    .deny
+                    .clone()
+                    .map(|list| list.iter().map(|e| e.trim().to_string()).collect())
+                    .unwrap_or_else(|| base.browser_deny.clone()),
+                engine: match t.engine.as_deref() {
+                    Some(name) => Some(
+                        crate::sandbox_policy::BrowserEngine::parse(name)
+                            .map_err(H5iError::Metadata)?,
+                    ),
+                    None => base.engine,
+                },
             }
         }
     };
@@ -561,6 +602,14 @@ pub fn effective_auto(
 /// Fail-closed policy lints (§7). These reject *policies*, before any env is
 /// created — never silently weaken them.
 pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
+    // A deny entry that matches no action denies nothing, while the resolved
+    // policy still reads as though the verb were blocked. Refuse the typo here
+    // rather than let the operator discover it from an agent successfully
+    // doing the thing.
+    for entry in &p.browser_deny {
+        crate::sandbox_policy::validate_browser_deny(entry).map_err(H5iError::Metadata)?;
+    }
+
     // A profile that opts into an egress allowlist may not also re-export the
     // proxy wiring: `env.pass` is applied after it, so the host's value would
     // win and the box would route around the allowlist. Refused at load, so the

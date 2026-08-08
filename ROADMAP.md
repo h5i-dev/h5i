@@ -1183,8 +1183,84 @@ Chromium installed answers `doctor`, snapshots a real documentation site,
 and the full loop's failure modes on a light engine are written down here.
 No routing yet: one engine per box.
 
-**M10. The lightweight visual engine — proposed, gated.** The h5i-native
-engine of 7.1 step 3. With M8's Fetch lane already delivering best-effort
+**M10. The lightweight visual engine — tier 1 built, 2026-08-07.**
+`crates/h5i-browser-light`, a standalone binary: static render, agent
+snapshot, screenshot, and the fail-closed request log. Blitz + Stylo +
+vello_cpu assembled behind our own broker; 42 tests; clippy clean with and
+without default features. Driven live against a local page and a real site.
+
+Built **ahead of its gates**, and that should be said plainly: M9 has not run,
+so there is no compatibility data yet, and Kitesurf's open-source drop has not
+landed, so the build-versus-adopt call was made without it. What that buys is
+a working artifact to measure instead of a design to argue about; what it
+costs is that tier 2/3 scope is still guesswork, and the CI lockfile grew by
+137 packages to carry the engine.
+
+Two findings from driving it, neither available by reading:
+
+1. **A denied resource must be *completed*, not dropped.** Blitz counts a
+   resource pending until its `NetHandler` is called, and `paint_scene`
+   refuses to paint while any critical resource is pending — so the obvious
+   way to write a deny (return without calling the handler) renders every page
+   permanently blank. Fail-closed means "completed with nothing", and there is
+   a test on it.
+2. **`system-fonts` is a build-time native dependency.** Blitz's font
+   discovery pulls `yeslogic-fontconfig-sys`, which needs libfontconfig
+   headers to compile — portable engine, non-portable build. Fonts are
+   discovered and registered at runtime instead, which also makes "no fonts"
+   a state `doctor` reports rather than a blank screenshot nobody can explain.
+
+**Tier 2 built, same day.** `h5i-browser-light serve`: a WebSocket that speaks
+the viewers' own format (base64 JPEG in a JSON envelope, `status` carrying the
+viewport, `config`/`ack` pacing), plus a `.stream` file so the existing
+discovery finds it. Scroll and link-click work; a click on a refused link
+returns `page_error` and keeps the page. Frames are driven by change, not by a
+clock: with no script, at rest the process sends nothing, and an `ack` alone
+never produces a frame. Verified with a protocol-level client that does its own
+handshake and masking, so the compatibility check is against the spec rather
+than against our own encoder.
+
+**The numbers, measured rather than hoped for.** Median of 5 after a warm-up,
+same host, self-contained local pages, peak summed RSS across the process tree:
+
+| | one-shot, 39 KB docs page | idle with a page held open |
+| --- | --- | --- |
+| h5i-browser-light | 72 ms / 33 MB | 37.5 MB |
+| chromium `headless_shell` | 356 ms / 479 MB | 383.8 MB |
+| chromium (full) | 644 ms / 799 MB | — |
+
+That is ~5x faster and ~15x lighter one-shot, ~10x lighter at rest, so the
+memory exit criterion is met in both the states it named. Three caveats travel
+with it and belong in any repetition of it: cold start is included and
+dominates Chromium's time (fair for a one-shot agent invocation, not a
+steady-state throughput claim); the pages carry no JavaScript, so Chromium is
+paying for an engine it is not using and a script-driven page would reverse the
+comparison entirely; and software rasterisation will narrow the time gap on
+heavy CSS.
+
+Still open at this tier: no script; input stops at scrolling and link clicks
+(no typing, no form submission); and the live view has been driven by a
+protocol-level test client rather than by `h5i box view` against a real box.
+What is missing in that last one is the run, not the plumbing —
+`H5I_BROWSER_STREAM_FILE` puts the `.stream` under the box's `agent-browser`
+directory, which is where the viewers' discovery already scans.
+
+**Corrected 2026-08-08.** This entry also said "nothing wires h5i to this
+engine yet — M9's `--engine` knob does not exist, so using it in a box is
+still manual", which was true the day tier 2 shipped and stopped being true
+three commits later on the same branch. `--engine h5i-light`, or
+`[profile.X] engine`, pins the engine in `policy.resolved.toml` and so in the
+digest; `browser_env` hands that engine `H5I_BROWSER_ALLOW` (the box's own
+`net.egress`, loopback included) and `H5I_BROWSER_RECEIPTS` pointing at the
+box's spool, and skips the agent-browser shim, whose job is to launch Chrome
+and attach a driver — neither of which applies to an engine h5i runs itself.
+Using this engine in a box is a create-time flag. The entry is left standing
+rather than edited away because the gap it records is the real lesson: a
+milestone's "still open" list ages against the commits that follow it.
+
+The original entry follows.
+
+**M10 (as proposed).** The h5i-native engine of 7.1 step 3. With M8's Fetch lane already delivering best-effort
 request receipts on Chromium, the engine's case is what mediation cannot
 give: fail-closed logging (no running log, no request), script off by
 default and checked by policy before evaluation, and the single-use
@@ -1239,7 +1315,9 @@ the reading half of the loop, and Kitesurf's open-source release has landed so
 the build-versus-adopt call is made with the code on the table, not the blog
 post.
 
-**M11. The developer-mode viewer — proposed, after M8.** The terminal
+**M11. The developer-mode viewer — built, 2026-08-07.** `d` in the terminal viewer splits the screen: the page keeps the top, and a console/error pane takes the bottom third. What it shows was already arriving and being thrown away — `ConsoleError` and `PageError` carried their text and the viewer kept only a counter. Page text is passed through `sanitize_display` before it is drawn, because a console message is untrusted input and would otherwise repaint the viewer's own chrome. The layout and the pane renderer are pure functions (`termview/panes.rs`) with the split, the truncation, the bounded buffer and the sanitising all tested; `App` stays the thin thing that positions and writes, which is why any of it is testable at all. A terminal shorter than 16 rows keeps the whole page rather than showing two useless slivers. Not built: a per-request network pane — nothing on the viewer's stream carries requests, and the mediator's records are host-side, so that needs a source rather than a layout.
+
+**M11 (as proposed).** The terminal
 viewer's default becomes a developer view rather than a page view: for a
 coding agent's overseer, the rendered page alone is the least informative
 pane. Something like
@@ -1273,6 +1351,214 @@ agent edits code -> starts dev server -> opens the app with h5i browser
   network errors -> screenshots -> fixes the code -> human watches or takes over
   -> export patch, report, screenshots, receipt
 ```
+
+**M11a. The browser terminal — the event model and the evidence panes are
+built, 2026-08-08.** The half this entry called durable, and said would land
+first, has: `browser_events` is the one stream, and the console reads it.
+
+* **The model** (`crates/h5i-core/src/browser_events.rs`). Every event carries
+  its lane *and* its grade, kept apart because they answer different questions
+  and the interesting case needs both: our own engine's request log is
+  **box-claimed** (written inside the box) and **fail-closed** (the engine will
+  not fetch what it cannot record). Chromium's Fetch lane is box-claimed and
+  best-effort. One "trusted" flag could not have said that. `caused_by` is set
+  only where the source carries the link — a response to its request by
+  sequence number, a refusal to the action that provoked it — and nowhere else,
+  so no arrow on the screen is drawn from two things merely having happened at
+  about the same time. Ingest sanitises every box string once, here, rather than
+  in each renderer, because M11b writes this same text straight to a PTY.
+* **Three real sources**, no placeholders: the light engine's request log, the
+  mediator's actions, and the drained page evidence.
+* **The mediator now writes its actions as data.** They were only ever on the
+  receipt as *rendered text*, so a reader wanting them back would have had to
+  parse a display format — the quiet-wrong-answer shape this file keeps
+  recording. `browser-actions.jsonl` sits beside `receipt.jsonl`, host-side,
+  where the box cannot write, and the round trip is pinned by a test.
+* **In `h5i ui`, on the console's own terms.** One `GET`, the same token gate,
+  no second web surface. Every row shows its lane and grade as words rather than
+  as a colour, selecting a row lights what it caused and what caused it, the
+  network pane names its engine's evidence grade in its header, and a dropped
+  count is rendered rather than hidden.
+
+**Driven against a real box, not only a test client** — the gap M10 recorded and
+this milestone was gated on not repeating. The real engine opened a page with
+two refused subresources, wrote its own log into the box's `/tmp`, and the
+console served the stream: both denials as `box-claimed` / `fail-closed`, each
+with a `policy-verdict` naming the request that caused it; the cursor returning
+only the tail on the next poll; an unauthenticated request refused with 401. Two
+guards checked by making them fail: a Chromium box with that same log planted in
+its `/tmp` yields **nothing**, because only our engine's log may wear the
+fail-closed grade, and the mediator's sidecar shows up `host-observed` on the
+box that has one.
+
+**The finding, which cost the first live attempt.** `ResolvedPolicy::home_binds`
+is `#[serde(skip)]`, so `host_tmp_root` — correct for a live run, which is the
+only caller it had — returns `None` for **every** policy loaded back from disk.
+The console asked a live-run question of a stored policy and got a silently
+empty stream for a session that had one: enforcement-shaped code answering
+"nothing to show" instead of "I cannot tell". The reader now takes the path from
+`private_tmp_backing`, the same function that placed it.
+
+**Second pass, same day: its own tab, and the reader made honest.**
+
+* **The stream is incremental and session-aware, which was a bug fix rather
+  than an optimisation.** The first reader re-parsed every source per poll and
+  numbered from 1 each time — stable only while files grow by appending, and
+  they do not: every run clears the box's private `/tmp`, so a second browser
+  run restarts the request log at zero bytes and restarts the numbering with
+  it. A console tab open across two runs would have kept its cursor and
+  silently dropped the head of the new session. The console now holds a byte
+  offset per source, notices a file that got *shorter*, and emits
+  `session-reset` as a visible row; ids never restart. Pinned by five tests
+  driven against real files, including the partial-line and vanished-file
+  cases, and confirmed live: with a viewer holding a stale cursor, a second run
+  produced the reset row and then the new session's events, where before it
+  produced nothing.
+* **A per-box Browser tab.** Evidence is a scroll of what happened; the browser
+  terminal is a live instrument, and wedging it between Services and the
+  timeline gave it a few hundred pixels. It now takes the pane. The tab appears
+  only for a browser box, and selecting another box returns to Evidence rather
+  than showing a browser view of something that has no browser.
+* **A page pane that says what it cannot show.** It reports whether a live view
+  is running in the box (the same `.stream` discovery `h5i box view` uses) and
+  names the command to attach, because the console watches and the *forward*
+  carries pixels and input with the control lock on it. For an `h5i-light` box
+  it states the engine-level caveat plainly: that engine has no resident
+  session, so each `open` renders its own page and exits, and a live view shows
+  **that** process's page rather than the one the agent is driving. An
+  unlabelled viewport there would have been the most convincing wrong answer on
+  the screen.
+
+One bug this pass created and caught before it shipped, worth recording because
+it is the same shape twice: the new `session-reset` event was added server-side
+while the console's own union type and pane router still knew six kinds, so the
+row was dropped silently in the browser — the swallow that had just been fixed
+one layer down, moved one layer up. Found by grepping the *served bundle* for
+the divider text rather than by trusting a green typecheck, which could not see
+it: an unknown variant simply matched no case.
+
+**Third pass: the console carries pixels.** The page pane shows the box's page,
+rendered by our own engine inside the box. The frame lane is joined, and the way
+it is joined is the point:
+
+* **A reader, not a proxy.** A background thread per watched box enters the
+  box's user and network namespaces by pid, connects to the stream server, and
+  reads — the same route `h5i box view --term` takes (`view::connect_in_netns`),
+  reusing the same hardened WebSocket client (`termview::ws`, which refuses
+  reserved opcodes, masked server frames and oversized lengths). Nothing new
+  listens; the box gains no reachability it did not have.
+* **The console's structural guarantee survives.** Every route is still a `GET`,
+  because the frame is served *as* a `GET` returning `image/jpeg` — `nosniff` so
+  crafted bytes cannot be re-read as anything else, `no-store` so a frame of
+  somebody's page does not settle into a disk cache. And the relay is
+  one-directional by construction: the only messages it can send upstream are
+  `config` and `ack`, there is no path from an HTTP request to a write on that
+  socket, and a test greps this module for `input_*` so the day someone adds one
+  the build says so. Typing into a page still has exactly one door: the forward,
+  which enforces the control lock.
+* **Change-driven, end to end.** The stream reports the newest frame's sequence
+  number and the page keys its `<img>` on it, so an unchanged page is zero
+  requests rather than a timer redrawing a still picture — the engine's own rule,
+  carried up to the browser.
+* **The picture is labelled.** A frame is **box-claimed**: the box's rendering of
+  its own page. Nothing derived from it reaches the trusted status row, and the
+  `h5i-light` caveat sits under the image rather than being left for a reader to
+  infer — that engine has no resident session, so a served view shows the page
+  the *serving* process opened, which need not be the one the agent is driving.
+
+Driven end to end rather than asserted: the engine served a page inside a
+supervised box, the console found the `.stream`, crossed the namespace, and
+returned a 1280×720 JPEG at `frame_seq 2` with the right headers; stopping the
+in-box server flipped `live_view` to false, dropped the relay, and the frame
+route went to 204. One test was rewritten on the way — clippy caught it
+comparing two constants, which is a tautology that would have passed with the
+size check deleted; it now drives the real decoder with real base64.
+
+**Still open, and none of it is dressing.** The
+accessibility snapshot has no live source (it is a CLI verb today). Takeover is
+not wired here: the console remains read-only and input still goes through
+`h5i box view`, so the read-only-by-default / interact-under-the-lock rule below
+is *stated* by this milestone and *enforced* by the forward, which is one
+surface short of the exit criterion. Nothing links an agent action to the
+requests it caused — neither the mediator's records nor the engine's log carries
+the other's id — so "selecting an action surfaces its correlated request" holds
+only for the verdict it provoked, and closing it is a change at the *sources*,
+not in the viewer. M11b has not started, so the claim that two readers agree is
+untested. The original entry follows.
+
+**M11a (as proposed).** M11 put
+the developer view in the terminal; this puts the full one where it can
+actually breathe, inside `h5i ui`. The design motif is a trading terminal —
+Hyperliquid is the reference, the way terminal-browser was for 5.10: what we
+take is the information model (peer panes of equal rank, change-driven row
+highlights, an always-on status bar), not the skin. The reasoning is the same
+one M11 recorded: for an agent's overseer the rendered page is the *least*
+informative pane, so page viewport, accessibility snapshot, agent actions,
+network requests, console, and policy verdicts sit side by side at equal rank
+— what the agent saw, what it did, what moved on the wire, and what h5i
+refused, in one view.
+
+**One web surface, not a second one.** This lives in the existing console:
+same axum server, same embedded bundle, same `web` feature, same loopback
+bind. The console's own rule — every route is a GET — stands; the live data
+and the input direction ride the per-box forward that already exists (5.9),
+with its per-box token and its lock check on input. The console gains a view,
+not a write path.
+
+**Not a read-only browser.** The viewer is read-only by default, interactive
+only while holding the control lock (5.4), and taking the lock is itself a
+recorded policy event — the takeover and the window in which human input
+flowed belong in the receipt next to the verbs the mediator refused during
+it. This is the terminal viewer's VIEW/INTERACT model (5.10) given a second
+skin, not a new input policy; a viewer that could never take over would
+delete M5's takeover story, and one that could always type would delete the
+lock.
+
+**The durable half is the event model, and it lands first.** One stream from
+the browser runtime — frames, snapshots, actions, requests, console, policy
+verdicts, metrics — with every event stamped with its session, ordinal,
+timestamp, kind, a `caused_by` back-reference, and its **lane**:
+host-observed or box-claimed, the same two kinds of claim the receipt
+already keeps apart. The web view, the terminal view, and the exported
+receipt all read this one stream, which is what makes the viewer a live
+receipt rather than a dashboard that happens to resemble one: selecting an
+action shows the request, console output, and verdict that carry its id.
+The panes inherit the honesty rules with the data: the status bar shows
+host-derived values only (box-claimed metrics are labeled, not promoted),
+and the network pane names its evidence grade per engine — h5i-light's
+fail-closed request log is authoritative, the Chromium path's Fetch lane is
+best-effort, and a pane that showed both alike would read as enforcement
+where there is none. Update budgets are per pane, not global: the viewport
+is change-driven (the light engine idles at zero frames by design; ~30fps
+is a Chromium screencast ceiling, not a target), status ticks slowly, rows
+batch, histories are bounded rings.
+
+The host browser trusts this page with nothing new: it renders pixels and
+structured events, target HTML never enters the viewer's DOM, box strings
+render as text (`sanitize_display`'s rule, applied in a second place), and
+the CSP names no external origin.
+
+Exit criteria: the console shows a live box with every pane labeled by lane;
+selecting an action surfaces its correlated request, console output, and
+verdict; a takeover started from the viewer types into the page and lands in
+the receipt as a policy event alongside the agent verbs refused during it;
+the network pane states its evidence grade per engine; and the TUI showing
+the same session shows the same events, because divergence between the two
+viewers is a bug in the model, not a difference of skin.
+
+Gated on the shared event stream existing (this milestone's own first half)
+and on M10's open item being closed first — the live view driven by a real
+`h5i box view` against a real box — because a polished terminal over a
+stream never exercised end to end inverts this file's own priorities.
+
+**M11b. Terminal watch mode — proposed, 2026-08-08.** The shipped terminal
+viewer (5.10, M7, M11) re-pointed at the same event stream and kept,
+deliberately smaller: viewport, trusted status row, latest actions, console
+errors, denied requests, panes cycled rather than tiled. It is the SSH and
+demo surface — "or stay entirely inside the terminal" — and it does not
+chase pane parity with M11a: the investment moves to the web view, and the
+TUI's job is to watch, take the lock when a login wall demands it, and prove
+the event model has two independent readers. Nothing shipped is discarded.
 
 ## 9. Limits we state up front
 
@@ -1316,6 +1602,15 @@ Being explicit about these is a feature, since the claim is a security claim.
   full-desktop tier lands.
 - **A dependency on the critical path.** agent-browser is someone else's
   release cadence. Pinned, CLI-boundary, forkable, but not ours.
+- **Browser mediation is enforcement, not containment.** The socket mediator
+  (M8) decides every verb the agent's CLI sends, which is the threat the
+  control lock was written for: an agent that does not know a human took the
+  wheel. It is not a boundary against an agent that goes looking, because the
+  daemon runs *inside* the box and a box has no internal privilege boundary —
+  Landlock grants are per-box, not per-process, so any socket the daemon can
+  bind the agent can reach directly. Moving the daemon outside the box would
+  close that and break the reason boxes exist: it could no longer reach the
+  dev server on the box's own loopback.
 
 ## 10. Decisions taken
 
@@ -1381,12 +1676,62 @@ Being explicit about these is a feature, since the claim is a security claim.
    decision about where the check lives (a PATH shim, a skill-level convention,
    or accepting that it is advisory) rather than more code in `control.rs`.
 
-   **Candidate answer, 2026-08-07: the mediated socket (7.2, M8).** The
-   daemon's NDJSON control socket is a fourth option the original list missed,
-   and it is the only one the agent cannot route around: a PATH shim can be
+   **Answered, 2026-08-07: the mediated socket (7.2, M8), built.** The
+   daemon's NDJSON control socket was a fourth option the original list
+   missed, and the only one the agent cannot route around: a PATH shim can be
    bypassed by calling the binary by path, a convention enforces nothing, and
-   the socket is the one door every verb walks through. The open part is now
-   the sidecar lifecycle, not the interception point.
+   the socket is the one door every verb walks through.
+   `crates/h5i-core/src/browser_proxy.rs` decides every line against
+   `control::check` and a per-profile action policy, answers refusals in the
+   daemon's own shape, and records each action into a host-observed
+   `browser-proxy` receipt lane. **Verified against the real `agent-browser`
+   CLI** (`tests/browser_mediation.rs`): a read passes through and returns the
+   real page, a denied `eval` is refused and never evaluated, and a click
+   during a human takeover is refused while reads keep working.
+
+   Three findings, none available by reading:
+
+   - **`__agent_browser_internal_shutdown` is an escape hatch, not an
+     action.** The CLI sends it when it decides the running daemon does not
+     match the options it wants, then starts its own. Forwarded naively it
+     kills the daemon we mediate and the replacement is the agent's, on a
+     socket we do not own — mediation gone, with no error anywhere. It is
+     refused unconditionally.
+   - **`launch` is not a page change.** The CLI prefixes every command with
+     it, so classifying it as mutating refuses it during a takeover and takes
+     every read-only verb down with it — the opposite of 5.4's rule that
+     watching never collides.
+   - **The daemon's config fingerprint covers its options, not its path**, so
+     the real daemon can run on a path the box cannot reach with the mediator
+     in front, provided h5i launches it with the environment the box's CLI
+     will compute and mirrors `.version`/`.config` into the box-visible dir.
+
+   **The lifecycle landed too, and is enforced by default.** The daemon is
+   started by the *shim* rather than by h5i directly, which is what makes the
+   split possible at all: the shim already runs inside the box and invokes the
+   real binary twice, so it starts the daemon on a private path
+   (`/tmp/agent-browser-daemon`), mirrors the `.version`/`.config`/`.stream`
+   files the CLI checks, and then execs the CLI against the mediated path.
+   h5i's listener binds *before* the box runs — waiting for a daemon first
+   would mean the box's own first call finds the mediated path empty and
+   starts an unmediated daemon on it — and connects upstream lazily.
+
+   Verified in a real supervised box: `agent-browser open` works through the
+   chain, the real daemon's socket lives in the private directory while the
+   visible one holds only mirrored files, a read passes through, and
+   `agent-browser eval` comes back
+   `✗ \`evaluate\` is denied for this box by its profile's browser action
+   policy (fail-closed)` with `browser mediation (2 action(s), 1 refused)` on
+   the receipt log.
+
+   Two more findings from that run. **Not every agent-browser word is a
+   command** — `url` and `status` are not, and using one to start the daemon
+   fails silently and leaves no daemon and no clue; `open about:blank` is the
+   cheap start that works. And **a box whose repo lives under `/tmp` cannot
+   see its own shim**: the per-env `/tmp` scratch shadows the host path the
+   shim sits on, `agent-browser` falls through to the system binary, and
+   mediation is bypassed with nothing to indicate it. That is the same
+   shadowing the M4 notes record, arriving somewhere new.
 
    Related and now much smaller: **snapshot handle staleness across a takeover**
    is modelled — `needs_resnapshot` is set on the take, survives a session that
@@ -1412,9 +1757,15 @@ Being explicit about these is a feature, since the claim is a security claim.
    fetched on postinstall. No `agent.run()` until the resident session shape is
    settled, and Python only when someone asks for it.
 4. **How engine selection grows from explicit to routed (7.1 step 2).** The
-   sequence is decided: create-time explicit choice first (M9, pinned in the
-   digest, no silent fallback), a `--browser auto` create-time heuristic as a
-   later explicit opt-in, and per-origin routing last. What is not designed
+   first step is **built (M9, 2026-08-07)**: `[profile.X] engine = "..."` and
+   `--engine`, pinned in the digest, refusing by name when the engine's
+   tooling is absent, with no `auto` and no fallback. One correction the build
+   forced: 7.1 claimed the knob's shape is "any CDP endpoint … the slot M10's
+   binary later fills with no new plumbing", and that is **wrong** —
+   `h5i-browser-light` does not speak CDP, so agent-browser cannot drive it
+   and h5i runs it directly (`BrowserEngine::driven_by_agent_browser`). The
+   remaining sequence is unchanged: a `--browser auto` heuristic as a later
+   explicit opt-in, and per-origin routing last. What is not designed
    is the routing step itself: agent-browser is one engine per daemon
    session, so "loopback gets Chromium, the web gets the light engine" needs
    either two sessions with h5i choosing at navigate time, or the mediation
@@ -1426,3 +1777,79 @@ Being explicit about these is a feature, since the claim is a security claim.
    open-sourcing decides how much of the M10 crate is ours to write. Until
    that drop, the only commitment is the shape: fetch through our proxy,
    receipts as the network log, script off by default for untrusted origins.
+
+## 12. Finishing the browser: the order, and why it is this order
+
+Sections 7 and 8 say what the browser layer is; this says what is left before it
+is a **real, secure, agentic browser in a sandbox** rather than a fail-closed
+page fetcher with a good audit trail and a live view. Written as a sequence
+because the dependencies are real: taken out of order, several of these items
+either cannot be built or make the system less safe than it is today.
+
+Most of what follows is already recorded somewhere in this file; the sequence is
+the part that was not, along with items 1, 2b and 4, which were not written down
+at all.
+
+1. **A resident session for the engine.** The root gap, and the one that makes
+   four other things possible rather than being one of five equals. Today every
+   `h5i-browser-light open` renders its own page and exits, so there is no
+   continuity: no navigate-then-click-then-read, **no cookies at all**
+   (`net.rs` has no cookie handling of any kind), no login anywhere, and no way
+   for a live view to show the page *the agent* is driving rather than the page
+   the serving process happened to open — the caveat M11a's page pane has to
+   print today. Chromium does not have this problem, because agent-browser is
+   one daemon owning one browser; matching that shape is the work.
+
+2. **A real input surface, and an agent interface to reach it.** These ship
+   together or neither is usable.
+   - **(a)** Input stops at scrolling and link clicks (recorded in M10's tier 2
+     entry). With a session but no typing or form submission, an agent still
+     cannot get past a login form, so the session buys little on its own.
+   - **(b)** **There is no agent-facing interface for this engine, and the skill
+     currently tells an agent to do something that will fail.** `skills/h5i/`
+     teaches `agent-browser open/snapshot/click @e2/fill @e3` — the CDP surface.
+     `h5i-browser-light` does not speak CDP (§11 item 4), so in an
+     `h5i-light` box those verbs are wrong, and the skill says nothing about the
+     engine at all. Two engines means two agent interfaces and only one of them
+     is written down. Whether the answer is a verb set on our binary or a CDP
+     subset it learns to speak is open; that it is undocumented today is not.
+
+3. **Action-to-request correlation, at the sources.** Neither the mediator's
+   records nor the engine's request log carries the other's id, so nothing can
+   answer "what did this click fetch" (recorded in M11a's open list). Worth
+   doing while items 1 and 2 are already opening both files: the correlation has
+   to be *stamped* by whoever knows the causal link, because a viewer inferring
+   it from timing would be inventing evidence.
+
+4. **Marking page content as untrusted where the agent reads it.** The snapshot
+   and page text an agent consumes are attacker-controllable input that arrives
+   looking exactly like instructions, and nothing marks that boundary today.
+   Note what the existing defences do and do not cover: `sanitize_display`
+   protects the *viewer's* chrome from page strings (5.10), and no-script
+   removes the commonest *delivery channel* (7.1) — neither is a measure at the
+   point where an agent reads a page and decides what to do next. Cheap relative
+   to everything else here, and the only item on this list whose absence is a
+   live hole rather than a missing feature.
+
+5. **LOGIN mode, and takeover as a recorded policy event.** LOGIN mode —
+   withholding frames and snapshots from the agent while a human types a
+   credential — is described and deliberately unbuilt at 5.10; recording the
+   takeover window itself in the receipt is M11a's remaining exit criterion.
+   Both belong *after* item 1 and *before* item 6, and the reason is item 1: a
+   session with cookies is the first version of this browser where a stolen
+   credential is worth having, so the protection has to land with the thing it
+   protects rather than after it.
+
+6. **Script, policy-gated — last, and the trade stated plainly.** M10 tier 3 and
+   §11 item 5 already describe the shape: off by default, gated by policy before
+   evaluation, on for origins a human named. What belongs here is the cost. The
+   strongest security property this engine currently has is that no JavaScript
+   engine is linked into it at all, so page-borne prompt injection has no
+   delivery channel *by construction* rather than by filtering. Linking one
+   spends that, permanently, and the phrase "absent by construction" must stop
+   being used the moment it happens. Meanwhile the containment story underneath
+   is still the weaker one: the mediator is enforcement against a compliant
+   agent, not containment against an evasive one (7.2, §9), because the daemon
+   lives inside the box and Landlock grants are per-box. So this waits on the
+   microVM tier being real, or it is the one step in this list that makes the
+   system less safe than it was.
