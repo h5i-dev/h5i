@@ -423,6 +423,7 @@ impl Drop for MediatorHandle {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
         // Poke the listener so a blocked accept wakes up and sees the flag.
+        #[cfg(unix)]
         let _ = std::os::unix::net::UnixStream::connect(&self.socket_path);
         if let Some(join) = self.join.take() {
             let _ = join.join();
@@ -436,6 +437,7 @@ impl Drop for MediatorHandle {
 /// The box's shim starts the daemon and connects in quick succession, so the
 /// mediator can be bound before an upstream exists. Waiting a little beats
 /// refusing a request that was always going to be servable a moment later.
+#[cfg(unix)] // only the unix-gated listener references this
 const UPSTREAM_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Consecutive `accept` failures before the mediator gives up.
@@ -443,6 +445,7 @@ const UPSTREAM_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 /// Anything less than "give up eventually" risks a hot loop on a permanently
 /// broken listener; anything that gives up on the first error hands the rest
 /// of the run to an unmediated daemon.
+#[cfg(unix)] // only the unix-gated listener references this
 const MAX_ACCEPT_ERRORS: usize = 20;
 
 /// Start mediating `socket_path` in front of `upstream`.
@@ -455,6 +458,7 @@ const MAX_ACCEPT_ERRORS: usize = 20;
 /// *before* the box runs, or the box's first `agent-browser` call finds
 /// nothing there and starts an unmediated daemon of its own on the very path
 /// we meant to hold.
+#[cfg(unix)]
 pub fn spawn(
     socket_path: &Path,
     upstream: &Path,
@@ -578,6 +582,23 @@ pub fn spawn(
     })
 }
 
+/// The whole mediator is an `AF_UNIX` listener in front of an `AF_UNIX`
+/// daemon, so on a platform without them there is nothing to sit in front of.
+/// Returning an error rather than a silent `None` keeps the caller's existing
+/// "mediation could not start, the lock is advisory" message — the same thing
+/// h5i says on a Unix host whose bind fails, which is the honest report.
+#[cfg(not(unix))]
+pub fn spawn(
+    _socket_path: &Path,
+    _upstream: &Path,
+    _env_dir: &Path,
+    _policy: ActionPolicy,
+) -> Result<MediatorHandle, h5i_error::H5iError> {
+    Err(h5i_error::H5iError::Metadata(
+        "browser mediation needs AF_UNIX sockets, which this platform does not provide".into(),
+    ))
+}
+
 /// Write what the mediator saw into the receipt, in its own lane.
 ///
 /// Its own lane (`browser-proxy`) rather than a field on `BrowserEvidence`,
@@ -627,6 +648,7 @@ pub fn record_actions(
 
 /// Tell a client that no daemon answered, echoing the id of its first request
 /// so a CLI correlating replies by id matches the reply rather than hanging.
+#[cfg(unix)]
 fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
     use std::io::{BufRead, Write};
 
@@ -657,6 +679,7 @@ fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
 }
 
 /// Connect to the daemon, waiting for it to appear.
+#[cfg(unix)]
 fn connect_upstream(path: &Path) -> Option<std::os::unix::net::UnixStream> {
     let deadline = std::time::Instant::now() + UPSTREAM_WAIT;
     loop {
@@ -935,6 +958,7 @@ mod tests {
     /// drive it with a real client — the same shape as production, minus
     /// agent-browser.
     #[test]
+    #[cfg(unix)]
     fn the_listener_mediates_over_real_sockets() {
         use std::io::{BufRead, BufReader, Write};
         use std::os::unix::net::{UnixListener, UnixStream};
@@ -997,6 +1021,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn the_no_daemon_refusal_echoes_the_request_id() {
         // Without the id, a CLI that correlates replies by id ignores this
         // line and hangs until its own timeout — the exact failure this
@@ -1023,6 +1048,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn dropping_the_handle_removes_the_socket_it_bound() {
         let td = TempDir::new().unwrap();
         let upstream = td.path().join("u.sock");

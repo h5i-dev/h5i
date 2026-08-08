@@ -3650,11 +3650,16 @@ mod browser_engine_env_tests {
     use super::*;
     use crate::sandbox::{AgentRuntime, BrowserEngine, IsolationClaim, Profile};
 
+    // Built directly rather than through `sandbox::resolve`, which for the
+    // supervised claim probes the *real* mediation stack and refuses where it
+    // is absent — a CI runner cannot unshare NEWNET, so resolving there
+    // panicked every test below on a host property none of them are about.
+    // What they are about (which variables a browser box is handed) is a pure
+    // function of the profile, and `resolve` returns this same value.
     fn policy_for(engine: BrowserEngine) -> ResolvedPolicy {
         let mut profile = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
         profile.engine = Some(engine);
-        let caps = sandbox::probe_host_for(IsolationClaim::Supervised);
-        sandbox::resolve(&profile, &caps).expect("resolves")
+        ResolvedPolicy::new(IsolationClaim::Supervised, profile)
     }
 
     fn names(env: &[(String, String)]) -> Vec<&str> {
@@ -3715,13 +3720,15 @@ mod browser_engine_env_tests {
             Profile::builtin_browser(IsolationClaim::Container, AgentRuntime::Claude);
         profile.engine = Some(BrowserEngine::Chromium);
         profile.image = Some("example:latest".to_string());
-        let caps = sandbox::probe_host_for(IsolationClaim::Container);
-        if let Ok(policy) = sandbox::resolve(&profile, &caps) {
-            assert!(
-                host_tmp_root(&policy, std::path::Path::new("/e")).is_none(),
-                "image-backed tiers must report no host-side /tmp"
-            );
-        }
+        // Same reason as `policy_for`: resolving the container claim needs
+        // rootless Podman on the host, which a runner does not have — and a
+        // test that quietly asserts nothing where the runtime is missing is
+        // exactly the coverage this file lost.
+        let policy = ResolvedPolicy::new(IsolationClaim::Container, profile);
+        assert!(
+            host_tmp_root(&policy, std::path::Path::new("/e")).is_none(),
+            "image-backed tiers must report no host-side /tmp"
+        );
     }
 
     #[test]
