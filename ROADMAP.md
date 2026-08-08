@@ -1183,8 +1183,41 @@ Chromium installed answers `doctor`, snapshots a real documentation site,
 and the full loop's failure modes on a light engine are written down here.
 No routing yet: one engine per box.
 
-**M10. The lightweight visual engine — proposed, gated.** The h5i-native
-engine of 7.1 step 3. With M8's Fetch lane already delivering best-effort
+**M10. The lightweight visual engine — tier 1 built, 2026-08-07.**
+`crates/h5i-browser-light`, a standalone binary: static render, agent
+snapshot, screenshot, and the fail-closed request log. Blitz + Stylo +
+vello_cpu assembled behind our own broker; 42 tests; clippy clean with and
+without default features. Driven live against a local page and a real site.
+
+Built **ahead of its gates**, and that should be said plainly: M9 has not run,
+so there is no compatibility data yet, and Kitesurf's open-source drop has not
+landed, so the build-versus-adopt call was made without it. What that buys is
+a working artifact to measure instead of a design to argue about; what it
+costs is that tier 2/3 scope is still guesswork, and the CI lockfile grew by
+137 packages to carry the engine.
+
+Two findings from driving it, neither available by reading:
+
+1. **A denied resource must be *completed*, not dropped.** Blitz counts a
+   resource pending until its `NetHandler` is called, and `paint_scene`
+   refuses to paint while any critical resource is pending — so the obvious
+   way to write a deny (return without calling the handler) renders every page
+   permanently blank. Fail-closed means "completed with nothing", and there is
+   a test on it.
+2. **`system-fonts` is a build-time native dependency.** Blitz's font
+   discovery pulls `yeslogic-fontconfig-sys`, which needs libfontconfig
+   headers to compile — portable engine, non-portable build. Fonts are
+   discovered and registered at runtime instead, which also makes "no fonts"
+   a state `doctor` reports rather than a blank screenshot nobody can explain.
+
+Still open at this tier: no live view (that is tier 2's screencast domain, and
+until it exists the viewer stack cannot follow this engine), no script, and
+the numeric exit criteria below are unmeasured — nothing has been benchmarked
+against headless Chromium yet, so "lighter" remains a hypothesis.
+
+The original entry follows.
+
+**M10 (as proposed).** The h5i-native engine of 7.1 step 3. With M8's Fetch lane already delivering best-effort
 request receipts on Chromium, the engine's case is what mediation cannot
 give: fail-closed logging (no running log, no request), script off by
 default and checked by policy before evaluation, and the single-use
