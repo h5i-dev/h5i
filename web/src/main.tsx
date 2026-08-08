@@ -22,13 +22,6 @@ if (window.location.search.includes("token=")) {
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <div className="wb-shell">
-      <header className="wb-header">
-        <span className="wb-brand">h5i</span>
-        <span className="wb-brand-sub">box console</span>
-        <span className="wb-header-note">
-          read-only · loopback only · lifecycle verbs stay in the CLI
-        </span>
-      </header>
       <SandboxView />
     </div>
   </React.StrictMode>,

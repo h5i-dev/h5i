@@ -70,30 +70,13 @@ pre,
   flex-direction: column;
   height: 100vh;
 }
-.wb-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  height: 42px;
-  padding: 0 14px;
-  background: linear-gradient(180deg, var(--bp-surface) 0%, var(--bp-bg) 100%);
-  border-bottom: 1px solid var(--bp-border);
-}
-.wb-brand {
-  font-size: 16px;
+/* The brand sits in the top strip, left of the host claims: one row, not two. */
+.sbx-brand {
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: -0.01em;
   color: var(--h5-accent);
-}
-.wb-brand-sub {
-  font-size: 13px;
-  color: var(--bp-text-muted);
-}
-.wb-header-note {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--bp-text-dim);
+  margin-right: 8px;
 }
 
 .sbx-pane-empty {
