@@ -301,6 +301,42 @@ impl PageFactory {
     }
 }
 
+/// Flatten the renderer's premultiplied RGBA onto an opaque white canvas.
+///
+/// Blitz paints no base layer, so a page that declares no `background-color`
+/// comes back with every untouched pixel at `(0,0,0,0)`. The default text
+/// colour is black, so simply dropping the alpha channel — which JPEG forces,
+/// having none — turned the background black and the text with it, and the live
+/// view arrived black-on-black. White is the canvas a real browser starts from,
+/// so compositing onto it here is what makes an undeclared background look the
+/// way the page's author saw it.
+///
+/// The buffer is premultiplied (verified: a 50%-red fill reads back as
+/// `(128,0,0,128)`), so the source needs no scaling and the backdrop
+/// contributes `255 - a` per channel. That is also why the PNG goes through
+/// here: PNG is specified as *straight* alpha, so writing these bytes out with
+/// their alpha attached rendered every translucent pixel too dark.
+fn flatten_onto_white(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, H5iError> {
+    let expected = width as usize * height as usize * 4;
+    if rgba.len() < expected {
+        return Err(H5iError::Internal(format!(
+            "renderer produced {} bytes for a {width}x{height} frame, expected {expected}",
+            rgba.len()
+        )));
+    }
+
+    let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
+    for pixel in rgba[..expected].chunks_exact(4) {
+        let backdrop = 255 - pixel[3];
+        rgb.extend_from_slice(&[
+            pixel[0].saturating_add(backdrop),
+            pixel[1].saturating_add(backdrop),
+            pixel[2].saturating_add(backdrop),
+        ]);
+    }
+    Ok(rgb)
+}
+
 fn encode_jpeg(
     rgba: &[u8],
     width: u32,
@@ -309,20 +345,7 @@ fn encode_jpeg(
 ) -> Result<Vec<u8>, H5iError> {
     use image::codecs::jpeg::JpegEncoder;
 
-    let expected = width as usize * height as usize * 4;
-    if rgba.len() < expected {
-        return Err(H5iError::Internal(format!(
-            "renderer produced {} bytes for a {width}x{height} frame, expected {expected}",
-            rgba.len()
-        )));
-    }
-
-    // JPEG has no alpha, and the frame is opaque anyway: drop the channel
-    // rather than let the encoder guess.
-    let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
-    for pixel in rgba[..expected].chunks_exact(4) {
-        rgb.extend_from_slice(&pixel[..3]);
-    }
+    let rgb = flatten_onto_white(rgba, width, height)?;
 
     let mut jpeg = Vec::new();
     JpegEncoder::new_with_quality(&mut jpeg, quality.clamp(1, 100))
@@ -331,26 +354,22 @@ fn encode_jpeg(
     Ok(jpeg)
 }
 
+/// Encode the screenshot, opaque.
+///
+/// Opaque rather than alpha-preserving on purpose: a screenshot of a page that
+/// declared no background is not a transparency the caller asked for, it is a
+/// canvas nobody painted, and handing it over as a hole means the image reads
+/// differently against a light and a dark viewer. This is also what Chromium's
+/// `captureScreenshot` does unless transparency is requested explicitly.
 fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, H5iError> {
     use image::codecs::png::PngEncoder;
     use image::ImageEncoder;
 
-    let expected = width as usize * height as usize * 4;
-    if rgba.len() < expected {
-        return Err(H5iError::Internal(format!(
-            "renderer produced {} bytes for a {width}x{height} frame, expected {expected}",
-            rgba.len()
-        )));
-    }
+    let rgb = flatten_onto_white(rgba, width, height)?;
 
     let mut png = Vec::new();
     PngEncoder::new(&mut png)
-        .write_image(
-            &rgba[..expected],
-            width,
-            height,
-            image::ExtendedColorType::Rgba8,
-        )
+        .write_image(&rgb, width, height, image::ExtendedColorType::Rgb8)
         .map_err(|e| H5iError::Metadata(format!("failed to encode the screenshot: {e}")))?;
     Ok(png)
 }
@@ -516,6 +535,83 @@ mod tests {
         let width = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
         let height = u32::from_be_bytes([png[20], png[21], png[22], png[23]]);
         assert_eq!((width, height), (400, 200));
+    }
+
+    /// Decode an encoded frame so a test can talk about pixels.
+    fn decoded(encoded: &[u8]) -> image::RgbImage {
+        image::load_from_memory(encoded)
+            .expect("the frame decodes")
+            .to_rgb8()
+    }
+
+    /// The bottom-right corner: past the end of any content these tests lay
+    /// out, so it is the canvas and nothing else. Sampling there is what keeps
+    /// these assertions independent of whether the host has fonts.
+    const CANVAS: (u32, u32) = (399, 199);
+
+    #[test]
+    fn a_page_that_declares_no_background_renders_white_not_black() {
+        let sink = Arc::new(MemorySink::new());
+        let mut page = page_from("<!doctype html><body><p>hi</p></body>", Policy::new(), sink);
+
+        let png = decoded(&page.screenshot_png().expect("screenshot"));
+        assert_eq!(
+            png.get_pixel(CANVAS.0, CANVAS.1).0,
+            [255, 255, 255],
+            "an undeclared background is the canvas, and the canvas is white"
+        );
+
+        // The JPEG is the one that was broken: it has no alpha channel to hide
+        // an unpainted pixel in, so `(0,0,0,0)` became black and the default
+        // black text became invisible on it.
+        let jpeg = decoded(&page.screenshot_jpeg(85).expect("frame"));
+        let corner = jpeg.get_pixel(CANVAS.0, CANVAS.1).0;
+        assert!(
+            corner.iter().all(|&c| c > 250),
+            "the live view's frame should be white here, got {corner:?}"
+        );
+    }
+
+    #[test]
+    fn black_content_stays_visible_against_the_canvas() {
+        // Black-on-black, stated without needing a glyph: the default text
+        // colour painted as a box has to survive the flatten as black while
+        // the canvas around it stays white.
+        let sink = Arc::new(MemorySink::new());
+        let mut page = page_from(
+            "<!doctype html><style>html,body{margin:0}\
+             div{width:100px;height:100px;background:#000}</style><div></div>",
+            Policy::new(),
+            sink,
+        );
+
+        let img = decoded(&page.screenshot_jpeg(90).expect("frame"));
+        let inside = img.get_pixel(50, 50).0;
+        let outside = img.get_pixel(CANVAS.0, CANVAS.1).0;
+        assert!(inside.iter().all(|&c| c < 5), "the black box: {inside:?}");
+        assert!(outside.iter().all(|&c| c > 250), "the canvas: {outside:?}");
+    }
+
+    #[test]
+    fn a_translucent_fill_composites_onto_white_rather_than_darkening() {
+        // The renderer's buffer is premultiplied, so a 50%-red fill arrives as
+        // (128,0,0,128). Written out as straight alpha that reads as a dark
+        // red; composited onto white it is the colour the page actually shows.
+        let sink = Arc::new(MemorySink::new());
+        let mut page = page_from(
+            "<!doctype html><style>html,body{margin:0}\
+             div{width:200px;height:100px;background:rgba(255,0,0,0.5)}</style><div></div>",
+            Policy::new(),
+            sink,
+        );
+
+        let img = decoded(&page.screenshot_png().expect("screenshot"));
+        let [r, g, b] = img.get_pixel(100, 50).0;
+        assert!(r > 250, "the red channel stays full, got {r}");
+        assert!(
+            (120..=135).contains(&g) && (120..=135).contains(&b),
+            "green and blue should be lifted halfway to white, got {g} and {b}"
+        );
     }
 
     #[test]
