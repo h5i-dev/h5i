@@ -789,6 +789,16 @@ client, and for untrusted origins script execution can be off entirely, which
 removes the delivery channel for most page-borne prompt injection instead of
 trying to filter it.
 
+Stated precisely, because Chromium can get partway there: CDP's Fetch domain
+lets a mediator pause every request Chromium makes and allow, deny, rewrite or
+record it, so request-level receipts and per-request policy are available on
+the Chromium path too, through the M8 sidecar (7.2). What a mediator cannot
+make them is **fail-closed**: attach races, freshly created targets and
+workers, event buffer limits and disconnects all mean CDP coverage is
+monitored rather than guaranteed. The engine's claim is narrower and stronger:
+if the log is not running, the request does not happen, and script for
+untrusted origins is absent by construction rather than disabled by flag.
+
 The model this points at is **two engines, routed by origin, one policy**:
 
 - **Loopback, the agent's own dev server: Chromium.** Verifying that a modern
@@ -821,9 +831,14 @@ The staged path, cheapest first:
 3. **The reading engine.** A crate of ours: Blitz and Stylo for parse and
    layout, a capped JS engine for the minority of pages that need script, and
    fetch wired directly into the egress proxy's stack so the receipt *is* the
-   network log. **Assembled, not written**: the component stack is the same
-   open-source Rust Kitesurf builds on, and the build-versus-adopt call waits
-   for Kitesurf's open-source drop before choosing which pieces are ours.
+   network log. Beyond fail-closed logging, an owned engine can bind what no
+   mediator can: a human-approved form submission mints a **single-use
+   capability** for that origin and those fields, page script cannot spend it,
+   and every request carries its provenance (agent, human, or page script) as
+   a structural fact instead of an inference over event timing. **Assembled,
+   not written**: the component stack is the same open-source Rust Kitesurf
+   builds on, and the build-versus-adopt call waits for Kitesurf's open-source
+   drop before choosing which pieces are ours.
 
 What we do not do is write a rendering browser. Section 7's argument is
 unchanged: Chromium plus agent-browser stays the fidelity path. The light
@@ -866,6 +881,12 @@ What one mediated socket buys, in order of value:
    `state_*` deniable, and a `confirm` tier for consequential actions, which
    is where the whole field landed on injection containment (per-site grants
    plus human confirmation). The confirm channel is the viewer.
+4. **The CDP side of the same sidecar.** Owning the daemon means owning its
+   browser, so the sidecar can attach CDP `Fetch.requestPaused` and give the
+   Chromium path request-level evidence and per-request policy: method,
+   origin, initiator and verdict in the receipt, not just the CONNECT line.
+   This lane is recorded as best-effort, because CDP coverage fails open
+   (7.1); the fail-closed version of the same lane is M10's reason to exist.
 
 The honest costs: an h5i process on the browser hot path; a dependency on the
 daemon's wire protocol, which is an internal surface, against section 7's
@@ -1119,9 +1140,11 @@ being, and a tool shell is not a TTY.
 an h5i-launched sidecar and its socket path is h5i's listener. Exit criteria:
 an agent's `agent-browser click` during a human takeover is refused with the
 typed error, not advised; every mutating verb appears in the receipt with its
-arguments; a profile denies `eval` and the denial lands in the receipt. This
-closes open item 1 and is worth doing before any engine work, because the
-mediation layer is where origin routing (7.1) would live anyway.
+arguments; a profile denies `eval` and the denial lands in the receipt; and
+the Fetch evidence lane (7.2 item 4) shows a granted request with its
+initiator and a denied one with its verdict, marked best-effort. This closes
+open item 1 and is worth doing before any engine work, because the mediation
+layer is where origin routing (7.1) would live anyway.
 
 **M9. Second engine — proposed (7.1).** `engine` as a profile field passed
 through to agent-browser, Lightpanda as the first non-Chromium value. Exit
@@ -1130,11 +1153,14 @@ snapshots a real documentation site, and the full loop's failure modes on a
 light engine are written down here. No routing yet: one engine per box.
 
 **M10. The reading engine — proposed, gated.** The h5i-native crate of 7.1
-step 3, fetch wired into the egress proxy so the receipt is the network log.
-Gated on two things: M9's findings say a light engine is actually usable for
-the reading half of the loop, and Kitesurf's open-source release has landed so
-the build-versus-adopt call is made with the code on the table, not the blog
-post.
+step 3. With M8's Fetch lane already delivering best-effort request receipts
+on Chromium, the engine's case is what mediation cannot give: fail-closed
+logging (no running log, no request), script absent by construction for
+untrusted origins, and the single-use form-submission capability with
+structural provenance. Gated on two things: M9's findings say a light engine
+is actually usable for the reading half of the loop, and Kitesurf's
+open-source release has landed so the build-versus-adopt call is made with the
+code on the table, not the blog post.
 
 Full loop the demo has to show:
 
@@ -1267,6 +1293,16 @@ Being explicit about these is a feature, since the claim is a security claim.
    platform pitch, which sells to nobody. The launch message should be one
    workflow: run untrusted or AI generated code, see it in a real browser, keep
    it off your machine.
+
+   **Candidate, 2026-08-07: name the runtime.** "h5i Browser: the browser
+   that runs where your coding agent runs." Kitesurf and Lightpanda are
+   browsers for agents browsing the web; this is a browser runtime for coding
+   agents building the web, and the demo is the full loop of section 8, which
+   already exists. It is packaging over M4-M7 plus M8, not new engineering,
+   with two constraints held from section 10: no separate binary (the surface
+   stays `h5i browser`, one-binary decision) and the wording is "an
+   agent-native browser runtime powered by Chromium", never an engine claim,
+   until M10 makes one true.
 3. **Publishing `@h5i/sdk`.** Blocked on item 2 by decision, not by code: the
    JSON contract it wraps is complete (6.2). First release scope is
    `create`/`exec`/`browser`/`diff`/`export`/`close`, TypeScript only, binary
