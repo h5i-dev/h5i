@@ -1443,12 +1443,42 @@ Being explicit about these is a feature, since the claim is a security claim.
    decision about where the check lives (a PATH shim, a skill-level convention,
    or accepting that it is advisory) rather than more code in `control.rs`.
 
-   **Candidate answer, 2026-08-07: the mediated socket (7.2, M8).** The
-   daemon's NDJSON control socket is a fourth option the original list missed,
-   and it is the only one the agent cannot route around: a PATH shim can be
+   **Answered, 2026-08-07: the mediated socket (7.2, M8), built.** The
+   daemon's NDJSON control socket was a fourth option the original list
+   missed, and the only one the agent cannot route around: a PATH shim can be
    bypassed by calling the binary by path, a convention enforces nothing, and
-   the socket is the one door every verb walks through. The open part is now
-   the sidecar lifecycle, not the interception point.
+   the socket is the one door every verb walks through.
+   `crates/h5i-core/src/browser_proxy.rs` decides every line against
+   `control::check` and a per-profile action policy, answers refusals in the
+   daemon's own shape, and records each action into a host-observed
+   `browser-proxy` receipt lane. **Verified against the real `agent-browser`
+   CLI** (`tests/browser_mediation.rs`): a read passes through and returns the
+   real page, a denied `eval` is refused and never evaluated, and a click
+   during a human takeover is refused while reads keep working.
+
+   Three findings, none available by reading:
+
+   - **`__agent_browser_internal_shutdown` is an escape hatch, not an
+     action.** The CLI sends it when it decides the running daemon does not
+     match the options it wants, then starts its own. Forwarded naively it
+     kills the daemon we mediate and the replacement is the agent's, on a
+     socket we do not own — mediation gone, with no error anywhere. It is
+     refused unconditionally.
+   - **`launch` is not a page change.** The CLI prefixes every command with
+     it, so classifying it as mutating refuses it during a takeover and takes
+     every read-only verb down with it — the opposite of 5.4's rule that
+     watching never collides.
+   - **The daemon's config fingerprint covers its options, not its path**, so
+     the real daemon can run on a path the box cannot reach with the mediator
+     in front, provided h5i launches it with the environment the box's CLI
+     will compute and mirrors `.version`/`.config` into the box-visible dir.
+
+   Still open: the **sidecar lifecycle**. h5i does not yet launch the daemon
+   on a private path and start the mediator for a run — the mediator is built
+   and proven, but wiring it into `run_inner` (step 4, beside the other RAII
+   handles) and into `shell` has not landed, so today it is reachable only by
+   a caller that sets it up. Until that lands the lock is enforceable but not
+   yet enforced by default.
 
    Related and now much smaller: **snapshot handle staleness across a takeover**
    is modelled — `needs_resnapshot` is set on the take, survives a session that
@@ -1474,9 +1504,15 @@ Being explicit about these is a feature, since the claim is a security claim.
    fetched on postinstall. No `agent.run()` until the resident session shape is
    settled, and Python only when someone asks for it.
 4. **How engine selection grows from explicit to routed (7.1 step 2).** The
-   sequence is decided: create-time explicit choice first (M9, pinned in the
-   digest, no silent fallback), a `--browser auto` create-time heuristic as a
-   later explicit opt-in, and per-origin routing last. What is not designed
+   first step is **built (M9, 2026-08-07)**: `[profile.X] engine = "..."` and
+   `--engine`, pinned in the digest, refusing by name when the engine's
+   tooling is absent, with no `auto` and no fallback. One correction the build
+   forced: 7.1 claimed the knob's shape is "any CDP endpoint … the slot M10's
+   binary later fills with no new plumbing", and that is **wrong** —
+   `h5i-browser-light` does not speak CDP, so agent-browser cannot drive it
+   and h5i runs it directly (`BrowserEngine::driven_by_agent_browser`). The
+   remaining sequence is unchanged: a `--browser auto` heuristic as a later
+   explicit opt-in, and per-origin routing last. What is not designed
    is the routing step itself: agent-browser is one engine per daemon
    session, so "loopback gets Chromium, the web gets the light engine" needs
    either two sessions with h5i choosing at navigate time, or the mediation

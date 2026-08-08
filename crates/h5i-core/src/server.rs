@@ -259,7 +259,10 @@ async fn asset(Path(path): Path<String>) -> Response {
 /// The lanes h5i itself writes, from the host, outside the box's reach.
 /// Anything else — `tee-shim`, `inbox-capture`, or a lane added later — is the
 /// box's own account and is counted as such.
-const HOST_OBSERVED_LANES: [&str; 3] = ["host-env-run", "shell-egress", "viewer"];
+// The browser mediator is host-observed like the viewer: the records are
+// written by an h5i process sitting on the socket, not claimed by the box.
+const HOST_OBSERVED_LANES: [&str; 4] =
+    ["host-env-run", "shell-egress", "viewer", "browser-proxy"];
 
 #[derive(Serialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct Signals {
