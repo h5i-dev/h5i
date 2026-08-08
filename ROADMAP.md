@@ -809,6 +809,17 @@ The model this points at is **two engines, routed by origin, one policy**:
   Reading rarely needs a JIT, receipts matter more than pixels, and the model
   wants a tree, not a frame. Containment wins.
 
+Two things fall out of this split without being built. **Video and WebGL
+never enter the light engine's scope**: a coding agent testing a video player
+is testing its own app, which is loopback, which is the Chromium path, where
+both already work. Kitesurf has to name them as gaps because it has no
+Chromium half; we do. And **authenticated sessions, Kitesurf's other stated
+gap, are answered by the control lock we already ship**: the agent hits a
+login wall, the human takes the viewer, logs in, hands back, and the agent
+resumes from a fresh snapshot (5.4). Watching stays the default posture and
+input stays an explicit take; a local-first tool with a human present should
+use that human, not imitate a cloud service that cannot have one.
+
 The routing rule lives next to `net.egress` in the profile, not in the agent's
 moment-to-moment choice: the agent must not get to pick the weaker-policy
 engine for a hostile page. Two degenerate profiles fall out for free:
@@ -1162,6 +1173,32 @@ is actually usable for the reading half of the loop, and Kitesurf's
 open-source release has landed so the build-versus-adopt call is made with the
 code on the table, not the blog post.
 
+**M11. The developer-mode viewer — proposed, after M8.** The terminal
+viewer's default becomes a developer view rather than a page view: for a
+coding agent's overseer, the rendered page alone is the least informative
+pane. Something like
+
+```
+┌───────── page ──────────┬────── snapshot ───────┐
+│    rendered frames      │ e12 button "Submit"   │
+│                         │ e13 textbox "Email"   │
+├──────── console ────────┼────── network ────────┤
+│ TypeError at App.tsx:42 │ 200 GET  /api/user    │
+│                         │ 500 POST /api/save    │
+├─────────────────── actions ─────────────────────┤
+│ click @e12 · fill @e13 "a@b.c" · snapshot       │
+└─────────────────────────────────────────────────┘
+```
+
+The composition is cheap because every pane's source exists or arrives with
+M8: termview already decodes frames (5.10), the drain already collects
+console and network errors, and the mediated socket plus the Fetch lane turn
+per-action and per-request evidence into live streams instead of a post-run
+artifact. Input keeps the lock's semantics untouched: watching is the
+default, `i` still takes control, and the takeover is how a login wall gets
+answered (7.1). This is also the demo surface the open item 2 candidate
+wants: the receipts, watched live.
+
 Full loop the demo has to show:
 
 ```
@@ -1302,7 +1339,7 @@ Being explicit about these is a feature, since the claim is a security claim.
    with two constraints held from section 10: no separate binary (the surface
    stays `h5i browser`, one-binary decision) and the wording is "an
    agent-native browser runtime powered by Chromium", never an engine claim,
-   until M10 makes one true.
+   until M10 makes one true. The demo surface is M11's developer view.
 3. **Publishing `@h5i/sdk`.** Blocked on item 2 by decision, not by code: the
    JSON contract it wraps is complete (6.2). First release scope is
    `create`/`exec`/`browser`/`diff`/`export`/`close`, TypeScript only, binary
