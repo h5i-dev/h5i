@@ -272,6 +272,13 @@ Install scripts and release workflows are security-sensitive. Changes there
 should be small, reviewed carefully, and tested from a clean checkout where
 possible.
 
+`install.sh` is published twice, at `h5i.dev/install.sh` and from the
+repository at `raw.githubusercontent.com`. They are the same bytes and CI fails
+if they diverge, but they do not carry the same trust chain: the first also
+depends on the `h5i.dev` domain and its Pages deployment, the second only on
+GitHub. Anyone who would rather not add the domain should use the repository
+URL, and both are documented for that reason.
+
 ## Secure Development Checklist
 
 Before merging security-sensitive code, verify that:

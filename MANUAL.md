@@ -81,6 +81,11 @@ curl -fsSL https://h5i.dev/install.sh | sh     # prebuilt binary
 cargo install --path .                         # from source
 ```
 
+`h5i.dev/install.sh` and
+`raw.githubusercontent.com/h5i-dev/h5i/main/install.sh` are the same file, and
+CI fails if they ever stop being. Use the second one if you would rather the
+install path not depend on the domain.
+
 Then, so your agent knows how to use it:
 
 ```bash

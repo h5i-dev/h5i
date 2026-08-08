@@ -36,6 +36,13 @@ h5i gives you:
 ## Install
 
 ```bash
+curl -fsSL https://h5i.dev/install.sh | sh
+```
+
+The same script, straight from the repository, if you would rather not add a
+domain to the chain:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
 ```
 

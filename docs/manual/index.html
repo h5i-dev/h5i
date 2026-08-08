@@ -256,6 +256,10 @@ git apply --3way ./review/patch.diff       # apply it where you want
 <pre><code class="language-bash">curl -fsSL https://h5i.dev/install.sh | sh     # prebuilt binary
 cargo install --path .                         # from source
 </code></pre>
+<p><code>h5i.dev/install.sh</code> and
+<code>raw.githubusercontent.com/h5i-dev/h5i/main/install.sh</code> are the same file, and
+CI fails if they ever stop being. Use the second one if you would rather the
+install path not depend on the domain.</p>
 <p>Then, so your agent knows how to use it:</p>
 <pre><code class="language-bash">h5i skill install           # writes the skill into ~/.claude/skills/h5i (or ~/.codex)
 npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
