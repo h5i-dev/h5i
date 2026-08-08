@@ -20,14 +20,14 @@
   <meta property="og:title" content="Claude Code Hooks vs Git Hooks: Two Lifecycles, Two Trust Models">
   <meta property="og:description" content="Claude Code hooks fire in the agent tool loop; Git hooks fire on repository operations. They see different things and carry different trust guarantees. Here is how to layer both.">
   <meta property="og:url" content="https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/">
-  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
   <meta property="article:published_time" content="2026-06-03">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Claude Code Hooks vs Git Hooks: Two Lifecycles, Two Trust Models">
   <meta name="twitter:description" content="Claude Code hooks fire in the agent tool loop; Git hooks fire on repository operations. They see different things and carry different trust guarantees. Here is how to layer both.">
-  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
 
   <script type="application/ld+json">
 {
@@ -54,16 +54,16 @@
     "@type": "WebPage",
     "@id": "https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/"
   },
-  "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+  "image": "https://h5i.dev/_static/sandbox-ui-demo.png",
   "keywords": "claude code hooks vs git hooks, claude code hooks, git hooks ai, PostToolUse, PreToolUse, SessionStart, agent hooks, agent observability, sandbox observation"
 }
   </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Claude Code Hooks vs Git Hooks", "item": "https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/"}]}
@@ -72,16 +72,15 @@
 </head>
 <body>
 
-<div class="bg-grid"></div>
 
 <nav class="blog-nav">
   <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
   <ul class="nav-links">
-    <li><a href="/">Home</a></li>
+    <li><a href="/features/">Features</a></li>
     <li><a href="/guides/">Guides</a></li>
     <li><a href="/manual/">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
   </ul>
 </nav>
 
@@ -116,7 +115,7 @@
 <p>That makes Claude Code hooks useful for agent-aware automation: inject context at session start, inspect tool calls before execution, record edits after tool use, summarize state when a turn stops, or add deterministic feedback after a file change.</p>
 <h2>What each layer can and can't see</h2>
 <p>The two layers are blind to each other by construction. A Git hook is handed a tree and a set of refs; it never learns which prompt motivated the change or which files the agent read before writing one. An agent hook is handed the prompt and the tool call; it never sees a teammate who commits from a plain terminal, or a force-push from CI. The table maps the events most worth wiring to what each can observe and whether it can stop the operation.</p>
-<table class="data">
+<div class="tbl-wrap"><table class="data">
   <thead>
     <tr><th>Hook (layer)</th><th>Fires at</th><th>Sees</th><th>Blind to</th><th>Can block?</th></tr>
   </thead>
@@ -132,7 +131,7 @@
     <tr><td><code>PostToolUse</code> (agent)</td><td>after a tool runs</td><td>the edit/read and its result</td><td>an out-of-band commit</td><td>no, observe or give feedback</td></tr>
     <tr><td><code>Stop</code> (agent)</td><td>turn ends</td><td>the full transcript</td><td>a later push or CI run</td><td>no, summarize or checkpoint</td></tr>
   </tbody>
-</table>
+</table></div>
 <p>Read down the two halves and the asymmetry is the whole point. The Git rows are tree- and ref-centric and blind to intent; the agent rows are intent- and tool-centric and blind to any repository operation that happens outside the session. Use only Git hooks and you know a commit landed but not which prompt caused it or what the agent inspected first; use only agent hooks and you have rich session context but no gate at the final commit or push.</p>
 <h2>Where h5i moved its observation, and why</h2>
 <p>h5i used to wire agent hooks. It stopped, and the reason is the same trust question this post is built on.</p>
