@@ -127,6 +127,25 @@ The page has exactly one owning thread and everything else reaches it by
 channel — which is the right shape for a session with several drivers anyway,
 because it leaves no interleaving to reason about.
 
+### What the agent did, recorded
+
+The console's *agent actions* pane is fed by the mediated socket h5i owns in
+front of agent-browser. There is no such socket here — the engine *is* the
+browser — so before this the pane rendered empty for a session an agent was
+actively driving, which reads as "the agent did nothing". `serve` now writes its
+own action log (`$H5I_BROWSER_ACTIONS`, set for you inside a box), and the rows
+land in that pane marked **box-claimed** rather than host-observed, because
+that is what they are. Nothing written inside a box can be more than the box's
+own account, and the pane says so.
+
+Each verb is recorded *before* it runs and again after: no record, no action,
+the same rule the request log enforces for fetches. That is a guarantee against
+accident — a bad path, a full disk — not against a box that has decided to lie.
+
+It costs **7µs per verb**, measured against the **42ms** a single frame encode
+takes (debug build, same host): 0.017% of one frame, on a path that already
+does a policy check and a layout pass. Agent verbs arrive at agent pace.
+
 ### The snapshot is fenced
 
 Page content is wrapped in `--- BEGIN/END UNTRUSTED PAGE CONTENT ---` and

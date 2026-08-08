@@ -40,6 +40,10 @@ const STREAM_FILE_VAR: &str = "H5I_BROWSER_STREAM_FILE";
 /// control file sits beside the stream file.
 const CONTROL_FILE_VAR: &str = "H5I_BROWSER_CONTROL_FILE";
 
+/// Where h5i wants the agent's verbs recorded, so the console's agent-actions
+/// pane has a source on an engine that has no mediated socket in front of it.
+const ACTIONS_VAR: &str = "H5I_BROWSER_ACTIONS";
+
 #[derive(Parser)]
 #[command(
     name = "h5i-browser-light",
@@ -109,6 +113,12 @@ enum Command {
         /// with a `.control` extension, so a box that sets one gets both.
         #[arg(long, value_name = "PATH")]
         control_file: Option<PathBuf>,
+
+        /// Record the verbs an agent asks for here, as JSON lines. Defaults to
+        /// $H5I_BROWSER_ACTIONS. With one set, a verb that cannot be recorded
+        /// is refused rather than performed unseen.
+        #[arg(long, value_name = "PATH")]
+        actions: Option<PathBuf>,
 
         /// Serve one viewer, then exit.
         #[arg(long)]
@@ -289,6 +299,7 @@ fn run() -> Result<(), H5iError> {
             quality,
             stream_file,
             control_file,
+            actions,
             once,
         } => serve(
             &target,
@@ -298,6 +309,7 @@ fn run() -> Result<(), H5iError> {
             quality,
             stream_file,
             control_file,
+            actions,
             once,
         ),
     }
@@ -349,6 +361,7 @@ fn serve(
     quality: u8,
     stream_file: Option<PathBuf>,
     control_file: Option<PathBuf>,
+    action_log: Option<PathBuf>,
     once: bool,
 ) -> Result<(), H5iError> {
     let (_display, factory, page) = load(target, net, view)?;
@@ -356,6 +369,7 @@ fn serve(
     let control_file = control_file
         .or_else(|| std::env::var(CONTROL_FILE_VAR).ok().map(PathBuf::from))
         .or_else(|| stream_file.as_deref().map(control_file_beside));
+    let action_log = action_log.or_else(|| std::env::var(ACTIONS_VAR).ok().map(PathBuf::from));
     h5i_browser_light::stream::serve(
         factory,
         page,
@@ -364,6 +378,7 @@ fn serve(
             quality,
             stream_file,
             control_file,
+            action_log,
             once,
         },
     )

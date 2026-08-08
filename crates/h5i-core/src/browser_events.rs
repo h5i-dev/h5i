@@ -576,6 +576,63 @@ pub fn ingest_evidence(evidence: &crate::receipt::BrowserEvidence) -> Vec<Draft>
     drafts
 }
 
+/// Parse the light engine's own action log — what the box says it was asked to
+/// do, as opposed to what h5i watched cross a socket.
+///
+/// **Box-claimed, always.** The engine writes this from inside the box, and no
+/// arrangement of files could make that host-observed: h5i sits on no socket
+/// between an agent and this engine, because the engine *is* the browser. The
+/// rows are still worth showing — an empty pane for a session an agent is
+/// driving is a worse lie than a row that says who is claiming it — and the
+/// grade travels with each one so a reader can weigh it.
+///
+/// Only `result` lines become rows. The `request` line that precedes each one
+/// exists to make "no record, no action" true inside the engine; rendering both
+/// would double every verb in the pane for no gain a reader could use.
+pub fn ingest_light_actions(text: &str) -> Vec<Draft> {
+    let mut drafts = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("phase").and_then(serde_json::Value::as_str) != Some("result") {
+            continue;
+        }
+        let verb = clean(v.get("verb").and_then(serde_json::Value::as_str).unwrap_or(""));
+        if verb.is_empty() {
+            continue;
+        }
+        // A row whose outcome cannot be read is not evidence that the verb
+        // worked, the same way an unreadable request row is not evidence of
+        // permission.
+        let ok = v.get("ok").and_then(serde_json::Value::as_bool).unwrap_or(false);
+
+        let mut action = verb;
+        if let Some(target) = v.get("target").and_then(serde_json::Value::as_str) {
+            action = format!("{action} {}", clean(target));
+        }
+        if !ok {
+            if let Some(error) = v.get("error").and_then(serde_json::Value::as_str) {
+                action = format!("{action} — {}", clean(error));
+            }
+        }
+
+        drafts.push(Draft::new(
+            EventKind::AgentAction {
+                action,
+                forwarded: ok,
+            },
+            Lane::BoxClaimed,
+            Grade::BestEffort,
+        ));
+    }
+    drafts
+}
+
 /// Parse the mediator's host-side action log (`browser-actions.jsonl`, written
 /// by [`crate::browser_proxy::record_actions`]). A line that will not parse is
 /// skipped, for the same reason the request log skips one.
@@ -614,6 +671,9 @@ pub struct BoxStream {
     /// reads, so a half-written line is the ordinary case and re-reading it next
     /// poll is how it gets picked up whole.
     actions_at: u64,
+    /// The light engine's own action log, which is a different file in a
+    /// different lane from the mediator's.
+    light_actions_at: u64,
     requests_at: u64,
     /// Receipt ids already folded in. Receipts are immutable once written, so
     /// identity is enough and no offset is needed.
@@ -625,6 +685,7 @@ impl BoxStream {
         Self {
             log: EventLog::new(capacity),
             actions_at: 0,
+            light_actions_at: 0,
             requests_at: 0,
             receipts_seen: std::collections::HashSet::new(),
         }
@@ -636,8 +697,9 @@ impl BoxStream {
 
     /// Fold in whatever the sources have produced since the last call.
     ///
-    /// Three sources, read in a fixed order — mediated actions, then the
-    /// engine's request log, then the page evidence carried on receipts.
+    /// Four sources, read in a fixed order — mediated actions, the light
+    /// engine's own actions, its request log, then the page evidence carried on
+    /// receipts. The first two never both exist: a box runs one engine.
     /// **That order is the read order, not a timeline**: the sources share no
     /// clock (the request log carries a sequence number and no timestamp), so
     /// interleaving them by time would mean inventing one. Within a source the
@@ -655,6 +717,15 @@ impl BoxStream {
                 self.log.extend(reset_draft("mediated actions"), &at);
             }
             self.log.extend(ingest_actions_log(&growth.text), &at);
+        }
+
+        if let Some(path) = crate::env::browser_action_log(h5i_root, m) {
+            if let Some(growth) = grown(&path, &mut self.light_actions_at) {
+                if growth.restarted {
+                    self.log.extend(reset_draft("the engine's action log"), &at);
+                }
+                self.log.extend(ingest_light_actions(&growth.text), &at);
+            }
         }
 
         if let Some(path) = crate::env::browser_request_log(h5i_root, m) {
@@ -1158,4 +1229,56 @@ mod tests {
         assert_eq!(json["action"], "click");
         assert!(json.get("caused_by").is_none(), "absent, not null: {json}");
     }
+    #[test]
+    fn the_light_engines_own_actions_are_box_claimed_not_host_observed() {
+        // The whole point of the second source. These rows come from inside the
+        // box, so labelling them host-observed would claim a guarantee that
+        // nothing provides — there is no socket between an agent and this
+        // engine for h5i to sit on.
+        let drafts = ingest_light_actions(
+            r#"{"seq":0,"phase":"request","verb":"click","target":"@e1"}
+{"seq":0,"phase":"result","verb":"click","target":"@e1","ok":true,"url":"https://example.com/"}"#,
+        );
+
+        assert_eq!(drafts.len(), 1, "only the result line becomes a row");
+        assert_eq!(drafts[0].lane, Lane::BoxClaimed);
+        assert_eq!(drafts[0].grade, Grade::BestEffort);
+        match &drafts[0].kind {
+            EventKind::AgentAction { action, forwarded } => {
+                assert!(action.contains("click"), "{action}");
+                assert!(action.contains("@e1"), "{action}");
+                assert!(forwarded);
+            }
+            other => panic!("expected an agent action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_refused_light_action_says_what_stopped_it() {
+        let drafts = ingest_light_actions(
+            r#"{"seq":1,"phase":"result","verb":"navigate","target":"https://denied.test/","ok":false,"error":"denied by policy"}"#,
+        );
+        match &drafts[0].kind {
+            EventKind::AgentAction { action, forwarded } => {
+                assert!(!forwarded, "a refused verb must not render as done");
+                assert!(action.contains("denied by policy"), "{action}");
+            }
+            other => panic!("expected an agent action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_unreadable_light_action_row_is_not_evidence_that_it_worked() {
+        // Fail closed on the read side too: a row whose outcome cannot be
+        // parsed renders as not-forwarded rather than as a success.
+        let drafts = ingest_light_actions(
+            "not json\n{\"seq\":2,\"phase\":\"result\",\"verb\":\"scroll\"}\n{\"phase\":\"result\"}",
+        );
+        assert_eq!(drafts.len(), 1, "the unparseable and the nameless are skipped");
+        match &drafts[0].kind {
+            EventKind::AgentAction { forwarded, .. } => assert!(!forwarded),
+            other => panic!("expected an agent action, got {other:?}"),
+        }
+    }
+
 }

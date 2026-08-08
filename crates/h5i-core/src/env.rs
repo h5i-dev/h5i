@@ -3642,6 +3642,17 @@ fn browser_light_env(policy: &ResolvedPolicy, allowed: &[String]) -> Vec<(String
             "H5I_BROWSER_STREAM_FILE".to_string(),
             format!("{}/agent-browser/h5i-light.stream", box_tmp_root(policy)),
         ),
+        // Where the agent's own verbs go. The console's agent-actions pane is
+        // fed by the mediator, and this engine has no mediator to feed it —
+        // `engage_browser_mediation` returns `None` for any engine agent-browser
+        // cannot drive. Without this the pane renders empty for a session an
+        // agent is actively driving, which reads as "the agent did nothing".
+        // The rows it produces are box-claimed, not host-observed, because the
+        // engine is the browser and there is no socket between them to watch.
+        (
+            "H5I_BROWSER_ACTIONS".to_string(),
+            format!("{}/browser-actions.jsonl", box_tmp_root(policy)),
+        ),
     ]
 }
 
@@ -3847,6 +3858,31 @@ pub fn browser_request_log(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf> 
     }
     let backing = private_tmp_backing(&m.dir(h5i_root).join("tmp"));
     Some(backing.join("browser-requests.jsonl"))
+}
+
+/// Host-side path of the action log the resident session writes, when this box
+/// runs our own engine.
+///
+/// The sibling of [`browser_request_log`], and `None` for the same two reasons:
+/// only this engine writes one, and an image-backed tier keeps `/tmp` inside
+/// the image where the host cannot read it.
+///
+/// Deliberately **not** [`crate::browser_proxy::actions_log`], which is the
+/// mediator's own file in the env directory. Two sources, two lanes: that one
+/// is what h5i watched cross a socket, this one is what the box says it did.
+/// Pointing them at one path would launder a box-claimed row into a
+/// host-observed pane, which is the exact confusion the lane split exists to
+/// prevent.
+pub fn browser_action_log(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf> {
+    let policy = load_policy(h5i_root, m).ok()?;
+    if policy.profile.engine? != crate::sandbox::BrowserEngine::H5iLight {
+        return None;
+    }
+    if policy.claim.image_backed() {
+        return None;
+    }
+    let backing = private_tmp_backing(&m.dir(h5i_root).join("tmp"));
+    Some(backing.join("browser-actions.jsonl"))
 }
 
 fn host_tmp_root(policy: &ResolvedPolicy, _env_dir: &Path) -> Option<PathBuf> {

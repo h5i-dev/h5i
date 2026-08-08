@@ -1296,6 +1296,28 @@ on nothing. Writing the test found the hole that made the fence worth having:
 attribute value may contain a literal newline — so the field that could forge
 the fence was the field nobody had thought of as text.
 
+**The agent-actions pane had no source on this engine, 2026-08-08.** Found by
+someone running an agent in an `h5i-light` box and noticing the pane stayed
+empty while the agent worked. It was empty *by construction*: the pane is fed by
+`browser-actions.jsonl`, which the mediator writes, and
+`engage_browser_mediation` returns `None` for any engine agent-browser cannot
+drive. Before the resident session that was harmless — there were no verbs to
+miss. Adding verbs made it a monitoring surface that silently under-reported,
+which is the failure this codebase keeps writing tests against.
+
+`serve` now writes its own action log (`$H5I_BROWSER_ACTIONS`), ingested as a
+fourth source into `BoxStream::poll` and rendered **box-claimed**, not
+host-observed. That distinction is the point rather than a caveat: h5i sits on
+no socket between an agent and this engine because the engine *is* the browser,
+and a row claiming otherwise would launder the box's own account into evidence
+h5i gathered. The pane note is engine-aware for the same reason. Each verb is
+recorded before it runs and again after — no record, no action — which is a
+guarantee against accident, not against a box that has decided to lie.
+
+Measured before shipping, because it sits on the verb path: **7µs per verb**
+against **42ms** for the single frame encode a scroll triggers when a viewer is
+attached. 0.017% of one frame.
+
 **Still open, and now the whole gap (§11 items 5.2a and 5.4):** no typing, no
 form submission, and **no cookies of any kind**. An agent with a session it
 cannot type into still cannot get past a login form, so the session buys less

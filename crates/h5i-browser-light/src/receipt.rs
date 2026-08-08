@@ -14,6 +14,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use h5i_error::H5iError;
@@ -280,5 +281,204 @@ mod tests {
 
         assert_eq!(sink.fetched_urls(), vec!["https://example.com/"]);
         assert_eq!(sink.denied_urls(), vec!["https://tracker.test/p"]);
+    }
+}
+
+// ── the agent's own verbs ───────────────────────────────────────────────────
+
+/// One verb an agent asked the resident session for.
+///
+/// A *separate* record from [`RequestRecord`], and a separate lane, because
+/// they answer different questions with different evidence. A request row is
+/// what crossed the wire; this is what the agent asked for. Correlating the two
+/// — which click caused which fetch — is not attempted here: the link has to be
+/// stamped by whoever knows it, and inferring it from adjacency in a file would
+/// be inventing evidence.
+///
+/// Written by the engine, inside the box, so this lane is **box-claimed**. h5i
+/// sits on no socket between an agent and this engine, because there is none:
+/// the engine *is* the browser. Anything reading these rows should weigh them
+/// as the box's own account.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionRecord {
+    pub seq: u64,
+    /// `request` before the verb runs, `result` after it.
+    pub phase: String,
+    pub verb: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ok: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Where the resident session records what it was asked to do.
+pub struct ActionLog {
+    file: Mutex<File>,
+    seq: AtomicU64,
+}
+
+impl ActionLog {
+    pub fn create(path: &Path) -> Result<Self, H5iError> {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+            }
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| H5iError::with_path(e, path))?;
+        Ok(Self {
+            file: Mutex::new(file),
+            seq: AtomicU64::new(0),
+        })
+    }
+
+    /// Record that a verb is about to run, and return its sequence number.
+    ///
+    /// Before, not after, and the failure is propagated: **no record, no
+    /// action**, the same rule the request log enforces for fetches. Recording
+    /// afterwards would make a full disk into an agent that acts invisibly,
+    /// which is precisely the silent under-reporting this log exists to end.
+    ///
+    /// Worth being exact about what that buys, since the lane is box-claimed:
+    /// it is a guarantee against *accident* — a bad path, a full disk, a
+    /// permission the box does not have. It is not a guarantee against a box
+    /// that has decided to lie, and nothing written inside the box could be.
+    pub fn begin(&self, verb: &str, target: Option<&str>) -> Result<u64, H5iError> {
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+        self.write(&ActionRecord {
+            seq,
+            phase: "request".to_string(),
+            verb: verb.to_string(),
+            target: target.map(str::to_string),
+            ok: None,
+            url: None,
+            error: None,
+        })?;
+        Ok(seq)
+    }
+
+    /// Record how it went. Best-effort: the verb has already happened, so
+    /// refusing anything now would only hide the outcome of something real.
+    pub fn finish(
+        &self,
+        seq: u64,
+        verb: &str,
+        target: Option<&str>,
+        ok: bool,
+        url: Option<&str>,
+        error: Option<&str>,
+    ) {
+        let _ = self.write(&ActionRecord {
+            seq,
+            phase: "result".to_string(),
+            verb: verb.to_string(),
+            target: target.map(str::to_string),
+            ok: Some(ok),
+            url: url.map(str::to_string),
+            error: error.map(str::to_string),
+        });
+    }
+
+    /// An [`ActionLog`] whose every write fails, for the one test that has to
+    /// prove "no record, no action" holds at the *verb*, not merely at startup.
+    ///
+    /// A read-only handle rather than a clever filesystem: unlinking the file
+    /// does not break writes through an fd that is already open, which is how
+    /// the first attempt at that test passed while proving nothing.
+    #[cfg(test)]
+    pub(crate) fn unwritable_for_test(path: &Path) -> Result<Self, H5iError> {
+        std::fs::write(path, "").map_err(|e| H5iError::with_path(e, path))?;
+        let file = OpenOptions::new()
+            .read(true)
+            .open(path)
+            .map_err(|e| H5iError::with_path(e, path))?;
+        Ok(Self {
+            file: Mutex::new(file),
+            seq: AtomicU64::new(0),
+        })
+    }
+
+    fn write(&self, record: &ActionRecord) -> Result<(), H5iError> {
+        let line = serde_json::to_string(record)?;
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| H5iError::Internal("action log lock was poisoned".to_string()))?;
+        writeln!(file, "{line}").map_err(H5iError::Io)?;
+        file.flush().map_err(H5iError::Io)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod action_log_tests {
+    use super::*;
+
+    #[test]
+    fn a_verb_is_recorded_before_it_runs_and_again_after() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nested").join("browser-actions.jsonl");
+        let log = ActionLog::create(&path).expect("creates, making the directory");
+
+        let seq = log.begin("click", Some("@e1")).expect("records");
+        log.finish(seq, "click", Some("@e1"), true, Some("https://example.com/"), None);
+
+        let lines: Vec<ActionRecord> = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).expect("each line is a record"))
+            .collect();
+
+        assert_eq!(lines.len(), 2, "a pair, like the request log");
+        assert_eq!(lines[0].phase, "request");
+        assert_eq!(lines[0].ok, None, "the first line cannot know the outcome");
+        assert_eq!(lines[1].phase, "result");
+        assert_eq!(lines[1].ok, Some(true));
+        assert_eq!(lines[1].seq, seq, "the pair shares a sequence number");
+    }
+
+    #[test]
+    fn a_failed_verb_is_recorded_as_fully_as_a_successful_one() {
+        // The rows that matter most for a reviewer are the ones where the
+        // agent did not get what it asked for.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.jsonl");
+        let log = ActionLog::create(&path).expect("creates");
+
+        let seq = log.begin("navigate", Some("https://denied.test/")).unwrap();
+        log.finish(seq, "navigate", Some("https://denied.test/"), false, None, Some("denied by policy"));
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("denied by policy"), "{text}");
+        assert!(text.contains("\"ok\":false"), "{text}");
+    }
+
+    #[test]
+    fn an_unwritable_log_refuses_rather_than_recording_nothing() {
+        // No record, no action — the same rule the request log enforces for
+        // fetches. A directory where the file should be is the cheapest way to
+        // make the open fail without depending on permissions.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("occupied");
+        std::fs::create_dir(&path).unwrap();
+        assert!(
+            ActionLog::create(&path).is_err(),
+            "a session that cannot record must fail at startup"
+        );
+    }
+
+    #[test]
+    fn sequence_numbers_do_not_repeat() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = ActionLog::create(&dir.path().join("a.jsonl")).unwrap();
+        let seqs: Vec<u64> = (0..5).map(|_| log.begin("scroll", None).unwrap()).collect();
+        assert_eq!(seqs, vec![0, 1, 2, 3, 4]);
     }
 }

@@ -51,6 +51,7 @@ use serde_json::{json, Value};
 use url::Url;
 
 use crate::engine::{Page, PageFactory};
+use crate::receipt::ActionLog;
 use crate::ws::{self, Incoming};
 
 /// How far a key scrolls, as a fraction of the viewport.
@@ -75,6 +76,9 @@ pub struct ServeOptions {
     /// either way: anything that can reach this port is already inside the box
     /// and could run the binary itself.
     pub control_file: Option<PathBuf>,
+    /// Where to record the verbs an agent asks for. `None` on a bare host,
+    /// where there is no console to feed.
+    pub action_log: Option<PathBuf>,
     /// Serve one viewer and exit, which is what the tests and a one-shot
     /// demo want.
     pub once: bool,
@@ -87,6 +91,7 @@ impl Default for ServeOptions {
             quality: 80,
             stream_file: None,
             control_file: None,
+            action_log: None,
             once: false,
         }
     }
@@ -140,6 +145,12 @@ struct Session {
     page: Page,
     quality: u8,
     seq: u64,
+    /// Where the agent's own verbs are recorded, when h5i asked for one.
+    ///
+    /// Optional because the engine runs on a bare host too, where there is no
+    /// console to feed and no claim to support. Inside a box it is set, and
+    /// then it is a precondition: see [`crate::receipt::ActionLog::begin`].
+    actions: Option<ActionLog>,
 }
 
 impl Session {
@@ -227,11 +238,20 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
     thread::spawn(move || accept_viewers(viewers, viewer_tx, once));
     thread::spawn(move || accept_control(control, tx));
 
+    // Opened before the listeners are advertised: a session that cannot record
+    // what it is asked to do should fail at startup, where someone is watching,
+    // rather than on the agent's first verb.
+    let actions = match &options.action_log {
+        Some(path) => Some(ActionLog::create(path)?),
+        None => None,
+    };
+
     let session = Session {
         factory,
         page,
         quality: options.quality,
         seq: 0,
+        actions,
     };
     run_session(session, rx, options.once);
 
@@ -316,7 +336,7 @@ fn run_session(mut session: Session, rx: Receiver<Command>, once: bool) {
             }
 
             Command::Control { request, reply } => {
-                let (answer, changed) = control_verb(&mut session, &request);
+                let (answer, changed) = recorded_verb(&mut session, &request);
                 let _ = reply.send(answer);
                 // A control verb that moved the page is exactly the case the
                 // resident session exists for: every viewer sees what the
@@ -552,6 +572,60 @@ pub fn ask(port: u16, request: &Value) -> Result<Value, H5iError> {
         .map_err(|e| H5iError::Metadata(format!("the session answered with non-JSON: {e}")))
 }
 
+/// Record a verb, run it, record how it went.
+///
+/// Wrapped around [`control_verb`] rather than folded into it so the verbs stay
+/// testable without a file, and so there is exactly one place where "acted" and
+/// "recorded" can drift apart — this one.
+///
+/// The pane this feeds says *agent actions*, and until now it could only ever
+/// be filled by the mediated socket in front of agent-browser. There is no such
+/// socket here — the engine is the browser — so before this the console showed
+/// an empty pane for a session an agent was actively driving, which reads as
+/// "the agent did nothing" and is the one thing a monitoring surface must never
+/// say by accident.
+fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
+    let verb = request.get("verb").and_then(Value::as_str).unwrap_or("");
+    // Whatever the verb aims at, under one name, so a reader does not have to
+    // know which verbs take a URL and which take a ref.
+    let target = request
+        .get("url")
+        .or_else(|| request.get("ref"))
+        .or_else(|| request.get("by"))
+        .map(|v| match v.as_str() {
+            Some(s) => s.to_string(),
+            None => v.to_string(),
+        });
+
+    let Some(log) = &session.actions else {
+        return control_verb(session, request);
+    };
+
+    let seq = match log.begin(verb, target.as_deref()) {
+        Ok(seq) => seq,
+        // No record, no action. The agent is told why in the same shape as any
+        // other refusal, so this does not read as the verb having half-happened.
+        Err(error) => {
+            return (
+                error_reply(&format!(
+                    "refusing to act: the action could not be recorded: {error}"
+                )),
+                false,
+            )
+        }
+    };
+
+    let (answer, changed) = control_verb(session, request);
+
+    let ok = answer.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    let url = answer.get("url").and_then(Value::as_str);
+    let error = answer.get("error").and_then(Value::as_str);
+    if let Some(log) = &session.actions {
+        log.finish(seq, verb, target.as_deref(), ok, url, error);
+    }
+    (answer, changed)
+}
+
 /// Handle one control request against the resident page.
 ///
 /// Returns the reply and whether the page moved, because the caller is the only
@@ -767,6 +841,7 @@ mod tests {
             page,
             quality: 70,
             seq: 0,
+            actions: None,
         }
     }
 
@@ -1074,6 +1149,65 @@ mod tests {
         let (reply, changed) = control_verb(&mut session, &json!({"verb": "scroll", "by": -100.0}));
         assert_eq!(reply["moved"], false, "already at the top: {reply:?}");
         assert!(!changed, "a scroll that moved nothing encodes no frame");
+    }
+
+    #[test]
+    fn every_verb_that_reaches_the_session_is_recorded() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("browser-actions.jsonl");
+        let mut session = session_with(tall_page());
+        session.actions = Some(ActionLog::create(&path).expect("log"));
+
+        recorded_verb(&mut session, &json!({"verb": "snapshot"}));
+        recorded_verb(&mut session, &json!({"verb": "scroll", "by": 200.0}));
+        recorded_verb(&mut session, &json!({"verb": "click", "ref": "e404"}));
+
+        let text = std::fs::read_to_string(&path).expect("written");
+        let results: Vec<&str> = text
+            .lines()
+            .filter(|l| l.contains("\"phase\":\"result\""))
+            .collect();
+        assert_eq!(results.len(), 3, "one outcome per verb:\n{text}");
+
+        // A read is recorded as surely as a write. "The agent looked at this
+        // page" is exactly the kind of thing a reviewer is auditing for.
+        assert!(results[0].contains("\"verb\":\"snapshot\""), "{text}");
+        // The target travels whatever its spelling: a url, a ref, a distance.
+        assert!(results[1].contains("\"target\":\"200.0\""), "{text}");
+        assert!(results[2].contains("\"ok\":false"), "{text}");
+        assert!(results[2].contains("e404"), "{text}");
+    }
+
+    #[test]
+    fn a_verb_that_cannot_be_recorded_does_not_happen() {
+        // No record, no action. Proved by the page not moving, not merely by
+        // the reply: an agent that scrolled invisibly would be the bug.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("actions.jsonl");
+        let mut session = session_with(tall_page());
+        session.actions = Some(ActionLog::unwritable_for_test(&path).expect("log"));
+
+        let before = session.page.scroll_offset();
+        let (reply, changed) = recorded_verb(&mut session, &json!({"verb": "scroll", "by": 400.0}));
+
+        assert_eq!(reply["ok"], false);
+        assert!(
+            reply["error"].as_str().unwrap().contains("could not be recorded"),
+            "the agent is told why: {reply:?}"
+        );
+        assert!(!changed);
+        assert_eq!(session.page.scroll_offset(), before, "the page must not move");
+    }
+
+    #[test]
+    fn a_session_without_a_log_still_works() {
+        // The engine runs on a bare host too, where there is no console to feed
+        // and no claim to support.
+        let mut session = session_with(tall_page());
+        assert!(session.actions.is_none());
+        let (reply, changed) = recorded_verb(&mut session, &json!({"verb": "scroll", "by": 300.0}));
+        assert_eq!(reply["ok"], true);
+        assert!(changed);
     }
 
     #[test]
