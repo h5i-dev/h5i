@@ -474,12 +474,23 @@ function SignalBadge({ signals }: { signals: Signals }) {
 
 // ── right: one box ───────────────────────────────────────────────────────────
 
+type DetailView = "evidence" | "browser";
+
 function DetailPane({ box, tick }: { box: BoxRow | null; tick: number }) {
   const [detail, setDetail] = useState<BoxDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [view, setView] = useState<DetailView>("evidence");
 
   const agent = box?.agent;
   const slug = box?.slug;
+
+  // Selecting a different box returns to Evidence. Keeping the browser tab
+  // across a switch would land the reader on a browser view of a box that may
+  // not have one, and the empty result reads as a failure rather than as "you
+  // are looking at the wrong box".
+  useEffect(() => {
+    setView("evidence");
+  }, [agent, slug]);
 
   useEffect(() => {
     if (!agent || !slug) {
@@ -517,6 +528,11 @@ function DetailPane({ box, tick }: { box: BoxRow | null; tick: number }) {
     );
   }
 
+  // Only a browser box has a browser terminal. Reading it off the profile
+  // rather than off whether events have arrived: a box that has not browsed yet
+  // still has the tab, and its panes say so, which is the honest empty state.
+  const browserCapable = box.profile === "browser";
+
   return (
     <div className="sbx-detail">
       <div className="sbx-detail-head">
@@ -540,19 +556,47 @@ function DetailPane({ box, tick }: { box: BoxRow | null; tick: number }) {
         <SignalBadge signals={box.signals} />
       </div>
 
+      {/* Two views of one box, because they answer different questions and
+          want different shapes. Evidence is a scroll of what has already
+          happened; the browser terminal is a live instrument that wants the
+          whole pane. Wedging the second into the first gave it a few hundred
+          pixels between Services and the timeline, which is not the density the
+          panes were designed for. The tab strip only appears for a box that has
+          a browser — every other box has one view, and a disabled tab is just a
+          question a reader has to answer. */}
+      {browserCapable ? (
+        <div className="sbx-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "evidence"}
+            className={view === "evidence" ? "on" : undefined}
+            onClick={() => setView("evidence")}
+          >
+            Evidence
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "browser"}
+            className={view === "browser" ? "on" : undefined}
+            onClick={() => setView("browser")}
+          >
+            Browser
+          </button>
+        </div>
+      ) : null}
+
       {loading && !detail ? (
         <NonIdealState icon={<Spinner size={20} />} title="Loading evidence…" />
       ) : !detail ? (
         <div className="sbx-pane-empty">No detail available.</div>
+      ) : view === "browser" && browserCapable ? (
+        <BrowserTerminal agent={box.agent} slug={box.slug} />
       ) : (
         <div className="sbx-detail-body">
           <SignalSummary box={box} />
           <Services services={detail.services} />
-          {/* Only for a box that actually has a browser: an empty terminal on
-              every other box would be four panes of "nothing yet" forever. */}
-          {box.profile === "browser" ? (
-            <BrowserTerminal agent={box.agent} slug={box.slug} />
-          ) : null}
           <Timeline
             agent={box.agent}
             slug={box.slug}

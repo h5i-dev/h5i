@@ -248,6 +248,12 @@ export type ViewerEvent = EventBase &
     | { kind: "console"; level: ConsoleLevel; text: string }
     | { kind: "agent-action"; action: string; forwarded: boolean }
     | { kind: "policy-verdict"; subject: string; reason: string }
+    /**
+     * A source restarted, so everything after this row belongs to a new
+     * browser session. Rendered in every pane: it is a boundary for the whole
+     * stream, not news about one lane.
+     */
+    | { kind: "session-reset"; source: string }
   );
 
 export interface BrowserStream {
@@ -257,6 +263,12 @@ export interface BrowserStream {
   dropped: number;
   /** The pinned engine, which is what the network pane's grade follows from. */
   engine?: string;
+  /**
+   * Whether a live view is being served inside the box right now. The console
+   * does not relay those frames — the forward does, with its own token and the
+   * control lock — so this only tells the page pane which state to describe.
+   */
+  live_view: boolean;
 }
 
 // ── transport ────────────────────────────────────────────────────────────────

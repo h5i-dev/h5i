@@ -167,6 +167,17 @@ pub enum EventKind {
     /// on the action: a refusal is the thing a reviewer scans for, and a flag
     /// buried in a forwarded row is not scannable.
     PolicyVerdict { subject: String, reason: String },
+    /// A source restarted: the file h5i was reading got shorter, which only
+    /// happens when a new run cleared the box's `/tmp` and a fresh session
+    /// began writing.
+    ///
+    /// Host-observed, because h5i noticed it about the box rather than being
+    /// told. It exists so a restart **looks like a restart**: without it the
+    /// reader silently resumes numbering and a viewer holding an old cursor
+    /// swallows the head of the new session, reporting a quiet page where there
+    /// was a busy one. That is the failure this whole module is arranged to
+    /// prevent, and it was live in the first version of this reader.
+    SessionReset { source: String },
 }
 
 /// Console severity. `log`/`info` chatter is not evidence and is not carried;
@@ -577,44 +588,177 @@ pub fn ingest_actions_log(text: &str) -> Vec<Draft> {
     ingest_actions(&records)
 }
 
-/// Assemble one box's browser stream from what is on disk, host-side.
+/// What one box's sources have already given up, so the next read can ask only
+/// for what is new.
 ///
-/// Three sources, read in a fixed order — mediated actions, then the engine's
-/// request log, then the page evidence carried on receipts. **That order is the
-/// read order, not a timeline**: the sources share no clock (the request log
-/// carries a sequence number and the receipts carry their own timestamps), so
-/// interleaving them by time would mean inventing one. Within a source the
-/// order is the source's own, which is the ordering that means something.
+/// Held by the console across polls rather than rebuilt per request, and the
+/// reason is a defect the first version of this reader shipped with. It
+/// re-parsed every source on every poll and numbered events from 1 each time,
+/// which is stable only while the files grow by appending — and they do not.
+/// **Every run clears the box's private `/tmp`** (`prepare_private_tmp`), so a
+/// second browser run starts the request log over at zero bytes, the numbering
+/// restarts with it, and a console tab holding a cursor from the first run
+/// silently drops the head of the second. A viewer under-reporting a session is
+/// exactly what the lane and grade fields exist to prevent elsewhere, so it does
+/// not get to happen here through arithmetic.
 ///
-/// Reading is best effort by design: a box that has never opened a browser has
-/// none of these files, and that is an empty stream rather than an error.
-pub fn assemble(
-    h5i_root: &std::path::Path,
-    m: &crate::env::EnvManifest,
-    capacity: usize,
-) -> EventLog {
-    let mut log = EventLog::new(capacity);
-    let observed_at =
-        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
-    let env_dir = m.dir(h5i_root);
+/// Holding the position turns that into its opposite: ids never restart, a
+/// shortened file is *detected*, and the restart is emitted as
+/// [`EventKind::SessionReset`] — a row a human can see. It also stops the
+/// console re-reading and re-parsing whole files once a second.
+#[derive(Debug)]
+pub struct BoxStream {
+    log: EventLog,
+    /// Byte offset just past the last **complete** line consumed. A trailing
+    /// partial line is deliberately not consumed: the engine appends while this
+    /// reads, so a half-written line is the ordinary case and re-reading it next
+    /// poll is how it gets picked up whole.
+    actions_at: u64,
+    requests_at: u64,
+    /// Receipt ids already folded in. Receipts are immutable once written, so
+    /// identity is enough and no offset is needed.
+    receipts_seen: std::collections::HashSet<String>,
+}
 
-    if let Ok(text) = std::fs::read_to_string(crate::browser_proxy::actions_log(&env_dir)) {
-        log.extend(ingest_actions_log(&text), &observed_at);
-    }
-
-    if let Some(path) = crate::env::browser_request_log(h5i_root, m) {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            log.extend(ingest_request_log(&text), &observed_at);
+impl BoxStream {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            log: EventLog::new(capacity),
+            actions_at: 0,
+            requests_at: 0,
+            receipts_seen: std::collections::HashSet::new(),
         }
     }
 
-    for record in crate::receipt::list(&env_dir).unwrap_or_default() {
-        if let Some(evidence) = &record.browser {
-            log.extend(ingest_evidence(evidence), &observed_at);
-        }
+    pub fn log(&self) -> &EventLog {
+        &self.log
     }
 
-    log
+    /// Fold in whatever the sources have produced since the last call.
+    ///
+    /// Three sources, read in a fixed order — mediated actions, then the
+    /// engine's request log, then the page evidence carried on receipts.
+    /// **That order is the read order, not a timeline**: the sources share no
+    /// clock (the request log carries a sequence number and no timestamp), so
+    /// interleaving them by time would mean inventing one. Within a source the
+    /// order is the source's own, which is the ordering that means something.
+    ///
+    /// Best effort by design: a box that has never opened a browser has none of
+    /// these files, and that is an empty stream rather than an error.
+    pub fn poll(&mut self, h5i_root: &std::path::Path, m: &crate::env::EnvManifest) {
+        let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+        let env_dir = m.dir(h5i_root);
+
+        let actions = crate::browser_proxy::actions_log(&env_dir);
+        if let Some(growth) = grown(&actions, &mut self.actions_at) {
+            if growth.restarted {
+                self.log.extend(reset_draft("mediated actions"), &at);
+            }
+            self.log.extend(ingest_actions_log(&growth.text), &at);
+        }
+
+        if let Some(path) = crate::env::browser_request_log(h5i_root, m) {
+            if let Some(growth) = grown(&path, &mut self.requests_at) {
+                if growth.restarted {
+                    self.log.extend(reset_draft("the engine's request log"), &at);
+                }
+                self.log.extend(ingest_request_log(&growth.text), &at);
+            }
+        }
+
+        for record in crate::receipt::list(&env_dir).unwrap_or_default() {
+            if !self.receipts_seen.insert(record.id.clone()) {
+                continue;
+            }
+            if let Some(evidence) = &record.browser {
+                self.log.extend(ingest_evidence(evidence), &at);
+            }
+        }
+    }
+}
+
+fn reset_draft(source: &str) -> Vec<Draft> {
+    vec![Draft::new(
+        EventKind::SessionReset {
+            source: source.to_string(),
+        },
+        // h5i noticed this about the box; the box did not report it.
+        Lane::HostObserved,
+        Grade::BestEffort,
+    )]
+}
+
+/// What a source has grown by.
+struct Growth {
+    /// Complete lines only.
+    text: String,
+    /// The file is shorter than what was already consumed, so it was replaced
+    /// rather than appended to.
+    restarted: bool,
+}
+
+/// Read the complete lines `path` has grown by since `*offset`, advancing it.
+///
+/// `None` when there is nothing new to fold in — no file, no growth, or growth
+/// that does not yet contain a line terminator.
+///
+/// Reads bytes rather than a `String` and cuts at the last newline before
+/// decoding: a partial write can split a multi-byte character, and decoding
+/// first would either fail or silently corrupt the tail. Cutting at a newline
+/// guarantees whole lines, which are whole characters.
+fn grown(path: &std::path::Path, offset: &mut u64) -> Option<Growth> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let Ok(meta) = std::fs::metadata(path) else {
+        // A file that was there and is not any more is a restart. Report it
+        // once — the next poll starts from zero and picks up whatever replaces
+        // it — rather than staying silent about a session that ended.
+        if *offset > 0 {
+            *offset = 0;
+            return Some(Growth {
+                text: String::new(),
+                restarted: true,
+            });
+        }
+        return None;
+    };
+
+    let len = meta.len();
+    let restarted = len < *offset;
+    if restarted {
+        *offset = 0;
+    }
+    if len == *offset {
+        // Nothing new. A bare restart with an empty replacement still has to be
+        // announced, or the row that explains the renumbering never appears.
+        return restarted.then(|| Growth {
+            text: String::new(),
+            restarted,
+        });
+    }
+
+    let mut file = std::fs::File::open(path).ok()?;
+    file.seek(SeekFrom::Start(*offset)).ok()?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+
+    // Stop at the last newline; anything after it is a line still being
+    // written, and it stays unconsumed until it is whole.
+    let complete = match buf.iter().rposition(|b| *b == b'\n') {
+        Some(i) => i + 1,
+        None => {
+            return restarted.then(|| Growth {
+                text: String::new(),
+                restarted,
+            })
+        }
+    };
+    *offset += complete as u64;
+
+    Some(Growth {
+        text: String::from_utf8_lossy(&buf[..complete]).into_owned(),
+        restarted,
+    })
 }
 
 #[cfg(test)]
@@ -856,6 +1000,146 @@ mod tests {
         // and that has to read as nothing happened rather than as a failure.
         assert!(log_with(ingest_actions_log("")).is_empty());
         assert!(log_with(ingest_request_log("")).is_empty());
+    }
+
+    // ── the incremental reader ───────────────────────────────────────────────
+    //
+    // Driven through `grown` against real files, because the whole point of it
+    // is what the filesystem does to a reader: partial writes, truncation, and
+    // a file that disappears between polls.
+
+    fn write(path: &std::path::Path, text: &str) {
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn a_reader_takes_only_complete_lines_and_comes_back_for_the_rest() {
+        // The engine appends while the console polls, so a trailing partial
+        // line is the ordinary case. Consuming it would parse half a record and
+        // then never see its other half.
+        let td = tempfile::TempDir::new().unwrap();
+        let path = td.path().join("log.jsonl");
+        let mut at = 0u64;
+
+        write(&path, "{\"a\":1}\n{\"b\":2");
+        let first = grown(&path, &mut at).expect("something to read");
+        assert_eq!(first.text, "{\"a\":1}\n", "only the whole line");
+        assert!(!first.restarted);
+
+        // Nothing new until the partial line is finished.
+        assert!(grown(&path, &mut at).is_none());
+
+        write(&path, "{\"a\":1}\n{\"b\":2}\n");
+        let second = grown(&path, &mut at).expect("the completed line");
+        assert_eq!(second.text, "{\"b\":2}\n", "and it is not re-read");
+    }
+
+    #[test]
+    fn a_cleared_source_reads_as_a_restart_not_as_silence() {
+        // THE defect this reader exists to fix. Every run clears the box's
+        // private /tmp, so the request log starts over; a reader that just
+        // resumed would renumber from the start and a viewer holding a cursor
+        // would drop the new session's opening events on the floor.
+        let td = tempfile::TempDir::new().unwrap();
+        let path = td.path().join("log.jsonl");
+        let mut at = 0u64;
+
+        write(&path, "{\"a\":1}\n{\"b\":2}\n");
+        grown(&path, &mut at).expect("the first session");
+        assert!(at > 0);
+
+        // A new run: shorter file, different content.
+        write(&path, "{\"c\":3}\n");
+        let after = grown(&path, &mut at).expect("the new session");
+        assert!(after.restarted, "the shortening must be noticed");
+        assert_eq!(after.text, "{\"c\":3}\n", "and read from the top");
+    }
+
+    #[test]
+    fn a_source_that_disappears_is_announced_once() {
+        let td = tempfile::TempDir::new().unwrap();
+        let path = td.path().join("log.jsonl");
+        let mut at = 0u64;
+
+        write(&path, "{\"a\":1}\n");
+        grown(&path, &mut at).expect("the first read");
+        std::fs::remove_file(&path).unwrap();
+
+        let gone = grown(&path, &mut at).expect("the disappearance is news");
+        assert!(gone.restarted);
+        // ...and only once: a box with no browser must not emit a reset per
+        // second for the rest of the console's life.
+        assert!(grown(&path, &mut at).is_none(), "silence after the first");
+    }
+
+    #[test]
+    fn ids_never_restart_so_an_open_viewer_keeps_its_place() {
+        // The property a viewer's cursor depends on, stated as a test: across a
+        // session boundary the numbering keeps climbing, and the boundary is
+        // itself an event rather than a gap in the sequence.
+        let mut log = EventLog::new(64);
+        log.extend(
+            ingest_request_log("{\"seq\":0,\"phase\":\"request\",\"method\":\"GET\",\"url\":\"https://a.example/\",\"allowed\":true}"),
+            TS,
+        );
+        let after_first = log.cursor();
+
+        log.extend(reset_draft("the engine's request log"), TS);
+        log.extend(
+            ingest_request_log("{\"seq\":0,\"phase\":\"request\",\"method\":\"GET\",\"url\":\"https://b.example/\",\"allowed\":true}"),
+            TS,
+        );
+
+        let fresh = log.since(after_first);
+        assert!(
+            fresh.iter().any(|e| matches!(e.kind, EventKind::SessionReset { .. })),
+            "the restart is visible: {fresh:?}"
+        );
+        assert!(
+            fresh.iter().all(|e| e.id > after_first),
+            "and everything after it is new to a viewer holding that cursor"
+        );
+        // The reset is h5i's observation about the box, not the box's claim.
+        let reset = fresh
+            .iter()
+            .find(|e| matches!(e.kind, EventKind::SessionReset { .. }))
+            .unwrap();
+        assert_eq!(reset.lane, Lane::HostObserved);
+    }
+
+    #[test]
+    fn a_reused_sequence_number_correlates_to_the_current_session() {
+        // Sequence numbers restart at 0 with the engine, so the same key turns
+        // up again after a reset. Newest-first resolution means a response is
+        // matched to its own session's request rather than to a stale one that
+        // happens to share a number.
+        let mut log = EventLog::new(64);
+        log.extend(
+            ingest_request_log("{\"seq\":0,\"phase\":\"request\",\"method\":\"GET\",\"url\":\"https://old.example/\",\"allowed\":true}"),
+            TS,
+        );
+        let stale = log.cursor();
+        log.extend(
+            ingest_request_log(
+                "{\"seq\":0,\"phase\":\"request\",\"method\":\"GET\",\"url\":\"https://new.example/\",\"allowed\":true}\n{\"seq\":0,\"phase\":\"response\",\"status\":200}",
+            ),
+            TS,
+        );
+
+        let events = log.since(stale);
+        let response = events
+            .iter()
+            .find(|e| matches!(e.kind, EventKind::Response { .. }))
+            .expect("a response");
+        let fresh_request = events
+            .iter()
+            .find(|e| matches!(e.kind, EventKind::Request { .. }))
+            .expect("the new request");
+        assert_eq!(
+            response.caused_by,
+            Some(fresh_request.id),
+            "not the stale seq 0 from before the restart"
+        );
     }
 
     #[test]

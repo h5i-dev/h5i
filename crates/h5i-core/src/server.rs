@@ -78,6 +78,28 @@ pub struct AppState {
     pub repo_path: PathBuf,
     /// This session's token. Never written to disk.
     pub token: String,
+    /// One [`crate::browser_events::BoxStream`] per box the console has looked
+    /// at, kept for the life of the process.
+    ///
+    /// State in a server whose whole pitch is that it holds none takes a
+    /// justification, and it is not caching: it is what makes the event ids
+    /// stable. Rebuilding the stream per request renumbers from 1 over whatever
+    /// the sources currently hold, and a run clears the box's `/tmp`, so a
+    /// viewer's cursor would silently swallow the next session (see `BoxStream`).
+    /// Bounded twice over — one entry per box *viewed*, each capped at
+    /// [`STREAM_CAP`] events — and it is derived from files on disk, so losing
+    /// it costs nothing but a re-read.
+    browser: Arc<std::sync::Mutex<std::collections::HashMap<String, crate::browser_events::BoxStream>>>,
+}
+
+impl AppState {
+    pub fn new(repo_path: PathBuf, token: String) -> Self {
+        Self {
+            repo_path,
+            token,
+            browser: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
 }
 
 // ── the gate ─────────────────────────────────────────────────────────────────
@@ -616,6 +638,16 @@ pub struct BrowserStream {
     /// names the engine rather than leaving a reader to assume Chromium.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
+    /// Whether a live view is being served inside the box right now — a
+    /// `.stream` file next to the daemon socket, the same discovery
+    /// `h5i box view` uses.
+    ///
+    /// The console does not relay those frames (it watches; the forward is what
+    /// carries pixels and input, with its own token and the control lock). It
+    /// reports the state so the page pane can say which of "no live view is
+    /// running" and "a live view is running, attach with `h5i box view`" is
+    /// true, instead of showing an empty rectangle that reads as broken.
+    pub live_view: bool,
 }
 
 /// How many events one box's stream holds. A page pulling in subresources makes
@@ -637,20 +669,34 @@ async fn api_browser(
     axum::extract::Query(query): axum::extract::Query<BrowserQuery>,
 ) -> Response {
     let path = state.repo_path.clone();
+    let streams = state.browser.clone();
     let stream = blocking(move || {
         let (_git, h5i_root) = open(&path)?;
         let want = format!("env/{agent}/{slug}");
         let m = env::list(&h5i_root).into_iter().find(|m| m.id == want)?;
-        let log = crate::browser_events::assemble(&h5i_root, &m, STREAM_CAP);
-        let engine = env::load_policy(&h5i_root, &m)
-            .ok()
+        let policy = env::load_policy(&h5i_root, &m).ok();
+        let engine = policy
+            .as_ref()
             .and_then(|p| p.profile.engine)
             .map(|e| e.as_str().to_string());
+
+        // A poisoned lock means another request panicked mid-poll. The state is
+        // a derived read cursor, not a record of anything, so the honest
+        // recovery is to keep serving from it rather than to fail every
+        // subsequent request for the life of the process.
+        let mut held = streams.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = held
+            .entry(want)
+            .or_insert_with(|| crate::browser_events::BoxStream::new(STREAM_CAP));
+        entry.poll(&h5i_root, &m);
+        let log = entry.log();
+
         Some(BrowserStream {
             events: log.since(query.since).into_iter().cloned().collect(),
             cursor: log.cursor(),
             dropped: log.dropped(),
             engine,
+            live_view: crate::view::stream_port(&m.dir(&h5i_root)).is_some(),
         })
     })
     .await;
@@ -723,7 +769,7 @@ impl Console {
         let token = crate::token::hex(TOKEN_BYTES)?;
         Ok(Console {
             listener,
-            state: Arc::new(AppState { repo_path, token }),
+            state: Arc::new(AppState::new(repo_path, token)),
         })
     }
 

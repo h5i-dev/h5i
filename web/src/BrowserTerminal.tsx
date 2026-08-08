@@ -44,9 +44,12 @@ export function BrowserTerminal({
   slug: string;
 }) {
   const [events, setEvents] = useState<ViewerEvent[]>([]);
-  const [meta, setMeta] = useState<Pick<BrowserStream, "cursor" | "dropped" | "engine">>({
+  const [meta, setMeta] = useState<
+    Pick<BrowserStream, "cursor" | "dropped" | "engine" | "live_view">
+  >({
     cursor: 0,
     dropped: 0,
+    live_view: false,
   });
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
@@ -59,7 +62,12 @@ export function BrowserTerminal({
     try {
       const next = await api.browser(agent, slug, cursor.current);
       cursor.current = next.cursor;
-      setMeta({ cursor: next.cursor, dropped: next.dropped, engine: next.engine });
+      setMeta({
+        cursor: next.cursor,
+        dropped: next.dropped,
+        engine: next.engine,
+        live_view: next.live_view,
+      });
       setError(null);
       if (next.events.length > 0) {
         setEvents((held) => [...held, ...next.events].slice(-PANE_CAP * 4));
@@ -106,6 +114,13 @@ export function BrowserTerminal({
         network={tally(panes.network)}
         dropped={meta.dropped}
         error={error}
+      />
+
+      <PagePane
+        engine={meta.engine}
+        liveView={meta.live_view === true}
+        url={lastUrl(events)}
+        slug={slug}
       />
 
       <div className="bterm-tabs" role="tablist">
@@ -196,6 +211,16 @@ function split(events: ViewerEvent[]): Record<PaneKey, ViewerEvent[]> {
       case "navigated":
         out.actions.push(e);
         break;
+      // A boundary for the whole stream rather than news about one lane, so it
+      // goes in every pane: each one's rows below it belong to a new session,
+      // and a divider that appeared in only one of them would leave the other
+      // three quietly implying continuity.
+      case "session-reset":
+        out.actions.push(e);
+        out.network.push(e);
+        out.console.push(e);
+        out.policy.push(e);
+        break;
     }
   }
   for (const key of Object.keys(out) as PaneKey[]) {
@@ -277,6 +302,75 @@ function StatusBar({
         </span>
       ) : null}
       {error ? <span className="bterm-val bterm-denied">{error}</span> : null}
+    </div>
+  );
+}
+
+/**
+ * The page pane — which today shows *what h5i knows about the page*, and says
+ * so, rather than a blank rectangle where a viewport is going to be.
+ *
+ * The console does not carry pixels. Frames live on the box's stream server and
+ * reach a human through `h5i box view`'s forward, which has its own token and
+ * enforces the control lock on the input direction; relaying them through this
+ * read-only surface is a separate piece of work, not a missing `<img>`.
+ *
+ * The h5i-light case is the one worth stating plainly, because it is a property
+ * of the engine and not of this pane: that engine has no resident session. Every
+ * invocation renders its own page and exits, so even with a live view running,
+ * what it shows is *that* process's page, not the one the agent is driving. A
+ * viewport here that implied otherwise would be the most convincing wrong answer
+ * on the screen.
+ */
+function PagePane({
+  engine,
+  liveView,
+  url,
+  slug,
+}: {
+  engine?: string;
+  liveView: boolean;
+  url?: string;
+  slug: string;
+}) {
+  const light = engine === "h5i-light";
+  return (
+    <div className="bterm-pane bterm-page">
+      <header>
+        <h3>page</h3>
+        <p>{url ? "last page h5i saw this box open" : "no page opened yet"}</p>
+      </header>
+      <div className="bterm-page-body">
+        <p className="bterm-page-url">{url ?? "—"}</p>
+        {liveView ? (
+          <p className="bterm-page-state live">
+            A live view is running in this box. The console watches and never
+            drives, so frames and input go through the forward:
+            <code>h5i box view {slug}</code>
+            <span>
+              {" "}
+              (add <code>--term</code> to stay in the terminal). Taking the
+              control lock there is what lets a human type into the page.
+            </span>
+          </p>
+        ) : (
+          <p className="bterm-page-state">
+            No live view is running in this box, so there are no frames to show.
+            Start one with <code>h5i-browser-light serve &lt;page&gt;</code>{" "}
+            inside the box, then attach with <code>h5i box view {slug}</code>.
+          </p>
+        )}
+        {light ? (
+          <p className="bterm-page-caveat">
+            This box is pinned to <code>h5i-light</code>, which has no resident
+            session: each <code>open</code> renders its own page and exits. A
+            live view therefore shows the page <em>it</em> was started on, not
+            the one the agent is driving. Watching the agent's own browsing needs
+            the engine to grow a session mode (ROADMAP M10); until then the panes
+            below are the record of what the agent actually did.
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -400,6 +494,8 @@ function severity(e: ViewerEvent): string {
       return e.forwarded ? "sev-action" : "sev-refused";
     case "navigated":
       return "sev-action";
+    case "session-reset":
+      return "sev-reset";
   }
 }
 
@@ -429,5 +525,7 @@ function describe(e: ViewerEvent): string {
       return e.forwarded ? e.action : `REFUSED ${e.action}`;
     case "policy-verdict":
       return `${e.subject} — ${e.reason}`;
+    case "session-reset":
+      return `── new browser session · ${e.source} restarted ──`;
   }
 }

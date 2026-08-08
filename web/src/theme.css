@@ -736,3 +736,103 @@ pre,
 .bterm-row.sev-ok .bterm-text {
   color: var(--bp-text-muted);
 }
+
+/* The two views of a box. Evidence scrolls; the browser terminal is an
+   instrument and takes the pane. */
+.sbx-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 14px 8px;
+  border-bottom: 1px solid var(--bp-border);
+}
+.sbx-tabs button {
+  background: none;
+  color: var(--bp-text-muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sbx-tabs button:hover {
+  color: var(--bp-text);
+}
+.sbx-tabs button.on {
+  color: var(--h5-accent);
+  border-bottom-color: var(--h5-accent);
+}
+
+/* Full height for the terminal, so the panes get the room the density needs:
+   the page pane on top, then the four evidence panes filling what is left. */
+.bterm {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 14px 14px;
+  overflow-y: auto;
+}
+.bterm-panes {
+  align-items: start;
+}
+.bterm-page {
+  margin-bottom: 8px;
+}
+.bterm-page-body {
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.bterm-page-url {
+  margin: 0;
+  font-size: 12px;
+  color: var(--h5-accent-hi);
+  word-break: break-all;
+}
+.bterm-page-state {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--bp-text-muted);
+}
+.bterm-page-state.live {
+  color: var(--bp-text);
+}
+.bterm-page-state code,
+.bterm-page-caveat code {
+  background: var(--bp-elev);
+  border: 1px solid var(--bp-border);
+  border-radius: 2px;
+  padding: 0 4px;
+  font-size: 10px;
+  color: var(--h5-accent-hi);
+}
+/* The engine caveat is not an error, so it does not get an error's colour. It
+   is the one thing on this screen most likely to be misread, so it gets a rule
+   beside it instead. */
+.bterm-page-caveat {
+  margin: 0;
+  padding-left: 9px;
+  border-left: 2px solid var(--bp-violet);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--bp-text-dim);
+}
+.bterm-page-caveat em {
+  color: var(--bp-text-muted);
+  font-style: italic;
+}
+/* Taller rows when the terminal owns the pane rather than sharing a scroll. */
+.bterm .bterm-rows {
+  max-height: 34vh;
+}
+/* A session boundary, not a severity. Reads as a divider so the eye skips it
+   while scanning for refusals, and is still unmissable when you look. */
+.bterm-row.sev-reset {
+  color: var(--bp-violet);
+  cursor: default;
+}
+.bterm-row.sev-reset .bterm-text {
+  color: var(--bp-violet);
+  letter-spacing: 0.04em;
+}

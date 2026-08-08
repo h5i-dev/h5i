@@ -1399,14 +1399,60 @@ empty stream for a session that had one: enforcement-shaped code answering
 "nothing to show" instead of "I cannot tell". The reader now takes the path from
 `private_tmp_backing`, the same function that placed it.
 
-**Still open, and none of it is dressing.** There is no page viewport in the
-console yet — the panes carry evidence, not pixels, so the live frame lane of
-5.9's forward is unjoined. The accessibility snapshot has no live source (it is
-a CLI verb today). Takeover is not wired here: the console remains read-only and
-input still goes through `h5i box view`, so the read-only-by-default / interact-
-under-the-lock rule below is *stated* by this milestone and *enforced* by the
-forward, which is one surface short of the exit criterion. M11b has not started,
-so the claim that two readers agree is untested. The original entry follows.
+**Second pass, same day: its own tab, and the reader made honest.**
+
+* **The stream is incremental and session-aware, which was a bug fix rather
+  than an optimisation.** The first reader re-parsed every source per poll and
+  numbered from 1 each time — stable only while files grow by appending, and
+  they do not: every run clears the box's private `/tmp`, so a second browser
+  run restarts the request log at zero bytes and restarts the numbering with
+  it. A console tab open across two runs would have kept its cursor and
+  silently dropped the head of the new session. The console now holds a byte
+  offset per source, notices a file that got *shorter*, and emits
+  `session-reset` as a visible row; ids never restart. Pinned by five tests
+  driven against real files, including the partial-line and vanished-file
+  cases, and confirmed live: with a viewer holding a stale cursor, a second run
+  produced the reset row and then the new session's events, where before it
+  produced nothing.
+* **A per-box Browser tab.** Evidence is a scroll of what happened; the browser
+  terminal is a live instrument, and wedging it between Services and the
+  timeline gave it a few hundred pixels. It now takes the pane. The tab appears
+  only for a browser box, and selecting another box returns to Evidence rather
+  than showing a browser view of something that has no browser.
+* **A page pane that says what it cannot show.** It reports whether a live view
+  is running in the box (the same `.stream` discovery `h5i box view` uses) and
+  names the command to attach, because the console watches and the *forward*
+  carries pixels and input with the control lock on it. For an `h5i-light` box
+  it states the engine-level caveat plainly: that engine has no resident
+  session, so each `open` renders its own page and exits, and a live view shows
+  **that** process's page rather than the one the agent is driving. An
+  unlabelled viewport there would have been the most convincing wrong answer on
+  the screen.
+
+One bug this pass created and caught before it shipped, worth recording because
+it is the same shape twice: the new `session-reset` event was added server-side
+while the console's own union type and pane router still knew six kinds, so the
+row was dropped silently in the browser — the swallow that had just been fixed
+one layer down, moved one layer up. Found by grepping the *served bundle* for
+the divider text rather than by trusting a green typecheck, which could not see
+it: an unknown variant simply matched no case.
+
+**Still open, and none of it is dressing.** There are still no pixels in the
+console — the page pane describes the live view, it does not carry it, so the
+frame lane of 5.9's forward is unjoined. Joining it is worth doing for Chromium
+boxes, where agent-browser is one daemon owning one session and a viewer really
+is watching the agent's page; for `h5i-light` it needs the engine to grow a
+resident session first (M10), or the viewport is honest only by caveat. The
+accessibility snapshot has no live source (it is a CLI verb today). Takeover is
+not wired here: the console remains read-only and input still goes through
+`h5i box view`, so the read-only-by-default / interact-under-the-lock rule below
+is *stated* by this milestone and *enforced* by the forward, which is one
+surface short of the exit criterion. Nothing links an agent action to the
+requests it caused — neither the mediator's records nor the engine's log carries
+the other's id — so "selecting an action surfaces its correlated request" holds
+only for the verdict it provoked, and closing it is a change at the *sources*,
+not in the viewer. M11b has not started, so the claim that two readers agree is
+untested. The original entry follows.
 
 **M11a (as proposed).** M11 put
 the developer view in the terminal; this puts the full one where it can
