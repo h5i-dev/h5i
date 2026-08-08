@@ -616,27 +616,25 @@ socket is a filesystem-bound `AF_UNIX` listener.
   reach the OpenAI credential.
 - **Any other service**: the same mechanism, declared as policy:
 
-  ```toml
-  [[profile.review.auth]]
-  host           = "api.github.com"
-  credential_env = "GITHUB_TOKEN"   # read on the host, never in the box
-  base_url_var   = "GH_HOST"        # what the client reads
-  token_var      = "GH_TOKEN"       # where the box gets its per-run dummy
-  ```
+        [[profile.review.auth]]
+        host           = "api.github.com"
+        credential_env = "GITHUB_TOKEN"   # read on the host, never in the box
+        base_url_var   = "GH_HOST"        # what the client reads
+        token_var      = "GH_TOKEN"       # where the box gets its per-run dummy
 
-  `token_var` is required. The proxy gates every request on a per-run token, so
-  the box has to be handed it in whatever variable its client already sends as
-  a credential. The real credential stays on the host; the box only ever holds
-  the dummy.
+    `token_var` is required. The proxy gates every request on a per-run token, so
+    the box has to be handed it in whatever variable its client already sends as
+    a credential. The real credential stays on the host; the box only ever holds
+    the dummy.
 
-  The limit is real and worth knowing before you declare one: it binds clients
-  you can point at another origin, so a plain `curl https://api.github.com`
-  still goes nowhere. A TLS-terminating forward proxy would lift that, at the
-  cost of a CA the box trusts, and it is deliberately not built.
+    The limit is real and worth knowing before you declare one: it binds clients
+    you can point at another origin, so a plain `curl https://api.github.com`
+    still goes nowhere. A TLS-terminating forward proxy would lift that, at the
+    cost of a CA the box trusts, and it is deliberately not built.
 
-  Restricting *what* the box may do with a credential is authorization, and it
-  belongs where it is already solved: a fine-grained token scoped to one
-  repository and the operations you meant.
+    Restricting *what* the box may do with a credential is authorization, and it
+    belongs where it is already solved: a fine-grained token scoped to one
+    repository and the operations you meant.
 
 - **Per-box HOME state** is a copy of the host agent's config, seeded once and
   never written back, with credential-shaped entries stripped at any depth
@@ -740,13 +738,12 @@ Being explicit about these is a feature, since the claim is a security claim.
       than 6.2 cannot close it at all. So h5i measures instead of claiming.
       `h5i box probe` prints one of:
 
-      ```
-        tty-injection= blocked at every tier
-        tty-injection= blocked at the kernel tiers, possible at isolation=workspace
-        tty-injection= possible at every tier
-      ```
+              tty-injection= blocked at every tier
+              tty-injection= blocked at the kernel tiers, possible at isolation=workspace
+              tty-injection= possible at every tier
 
-      and, when anything is open, how to close it.
+        and, when anything is open, how to close it.
+
     - **Reading what you type next.** The session's read grant on the terminal
       is not revoked when the shell exits, so a box process that outlives the
       session (a stray background job) can read the terminal it still holds
@@ -757,11 +754,12 @@ Being explicit about these is a feature, since the claim is a security claim.
       programs cannot open it. Recoverable (`stty sane`, or a new terminal), not
       an escape, but it is yours to recover.
 
-  What is *not* reachable, checked rather than assumed: `TIOCCONS` (redirecting
-  console output to the box's terminal) is refused by Darwin for a non-root
-  process with or without a sandbox. Giving the box its own pty and proxying it
-  is the fix that ends the whole list, and it is not built. The container and
-  microVM tiers do not share a terminal at all.
+    What is *not* reachable, checked rather than assumed: `TIOCCONS`
+    (redirecting console output to the box's terminal) is refused by Darwin for
+    a non-root process with or without a sandbox. Giving the box its own pty and
+    proxying it is the fix that ends the whole list, and it is not built. The
+    container and microVM tiers do not share a terminal at all.
+
 - **Chrome runs with its own sandbox off.** On Linux, h5i's seccomp deny-list
   blocks the namespace syscalls Chrome's sandbox needs, at every tier. h5i's box
   is the boundary; Chrome's is not available inside it. That is one layer fewer

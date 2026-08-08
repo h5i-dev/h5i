@@ -27,6 +27,34 @@ md = markdown.Markdown(extensions=["fenced_code","tables","toc","sane_lists","at
                        extension_configs={"toc":{"permalink":False,"slugify":gh_slug,"separator":"-"}})
 body = md.convert(src)
 
+# Guard against the two ways this renderer silently produces wrong HTML from
+# markdown that looks fine in an editor and on GitHub. Both bit the Limits and
+# Credentials sections and shipped unnoticed, because a mangled list is still
+# valid HTML: nothing downstream had any reason to complain.
+#
+#   1. A `- ` line directly after a multi-line paragraph is read as another line
+#      of that paragraph, not as a list item, so the bullet and everything after
+#      it collapse into prose. Fix: a blank line before the item.
+#   2. python-markdown's fenced_code is a preprocessor and never sees a fence
+#      indented inside a list item, so the fence renders as literal text and the
+#      language word leaks into the page. Fix: an indented code block instead,
+#      8 spaces at the top level of a list and 12 inside a nested item.
+def _check(body):
+    problems = []
+    for m in re.finditer(r'<p>(?:(?!</p>).)*?\n\s*[-*+] ', body, re.S):
+        problems.append(f"list item swallowed into a paragraph near: "
+                        f"{re.sub(r'<[^>]+>', '', m.group(0))[:70].strip()!r}")
+    if '```' in body:
+        i = body.index('```')
+        problems.append(f"unrendered code fence (indented inside a list?) near: "
+                        f"{re.sub(chr(60) + '[^>]+' + chr(62), '', body[i:i + 70]).strip()!r}")
+    if problems:
+        raise SystemExit("MANUAL.md renders to broken HTML:\n  - "
+                         + "\n  - ".join(problems)
+                         + "\nSee the note above this check in scripts/gen_manual.py.")
+
+_check(body)
+
 # Build sidebar TOC from the heading tokens (levels 2 and 3)
 def render_toc(tokens):
     out = []
