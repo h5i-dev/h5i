@@ -1352,7 +1352,63 @@ agent edits code -> starts dev server -> opens the app with h5i browser
   -> export patch, report, screenshots, receipt
 ```
 
-**M11a. The browser terminal in the console — proposed, 2026-08-08.** M11 put
+**M11a. The browser terminal — the event model and the evidence panes are
+built, 2026-08-08.** The half this entry called durable, and said would land
+first, has: `browser_events` is the one stream, and the console reads it.
+
+* **The model** (`crates/h5i-core/src/browser_events.rs`). Every event carries
+  its lane *and* its grade, kept apart because they answer different questions
+  and the interesting case needs both: our own engine's request log is
+  **box-claimed** (written inside the box) and **fail-closed** (the engine will
+  not fetch what it cannot record). Chromium's Fetch lane is box-claimed and
+  best-effort. One "trusted" flag could not have said that. `caused_by` is set
+  only where the source carries the link — a response to its request by
+  sequence number, a refusal to the action that provoked it — and nowhere else,
+  so no arrow on the screen is drawn from two things merely having happened at
+  about the same time. Ingest sanitises every box string once, here, rather than
+  in each renderer, because M11b writes this same text straight to a PTY.
+* **Three real sources**, no placeholders: the light engine's request log, the
+  mediator's actions, and the drained page evidence.
+* **The mediator now writes its actions as data.** They were only ever on the
+  receipt as *rendered text*, so a reader wanting them back would have had to
+  parse a display format — the quiet-wrong-answer shape this file keeps
+  recording. `browser-actions.jsonl` sits beside `receipt.jsonl`, host-side,
+  where the box cannot write, and the round trip is pinned by a test.
+* **In `h5i ui`, on the console's own terms.** One `GET`, the same token gate,
+  no second web surface. Every row shows its lane and grade as words rather than
+  as a colour, selecting a row lights what it caused and what caused it, the
+  network pane names its engine's evidence grade in its header, and a dropped
+  count is rendered rather than hidden.
+
+**Driven against a real box, not only a test client** — the gap M10 recorded and
+this milestone was gated on not repeating. The real engine opened a page with
+two refused subresources, wrote its own log into the box's `/tmp`, and the
+console served the stream: both denials as `box-claimed` / `fail-closed`, each
+with a `policy-verdict` naming the request that caused it; the cursor returning
+only the tail on the next poll; an unauthenticated request refused with 401. Two
+guards checked by making them fail: a Chromium box with that same log planted in
+its `/tmp` yields **nothing**, because only our engine's log may wear the
+fail-closed grade, and the mediator's sidecar shows up `host-observed` on the
+box that has one.
+
+**The finding, which cost the first live attempt.** `ResolvedPolicy::home_binds`
+is `#[serde(skip)]`, so `host_tmp_root` — correct for a live run, which is the
+only caller it had — returns `None` for **every** policy loaded back from disk.
+The console asked a live-run question of a stored policy and got a silently
+empty stream for a session that had one: enforcement-shaped code answering
+"nothing to show" instead of "I cannot tell". The reader now takes the path from
+`private_tmp_backing`, the same function that placed it.
+
+**Still open, and none of it is dressing.** There is no page viewport in the
+console yet — the panes carry evidence, not pixels, so the live frame lane of
+5.9's forward is unjoined. The accessibility snapshot has no live source (it is
+a CLI verb today). Takeover is not wired here: the console remains read-only and
+input still goes through `h5i box view`, so the read-only-by-default / interact-
+under-the-lock rule below is *stated* by this milestone and *enforced* by the
+forward, which is one surface short of the exit criterion. M11b has not started,
+so the claim that two readers agree is untested. The original entry follows.
+
+**M11a (as proposed).** M11 put
 the developer view in the terminal; this puts the full one where it can
 actually breathe, inside `h5i ui`. The design motif is a trading terminal —
 Hyperliquid is the reference, the way terminal-browser was for 5.10: what we

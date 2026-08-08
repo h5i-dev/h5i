@@ -14,6 +14,7 @@ import {
   Tag,
 } from "@blueprintjs/core";
 
+import { BrowserTerminal } from "./BrowserTerminal";
 import {
   api,
   type BoxDetail,
@@ -547,6 +548,11 @@ function DetailPane({ box, tick }: { box: BoxRow | null; tick: number }) {
         <div className="sbx-detail-body">
           <SignalSummary box={box} />
           <Services services={detail.services} />
+          {/* Only for a box that actually has a browser: an empty terminal on
+              every other box would be four panes of "nothing yet" forever. */}
+          {box.profile === "browser" ? (
+            <BrowserTerminal agent={box.agent} slug={box.slug} />
+          ) : null}
           <Timeline
             agent={box.agent}
             slug={box.slug}

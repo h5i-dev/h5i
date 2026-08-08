@@ -1,0 +1,433 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import {
+  api,
+  type BrowserStream,
+  type Grade,
+  type Lane,
+  type ViewerEvent,
+} from "./api";
+
+// The browser terminal (ROADMAP M11a): what the agent did, what moved on the
+// wire, what the page said, and what h5i refused — as peer panes rather than a
+// page with a debugger bolted to the side. For an agent's overseer the rendered
+// page is the least informative pane, so it does not get to be the whole screen.
+//
+// Two rules the panes exist to keep, both inherited from the event model:
+//
+//   * Every row states its lane (who observed it) and its grade (how complete
+//     that observation is). They are different questions and the UI never
+//     collapses them: the light engine's request log is box-claimed *and*
+//     fail-closed, which no single "trusted" badge can say.
+//   * Correlation is drawn only where the stream carried it. Selecting a row
+//     lights the rows whose `caused_by` names it. Nothing here infers a link
+//     from two things having happened at about the same time.
+//
+// Box text is rendered as text. React escapes by default and there is no
+// `dangerouslySetInnerHTML` anywhere in this file — the page's own strings
+// reach the DOM as text nodes, never as markup.
+
+/** Quiet enough not to hammer a box, live enough to watch. */
+const POLL_MS = 1000;
+
+/** Rows a pane keeps. The stream is already bounded server-side; this bounds
+ *  what the DOM holds, which is a different limit with a different reason. */
+const PANE_CAP = 400;
+
+type PaneKey = "actions" | "network" | "console" | "policy";
+
+export function BrowserTerminal({
+  agent,
+  slug,
+}: {
+  agent: string;
+  slug: string;
+}) {
+  const [events, setEvents] = useState<ViewerEvent[]>([]);
+  const [meta, setMeta] = useState<Pick<BrowserStream, "cursor" | "dropped" | "engine">>({
+    cursor: 0,
+    dropped: 0,
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [focus, setFocus] = useState<PaneKey | null>(null);
+  // The cursor lives in a ref as well as in state: the poll closure must read
+  // the newest value without being re-created (and re-scheduled) every tick.
+  const cursor = useRef(0);
+
+  const poll = useCallback(async () => {
+    try {
+      const next = await api.browser(agent, slug, cursor.current);
+      cursor.current = next.cursor;
+      setMeta({ cursor: next.cursor, dropped: next.dropped, engine: next.engine });
+      setError(null);
+      if (next.events.length > 0) {
+        setEvents((held) => [...held, ...next.events].slice(-PANE_CAP * 4));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [agent, slug]);
+
+  useEffect(() => {
+    // A box switch is a different session: drop what the last one held rather
+    // than letting its rows bleed into the new pane.
+    setEvents([]);
+    setSelected(null);
+    cursor.current = 0;
+    void poll();
+    const timer = window.setInterval(() => void poll(), POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [poll]);
+
+  const panes = useMemo(() => split(events), [events]);
+  // Which rows the selected one caused, and which caused it. Both directions,
+  // because a reviewer arrives from either end: from the action that misfired,
+  // or from the refusal they are trying to explain.
+  const related = useMemo(() => {
+    if (selected === null) return new Set<number>();
+    const out = new Set<number>([selected]);
+    for (const e of events) {
+      if (e.caused_by === selected) out.add(e.id);
+      if (e.id === selected && e.caused_by !== undefined) out.add(e.caused_by);
+    }
+    return out;
+  }, [events, selected]);
+
+  const shown: PaneKey[] = focus ? [focus] : ["actions", "network", "console", "policy"];
+
+  return (
+    <section className="bterm">
+      <StatusBar
+        agent={agent}
+        slug={slug}
+        engine={meta.engine}
+        url={lastUrl(events)}
+        network={tally(panes.network)}
+        dropped={meta.dropped}
+        error={error}
+      />
+
+      <div className="bterm-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={focus === null}
+          className={focus === null ? "on" : undefined}
+          onClick={() => setFocus(null)}
+        >
+          all panes
+        </button>
+        {(["actions", "network", "console", "policy"] as PaneKey[]).map((key) => (
+          <button
+            type="button"
+            role="tab"
+            key={key}
+            aria-selected={focus === key}
+            className={focus === key ? "on" : undefined}
+            onClick={() => setFocus(key)}
+          >
+            {PANE_TITLE[key]}
+            <span className="bterm-count">{panes[key].length}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className={focus ? "bterm-panes solo" : "bterm-panes"}>
+        {shown.map((key) => (
+          <Pane
+            key={key}
+            title={PANE_TITLE[key]}
+            note={PANE_NOTE[key](meta.engine)}
+            rows={panes[key]}
+            related={related}
+            selected={selected}
+            onSelect={setSelected}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+const PANE_TITLE: Record<PaneKey, string> = {
+  actions: "agent actions",
+  network: "network",
+  console: "console",
+  policy: "policy verdicts",
+};
+
+// What each pane's evidence actually is. Stated in the pane rather than in
+// documentation nobody reads while looking at a refusal.
+const PANE_NOTE: Record<PaneKey, (engine?: string) => string> = {
+  actions: () => "host-observed: h5i watched these cross the mediated socket",
+  network: (engine) =>
+    engine === "h5i-light"
+      ? "box-claimed, fail-closed: the engine will not fetch what it cannot record"
+      : engine === undefined
+        ? "no engine pinned for this box"
+        : `${engine}: best-effort — the Fetch lane can miss requests without noticing`,
+  console: () => "box-claimed, best-effort: drained from the page after the fact",
+  policy: () => "what h5i refused, and why",
+};
+
+function split(events: ViewerEvent[]): Record<PaneKey, ViewerEvent[]> {
+  const out: Record<PaneKey, ViewerEvent[]> = {
+    actions: [],
+    network: [],
+    console: [],
+    policy: [],
+  };
+  for (const e of events) {
+    switch (e.kind) {
+      case "agent-action":
+        out.actions.push(e);
+        break;
+      case "request":
+      case "response":
+        out.network.push(e);
+        break;
+      case "console":
+        out.console.push(e);
+        break;
+      case "policy-verdict":
+        out.policy.push(e);
+        break;
+      case "navigated":
+        out.actions.push(e);
+        break;
+    }
+  }
+  for (const key of Object.keys(out) as PaneKey[]) {
+    out[key] = out[key].slice(-PANE_CAP);
+  }
+  return out;
+}
+
+function lastUrl(events: ViewerEvent[]): string | undefined {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const e = events[i];
+    if (e.kind === "navigated") return e.url;
+    if (e.kind === "request" && e.initiator === "navigation") return e.url;
+  }
+  return undefined;
+}
+
+function tally(rows: ViewerEvent[]): { allowed: number; denied: number } {
+  let allowed = 0;
+  let denied = 0;
+  for (const e of rows) {
+    if (e.kind === "request") {
+      if (e.allowed) allowed += 1;
+      else denied += 1;
+    }
+  }
+  return { allowed, denied };
+}
+
+/**
+ * The row the page cannot reach, and the terminal viewer's own rule (5.10)
+ * applied here: it carries **host-derived values only**. The engine's memory
+ * and frame rate are things the box reports about itself, so they do not belong
+ * on a bar labelled trusted — they would be the one place on the screen where a
+ * box-claimed number wore host authority.
+ */
+function StatusBar({
+  agent,
+  slug,
+  engine,
+  url,
+  network,
+  dropped,
+  error,
+}: {
+  agent: string;
+  slug: string;
+  engine?: string;
+  url?: string;
+  network: { allowed: number; denied: number };
+  dropped: number;
+  error: string | null;
+}) {
+  return (
+    <div className="bterm-status">
+      <span className="bterm-badge">BOX</span>
+      <span className="bterm-val">
+        {agent}/{slug}
+      </span>
+      <span className="bterm-badge">ENGINE</span>
+      <span className="bterm-val">{engine ?? "none pinned"}</span>
+      <span className="bterm-badge">PAGE</span>
+      <span className="bterm-val bterm-url" title={url ?? ""}>
+        {url ?? "nothing opened"}
+      </span>
+      <span className="bterm-badge">REQUESTS</span>
+      <span className="bterm-val">
+        {network.allowed} allowed
+        {network.denied > 0 ? (
+          <>
+            {" / "}
+            <em className="bterm-denied">{network.denied} denied</em>
+          </>
+        ) : null}
+      </span>
+      {dropped > 0 ? (
+        <span className="bterm-val bterm-dropped" title="the stream is bounded">
+          {dropped} older events dropped
+        </span>
+      ) : null}
+      {error ? <span className="bterm-val bterm-denied">{error}</span> : null}
+    </div>
+  );
+}
+
+function Pane({
+  title,
+  note,
+  rows,
+  related,
+  selected,
+  onSelect,
+}: {
+  title: string;
+  note: string;
+  rows: ViewerEvent[];
+  related: Set<number>;
+  selected: number | null;
+  onSelect: (id: number | null) => void;
+}) {
+  const body = useRef<HTMLDivElement>(null);
+  // Follow the tail only while the reader is already at it: yanking the view
+  // back down while someone is reading an older row is the classic way a live
+  // log becomes unusable.
+  useEffect(() => {
+    const el = body.current;
+    if (!el) return;
+    const atTail = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (atTail) el.scrollTop = el.scrollHeight;
+  }, [rows.length]);
+
+  return (
+    <div className="bterm-pane">
+      <header>
+        <h3>{title}</h3>
+        <p>{note}</p>
+      </header>
+      <div className="bterm-rows" ref={body}>
+        {rows.length === 0 ? (
+          <p className="bterm-empty">nothing yet</p>
+        ) : (
+          rows.map((e) => (
+            <Row
+              key={e.id}
+              event={e}
+              dimmed={selected !== null && !related.has(e.id)}
+              linked={selected !== null && related.has(e.id) && e.id !== selected}
+              selected={e.id === selected}
+              onSelect={onSelect}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Row({
+  event,
+  dimmed,
+  linked,
+  selected,
+  onSelect,
+}: {
+  event: ViewerEvent;
+  dimmed: boolean;
+  linked: boolean;
+  selected: boolean;
+  onSelect: (id: number | null) => void;
+}) {
+  const classes = ["bterm-row", severity(event)];
+  if (dimmed) classes.push("dim");
+  if (linked) classes.push("linked");
+  if (selected) classes.push("sel");
+
+  return (
+    <button
+      type="button"
+      className={classes.join(" ")}
+      onClick={() => onSelect(selected ? null : event.id)}
+      title={`observed by h5i at ${event.observed_at}`}
+    >
+      <Provenance lane={event.lane} grade={event.grade} />
+      <span className="bterm-text">{describe(event)}</span>
+      {event.caused_by !== undefined ? (
+        <span className="bterm-cause" title="the event this one answers to">
+          ← #{event.caused_by}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+/** Lane and grade, always both, always as words rather than as a colour. The
+ *  colour carries severity; provenance is not severity, and a reader who is
+ *  colour-blind or looking at a screenshot still has to be able to tell. */
+function Provenance({ lane, grade }: { lane: Lane; grade: Grade }) {
+  return (
+    <span className="bterm-prov">
+      <span className={lane === "host-observed" ? "lane host" : "lane box"}>
+        {lane === "host-observed" ? "host" : "box"}
+      </span>
+      <span className={grade === "fail-closed" ? "grade closed" : "grade effort"}>
+        {grade === "fail-closed" ? "fail-closed" : "best-effort"}
+      </span>
+    </span>
+  );
+}
+
+function severity(e: ViewerEvent): string {
+  switch (e.kind) {
+    case "policy-verdict":
+      return "sev-refused";
+    case "request":
+      return e.allowed ? "sev-ok" : "sev-refused";
+    case "response":
+      if (e.error !== undefined) return "sev-error";
+      return e.status !== undefined && e.status >= 400 ? "sev-error" : "sev-ok";
+    case "console":
+      return e.level === "warning" ? "sev-warn" : "sev-error";
+    case "agent-action":
+      return e.forwarded ? "sev-action" : "sev-refused";
+    case "navigated":
+      return "sev-action";
+  }
+}
+
+/** One line of text per event. Everything interpolated here came out of the
+ *  event model, which sanitised it at ingest — and React renders it as a text
+ *  node regardless, so a page string cannot become markup. */
+function describe(e: ViewerEvent): string {
+  switch (e.kind) {
+    case "navigated":
+      return `navigated ${e.url}`;
+    case "request":
+      return e.allowed
+        ? `${e.method} ${e.url} (${e.initiator})`
+        : `REFUSED ${e.method} ${e.url} — ${e.denied_reason ?? "denied"}`;
+    case "response": {
+      if (e.error !== undefined) return `#${e.seq} failed: ${e.error}`;
+      const bits = [
+        e.status !== undefined ? String(e.status) : "no status",
+        e.bytes !== undefined ? `${e.bytes} B` : null,
+        e.duration_ms !== undefined ? `${e.duration_ms} ms` : null,
+      ].filter((b): b is string => b !== null);
+      return `#${e.seq} ${bits.join(" · ")}`;
+    }
+    case "console":
+      return `${e.level}: ${e.text}`;
+    case "agent-action":
+      return e.forwarded ? e.action : `REFUSED ${e.action}`;
+    case "policy-verdict":
+      return `${e.subject} — ${e.reason}`;
+  }
+}

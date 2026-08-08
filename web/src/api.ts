@@ -195,6 +195,70 @@ export interface CapabilitiesReport {
   strongest_tier: string;
 }
 
+// ── the browser terminal's stream (ROADMAP M11a) ─────────────────────────────
+
+/**
+ * Who observed an event. `host-observed` means h5i saw it from outside the box
+ * and the box cannot edit it; `box-claimed` means the box said so.
+ */
+export type Lane = "host-observed" | "box-claimed";
+
+/**
+ * How complete the observation is. `fail-closed` means the record is a
+ * precondition of the act — no record, no act. `best-effort` means it can miss
+ * things without noticing. Orthogonal to {@link Lane}: the light engine's
+ * request log is box-claimed *and* fail-closed.
+ */
+export type Grade = "fail-closed" | "best-effort";
+
+export type ConsoleLevel = "warning" | "error" | "page-error";
+export type Initiator = "navigation" | "subresource" | "redirect" | "other";
+
+/** The envelope every row carries — `h5i_core::browser_events::ViewerEvent`. */
+interface EventBase {
+  id: number;
+  /** When h5i *read* this. Not when the box produced it. */
+  observed_at: string;
+  lane: Lane;
+  grade: Grade;
+  /** Set only where the source carried the link. Never inferred. */
+  caused_by?: number;
+}
+
+export type ViewerEvent = EventBase &
+  (
+    | { kind: "navigated"; url: string }
+    | {
+        kind: "request";
+        seq: number;
+        method: string;
+        url: string;
+        initiator: Initiator;
+        allowed: boolean;
+        denied_reason?: string;
+      }
+    | {
+        kind: "response";
+        seq: number;
+        status?: number;
+        bytes?: number;
+        duration_ms?: number;
+        error?: string;
+      }
+    | { kind: "console"; level: ConsoleLevel; text: string }
+    | { kind: "agent-action"; action: string; forwarded: boolean }
+    | { kind: "policy-verdict"; subject: string; reason: string }
+  );
+
+export interface BrowserStream {
+  events: ViewerEvent[];
+  cursor: number;
+  /** Events the cap discarded. Shown, never hidden. */
+  dropped: number;
+  /** The pinned engine, which is what the network pane's grade follows from. */
+  engine?: string;
+}
+
 // ── transport ────────────────────────────────────────────────────────────────
 
 async function get<T>(path: string): Promise<T> {
@@ -221,4 +285,8 @@ export const api = {
       `/api/box/${encodeURIComponent(agent)}/${encodeURIComponent(slug)}/receipts/${encodeURIComponent(id)}`,
     ),
   probe: () => get<CapabilitiesReport>("/api/probe"),
+  browser: (agent: string, slug: string, since: number) =>
+    get<BrowserStream>(
+      `/api/box/${encodeURIComponent(agent)}/${encodeURIComponent(slug)}/browser?since=${since}`,
+    ),
 };

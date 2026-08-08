@@ -599,6 +599,74 @@ async fn api_receipt(
     }
 }
 
+/// What the browser terminal reads: the box's event stream plus the two things
+/// a pane must state rather than imply.
+#[derive(Serialize)]
+pub struct BrowserStream {
+    /// Events after the caller's cursor, oldest first.
+    pub events: Vec<crate::browser_events::ViewerEvent>,
+    /// The newest id held. The caller sends this back as `since` and gets only
+    /// what it has not seen.
+    pub cursor: u64,
+    /// Events the cap discarded. Rendered by the console, because a bound that
+    /// drops silently reports a quiet session where there was a loud one.
+    pub dropped: u64,
+    /// The engine this box is pinned to, or `None` when it has no browser
+    /// profile. The network pane's evidence grade follows from it, so the pane
+    /// names the engine rather than leaving a reader to assume Chromium.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+}
+
+/// How many events one box's stream holds. A page pulling in subresources makes
+/// two rows each, so this is a few hundred navigations' worth — enough to scroll
+/// back through a session, bounded enough that a long-lived console does not
+/// grow without limit.
+const STREAM_CAP: usize = 4000;
+
+/// `GET /api/box/:agent/:slug/browser?since=N` — the browser terminal's stream
+/// (ROADMAP M11a).
+///
+/// A `GET` like every other route here, and for the same reason: the console
+/// watches and never drives. Taking the control lock and typing into a page go
+/// through [`crate::view`]'s forward, which is a different surface with a
+/// different token, and deliberately not this one.
+async fn api_browser(
+    State(state): State<Arc<AppState>>,
+    Path((agent, slug)): Path<(String, String)>,
+    axum::extract::Query(query): axum::extract::Query<BrowserQuery>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let stream = blocking(move || {
+        let (_git, h5i_root) = open(&path)?;
+        let want = format!("env/{agent}/{slug}");
+        let m = env::list(&h5i_root).into_iter().find(|m| m.id == want)?;
+        let log = crate::browser_events::assemble(&h5i_root, &m, STREAM_CAP);
+        let engine = env::load_policy(&h5i_root, &m)
+            .ok()
+            .and_then(|p| p.profile.engine)
+            .map(|e| e.as_str().to_string());
+        Some(BrowserStream {
+            events: log.since(query.since).into_iter().cloned().collect(),
+            cursor: log.cursor(),
+            dropped: log.dropped(),
+            engine,
+        })
+    })
+    .await;
+    match stream {
+        Some(s) => Json(s).into_response(),
+        None => (StatusCode::NOT_FOUND, "no such box").into_response(),
+    }
+}
+
+/// The cursor, defaulted so a first poll needs no parameter.
+#[derive(serde::Deserialize)]
+pub struct BrowserQuery {
+    #[serde(default)]
+    pub since: u64,
+}
+
 /// `GET /api/probe` — what this host can actually enforce. The same report
 /// `h5i box capabilities --json` prints, so the console's top strip and the
 /// CLI can never disagree.
@@ -622,6 +690,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/boxes", get(api_boxes))
         .route("/api/box/:agent/:slug", get(api_box))
         .route("/api/box/:agent/:slug/receipts/:id", get(api_receipt))
+        .route("/api/box/:agent/:slug/browser", get(api_browser))
         .layer(axum::middleware::from_fn_with_state(state.clone(), gate))
         .with_state(state)
 }

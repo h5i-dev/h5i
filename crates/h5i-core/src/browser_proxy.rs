@@ -610,6 +610,19 @@ pub fn spawn(
 ///
 /// Records nothing when nothing happened: a browser box whose agent never
 /// touched the browser should not grow an empty receipt per run.
+/// Where the structured copy of the mediated actions lives, host-side.
+///
+/// A sibling of `receipt.jsonl` and deliberately **not** under `<env>/spool` or
+/// `<env>/tmp`, the two paths a box can write — the same rule the viewer token
+/// follows. It exists because the receipt carries these actions as *rendered
+/// text*, and a reader that wanted them back as data would have to parse a
+/// display format. Reversing a display format is the quiet-wrong-answer shape
+/// this codebase keeps getting bitten by, so the data is written as data once,
+/// here, for the browser terminal (ROADMAP M11a) and anything after it.
+pub fn actions_log(env_dir: &Path) -> std::path::PathBuf {
+    env_dir.join("browser-actions.jsonl")
+}
+
 pub fn record_actions(
     env_dir: &Path,
     env_id: &str,
@@ -618,6 +631,13 @@ pub fn record_actions(
 ) {
     if actions.is_empty() {
         return;
+    }
+
+    // Best effort, and deliberately before the receipt: the receipt is the
+    // record of account and must not be lost because a viewer's convenience
+    // copy could not be written. A failure here is reported and dropped.
+    if let Err(e) = append_actions_log(env_dir, actions) {
+        eprintln!("browser mediation: could not write the action log: {e}");
     }
 
     let refused = actions.iter().filter(|a| !a.forwarded).count();
@@ -644,6 +664,26 @@ pub fn record_actions(
     if let Err(e) = crate::receipt::append(env_dir, input, body.as_bytes()) {
         eprintln!("browser mediation: could not record the actions: {e}");
     }
+}
+
+/// Append the actions as JSON lines. Opened per call rather than held: a run
+/// writes this once at the end, and a long-lived handle on a path in the env
+/// directory is one more thing to reason about across a `Drop`.
+fn append_actions_log(env_dir: &Path, actions: &[ActionRecord]) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(actions_log(env_dir))?;
+    for record in actions {
+        // A record that will not serialize is skipped rather than aborting the
+        // rest: one unrenderable action must not cost a reviewer the others.
+        if let Ok(line) = serde_json::to_string(record) {
+            writeln!(file, "{line}")?;
+        }
+    }
+    file.flush()
 }
 
 /// Tell a client that no daemon answered, echoing the id of its first request

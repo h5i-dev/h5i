@@ -532,3 +532,207 @@ pre,
   border-radius: 0;
   max-height: 260px;
 }
+
+/* ── the browser terminal (ROADMAP M11a) ─────────────────────────────────────
+   Peer panes at a trading terminal's density: no pane is the main one, because
+   for an agent's overseer the rendered page is the least informative of them.
+   Severity is carried by colour AND by a word, so a refusal survives a
+   screenshot, a colour-blind reader, and a grep. */
+.bterm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--font-mono);
+}
+.bterm-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  padding: 7px 10px;
+  background: var(--bp-surface-2);
+  border: 1px solid var(--bp-border-strong);
+  border-radius: 3px;
+  font-size: 11px;
+}
+.bterm-badge {
+  color: var(--bp-text-dim);
+  letter-spacing: 0.08em;
+}
+.bterm-val {
+  color: var(--bp-text);
+}
+.bterm-url {
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bterm-denied {
+  color: var(--bp-red);
+  font-style: normal;
+}
+.bterm-dropped {
+  color: var(--bp-orange);
+}
+.bterm-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.bterm-tabs button {
+  background: var(--bp-surface);
+  color: var(--bp-text-muted);
+  border: 1px solid var(--bp-border);
+  border-radius: 3px;
+  padding: 3px 9px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.bterm-tabs button.on {
+  color: var(--bp-bg);
+  background: var(--h5-accent);
+  border-color: var(--h5-accent);
+}
+.bterm-count {
+  margin-left: 6px;
+  opacity: 0.7;
+}
+.bterm-panes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.bterm-panes.solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* One column when there is no room for two. The panes are readable stacked;
+   they are not readable at 30 characters wide. */
+@media (max-width: 900px) {
+  .bterm-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.bterm-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bp-surface);
+  border: 1px solid var(--bp-border);
+  border-radius: 3px;
+}
+.bterm-pane header {
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--bp-border);
+  background: var(--bp-surface-2);
+}
+.bterm-pane h3 {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bp-text);
+}
+.bterm-pane header p {
+  margin: 2px 0 0;
+  font-size: 10px;
+  color: var(--bp-text-dim);
+}
+.bterm-rows {
+  overflow-y: auto;
+  max-height: 260px;
+  min-height: 96px;
+}
+.bterm-empty {
+  margin: 0;
+  padding: 10px;
+  font-size: 11px;
+  color: var(--bp-text-dim);
+}
+.bterm-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 9px;
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  color: var(--bp-text-muted);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.bterm-row:hover {
+  background: var(--bp-elev);
+}
+.bterm-row.dim {
+  opacity: 0.32;
+}
+.bterm-row.sel {
+  background: var(--h5-accent-bg);
+  border-left-color: var(--h5-accent);
+}
+.bterm-row.linked {
+  border-left-color: var(--bp-violet);
+  background: rgba(180, 139, 217, 0.1);
+}
+.bterm-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bterm-cause {
+  color: var(--bp-violet);
+  font-size: 10px;
+}
+.bterm-prov {
+  display: inline-flex;
+  gap: 3px;
+  flex: none;
+}
+.bterm-prov .lane,
+.bterm-prov .grade {
+  padding: 0 4px;
+  border-radius: 2px;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--bp-border-strong);
+}
+/* Host-observed is the stronger claim, so it is the one that reads as solid.
+   The box-claimed rows are not accusations; they are just the box's word. */
+.bterm-prov .lane.host {
+  color: var(--bp-bg);
+  background: var(--bp-text-muted);
+  border-color: var(--bp-text-muted);
+}
+.bterm-prov .lane.box {
+  color: var(--bp-text-dim);
+}
+.bterm-prov .grade.closed {
+  color: var(--bp-green-hi);
+  border-color: rgba(94, 226, 160, 0.4);
+}
+.bterm-prov .grade.effort {
+  color: var(--bp-text-dim);
+}
+.bterm-row.sev-refused .bterm-text {
+  color: var(--bp-red);
+}
+.bterm-row.sev-error .bterm-text {
+  color: var(--bp-orange);
+}
+.bterm-row.sev-warn .bterm-text {
+  color: var(--bp-orange);
+  opacity: 0.85;
+}
+.bterm-row.sev-action .bterm-text {
+  color: var(--h5-accent-hi);
+}
+.bterm-row.sev-ok .bterm-text {
+  color: var(--bp-text-muted);
+}

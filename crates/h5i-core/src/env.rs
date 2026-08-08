@@ -3812,6 +3812,43 @@ mod browser_engine_env_tests {
 /// `None` for image-backed tiers: a container's `/tmp` lives in the image, so
 /// there is no host path to bind and the caller must say so rather than
 /// binding a decoy.
+/// Host-side path of the request log `h5i-browser-light` writes, when this box
+/// has an engine that writes one and a `/tmp` the host can reach.
+///
+/// The box side is `H5I_BROWSER_RECEIPTS` ([`browser_light_env`]); this is the
+/// same file seen from outside, which is what lets the console read the log
+/// without asking the box for it. `None` rather than a guess when the engine is
+/// not ours (Chromium's requests are the best-effort Fetch lane, a different
+/// source with a different grade) or when there is no private `/tmp` to read
+/// through — an image-backed tier keeps its `/tmp` inside the image.
+/// Not [`host_tmp_root`], and the difference is the whole reason this exists:
+/// that one answers a **live run's** question by reading `home_binds`, which is
+/// `#[serde(skip)]` and therefore empty in any policy loaded back from disk. A
+/// reader (the console) asking it would get `None` for every box and render an
+/// empty stream for a session that had one. So the path comes from
+/// [`private_tmp_backing`] — the same function `prepare_private_tmp` uses to
+/// place the backing, so this calls the source of truth rather than
+/// reconstructing a condition from grants that have since been rewritten.
+///
+/// The file need not exist: a box whose agent has not browsed yet has no log,
+/// and the caller reads that as an empty stream rather than an error.
+pub fn browser_request_log(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf> {
+    let policy = load_policy(h5i_root, m).ok()?;
+    // Only our own engine writes this log. Chromium's requests are the
+    // best-effort Fetch lane — a different source with a different grade, and
+    // pointing this at a box running Chromium would label that lane fail-closed.
+    if policy.profile.engine? != crate::sandbox::BrowserEngine::H5iLight {
+        return None;
+    }
+    // An image-backed tier keeps `/tmp` inside the image, so there is no host
+    // path to read through.
+    if policy.claim.image_backed() {
+        return None;
+    }
+    let backing = private_tmp_backing(&m.dir(h5i_root).join("tmp"));
+    Some(backing.join("browser-requests.jsonl"))
+}
+
 fn host_tmp_root(policy: &ResolvedPolicy, _env_dir: &Path) -> Option<PathBuf> {
     if policy.claim.image_backed() {
         return None;
