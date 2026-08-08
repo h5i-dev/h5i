@@ -185,3 +185,12 @@ npx skills add h5i-dev/h5i       # if you do not have the binary yet
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+---
+
+## Contributors
+
+<a href="https://github.com/h5i-dev/h5i/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" />
+</a>
+
