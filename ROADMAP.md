@@ -763,6 +763,154 @@ test, browser chrome, a file picker, devtools as a human sees them — an X plus
 streaming tier comes back, and Neko is the reference design for it. Nothing in
 the boundary, the lock or the receipt changes when it does.
 
+### 7.1 Two engines, one policy (proposed, 2026-08-07)
+
+A survey on 2026-08-07 (Cloudflare's Kitesurf announcement, Lightpanda, and a
+read of agent-browser upstream) changed what "the browser" can mean here.
+Kitesurf is a browser engine rewritten for agents: Rust (Blitz for HTML and
+layout, Stylo for CSS, Boa for JS) compiled to WASM and run as disposable
+isolates behind a single egress worker that owns every network request and
+every cookie jar. It passes 215,000+ Web Platform Tests, speaks CDP and MCP,
+treats every page load as untrusted input, keeps no persistent authenticated
+sessions, and Cloudflare says it will be open-sourced for self-hosting.
+Lightpanda (Zig, html5ever plus V8, CDP) is the same camp, and agent-browser
+upstream already selects between Chrome and Lightpanda with `--engine`. The
+part that matters to us is not the cloud: it is that non-Chromium engines an
+agent can actually use now exist, and the ecosystem has converged on CDP as the
+interface, so an engine swap does not orphan the tooling.
+
+The h5i-shaped observation: **our egress proxy is a blind CONNECT gate, so
+browser receipts can only name hosts.** The proxy sees
+`CONNECT docs.example.com:443` and nothing else; the evidence for "what did
+the agent read" is whatever the post-run console drain catches. An engine whose
+network stack *is* our proxy inverts that. Every request and response becomes
+first-class evidence, per-request policy needs no MITM CA because we are the
+client, and for untrusted origins script execution can be off entirely, which
+removes the delivery channel for most page-borne prompt injection instead of
+trying to filter it.
+
+Stated precisely, because Chromium can get partway there: CDP's Fetch domain
+lets a mediator pause every request Chromium makes and allow, deny, rewrite or
+record it, so request-level receipts and per-request policy are available on
+the Chromium path too, through the M8 sidecar (7.2). What a mediator cannot
+make them is **fail-closed**: attach races, freshly created targets and
+workers, event buffer limits and disconnects all mean CDP coverage is
+monitored rather than guaranteed. The engine's claim is narrower and stronger:
+if the log is not running, the request does not happen, and a page script is
+never evaluated unless a profile line granted it, checked before evaluation
+rather than filtered after. With a JS engine in the binary the honest words
+are "off by default, gated by policy"; "absent by construction" is reserved
+for a `--no-js` feature build, if one is ever worth cutting.
+
+The model this points at is **two engines, routed by origin, one policy**:
+
+- **Loopback, the agent's own dev server: Chromium.** Verifying that a modern
+  app renders, hot-reloads and runs its client-side code is the hardest compat
+  case there is, and the content is the agent's own code. Fidelity wins, and
+  today's stack stays exactly as built.
+- **The untrusted web (docs, search, issue trackers): the light engine.**
+  Reading rarely needs a JIT, receipts matter more than pixels, and the model
+  wants a tree, not a frame. Containment wins.
+
+Two things fall out of this split without being built. **Video and WebGL
+never enter the light engine's scope**: a coding agent testing a video player
+is testing its own app, which is loopback, which is the Chromium path, where
+both already work. Kitesurf has to name them as gaps because it has no
+Chromium half; we do. And **authenticated sessions, Kitesurf's other stated
+gap, are answered by the control lock we already ship**: the agent hits a
+login wall, the human takes the viewer, logs in, hands back, and the agent
+resumes from a fresh snapshot (5.4). Watching stays the default posture and
+input stays an explicit take; a local-first tool with a human present should
+use that human, not imitate a cloud service that cannot have one.
+
+The routing rule lives next to `net.egress` in the profile, not in the agent's
+moment-to-moment choice: the agent must not get to pick the weaker-policy
+engine for a hostile page. Two degenerate profiles fall out for free:
+`browser` as it exists today (Chromium only, nothing changes), and a
+`browser-lite` with no Chromium at all: no Chrome preflight, no 12 GiB limit,
+plausible at the microvm tier where the Chromium stack has never been proven.
+
+The staged path, cheapest first:
+
+1. **Engine as a profile knob.** agent-browser already abstracts the engine;
+   a profile field that sets `--engine lightpanda` costs almost nothing and
+   changes no seam we own (socket dir, egress env, evidence drain all stay).
+   What it buys is the real data: where a light engine actually breaks on our
+   loop, before we bet anything on one.
+2. **Origin routing.** agent-browser is one engine per daemon session, so
+   per-origin routing means either two sessions with h5i choosing at navigate
+   time, or our own layer in front (7.2 builds that layer for other reasons).
+   This step is a design decision, not a big build, but it is honest to say
+   the session model does not give it to us for free.
+3. **The lightweight visual engine.** A crate of ours: Blitz and Stylo for
+   parse, layout and paint, Boa (off by default, policy-gated) for the
+   minority of pages that need script, and fetch wired directly into the
+   egress proxy's stack so the receipt *is* the network log. Beyond fail-closed logging, an owned engine can bind what no
+   mediator can: a human-approved form submission mints a **single-use
+   capability** for that origin and those fields, page script cannot spend it,
+   and every request carries its provenance (agent, human, or page script) as
+   a structural fact instead of an inference over event timing. **Assembled,
+   not written**: the component stack is the same open-source Rust Kitesurf
+   builds on, and the build-versus-adopt call waits for Kitesurf's open-source
+   drop before choosing which pieces are ours.
+
+What we do not do is write HTML, CSS, JS or rasterization primitives from
+scratch: the engine is assembled from Blitz, Stylo and Boa, focused on what
+an agent needs. Section 7's argument is unchanged: Chromium plus
+agent-browser stays the fidelity path, docs-grade pages are the light
+engine's compatibility bar rather than React, and the light engine earns its
+place on the strength of receipts and a containment story Chromium
+structurally cannot give us.
+
+### 7.2 Owning the daemon socket (proposed; the interception point open item 1 asks for)
+
+Open item 1 records that the control lock is advisory because no h5i process
+sits between the agent and agent-browser. The upstream read says the
+interception point exists and is small: the daemon's entire control surface is
+newline-delimited JSON over one filesystem-bound `AF_UNIX` socket,
+`{"id", "action", ...}` in, `{"success", "data", "error"}` out, one line each
+way, every action serialized under a single mutex. That is a protocol a
+supervisor can hold in a few hundred lines.
+
+The shape: the daemon's real socket moves to a path the box has no grant for,
+and the path the box is given (`AGENT_BROWSER_SOCKET_DIR`) carries an
+h5i-owned listener that forwards line by line. The design consequence is that
+the daemon stops being an in-box child and becomes an h5i-launched sidecar,
+because a daemon spawned by the agent's own CLI can only ever bind where the
+agent can also reach. That is the shape the macOS shim already has (h5i
+launches Chrome itself and attaches agent-browser to it), so it is a
+convergence, not a fork; and it must not move the boundary: the sidecar stays
+in the box's netns, under the box's egress, with nothing published.
+
+What one mediated socket buys, in order of value:
+
+1. **The lock becomes real.** `control::check` runs on every mutating verb,
+   and `HeldByHuman` / `NeedsResnapshot` come back as the daemon's own typed
+   error. Read-only verbs pass untouched, which is exactly the split 5.4
+   wants: watching never collides.
+2. **Per-action receipts.** navigate, click, fill, eval land in the receipt as
+   they happen, with their arguments. Today's evidence is a post-run console
+   drain; this is the action log, and it is the browser-side analogue of the
+   egress tally.
+3. **A browser action policy.** Upstream's `ActionPolicy` (allow / deny /
+   confirm over action names, about 200 lines) is the right vocabulary, worth
+   adopting as a per-profile manifest: `eval` deniable, `credentials_*` and
+   `state_*` deniable, and a `confirm` tier for consequential actions, which
+   is where the whole field landed on injection containment (per-site grants
+   plus human confirmation). The confirm channel is the viewer.
+4. **The CDP side of the same sidecar.** Owning the daemon means owning its
+   browser, so the sidecar can attach CDP `Fetch.requestPaused` and give the
+   Chromium path request-level evidence and per-request policy: method,
+   origin, initiator and verdict in the receipt, not just the CONNECT line.
+   This lane is recorded as best-effort, because CDP coverage fails open
+   (7.1); the fail-closed version of the same lane is M10's reason to exist.
+
+The honest costs: an h5i process on the browser hot path; a dependency on the
+daemon's wire protocol, which is an internal surface, against section 7's
+stated preference for the CLI boundary (mitigated the same way: pinned,
+forkable, and the protocol is one page); and the sidecar launch is new
+lifecycle code where today the daemon manages itself.
+
 ## 8. Phases
 
 Each phase ends with a green `cargo test` and a demo that runs on a stock
@@ -1005,6 +1153,118 @@ being, and a tool shell is not a TTY.
 **Post M7.** A full-desktop tier when something needs more than a page viewport
 (X plus streaming, Neko as the reference design), microVM backend, macOS.
 
+**M8. The mediated socket — proposed (7.2).** The agent-browser daemon becomes
+an h5i-launched sidecar and its socket path is h5i's listener. Exit criteria:
+an agent's `agent-browser click` during a human takeover is refused with the
+typed error, not advised; every mutating verb appears in the receipt with its
+arguments; a profile denies `eval` and the denial lands in the receipt; and
+the Fetch evidence lane (7.2 item 4) shows a granted request with its
+initiator and a denied one with its verdict, marked best-effort. This closes
+open item 1 and is worth doing before any engine work, because the mediation
+layer is where origin routing (7.1) would live anyway.
+
+**M9. Second engine — proposed (7.1).** `engine` as a profile field, pinned
+in the digest with its version like any other policy choice, Lightpanda as
+the first non-Chromium value. The knob's real shape is "any CDP endpoint",
+not "Lightpanda": agent-browser already drives engines over CDP, so this is
+the slot M10's binary later fills with no new plumbing, and agent-browser
+stays the one automation surface for every engine behind it. The subset an
+engine must speak is automation plus the screencast domain
+(`Page.startScreencast` / `screencastFrame` / `screencastFrameAck`), because
+the whole shipped viewer stack, stream server through terminal panes, sits
+downstream of that domain and follows any engine that implements it. **No silent
+fallback**: an unsupported page fails closed and names the retry ("this page
+needs MediaSource; recreate with `--browser chromium`"), because a fallback
+to Chromium is not an optimization, it is a security-policy change: an API
+absent by construction in one engine exists in the other, so the box's
+capability surface must not move without a create. The engine and its
+version land in the receipt. Exit criteria: a `browser-lite` box with no
+Chromium installed answers `doctor`, snapshots a real documentation site,
+and the full loop's failure modes on a light engine are written down here.
+No routing yet: one engine per box.
+
+**M10. The lightweight visual engine — proposed, gated.** The h5i-native
+engine of 7.1 step 3. With M8's Fetch lane already delivering best-effort
+request receipts on Chromium, the engine's case is what mediation cannot
+give: fail-closed logging (no running log, no request), script off by
+default and checked by policy before evaluation, and the single-use
+form-submission capability with structural provenance.
+
+The shape is a **standalone binary**, a workspace crate with its own bin,
+not a library h5i links. h5i launches it as a process, hands it the egress
+proxy endpoint and a receipts channel, and the engine answers with a
+capability manifest (`javascript`, `screenshot`, `video: false`, ...) so h5i
+never guesses at what is unimplemented. It speaks the CDP subset the M9 knob
+defines, automation plus the screencast domain, so it plugs into the
+existing driver, the M8 mediation and the whole viewer stack with no new
+plumbing, and fail-closed becomes a protocol property: no receipts channel,
+no fetch. This is the agent-browser pattern applied to our own
+component (a pinned binary behind a protocol boundary, section 7), and it
+prices the risk correctly: if the engine fails, h5i is untouched; if it
+succeeds, it can stand as a product of its own. One honesty requirement
+travels with the standalone story: bare on a host, outside a box, it is
+just a light browser, and its containment claims are made only where the
+proxy and the receipt store exist.
+
+The build is **tiered**, each tier shipping value on its own so the hardest
+one can slip without taking the milestone with it:
+
+1. **Static render.** Blitz and Stylo parse and lay out, `captureScreenshot`
+   and the snapshot verbs work, no JS. Docs-grade reading with full receipts
+   is already useful and already demo-able here.
+2. **Live view.** The screencast domain with adaptive frames: zero at rest, a
+   frame on mutation, 20-30 fps under animation, latest-frame-wins with
+   `screencastFrameAck` as the backpressure. The light engine's viewer is
+   read-only, and that is not a walk-back of 5.4: the control lock and human
+   takeover stay on the Chromium path, which is where login walls route
+   anyway (7.1).
+3. **Script, policy-gated.** Boa, with the event loop owned by the host
+   process (network completions, timers, microtasks, rAF, then
+   style/layout/paint, then the frame), and `fetch` registered as a host
+   function so a page script never holds a socket: every request goes policy
+   check, receipt append, then the wire. Off by default; the grant is a
+   profile line pinned in the digest, and the capability manifest reports
+   `javascript: false` while it is absent. The cost lives in the web
+   bindings (DOM, events, timers, observers), not in Boa, and Test262
+   conformance says nothing about the web platform, which is why this tier
+   is last.
+
+Exit criteria are numbers, not adjectives: less memory than headless
+Chromium on the same page, both at rest and while screencasting; roughly
+100ms from action to updated frame locally; rest-state CPU near zero.
+"Rust, therefore light" is a hypothesis until measured.
+
+Gated on two things: M9's findings say a light engine is actually usable for
+the reading half of the loop, and Kitesurf's open-source release has landed so
+the build-versus-adopt call is made with the code on the table, not the blog
+post.
+
+**M11. The developer-mode viewer — proposed, after M8.** The terminal
+viewer's default becomes a developer view rather than a page view: for a
+coding agent's overseer, the rendered page alone is the least informative
+pane. Something like
+
+```
+┌───────── page ──────────┬────── snapshot ───────┐
+│    rendered frames      │ e12 button "Submit"   │
+│                         │ e13 textbox "Email"   │
+├──────── console ────────┼────── network ────────┤
+│ TypeError at App.tsx:42 │ 200 GET  /api/user    │
+│                         │ 500 POST /api/save    │
+├─────────────────── actions ─────────────────────┤
+│ click @e12 · fill @e13 "a@b.c" · snapshot       │
+└─────────────────────────────────────────────────┘
+```
+
+The composition is cheap because every pane's source exists or arrives with
+M8: termview already decodes frames (5.10), the drain already collects
+console and network errors, and the mediated socket plus the Fetch lane turn
+per-action and per-request evidence into live streams instead of a post-run
+artifact. Input keeps the lock's semantics untouched: watching is the
+default, `i` still takes control, and the takeover is how a login wall gets
+answered (7.1). This is also the demo surface the open item 2 candidate
+wants: the receipts, watched live.
+
 Full loop the demo has to show:
 
 ```
@@ -1121,6 +1381,13 @@ Being explicit about these is a feature, since the claim is a security claim.
    decision about where the check lives (a PATH shim, a skill-level convention,
    or accepting that it is advisory) rather than more code in `control.rs`.
 
+   **Candidate answer, 2026-08-07: the mediated socket (7.2, M8).** The
+   daemon's NDJSON control socket is a fourth option the original list missed,
+   and it is the only one the agent cannot route around: a PATH shim can be
+   bypassed by calling the binary by path, a convention enforces nothing, and
+   the socket is the one door every verb walks through. The open part is now
+   the sidecar lifecycle, not the interception point.
+
    Related and now much smaller: **snapshot handle staleness across a takeover**
    is modelled — `needs_resnapshot` is set on the take, survives a session that
    never hands back, and clears only on an actual snapshot. It rests on the same
@@ -1129,8 +1396,33 @@ Being explicit about these is a feature, since the claim is a security claim.
    platform pitch, which sells to nobody. The launch message should be one
    workflow: run untrusted or AI generated code, see it in a real browser, keep
    it off your machine.
+
+   **Candidate, 2026-08-07: name the runtime.** "h5i Browser: the browser
+   that runs where your coding agent runs." Kitesurf and Lightpanda are
+   browsers for agents browsing the web; this is a browser runtime for coding
+   agents building the web, and the demo is the full loop of section 8, which
+   already exists. It is packaging over M4-M7 plus M8, not new engineering,
+   with two constraints held from section 10: no separate binary (the surface
+   stays `h5i browser`, one-binary decision) and the wording is "an
+   agent-native browser runtime powered by Chromium", never an engine claim,
+   until M10 makes one true. The demo surface is M11's developer view.
 3. **Publishing `@h5i/sdk`.** Blocked on item 2 by decision, not by code: the
    JSON contract it wraps is complete (6.2). First release scope is
    `create`/`exec`/`browser`/`diff`/`export`/`close`, TypeScript only, binary
    fetched on postinstall. No `agent.run()` until the resident session shape is
    settled, and Python only when someone asks for it.
+4. **How engine selection grows from explicit to routed (7.1 step 2).** The
+   sequence is decided: create-time explicit choice first (M9, pinned in the
+   digest, no silent fallback), a `--browser auto` create-time heuristic as a
+   later explicit opt-in, and per-origin routing last. What is not designed
+   is the routing step itself: agent-browser is one engine per daemon
+   session, so "loopback gets Chromium, the web gets the light engine" needs
+   either two sessions with h5i choosing at navigate time, or the mediation
+   layer of 7.2 doing the choosing per action. The second is cleaner and is
+   one more reason M8 goes first. Wherever it lands, routing inherits M9's
+   rule: an engine switch is a policy change, so it belongs in the digest and
+   the receipt, never in a silent fallback.
+5. **Build versus adopt for the lightweight visual engine (M10).** Kitesurf's announced
+   open-sourcing decides how much of the M10 crate is ours to write. Until
+   that drop, the only commitment is the shape: fetch through our proxy,
+   receipts as the network log, script off by default for untrusted origins.
