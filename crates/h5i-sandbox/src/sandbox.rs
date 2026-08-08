@@ -474,6 +474,9 @@ pub fn load_profile(
                 mach_iokit: base.mach_iokit,
                 // Declared or inherited. Parsed (and refused) in
                 // `validate_profile` so the error names the accepted set.
+                // Checked against the known action vocabulary in
+                // `validate_profile` below, so a misspelling is refused at
+                // create rather than silently denying nothing.
                 browser_deny: t
                     .browser
                     .deny
@@ -593,6 +596,14 @@ pub fn effective_auto(
 /// Fail-closed policy lints (§7). These reject *policies*, before any env is
 /// created — never silently weaken them.
 pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
+    // A deny entry that matches no action denies nothing, while the resolved
+    // policy still reads as though the verb were blocked. Refuse the typo here
+    // rather than let the operator discover it from an agent successfully
+    // doing the thing.
+    for entry in &p.browser_deny {
+        crate::sandbox_policy::validate_browser_deny(entry).map_err(H5iError::Metadata)?;
+    }
+
     // A profile that opts into an egress allowlist may not also re-export the
     // proxy wiring: `env.pass` is applied after it, so the host's value would
     // win and the box would route around the allowlist. Refused at load, so the

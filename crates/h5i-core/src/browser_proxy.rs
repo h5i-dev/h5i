@@ -97,10 +97,15 @@ const READ_ONLY_ACTIONS: &[&str] = &[
 /// What a profile permits the agent to do with the browser.
 ///
 /// Modelled on agent-browser's own `ActionPolicy`, which is the right
-/// vocabulary and about the right size. `deny` is the interesting half: `eval`
-/// is arbitrary code in the page, and `credentials_*`/`state_*` reach the
-/// browser's stored secrets, so a profile that wants a reading browser can say
-/// so.
+/// vocabulary and about the right size. `deny` is the interesting half:
+/// `evaluate` is arbitrary code in the page, and `credentials_*`/`state_*`
+/// reach the browser's stored secrets, so a profile that wants a reading
+/// browser can say so.
+///
+/// The spelling is the *action* name, not the CLI verb — `evaluate`, which is
+/// what `agent-browser eval` sends on the wire. Entries are checked against
+/// `sandbox_policy::BROWSER_DENYABLE_ACTIONS` at create, because one that
+/// matches nothing denies nothing while reading as if it did.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActionPolicy {
     /// Actions refused outright. Matched on the action name, and on a `_`
@@ -143,6 +148,16 @@ pub enum Decision {
 /// silently allowed to fight for the pointer.
 pub fn is_mutating(action: &str) -> bool {
     !READ_ONLY_ACTIONS.contains(&action)
+}
+
+/// Whether completing this verb refreshes the agent's view of the page, and so
+/// clears the stale-handle latch a human takeover set.
+///
+/// Deliberately just `snapshot`: that is the verb
+/// [`control::Verdict::explain`] names, and the two have to agree or the
+/// refusal is advice the agent cannot act on.
+fn clears_resnapshot(action: &str) -> bool {
+    action == "snapshot"
 }
 
 /// Decide one action.
@@ -300,6 +315,17 @@ pub fn mediate_observed(
                     mediation.actions.push(record);
                     break;
                 }
+                // A completed snapshot is what clears the stale-handle latch a
+                // takeover set. Nothing else in the tree calls `snapshotted`,
+                // so without this the refusal tells the agent to run
+                // `agent-browser snapshot` and running it changes nothing —
+                // every mutating verb stays refused for the life of the box.
+                // Cleared only after the daemon answered, because a snapshot
+                // that never reached the page did not refresh anything.
+                if clears_resnapshot(&action) {
+                    let _ = control::snapshotted(env_dir);
+                }
+
                 let record = ActionRecord {
                     action,
                     forwarded: true,
@@ -408,6 +434,13 @@ impl Drop for MediatorHandle {
 /// refusing a request that was always going to be servable a moment later.
 const UPSTREAM_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// Consecutive `accept` failures before the mediator gives up.
+///
+/// Anything less than "give up eventually" risks a hot loop on a permanently
+/// broken listener; anything that gives up on the first error hands the rest
+/// of the run to an unmediated daemon.
+const MAX_ACCEPT_ERRORS: usize = 20;
+
 /// Start mediating `socket_path` in front of `upstream`.
 ///
 /// Both are `AF_UNIX` paths. `socket_path` is what the box is told to use
@@ -455,9 +488,11 @@ pub fn spawn(
         let upstream = upstream.to_path_buf();
         let env_dir = env_dir.to_path_buf();
         std::thread::spawn(move || {
+            let mut consecutive_errors = 0usize;
             while !stop.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((client, _)) => {
+                        consecutive_errors = 0;
                         if stop.load(Ordering::SeqCst) {
                             break;
                         }
@@ -501,7 +536,26 @@ pub fn spawn(
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(std::time::Duration::from_millis(25));
                     }
-                    Err(_) => break,
+                    // A transient accept failure — EMFILE while the box runs a
+                    // browser and a build, ECONNABORTED from a client that hung
+                    // up between connect and accept — must not end enforcement
+                    // for the rest of the run. Breaking here leaves the socket
+                    // file on disk with nothing listening, so the box's next
+                    // command gets ECONNREFUSED and starts its own unmediated
+                    // daemon, silently. Back off and keep accepting; give up
+                    // only if it never recovers, and say so when we do.
+                    Err(e) => {
+                        consecutive_errors += 1;
+                        if consecutive_errors >= MAX_ACCEPT_ERRORS {
+                            eprintln!(
+                                "h5i: browser mediation stopped after {consecutive_errors} \
+                                 consecutive accept failures ({e}); the control lock is no \
+                                 longer enforced for this session."
+                            );
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
                 }
             }
         })
@@ -758,6 +812,79 @@ mod tests {
         let (m, _, to_daemon) = run(&[req("2", "click")], td.path(), &ActionPolicy::default());
         assert_eq!(m.forwarded(), 1, "{:?}", m.actions);
         assert!(to_daemon.contains("click"));
+    }
+
+    #[test]
+    fn taking_the_snapshot_the_refusal_asks_for_actually_unblocks_the_agent() {
+        // The whole cycle, with nobody calling `control::snapshotted` by hand:
+        // the mediator is the only thing that can clear the latch, and if it
+        // does not, the refusal names a remedy that does nothing and the
+        // browser is bricked for the agent for the life of the box.
+        let td = TempDir::new().unwrap();
+        control::take(td.path()).unwrap();
+        control::release(td.path()).unwrap();
+
+        // Refused, and told to snapshot.
+        let (m, to_client, _) = run(&[req("1", "click")], td.path(), &ActionPolicy::default());
+        assert_eq!(m.refused(), 1);
+        assert!(to_client.contains("snapshot"), "{to_client}");
+
+        // Do exactly that, through the mediator.
+        let (m, _, to_daemon) = run(&[req("2", "snapshot")], td.path(), &ActionPolicy::default());
+        assert_eq!(m.forwarded(), 1, "a snapshot is read-only and must pass");
+        assert!(to_daemon.contains("snapshot"));
+
+        // Now acting works again.
+        let (m, _, to_daemon) = run(&[req("3", "click")], td.path(), &ActionPolicy::default());
+        assert_eq!(
+            m.forwarded(),
+            1,
+            "the snapshot must have cleared the latch: {:?}",
+            m.actions
+        );
+        assert!(to_daemon.contains("click"));
+    }
+
+    #[test]
+    fn a_snapshot_that_never_reached_the_daemon_does_not_clear_the_latch() {
+        // The daemon hangs up before answering; nothing was refreshed, so the
+        // agent must still be told to re-snapshot.
+        let td = TempDir::new().unwrap();
+        control::take(td.path()).unwrap();
+        control::release(td.path()).unwrap();
+
+        let mut to_client = Vec::new();
+        let mut to_daemon = Vec::new();
+        let mediation = mediate(
+            Cursor::new((req("1", "snapshot") + "\n").into_bytes()),
+            &mut to_client,
+            // Truly empty: the daemon hung up without answering. (`fake_daemon(0)`
+            // would still emit a bare newline, which `read_line` reads as a
+            // successful — if empty — response.)
+            Cursor::new(Vec::new()),
+            &mut to_daemon,
+            td.path(),
+            &ActionPolicy::default(),
+        );
+        assert!(mediation.error.is_some(), "the hangup should be reported");
+
+        assert!(
+            control::read(td.path()).needs_resnapshot,
+            "an unanswered snapshot must not clear the latch"
+        );
+    }
+
+    #[test]
+    fn a_human_still_holding_control_is_not_unblocked_by_a_snapshot() {
+        // Clearing the stale-handle latch must not be a way around the lock
+        // itself.
+        let td = TempDir::new().unwrap();
+        control::take(td.path()).unwrap();
+
+        let (_, _, _) = run(&[req("1", "snapshot")], td.path(), &ActionPolicy::default());
+        let (m, _, to_daemon) = run(&[req("2", "click")], td.path(), &ActionPolicy::default());
+        assert_eq!(m.refused(), 1, "the human still holds control");
+        assert!(!to_daemon.contains("click"));
     }
 
     #[test]

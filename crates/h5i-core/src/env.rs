@@ -3122,12 +3122,23 @@ if [ -n "$H5I_BROWSER_DAEMON_DIR" ]; then
     # `open about:blank` rather than a read verb: every agent-browser command
     # starts the daemon, but only some of them are commands — `url` and
     # `status` are not, and a failed start leaves no daemon and no clue.
+    #
+    # Output is kept, not discarded: if this fails the mirroring below is
+    # skipped, h5i's socket is left with no .version/.config beside it, and the
+    # CLI concludes the mediator is a stale daemon and replaces it — so the run
+    # continues completely unmediated. That has to be loud.
     AGENT_BROWSER_SOCKET_DIR="$H5I_BROWSER_DAEMON_DIR" \
-      "$REAL" --cdp "$PORT" open about:blank >/dev/null 2>&1 || true
+      "$REAL" --cdp "$PORT" open about:blank >"$STATE/daemon-start.log" 2>&1 || true
     i=0
     while [ $i -lt 100 ] && [ ! -S "$H5I_BROWSER_DAEMON_DIR/default.sock" ]; do
       i=$((i+1)); sleep 0.1
     done
+    if [ ! -S "$H5I_BROWSER_DAEMON_DIR/default.sock" ]; then
+      echo "h5i: the browser daemon did not start, so this session is NOT mediated:" >&2
+      echo "     the control lock and the profile's browser deny list are not enforced." >&2
+      tail -5 "$STATE/daemon-start.log" >&2 2>/dev/null || true
+      exit 1
+    fi
   fi
   # The CLI decides whether a daemon is already up by reading these beside the
   # socket. Without them it concludes the mediator is a stale daemon, asks it
@@ -3604,6 +3615,20 @@ fn browser_env_inner(policy: &ResolvedPolicy, shimmed: bool) -> Vec<(String, Str
 /// rather than the engine's alone.
 fn browser_light_env(policy: &ResolvedPolicy, allowed: &[String]) -> Vec<(String, String)> {
     vec![
+        // agent-browser's own in-process allowlist, kept even though this
+        // engine does not read it. Its binaries stay granted (the grant list
+        // is host discovery, not per-engine), so an agent in an h5i-light box
+        // can still invoke agent-browser directly — and if it does, this is
+        // the only thing standing between it and any host on the internet.
+        // Dropping it because "our engine ignores it" would have removed a
+        // control from the box that was pinned to the *safer* engine.
+        (
+            "AGENT_BROWSER_ALLOWED_DOMAINS".to_string(),
+            allowed.join(","),
+        ),
+        // Headless for the same reason: a headed launch on a displayless box
+        // starts an Xvfb the profile never granted.
+        ("AGENT_BROWSER_HEADED".to_string(), "0".to_string()),
         ("H5I_BROWSER_ALLOW".to_string(), allowed.join(",")),
         (
             "H5I_BROWSER_RECEIPTS".to_string(),
@@ -3637,17 +3662,94 @@ mod browser_engine_env_tests {
     }
 
     #[test]
-    fn an_engine_we_run_ourselves_gets_none_of_agent_browsers_variables() {
-        // Every AGENT_BROWSER_* here would be a policy line that reviews as
-        // enforcement while enforcing nothing: the engine never reads them.
-        let env = browser_env_inner(&policy_for(BrowserEngine::H5iLight), false);
-        assert!(
-            !names(&env).iter().any(|k| k.starts_with("AGENT_BROWSER_")),
-            "{:?}",
-            names(&env)
+    fn the_mediator_binds_where_the_box_is_told_to_look() {
+        // The bug this pins: `engage_browser_mediation` derived its path from
+        // `<env>/tmp` while the box was told `box_tmp_root`. They coincide on
+        // Linux kernel tiers — which is all the manual verification covered —
+        // and diverge on macOS, so mediation silently did not happen there.
+        let policy = policy_for(BrowserEngine::Chromium);
+        let env_dir = std::path::Path::new("/some/env/dir");
+
+        let told = browser_env_inner(&policy, false)
+            .into_iter()
+            .find(|(k, _)| k == "AGENT_BROWSER_SOCKET_DIR")
+            .map(|(_, v)| v)
+            .expect("the box is told a socket dir");
+        assert_eq!(
+            told,
+            format!("{}/agent-browser", box_tmp_root(&policy)),
+            "the box side must come from box_tmp_root"
         );
+
+        // With a `/tmp` redirect recorded, the host side must be its backing —
+        // not the host's own /tmp, and not a path reconstructed from the
+        // profile's grants (which have been rewritten by then).
+        let mut redirected = policy.clone();
+        redirected.home_binds.push(crate::sandbox::HomeBind {
+            backing: std::path::PathBuf::from("/some/env/dir/tmp"),
+            target: std::path::PathBuf::from("/tmp"),
+        });
+        assert_eq!(
+            host_tmp_root(&redirected, env_dir),
+            Some(std::path::PathBuf::from("/some/env/dir/tmp")),
+            "the mediator must follow the recorded /tmp redirect"
+        );
+
+        // With no redirect the box uses the host's own /tmp.
+        let mut plain = policy.clone();
+        plain.home_binds.retain(|b| b.target != std::path::Path::new("/tmp"));
+        assert_eq!(
+            host_tmp_root(&plain, env_dir),
+            Some(std::path::PathBuf::from("/tmp"))
+        );
+    }
+
+    #[test]
+    fn an_image_backed_tier_has_no_host_side_tmp_to_mediate() {
+        // A container's /tmp is in the image, so there is no host path to bind.
+        // Returning a path anyway is what produces a mediator nobody connects
+        // to, which reads as enforcement and is not.
+        let mut profile =
+            Profile::builtin_browser(IsolationClaim::Container, AgentRuntime::Claude);
+        profile.engine = Some(BrowserEngine::Chromium);
+        profile.image = Some("example:latest".to_string());
+        let caps = sandbox::probe_host_for(IsolationClaim::Container);
+        if let Ok(policy) = sandbox::resolve(&profile, &caps) {
+            assert!(
+                host_tmp_root(&policy, std::path::Path::new("/e")).is_none(),
+                "image-backed tiers must report no host-side /tmp"
+            );
+        }
+    }
+
+    #[test]
+    fn our_own_engine_gets_its_own_variables() {
+        let env = browser_env_inner(&policy_for(BrowserEngine::H5iLight), false);
         assert!(names(&env).contains(&"H5I_BROWSER_ALLOW"));
         assert!(names(&env).contains(&"H5I_BROWSER_RECEIPTS"));
+        // The daemon dir is agent-browser's and means nothing here.
+        assert!(!names(&env).contains(&"H5I_BROWSER_DAEMON_DIR"), "{:?}", names(&env));
+    }
+
+    #[test]
+    fn an_h5i_light_box_keeps_agent_browsers_allowlist_because_chrome_stays_reachable() {
+        // The trap: `browser_read_grants` is host discovery, so Chrome and
+        // agent-browser stay granted in *every* browser box regardless of the
+        // pinned engine. Emitting no AGENT_BROWSER_* at all therefore did not
+        // mean "agent-browser cannot run here" — it meant "if it runs, it runs
+        // with no domain allowlist", in the box chosen for being safer.
+        let env = browser_env_inner(&policy_for(BrowserEngine::H5iLight), false);
+        let allowed = env
+            .iter()
+            .find(|(k, _)| k == "AGENT_BROWSER_ALLOWED_DOMAINS")
+            .map(|(_, v)| v.clone())
+            .expect("the in-process allowlist must survive the engine switch");
+        assert!(allowed.contains("localhost"), "{allowed}");
+        assert_eq!(
+            env.iter().find(|(k, _)| k == "AGENT_BROWSER_HEADED").map(|(_, v)| v.as_str()),
+            Some("0"),
+            "headless must stay pinned too"
+        );
     }
 
     #[test]
@@ -3688,13 +3790,53 @@ mod browser_engine_env_tests {
 }
 
 
+/// The **host-side** path of the box's `/tmp`, or `None` when the box's `/tmp`
+/// is not reachable from the host at all.
+///
+/// [`box_tmp_root`] answers the box's question ("what path do I use?"), which
+/// is not the same answer: on Linux the box says `/tmp` while the host sees
+/// `<env>/tmp`, and on macOS both say the private backing. Confusing the two
+/// is how a mediator ends up bound to a path nobody connects to — bind
+/// succeeds, nothing is listening where the box looks, and enforcement is
+/// silently absent.
+///
+/// `None` for image-backed tiers: a container's `/tmp` lives in the image, so
+/// there is no host path to bind and the caller must say so rather than
+/// binding a decoy.
+fn host_tmp_root(policy: &ResolvedPolicy, _env_dir: &Path) -> Option<PathBuf> {
+    if policy.claim.image_backed() {
+        return None;
+    }
+    // Read the mapping, do not re-derive it. `prepare_private_tmp` records the
+    // `/tmp` redirect as a `home_bind` (target `/tmp`, backing `<env>/tmp` on
+    // Linux, the short `/tmp/h5i-<digest>` on macOS), and that entry is the
+    // only thing that knows whether the redirect actually applied for this
+    // policy. An earlier version of this function reconstructed the condition
+    // from `fs_read`/`fs_write` and got it wrong — by the time mediation is
+    // engaged the bare `/tmp` grant has been rewritten to the backing path, so
+    // the check said "no private tmp", the mediator bound the *host's* real
+    // `/tmp`, and enforcement silently did not happen. Same class of bug as
+    // the one this whole function exists to fix.
+    if let Some(bind) = policy
+        .home_binds
+        .iter()
+        .find(|b| b.target == Path::new("/tmp"))
+    {
+        return Some(bind.backing.clone());
+    }
+    // No redirect: the box uses the host's own `/tmp` (workspace tier).
+    Some(PathBuf::from("/tmp"))
+}
+
 /// The daemon's session name. agent-browser defaults to `default`, and h5i
 /// does not set one, so both sides can agree on it without a variable whose
 /// spelling nobody has verified.
 const DAEMON_SESSION: &str = "default";
 
 /// Directory (under the box's `/tmp`) where the shim starts the real daemon.
-const DAEMON_DIR_NAME: &str = "agent-browser-daemon";
+/// One definition, shared with `browser`, which has to know the same path to
+/// tell a real daemon from h5i's own listener.
+use crate::browser::DAEMON_DIR_NAME;
 
 /// Start mediating the browser daemon's socket for the duration of a run.
 ///
@@ -3725,9 +3867,19 @@ fn engage_browser_mediation(
         return None;
     }
 
-    // Where the box looks, and where h5i keeps the real one.
-    let visible = env_dir.join("tmp").join("agent-browser");
-    let private = env_dir.join("tmp").join(DAEMON_DIR_NAME);
+    // Where the box looks, and where the shim keeps the real daemon — as the
+    // *host* sees them. Derived from the same mapping `browser_env_inner` uses
+    // for the box side, so the two cannot drift apart into a mediator nobody
+    // connects to.
+    let Some(tmp) = host_tmp_root(policy, env_dir) else {
+        eprintln!(
+            "h5i: this tier's /tmp is inside the image, so the browser control lock \
+             cannot be enforced for this box (it remains advisory)."
+        );
+        return None;
+    };
+    let visible = tmp.join("agent-browser");
+    let private = tmp.join(DAEMON_DIR_NAME);
 
     // Bound before the box runs, and before any daemon exists. The shim starts
     // the daemon on the private path and mirrors the files the CLI checks; if
@@ -4816,6 +4968,11 @@ pub fn shell(
     // `shell` silently did not. Held for the session: dropping a handle shuts
     // its proxy down.
     let (_auth_handles, auth_env) = engage_grants_for(&policy)?;
+    // ...and the browser mediator, for exactly the same reason the line above
+    // exists: `run` had it while `shell` silently did not. An interactive
+    // session is where a human is most likely to take control, so a shell that
+    // left the lock unenforced was the worst place to leave the gap.
+    let browser_mediator = engage_browser_mediation(&policy, &m.dir(h5i_root));
     let injected_env = merged_env(
         &merged_env(
             &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
@@ -5000,6 +5157,18 @@ pub fn shell(
         )),
         egress_capture,
     )?;
+
+    // What the mediator decided during the session, in its own host-observed
+    // lane. An interactive session is exactly where a human takes control, so
+    // this is the record that says whether the lock held.
+    if let Some(mediator) = &browser_mediator {
+        crate::browser_proxy::record_actions(
+            &m.dir(h5i_root),
+            &m.id,
+            &m.policy_digest,
+            &mediator.actions(),
+        );
+    }
 
     // Audit each delivered secret grant (id + source + inject + fingerprint).
     for rec in &brokered.records {

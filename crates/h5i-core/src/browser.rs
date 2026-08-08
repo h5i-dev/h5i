@@ -118,20 +118,45 @@ fn socket_dir(env_dir: &Path) -> PathBuf {
     env_dir.join("tmp").join("agent-browser")
 }
 
+/// Directory (under the box's `/tmp`) where the shim starts the real daemon
+/// when h5i is mediating the socket the box is told to use.
+pub(crate) const DAEMON_DIR_NAME: &str = "agent-browser-daemon";
+
+fn daemon_dir(env_dir: &Path) -> PathBuf {
+    env_dir.join("tmp").join(DAEMON_DIR_NAME)
+}
+
 /// Is a browser actually running in this box right now?
 ///
 /// This gate exists because the drain command *starts* a browser if none is
 /// running. Without it, a `cargo build` in a browser box would launch Chrome
 /// purely to be told the console was empty, and every run would report a
-/// spuriously clean page. No socket means no session, which means there is
-/// nothing to observe and nothing to claim.
+/// spuriously clean page.
+///
+/// A session is a socket **and** a pid file together, in one directory.
+/// Either alone is a leftover: a stale `.pid` outlives a daemon that died, and
+/// since h5i began mediating, a `.sock` in the box-visible directory may be
+/// h5i's own listener — bound before the box starts, which would make this gate
+/// unconditionally true and reintroduce the spurious launch it exists to
+/// prevent. Only a running daemon leaves both.
+///
+/// Both directories are searched, because under mediation the real daemon binds
+/// the private one while an unmediated box still uses the visible one.
 pub fn browser_is_live(env_dir: &Path) -> bool {
-    std::fs::read_dir(socket_dir(env_dir))
-        .map(|rd| {
-            rd.flatten()
-                .any(|e| e.file_name().to_string_lossy().ends_with(".sock"))
+    [socket_dir(env_dir), daemon_dir(env_dir)]
+        .iter()
+        .any(|dir| {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return false;
+            };
+            let (mut sock, mut pid) = (false, false);
+            for name in entries.flatten().map(|e| e.file_name()) {
+                let name = name.to_string_lossy();
+                sock |= name.ends_with(".sock");
+                pid |= name.ends_with(".pid");
+            }
+            sock && pid
         })
-        .unwrap_or(false)
 }
 
 /// Did this run touch the browser at all?
@@ -333,6 +358,39 @@ pub fn collect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_mediator_socket_alone_does_not_count_as_a_live_browser() {
+        // h5i binds its listener in this directory before the box starts, so a
+        // socket-based check would be unconditionally true and the drain would
+        // launch Chrome purely to report an empty console — the spurious launch
+        // this gate exists to prevent.
+        let td = tempfile::tempdir().expect("tempdir");
+        let dir = td.path().join("tmp").join("agent-browser");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("default.sock"), b"").unwrap();
+        assert!(
+            !browser_is_live(td.path()),
+            "a socket with no pid beside it is h5i's listener, not a browser"
+        );
+
+        // A real daemon writes a pid file.
+        std::fs::write(dir.join("default.pid"), b"1234").unwrap();
+        assert!(browser_is_live(td.path()));
+    }
+
+    #[test]
+    fn a_daemon_on_the_mediated_private_path_still_counts_as_live() {
+        // Under mediation the real daemon lives in the private directory, so
+        // looking only at the box-visible one would report every mediated
+        // session as having no browser.
+        let td = tempfile::tempdir().expect("tempdir");
+        let dir = td.path().join("tmp").join(DAEMON_DIR_NAME);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("default.sock"), b"").unwrap();
+        std::fs::write(dir.join("default.pid"), b"4321").unwrap();
+        assert!(browser_is_live(td.path()));
+    }
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()

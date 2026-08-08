@@ -47,6 +47,13 @@ impl Verdict {
 #[derive(Debug, Clone)]
 pub struct Policy {
     origins: BTreeSet<String>,
+    /// Subdomain wildcards (`*.example.com`), stored as the bare suffix.
+    ///
+    /// h5i's own `net.egress` accepts `*.host`, and a box's egress list is
+    /// handed to this engine verbatim, so treating the entry as a literal
+    /// hostname made every wildcard grant match nothing — a box the sandbox
+    /// would have let through, refused here.
+    wildcards: BTreeSet<String>,
     allow_loopback: bool,
     max_redirects: usize,
     max_response_bytes: u64,
@@ -56,6 +63,7 @@ impl Default for Policy {
     fn default() -> Self {
         Self {
             origins: BTreeSet::new(),
+            wildcards: BTreeSet::new(),
             // Loopback is the agent's own dev server. It never appears in an
             // egress allowlist and is the whole point of a dev loop, so it is
             // opt-out rather than opt-in — matching the sandbox's own handling.
@@ -77,7 +85,20 @@ impl Policy {
     /// those is a thing a person types and none of them should mean "denied,
     /// silently".
     pub fn allow(mut self, origin: &str) -> Self {
-        if let Some(normalized) = normalize_origin(origin) {
+        let trimmed = origin.trim();
+        // `*.host` and `.host` are h5i's spellings for "this host and its
+        // subdomains". Record the suffix; `check` matches it against the host
+        // rather than against the whole origin string.
+        if let Some(suffix) = trimmed
+            .strip_prefix("*.")
+            .or_else(|| trimmed.strip_prefix('.'))
+        {
+            if !suffix.is_empty() {
+                self.wildcards.insert(suffix.to_ascii_lowercase());
+            }
+            return self;
+        }
+        if let Some(normalized) = normalize_origin(trimmed) {
             self.origins.insert(normalized);
         }
         self
@@ -152,12 +173,21 @@ impl Policy {
         };
 
         if self.origins.contains(&origin) {
-            Verdict::Allow
-        } else {
-            // Name the origin, not just "denied": this string is what a human
-            // reads when a page came back empty, and it is the retry hint.
-            Verdict::Deny(format!("origin `{origin}` is not in the allowlist"))
+            return Verdict::Allow;
         }
+
+        // A wildcard grants the host and anything under it, matched on a label
+        // boundary so `*.example.com` does not also grant `notexample.com`.
+        let host_lower = host.to_ascii_lowercase();
+        if self.wildcards.iter().any(|suffix| {
+            host_lower == *suffix || host_lower.ends_with(&format!(".{suffix}"))
+        }) {
+            return Verdict::Allow;
+        }
+
+        // Name the origin, not just "denied": this string is what a human
+        // reads when a page came back empty, and it is the retry hint.
+        Verdict::Deny(format!("origin `{origin}` is not in the allowlist"))
     }
 }
 
@@ -231,6 +261,30 @@ mod tests {
         // ...and can be taken away for a run that should reach nothing local.
         let strict = Policy::new().set_allow_loopback(false);
         assert!(!strict.check(&url("http://localhost:3000/")).is_allowed());
+    }
+
+    #[test]
+    fn a_subdomain_wildcard_grants_the_subdomains_h5i_already_permits() {
+        // h5i's net.egress accepts `*.host`, and the box's egress list reaches
+        // this engine verbatim; treating it as a literal hostname refused every
+        // request the sandbox itself would have allowed.
+        let policy = Policy::new().allow("*.example.com");
+        assert!(policy.check(&url("https://docs.example.com/guide")).is_allowed());
+        assert!(policy.check(&url("https://a.b.example.com/")).is_allowed());
+        // The apex too: `*.host` in h5i means the host and everything under it.
+        assert!(policy.check(&url("https://example.com/")).is_allowed());
+        // `.host` is the other spelling h5i accepts.
+        assert!(Policy::new().allow(".example.com").check(&url("https://x.example.com/")).is_allowed());
+    }
+
+    #[test]
+    fn a_wildcard_matches_on_a_label_boundary_only() {
+        // The classic near-miss: `*.example.com` must not grant
+        // `notexample.com` or an attacker-controlled suffix lookalike.
+        let policy = Policy::new().allow("*.example.com");
+        assert!(!policy.check(&url("https://notexample.com/")).is_allowed());
+        assert!(!policy.check(&url("https://example.com.evil.test/")).is_allowed());
+        assert!(!policy.check(&url("https://evil-example.com/")).is_allowed());
     }
 
     #[test]

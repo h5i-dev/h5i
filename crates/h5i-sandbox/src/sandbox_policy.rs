@@ -558,6 +558,10 @@ pub struct Profile {
     /// Browser actions this box may not perform
     /// (`[profile.X.browser] deny = ["evaluate", "state"]`).
     ///
+    /// Names are the *action* as it goes over the daemon socket, which is not
+    /// always the CLI verb: `agent-browser eval` sends `evaluate`. Entries are
+    /// validated against [`BROWSER_DENYABLE_ACTIONS`] at create.
+    ///
     /// Enforced by the mediator that sits on the daemon's control socket, so
     /// this is a real refusal rather than advice: the verb never reaches the
     /// browser. A bare family name denies its members, so `state` covers
@@ -589,6 +593,113 @@ pub enum BrowserEngine {
     /// `h5i-browser-light`: our own engine. No script in this tier, and every
     /// request is policy-checked and receipted before the wire.
     H5iLight,
+}
+
+/// Browser actions (and action *families*) a profile may name in
+/// `[profile.X.browser] deny`.
+///
+/// A curated vocabulary rather than free text, because the deny list is
+/// fail-open by nature: an entry that matches nothing denies nothing, while
+/// `policy.resolved.toml` still reads as though the verb were blocked. A
+/// misspelling has to be refused at create, where the author is standing
+/// there, not discovered later by an agent successfully doing the thing.
+///
+/// Family entries (`state`, `credentials`, …) cover their `name_*` members —
+/// `state` denies `state_save` and `state_load` — which is why they are listed
+/// alongside the individual verbs rather than instead of them.
+///
+/// Adding an action upstream means adding it here. That is the cost of the
+/// guarantee, and it is the same trade the Chrome candidate tables make.
+pub const BROWSER_DENYABLE_ACTIONS: &[&str] = &[
+    // Families.
+    "cookies",
+    "credentials",
+    "profiler",
+    "react",
+    "recording",
+    "state",
+    "storage",
+    "tab",
+    "trace",
+    // Individual verbs.
+    "back",
+    "boundingbox",
+    "check",
+    "click",
+    "close",
+    "content",
+    "count",
+    "dblclick",
+    "download",
+    "drag",
+    "evaluate",
+    "fill",
+    "focus",
+    "forward",
+    "geolocation",
+    "getattribute",
+    "gettext",
+    "headers",
+    "hover",
+    "innerhtml",
+    "inputvalue",
+    "ischecked",
+    "isenabled",
+    "isvisible",
+    "keyboard",
+    "launch",
+    "locale",
+    "navigate",
+    "offline",
+    "open",
+    "pdf",
+    "permissions",
+    "press",
+    "read",
+    "reload",
+    "screenshot",
+    "scroll",
+    "select",
+    "snapshot",
+    "styles",
+    "tap",
+    "timezone",
+    "title",
+    "type",
+    "uncheck",
+    "upload",
+    "url",
+    "useragent",
+    "viewport",
+    "wait",
+];
+
+/// Check one `[profile.X.browser] deny` entry, fail-closed.
+///
+/// The error names a near match when there is one, because the mistake this
+/// exists to catch is a plausible short spelling (`eval` for `evaluate`) that
+/// would otherwise silently deny nothing.
+pub fn validate_browser_deny(entry: &str) -> Result<(), String> {
+    let name = entry.trim();
+    if name.is_empty() {
+        return Err("`[profile.X.browser] deny` contains an empty entry (fail-closed)".to_string());
+    }
+    if BROWSER_DENYABLE_ACTIONS.contains(&name) {
+        return Ok(());
+    }
+
+    // A near match is almost always the intent: `eval` -> `evaluate`,
+    // `cookie` -> `cookies`.
+    let lowered = name.to_ascii_lowercase();
+    let hint = BROWSER_DENYABLE_ACTIONS
+        .iter()
+        .find(|known| **known == lowered || known.starts_with(&lowered) || lowered.starts_with(*known))
+        .map(|known| format!(" — did you mean `{known}`?"))
+        .unwrap_or_default();
+
+    Err(format!(
+        "unknown browser action `{entry}` in `[profile.X.browser] deny`{hint}\n           An entry that matches no action denies nothing while the policy reads as if it did, \n           so it is refused here (fail-closed). Accepted names are the agent-browser verbs and \n           the families `cookies`, `credentials`, `state`, `storage`, `tab`, `trace`, `profiler`, \n           `react`, `recording` (a family covers its `name_*` members)."
+    ))
 }
 
 impl BrowserEngine {
@@ -1242,6 +1353,15 @@ pub fn engine_tooling_missing(engine: BrowserEngine) -> Vec<&'static str> {
             if !agent_browser {
                 missing.push("the `agent-browser` binary");
             }
+            // Chrome too, and not as an oversight: h5i's launch shim starts
+            // Chrome and attaches agent-browser to it over `--cdp`, and that
+            // shim is installed for every engine agent-browser drives. Until
+            // the shim can launch lightpanda itself, a lightpanda box still
+            // needs a Chrome on the host — so demand it here rather than let
+            // create pass and every browser command afterwards fail.
+            if chrome_binary().is_none() {
+                missing.push("a Chrome/Chromium build (h5i's launch shim still starts Chrome)");
+            }
         }
         // Ours drives itself: agent-browser cannot speak to it, so requiring
         // agent-browser here would refuse a box that would have worked.
@@ -1280,6 +1400,31 @@ pub fn browser_tooling_present() -> (bool, bool) {
 #[cfg(test)]
 mod browser_discovery_tests {
     use super::*;
+
+    #[test]
+    fn a_misspelled_deny_entry_is_refused_and_the_error_suggests_the_real_name() {
+        // The failure this guards: `deny = ["eval"]` looks right, matches no
+        // action, and leaves arbitrary JS allowed while the resolved policy
+        // reads as though it were blocked.
+        let err = validate_browser_deny("eval").expect_err("must refuse");
+        assert!(err.contains("eval"), "{err}");
+        assert!(err.contains("did you mean `evaluate`"), "{err}");
+        assert!(err.contains("fail-closed"), "{err}");
+
+        assert!(validate_browser_deny("Evaluate").is_err(), "case matters");
+        assert!(validate_browser_deny("evaluate-js").is_err());
+        assert!(validate_browser_deny("  ").is_err(), "empty entries too");
+    }
+
+    #[test]
+    fn real_actions_and_families_are_accepted() {
+        for good in ["evaluate", "click", "state", "credentials", "cookies", "screenshot"] {
+            validate_browser_deny(good)
+                .unwrap_or_else(|e| panic!("`{good}` should be a valid deny entry: {e}"));
+        }
+        // Surrounding whitespace is a typo, not a different action.
+        assert!(validate_browser_deny(" evaluate ").is_ok());
+    }
 
     #[test]
     fn the_engine_is_in_the_digest_and_only_when_a_profile_runs_a_browser() {
@@ -1336,6 +1481,26 @@ mod browser_discovery_tests {
         assert!(BrowserEngine::Chromium.driven_by_agent_browser());
         assert!(BrowserEngine::Lightpanda.driven_by_agent_browser());
         assert!(!BrowserEngine::H5iLight.driven_by_agent_browser());
+    }
+
+    #[test]
+    fn lightpanda_still_demands_chrome_because_the_shim_launches_it() {
+        // The create-time guard used to require Chrome for every browser box.
+        // Making it per-engine dropped that for lightpanda while
+        // `prepare_browser_shim` kept installing the Chrome-launching shim —
+        // so create passed and every browser command then failed, or worse,
+        // silently ran full Chromium under a digest that said "lightpanda".
+        let (_, install) = BrowserEngine::Lightpanda.required_tooling();
+        assert!(!install.is_empty());
+        // The check must ask about Chrome at all; whether it is present here
+        // depends on the host, so assert on the question, not the answer.
+        let missing = engine_tooling_missing(BrowserEngine::Lightpanda);
+        if chrome_binary().is_none() {
+            assert!(
+                missing.iter().any(|m| m.contains("Chrome")),
+                "lightpanda must not pass create on a host with no Chrome: {missing:?}"
+            );
+        }
     }
 
     #[test]
