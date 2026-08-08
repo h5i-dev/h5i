@@ -367,6 +367,17 @@ unsatisfiable request fails closed rather than leaving half a box behind.</p>
 </tr>
 </tbody>
 </table>
+<p>A profile can also refuse individual browser actions, enforced by h5i on the
+daemon's control socket rather than advised:</p>
+<pre><code class="language-toml">[profile.browser.browser]
+deny = [&quot;evaluate&quot;, &quot;state&quot;]   # a bare family name covers state_save/state_load
+</code></pre>
+<p><code>evaluate</code> is arbitrary code in the page; <code>state_*</code> and <code>credentials_*</code> reach
+the browser's stored secrets. A denied verb never reaches the browser, and the
+refusal lands in the receipt's <code>browser-proxy</code> lane. This is enforcement
+against an agent using the documented path, not containment against one that
+goes looking: the daemon runs inside the box, and a box has no internal
+privilege boundary.</p>
 <h3 id="working-in-a-box">Working in a box</h3>
 <pre><code class="language-bash">h5i box ls                            # every box on this clone
 h5i box status &lt;name&gt;                 # policy actually enforced, evidence, base drift

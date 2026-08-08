@@ -155,6 +155,21 @@ unsatisfiable request fails closed rather than leaving half a box behind.
 | `--image <img>` | Base image for `isolation=container` and `isolation=microvm`. Pre-pulled; runs never pull. |
 | `--engine <e>` | Browser engine for the `browser` profile: `chromium` (default), `lightpanda`, or `h5i-light`. Pinned in the digest; never falls back. |
 
+A profile can also refuse individual browser actions, enforced by h5i on the
+daemon's control socket rather than advised:
+
+```toml
+[profile.browser.browser]
+deny = ["evaluate", "state"]   # a bare family name covers state_save/state_load
+```
+
+`evaluate` is arbitrary code in the page; `state_*` and `credentials_*` reach
+the browser's stored secrets. A denied verb never reaches the browser, and the
+refusal lands in the receipt's `browser-proxy` lane. This is enforcement
+against an agent using the documented path, not containment against one that
+goes looking: the daemon runs inside the box, and a box has no internal
+privilege boundary.
+
 ### Working in a box
 
 ```bash

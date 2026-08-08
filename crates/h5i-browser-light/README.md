@@ -149,8 +149,12 @@ Tiers 1 and 2 of ROADMAP M10: static render, snapshot, screenshot, receipts,
 and a live view h5i's viewers can attach to. Tier 3 (policy-gated script) is
 not built.
 
+h5i can pin a box to this engine: `h5i box create --profile browser --engine
+h5i-light`, or `[profile.browser] engine = "h5i-light"`. A box pinned to it
+gets `H5I_BROWSER_ALLOW` (its own `net.egress`, so the engine's allowlist is
+the box's) and `H5I_BROWSER_RECEIPTS` (a path inside the box), and none of
+agent-browser's variables, which this engine would not read.
+
 Not yet done at this tier: the live view has been driven by a protocol-level
-test client, not by `h5i box view` against a real box; there is no input beyond
-scrolling and link clicks (no typing, no form submission); and h5i does not yet
-launch this engine — nothing sets `--engine` (ROADMAP M9), so using it inside a
-box is still manual.
+test client, not by `h5i box view` against a real box; and there is no input
+beyond scrolling and link clicks (no typing, no form submission).

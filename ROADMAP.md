@@ -1301,7 +1301,9 @@ the reading half of the loop, and Kitesurf's open-source release has landed so
 the build-versus-adopt call is made with the code on the table, not the blog
 post.
 
-**M11. The developer-mode viewer — proposed, after M8.** The terminal
+**M11. The developer-mode viewer — built, 2026-08-07.** `d` in the terminal viewer splits the screen: the page keeps the top, and a console/error pane takes the bottom third. What it shows was already arriving and being thrown away — `ConsoleError` and `PageError` carried their text and the viewer kept only a counter. Page text is passed through `sanitize_display` before it is drawn, because a console message is untrusted input and would otherwise repaint the viewer's own chrome. The layout and the pane renderer are pure functions (`termview/panes.rs`) with the split, the truncation, the bounded buffer and the sanitising all tested; `App` stays the thin thing that positions and writes, which is why any of it is testable at all. A terminal shorter than 16 rows keeps the whole page rather than showing two useless slivers. Not built: a per-request network pane — nothing on the viewer's stream carries requests, and the mediator's records are host-side, so that needs a source rather than a layout.
+
+**M11 (as proposed).** The terminal
 viewer's default becomes a developer view rather than a page view: for a
 coding agent's overseer, the rendered page alone is the least informative
 pane. Something like
@@ -1378,6 +1380,15 @@ Being explicit about these is a feature, since the claim is a security claim.
   full-desktop tier lands.
 - **A dependency on the critical path.** agent-browser is someone else's
   release cadence. Pinned, CLI-boundary, forkable, but not ours.
+- **Browser mediation is enforcement, not containment.** The socket mediator
+  (M8) decides every verb the agent's CLI sends, which is the threat the
+  control lock was written for: an agent that does not know a human took the
+  wheel. It is not a boundary against an agent that goes looking, because the
+  daemon runs *inside* the box and a box has no internal privilege boundary —
+  Landlock grants are per-box, not per-process, so any socket the daemon can
+  bind the agent can reach directly. Moving the daemon outside the box would
+  close that and break the reason boxes exist: it could no longer reach the
+  dev server on the box's own loopback.
 
 ## 10. Decisions taken
 

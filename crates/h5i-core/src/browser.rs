@@ -70,7 +70,7 @@ struct Cursor {
 /// that holds both is wiped at the start of every run — so the set of pid files
 /// is a serviceable session fingerprint, readable from the host without asking
 /// the box anything.
-fn session_id(env_dir: &Path) -> Option<String> {
+pub(crate) fn session_id(env_dir: &Path) -> Option<String> {
     let mut ids: Vec<String> = std::fs::read_dir(socket_dir(env_dir))
         .ok()?
         .flatten()

@@ -13,6 +13,23 @@
 //! `{"success","data","error"}` out, serialized under a single mutex upstream),
 //! which is why a few hundred lines can sit in front of it.
 //!
+//! # What this is, and is not
+//!
+//! It is **enforcement against an agent following the documented path**: the
+//! CLI reads `AGENT_BROWSER_SOCKET_DIR`, that directory is h5i's listener, and
+//! every verb it sends is decided here. That is the threat the control lock
+//! was written for — an agent that does not know a human took the wheel.
+//!
+//! It is **not containment against a deliberately evasive agent**, and the
+//! reason is structural rather than a missing feature: the daemon runs inside
+//! the box, and inside a box there is no privilege boundary. Landlock grants
+//! are per-box, not per-process, so any socket the daemon can bind the agent
+//! can also connect to directly if it goes looking. Moving the daemon outside
+//! the box would fix that and break the thing boxes exist for — it could no
+//! longer reach the dev server on the box's own loopback. So the honest claim
+//! is the narrower one, and it belongs in the limits section rather than in a
+//! footnote.
+//!
 //! # Two things learned by driving the real daemon
 //!
 //! 1. **`__agent_browser_internal_shutdown` is an escape hatch, not an

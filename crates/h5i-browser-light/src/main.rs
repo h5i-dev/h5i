@@ -22,6 +22,16 @@ use url::Url;
 /// The environment variable h5i uses to hand a box its egress proxy.
 const EGRESS_PROXY_VAR: &str = "H5I_EGRESS_PROXY";
 
+/// Origins h5i granted this box, as a comma-separated list. Read as a default
+/// for `--allow` so a box inherits its own `net.egress` without the agent
+/// having to restate it (and without it being able to widen it by omission).
+const ALLOW_VAR: &str = "H5I_BROWSER_ALLOW";
+
+/// Where h5i wants the request log. Read as a default for `--receipts`, which
+/// is what puts the fail-closed guarantee under h5i's control rather than the
+/// caller's: no writable log, no fetch.
+const RECEIPTS_VAR: &str = "H5I_BROWSER_RECEIPTS";
+
 #[derive(Parser)]
 #[command(
     name = "h5i-browser-light",
@@ -269,8 +279,19 @@ fn serve(
 }
 
 fn build_policy(net: &NetArgs) -> Policy {
+    // Flags first, then whatever h5i granted the box. Both are additive: an
+    // agent cannot widen the box's policy by passing `--allow`, because the
+    // sandbox's own egress enforcement is still the boundary underneath.
+    let from_env: Vec<String> = std::env::var(ALLOW_VAR)
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
     Policy::new()
         .allow_all_of(&net.allow)
+        .allow_all_of(&from_env)
         .set_allow_loopback(!net.no_loopback)
         .set_max_redirects(net.max_redirects)
         .set_max_response_bytes(net.max_response_bytes)
@@ -285,7 +306,11 @@ fn proxy_of(net: &NetArgs) -> Option<String> {
 
 fn build_sinks(net: &NetArgs) -> Result<(Arc<MemorySink>, Arc<dyn Sink>), H5iError> {
     let display = Arc::new(MemorySink::new());
-    match &net.receipts {
+    let receipts = net
+        .receipts
+        .clone()
+        .or_else(|| std::env::var(RECEIPTS_VAR).ok().map(PathBuf::from));
+    match &receipts {
         None => Ok((display.clone(), display)),
         Some(path) => {
             let file = Arc::new(JsonlSink::create(path)?);

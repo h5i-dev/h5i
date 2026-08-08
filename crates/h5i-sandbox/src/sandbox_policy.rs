@@ -554,6 +554,20 @@ pub struct Profile {
     /// canonical serialization — and its pinned digest — is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<BrowserEngine>,
+
+    /// Browser actions this box may not perform
+    /// (`[profile.X.browser] deny = ["evaluate", "state"]`).
+    ///
+    /// Enforced by the mediator that sits on the daemon's control socket, so
+    /// this is a real refusal rather than advice: the verb never reaches the
+    /// browser. A bare family name denies its members, so `state` covers
+    /// `state_save` and `state_load`. `evaluate` is the one most profiles want,
+    /// because it is arbitrary code in the page.
+    ///
+    /// Appended last, and serialized only when non-empty, so every existing
+    /// profile's canonical serialization — and its pinned digest — is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub browser_deny: Vec<String>,
 }
 
 /// The browser engines a `browser` box can be pinned to.
@@ -695,6 +709,7 @@ impl Profile {
             mach_iokit: false,
             loopback_ports: Vec::new(),
             engine: None,
+            browser_deny: Vec::new(),
         }
     }
 

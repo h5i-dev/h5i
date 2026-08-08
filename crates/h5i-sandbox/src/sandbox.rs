@@ -187,6 +187,17 @@ struct ProfileToml {
     /// changing engine changes what a page can do.
     #[serde(default)]
     engine: Option<String>,
+    /// `[profile.X.browser]` — what the box may do with the browser.
+    #[serde(default)]
+    browser: BrowserToml,
+}
+
+/// `[profile.X.browser] deny = ["evaluate"]`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BrowserToml {
+    #[serde(default)]
+    deny: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -463,6 +474,11 @@ pub fn load_profile(
                 mach_iokit: base.mach_iokit,
                 // Declared or inherited. Parsed (and refused) in
                 // `validate_profile` so the error names the accepted set.
+                browser_deny: t
+                    .browser
+                    .deny
+                    .clone()
+                    .unwrap_or_else(|| base.browser_deny.clone()),
                 engine: match t.engine.as_deref() {
                     Some(name) => Some(
                         crate::sandbox_policy::BrowserEngine::parse(name)
