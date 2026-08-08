@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactElement,
 } from "react";
@@ -59,6 +60,26 @@ export function SandboxView() {
   const [filter, setFilter] = useState<string>("all");
   // Bumped on every successful fleet poll, so the detail pane refreshes with it.
   const [tick, setTick] = useState(0);
+  // Width of the fleet column. Read from storage once, on the initialiser, so
+  // the first paint is already at the remembered width rather than jumping.
+  const [split, setSplit] = useState<number>(loadSplit);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SPLIT_KEY, String(Math.round(split)));
+    } catch {
+      // Storage refused (private mode, disabled). The width still works for
+      // this session; only the memory of it is lost.
+    }
+  }, [split]);
+
+  // A window that shrinks below the saved width would otherwise leave no room
+  // for the detail pane at all.
+  useEffect(() => {
+    const onResize = () => setSplit((w) => clampSplit(w));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   const load = useCallback(() => {
     api
@@ -118,7 +139,10 @@ export function SandboxView() {
   return (
     <div className="sbx-shell">
       <TopStrip probe={probe} boxes={boxes} />
-      <div className="sbx-body">
+      <div
+        className="sbx-body"
+        style={{ gridTemplateColumns: `${split}px 1px 1fr` }}
+      >
         <FleetPane
           boxes={filtered}
           total={boxes?.length ?? 0}
@@ -127,9 +151,120 @@ export function SandboxView() {
           selectedId={selectedId}
           onSelect={setSelectedId}
         />
+        <Divider width={split} onWidth={setSplit} />
         <DetailPane box={selected} tick={tick} />
       </div>
     </div>
+  );
+}
+
+// ── the split ────────────────────────────────────────────────────────────────
+
+/** Bounds on the fleet column, in pixels. Narrow enough to get out of the way
+ *  of the browser terminal, wide enough that a box row is still readable. */
+const SPLIT_MIN = 260;
+const SPLIT_MAX = 900;
+const SPLIT_DEFAULT = 380;
+const SPLIT_KEY = "h5i.console.split";
+
+/** Remembered across reloads, because re-dragging the same divider every time
+ *  the page reloads is the kind of small friction that makes a tool feel
+ *  disposable. `localStorage` can throw (private mode, storage disabled), and a
+ *  console that fails to render because it could not save a pane width would be
+ *  a bad trade — so both directions swallow. */
+function loadSplit(): number {
+  try {
+    const raw = window.localStorage.getItem(SPLIT_KEY);
+    const n = raw === null ? NaN : Number.parseInt(raw, 10);
+    return Number.isFinite(n) ? clampSplit(n) : SPLIT_DEFAULT;
+  } catch {
+    return SPLIT_DEFAULT;
+  }
+}
+
+function clampSplit(n: number): number {
+  // Also bounded by the window, or a saved width from a wide monitor leaves the
+  // detail pane invisible on a laptop.
+  const ceiling = Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, window.innerWidth - 360));
+  return Math.min(ceiling, Math.max(SPLIT_MIN, n));
+}
+
+/**
+ * The drag handle between the fleet and the detail pane.
+ *
+ * A `separator` with `aria-valuenow`, focusable, and movable with the arrow
+ * keys: a divider that only responds to a mouse is one a keyboard user cannot
+ * reach at all, and this one decides how much of the screen the browser
+ * terminal gets.
+ *
+ * Pointer events rather than mouse events, so a trackpad, a pen and a touch
+ * screen all work; `setPointerCapture` keeps the drag alive when the pointer
+ * outruns the 1px handle, which at speed it always does.
+ */
+function Divider({
+  width,
+  onWidth,
+}: {
+  width: number;
+  onWidth: (n: number) => void;
+}) {
+  const dragging = useRef(false);
+
+  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    dragging.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    // Without this the drag selects the fleet list's text as it crosses it.
+    document.body.classList.add("sbx-dragging");
+  }, []);
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!dragging.current) return;
+      // The x of the pointer *is* the new column width: the grid starts at the
+      // body's left edge, so no offset bookkeeping is needed.
+      const left = e.currentTarget.parentElement?.getBoundingClientRect().left ?? 0;
+      onWidth(clampSplit(e.clientX - left));
+    },
+    [onWidth],
+  );
+
+  const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    dragging.current = false;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    document.body.classList.remove("sbx-dragging");
+  }, []);
+
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const step = e.shiftKey ? 64 : 16;
+      if (e.key === "ArrowLeft") onWidth(clampSplit(width - step));
+      else if (e.key === "ArrowRight") onWidth(clampSplit(width + step));
+      else if (e.key === "Home") onWidth(SPLIT_MIN);
+      else if (e.key === "End") onWidth(clampSplit(SPLIT_MAX));
+      else return;
+      e.preventDefault();
+    },
+    [width, onWidth],
+  );
+
+  return (
+    <div
+      className="sbx-divider"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the fleet list"
+      aria-valuenow={Math.round(width)}
+      aria-valuemin={SPLIT_MIN}
+      aria-valuemax={SPLIT_MAX}
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onKeyDown={onKeyDown}
+      onDoubleClick={() => onWidth(SPLIT_DEFAULT)}
+      title="Drag to resize · double-click to reset · arrow keys when focused"
+    />
   );
 }
 

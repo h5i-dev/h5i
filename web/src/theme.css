@@ -159,10 +159,12 @@ pre,
 
 /* ── body split: fleet | detail ────────────────────────────────────────────── */
 
+/* Three columns: fleet, the drag handle, detail. The first is set inline from
+   the remembered width; the fallback here is what renders before that lands. */
 .sbx-body {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(340px, 32%) 1fr;
+  grid-template-columns: 380px 1px 1fr;
   min-height: 0;
   overflow: hidden;
 }
@@ -171,7 +173,31 @@ pre,
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: 1px solid var(--bp-border);
+}
+
+/* One pixel wide, with a comfortable grab area either side via a padded
+   pseudo-element — a 1px hit target is a divider nobody can catch. */
+.sbx-divider {
+  position: relative;
+  background: var(--bp-border);
+  cursor: col-resize;
+  touch-action: none;
+}
+.sbx-divider::after {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+.sbx-divider:hover,
+.sbx-divider:focus-visible {
+  background: var(--h5-accent);
+  outline: none;
+}
+/* While dragging, the pointer regularly outruns the handle and lands on the
+   list; without this the drag selects text the whole way across. */
+body.sbx-dragging {
+  cursor: col-resize;
+  user-select: none;
 }
 .sbx-fleet-header {
   display: flex;
