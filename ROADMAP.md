@@ -763,6 +763,116 @@ test, browser chrome, a file picker, devtools as a human sees them — an X plus
 streaming tier comes back, and Neko is the reference design for it. Nothing in
 the boundary, the lock or the receipt changes when it does.
 
+### 7.1 Two engines, one policy (proposed, 2026-08-07)
+
+A survey on 2026-08-07 (Cloudflare's Kitesurf announcement, Lightpanda, and a
+read of agent-browser upstream) changed what "the browser" can mean here.
+Kitesurf is a browser engine rewritten for agents: Rust (Blitz for HTML and
+layout, Stylo for CSS, Boa for JS) compiled to WASM and run as disposable
+isolates behind a single egress worker that owns every network request and
+every cookie jar. It passes 215,000+ Web Platform Tests, speaks CDP and MCP,
+treats every page load as untrusted input, keeps no persistent authenticated
+sessions, and Cloudflare says it will be open-sourced for self-hosting.
+Lightpanda (Zig, html5ever plus V8, CDP) is the same camp, and agent-browser
+upstream already selects between Chrome and Lightpanda with `--engine`. The
+part that matters to us is not the cloud: it is that non-Chromium engines an
+agent can actually use now exist, and the ecosystem has converged on CDP as the
+interface, so an engine swap does not orphan the tooling.
+
+The h5i-shaped observation: **our egress proxy is a blind CONNECT gate, so
+browser receipts can only name hosts.** The proxy sees
+`CONNECT docs.example.com:443` and nothing else; the evidence for "what did
+the agent read" is whatever the post-run console drain catches. An engine whose
+network stack *is* our proxy inverts that. Every request and response becomes
+first-class evidence, per-request policy needs no MITM CA because we are the
+client, and for untrusted origins script execution can be off entirely, which
+removes the delivery channel for most page-borne prompt injection instead of
+trying to filter it.
+
+The model this points at is **two engines, routed by origin, one policy**:
+
+- **Loopback, the agent's own dev server: Chromium.** Verifying that a modern
+  app renders, hot-reloads and runs its client-side code is the hardest compat
+  case there is, and the content is the agent's own code. Fidelity wins, and
+  today's stack stays exactly as built.
+- **The untrusted web (docs, search, issue trackers): the light engine.**
+  Reading rarely needs a JIT, receipts matter more than pixels, and the model
+  wants a tree, not a frame. Containment wins.
+
+The routing rule lives next to `net.egress` in the profile, not in the agent's
+moment-to-moment choice: the agent must not get to pick the weaker-policy
+engine for a hostile page. Two degenerate profiles fall out for free:
+`browser` as it exists today (Chromium only, nothing changes), and a
+`browser-lite` with no Chromium at all: no Chrome preflight, no 12 GiB limit,
+plausible at the microvm tier where the Chromium stack has never been proven.
+
+The staged path, cheapest first:
+
+1. **Engine as a profile knob.** agent-browser already abstracts the engine;
+   a profile field that sets `--engine lightpanda` costs almost nothing and
+   changes no seam we own (socket dir, egress env, evidence drain all stay).
+   What it buys is the real data: where a light engine actually breaks on our
+   loop, before we bet anything on one.
+2. **Origin routing.** agent-browser is one engine per daemon session, so
+   per-origin routing means either two sessions with h5i choosing at navigate
+   time, or our own layer in front (7.2 builds that layer for other reasons).
+   This step is a design decision, not a big build, but it is honest to say
+   the session model does not give it to us for free.
+3. **The reading engine.** A crate of ours: Blitz and Stylo for parse and
+   layout, a capped JS engine for the minority of pages that need script, and
+   fetch wired directly into the egress proxy's stack so the receipt *is* the
+   network log. **Assembled, not written**: the component stack is the same
+   open-source Rust Kitesurf builds on, and the build-versus-adopt call waits
+   for Kitesurf's open-source drop before choosing which pieces are ours.
+
+What we do not do is write a rendering browser. Section 7's argument is
+unchanged: Chromium plus agent-browser stays the fidelity path. The light
+engine earns its place only as the reading path, on the strength of receipts
+and a containment story Chromium structurally cannot give us.
+
+### 7.2 Owning the daemon socket (proposed; the interception point open item 1 asks for)
+
+Open item 1 records that the control lock is advisory because no h5i process
+sits between the agent and agent-browser. The upstream read says the
+interception point exists and is small: the daemon's entire control surface is
+newline-delimited JSON over one filesystem-bound `AF_UNIX` socket,
+`{"id", "action", ...}` in, `{"success", "data", "error"}` out, one line each
+way, every action serialized under a single mutex. That is a protocol a
+supervisor can hold in a few hundred lines.
+
+The shape: the daemon's real socket moves to a path the box has no grant for,
+and the path the box is given (`AGENT_BROWSER_SOCKET_DIR`) carries an
+h5i-owned listener that forwards line by line. The design consequence is that
+the daemon stops being an in-box child and becomes an h5i-launched sidecar,
+because a daemon spawned by the agent's own CLI can only ever bind where the
+agent can also reach. That is the shape the macOS shim already has (h5i
+launches Chrome itself and attaches agent-browser to it), so it is a
+convergence, not a fork; and it must not move the boundary: the sidecar stays
+in the box's netns, under the box's egress, with nothing published.
+
+What one mediated socket buys, in order of value:
+
+1. **The lock becomes real.** `control::check` runs on every mutating verb,
+   and `HeldByHuman` / `NeedsResnapshot` come back as the daemon's own typed
+   error. Read-only verbs pass untouched, which is exactly the split 5.4
+   wants: watching never collides.
+2. **Per-action receipts.** navigate, click, fill, eval land in the receipt as
+   they happen, with their arguments. Today's evidence is a post-run console
+   drain; this is the action log, and it is the browser-side analogue of the
+   egress tally.
+3. **A browser action policy.** Upstream's `ActionPolicy` (allow / deny /
+   confirm over action names, about 200 lines) is the right vocabulary, worth
+   adopting as a per-profile manifest: `eval` deniable, `credentials_*` and
+   `state_*` deniable, and a `confirm` tier for consequential actions, which
+   is where the whole field landed on injection containment (per-site grants
+   plus human confirmation). The confirm channel is the viewer.
+
+The honest costs: an h5i process on the browser hot path; a dependency on the
+daemon's wire protocol, which is an internal surface, against section 7's
+stated preference for the CLI boundary (mitigated the same way: pinned,
+forkable, and the protocol is one page); and the sidecar launch is new
+lifecycle code where today the daemon manages itself.
+
 ## 8. Phases
 
 Each phase ends with a green `cargo test` and a demo that runs on a stock
@@ -1005,6 +1115,27 @@ being, and a tool shell is not a TTY.
 **Post M7.** A full-desktop tier when something needs more than a page viewport
 (X plus streaming, Neko as the reference design), microVM backend, macOS.
 
+**M8. The mediated socket — proposed (7.2).** The agent-browser daemon becomes
+an h5i-launched sidecar and its socket path is h5i's listener. Exit criteria:
+an agent's `agent-browser click` during a human takeover is refused with the
+typed error, not advised; every mutating verb appears in the receipt with its
+arguments; a profile denies `eval` and the denial lands in the receipt. This
+closes open item 1 and is worth doing before any engine work, because the
+mediation layer is where origin routing (7.1) would live anyway.
+
+**M9. Second engine — proposed (7.1).** `engine` as a profile field passed
+through to agent-browser, Lightpanda as the first non-Chromium value. Exit
+criteria: a `browser-lite` box with no Chromium installed answers `doctor`,
+snapshots a real documentation site, and the full loop's failure modes on a
+light engine are written down here. No routing yet: one engine per box.
+
+**M10. The reading engine — proposed, gated.** The h5i-native crate of 7.1
+step 3, fetch wired into the egress proxy so the receipt is the network log.
+Gated on two things: M9's findings say a light engine is actually usable for
+the reading half of the loop, and Kitesurf's open-source release has landed so
+the build-versus-adopt call is made with the code on the table, not the blog
+post.
+
 Full loop the demo has to show:
 
 ```
@@ -1121,6 +1252,13 @@ Being explicit about these is a feature, since the claim is a security claim.
    decision about where the check lives (a PATH shim, a skill-level convention,
    or accepting that it is advisory) rather than more code in `control.rs`.
 
+   **Candidate answer, 2026-08-07: the mediated socket (7.2, M8).** The
+   daemon's NDJSON control socket is a fourth option the original list missed,
+   and it is the only one the agent cannot route around: a PATH shim can be
+   bypassed by calling the binary by path, a convention enforces nothing, and
+   the socket is the one door every verb walks through. The open part is now
+   the sidecar lifecycle, not the interception point.
+
    Related and now much smaller: **snapshot handle staleness across a takeover**
    is modelled — `needs_resnapshot` is set on the take, survives a session that
    never hands back, and clears only on an actual snapshot. It rests on the same
@@ -1134,3 +1272,14 @@ Being explicit about these is a feature, since the claim is a security claim.
    `create`/`exec`/`browser`/`diff`/`export`/`close`, TypeScript only, binary
    fetched on postinstall. No `agent.run()` until the resident session shape is
    settled, and Python only when someone asks for it.
+4. **How origin routing selects an engine (7.1 step 2).** agent-browser is one
+   engine per daemon session, so "loopback gets Chromium, the web gets the
+   light engine" needs either two sessions with h5i choosing at navigate time,
+   or the mediation layer of 7.2 doing the choosing per action. The second is
+   cleaner and is one more reason M8 goes first, but neither is designed, and
+   the policy surface (where in the profile the routing rule lives, and what
+   its default is) is unwritten.
+5. **Build versus adopt for the reading engine (M10).** Kitesurf's announced
+   open-sourcing decides how much of the M10 crate is ours to write. Until
+   that drop, the only commitment is the shape: fetch through our proxy,
+   receipts as the network log, script off by default for untrusted origins.
