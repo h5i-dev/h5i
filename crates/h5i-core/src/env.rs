@@ -3695,12 +3695,14 @@ mod browser_engine_env_tests {
             "the mediator must follow the recorded /tmp redirect"
         );
 
-        // With no redirect the box uses the host's own /tmp.
+        // With no redirect there is no *private* /tmp, and mediating on the
+        // host's shared one would let two boxes steal each other's socket.
         let mut plain = policy.clone();
         plain.home_binds.retain(|b| b.target != std::path::Path::new("/tmp"));
         assert_eq!(
             host_tmp_root(&plain, env_dir),
-            Some(std::path::PathBuf::from("/tmp"))
+            None,
+            "a shared host /tmp must disable mediation, not host a global socket"
         );
     }
 
@@ -3824,8 +3826,15 @@ fn host_tmp_root(policy: &ResolvedPolicy, _env_dir: &Path) -> Option<PathBuf> {
     {
         return Some(bind.backing.clone());
     }
-    // No redirect: the box uses the host's own `/tmp` (workspace tier).
-    Some(PathBuf::from("/tmp"))
+    // No redirect: the box uses the host's own `/tmp`, shared with every other
+    // box and every other process on the machine. Mediating there would put a
+    // *host-global* socket at a well-known name — two browser boxes would
+    // unlink and rebind each other's rendezvous, so one box's verbs would be
+    // judged against the other's deny list and recorded in the other's
+    // receipt, and any same-uid process could connect and drive the browser.
+    // A control that can be silently stolen is worse than one that is
+    // honestly absent, so there is no mediation without a private /tmp.
+    None
 }
 
 /// The daemon's session name. agent-browser defaults to `default`, and h5i
@@ -3873,8 +3882,9 @@ fn engage_browser_mediation(
     // connects to.
     let Some(tmp) = host_tmp_root(policy, env_dir) else {
         eprintln!(
-            "h5i: this tier's /tmp is inside the image, so the browser control lock \
-             cannot be enforced for this box (it remains advisory)."
+            "h5i: this box has no private /tmp the host can reach (image-backed tier, or a \
+             profile without a /tmp grant), so browser actions cannot be mediated and the \
+             control lock remains advisory for this session."
         );
         return None;
     };
@@ -4685,9 +4695,18 @@ fn run_inner(
     let env_dir_path = m.dir(h5i_root);
     let browser_evidence = crate::browser::run_touched_browser(argv)
         .filter(|verb| crate::browser::verb_wants_drain(verb))
-        .filter(|_| crate::browser::browser_is_live(&env_dir_path))
+        // Resolved from the policy, not derived from the env dir: `<env>/tmp` is
+        // only the box's /tmp on Linux kernel tiers, and getting it wrong here
+        // skips the drain entirely and reports a run that browsed as clean.
+        .filter(|_| {
+            host_tmp_root(&policy, &env_dir_path)
+                .map(|root| crate::browser::browser_is_live(&root))
+                .unwrap_or(false)
+        })
         .map(|verb| {
-            crate::browser::collect(&env_dir_path, &verb, |drain_argv| {
+            let tmp_root = host_tmp_root(&policy, &env_dir_path)
+                .unwrap_or_else(|| env_dir_path.join("tmp"));
+            crate::browser::collect(&env_dir_path, &tmp_root, &verb, |drain_argv| {
                 let out = sandbox::run_with_env(&policy, &work, drain_argv, &injected_env).ok()?;
                 // A non-zero drain is a browser that is gone or wedged. Report
                 // that as `unavailable`, never as a clean page.

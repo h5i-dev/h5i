@@ -47,12 +47,16 @@ impl Verdict {
 #[derive(Debug, Clone)]
 pub struct Policy {
     origins: BTreeSet<String>,
-    /// Subdomain wildcards (`*.example.com`), stored as the bare suffix.
+    /// Subdomain wildcards (`*.example.com`), stored as `scheme://suffix[:port]`
+    /// so they carry the same scheme and port constraints as an exact origin.
     ///
     /// h5i's own `net.egress` accepts `*.host`, and a box's egress list is
     /// handed to this engine verbatim, so treating the entry as a literal
-    /// hostname made every wildcard grant match nothing — a box the sandbox
-    /// would have let through, refused here.
+    /// hostname made every wildcard grant match nothing. Storing only the bare
+    /// host was the other half of that mistake: it silently dropped the scheme,
+    /// so a wildcard permitted plaintext http on any port while the exact
+    /// spelling of the same grant refused it, and made an https->http redirect
+    /// on the same host a downgrade the allowlist waved through.
     wildcards: BTreeSet<String>,
     allow_loopback: bool,
     max_redirects: usize,
@@ -89,12 +93,25 @@ impl Policy {
         // `*.host` and `.host` are h5i's spellings for "this host and its
         // subdomains". Record the suffix; `check` matches it against the host
         // rather than against the whole origin string.
-        if let Some(suffix) = trimmed
+        // The wildcard marker sits on the *host*, which may follow a scheme
+        // (`http://*.host:8080`) or stand alone (`*.host`), so strip the scheme
+        // first and put it back afterwards.
+        let (scheme, authority) = match trimmed.split_once("://") {
+            Some((scheme, rest)) => (Some(scheme), rest),
+            None => (None, trimmed),
+        };
+        if let Some(rest) = authority
             .strip_prefix("*.")
-            .or_else(|| trimmed.strip_prefix('.'))
+            .or_else(|| authority.strip_prefix('.'))
         {
-            if !suffix.is_empty() {
-                self.wildcards.insert(suffix.to_ascii_lowercase());
+            let rebuilt = match scheme {
+                Some(scheme) => format!("{scheme}://{rest}"),
+                None => rest.to_string(),
+            };
+            // Normalised exactly like an exact entry, so a bare `*.host` means
+            // https like a bare `host` does, and `*.host:8443` keeps its port.
+            if let Some(origin) = normalize_origin(&rebuilt) {
+                self.wildcards.insert(origin);
             }
             return self;
         }
@@ -176,11 +193,27 @@ impl Policy {
             return Verdict::Allow;
         }
 
-        // A wildcard grants the host and anything under it, matched on a label
-        // boundary so `*.example.com` does not also grant `notexample.com`.
+        // A wildcard grants the host and anything under it — but only on the
+        // scheme and port it was granted for, so it is compared as an origin
+        // with the host part relaxed, not as a bare hostname.
         let host_lower = host.to_ascii_lowercase();
-        if self.wildcards.iter().any(|suffix| {
-            host_lower == *suffix || host_lower.ends_with(&format!(".{suffix}"))
+        if self.wildcards.iter().any(|w| {
+            let Some((scheme, rest)) = w.split_once("://") else {
+                return false;
+            };
+            // Split the granted authority back into host and optional port.
+            let (w_host, w_port) = match rest.rsplit_once(':') {
+                Some((h, p)) if p.bytes().all(|b| b.is_ascii_digit()) => (h, Some(p)),
+                _ => (rest, None),
+            };
+            let host_matches =
+                host_lower == w_host || host_lower.ends_with(&format!(".{w_host}"));
+            let scheme_matches = url.scheme() == scheme;
+            let port_matches = match w_port {
+                Some(p) => url.port().map(|actual| actual.to_string()) == Some(p.to_string()),
+                None => url.port().is_none(),
+            };
+            host_matches && scheme_matches && port_matches
         }) {
             return Verdict::Allow;
         }
@@ -275,6 +308,38 @@ mod tests {
         assert!(policy.check(&url("https://example.com/")).is_allowed());
         // `.host` is the other spelling h5i accepts.
         assert!(Policy::new().allow(".example.com").check(&url("https://x.example.com/")).is_allowed());
+    }
+
+    #[test]
+    fn a_wildcard_carries_the_same_scheme_and_port_constraints_as_an_exact_grant() {
+        // The bug: the wildcard branch skipped normalize_origin, so `*.host`
+        // silently permitted plaintext http on any port while the exact
+        // spelling of the same grant refused it.
+        let policy = Policy::new().allow("*.example.com");
+        assert!(policy.check(&url("https://docs.example.com/")).is_allowed());
+        assert!(
+            !policy.check(&url("http://docs.example.com/")).is_allowed(),
+            "a bare wildcard means https, exactly as a bare host does"
+        );
+        assert!(
+            !policy.check(&url("https://docs.example.com:8443/")).is_allowed(),
+            "the port is part of the origin for wildcards too"
+        );
+
+        // ...and an explicit scheme/port is honoured.
+        let plain = Policy::new().allow("http://*.internal.corp:8080");
+        assert!(plain.check(&url("http://api.internal.corp:8080/t")).is_allowed());
+        assert!(!plain.check(&url("https://api.internal.corp/t")).is_allowed());
+    }
+
+    #[test]
+    fn a_redirect_cannot_downgrade_a_wildcard_grant_to_plaintext() {
+        // Every hop is re-checked by this same function, so if the wildcard
+        // ignored the scheme an https->http hop on the same host would be
+        // waved through and the response would travel unencrypted.
+        let policy = Policy::new().allow("*.example.com");
+        assert!(policy.check(&url("https://a.example.com/x")).is_allowed());
+        assert!(!policy.check(&url("http://a.example.com/x")).is_allowed());
     }
 
     #[test]

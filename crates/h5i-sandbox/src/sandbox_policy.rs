@@ -623,13 +623,17 @@ pub const BROWSER_DENYABLE_ACTIONS: &[&str] = &[
     "trace",
     // Individual verbs.
     "back",
+    "cdp_url",
     "boundingbox",
     "check",
     "click",
     "close",
+    "console",
     "content",
     "count",
     "dblclick",
+    "diff_snapshot",
+    "diff_url",
     "download",
     "drag",
     "evaluate",
@@ -650,6 +654,7 @@ pub const BROWSER_DENYABLE_ACTIONS: &[&str] = &[
     "launch",
     "locale",
     "navigate",
+    "network",
     "offline",
     "open",
     "pdf",
@@ -683,6 +688,19 @@ pub fn validate_browser_deny(entry: &str) -> Result<(), String> {
     let name = entry.trim();
     if name.is_empty() {
         return Err("`[profile.X.browser] deny` contains an empty entry (fail-closed)".to_string());
+    }
+    // `snapshot` is the one verb that clears the stale-handle latch a human
+    // takeover sets, so denying it means every mutating verb is refused with
+    // "run `agent-browser snapshot`" and that snapshot is refused too — the
+    // browser is unusable for the life of the box, with an error that reads as
+    // a malfunction.
+    if name == "snapshot" {
+        return Err(
+            "`snapshot` cannot be denied: it is how an agent recovers after a human takes and \
+             hands back browser control, so denying it would leave the browser permanently \
+             refusing every action (fail-closed)."
+                .to_string(),
+        );
     }
     if BROWSER_DENYABLE_ACTIONS.contains(&name) {
         return Ok(());
@@ -1422,8 +1440,41 @@ mod browser_discovery_tests {
             validate_browser_deny(good)
                 .unwrap_or_else(|e| panic!("`{good}` should be a valid deny entry: {e}"));
         }
-        // Surrounding whitespace is a typo, not a different action.
+        // Surrounding whitespace validates — and `load_profile` trims on the
+        // way in, so what enforcement matches is what was validated. This test
+        // previously stopped here, which pinned the fail-open: validation
+        // trimmed, storage did not, and the padded entry denied nothing.
         assert!(validate_browser_deny(" evaluate ").is_ok());
+    }
+
+    #[test]
+    fn snapshot_cannot_be_denied_because_it_is_how_the_lock_releases() {
+        let err = validate_browser_deny("snapshot").expect_err("must refuse");
+        assert!(err.contains("snapshot"), "{err}");
+        assert!(err.contains("fail-closed"), "{err}");
+    }
+
+    #[test]
+    fn every_read_only_action_the_mediator_knows_is_deniable() {
+        // Drift guard. The mediator enumerates actions it treats as read-only;
+        // if one of them is missing here, `validate_profile` hard-refuses a
+        // profile that names it — a regression for a config that loaded
+        // before — and, for `cdp_url`, removes the only way to close a
+        // mediation bypass (it hands out the raw CDP endpoint).
+        for action in [
+            "cdp_url",
+            "console",
+            "network",
+            "diff_snapshot",
+            "diff_url",
+            "read",
+            "screenshot",
+            "url",
+            "title",
+        ] {
+            validate_browser_deny(action)
+                .unwrap_or_else(|e| panic!("`{action}` is a real action and must be deniable: {e}"));
+        }
     }
 
     #[test]

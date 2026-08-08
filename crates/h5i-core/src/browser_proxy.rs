@@ -156,6 +156,10 @@ pub fn is_mutating(action: &str) -> bool {
 /// Deliberately just `snapshot`: that is the verb
 /// [`control::Verdict::explain`] names, and the two have to agree or the
 /// refusal is advice the agent cannot act on.
+///
+/// Because it is the *only* way out of the latch, a profile is not allowed to
+/// deny it — see `sandbox_policy::validate_browser_deny`, which refuses
+/// `snapshot` for exactly this reason.
 fn clears_resnapshot(action: &str) -> bool {
     action == "snapshot"
 }
@@ -534,6 +538,11 @@ pub fn spawn(
                         });
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        // A healthy idle poll. It has to clear the counter, or
+                        // "consecutive" means "total since the session began"
+                        // and sporadic errors hours apart add up to a listener
+                        // that stops enforcing.
+                        consecutive_errors = 0;
                         std::thread::sleep(std::time::Duration::from_millis(25));
                     }
                     // A transient accept failure — EMFILE while the box runs a
@@ -622,9 +631,15 @@ fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
     use std::io::{BufRead, Write};
 
     // Read one line — the request the client is waiting on a reply to. Best
-    // effort: if it sent nothing, a null id is the honest answer.
+    // effort, and *bounded*: a client that connects to probe liveness and waits
+    // for the peer to speak first would otherwise block this thread forever and
+    // never receive the refusal, which is the hang this branch exists to
+    // prevent. Threads here are detached, so an unbounded wait also leaks one
+    // per retry while a daemon is failing to start.
+    let _ = client.set_read_timeout(Some(std::time::Duration::from_secs(2)));
     let mut first = String::new();
     let _ = std::io::BufReader::new(client).read_line(&mut first);
+    let _ = client.set_read_timeout(None);
     let id = serde_json::from_str::<Value>(&first)
         .ok()
         .and_then(|v| v.get("id").cloned())

@@ -477,10 +477,16 @@ pub fn load_profile(
                 // Checked against the known action vocabulary in
                 // `validate_profile` below, so a misspelling is refused at
                 // create rather than silently denying nothing.
+                // Trimmed on the way in, so what enforcement matches is what
+                // validation checked. Validating `entry.trim()` while storing
+                // the raw string meant `deny = [" evaluate "]` passed create
+                // and then matched no action — the exact fail-open the
+                // validator exists to prevent.
                 browser_deny: t
                     .browser
                     .deny
                     .clone()
+                    .map(|list| list.iter().map(|e| e.trim().to_string()).collect())
                     .unwrap_or_else(|| base.browser_deny.clone()),
                 engine: match t.engine.as_deref() {
                     Some(name) => Some(

@@ -70,9 +70,17 @@ struct Cursor {
 /// that holds both is wiped at the start of every run — so the set of pid files
 /// is a serviceable session fingerprint, readable from the host without asking
 /// the box anything.
-pub(crate) fn session_id(env_dir: &Path) -> Option<String> {
-    let mut ids: Vec<String> = std::fs::read_dir(socket_dir(env_dir))
-        .ok()?
+pub(crate) fn session_id(tmp_root: &Path) -> Option<String> {
+    // Both directories: under mediation the daemon's pid file is in the
+    // private one and the shim mirrors only .version/.config/.stream, so
+    // looking at the visible directory alone returns None on every mediated
+    // run — and a cursor that never sees a session change never resets, so a
+    // fresh browser producing the same number of console lines reads as a
+    // clean page.
+    let mut ids: Vec<String> = std::fs::read_dir(daemon_dir(tmp_root))
+        .into_iter()
+        .flatten()
+        .chain(std::fs::read_dir(socket_dir(tmp_root)).into_iter().flatten())
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().ends_with(".pid"))
         .filter_map(|e| {
@@ -114,16 +122,23 @@ fn write_cursor(env_dir: &Path, c: &Cursor) {
 /// tiers `/tmp` is the per-env scratch backed by `<env>/tmp` — so the socket the
 /// box created is visible from here. That is what makes the "is there a browser
 /// to ask?" check free: no exec, no daemon launch, just a directory listing.
-fn socket_dir(env_dir: &Path) -> PathBuf {
-    env_dir.join("tmp").join("agent-browser")
+/// The box-visible socket directory, under the **resolved** host-side `/tmp`.
+///
+/// Takes the root rather than deriving `<env>/tmp` itself: that derivation is
+/// only correct on Linux kernel tiers, and getting it wrong here means the
+/// liveness gate is always false and the evidence drain is silently skipped —
+/// a run that looks clean because nothing was ever collected. `env::host_tmp_root`
+/// is the single place that knows the mapping.
+fn socket_dir(tmp_root: &Path) -> PathBuf {
+    tmp_root.join("agent-browser")
 }
 
 /// Directory (under the box's `/tmp`) where the shim starts the real daemon
 /// when h5i is mediating the socket the box is told to use.
 pub(crate) const DAEMON_DIR_NAME: &str = "agent-browser-daemon";
 
-fn daemon_dir(env_dir: &Path) -> PathBuf {
-    env_dir.join("tmp").join(DAEMON_DIR_NAME)
+fn daemon_dir(tmp_root: &Path) -> PathBuf {
+    tmp_root.join(DAEMON_DIR_NAME)
 }
 
 /// Is a browser actually running in this box right now?
@@ -142,8 +157,8 @@ fn daemon_dir(env_dir: &Path) -> PathBuf {
 ///
 /// Both directories are searched, because under mediation the real daemon binds
 /// the private one while an unmediated box still uses the visible one.
-pub fn browser_is_live(env_dir: &Path) -> bool {
-    [socket_dir(env_dir), daemon_dir(env_dir)]
+pub fn browser_is_live(tmp_root: &Path) -> bool {
+    [socket_dir(tmp_root), daemon_dir(tmp_root)]
         .iter()
         .any(|dir| {
             let Ok(entries) = std::fs::read_dir(dir) else {
@@ -329,10 +344,13 @@ fn parse_batch(out: &[u8], cursor: &mut Cursor) -> BrowserEvidence {
 /// page.
 pub fn collect(
     env_dir: &Path,
+    tmp_root: &Path,
     verb: &str,
     run: impl FnOnce(&[String]) -> Option<Vec<u8>>,
 ) -> BrowserEvidence {
-    let session = session_id(env_dir);
+    // `env_dir` holds the host-owned cursor; `tmp_root` is where the browser's
+    // sockets actually are, which is not `<env>/tmp` on every tier.
+    let session = session_id(tmp_root);
     let mut cursor = read_cursor(env_dir);
     // A different browser than the one these counts came from: start over, or
     // this session's findings are measured against a buffer that never existed.
@@ -370,13 +388,13 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("default.sock"), b"").unwrap();
         assert!(
-            !browser_is_live(td.path()),
+            !browser_is_live(&td.path().join("tmp")),
             "a socket with no pid beside it is h5i's listener, not a browser"
         );
 
         // A real daemon writes a pid file.
         std::fs::write(dir.join("default.pid"), b"1234").unwrap();
-        assert!(browser_is_live(td.path()));
+        assert!(browser_is_live(&td.path().join("tmp")));
     }
 
     #[test]
@@ -389,7 +407,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("default.sock"), b"").unwrap();
         std::fs::write(dir.join("default.pid"), b"4321").unwrap();
-        assert!(browser_is_live(td.path()));
+        assert!(browser_is_live(&td.path().join("tmp")));
     }
 
     fn argv(parts: &[&str]) -> Vec<String> {
@@ -444,15 +462,15 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         // The gate that keeps the drain from *starting* a browser: with no
         // session, a run must not be recorded as having seen a clean page.
-        assert!(!browser_is_live(td.path()));
+        assert!(!browser_is_live(&td.path().join("tmp")));
 
         let sockets = td.path().join("tmp").join("agent-browser");
         std::fs::create_dir_all(&sockets).unwrap();
-        assert!(!browser_is_live(td.path()), "an empty socket dir is not a session");
+        assert!(!browser_is_live(&td.path().join("tmp")), "an empty socket dir is not a session");
         std::fs::write(sockets.join("default.pid"), "123").unwrap();
-        assert!(!browser_is_live(td.path()), "a stale pid file is not a socket");
+        assert!(!browser_is_live(&td.path().join("tmp")), "a stale pid file is not a socket");
         std::fs::write(sockets.join("default.sock"), "").unwrap();
-        assert!(browser_is_live(td.path()));
+        assert!(browser_is_live(&td.path().join("tmp")));
     }
 
     #[test]
@@ -554,7 +572,7 @@ mod tests {
     #[test]
     fn a_missing_browser_is_recorded_as_unavailable_not_as_clean() {
         let td = tempfile::tempdir().unwrap();
-        let ev = collect(td.path(), "click", |_| None);
+        let ev = collect(td.path(), &td.path().join("tmp"), "click", |_| None);
         assert!(ev.unavailable);
         // The distinction a reviewer needs: nothing was looked at, which is not
         // the same claim as nothing went wrong.
@@ -572,11 +590,11 @@ mod tests {
 
         let out = batch_json(r#"{"type":"error","text":"boom"}"#, "", "");
         assert_eq!(
-            collect(td.path(), "open", |_| Some(out.clone())).console,
+            collect(td.path(), &td.path().join("tmp"), "open", |_| Some(out.clone())).console,
             vec!["[error] boom"]
         );
         // Same session, same buffer: already reported.
-        assert!(collect(td.path(), "click", |_| Some(out.clone()))
+        assert!(collect(td.path(), &td.path().join("tmp"), "click", |_| Some(out.clone()))
             .console
             .is_empty());
 
@@ -586,7 +604,7 @@ mod tests {
         // exactly the failure this identity exists to prevent.
         std::fs::write(sockets.join("default.pid"), "2002").unwrap();
         assert_eq!(
-            collect(td.path(), "open", |_| Some(out.clone())).console,
+            collect(td.path(), &td.path().join("tmp"), "open", |_| Some(out.clone())).console,
             vec!["[error] boom"]
         );
     }
@@ -595,11 +613,11 @@ mod tests {
     fn the_cursor_persists_across_runs_and_lives_outside_the_spool() {
         let td = tempfile::tempdir().unwrap();
         let out = batch_json(r#"{"type":"error","text":"one"}"#, "", "");
-        let first = collect(td.path(), "open", |_| Some(out.clone()));
+        let first = collect(td.path(), &td.path().join("tmp"), "open", |_| Some(out.clone()));
         assert_eq!(first.console, vec!["[error] one"]);
 
         // Same buffer, new run: already recorded, so nothing new.
-        let second = collect(td.path(), "click", |_| Some(out.clone()));
+        let second = collect(td.path(), &td.path().join("tmp"), "click", |_| Some(out.clone()));
         assert!(second.console.is_empty());
 
         // And the cursor is a sibling of the spool, never inside it — the box's
