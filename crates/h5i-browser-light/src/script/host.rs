@@ -21,6 +21,50 @@ use crate::net::Broker;
 pub struct ConsoleLine {
     pub level: String,
     pub text: String,
+    /// `"page"` when the page called `console.*`, `"engine"` when this engine
+    /// is the one complaining.
+    ///
+    /// An agent reading a console needs to know which it is looking at: "the
+    /// site reported an error" and "the browser could not do something" call
+    /// for different responses, and they were indistinguishable.
+    pub source: String,
+    /// How many times in a row this exact line was said.
+    ///
+    /// remix.run logged one identical error **1486 times**, which is not
+    /// information — it is the same information, at a volume that buries
+    /// everything else and blows up the snapshot an agent reads.
+    pub repeats: usize,
+}
+
+fn page_source() -> String {
+    "page".to_string()
+}
+
+impl ConsoleLine {
+    pub fn page(level: &str, text: String) -> Self {
+        Self { level: level.to_string(), text, source: page_source(), repeats: 1 }
+    }
+
+    /// A line this engine said about itself, not about the page.
+    pub fn engine(level: &str, text: String) -> Self {
+        Self { level: level.to_string(), text, source: "engine".to_string(), repeats: 1 }
+    }
+}
+
+/// Append a line, collapsing an immediate repeat into a count.
+///
+/// Consecutive rather than global on purpose: a page that alternates two
+/// messages is saying something different from one that says the same thing
+/// twice, and collapsing across the whole log would lose the order an agent
+/// reads for cause and effect.
+pub fn push_console(log: &mut Vec<ConsoleLine>, line: ConsoleLine) {
+    if let Some(last) = log.last_mut() {
+        if last.text == line.text && last.level == line.level && last.source == line.source {
+            last.repeats += 1;
+            return;
+        }
+    }
+    log.push(line);
 }
 
 /// A Web API the page asked for and this engine does not have.

@@ -587,7 +587,10 @@ fn log(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsV
     let level = arg_string(args, 0, context)?;
     let text = arg_string(args, 1, context)?;
     let host = host(context)?;
-    host.console.borrow_mut().push(ConsoleLine { level, text });
+    crate::script::host::push_console(
+        &mut host.console.borrow_mut(),
+        ConsoleLine::page(&level, text),
+    );
     Ok(JsValue::undefined())
 }
 

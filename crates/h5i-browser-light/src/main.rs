@@ -706,7 +706,17 @@ fn open(
             "console": page
                 .console()
                 .into_iter()
-                .map(|line| serde_json::json!({ "level": line.level, "text": line.text }))
+                .map(|line| {
+                    serde_json::json!({
+                        "level": line.level,
+                        "text": line.text,
+                        // Which of the two is talking. "the site reported an
+                        // error" and "the browser could not do something" call
+                        // for different responses and were indistinguishable.
+                        "source": line.source,
+                        "repeats": line.repeats,
+                    })
+                })
                 .collect::<Vec<_>>(),
             "settled": page.settled().map(|s| s.render()),
             "script": page.has_script(),

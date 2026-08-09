@@ -668,7 +668,25 @@
     get className() { return this.getAttribute("class") || ""; }
     set className(v) { this.setAttribute("class", v); }
     get classList() { return observed(new DOMTokenList(this, "class"), "DOMTokenList"); }
+    set classList(v) { this.setAttribute("class", String(v)); }
     get relList() { return observed(new DOMTokenList(this, "rel"), "DOMTokenList"); }
+
+    // Setting a URL part rewrites the href it came from, which is how routing
+    // code edits a link in place.
+    set protocol(v) { this._setUrlPart("protocol", v); }
+    set host(v) { this._setUrlPart("host", v); }
+    set hostname(v) { this._setUrlPart("hostname", v); }
+    set port(v) { this._setUrlPart("port", v); }
+    set pathname(v) { this._setUrlPart("pathname", v); }
+    set search(v) { this._setUrlPart("search", v); }
+    set hash(v) { this._setUrlPart("hash", v); }
+    _setUrlPart(part, value) {
+      const raw = api.getAttr(this._id, "href");
+      if (raw === null) return;
+      const url = new URL(raw, currentAddress);
+      url[part] = value;
+      this.setAttribute("href", url.href);
+    }
 
     get value() {
       const tag = this.tagName;
@@ -763,6 +781,10 @@
     get scrollTop() { return (api.scrollMetrics(this._id) || [0])[0]; }
     set scrollTop(y) { api.setScrollTop(this._id, Number(y)); }
     get scrollLeft() { return (api.scrollMetrics(this._id) || [0, 0])[1]; }
+    // Nothing here scrolls horizontally — no subtree clips and scrolls — so the
+    // write is accepted and does nothing rather than throwing at a page that is
+    // merely restoring a saved position.
+    set scrollLeft(_x) {}
     get scrollHeight() { return (api.scrollMetrics(this._id) || [0, 0, 0])[2]; }
     get scrollWidth() { return (api.scrollMetrics(this._id) || [0, 0, 0, 0])[3]; }
 
@@ -863,8 +885,14 @@
     }
 
     get disabled() { return api.getAttr(this._id, "disabled") !== null; }
+    set disabled(on) {
+      if (on) this.setAttribute("disabled", "");
+      else this.removeAttribute("disabled");
+    }
     get name() { return api.getAttr(this._id, "name") || ""; }
+    set name(v) { this.setAttribute("name", v); }
     get type() { return (api.getAttr(this._id, "type") || "text").toLowerCase(); }
+    set type(v) { this.setAttribute("type", v); }
     get options() { return this.querySelectorAll("option"); }
 
     // Real serialisation. Returning textContent here silently stripped every
@@ -872,12 +900,24 @@
     get innerHTML() { return api.innerHtml(this._id); }
     set innerHTML(html) { api.setInnerHtml(this._id, String(html)); }
     get outerHTML() { return api.outerHtml(this._id); }
+    set outerHTML(html) {
+      // Replacing an element with its own markup, which is how a component
+      // swaps itself out. The node is gone afterwards, as in a browser.
+      const parent = this.parentNode;
+      if (!parent) return;
+      const host = document.createElement("div");
+      host.innerHTML = String(html);
+      const replacements = host.childNodes;
+      for (const kid of replacements) parent.insertBefore(kid, this);
+      this.remove();
+    }
 
     // Deliberately not watched. A style declaration answers *any* CSS property
     // name by design — it is already a proxy over the dashed surface — so there
     // is no such thing as a name it is missing, and wrapping one proxy in
     // another defeats the `in` check the reporting one relies on.
     get style() { return new StyleDeclaration(this); }
+    set style(text) { this.setAttribute("style", String(text)); }
 
     get dataset() {
       const node = this;
@@ -999,6 +1039,51 @@
   // `el.onclick = fn` is the other way to bind a handler, and plenty of
   // generated code still uses it. Defined rather than enumerated by hand so the
   // property and `addEventListener` cannot disagree about what is registered.
+  // Attributes that are nothing but a string on the element. Defined from a
+  // table rather than written out twice, so a getter can never exist without
+  // its setter — which is the bug this table was written to end: in a module,
+  // which is strict, assigning to a getter-only property *throws*, and a
+  // classic-script test cannot see it because sloppy mode swallows it.
+  const REFLECTED_ATTRIBUTES = {
+    dir: "dir",
+    rel: "rel",
+    slot: "slot",
+    crossOrigin: "crossorigin",
+    integrity: "integrity",
+    referrerPolicy: "referrerpolicy",
+    accessKey: "accesskey",
+    placeholder: "placeholder",
+    htmlFor: "for",
+    target: "target",
+    media: "media",
+    charset: "charset",
+    loading: "loading",
+    decoding: "decoding",
+    autocomplete: "autocomplete",
+  };
+  for (const [property, attribute] of Object.entries(REFLECTED_ATTRIBUTES)) {
+    Object.defineProperty(Element.prototype, property, {
+      configurable: true,
+      get() { return api.getAttr(this._id, attribute) || ""; },
+      set(value) { this.setAttribute(attribute, value); },
+    });
+  }
+
+  // Boolean and numeric reflections, which convert rather than pass through.
+  Object.defineProperty(Element.prototype, "hidden", {
+    configurable: true,
+    get() { return api.getAttr(this._id, "hidden") !== null; },
+    set(on) { if (on) this.setAttribute("hidden", ""); else this.removeAttribute("hidden"); },
+  });
+  Object.defineProperty(Element.prototype, "tabIndex", {
+    configurable: true,
+    get() {
+      const raw = api.getAttr(this._id, "tabindex");
+      return raw === null ? -1 : Number(raw) || 0;
+    },
+    set(value) { this.setAttribute("tabindex", String(Number(value) || 0)); },
+  });
+
   const HANDLER_EVENTS = [
     "click", "dblclick", "mousedown", "mouseup", "mouseover", "mouseout", "mousemove",
     "input", "change", "submit", "focus", "blur", "keydown", "keyup", "keypress",
@@ -1200,24 +1285,20 @@
   // reaches the unsupported list an agent reads — the page just looks broken.
   // These record themselves on *any* access and throw a message that names what
   // was wanted, so a missing API is legible from both directions.
-  function missingApi(name) {
-    const report = (property) => {
-      const full = property ? `${name}.${String(property)}` : name;
-      api.unsupported(full);
-      throw new TypeError(`${full} is not implemented by this engine`);
-    };
-    return new Proxy(function () {}, {
-      get(_t, property) {
-        if (property === Symbol.toPrimitive || property === "toString") {
-          return () => `[unsupported ${name}]`;
-        }
-        if (property === "then") return undefined; // not a thenable
-        report(property);
-      },
-      apply() { report(null); },
-      construct() { report(null); },
-    });
-  }
+  // There was a `missingApi(name)` helper here that returned a proxy throwing a
+  // named TypeError for anything this engine lacked. It is gone, and its
+  // removal is the point.
+  //
+  // It made `typeof WebSocket` answer "function" and `'serviceWorker' in
+  // navigator` answer true — so every page that *correctly* feature-detects
+  // took the branch for an API that then threw. That is the plausible-wrong
+  // answer this engine exists to refuse, written by us, and it cost three real
+  // sites their whole bundle.
+  //
+  // An API we do not have is now simply absent, which is what a browser lacking
+  // it looks like, and absence is already named: a global reports itself
+  // through the ReferenceError parser in `Script::name_missing_global`, and a
+  // property through the reporting proxy in `observed`.
 
   // Real, because the engine already contains a correct URL parser and a
   // second one written in JavaScript would disagree with it about exactly the
@@ -1594,9 +1675,16 @@
 
   function observes(entry, record) {
     const { target, options } = entry;
-    const inScope = options.subtree
-      ? target.contains(record.target)
-      : target._id === record.target._id;
+    // Observing the *document* is what a framework does to watch a whole page —
+    // Vite's module-preload polyfill opens with exactly this — and `document`
+    // is not a `Node` here, so it has no `contains`. Calling it threw "not a
+    // callable function" from inside this engine, on every page that mutated
+    // the DOM after registering such an observer.
+    const inScope = target.nodeType === 9
+      ? record.target.isConnected
+      : options.subtree
+        ? target.contains(record.target)
+        : target._id === record.target._id;
     if (!inScope) return false;
     if (record.type === "childList") return !!options.childList;
     if (record.type === "attributes") {
@@ -1891,6 +1979,11 @@
     createTreeWalker(root, whatToShow, filter) {
       return new TreeWalker(root, whatToShow === undefined ? NodeFilter.SHOW_ALL : whatToShow, filter);
     },
+    // Real API in its own right: `document.contains(node)` is how code asks
+    // whether something is still on the page.
+    contains(node) {
+      return !!node && node.isConnected === true;
+    },
     getElementsByName(name) {
       return api.queryAll(`[name="${String(name).replace(/"/g, '\\"')}"]`, 0).map(wrap);
     },
@@ -1969,15 +2062,12 @@
     namespaceURI: undefined,
     ownerDocument: null,
     get implementation() {
-      return {
+      return observed({
         hasFeature: () => true,
         // A second document is genuinely out of reach here — there is one tree,
         // and it is the page. A page using this to parse HTML off to the side
         // gets a named refusal instead of a silently broken document.
-        createHTMLDocument: missingApi("document.implementation.createHTMLDocument"),
-        createDocument: missingApi("document.implementation.createDocument"),
-        createDocumentType: missingApi("document.implementation.createDocumentType"),
-      };
+      }, "document.implementation");
     },
 
     get activeElement() { return wrap(api.body()); },
@@ -2365,7 +2455,6 @@
         hex.slice(10, 16).join(""),
       ].join("-");
     },
-    subtle: missingApi("crypto.subtle"),
   };
 
   // A real deep clone. The JSON round trip this replaces silently dropped
@@ -2504,10 +2593,6 @@
       userAgent: api.userAgent(),
       platform: "", language: "en-US", languages: ["en-US"],
       onLine: true, cookieEnabled: false, maxTouchPoints: 0,
-      clipboard: missingApi("navigator.clipboard"),
-      serviceWorker: missingApi("navigator.serviceWorker"),
-      geolocation: missingApi("navigator.geolocation"),
-      mediaDevices: missingApi("navigator.mediaDevices"),
     }, "navigator"),
     // Named rather than absent. A page reaching for these gets a message that
     // says which API it wanted, and the name reaches the snapshot.
@@ -2570,21 +2655,8 @@
     CharacterData: Text,
     customElements, NodeFilter, NodeIterator, TreeWalker,
 
-    WebSocket: missingApi("WebSocket"),
-    Worker: missingApi("Worker"),
-    SharedWorker: missingApi("SharedWorker"),
-    EventSource: missingApi("EventSource"),
-    indexedDB: missingApi("indexedDB"),
-    caches: missingApi("caches"),
     crypto: observed(crypto, "crypto"),
-    WebAssembly: missingApi("WebAssembly"),
-    BroadcastChannel: missingApi("BroadcastChannel"),
-    Notification: missingApi("Notification"),
-    FileReader: missingApi("FileReader"),
-    Blob: missingApi("Blob"),
-    Image: missingApi("Image"),
     TextEncoder, TextDecoder, XMLHttpRequest,
-    HTMLCanvasElement: missingApi("HTMLCanvasElement"),
     getComputedStyle: (element) => {
       // Reads what Stylo resolved. Properties outside the curated set record
       // themselves as unsupported rather than returning a plausible lie: a

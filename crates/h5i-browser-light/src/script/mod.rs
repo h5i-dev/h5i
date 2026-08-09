@@ -39,6 +39,15 @@ use host::{ConsoleLine, Host, HostHandle};
 /// Boa's own prelude is the language; this is the browser.
 const PRELUDE: &str = include_str!("prelude.js");
 
+/// What a stack frame inside this engine's own prelude is called.
+///
+/// The prelude was the one source evaluated without a path, so any frame in it
+/// read `unknown at :1598:24` — and a bug in *our* DOM implementation looked
+/// exactly like a bug in the page's bundle. It took three sites failing
+/// identically to notice. A frame that names this file is a bug report against
+/// this engine, and it should say so.
+const PRELUDE_PATH: &str = "<h5i browser prelude>";
+
 /// How long a settle may take before it is cut off and *reported* as cut off.
 const SETTLE_BUDGET_MS: u64 = 2_000;
 
@@ -191,7 +200,10 @@ impl Script {
             )
             .map_err(|e| e.to_string())?;
         context
-            .eval(Source::from_bytes(PRELUDE))
+            .eval(Source::from_reader(
+                PRELUDE.as_bytes(),
+                Some(std::path::Path::new(PRELUDE_PATH)),
+            ))
             .map_err(|e| format!("the browser prelude failed to load: {e}"))?;
 
         Ok(Self {
@@ -263,10 +275,10 @@ impl Script {
                     // there, while the error carries the stack trace Boa 0.21
                     // records — which is the whole reason for being on 0.21.
                     let text = boa_engine::JsError::from_opaque(reason).to_string();
-                    self.host.console.borrow_mut().push(ConsoleLine {
-                        level: "error".to_string(),
-                        text: format!("{name}: module failed: {text}"),
-                    });
+                    crate::script::host::push_console(
+                &mut self.host.console.borrow_mut(),
+                ConsoleLine::engine("error", format!("{name}: module failed: {text}")),
+            );
                 }
             }
         }
@@ -275,13 +287,16 @@ impl Script {
         // never arrived. Said plainly, because an agent reading a thin outline
         // would otherwise blame the page.
         for (name, _) in &still_pending {
-            self.host.console.borrow_mut().push(ConsoleLine {
-                level: "error".to_string(),
-                text: format!(
-                    "{name}: still loading when the page settled — its imports did not finish \
-                     arriving"
+            crate::script::host::push_console(
+                &mut self.host.console.borrow_mut(),
+                ConsoleLine::engine(
+                    "error",
+                    format!(
+                        "{name}: still loading when the page settled — its imports did not \
+                         finish arriving"
+                    ),
                 ),
-            });
+            );
         }
     }
 
@@ -474,10 +489,10 @@ impl Script {
     /// output rather than in a stream nobody reads.
     pub fn note_error(&self, text: &str) {
         self.name_missing_global(text);
-        self.host.console.borrow_mut().push(ConsoleLine {
-            level: "error".to_string(),
-            text: text.to_string(),
-        });
+        crate::script::host::push_console(
+                &mut self.host.console.borrow_mut(),
+                ConsoleLine::engine("error", text.to_string()),
+            );
     }
 
     /// Record the identifier behind a `ReferenceError` as an API we lack.
@@ -510,15 +525,18 @@ impl Script {
             } else {
                 String::new()
             };
-            self.host.console.borrow_mut().push(ConsoleLine {
-                level: "error".to_string(),
-                text: format!(
-                    "`{}` is missing because a script this page needed did not run: \
-                     {first}{and_others}. This engine did not refuse the API, it refused \
-                     the request.",
-                    name.trim()
+            crate::script::host::push_console(
+                &mut self.host.console.borrow_mut(),
+                ConsoleLine::engine(
+                    "error",
+                    format!(
+                        "`{}` is missing because a script this page needed did not run: \
+                         {first}{and_others}. This engine did not refuse the API, it refused \
+                         the request.",
+                        name.trim()
+                    ),
                 ),
-            });
+            );
             return;
         }
         // Only accept something shaped like an identifier, so a page that puts

@@ -178,19 +178,55 @@ fn a_missing_web_api_is_recorded_rather_than_silently_stubbed() {
     let (_page, mut script) = page_and_script("<html><body><div id='d'></div></body></html>");
     script
         .eval(
-            "try { new WebSocket('wss://x') } catch (e) {} \
-             try { new WebSocket('wss://y') } catch (e) {} \
-             try { indexedDB.open('db') } catch (e) {}",
+            "void navigator.serviceWorker; void navigator.serviceWorker; \
+             void navigator.clipboard;",
         )
         .expect("runs");
 
     let reported = script.unsupported();
     let names: Vec<&str> = reported.iter().map(|(n, _)| n.as_str()).collect();
-    assert!(names.contains(&"WebSocket"), "{reported:?}");
-    assert!(names.contains(&"indexedDB.open"), "{reported:?}");
+    assert!(names.contains(&"navigator.serviceWorker"), "{reported:?}");
+    assert!(names.contains(&"navigator.clipboard"), "{reported:?}");
     // Most-used first, because forty calls is likelier to be the problem than one.
-    assert_eq!(reported[0].0, "WebSocket");
+    assert_eq!(reported[0].0, "navigator.serviceWorker");
     assert_eq!(reported[0].1, 2);
+}
+
+#[test]
+fn an_api_this_engine_lacks_is_absent_rather_than_a_stub_that_lies() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // This engine used to answer feature detection with a stub that threw when
+    // touched: `typeof WebSocket` was "function" and `'serviceWorker' in
+    // navigator` was true. Every page that *correctly* checked before using
+    // therefore took the branch for an API that then failed — the
+    // plausible-wrong answer this engine exists to refuse, written by us. It
+    // cost three real sites their entire bundle.
+    assert_eq!(script.eval_value("typeof WebSocket").unwrap(), "undefined");
+    assert_eq!(script.eval_value("typeof BroadcastChannel").unwrap(), "undefined");
+    assert_eq!(
+        script.eval_value("String('serviceWorker' in navigator)").unwrap(),
+        "false"
+    );
+    assert_eq!(
+        script.eval_value("String(!!navigator.serviceWorker)").unwrap(),
+        "false"
+    );
+    // And optional chaining reaches its fallback instead of throwing.
+    assert_eq!(
+        script.eval_value("typeof navigator.clipboard?.writeText").unwrap(),
+        "undefined"
+    );
+
+    // Absent, but never silent: the property was still recorded.
+    assert!(
+        script
+            .unsupported()
+            .iter()
+            .any(|(n, _)| n == "navigator.serviceWorker"),
+        "{:?}",
+        script.unsupported()
+    );
 }
 
 #[test]
@@ -399,14 +435,14 @@ fn the_snapshot_says_when_a_page_needed_an_api_this_engine_lacks() {
 
     let page = factory.from_html(
         "<html><body><div id='d'>x</div><script>\
-         try { new WebSocket('wss://x') } catch (e) {}\
+         void navigator.serviceWorker;\
          </script></body></html>",
         &url::Url::parse("https://app.example/").unwrap(),
     );
 
     let rendered = page.snapshot().render();
     assert!(rendered.contains("Web APIs this engine does not have"), "{rendered}");
-    assert!(rendered.contains("WebSocket"), "{rendered}");
+    assert!(rendered.contains("navigator.serviceWorker"), "{rendered}");
     // Outside the fence, because it is a fact about the reading, not the page.
     let fence = rendered.find(crate::snapshot::CONTENT_BEGIN).unwrap();
     assert!(rendered.find("note:").unwrap() < fence, "{rendered}");
@@ -1530,23 +1566,22 @@ fn an_api_this_engine_lacks_names_itself_instead_of_throwing_anonymously() {
         .eval(
             "globalThis.said = ''; \
              try { indexedDB.open('db') } catch (e) { said = String(e) } \
-             try { new WebSocket('wss://x') } catch (e) {} \
-             try { navigator.clipboard.writeText('x') } catch (e) {}",
+             void navigator.clipboard;",
         )
         .expect("runs");
 
+    // A global this engine lacks throws by its own name, which is what the
+    // ReferenceError parser reads back.
     assert!(
-        script.eval_value("said").unwrap().contains("indexedDB.open"),
+        script.eval_value("said").unwrap().contains("indexedDB"),
         "the message names what was wanted: {}",
         script.eval_value("said").unwrap()
     );
 
     let reported: Vec<String> = script.unsupported().into_iter().map(|(n, _)| n).collect();
-    assert!(reported.iter().any(|n| n == "indexedDB.open"), "{reported:?}");
-    assert!(reported.iter().any(|n| n == "WebSocket"), "{reported:?}");
     assert!(
-        reported.iter().any(|n| n == "navigator.clipboard.writeText"),
-        "nested ones name their whole path: {reported:?}"
+        reported.iter().any(|n| n == "navigator.clipboard"),
+        "a property names its whole path: {reported:?}"
     );
 }
 
@@ -3286,4 +3321,45 @@ fn a_missing_method_on_a_host_object_names_itself() {
     let reported: Vec<String> = script.unsupported().into_iter().map(|(n, _)| n).collect();
     assert!(reported.iter().any(|n| n == "location.someRoutingHelper"), "{reported:?}");
     assert!(reported.iter().any(|n| n == "navigator.someSensor"), "{reported:?}");
+}
+
+#[test]
+fn the_console_says_which_of_the_two_is_talking() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    script.eval("console.error('the site is unhappy')").unwrap();
+    script.note_error("the engine could not do something");
+
+    let lines = script.console();
+    let page_line = lines.iter().find(|l| l.text.contains("site is unhappy")).unwrap();
+    let engine_line = lines.iter().find(|l| l.text.contains("could not do")).unwrap();
+
+    // "the site reported an error" and "the browser could not do something"
+    // call for different responses, and were indistinguishable.
+    assert_eq!(page_line.source, "page");
+    assert_eq!(engine_line.source, "engine");
+}
+
+#[test]
+fn an_identical_line_repeated_is_counted_rather_than_repeated() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // remix.run logged one identical error 1486 times. That is not information;
+    // it is the same information at a volume that buries everything else.
+    script
+        .eval("for (let i = 0; i < 500; i++) console.error('the same thing')")
+        .unwrap();
+
+    let lines = script.console();
+    let same: Vec<_> = lines.iter().filter(|l| l.text == "the same thing").collect();
+    assert_eq!(same.len(), 1, "collapsed to one line: {lines:?}");
+    assert_eq!(same[0].repeats, 500, "and the count is kept");
+
+    // Consecutive only: alternating messages are saying something different,
+    // and collapsing across the whole log would lose the order.
+    script
+        .eval("console.error('a'); console.error('b'); console.error('a')")
+        .unwrap();
+    let after = script.console();
+    assert_eq!(after.iter().filter(|l| l.text == "a").count(), 2);
 }

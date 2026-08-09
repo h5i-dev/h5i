@@ -151,7 +151,17 @@ def summarise(payload):
         "refs": len(snap.get("refs") or []),
         "denied": denied,
         "unsupported": {u["api"]: u["calls"] for u in payload.get("unsupported", [])},
-        "errors": [c["text"] for c in payload.get("console", []) if c["level"] == "error"],
+        # Only what the *engine* said. A page calling `console.error` is the
+        # site reporting its own trouble, which is information rather than a
+        # failure of this engine to explain itself.
+        "errors": [
+            c["text"] for c in payload.get("console", [])
+            if c["level"] == "error" and c.get("source", "page") == "engine"
+        ],
+        "page_errors": sum(
+            c.get("repeats", 1) for c in payload.get("console", [])
+            if c["level"] == "error" and c.get("source", "page") == "page"
+        ),
         "settled": payload.get("settled"),
     }
 
@@ -198,11 +208,13 @@ def measure(binary, name, sites):
             "refs": js["refs"],
             "denied": js["denied"],
             "errors": len(js.get("errors", [])),
+            "page_errors": js.get("page_errors", 0),
             "cut_off": bool(js.get("settled") and "still busy" in str(js["settled"])),
         })
         print(
             f"  {js['lines']:>4} lines ({base['lines']:>4} w/o)  {js['refs']:>3} refs  "
-            f"{len(js.get('errors', [])):>2} err  {js['denied']:>2} denied  {url}",
+            f"{len(js.get('errors', [])):>2} err  {js.get('page_errors', 0):>3} page  "
+            f"{js['denied']:>2} denied  {url}",
             flush=True,
         )
 
