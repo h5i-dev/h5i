@@ -14,6 +14,23 @@
 
   const api = globalThis.__h5i;
 
+  /// Tag name to the interface that tag gets, filled in once the
+  /// interfaces below exist. A Map declared here rather than beside them
+  /// because `constructElement` is defined above and would otherwise read
+  /// a `const` still in its temporal dead zone.
+  const TAG_CLASSES = new Map();
+
+  /// An error with the line it came from, for the callbacks that swallow one.
+  ///
+  /// Every `catch` that reports and carries on — a listener, a timer, an
+  /// observer — is by definition detached from the code that scheduled it, so
+  /// the message is all the reader gets and a message without a location sends
+  /// them looking through the whole page. These are exactly the errors that can
+  /// least afford to be anonymous, and they were the ones reporting the least.
+  function withStack(error) {
+    return String(error) + (error && error.stack ? "\n" + error.stack : "");
+  }
+
   // ── nodes ────────────────────────────────────────────────────────────────
 
   const wrappers = new Map(); // id -> Node, so identity holds across lookups
@@ -118,8 +135,9 @@
   let upgrading = null;
 
   function constructElement(id) {
-    const definition = definitions.get(api.tagName(id).toLowerCase());
-    if (!definition) return new Element(id);
+    const tag = api.tagName(id).toLowerCase();
+    const definition = definitions.get(tag);
+    if (!definition) return new (TAG_CLASSES.get(tag) ?? Element)(id);
 
     const previousUpgrade = upgrading;
     upgrading = id;
@@ -169,7 +187,7 @@
     try {
       if (typeof node.connectedCallback === "function") node.connectedCallback();
     } catch (error) {
-      console.error(`custom element connectedCallback threw: ${error}`);
+      console.error(`custom element connectedCallback threw: ${withStack(error)}`);
     }
   }
 
@@ -179,7 +197,7 @@
     try {
       if (typeof node.disconnectedCallback === "function") node.disconnectedCallback();
     } catch (error) {
-      console.error(`custom element disconnectedCallback threw: ${error}`);
+      console.error(`custom element disconnectedCallback threw: ${withStack(error)}`);
     }
   }
 
@@ -192,7 +210,7 @@
         node.attributeChangedCallback(name, oldValue, newValue);
       }
     } catch (error) {
-      console.error(`custom element attributeChangedCallback threw: ${error}`);
+      console.error(`custom element attributeChangedCallback threw: ${withStack(error)}`);
     }
   }
 
@@ -416,7 +434,7 @@
           if (typeof handler === "function") handler.call(this, event);
           else handler.handleEvent(event);
         } catch (error) {
-          console.error(`a ${event.type} listener threw: ${error}`);
+          console.error(`a ${event.type} listener threw: ${withStack(error)}`);
         }
         if (registered.options && registered.options.once) this.__listeners.delete(handler);
       }
@@ -484,6 +502,14 @@
       return parent && parent.nodeType === 1 ? parent : null;
     }
     get childNodes() { return api.children(this._id).map(wrap); }
+    /// The single most-asked-for thing this engine did not have.
+    ///
+    /// WPT called it 3,944 times across the corpus, more than twice anything
+    /// else on the list, and it is one line. It went missing because nothing in
+    /// four hand-picked corpora used it and everything in the DOM test suite
+    /// does — which is the argument for running a conformance suite in one
+    /// sentence.
+    hasChildNodes() { return api.children(this._id).length > 0; }
     get firstChild() { return this.childNodes[0] || null; }
     get lastChild() { const c = this.childNodes; return c[c.length - 1] || null; }
 
@@ -511,6 +537,46 @@
       });
       childListRecord(this, [], []);
     }
+
+    /// The text as *rendered*, which is what separates it from `textContent`.
+    ///
+    /// Two differences, and both are the reason pages reach for this one:
+    /// content in a `display: none` subtree is not in it, and block boundaries
+    /// become line breaks. A page that reads `innerText` to find out what the
+    /// user can see gets a different and better answer than `textContent`,
+    /// which would hand back the contents of every hidden menu on the page.
+    ///
+    /// An approximation of the spec's algorithm rather than the whole of it:
+    /// the full version is defined in terms of layout boxes and collapses
+    /// runs of whitespace across them. This walks the tree instead, which
+    /// agrees with a browser on ordinary content and can differ on
+    /// deliberately awkward whitespace. `textContent` remains available for
+    /// anyone who wants the literal answer.
+    get innerText() {
+      const parts = [];
+      const walk = (node) => {
+        for (const child of node.childNodes) {
+          if (child.nodeType === 3) { parts.push(child.data); continue; }
+          if (child.nodeType !== 1) continue;
+          const tag = child.tagName;
+          if (tag === "SCRIPT" || tag === "STYLE" || tag === "TEMPLATE") continue;
+          if (tag === "BR") { parts.push("\n"); continue; }
+          const display = api.computedStyle(child._id, "display") || "";
+          if (display === "none") continue;
+          // `inline` and its relatives run together; everything else is a
+          // block and earns a break on each side.
+          const inline = display.startsWith("inline") || display === "contents";
+          if (!inline) parts.push("\n");
+          walk(child);
+          if (!inline) parts.push("\n");
+        }
+      };
+      walk(this);
+      // Collapse the runs of breaks the walk produced at nested block edges,
+      // then trim: a browser reports no leading or trailing blank line.
+      return parts.join("").replace(/[ \t]*\n[ \t]*(\n[ \t]*)*/g, "\n").trim();
+    }
+    set innerText(value) { this.textContent = String(value); }
 
     appendChild(child) {
       // Inserting a fragment inserts its children and leaves the fragment
@@ -1249,6 +1315,22 @@
     getClientRects() { return [this.getBoundingClientRect()]; }
     get offsetWidth() { return this.getBoundingClientRect().width; }
     get offsetHeight() { return this.getBoundingClientRect().height; }
+    /// Position relative to `offsetParent`, which for this engine is the page.
+    ///
+    /// A full implementation walks up for the nearest positioned ancestor and
+    /// subtracts its border box. That is a real difference on a positioned
+    /// subtree, and it is written down here rather than left to be discovered:
+    /// what these return is the offset from the document, which is what
+    /// `offsetParent` being the body means.
+    get offsetTop() { return this.getBoundingClientRect().top; }
+    get offsetLeft() { return this.getBoundingClientRect().left; }
+    get offsetParent() {
+      // Null for an element that is not rendered, which is the one case code
+      // actually branches on.
+      const display = api.computedStyle(this._id, "display") || "";
+      if (display === "none" || !this.isConnected) return null;
+      return wrap(api.query("body", 0));
+    }
     // Not the bounding rect: for `documentElement` and `body` this is the
     // *viewport*, not the element's own height, and the bottom-of-page check
     // every page writes compares the two.
@@ -1372,7 +1454,7 @@
   /// One definition per shape rather than a hand-written getter and setter per
   /// attribute, because there are a great many of them and the interesting part
   /// is the conversion, not the plumbing.
-  function reflect(idl, content, type = "string", options = {}) {
+  function reflect(proto, idl, content, type = "string", options = {}) {
     const parseInteger = (raw) => {
       // The spec's rules for parsing integers, which are not `Number()`:
       // leading whitespace is skipped, trailing garbage ends the number, and
@@ -1400,7 +1482,10 @@
       },
       enumerated() {
         const raw = api.getAttr(this._id, content);
-        if (raw === null) return options.missing ?? "";
+        // `in` rather than `??`, because `null` is a real missing-value default
+        // — `crossOrigin` reports null for an absent attribute — and `??` would
+        // quietly turn that into "".
+        if (raw === null) return "missing" in options ? options.missing : "";
         const lower = String(raw).toLowerCase();
         // Aliases first: a keyword can have more than one spelling that maps to
         // the same state, and the empty string is the one that matters —
@@ -1409,12 +1494,16 @@
         // most common way anyone writes it.
         if (options.aliases && lower in options.aliases) return options.aliases[lower];
         const found = options.keywords.find((word) => word.toLowerCase() === lower);
-        return found ?? options.invalid ?? "";
+        if (found !== undefined) return found;
+        return "invalid" in options ? options.invalid : "";
       },
       url() {
         const raw = api.getAttr(this._id, content);
         if (raw === null) return "";
-        const parts = api.parseUrl(String(raw), this.baseURI);
+        // `currentAddress`, matching `_resolved` above: only Document carries a
+        // `baseURI`, and resolving against `undefined` would hand back the raw
+        // attribute for every relative URL while looking like it resolved.
+        const parts = api.parseUrl(String(raw), currentAddress);
         // An unparseable URL reflects as the literal attribute, which is what a
         // browser does and is more useful than an empty string when debugging.
         return parts ? parts.href : String(raw);
@@ -1436,35 +1525,35 @@
           if (value === null && type === "nullable") this.removeAttribute(content);
           else this.setAttribute(content, String(value));
         };
-    Object.defineProperty(Element.prototype, idl, { configurable: true, get, set });
+    Object.defineProperty(proto, idl, { configurable: true, get, set });
   }
 
   // The attributes every HTML element carries. `hidden` and `tabIndex` were
   // the only two of these that existed, hand-written, before WPT was pointed
   // at the engine.
-  reflect("hidden", "hidden", "bool");
-  reflect("autofocus", "autofocus", "bool");
-  reflect("tabIndex", "tabindex", "long", { default: -1 });
-  reflect("accessKey", "accesskey");
-  reflect("slot", "slot");
-  reflect("nonce", "nonce");
-  reflect("dir", "dir", "enumerated", { keywords: ["ltr", "rtl", "auto"] });
-  reflect("contentEditable", "contenteditable", "enumerated", {
+  reflect(Element.prototype, "hidden", "hidden", "bool");
+  reflect(Element.prototype, "autofocus", "autofocus", "bool");
+  reflect(Element.prototype, "tabIndex", "tabindex", "long", { default: -1 });
+  reflect(Element.prototype, "accessKey", "accesskey");
+  reflect(Element.prototype, "slot", "slot");
+  reflect(Element.prototype, "nonce", "nonce");
+  reflect(Element.prototype, "dir", "dir", "enumerated", { keywords: ["ltr", "rtl", "auto"] });
+  reflect(Element.prototype, "contentEditable", "contenteditable", "enumerated", {
     keywords: ["true", "false", "plaintext-only"],
     aliases: { "": "true" },
     missing: "inherit",
     invalid: "inherit",
   });
-  reflect("autocapitalize", "autocapitalize", "enumerated", {
+  reflect(Element.prototype, "autocapitalize", "autocapitalize", "enumerated", {
     keywords: ["none", "off", "on", "sentences", "words", "characters"],
   });
-  reflect("inputMode", "inputmode", "enumerated", {
+  reflect(Element.prototype, "inputMode", "inputmode", "enumerated", {
     keywords: ["none", "text", "tel", "url", "email", "numeric", "decimal", "search"],
   });
-  reflect("enterKeyHint", "enterkeyhint", "enumerated", {
+  reflect(Element.prototype, "enterKeyHint", "enterkeyhint", "enumerated", {
     keywords: ["enter", "done", "go", "next", "previous", "search", "send"],
   });
-  reflect("popover", "popover", "enumerated", {
+  reflect(Element.prototype, "popover", "popover", "enumerated", {
     keywords: ["auto", "manual"], invalid: "manual",
   });
 
@@ -1483,9 +1572,280 @@
     "ariaRowIndexText", "ariaRowSpan", "ariaSelected", "ariaSetSize", "ariaSort",
     "ariaValueMax", "ariaValueMin", "ariaValueNow", "ariaValueText",
   ]) {
-    reflect(name, "aria-" + name.slice(4).toLowerCase(), "nullable");
+    reflect(Element.prototype, name, "aria-" + name.slice(4).toLowerCase(), "nullable");
   }
-  reflect("role", "role", "nullable");
+  reflect(Element.prototype, "role", "role", "nullable");
+
+  // ── per-tag interfaces ───────────────────────────────────────────────────
+  //
+  // A browser has HTMLAnchorElement, HTMLTableCellElement and eighty more, and
+  // the split is not cosmetic. `colSpan` belongs to <td> and <th>; `span` to
+  // <col> and <colgroup>; `scrollAmount` to <marquee> and nothing else. Hanging
+  // all of them on one Element would make `"colSpan" in div` true, which is the
+  // same lie the removed `missingApi` stubs told: feature detection asks before
+  // it uses, and gets sent down a branch a real browser never takes.
+  //
+  // Each entry is [idl, content, type, options] and reads as the spec's
+  // reflection table does. Names Element already defines — href, src, name,
+  // type, disabled, value, checked, selected — are deliberately absent: those
+  // carry behaviour beyond reflection, and `defaultChecked`, `defaultSelected`
+  // and `defaultValue` are the spec's names for the reflecting half.
+  const REFLECTIONS = {
+    html: ["HTMLHtmlElement", [["version", "version"]]],
+    head: ["HTMLHeadElement", []],
+    title: ["HTMLTitleElement", []],
+    base: ["HTMLBaseElement", [["target", "target"]]],
+    link: ["HTMLLinkElement", [
+      ["rel", "rel"], ["media", "media"], ["hreflang", "hreflang"],
+      ["integrity", "integrity"], ["imageSrcset", "imagesrcset"],
+      ["imageSizes", "imagesizes"], ["charset", "charset"], ["rev", "rev"],
+      ["target", "target"],
+      ["as", "as", "enumerated", { keywords: [
+        "fetch", "audio", "audioworklet", "document", "embed", "font", "frame",
+        "iframe", "image", "json", "manifest", "object", "paintworklet",
+        "report", "script", "serviceworker", "sharedworker", "style", "track",
+        "video", "webidentity", "worker", "xslt"] }],
+      ["crossOrigin", "crossorigin", "enumerated", {
+        keywords: ["anonymous", "use-credentials"],
+        missing: null, invalid: "anonymous" }],
+      ["referrerPolicy", "referrerpolicy", "enumerated", { keywords: [
+        "", "no-referrer", "no-referrer-when-downgrade", "same-origin",
+        "origin", "strict-origin", "origin-when-cross-origin",
+        "strict-origin-when-cross-origin", "unsafe-url"] }],
+    ]],
+    meta: ["HTMLMetaElement", [
+      ["httpEquiv", "http-equiv"], ["media", "media"], ["scheme", "scheme"],
+    ]],
+    style: ["HTMLStyleElement", [["media", "media"]]],
+    body: ["HTMLBodyElement", [
+      ["link", "link"], ["vLink", "vlink"], ["aLink", "alink"],
+      ["bgColor", "bgcolor"], ["background", "background"], ["text", "text"],
+    ]],
+    a: ["HTMLAnchorElement", [
+      ["target", "target"], ["download", "download"], ["ping", "ping"],
+      ["rel", "rel"], ["hreflang", "hreflang"], ["charset", "charset"],
+      ["rev", "rev"], ["shape", "shape"], ["coords", "coords"],
+      ["referrerPolicy", "referrerpolicy", "enumerated", { keywords: [
+        "", "no-referrer", "no-referrer-when-downgrade", "same-origin",
+        "origin", "strict-origin", "origin-when-cross-origin",
+        "strict-origin-when-cross-origin", "unsafe-url"] }],
+    ]],
+    area: ["HTMLAreaElement", [
+      ["coords", "coords"], ["download", "download"], ["ping", "ping"],
+      ["rel", "rel"], ["shape", "shape"], ["target", "target"],
+      ["noHref", "nohref", "bool"],
+    ]],
+    img: ["HTMLImageElement", [
+      ["srcset", "srcset"], ["sizes", "sizes"], ["useMap", "usemap"],
+      ["isMap", "ismap", "bool"], ["align", "align"], ["border", "border"],
+      ["lowsrc", "lowsrc", "url"], ["longDesc", "longdesc", "url"],
+      ["width", "width", "ulong"], ["height", "height", "ulong"],
+      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+      ["decoding", "decoding"], ["loading", "loading"],
+    ]],
+    embed: ["HTMLEmbedElement", [
+      ["width", "width"], ["height", "height"], ["align", "align"],
+    ]],
+    object: ["HTMLObjectElement", [
+      ["data", "data", "url"], ["useMap", "usemap"], ["align", "align"],
+      ["archive", "archive"], ["code", "code"], ["declare", "declare", "bool"],
+      ["standby", "standby"], ["codeBase", "codebase", "url"],
+      ["codeType", "codetype"], ["border", "border"],
+      ["width", "width"], ["height", "height"],
+      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+    ]],
+    param: ["HTMLParamElement", [["valueType", "valuetype"]]],
+    video: ["HTMLVideoElement", [
+      ["poster", "poster", "url"], ["preload", "preload"],
+      ["autoplay", "autoplay", "bool"], ["loop", "loop", "bool"],
+      ["controls", "controls", "bool"], ["defaultMuted", "muted", "bool"],
+      ["playsInline", "playsinline", "bool"],
+      ["width", "width", "ulong"], ["height", "height", "ulong"],
+    ]],
+    audio: ["HTMLAudioElement", [
+      ["preload", "preload"], ["autoplay", "autoplay", "bool"],
+      ["loop", "loop", "bool"], ["controls", "controls", "bool"],
+      ["defaultMuted", "muted", "bool"],
+    ]],
+    source: ["HTMLSourceElement", [
+      ["srcset", "srcset"], ["sizes", "sizes"], ["media", "media"],
+      ["width", "width", "ulong"], ["height", "height", "ulong"],
+    ]],
+    track: ["HTMLTrackElement", [
+      ["srclang", "srclang"], ["label", "label"], ["default", "default", "bool"],
+      ["kind", "kind", "enumerated", {
+        keywords: ["subtitles", "captions", "descriptions", "chapters", "metadata"],
+        missing: "subtitles", invalid: "metadata" }],
+    ]],
+    map: ["HTMLMapElement", []],
+    form: ["HTMLFormElement", [
+      ["acceptCharset", "accept-charset"], ["action", "action", "url"],
+      ["autocomplete", "autocomplete"], ["enctype", "enctype"],
+      ["encoding", "enctype"], ["method", "method"],
+      ["noValidate", "novalidate", "bool"], ["target", "target"], ["rel", "rel"],
+    ]],
+    label: ["HTMLLabelElement", [["htmlFor", "for"]]],
+    input: ["HTMLInputElement", [
+      ["accept", "accept"], ["autocomplete", "autocomplete"],
+      ["defaultChecked", "checked", "bool"], ["dirName", "dirname"],
+      ["formAction", "formaction", "url"], ["formEnctype", "formenctype"],
+      ["formMethod", "formmethod"], ["formTarget", "formtarget"],
+      ["formNoValidate", "formnovalidate", "bool"],
+      ["max", "max"], ["min", "min"], ["pattern", "pattern"],
+      ["placeholder", "placeholder"], ["step", "step"], ["useMap", "usemap"],
+      ["align", "align"], ["defaultValue", "value"],
+      ["multiple", "multiple", "bool"], ["required", "required", "bool"],
+      ["readOnly", "readonly", "bool"],
+      ["maxLength", "maxlength", "long", { default: -1 }],
+      ["minLength", "minlength", "long", { default: -1 }],
+      ["size", "size", "ulong", { default: 20 }],
+      ["width", "width", "ulong"], ["height", "height", "ulong"],
+    ]],
+    button: ["HTMLButtonElement", [
+      ["formAction", "formaction", "url"], ["formEnctype", "formenctype"],
+      ["formMethod", "formmethod"], ["formTarget", "formtarget"],
+      ["formNoValidate", "formnovalidate", "bool"],
+    ]],
+    select: ["HTMLSelectElement", [
+      ["autocomplete", "autocomplete"], ["multiple", "multiple", "bool"],
+      ["required", "required", "bool"], ["size", "size", "ulong"],
+    ]],
+    optgroup: ["HTMLOptGroupElement", [["label", "label"]]],
+    option: ["HTMLOptionElement", [
+      ["label", "label"], ["defaultSelected", "selected", "bool"],
+    ]],
+    textarea: ["HTMLTextAreaElement", [
+      ["autocomplete", "autocomplete"], ["dirName", "dirname"],
+      ["placeholder", "placeholder"], ["wrap", "wrap"],
+      ["required", "required", "bool"], ["readOnly", "readonly", "bool"],
+      ["maxLength", "maxlength", "long", { default: -1 }],
+      ["minLength", "minlength", "long", { default: -1 }],
+      ["cols", "cols", "ulong", { default: 20 }],
+      ["rows", "rows", "ulong", { default: 2 }],
+    ]],
+    output: ["HTMLOutputElement", [["htmlFor", "for"]]],
+    fieldset: ["HTMLFieldSetElement", []],
+    legend: ["HTMLLegendElement", [["align", "align"]]],
+    table: ["HTMLTableElement", [
+      ["align", "align"], ["border", "border"], ["frame", "frame"],
+      ["rules", "rules"], ["summary", "summary"], ["width", "width"],
+      ["bgColor", "bgcolor"], ["cellPadding", "cellpadding"],
+      ["cellSpacing", "cellspacing"],
+    ]],
+    caption: ["HTMLTableCaptionElement", [["align", "align"]]],
+    col: ["HTMLTableColElement", [
+      ["span", "span", "ulong", { default: 1 }], ["align", "align"],
+      ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
+      ["width", "width"],
+    ]],
+    tr: ["HTMLTableRowElement", [
+      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      ["vAlign", "valign"], ["bgColor", "bgcolor"],
+    ]],
+    td: ["HTMLTableCellElement", [
+      ["colSpan", "colspan", "ulong", { default: 1 }],
+      ["rowSpan", "rowspan", "ulong", { default: 1 }],
+      ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
+      ["align", "align"], ["axis", "axis"], ["height", "height"],
+      ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
+      ["noWrap", "nowrap", "bool"], ["vAlign", "valign"], ["bgColor", "bgcolor"],
+    ]],
+    ol: ["HTMLOListElement", [
+      ["reversed", "reversed", "bool"], ["compact", "compact", "bool"],
+      ["start", "start", "long", { default: 1 }],
+    ]],
+    ul: ["HTMLUListElement", [["compact", "compact", "bool"]]],
+    li: ["HTMLLIElement", [["value", "value", "long"]]],
+    dl: ["HTMLDListElement", [["compact", "compact", "bool"]]],
+    blockquote: ["HTMLQuoteElement", [["cite", "cite", "url"]]],
+    ins: ["HTMLModElement", [["cite", "cite", "url"], ["dateTime", "datetime"]]],
+    script: ["HTMLScriptElement", [
+      ["noModule", "nomodule", "bool"], ["async", "async", "bool"],
+      ["defer", "defer", "bool"], ["integrity", "integrity"],
+      ["charset", "charset"], ["event", "event"], ["htmlFor", "for"],
+    ]],
+    marquee: ["HTMLMarqueeElement", [
+      ["behavior", "behavior"], ["bgColor", "bgcolor"],
+      ["direction", "direction"], ["height", "height"], ["width", "width"],
+      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+      ["trueSpeed", "truespeed", "bool"],
+      ["scrollAmount", "scrollamount", "ulong", { default: 6 }],
+      ["scrollDelay", "scrolldelay", "ulong", { default: 85 }],
+      ["loop", "loop", "long", { default: -1 }],
+    ]],
+    applet: ["HTMLAppletElement", [
+      ["align", "align"], ["archive", "archive"], ["code", "code"],
+      ["codeBase", "codebase", "url"], ["height", "height"],
+      ["object", "object"], ["width", "width"],
+      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+    ]],
+    frame: ["HTMLFrameElement", [
+      ["scrolling", "scrolling"], ["frameBorder", "frameborder"],
+      ["longDesc", "longdesc", "url"], ["noResize", "noresize", "bool"],
+      ["marginHeight", "marginheight"], ["marginWidth", "marginwidth"],
+    ]],
+    frameset: ["HTMLFrameSetElement", [["cols", "cols"], ["rows", "rows"]]],
+    font: ["HTMLFontElement", [
+      ["color", "color"], ["face", "face"], ["size", "size"],
+    ]],
+    dir: ["HTMLDirectoryElement", [["compact", "compact", "bool"]]],
+    hr: ["HTMLHRElement", [
+      ["align", "align"], ["color", "color"], ["size", "size"],
+      ["width", "width"], ["noShade", "noshade", "bool"],
+    ]],
+    pre: ["HTMLPreElement", [["width", "width", "long"]]],
+    details: ["HTMLDetailsElement", [["open", "open", "bool"]]],
+    dialog: ["HTMLDialogElement", [["open", "open", "bool"]]],
+    slot: ["HTMLSlotElement", []],
+    canvas: ["HTMLCanvasElement", [
+      ["width", "width", "ulong", { default: 300 }],
+      ["height", "height", "ulong", { default: 150 }],
+    ]],
+    time: ["HTMLTimeElement", [["dateTime", "datetime"]]],
+    data: ["HTMLDataElement", []],
+    div: ["HTMLDivElement", [["align", "align"]]],
+    h1: ["HTMLHeadingElement", [["align", "align"]]],
+    tbody: ["HTMLTableSectionElement", [
+      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      ["vAlign", "valign"],
+    ]],
+    p: ["HTMLParagraphElement", [["align", "align"]]],
+    span: ["HTMLSpanElement", []],
+    br: ["HTMLBRElement", [["clear", "clear"]]],
+    menu: ["HTMLMenuElement", [["compact", "compact", "bool"]]],
+  };
+
+  // Tags that share one interface with another tag, rather than repeating it.
+  //
+  // Only where the spec genuinely gives two tags one interface. <h1> is a
+  // heading and <tbody> is a table section, so both got their own above rather
+  // than being pointed at <p> and <tr>: `h1 instanceof HTMLParagraphElement`
+  // would be false in every browser and true here, which is the kind of
+  // almost-right this engine keeps having to remove.
+  const SHARED = {
+    colgroup: "col", th: "td", q: "blockquote", del: "ins",
+    thead: "tbody", tfoot: "tbody",
+    h2: "h1", h3: "h1", h4: "h1", h5: "h1", h6: "h1",
+  };
+
+  {
+    const interfaces = {};
+    for (const [tag, [name, attributes]] of Object.entries(REFLECTIONS)) {
+      const Interface = { [name]: class extends Element {} }[name];
+      for (const [idl, content, type, options] of attributes) {
+        reflect(Interface.prototype, idl, content, type ?? "string", options ?? {});
+      }
+      interfaces[name] = Interface;
+      TAG_CLASSES.set(tag, Interface);
+    }
+    // <th> is a table cell and <del> is a mod: same interface, both tags.
+    for (const [tag, like] of Object.entries(SHARED)) {
+      if (TAG_CLASSES.has(like)) TAG_CLASSES.set(tag, TAG_CLASSES.get(like));
+    }
+    // `instanceof HTMLAnchorElement` is something pages genuinely write, and
+    // an engine with the interfaces but no names for them fails it anyway.
+    Object.assign(globalThis, interfaces);
+  }
 
   const HANDLER_EVENTS = [
     "click", "dblclick", "mousedown", "mouseup", "mouseover", "mouseout", "mousemove",
@@ -1667,7 +2027,7 @@
             l.handler.handleEvent(event);
           }
         } catch (error) {
-          console.error("listener for " + event.type + " threw: " + error);
+          console.error("listener for " + event.type + " threw: " + withStack(error));
         }
       }
     };
@@ -2036,7 +2396,7 @@
     try {
       observer._callback(entries, observer);
     } catch (error) {
-      console.error("observer callback threw: " + error);
+      console.error("observer callback threw: " + withStack(error));
     }
   }
 
@@ -2122,7 +2482,7 @@
       try {
         observer._callback(records, observer);
       } catch (error) {
-        console.error("MutationObserver callback threw: " + error);
+        console.error("MutationObserver callback threw: " + withStack(error));
       }
     }
   }
@@ -2731,13 +3091,7 @@
       if (timer.every === null) timers.delete(id);
       else timer.due = clock + timer.every;
       try { timer.fn(...timer.args); } catch (error) {
-        // With the stack, because without it this said only "timer threw" and
-        // the one thing a caller needs — which line — was the one thing it
-        // withheld. A timer callback is by definition detached from whatever
-        // scheduled it, so it is the error that can least afford to be
-        // anonymous.
-        const where = error && error.stack ? "\n" + error.stack : "";
-        console.error("timer threw: " + error + where);
+        console.error("timer threw: " + withStack(error));
       }
       ran++;
     }

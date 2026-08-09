@@ -676,10 +676,15 @@ fn a_page_from_the_web_may_not_reach_the_boxs_dev_server() {
 
 #[test]
 fn computed_style_answers_what_it_knows_and_reports_what_it_does_not() {
-    // Curated on purpose: a wrong `display` sends a framework down a branch a
-    // real browser would never take, and it would never find out. So the
-    // properties pages branch on are answered from what Stylo resolved, and
-    // everything else records itself.
+    // Every longhand Stylo can resolve is answered; what cannot be resolved
+    // names itself rather than returning a plausible "".
+    //
+    // This test used to assert the opposite for `font-variant-ligatures` — that
+    // an "uncurated" property reports itself as missing — because the six
+    // properties this once answered were believed to be all that could be
+    // bound. WPT disproved that: `ComputedValues::computed_value_to_string`
+    // resolves any longhand. The assertion below is the same shape as the old
+    // one, pointed at what is genuinely still unanswered.
     let (_page, mut script) = page_and_script(
         "<html><body><div id='shown'>a</div><div id='hidden' style='display:none'>b</div></body></html>",
     );
@@ -699,12 +704,29 @@ fn computed_style_answers_what_it_knows_and_reports_what_it_does_not() {
         "box metrics come from the resolved layout"
     );
 
+    // A longhand nobody hand-listed, answered from the cascade.
+    assert_eq!(
+        script
+            .eval_value("getComputedStyle(document.querySelector('#shown')).fontVariantLigatures")
+            .unwrap(),
+        "normal",
+        "any longhand resolves, not just the six that were once written out"
+    );
+    assert_eq!(
+        script.eval_value("getComputedStyle(document.querySelector('#shown')).color").unwrap(),
+        "rgb(0, 0, 0)",
+        "`color` came back empty before, which is what §11.5.11 recorded"
+    );
+
+    // A shorthand is a real remaining gap and says so: re-serialising one from
+    // its longhands is easy to get subtly wrong, and a caller comparing two
+    // `border` strings would be told two different borders match.
     script
-        .eval("getComputedStyle(document.querySelector('#shown')).fontVariantLigatures")
+        .eval("getComputedStyle(document.querySelector('#shown')).border")
         .expect("runs");
     assert!(
-        script.unsupported().iter().any(|(n, _)| n.contains("font-variant-ligatures")),
-        "an uncurated property names itself: {:?}",
+        script.unsupported().iter().any(|(n, _)| n.contains("getComputedStyle(border)")),
+        "a shorthand names itself: {:?}",
         script.unsupported()
     );
 }

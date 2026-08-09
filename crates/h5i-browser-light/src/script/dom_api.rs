@@ -1254,15 +1254,25 @@ fn rect(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
     Ok(array.into())
 }
 
-/// A curated set of computed values, read from the styles Stylo resolved.
+/// Every computed value Stylo can resolve, which is nearly all of CSS.
 ///
-/// Curated rather than complete because Stylo's per-property accessors are
-/// generated at build time and there is no stable generic "give me property X
-/// as a string" on `ComputedValues` to bind against. So this answers the
-/// properties pages actually branch on — visibility checks and box metrics —
-/// and anything else records itself as unsupported rather than returning a
-/// plausible lie. A wrong `display` is worse than a missing one: it sends a
-/// framework down a branch the real browser would never take.
+/// The note that stood here said Stylo's accessors are generated at build time
+/// and there is "no stable generic 'give me property X as a string' on
+/// `ComputedValues` to bind against", so six properties were hand-listed and
+/// every other question answered "". That was wrong, and WPT is what proved it:
+/// `ComputedValues::computed_value_to_string` takes a `PropertyDeclarationId`
+/// and does exactly that, and `PropertyId::parse_enabled_for_all_content` turns
+/// a property name into one without needing a parser context to be built first.
+///
+/// §11.5.11 recorded `getComputedStyle` as implemented far enough to look
+/// implemented — `color` came back empty. This is the fix, and the shape of the
+/// mistake is worth keeping: the curated list was not a considered scope, it
+/// was a wrong belief about the dependency, and it survived four corpora
+/// because a page that reads `color` and gets "" mostly carries on.
+///
+/// What is still not answered names itself: shorthands, custom properties, and
+/// the layout-dependent resolutions (`top` on a positioned box resolves to a
+/// used pixel value in a browser, and Stylo alone cannot know it).
 fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let property = arg_string(args, 1, context)?.to_lowercase();
@@ -1294,22 +1304,43 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     };
 
     use style_traits::ToCss as _;
-    let answer = match property.as_str() {
-        // `to_css_string`, not `{:?}`: Stylo's `Display` is a bitfield whose
-        // Debug form is `display(514)`, and handing an agent that instead of
-        // `block` is precisely the plausible lie this engine refuses.
-        "display" => node.display_constructed_as.to_css_string(),
-        "visibility" => styles.clone_visibility().to_css_string(),
-        "position" => styles.clone_position().to_css_string(),
-        "opacity" => styles.clone_opacity().to_string(),
-        other => {
+    // `display` stays special because the tree knows better than the style
+    // does: an element in a `display: none` subtree, or one the box tree
+    // reconstructed, is described by what it was actually constructed as.
+    // `to_css_string`, not `{:?}`: Stylo's `Display` is a bitfield whose Debug
+    // form is `display(514)`, and handing an agent that instead of `block` is
+    // precisely the plausible lie this engine refuses.
+    if property == "display" {
+        return Ok(js_string!(node.display_constructed_as.to_css_string()).into());
+    }
+
+    use style::properties::{PropertyDeclarationId, PropertyId};
+    let answer = match PropertyId::parse_enabled_for_all_content(&property) {
+        Ok(PropertyId::NonCustom(id)) => match id.as_longhand() {
+            Some(longhand) => {
+                Some(styles.computed_value_to_string(PropertyDeclarationId::Longhand(longhand)))
+            }
+            // A shorthand's computed value is its longhands re-serialised, and
+            // getting that subtly wrong is worse than not answering: a caller
+            // comparing `border` strings would be told two different borders
+            // match. Named as missing until it is done properly.
+            None => None,
+        },
+        // `--custom-property`. Pages read these for theming, so this is a real
+        // gap rather than an obscure one, and it is named as itself.
+        Ok(PropertyId::Custom(_)) => None,
+        Err(()) => None,
+    };
+
+    Ok(match answer {
+        Some(value) => js_string!(value).into(),
+        None => {
             host.unsupported
                 .borrow_mut()
-                .record(&format!("getComputedStyle({other})"));
-            String::new()
+                .record(&format!("getComputedStyle({property})"));
+            js_string!("").into()
         }
-    };
-    Ok(js_string!(answer).into())
+    })
 }
 
 /// Parse a URL against an optional base, using the same parser the broker uses.
