@@ -451,7 +451,14 @@ impl Page {
                 matches!(source, Source::Inline(_) | Source::External(_))
             });
 
+        let phase_started = std::time::Instant::now();
+        let mut skipped = 0usize;
+
         for (index, (node, source)) in classic.into_iter().enumerate() {
+            if phase_started.elapsed() >= SCRIPT_PHASE_BUDGET {
+                skipped += 1;
+                continue;
+            }
             // Which script this was. Boa 0.19 reports neither a line number nor
             // a stack, so the element is the only locus available — and a bare
             // "TypeError: cannot convert null" with no locus at all is the
@@ -509,6 +516,10 @@ impl Page {
         script.set_current_script(None);
 
         for (_, source) in modules {
+            if phase_started.elapsed() >= SCRIPT_PHASE_BUDGET {
+                skipped += 1;
+                continue;
+            }
             let (code, path) = match source {
                 Source::ModuleInline(text) => (text, self.url.to_string()),
                 Source::ModuleExternal(src) => {
@@ -551,6 +562,14 @@ impl Page {
         // graph and any fetch its startup made. Leaving them queued would
         // attribute them to whatever the agent did first, and "this click
         // caused these requests" is the one claim here that has to be exact.
+        if skipped > 0 {
+            script.note_error(&format!(
+                "this page's scripts took longer than {}s, so {skipped} of them were not run. \
+                 What follows was rendered by the ones that finished.",
+                SCRIPT_PHASE_BUDGET.as_secs()
+            ));
+        }
+
         let _ = script.take_requests();
         self.settled = Some(settled);
         self.script = Some(script);
@@ -1062,6 +1081,25 @@ impl PageFactory {
 /// Low on purpose. A refresh chain longer than this is not a site pointing at
 /// its real address, it is a loop or a tracker bounce.
 const MAX_META_REFRESH_HOPS: usize = 3;
+
+/// How long the whole script phase may take before this engine stops starting
+/// more of it.
+///
+/// Boa exposes no wall-clock interrupt, so a single `eval` cannot be cut short —
+/// but a page is rarely one script, and this bounds a page that is slow because
+/// it has *many*. After the budget the remaining scripts are skipped and the
+/// snapshot says how many, so a thin outline is explained rather than
+/// mysterious.
+///
+/// Worth being exact about what it does not cover, because it was written
+/// hoping it would: a **module graph evaluates inside `run_jobs`**, which is one
+/// call that returns when it returns. lit.dev spends minutes there and this
+/// budget never gets a turn. Bounding that needs an interrupt Boa does not
+/// have, and a caller who cannot wait must still impose its own timeout.
+///
+/// Generous, because the alternative to a slow page is a wrong one: a page that
+/// merely needs four seconds should get them.
+const SCRIPT_PHASE_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// The line between "this page redirected" and "this page updates itself".
 ///

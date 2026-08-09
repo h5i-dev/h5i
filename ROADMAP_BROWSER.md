@@ -774,11 +774,19 @@ defeats the `in` check the reporting one depends on.
    hit it, which is how lit.dev fails. Not fixable here, and not worth working
    around: stripping comments from a page's own source would move every line
    number and could corrupt string literals — the plausible-wrong answer again.
-2. **Two sites now exceed the harness timeout** (lit.dev, material-web) where
-   they previously returned quickly. That is *because* they now get further:
-   `DOMParser` unlocked execution that used to fail early. More correct and
-   slower is still an unhappy trade for an agent, and it is recorded rather than
-   hidden.
+2. **Two sites exceed any reasonable timeout** (lit.dev, material-web), and the
+   cause is that they now get *further*. `DOMParser` unlocked execution that used
+   to fail early, and removing the lying feature-detection stubs sent pages down
+   polyfill paths they had previously skipped. lit.dev went from failing in
+   seconds to **seven minutes** of real work.
+
+   A wall-clock budget on the script phase was added and does not fix it: a
+   module graph evaluates inside `run_jobs`, which is one call that returns when
+   it returns, so the budget never gets a turn. The budget is kept because it
+   does bound a page that is slow for having *many* scripts, and its comment
+   says plainly what it cannot reach. Bounding the rest needs an interrupt Boa
+   does not expose. **More correct and unusably slower is still a bad trade, and
+   this is the clearest open problem in the engine.**
 3. **Total CPU is unbounded.** Boa exposes no wall-clock interrupt, so the
    engine bounds what it can — one loop, recursion depth, stack size — and a
    caller that cannot wait must impose its own timeout. Raising the loop bound
