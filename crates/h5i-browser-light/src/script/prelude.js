@@ -243,20 +243,30 @@
         // and the corpus did exactly that until this rule was written.
         if (label !== "Element" && property in Element.prototype) return undefined;
 
+        // Nor is a page's own bookkeeping. No web platform property begins with
+        // an underscore or a dollar; frameworks' private fields routinely do.
+        // Solid reads `document._$DX_DELEGATE` before it sets it, and the list
+        // an agent reads carried that as something this engine was missing.
+        const first = String(property).charCodeAt(0);
+        if (first === 95 || first === 36) return undefined;
+
         api.unsupported(`${label}.${String(property)}`);
         return undefined;
       },
     });
   }
 
-  class ClassList {
-    constructor(node) { this._node = node; }
+  // `class` is the famous one, but `rel` is a token list too, and so are
+  // `sandbox` and `headers`. Parameterising the attribute is the difference
+  // between one implementation and four.
+  class DOMTokenList {
+    constructor(node, attribute) { this._node = node; this._attr = attribute; }
     _all() {
-      const raw = api.getAttr(this._node._id, "class") || "";
+      const raw = api.getAttr(this._node._id, this._attr) || "";
       return raw.split(/\s+/).filter(Boolean);
     }
     _write(list) {
-      api.setAttr(this._node._id, "class", list.join(" "));
+      api.setAttr(this._node._id, this._attr, list.join(" "));
     }
     add(...names) {
       const list = this._all();
@@ -347,11 +357,12 @@
     appendChild(child) {
       // Inserting a fragment inserts its children and leaves the fragment
       // behind, which is the whole reason a fragment exists.
-      if (child instanceof DocumentFragment) {
+      if (child && child.nodeType === 11) {
         const moved = child.childNodes;
         for (const kid of moved) api.append(this._id, kid._id);
-        child._children.length = 0;
+        if (child._children) child._children.length = 0;
         childListRecord(this, moved, []);
+        notifyConnection(this);
         return child;
       }
       api.append(this._id, child._id);
@@ -361,9 +372,10 @@
     }
     insertBefore(child, anchor) {
       if (!anchor) return this.appendChild(child);
-      if (child instanceof DocumentFragment) {
+      if (child && child.nodeType === 11) {
         for (const kid of child.childNodes) api.insertBefore(anchor._id, kid._id);
-        child._children.length = 0;
+        if (child._children) child._children.length = 0;
+        notifyConnection(this);
         return child;
       }
       api.insertBefore(anchor._id, child._id);
@@ -372,6 +384,15 @@
       return child;
     }
     cloneNode(deep) {
+      // A fragment clones to a fragment holding clones of its children, which
+      // is the shape `appendChild` then expects.
+      if (this.nodeType === 11) {
+        const fragment = new DocumentFragment();
+        if (deep) {
+          for (const kid of this.childNodes) fragment.appendChild(kid.cloneNode(true));
+        }
+        return fragment;
+      }
       const copy = this.nodeType === 3
         ? document.createTextNode(this.textContent)
         : document.createElement(this.tagName);
@@ -459,7 +480,34 @@
       if (at >= 0) this._children.splice(at, 1);
       return child;
     }
-    querySelector() { api.unsupported("DocumentFragment.querySelector"); return null; }
+    // Searchable, because clone-query-fill-append is how a framework renders a
+    // row and the query happens while the fragment is still detached. Each
+    // child is its own scope: a fragment has no node of its own to search from.
+    querySelector(sel) {
+      for (const kid of this._children) {
+        if (kid.nodeType !== 1) continue;
+        if (kid.matches(sel)) return kid;
+        const found = kid.querySelector(sel);
+        if (found) return found;
+      }
+      return null;
+    }
+    querySelectorAll(sel) {
+      const out = [];
+      for (const kid of this._children) {
+        if (kid.nodeType !== 1) continue;
+        if (kid.matches(sel)) out.push(kid);
+        out.push(...kid.querySelectorAll(sel));
+      }
+      return out;
+    }
+    get children() { return this._children.filter((n) => n.nodeType === 1); }
+    get lastChild() { return this._children[this._children.length - 1] || null; }
+    cloneNode(deep) {
+      const copy = new DocumentFragment();
+      if (deep) for (const kid of this._children) copy.appendChild(kid.cloneNode(true));
+      return copy;
+    }
   }
 
   class Text extends Node {
@@ -506,7 +554,8 @@
     set id(v) { this.setAttribute("id", v); }
     get className() { return this.getAttribute("class") || ""; }
     set className(v) { this.setAttribute("class", v); }
-    get classList() { return new ClassList(this); }
+    get classList() { return new DOMTokenList(this, "class"); }
+    get relList() { return new DOMTokenList(this, "rel"); }
 
     get value() {
       const tag = this.tagName;
@@ -554,7 +603,7 @@
     _resolved(name) {
       const raw = api.getAttr(this._id, name);
       if (raw === null) return "";
-      const parts = api.parseUrl(String(raw), globalThis.__h5iUrl);
+      const parts = api.parseUrl(String(raw), currentAddress);
       return parts ? parts.href : raw;
     }
 
@@ -572,7 +621,7 @@
     _urlPart(part) {
       const raw = api.getAttr(this._id, "href") ?? api.getAttr(this._id, "src");
       if (raw === null) return "";
-      const parts = api.parseUrl(String(raw), globalThis.__h5iUrl);
+      const parts = api.parseUrl(String(raw), currentAddress);
       return parts ? parts[part] : "";
     }
 
@@ -603,6 +652,53 @@
     get scrollLeft() { return (api.scrollMetrics(this._id) || [0, 0])[1]; }
     get scrollHeight() { return (api.scrollMetrics(this._id) || [0, 0, 0])[2]; }
     get scrollWidth() { return (api.scrollMetrics(this._id) || [0, 0, 0, 0])[3]; }
+
+    // `<template>.content` is a fragment view; `<meta content>` reflects the
+    // attribute. Same property name, two unrelated meanings, both real.
+    get content() {
+      if (this.tagName === "TEMPLATE") return new TemplateContent(this._id);
+      if (this.tagName === "META") return api.getAttr(this._id, "content") || "";
+      return undefined;
+    }
+
+    get firstElementChild() { return this.children[0] || null; }
+    get lastElementChild() { const c = this.children; return c[c.length - 1] || null; }
+    get childElementCount() { return this.children.length; }
+    get nextElementSibling() {
+      for (let n = this.nextSibling; n; n = n.nextSibling) if (n.nodeType === 1) return n;
+      return null;
+    }
+    get previousElementSibling() {
+      for (let n = this.previousSibling; n; n = n.previousSibling) if (n.nodeType === 1) return n;
+      return null;
+    }
+
+    // The live list, in source order. Enough of a `NamedNodeMap` for the two
+    // things code does with it: iterate it, and look a name up.
+    get attributes() {
+      const node = this;
+      const list = api.attrNames(this._id).map((name) => ({
+        name,
+        value: api.getAttr(node._id, name),
+      }));
+      list.getNamedItem = (name) =>
+        list.find((a) => a.name === String(name).toLowerCase()) || null;
+      return list;
+    }
+    hasAttributes() { return api.attrNames(this._id).length > 0; }
+    getAttributeNames() { return api.attrNames(this._id); }
+
+    // Nothing is animating: this engine has no frames at rest, so there is
+    // never an animation in progress to report. An empty list is what a browser
+    // returns in that state, and it is the truth rather than a stub.
+    getAnimations() { return []; }
+
+    // An iframe's document, which this engine does not load — see the note the
+    // snapshot carries when a page has frames. Null is what a browser returns
+    // for a frame it will not let you into, so a page's fallback path is the
+    // right one to take.
+    get contentDocument() { return null; }
+    get contentWindow() { return null; }
 
     get lang() { return api.getAttr(this._id, "lang") || ""; }
     set lang(v) { this.setAttribute("lang", v); }
@@ -674,12 +770,7 @@
     getElementsByTagName(tag) { return api.queryAll(String(tag), this._id).map(wrap); }
     getElementsByClassName(cls) { return api.queryAll("." + String(cls), this._id).map(wrap); }
 
-    matches(sel) {
-      // Asked of the document and filtered, because the selector engine
-      // underneath searches from the root. Correct, if not the cheapest route.
-      const id = this._id;
-      return api.queryAll(String(sel), 0).some((m) => m === id);
-    }
+    matches(sel) { return api.matchesSelector(this._id, String(sel)); }
     closest(sel) {
       for (let n = this; n; n = n.parentNode) {
         if (n.nodeType === 1 && n.matches(sel)) return n;
@@ -755,6 +846,47 @@
     // every page writes compares the two.
     get clientWidth() { return (api.scrollMetrics(this._id) || [0, 0, 0, 0, 0, 0])[5]; }
     get clientHeight() { return (api.scrollMetrics(this._id) || [0, 0, 0, 0, 0])[4]; }
+  }
+
+  // What `<template>.content` hands back.
+  //
+  // A template's children are parsed into the tree here rather than into a
+  // separate document, so this is a *view* of the template node that answers
+  // `nodeType` as a fragment. That is enough for the two things pages do with
+  // it — clone it, and query inside it — without pretending there is a second
+  // document underneath.
+  //
+  // Its absence was not a small gap: `template.content.cloneNode(true)` threw
+  // `cannot convert 'null' or 'undefined' to object`, which was the *entire*
+  // text of fifteen module failures across the application corpus.
+  class TemplateContent extends Element {
+    get nodeType() { return 11; }
+    get nodeName() { return "#document-fragment"; }
+  }
+
+  // `el.onclick = fn` is the other way to bind a handler, and plenty of
+  // generated code still uses it. Defined rather than enumerated by hand so the
+  // property and `addEventListener` cannot disagree about what is registered.
+  const HANDLER_EVENTS = [
+    "click", "dblclick", "mousedown", "mouseup", "mouseover", "mouseout", "mousemove",
+    "input", "change", "submit", "focus", "blur", "keydown", "keyup", "keypress",
+    "load", "error", "scroll", "wheel", "contextmenu", "pointerdown", "pointerup",
+    "touchstart", "touchend", "animationend", "transitionend",
+  ];
+  for (const type of HANDLER_EVENTS) {
+    const slot = `__on_${type}`;
+    Object.defineProperty(Element.prototype, `on${type}`, {
+      configurable: true,
+      get() { return this[slot] ?? null; },
+      set(handler) {
+        // Assigning replaces whatever the property held before, which is what
+        // makes it different from `addEventListener` — two assignments leave
+        // one handler, not two.
+        if (this[slot]) this.removeEventListener(type, this[slot]);
+        this[slot] = typeof handler === "function" ? handler : null;
+        if (this[slot]) this.addEventListener(type, this[slot]);
+      },
+    });
   }
 
   function camelToDash(name) {
@@ -1545,8 +1677,10 @@
     get childNodes() { const root = wrap(api.root()); return root ? [root] : []; },
     get defaultView() { return globalThis; },
     get location() { return location; },
-    get URL() { return globalThis.__h5iUrl; },
-    get documentURI() { return globalThis.__h5iUrl; },
+    get URL() { return currentAddress; },
+    get documentURI() { return currentAddress; },
+    // This engine parses HTML and nothing else, so there is one honest answer.
+    contentType: "text/html",
 
     // Empty, and true: this engine sends no `Referer`, so a page told anything
     // else would be told a lie about a request it can check.
@@ -1770,10 +1904,32 @@
 
   // ── the rest of the window ───────────────────────────────────────────────
 
+  // Every part, from the engine's own parser rather than from string surgery —
+  // `pathname` came back undefined, and client-side routing is written against
+  // exactly these. A second parser written in JavaScript would disagree with
+  // the one that actually fetched the page about precisely the cases that
+  // matter.
+  // The address the *page* is at, which starts as the document URL and moves
+  // with `history.pushState`. Held here rather than by writing to
+  // `globalThis.__h5iUrl`, which the host defines read-only on purpose: that one
+  // is the URL the broker actually fetched, and an engine whose record of what
+  // it requested could be edited by the page would be worth nothing.
+  let currentAddress = globalThis.__h5iUrl;
+
+  function locationParts() {
+    return api.parseUrl(String(currentAddress), "") || {};
+  }
   const location = {
-    get href() { return globalThis.__h5iUrl; },
-    get protocol() { return String(globalThis.__h5iUrl).split(":")[0] + ":"; },
-    toString() { return globalThis.__h5iUrl; },
+    get href() { return currentAddress; },
+    get protocol() { return locationParts().protocol ?? ""; },
+    get host() { return locationParts().host ?? ""; },
+    get hostname() { return locationParts().hostname ?? ""; },
+    get port() { return locationParts().port ?? ""; },
+    get pathname() { return locationParts().pathname ?? ""; },
+    get search() { return locationParts().search ?? ""; },
+    get hash() { return locationParts().hash ?? ""; },
+    get origin() { return locationParts().origin ?? ""; },
+    toString() { return currentAddress; },
     assign(u) { api.unsupported("location.assign"); void u; },
     replace(u) { api.unsupported("location.replace"); void u; },
     reload() { api.unsupported("location.reload"); },
@@ -1784,21 +1940,38 @@
   // page's own router reads `state` and listens for `popstate`, and both work.
   const entries = [{ state: null, url: globalThis.__h5iUrl }];
   let entryAt = 0;
+
+  /// Resolve a pushed URL against the current one, the way a link would be.
+  /// A router pushes `/page/2`, and storing that raw leaves an address no
+  /// parser can answer questions about.
+  function resolveEntry(url) {
+    if (url === undefined || url === null || url === "") return entries[entryAt].url;
+    const parts = api.parseUrl(String(url), String(currentAddress));
+    return parts ? parts.href : String(url);
+  }
   const history = {
     get length() { return entries.length; },
     get state() { return entries[entryAt].state ?? null; },
     pushState(state, _title, url) {
+      const next = resolveEntry(url);
       entries.length = entryAt + 1;
-      entries.push({ state: state ?? null, url: url ? String(url) : entries[entryAt].url });
+      entries.push({ state: state ?? null, url: next });
       entryAt = entries.length - 1;
+      // The address has to move with the entry, or `location.pathname` keeps
+      // answering about the page the router already left — and a router that
+      // reads its own route back gets the wrong one.
+      currentAddress = next;
     },
     replaceState(state, _title, url) {
-      entries[entryAt] = { state: state ?? null, url: url ? String(url) : entries[entryAt].url };
+      const next = resolveEntry(url);
+      entries[entryAt] = { state: state ?? null, url: next };
+      currentAddress = next;
     },
     go(delta) {
       const next = entryAt + (delta | 0);
       if (next < 0 || next >= entries.length) return;
       entryAt = next;
+      currentAddress = entries[entryAt].url;
       const event = new Event("popstate", { bubbles: false });
       event.state = entries[entryAt].state;
       dispatch(wrap(api.root()), event);
@@ -1827,9 +2000,223 @@
   }
 
   const window = globalThis;
+  // ── text encoding, randomness, cloning, and the old request object ───────
+
+  // UTF-8, written out rather than approximated. `escape`/`unescape` round
+  // trips and `charCodeAt` truncation both get the common cases right and the
+  // rest wrong, and "wrong only for non-Latin text" is the failure mode this
+  // engine is least able to notice.
+  class TextEncoder {
+    get encoding() { return "utf-8"; }
+    encode(input) {
+      const text = String(input === undefined ? "" : input);
+      const out = [];
+      for (let i = 0; i < text.length; i++) {
+        let code = text.codePointAt(i);
+        if (code > 0xffff) i++; // a surrogate pair is one code point
+        if (code < 0x80) {
+          out.push(code);
+        } else if (code < 0x800) {
+          out.push(0xc0 | (code >> 6), 0x80 | (code & 63));
+        } else if (code < 0x10000) {
+          out.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+        } else {
+          out.push(
+            0xf0 | (code >> 18),
+            0x80 | ((code >> 12) & 63),
+            0x80 | ((code >> 6) & 63),
+            0x80 | (code & 63),
+          );
+        }
+      }
+      return new Uint8Array(out);
+    }
+  }
+
+  class TextDecoder {
+    constructor(label) { this._label = String(label || "utf-8").toLowerCase(); }
+    get encoding() { return "utf-8"; }
+    decode(input) {
+      if (input === undefined || input === null) return "";
+      // Anything byte-shaped: a typed array, an ArrayBuffer, or a plain array.
+      const bytes = input instanceof Uint8Array
+        ? input
+        : new Uint8Array(input.buffer ? input.buffer : input);
+      let out = "";
+      for (let i = 0; i < bytes.length; ) {
+        const byte = bytes[i];
+        let code;
+        let width;
+        if (byte < 0x80) { code = byte; width = 1; }
+        else if ((byte & 0xe0) === 0xc0) { code = byte & 31; width = 2; }
+        else if ((byte & 0xf0) === 0xe0) { code = byte & 15; width = 3; }
+        else if ((byte & 0xf8) === 0xf0) { code = byte & 7; width = 4; }
+        else { out += "�"; i += 1; continue; }
+
+        if (i + width > bytes.length) { out += "�"; break; }
+        for (let k = 1; k < width; k++) {
+          const cont = bytes[i + k];
+          if ((cont & 0xc0) !== 0x80) { code = -1; break; }
+          code = (code << 6) | (cont & 63);
+        }
+        // A truncated or overlong sequence becomes the replacement character,
+        // which is what a decoder is specified to do rather than throwing.
+        out += code < 0 ? "�" : String.fromCodePoint(code);
+        i += width;
+      }
+      return out;
+    }
+  }
+
+  const crypto = {
+    getRandomValues(target) {
+      if (!target || typeof target.length !== "number") {
+        throw new TypeError("getRandomValues expects a typed array");
+      }
+      // Per element, not per byte: the caller's array decides the width.
+      const width = target.BYTES_PER_ELEMENT || 1;
+      const bytes = api.randomBytes(target.length * width);
+      for (let i = 0; i < target.length; i++) {
+        let value = 0;
+        for (let b = 0; b < width; b++) value = value * 256 + bytes[i * width + b];
+        target[i] = value;
+      }
+      return target;
+    },
+    randomUUID() {
+      const bytes = api.randomBytes(16);
+      // Version 4, variant 1 — the two fields a v4 UUID is defined by.
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = bytes.map((b) => b.toString(16).padStart(2, "0"));
+      return [
+        hex.slice(0, 4).join(""),
+        hex.slice(4, 6).join(""),
+        hex.slice(6, 8).join(""),
+        hex.slice(8, 10).join(""),
+        hex.slice(10, 16).join(""),
+      ].join("-");
+    },
+    subtle: missingApi("crypto.subtle"),
+  };
+
+  // A real deep clone. The JSON round trip this replaces silently dropped
+  // `undefined`, turned a `Date` into a string, lost `Map` and `Set` entirely,
+  // and threw on a cycle — every one of which reads as the page's own bug.
+  function structuredClone(value, seen) {
+    seen = seen || new Map();
+    if (value === null || typeof value !== "object") return value;
+    if (seen.has(value)) return seen.get(value);
+
+    if (value instanceof Date) return new Date(value.getTime());
+    if (value instanceof RegExp) return new RegExp(value.source, value.flags);
+    if (Array.isArray(value)) {
+      const out = [];
+      seen.set(value, out);
+      for (const item of value) out.push(structuredClone(item, seen));
+      return out;
+    }
+    if (value instanceof Map) {
+      const out = new Map();
+      seen.set(value, out);
+      for (const [k, v] of value) out.set(structuredClone(k, seen), structuredClone(v, seen));
+      return out;
+    }
+    if (value instanceof Set) {
+      const out = new Set();
+      seen.set(value, out);
+      for (const item of value) out.add(structuredClone(item, seen));
+      return out;
+    }
+    // A node is not transferable, and pretending otherwise would hand the page
+    // a detached copy that silently does nothing.
+    if (value instanceof Node) {
+      throw new TypeError("structuredClone cannot clone a DOM node");
+    }
+    const out = {};
+    seen.set(value, out);
+    for (const [k, v] of Object.entries(value)) out[k] = structuredClone(v, seen);
+    return out;
+  }
+
+  // The old request object, over the same queue `fetch` uses — so an XHR is
+  // policy-checked and receipted identically, and overlaps with everything else
+  // in flight. Libraries that predate `fetch` are still everywhere.
+  class XMLHttpRequest {
+    constructor() {
+      this.readyState = 0;
+      this.status = 0;
+      this.statusText = "";
+      this.responseText = "";
+      this.response = "";
+      this.responseType = "";
+      this.onreadystatechange = null;
+      this.onload = null;
+      this.onerror = null;
+      this._method = "GET";
+      this._url = "";
+      this._headers = new Headers();
+      this._responseHeaders = new Headers();
+    }
+    open(method, url, async) {
+      // Synchronous XHR would have to block the one thread that owns the realm,
+      // which would deadlock the loop that answers the request. Named rather
+      // than silently upgraded to async, because a page relying on the return
+      // value would read an empty response as an empty server.
+      if (async === false) api.unsupported("XMLHttpRequest (synchronous)");
+      this._method = String(method || "GET").toUpperCase();
+      this._url = String(url);
+      this._transition(1);
+    }
+    setRequestHeader(name, value) { this._headers.append(name, value); }
+    getAllResponseHeaders() {
+      let out = "";
+      for (const [name, value] of this._responseHeaders) out += `${name}: ${value}\r\n`;
+      return out;
+    }
+    getResponseHeader(name) { return this._responseHeaders.get(name); }
+    abort() { this._aborted = true; this._transition(4); }
+    _transition(state) {
+      this.readyState = state;
+      if (typeof this.onreadystatechange === "function") {
+        try { this.onreadystatechange(); } catch (e) { console.error(`XHR onreadystatechange threw: ${e}`); }
+      }
+    }
+    send(body) {
+      fetch(this._url, { method: this._method, body, headers: this._headers })
+        .then((response) => response.text().then((text) => ({ response, text })))
+        .then(({ response, text }) => {
+          if (this._aborted) return;
+          this.status = response.status;
+          this.statusText = response.statusText;
+          this._responseHeaders = response.headers;
+          this.responseText = text;
+          this.response = this.responseType === "json" ? JSON.parse(text) : text;
+          this._transition(4);
+          if (typeof this.onload === "function") this.onload();
+        })
+        .catch((error) => {
+          if (this._aborted) return;
+          this.status = 0;
+          this._transition(4);
+          if (typeof this.onerror === "function") this.onerror(error);
+          else console.error(`XMLHttpRequest failed: ${error}`);
+        });
+    }
+  }
+
   Object.assign(globalThis, {
     addEventListener, removeEventListener, dispatchEvent,
-    window, document, console, location, history, performance,
+    window,
+    document,
+    console,
+    // Same reporting rule as `document`: a method missing from one of these was
+    // invisible, because only the document and its nodes were watched. A module
+    // failing with "not a callable function" and naming nothing is the failure
+    // §8.3 exists to prevent, and these are where the remaining ones hid.
+    location: observed(location, "location"),
+    history: observed(history, "history"),
+    performance: observed(performance, "performance"),
     setTimeout, clearTimeout,
     setInterval, clearInterval: clearTimeout,
     requestAnimationFrame: (fn) => setTimeout(() => fn(clock), 16),
@@ -1839,10 +2226,10 @@
     matchMedia,
     URL, URLSearchParams,
     queueMicrotask: (fn) => { Promise.resolve().then(fn); },
-    structuredClone: (value) => JSON.parse(JSON.stringify(value)),
+    structuredClone: (value) => structuredClone(value),
     requestIdleCallback: (fn) => setTimeout(() => fn({ didTimeout: false, timeRemaining: () => 0 }), 1),
     cancelIdleCallback: clearTimeout,
-    navigator: {
+    navigator: observed({
       // From the host, not a second copy: a page that branches on the agent
       // server-side and again in script must see the same string both times,
       // or it renders for one engine and scripts for another.
@@ -1853,7 +2240,7 @@
       serviceWorker: missingApi("navigator.serviceWorker"),
       geolocation: missingApi("navigator.geolocation"),
       mediaDevices: missingApi("navigator.mediaDevices"),
-    },
+    }, "navigator"),
     // Named rather than absent. A page reaching for these gets a message that
     // says which API it wanted, and the name reaches the snapshot.
     // `self` is `window` under another name, and worker-shaped code reaches for
@@ -1873,30 +2260,41 @@
     },
     btoa, atob, escape, unescape,
 
+    // Boa defines neither. `reportError` is how a library hands an error to the
+    // page's own handler rather than swallowing it, and this engine's console
+    // is exactly where that should land.
+    reportError: (error) => api.log("error", `reported: ${render(error)}`),
+    // Nothing here is ever collected during a page's life, so a registry that
+    // never fires its callback is the honest shape rather than a refusal: a
+    // page registering one is not asking for anything it will notice missing.
+    FinalizationRegistry: class FinalizationRegistry {
+      constructor(callback) { this._callback = callback; }
+      register() {}
+      unregister() { return false; }
+    },
+
     // The constructors, exposed for `instanceof` — which is how library code
     // asks "is this a node?" before deciding what to do with it. `HTMLElement`
     // is `Element` here because this engine has one element class; the check
     // that matters is the one pages actually write.
-    Node, Element, Text, Comment, DocumentFragment,
+    Node, Element, Text, Comment, DocumentFragment, DOMTokenList,
     HTMLElement: Element,
     customElements, NodeFilter, NodeIterator, TreeWalker,
 
     WebSocket: missingApi("WebSocket"),
     Worker: missingApi("Worker"),
     SharedWorker: missingApi("SharedWorker"),
-    XMLHttpRequest: missingApi("XMLHttpRequest"),
     EventSource: missingApi("EventSource"),
     indexedDB: missingApi("indexedDB"),
     caches: missingApi("caches"),
-    crypto: missingApi("crypto"),
+    crypto: observed(crypto, "crypto"),
     WebAssembly: missingApi("WebAssembly"),
     BroadcastChannel: missingApi("BroadcastChannel"),
     Notification: missingApi("Notification"),
     FileReader: missingApi("FileReader"),
     Blob: missingApi("Blob"),
     Image: missingApi("Image"),
-    TextEncoder: missingApi("TextEncoder"),
-    TextDecoder: missingApi("TextDecoder"),
+    TextEncoder, TextDecoder, XMLHttpRequest,
     HTMLCanvasElement: missingApi("HTMLCanvasElement"),
     getComputedStyle: (element) => {
       // Reads what Stylo resolved. Properties outside the curated set record
@@ -1915,8 +2313,8 @@
         }
       );
     },
-    localStorage: makeStorage(),
-    sessionStorage: makeStorage(),
+    localStorage: observed(makeStorage(), "localStorage"),
+    sessionStorage: observed(makeStorage(), "sessionStorage"),
     CustomEvent, UIEvent, MouseEvent, KeyboardEvent, InputEvent,
     DocumentFragment, Headers, Request, AbortController, AbortSignal, FormData,
     MutationObserver,

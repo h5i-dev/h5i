@@ -97,7 +97,13 @@ pub struct Script {
     host: Rc<Host>,
     /// Module evaluations whose outcome is not known yet. See
     /// [`Script::collect_module_failures`].
-    pending_modules: Vec<boa_engine::object::builtins::JsPromise>,
+    /// Modules whose evaluation is still outstanding, each with the specifier
+    /// it was loaded under.
+    ///
+    /// The name travels with the promise because a failure reported as "module
+    /// failed" names nothing — the same anonymity §8.3 removed from script
+    /// errors, one level up. An agent cannot act on it and neither can we.
+    pending_modules: Vec<(String, boa_engine::object::builtins::JsPromise)>,
 }
 
 impl Script {
@@ -163,7 +169,7 @@ impl Script {
         // the jobs that decide it have run. A module whose import failed
         // otherwise rejects into nothing and the page looks merely empty.
         let promise = module.load_link_evaluate(&mut self.context);
-        self.pending_modules.push(promise);
+        self.pending_modules.push((path.to_string(), promise));
         Ok(())
     }
 
@@ -171,11 +177,13 @@ impl Script {
     /// settle it have run.
     fn collect_module_failures(&mut self) {
         let pending = std::mem::take(&mut self.pending_modules);
-        let mut still_pending = Vec::new();
+        let mut still_pending: Vec<(String, boa_engine::object::builtins::JsPromise)> = Vec::new();
 
-        for promise in pending {
+        for (name, promise) in pending {
             match promise.state() {
-                boa_engine::builtins::promise::PromiseState::Pending => still_pending.push(promise),
+                boa_engine::builtins::promise::PromiseState::Pending => {
+                    still_pending.push((name, promise))
+                }
                 boa_engine::builtins::promise::PromiseState::Fulfilled(_) => {}
                 boa_engine::builtins::promise::PromiseState::Rejected(reason) => {
                     let text = reason
@@ -184,7 +192,7 @@ impl Script {
                         .unwrap_or_else(|_| "<unrenderable>".to_string());
                     self.host.console.borrow_mut().push(ConsoleLine {
                         level: "error".to_string(),
-                        text: format!("module failed: {text}"),
+                        text: format!("{name}: module failed: {text}"),
                     });
                 }
             }
@@ -193,12 +201,13 @@ impl Script {
         // A module still pending when the page settled is one whose imports
         // never arrived. Said plainly, because an agent reading a thin outline
         // would otherwise blame the page.
-        for _ in &still_pending {
+        for (name, _) in &still_pending {
             self.host.console.borrow_mut().push(ConsoleLine {
                 level: "error".to_string(),
-                text: "a module was still loading when the page settled: its imports did not \
-                       finish arriving"
-                    .to_string(),
+                text: format!(
+                    "{name}: still loading when the page settled — its imports did not finish \
+                     arriving"
+                ),
             });
         }
     }

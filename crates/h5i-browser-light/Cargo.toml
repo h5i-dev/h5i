@@ -39,6 +39,11 @@ parley = { version = "0.10", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 url = "2.5"
 
+# The operating system's own CSPRNG, for `crypto.getRandomValues`. A browser
+# promises unpredictability there; a seeded generator wearing the name would be
+# a lie a page cannot detect.
+getrandom = "0.2"
+
 # Already in the tree via reqwest, so this adds no package: it is here to parse
 # `Set-Cookie`'s `Expires`, where hand-rolling the format would mean a cookie
 # that outlives its deletion.
@@ -50,6 +55,16 @@ httpdate = "1"
 # this engine refuses to hand an agent. `package =` because Blitz names it the
 # same way and two spellings of one crate would be two crates.
 style_traits = { version = "0.19.0", package = "stylo_traits" }
+
+# The selector engine itself, for one thing blitz does not expose: matching from
+# an arbitrary node rather than from the document root. `BaseDocument`'s own
+# `query_selector_all` always starts at the root, so a detached subtree — every
+# cloned `<template>` before it is inserted — could not be searched at all.
+style = { version = "0.19.0", package = "stylo" }
+# Only for the result buffer stylo's query API writes into.
+smallvec = "1"
+# The selector types stylo's matching API is written in terms of.
+selectors = "0.39"
 
 # Blocking client on purpose: `NetProvider::fetch` is called synchronously
 # from Blitz's parse/resolve, there is no runtime to await on, and a browser

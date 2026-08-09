@@ -2891,3 +2891,399 @@ fn the_wire_agent_and_the_scripted_one_are_the_same_string() {
         crate::net::USER_AGENT
     );
 }
+
+// ── what the application corpus asked for ────────────────────────────────────
+
+#[test]
+fn a_template_hands_back_content_that_can_be_cloned_and_queried() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><template id='t'><li class='row'><span>hello</span></li></template>\
+         <ul id='out'></ul></body></html>",
+    );
+
+    // `template.content.cloneNode(true)` threw `cannot convert 'null' or
+    // 'undefined' to object`, which was the entire text of fifteen module
+    // failures across the application corpus. It is how every framework that
+    // ships a template renders its first row.
+    assert_eq!(
+        script.eval_value("document.querySelector('#t').content.nodeType").unwrap(),
+        "11",
+        "content answers as a fragment"
+    );
+    script
+        .eval(
+            "const t = document.querySelector('#t'); \
+             document.querySelector('#out').appendChild(t.content.cloneNode(true));",
+        )
+        .expect("clones");
+    assert_eq!(
+        script.eval_value("document.querySelector('#out').innerHTML").unwrap(),
+        "<li class=\"row\"><span>hello</span></li>"
+    );
+    // Cloning does not empty the template — it can be used again.
+    assert_eq!(
+        script.eval_value("document.querySelector('#t').content.childNodes.length").unwrap(),
+        "1"
+    );
+    // And it can be searched inside without being inserted first.
+    assert_eq!(
+        script.eval_value("document.querySelector('#t').content.querySelector('span').textContent")
+            .unwrap(),
+        "hello"
+    );
+}
+
+#[test]
+fn meta_content_is_the_attribute_and_template_content_is_not() {
+    let (_page, mut script) = page_and_script(
+        "<html><head><meta name='x' content='a value'></head>\
+         <body><p id='p'>x</p></body></html>",
+    );
+
+    // The same property name, two unrelated meanings, both real.
+    assert_eq!(
+        script.eval_value("document.querySelector('meta').content").unwrap(),
+        "a value"
+    );
+    assert_eq!(script.eval_value("typeof document.querySelector('#p').content").unwrap(), "undefined");
+}
+
+#[test]
+fn the_element_walk_and_attribute_list_answer() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='d' class='a b' data-x='1'>text<span>one</span>mid<em>two</em></div>\
+         <link rel='stylesheet preload' href='/x.css'></body></html>",
+    );
+
+    assert_eq!(
+        script.eval_value("document.querySelector('#d').firstElementChild.tagName").unwrap(),
+        "SPAN"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('#d').lastElementChild.tagName").unwrap(),
+        "EM"
+    );
+    assert_eq!(script.eval_value("document.querySelector('#d').childElementCount").unwrap(), "2");
+    assert_eq!(
+        script.eval_value("document.querySelector('span').nextElementSibling.tagName").unwrap(),
+        "EM"
+    );
+
+    // Attributes, in source order, with a name lookup.
+    assert_eq!(
+        script.eval_value("document.querySelector('#d').attributes.map(a => a.name).join(',')")
+            .unwrap(),
+        "id,class,data-x"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('#d').attributes.getNamedItem('data-x').value")
+            .unwrap(),
+        "1"
+    );
+
+    // `rel` is a token list like `class` is.
+    assert_eq!(
+        script.eval_value("document.querySelector('link').relList.contains('preload')").unwrap(),
+        "true"
+    );
+    script.eval("document.querySelector('link').relList.add('modulepreload')").unwrap();
+    assert_eq!(
+        script.eval_value("document.querySelector('link').getAttribute('rel')").unwrap(),
+        "stylesheet preload modulepreload"
+    );
+
+    assert!(
+        script.unsupported().is_empty(),
+        "none of that should read as a gap: {:?}",
+        script.unsupported()
+    );
+}
+
+#[test]
+fn a_frameworks_private_field_is_not_reported_as_a_missing_api() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // Solid reads `document._$DX_DELEGATE` before it sets it, and the list an
+    // agent reads carried that as something this engine was missing. No web
+    // platform property begins with an underscore or a dollar.
+    script.eval("void document._$DX_DELEGATE; void document.$internal;").unwrap();
+    assert!(
+        script.unsupported().is_empty(),
+        "a framework's own bookkeeping is not an API gap: {:?}",
+        script.unsupported()
+    );
+
+    // A name that could be a real API is still reported.
+    script.eval("void document.adoptedStyleSheets;").unwrap();
+    assert!(
+        script.unsupported().iter().any(|(n, _)| n == "document.adoptedStyleSheets"),
+        "{:?}",
+        script.unsupported()
+    );
+}
+
+#[test]
+fn utf8_survives_a_round_trip_through_the_encoder() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // One, two, three and four byte sequences. "Wrong only for non-Latin text"
+    // is the failure mode this engine is least able to notice.
+    for text in ["plain", "café", "日本語", "\u{1F600} emoji"] {
+        assert_eq!(
+            script
+                .eval_value(&format!(
+                    "new TextDecoder().decode(new TextEncoder().encode({text:?}))"
+                ))
+                .unwrap(),
+            text
+        );
+    }
+    assert_eq!(
+        script.eval_value("new TextEncoder().encode('é').length").unwrap(),
+        "2",
+        "two bytes, not one character"
+    );
+    // A truncated sequence decodes to the replacement character rather than
+    // throwing, which is what a decoder is specified to do.
+    assert_eq!(
+        script.eval_value("new TextDecoder().decode(new Uint8Array([0xE6, 0x97]))").unwrap(),
+        "\u{FFFD}"
+    );
+}
+
+#[test]
+fn random_values_come_from_the_system_and_look_like_it() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // Not a distribution test — a "did anything actually happen" test. A seeded
+    // generator wearing this name would be a lie a page cannot detect.
+    assert_eq!(
+        script
+            .eval_value(
+                "const a = new Uint8Array(32); crypto.getRandomValues(a); \
+                 String(new Set(a).size > 4)"
+            )
+            .unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script
+            .eval_value(
+                "const b = new Uint8Array(16), c = new Uint8Array(16); \
+                 crypto.getRandomValues(b); crypto.getRandomValues(c); \
+                 String(b.join() !== c.join())"
+            )
+            .unwrap(),
+        "true",
+        "two draws must differ"
+    );
+
+    // A v4 UUID, in the shape everything that parses one expects.
+    let uuid = script.eval_value("crypto.randomUUID()").unwrap();
+    assert_eq!(uuid.len(), 36, "{uuid}");
+    assert_eq!(uuid.chars().nth(14), Some('4'), "version nibble: {uuid}");
+    assert!(
+        matches!(uuid.chars().nth(19), Some('8' | '9' | 'a' | 'b')),
+        "variant nibble: {uuid}"
+    );
+}
+
+#[test]
+fn structured_clone_keeps_what_the_json_round_trip_dropped() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // Every one of these read as the page's own bug before.
+    assert_eq!(
+        script.eval_value("structuredClone(new Map([['a', 1]])).get('a')").unwrap(),
+        "1"
+    );
+    assert_eq!(
+        script.eval_value("structuredClone(new Set([1, 2, 3])).size").unwrap(),
+        "3"
+    );
+    assert_eq!(
+        script.eval_value("structuredClone(new Date(86400000)) instanceof Date").unwrap(),
+        "true"
+    );
+    // A cycle is clonable, and used to throw.
+    assert_eq!(
+        script
+            .eval_value("const o = { name: 'x' }; o.self = o; \
+                         const c = structuredClone(o); String(c.self === c)")
+            .unwrap(),
+        "true"
+    );
+    // And the copy is a copy.
+    assert_eq!(
+        script
+            .eval_value("const src = { nested: { n: 1 } }; const copy = structuredClone(src); \
+                         copy.nested.n = 2; String(src.nested.n)")
+            .unwrap(),
+        "1"
+    );
+}
+
+#[test]
+fn the_old_request_object_goes_through_the_same_broker() {
+    use std::sync::atomic::Ordering;
+    let (port, hits) = counting_server();
+
+    let broker = Arc::new(
+        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+    );
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let page = factory.from_html("<html><body></body></html>", &base);
+    let mut script = Script::new(page.dom(), broker, &base).expect("realm");
+
+    // Libraries that predate `fetch` are still everywhere, and an XHR that
+    // slipped around the broker would be the one request with no receipt.
+    script
+        .eval(
+            "globalThis.got = null; globalThis.state = null; \
+             const x = new XMLHttpRequest(); \
+             x.open('GET', '/api'); \
+             x.onload = () => { got = x.responseText; state = x.readyState }; \
+             x.send();",
+        )
+        .expect("runs");
+    script.settle();
+
+    assert_eq!(script.eval_value("got").unwrap(), "secret source code");
+    assert_eq!(script.eval_value("String(state)").unwrap(), "4");
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    // Synchronous XHR would deadlock the one thread that owns the realm, so it
+    // is named rather than silently upgraded.
+    script
+        .eval("try { new XMLHttpRequest().open('GET', '/x', false) } catch (e) {}")
+        .unwrap();
+    assert!(
+        script
+            .unsupported()
+            .iter()
+            .any(|(n, _)| n == "XMLHttpRequest (synchronous)"),
+        "{:?}",
+        script.unsupported()
+    );
+}
+
+#[test]
+fn a_detached_subtree_can_be_searched_before_it_is_inserted() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='attached'><span class='label'>here</span></div></body></html>",
+    );
+
+    // Clone, query, fill, append is how a framework renders a row — and the
+    // query happens while the fragment is still detached. Stylo's fast path
+    // consults the document's id and class caches, which hold only attached
+    // nodes and report "handled, nothing found" rather than falling through, so
+    // this came back null and every template-driven page rendered empty.
+    assert_eq!(
+        script
+            .eval_value(
+                "const d = document.createElement('div'); \
+                 d.innerHTML = '<p class=\"row\"><b>deep</b></p>'; \
+                 d.querySelector('.row b').textContent"
+            )
+            .unwrap(),
+        "deep"
+    );
+    assert_eq!(
+        script
+            .eval_value(
+                "const e = document.createElement('section'); \
+                 e.innerHTML = '<i class=\"x\">1</i><i class=\"x\">2</i>'; \
+                 String(e.querySelectorAll('.x').length)"
+            )
+            .unwrap(),
+        "2"
+    );
+    // And a scoped query still does not escape its scope.
+    assert_eq!(
+        script
+            .eval_value(
+                "const f = document.createElement('div'); \
+                 String(f.querySelector('.label'))"
+            )
+            .unwrap(),
+        "null",
+        "a scoped query must not find a match from elsewhere in the document"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('#attached').querySelector('.label').textContent")
+            .unwrap(),
+        "here"
+    );
+}
+
+#[test]
+fn the_address_moves_with_client_side_routing() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // A router that reads its own route back has to get the one it just pushed.
+    assert_eq!(script.eval_value("location.pathname").unwrap(), "/");
+    script.eval("history.pushState({ page: 2 }, '', '/page/2?tab=a#top')").unwrap();
+
+    assert_eq!(script.eval_value("location.pathname").unwrap(), "/page/2");
+    assert_eq!(script.eval_value("location.search").unwrap(), "?tab=a");
+    assert_eq!(script.eval_value("location.hash").unwrap(), "#top");
+    assert_eq!(script.eval_value("location.host").unwrap(), "app.example");
+    assert_eq!(script.eval_value("location.origin").unwrap(), "https://app.example");
+    assert_eq!(script.eval_value("document.URL").unwrap(), "https://app.example/page/2?tab=a#top");
+
+    // Going back moves it too.
+    script.eval("history.back()").unwrap();
+    assert_eq!(script.eval_value("location.pathname").unwrap(), "/");
+
+    // The host's record of what it actually fetched is not editable by the page:
+    // an engine whose account of its own requests the page could rewrite would
+    // be worth nothing.
+    assert_eq!(
+        script.eval_value("globalThis.__h5iUrl").unwrap(),
+        "https://app.example/"
+    );
+}
+
+#[test]
+fn an_on_handler_property_binds_and_replaces() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><button id='b'>go</button><output id='out'></output></body></html>",
+    );
+
+    script
+        .eval(
+            "const b = document.querySelector('#b'); \
+             globalThis.calls = []; \
+             b.onclick = () => calls.push('first'); \
+             b.onclick = () => calls.push('second'); \
+             b.click();",
+        )
+        .expect("runs");
+
+    // Assigning replaces: two assignments leave one handler, which is what
+    // makes the property different from addEventListener.
+    assert_eq!(script.eval_value("calls.join(',')").unwrap(), "second");
+    assert_eq!(script.eval_value("typeof document.querySelector('#b').onclick").unwrap(), "function");
+
+    // And it can be cleared.
+    script.eval("document.querySelector('#b').onclick = null; document.querySelector('#b').click()")
+        .unwrap();
+    assert_eq!(script.eval_value("calls.join(',')").unwrap(), "second");
+    assert!(script.unsupported().is_empty(), "{:?}", script.unsupported());
+}
+
+#[test]
+fn a_missing_method_on_a_host_object_names_itself() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // Only the document and its nodes were watched, so a method missing from
+    // `location` or `navigator` was invisible — and a module failing with "not
+    // a callable function" that names nothing is the failure §8.3 exists to
+    // prevent.
+    script.eval("void location.someRoutingHelper; void navigator.someSensor;").unwrap();
+    let reported: Vec<String> = script.unsupported().into_iter().map(|(n, _)| n).collect();
+    assert!(reported.iter().any(|n| n == "location.someRoutingHelper"), "{reported:?}");
+    assert!(reported.iter().any(|n| n == "navigator.someSensor"), "{reported:?}");
+}

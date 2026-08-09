@@ -77,6 +77,9 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("fetchDrain", 0, fetch_drain),
         ("fetchPending", 0, fetch_pending),
         ("userAgent", 0, user_agent),
+        ("attrNames", 1, attr_names),
+        ("randomBytes", 1, random_bytes),
+        ("matchesSelector", 2, matches_selector),
         ("innerHtml", 1, inner_html),
         ("outerHtml", 1, outer_html),
         ("rect", 1, rect),
@@ -111,37 +114,6 @@ pub fn install(context: &mut Context) -> JsResult<()> {
     Ok(())
 }
 
-/// Restrict matches to descendants of `scope`, or leave them alone for the
-/// document scope.
-///
-/// Blitz's selector engine always searches from the root, so `element.
-/// querySelector` has to be narrowed here. Without this an app that scopes a
-/// lookup to one panel would silently get a match from another, which is worse
-/// than an error because it looks like it worked.
-fn within(doc: &blitz_dom::BaseDocument, scope: usize, ids: Vec<usize>) -> Vec<usize> {
-    if scope == 0 {
-        return ids;
-    }
-    ids.into_iter()
-        .filter(|id| {
-            let mut current = *id;
-            for _ in 0..256 {
-                let Some(node) = doc.get_node(current) else {
-                    return false;
-                };
-                let Some(parent) = node.parent else {
-                    return false;
-                };
-                if parent == scope {
-                    return true;
-                }
-                current = parent;
-            }
-            false
-        })
-        .collect()
-}
-
 // ── reading ────────────────────────────────────────────────────────────────
 
 fn query(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -149,11 +121,9 @@ fn query(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
     let scope = arg_id(args, 1, context).unwrap_or(0);
     let host = host(context)?;
     let doc = host.dom.borrow();
-    let all = doc
-        .query_selector_all(&selector)
-        .map(|found| found.to_vec())
-        .unwrap_or_default();
-    Ok(id_value(within(&doc, scope, all).into_iter().next()))
+    Ok(id_value(
+        matches_within(&doc, scope, &selector).into_iter().next(),
+    ))
 }
 
 fn query_all(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -162,17 +132,75 @@ fn query_all(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     let scope = arg_id(args, 1, context).unwrap_or(0);
     let ids: Vec<usize> = {
         let doc = host.dom.borrow();
-        let all = doc
-            .query_selector_all(&selector)
-            .map(|found| found.to_vec())
-            .unwrap_or_default();
-        within(&doc, scope, all)
+        matches_within(&doc, scope, &selector)
     };
     let array = boa_engine::object::builtins::JsArray::new(context);
     for id in ids {
         array.push(JsValue::from(id as f64), context)?;
     }
     Ok(array.into())
+}
+
+/// Every node under `scope` matching `selector`, in document order.
+///
+/// Two paths, and the reason is a real limitation rather than an optimisation.
+/// Stylo's `query_selector` is fast because it consults the document's id and
+/// class caches — which contain only *attached* nodes, and which report "handled,
+/// nothing found" rather than falling through. So a detached subtree came back
+/// empty: every cloned `<template>` before it is inserted, which is exactly when
+/// a framework searches one. Clone, query, fill, append is how a row is made.
+///
+/// So: the whole document goes through stylo's fast path, and anything scoped to
+/// a node is walked here and matched one element at a time. The walk is bounded
+/// by the subtree, which is the part a scoped query was always going to touch.
+fn matches_within(doc: &blitz_dom::BaseDocument, scope: usize, selector: &str) -> Vec<usize> {
+    let Ok(list) = doc.try_parse_selector_list(selector) else {
+        return Vec::new();
+    };
+
+    if scope == 0 {
+        let mut found = smallvec::SmallVec::<[&blitz_dom::Node; 128]>::new();
+        style::dom_apis::query_selector::<&blitz_dom::Node, style::dom_apis::QueryAll>(
+            doc.root_node(),
+            &list,
+            &mut found,
+            style::dom_apis::MayUseInvalidation::Yes,
+        );
+        return found.into_iter().map(|node| node.id).collect();
+    }
+
+    let mut out = Vec::new();
+    collect_matches(doc, scope, &list, &mut out);
+    out
+}
+
+/// Depth-first over the descendants of `id`, in document order.
+///
+/// The scope itself is deliberately not tested: `element.querySelector` is
+/// defined to search inside the element, not to return it.
+fn collect_matches(
+    doc: &blitz_dom::BaseDocument,
+    id: usize,
+    list: &selectors::SelectorList<style::selector_parser::SelectorImpl>,
+    out: &mut Vec<usize>,
+) {
+    let Some(node) = doc.get_node(id) else { return };
+    for child in node.children.clone() {
+        if let Some(child_node) = doc.get_node(child) {
+            if child_node.is_element()
+                // Standards mode: this engine parses HTML5 and never emulates
+                // the quirks the flag exists to preserve.
+                && style::dom_apis::element_matches(
+                    &child_node,
+                    list,
+                    style::context::QuirksMode::NoQuirks,
+                )
+            {
+                out.push(child);
+            }
+        }
+        collect_matches(doc, child, list, out);
+    }
 }
 
 fn get_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -585,6 +613,90 @@ fn unsupported(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
 ///
 /// The URL is recorded before the answer is returned, so a caller can correlate
 /// the click that ran this script with the request it caused.
+/// Does this one element match the selector?
+///
+/// Asked of the element's parent and filtered, because stylo's query walks
+/// *descendants* of the node it is given. Rooting at the element itself would
+/// never return the element itself. When there is no parent — a freshly created
+/// node, or the root — the element is its own scope and the answer comes from
+/// the document, which is the only case where that is still correct.
+fn matches_selector(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let selector = arg_string(args, 1, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+
+    let scope = doc.get_node(id).and_then(|node| node.parent);
+    let found = match scope {
+        Some(parent) => matches_within(&doc, parent, &selector),
+        // No parent: the node is detached and alone, so nothing containing it
+        // can be searched. Ask the document — which finds it only if it is
+        // attached — and accept that a lone detached node answers false.
+        None => matches_within(&doc, 0, &selector),
+    };
+    Ok(JsValue::from(found.contains(&id)))
+}
+
+/// Bytes from the operating system's CSPRNG, for `crypto.getRandomValues`.
+///
+/// The real thing rather than a seeded generator. A page cannot tell the
+/// difference, which is exactly why substituting one would be a lie: the
+/// property `crypto` names is unpredictability, and a nonce or an id built on a
+/// predictable stream is broken in a way nothing here would surface.
+fn random_bytes(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let count = args
+        .first()
+        .unwrap_or(&JsValue::undefined())
+        .to_number(context)? as usize;
+    // Bounded so a page cannot ask this process for an arbitrary allocation.
+    // A browser refuses above 65536 for the same reason.
+    if count > 65_536 {
+        return Err(boa_engine::JsNativeError::typ()
+            .with_message("getRandomValues: at most 65536 bytes at a time")
+            .into());
+    }
+
+    let mut bytes = vec![0u8; count];
+    if let Err(error) = getrandom::getrandom(&mut bytes) {
+        return Err(boa_engine::JsNativeError::error()
+            .with_message(format!("the system random source refused: {error}"))
+            .into());
+    }
+
+    let out = boa_engine::object::builtins::JsArray::new(context);
+    for byte in bytes {
+        out.push(JsValue::from(byte as f64), context)?;
+    }
+    Ok(out.into())
+}
+
+/// Every attribute on an element, in source order.
+///
+/// Backs `Element.attributes` and `getAttributeNames`. Names only: the values
+/// come back through `getAttr`, so there is one place that reads them.
+fn attr_names(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+
+    let names: Vec<String> = doc
+        .get_node(id)
+        .and_then(|node| node.attrs())
+        .map(|attrs| {
+            attrs
+                .iter()
+                .map(|a| a.name.local.as_ref().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let out = boa_engine::object::builtins::JsArray::new(context);
+    for name in names {
+        out.push(JsValue::from(js_string!(name.as_str())), context)?;
+    }
+    Ok(out.into())
+}
+
 /// The one user agent, so the prelude cannot hold a second copy that drifts.
 fn user_agent(_this: &JsValue, _args: &[JsValue], _context: &mut Context) -> JsResult<JsValue> {
     Ok(JsValue::from(js_string!(crate::net::USER_AGENT)))

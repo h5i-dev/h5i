@@ -200,6 +200,25 @@ impl Page {
                 ));
             }
 
+            // Frames are not loaded, and `contentDocument` answers null for
+            // them exactly as a browser does for a frame it will not let you
+            // into. Null is the right answer to give *script*; it is the wrong
+            // thing to leave an agent to infer, because the missing content
+            // looks like content the page never had.
+            let frames = {
+                let doc = page.doc.borrow();
+                doc.query_selector_all("iframe, frame")
+                    .map(|ids| ids.len())
+                    .unwrap_or(0)
+            };
+            if frames > 0 {
+                page.note(&format!(
+                    "this page has {frames} frame(s), whose content this engine does not load: \
+                     anything inside them is absent from the outline below, and script reading \
+                     `contentDocument` gets null"
+                ));
+            }
+
             // A challenge is not the page, and an outline of one reads as a
             // page that is simply empty. Naming it is the difference between an
             // agent concluding "there is nothing here" and "I was blocked".
