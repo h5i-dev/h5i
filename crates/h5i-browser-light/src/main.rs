@@ -658,6 +658,21 @@ fn open(
             "snapshot": snapshot,
             "text": page.text(),
             "requests": records,
+            // Machine-readable forms of what the snapshot says in prose, so a
+            // caller aggregating across many pages does not have to parse
+            // sentences back out of the outline.
+            "unsupported": page
+                .unsupported()
+                .into_iter()
+                .map(|(name, count)| serde_json::json!({ "api": name, "calls": count }))
+                .collect::<Vec<_>>(),
+            "console": page
+                .console()
+                .into_iter()
+                .map(|line| serde_json::json!({ "level": line.level, "text": line.text }))
+                .collect::<Vec<_>>(),
+            "settled": page.settled().map(|s| s.render()),
+            "script": page.has_script(),
             "screenshot": screenshot_bytes.as_ref().map(|(path, len)| serde_json::json!({
                 "path": path.display().to_string(),
                 "bytes": len,

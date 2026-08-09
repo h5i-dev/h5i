@@ -268,8 +268,30 @@ impl Page {
                                         .map(|a| a.value.to_string())
                                 })
                             };
-                            let is_module = attr("type")
-                                .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("module"));
+                            // What the `type` attribute means, which is not
+                            // "run it anyway". A page embeds data in script
+                            // elements — `application/json` for state,
+                            // `text/template` for markup — and those are data
+                            // blocks the spec says never execute. Running them
+                            // parses JSON as JavaScript and fills the console
+                            // with syntax errors that blame the page for
+                            // something it never asked us to do. Found by
+                            // pointing this at github.com.
+                            let kind = attr("type").unwrap_or_default();
+                            let kind = kind.trim().to_ascii_lowercase();
+                            let is_module = kind == "module";
+                            let is_classic = kind.is_empty()
+                                || matches!(
+                                    kind.as_str(),
+                                    "text/javascript"
+                                        | "application/javascript"
+                                        | "text/ecmascript"
+                                        | "application/ecmascript"
+                                        | "module"
+                                );
+                            if !is_classic {
+                                return None;
+                            }
 
                             match (attr("src"), is_module) {
                                 (Some(src), true) => Some(Source::ModuleExternal(src)),

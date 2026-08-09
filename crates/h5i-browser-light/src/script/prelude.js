@@ -534,6 +534,81 @@
     return !event.defaultPrevented;
   }
 
+  // An API this engine does not implement, made to say so.
+  //
+  // The corpus run found the gap this closes: a global we never defined throws
+  // a bare `ReferenceError`, and a method on a half-defined object throws
+  // `TypeError: not a callable function`. Neither names the API, so neither
+  // reaches the unsupported list an agent reads — the page just looks broken.
+  // These record themselves on *any* access and throw a message that names what
+  // was wanted, so a missing API is legible from both directions.
+  function missingApi(name) {
+    const report = (property) => {
+      const full = property ? `${name}.${String(property)}` : name;
+      api.unsupported(full);
+      throw new TypeError(`${full} is not implemented by this engine`);
+    };
+    return new Proxy(function () {}, {
+      get(_t, property) {
+        if (property === Symbol.toPrimitive || property === "toString") {
+          return () => `[unsupported ${name}]`;
+        }
+        if (property === "then") return undefined; // not a thenable
+        report(property);
+      },
+      apply() { report(null); },
+      construct() { report(null); },
+    });
+  }
+
+  // Real, because the engine already contains a correct URL parser and a
+  // second one written in JavaScript would disagree with it about exactly the
+  // cases that matter.
+  class URLSearchParams {
+    constructor(init) {
+      this._pairs = [];
+      if (typeof init === "string") {
+        for (const part of init.replace(/^\?/, "").split("&")) {
+          if (!part) continue;
+          const at = part.indexOf("=");
+          const k = at < 0 ? part : part.slice(0, at);
+          const v = at < 0 ? "" : part.slice(at + 1);
+          this._pairs.push([decodeURIComponent(k.replace(/\+/g, " ")),
+                            decodeURIComponent(v.replace(/\+/g, " "))]);
+        }
+      } else if (init && typeof init === "object") {
+        for (const k of Object.keys(init)) this._pairs.push([k, String(init[k])]);
+      }
+    }
+    get(k) { const hit = this._pairs.find(([n]) => n === String(k)); return hit ? hit[1] : null; }
+    getAll(k) { return this._pairs.filter(([n]) => n === String(k)).map(([, v]) => v); }
+    has(k) { return this._pairs.some(([n]) => n === String(k)); }
+    set(k, v) { this.delete(k); this.append(k, v); }
+    append(k, v) { this._pairs.push([String(k), String(v)]); }
+    delete(k) { this._pairs = this._pairs.filter(([n]) => n !== String(k)); }
+    forEach(fn) { for (const [k, v] of this._pairs) fn(v, k, this); }
+    keys() { return this._pairs.map(([k]) => k)[Symbol.iterator](); }
+    values() { return this._pairs.map(([, v]) => v)[Symbol.iterator](); }
+    entries() { return this._pairs[Symbol.iterator](); }
+    [Symbol.iterator]() { return this.entries(); }
+    toString() {
+      return this._pairs
+        .map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v))
+        .join("&");
+    }
+  }
+
+  class URL {
+    constructor(href, base) {
+      const parts = api.parseUrl(String(href), base === undefined ? "" : String(base));
+      if (!parts) throw new TypeError(`Invalid URL: ${href}`);
+      Object.assign(this, parts);
+      this.searchParams = new URLSearchParams(parts.search);
+    }
+    toString() { return this.href; }
+    toJSON() { return this.href; }
+  }
+
   // A case-insensitive header map, which is what `Headers` is: `get("ETag")`
   // must find a header the server spelled `etag`.
   class Headers {
@@ -870,7 +945,51 @@
     cancelAnimationFrame: clearTimeout,
     Node, Element, Text, Event,
     alert: () => api.unsupported("alert"),
-    matchMedia: () => { api.unsupported("matchMedia"); return { matches: false, addListener() {}, addEventListener() {} }; },
+    matchMedia: (query) => {
+      // Answered rather than thrown, because a page that cannot ask about the
+      // viewport usually stops rendering entirely. `matches: false` is honest
+      // for a fixed-size headless viewport, and the call is still recorded.
+      api.unsupported("matchMedia");
+      return {
+        media: String(query || ""), matches: false, onchange: null,
+        addListener() {}, removeListener() {},
+        addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; },
+      };
+    },
+    URL, URLSearchParams,
+    queueMicrotask: (fn) => { Promise.resolve().then(fn); },
+    structuredClone: (value) => JSON.parse(JSON.stringify(value)),
+    requestIdleCallback: (fn) => setTimeout(() => fn({ didTimeout: false, timeRemaining: () => 0 }), 1),
+    cancelIdleCallback: clearTimeout,
+    navigator: {
+      userAgent: "Mozilla/5.0 (compatible; h5i-browser-light)",
+      platform: "", language: "en-US", languages: ["en-US"],
+      onLine: true, cookieEnabled: false, maxTouchPoints: 0,
+      clipboard: missingApi("navigator.clipboard"),
+      serviceWorker: missingApi("navigator.serviceWorker"),
+      geolocation: missingApi("navigator.geolocation"),
+      mediaDevices: missingApi("navigator.mediaDevices"),
+    },
+    // Named rather than absent. A page reaching for these gets a message that
+    // says which API it wanted, and the name reaches the snapshot.
+    customElements: missingApi("customElements"),
+    WebSocket: missingApi("WebSocket"),
+    Worker: missingApi("Worker"),
+    SharedWorker: missingApi("SharedWorker"),
+    XMLHttpRequest: missingApi("XMLHttpRequest"),
+    EventSource: missingApi("EventSource"),
+    indexedDB: missingApi("indexedDB"),
+    caches: missingApi("caches"),
+    crypto: missingApi("crypto"),
+    WebAssembly: missingApi("WebAssembly"),
+    BroadcastChannel: missingApi("BroadcastChannel"),
+    Notification: missingApi("Notification"),
+    FileReader: missingApi("FileReader"),
+    Blob: missingApi("Blob"),
+    Image: missingApi("Image"),
+    TextEncoder: missingApi("TextEncoder"),
+    TextDecoder: missingApi("TextDecoder"),
+    HTMLCanvasElement: missingApi("HTMLCanvasElement"),
     getComputedStyle: (element) => {
       // Reads what Stylo resolved. Properties outside the curated set record
       // themselves as unsupported rather than returning a plausible lie: a

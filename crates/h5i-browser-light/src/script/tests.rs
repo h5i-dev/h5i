@@ -1484,3 +1484,110 @@ fn a_click_is_credited_only_with_what_it_caused() {
     );
     assert!(caused[0].ends_with("/clicked"), "{caused:?}");
 }
+
+#[test]
+fn a_script_element_that_is_not_javascript_is_not_executed() {
+    // Pages embed data in script elements — `application/json` for state,
+    // `text/template` for markup — and the spec says those never execute.
+    // Running them parses JSON as JavaScript and fills the console with syntax
+    // errors that blame the page. Found by pointing the corpus at github.com.
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let factory = scripted_factory(broker);
+
+    let page = factory.from_html(
+        r#"<html><body><p id="out">before</p>
+           <script type="application/json">{"embedded": "state", "n": 1}</script>
+           <script type="text/template"><div>{{ handlebars }}</div></script>
+           <script type="text/javascript">document.querySelector('#out').textContent = 'ran';</script>
+           </body></html>"#,
+        &url::Url::parse("https://app.example/").unwrap(),
+    );
+
+    assert!(
+        page.snapshot().render().contains("ran"),
+        "a real script still runs:\n{}",
+        page.snapshot().render()
+    );
+    assert!(
+        page.console().is_empty(),
+        "and the data blocks produced no errors at all: {:?}",
+        page.console()
+    );
+}
+
+#[test]
+fn an_api_this_engine_lacks_names_itself_instead_of_throwing_anonymously() {
+    // The gap the corpus found. A global we never defined throws a bare
+    // ReferenceError; a method on a half-defined object throws
+    // `TypeError: not a callable function`. Neither names the API, so neither
+    // reaches the list an agent reads and the page just looks broken.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script
+        .eval(
+            "globalThis.said = ''; \
+             try { customElements.define('x-y', class {}) } catch (e) { said = String(e) } \
+             try { new WebSocket('wss://x') } catch (e) {} \
+             try { navigator.clipboard.writeText('x') } catch (e) {}",
+        )
+        .expect("runs");
+
+    assert!(
+        script.eval_value("said").unwrap().contains("customElements.define"),
+        "the message names what was wanted: {}",
+        script.eval_value("said").unwrap()
+    );
+
+    let reported: Vec<String> = script.unsupported().into_iter().map(|(n, _)| n).collect();
+    assert!(reported.iter().any(|n| n == "customElements.define"), "{reported:?}");
+    assert!(reported.iter().any(|n| n == "WebSocket"), "{reported:?}");
+    assert!(
+        reported.iter().any(|n| n == "navigator.clipboard.writeText"),
+        "nested ones name their whole path: {reported:?}"
+    );
+}
+
+#[test]
+fn url_parsing_uses_the_engines_own_parser() {
+    // One parser, not two. A JavaScript reimplementation would disagree with
+    // the broker about percent-encoding, default ports and origins — exactly
+    // the cases a policy decision turns on.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+
+    assert_eq!(
+        script.eval_value("new URL('/b?x=1#f', 'https://a.example/base/').href").unwrap(),
+        "https://a.example/b?x=1#f"
+    );
+    assert_eq!(
+        script.eval_value("new URL('https://a.example:8443/p').origin").unwrap(),
+        "https://a.example:8443"
+    );
+    assert_eq!(
+        script.eval_value("new URL('https://a.example/p?q=a%20b').searchParams.get('q')").unwrap(),
+        "a b"
+    );
+    assert_eq!(
+        script.eval_value("String(new URLSearchParams({a:'1',b:'2'}))").unwrap(),
+        "a=1&b=2"
+    );
+    assert_eq!(
+        script.eval_value("(() => { try { new URL('not a url'); return 'no throw' } \
+                           catch (e) { return 'threw' } })()").unwrap(),
+        "threw"
+    );
+}
+
+#[test]
+fn queue_microtask_and_structured_clone_are_real() {
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script
+        .eval(
+            "globalThis.order = []; queueMicrotask(() => order.push('micro')); order.push('sync'); \
+             globalThis.copy = structuredClone({ a: [1, 2], b: { c: 3 } });",
+        )
+        .expect("runs");
+    script.settle();
+
+    assert_eq!(script.eval_value("order.join(',')").unwrap(), "sync,micro");
+    assert_eq!(script.eval_value("copy.b.c").unwrap(), "3");
+    assert_eq!(script.eval_value("copy.a.length").unwrap(), "2");
+}

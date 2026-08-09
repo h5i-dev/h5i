@@ -78,6 +78,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("outerHtml", 1, outer_html),
         ("rect", 1, rect),
         ("computedStyle", 2, computed_style),
+        ("parseUrl", 2, parse_url),
     ];
 
     let api = boa_engine::object::ObjectInitializer::new(context).build();
@@ -631,4 +632,50 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         }
     };
     Ok(js_string!(answer).into())
+}
+
+/// Parse a URL against an optional base, using the same parser the broker uses.
+///
+/// Native rather than a JavaScript reimplementation because the engine already
+/// contains a correct URL parser, and a second one in the prelude would
+/// disagree with it about exactly the cases that matter — percent-encoding,
+/// default ports, and what counts as an origin.
+fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let href = arg_string(args, 0, context)?;
+    let base = arg_string(args, 1, context).unwrap_or_default();
+
+    let parsed = if base.is_empty() {
+        url::Url::parse(&href)
+    } else {
+        url::Url::parse(&base).and_then(|base| base.join(&href))
+    };
+
+    let Ok(url) = parsed else {
+        return Ok(JsValue::null());
+    };
+
+    let out = boa_engine::object::ObjectInitializer::new(context).build();
+    let fields: [(&str, String); 8] = [
+        ("href", url.to_string()),
+        ("protocol", format!("{}:", url.scheme())),
+        ("host", url.host_str().map(|h| match url.port() {
+            Some(port) => format!("{h}:{port}"),
+            None => h.to_string(),
+        }).unwrap_or_default()),
+        ("hostname", url.host_str().unwrap_or_default().to_string()),
+        ("port", url.port().map(|p| p.to_string()).unwrap_or_default()),
+        ("pathname", url.path().to_string()),
+        ("search", url.query().map(|q| format!("?{q}")).unwrap_or_default()),
+        ("hash", url.fragment().map(|f| format!("#{f}")).unwrap_or_default()),
+    ];
+    for (name, value) in fields {
+        out.set(js_string!(name), js_string!(value), false, context)?;
+    }
+    out.set(
+        js_string!("origin"),
+        js_string!(url.origin().ascii_serialization()),
+        false,
+        context,
+    )?;
+    Ok(out.into())
 }
