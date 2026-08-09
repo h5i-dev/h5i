@@ -481,7 +481,7 @@ impl Script {
     ///
     /// Drained rather than accumulated, so a caller can attribute requests to
     /// the action it just performed instead of to the whole session.
-    pub fn take_requests(&self) -> Vec<String> {
+    pub fn take_requests(&self) -> Vec<crate::script::host::RequestLink> {
         std::mem::take(&mut *self.host.requests.borrow_mut())
     }
 }

@@ -301,7 +301,7 @@ fn a_click_runs_script_that_fetches_and_the_agent_sees_the_result() {
 
     // And the causal link is stamped by the one component that knows it.
     assert_eq!(requests.len(), 1, "{requests:?}");
-    assert!(requests[0].ends_with("/api/items"), "{requests:?}");
+    assert!(requests[0].url.ends_with("/api/items"), "{requests:?}");
 
     // Every byte the script moved is in the request log, like any other fetch.
     let logged = sink.fetched_urls();
@@ -1483,7 +1483,10 @@ fn a_click_is_credited_only_with_what_it_caused() {
         1,
         "the module graph belongs to page load, not to the click: {caused:?}"
     );
-    assert!(caused[0].ends_with("/clicked"), "{caused:?}");
+    assert!(caused[0].url.ends_with("/clicked"), "{caused:?}");
+    // And it names the receipt it produced, which is what lets the console
+    // draw "this click, this row" rather than inferring one from timing.
+    assert!(caused[0].seq.is_some(), "{caused:?}");
 }
 
 #[test]

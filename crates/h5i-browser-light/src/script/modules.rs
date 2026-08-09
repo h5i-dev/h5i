@@ -133,7 +133,6 @@ impl ModuleLoader for BrokerModuleLoader {
             return;
         }
 
-        self.host.requests.borrow_mut().push(resolved.to_string());
         let outcome = self.host.broker.send_from(
             &resolved,
             Initiator::Subresource,
@@ -142,6 +141,18 @@ impl ModuleLoader for BrokerModuleLoader {
             None,
             Some(&self.host.base),
         );
+
+        // A module import is a request the page made like any other. It is
+        // fetched inline rather than through the ticket queue, so its receipt
+        // number is known by the time it is recorded.
+        self.host
+            .requests
+            .borrow_mut()
+            .push(crate::script::host::RequestLink {
+                ticket: 0,
+                url: resolved.to_string(),
+                seq: outcome.seq,
+            });
 
         if let Some(error) = outcome.error {
             finish_load(

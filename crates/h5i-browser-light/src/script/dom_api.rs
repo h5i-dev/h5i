@@ -607,10 +607,15 @@ fn fetch_start(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         Ok(url) => url,
         Err(error) => return reply_error(&format!("`{target}` is not a URL: {error}"), context),
     };
-    host.requests.borrow_mut().push(resolved.to_string());
-
     let id = host.next_fetch.get();
     host.next_fetch.set(id + 1);
+    host.requests
+        .borrow_mut()
+        .push(crate::script::host::RequestLink {
+            ticket: id,
+            url: resolved.to_string(),
+            seq: None,
+        });
     host.pending_fetches.borrow_mut().insert(
         id,
         crate::script::host::FetchSlot::Queued {
@@ -731,6 +736,16 @@ fn fetch_drain(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsR
             };
             if let Some(outcome) = taken {
                 pending.remove(&id);
+                // Now the receipt exists, so this request can name it. That
+                // number is what lets the console draw "this click, this row".
+                if let Some(link) = host
+                    .requests
+                    .borrow_mut()
+                    .iter_mut()
+                    .find(|link| link.ticket == id)
+                {
+                    link.seq = outcome.seq;
+                }
                 arrived.push((id, outcome));
             }
         }

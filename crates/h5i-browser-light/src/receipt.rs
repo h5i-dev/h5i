@@ -323,6 +323,27 @@ pub struct ActionRecord {
     pub url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Receipt sequence numbers this verb caused.
+    ///
+    /// The differentiator, written down: not "a request happened around then"
+    /// but "this click produced these receipts". Stamped by the only component
+    /// that knows the causal fact, and joined in the console against the
+    /// request log's own numbering.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requests: Vec<u64>,
+}
+
+/// How a verb went, for [`ActionLog::finish`].
+///
+/// A struct rather than five more parameters: the two `Option<String>`s next to
+/// each other were a call site nobody could read without counting.
+#[derive(Debug, Default, Clone)]
+pub struct ActionOutcome {
+    pub ok: bool,
+    pub url: Option<String>,
+    pub error: Option<String>,
+    /// Receipt sequence numbers this verb caused.
+    pub requests: Vec<u64>,
 }
 
 /// Where the resident session records what it was asked to do.
@@ -370,29 +391,23 @@ impl ActionLog {
             ok: None,
             url: None,
             error: None,
+            requests: Vec::new(),
         })?;
         Ok(seq)
     }
 
     /// Record how it went. Best-effort: the verb has already happened, so
     /// refusing anything now would only hide the outcome of something real.
-    pub fn finish(
-        &self,
-        seq: u64,
-        verb: &str,
-        target: Option<&str>,
-        ok: bool,
-        url: Option<&str>,
-        error: Option<&str>,
-    ) {
+    pub fn finish(&self, seq: u64, verb: &str, target: Option<&str>, outcome: ActionOutcome) {
         let _ = self.write(&ActionRecord {
             seq,
             phase: "result".to_string(),
             verb: verb.to_string(),
             target: target.map(str::to_string),
-            ok: Some(ok),
-            url: url.map(str::to_string),
-            error: error.map(str::to_string),
+            ok: Some(outcome.ok),
+            url: outcome.url,
+            error: outcome.error,
+            requests: outcome.requests,
         });
     }
 
@@ -438,7 +453,17 @@ mod action_log_tests {
         let log = ActionLog::create(&path).expect("creates, making the directory");
 
         let seq = log.begin("click", Some("@e1")).expect("records");
-        log.finish(seq, "click", Some("@e1"), true, Some("https://example.com/"), None);
+        log.finish(
+            seq,
+            "click",
+            Some("@e1"),
+            ActionOutcome {
+                ok: true,
+                url: Some("https://example.com/".to_string()),
+                requests: vec![4, 5],
+                ..Default::default()
+            },
+        );
 
         let lines: Vec<ActionRecord> = std::fs::read_to_string(&path)
             .unwrap()
@@ -463,7 +488,16 @@ mod action_log_tests {
         let log = ActionLog::create(&path).expect("creates");
 
         let seq = log.begin("navigate", Some("https://denied.test/")).unwrap();
-        log.finish(seq, "navigate", Some("https://denied.test/"), false, None, Some("denied by policy"));
+        log.finish(
+            seq,
+            "navigate",
+            Some("https://denied.test/"),
+            ActionOutcome {
+                ok: false,
+                error: Some("denied by policy".to_string()),
+                ..Default::default()
+            },
+        );
 
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("denied by policy"), "{text}");

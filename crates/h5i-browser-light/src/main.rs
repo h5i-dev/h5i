@@ -161,6 +161,31 @@ enum SessionVerb {
     /// The page as a model should read it: the fenced outline, with `@ref`
     /// handles for the things that can be acted on.
     Snapshot {
+        /// Report only what changed since the last snapshot.
+        ///
+        /// Three hundred lines re-read after every click, of which four are
+        /// new, is the wrong shape for an agent loop. When the page changed too
+        /// much for a difference to be the shorter answer — a navigation, or a
+        /// page that replaced its own body — the full outline is sent instead
+        /// and the reply says which it is.
+        #[arg(long)]
+        delta: bool,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+    /// Hand the page to the human at the live view for as long as a login takes.
+    ///
+    /// While this is on the agent cannot read the page: a credential typed into
+    /// a page the agent can snapshot has been handed to the agent. The session
+    /// that the login establishes stays in the jar afterwards, and the agent can
+    /// see that it is logged in without ever reading the cookie that says so.
+    Login {
+        /// End login mode and make the page readable again.
+        #[arg(long, conflicts_with = "on")]
+        off: bool,
+        /// Begin login mode. The default.
+        #[arg(long)]
+        on: bool,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -424,7 +449,12 @@ fn serve(
 fn session(verb: SessionVerb) -> Result<(), H5iError> {
     let (at, request) = match &verb {
         SessionVerb::Status { at } => (at, serde_json::json!({"verb": "status"})),
-        SessionVerb::Snapshot { at } => (at, serde_json::json!({"verb": "snapshot"})),
+        SessionVerb::Snapshot { delta, at } => {
+            (at, serde_json::json!({"verb": "snapshot", "delta": delta}))
+        }
+        SessionVerb::Login { off, on: _, at } => {
+            (at, serde_json::json!({"verb": "login", "on": !off}))
+        }
         SessionVerb::Navigate { url, at } => {
             (at, serde_json::json!({"verb": "navigate", "url": url}))
         }
@@ -461,7 +491,14 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
 
     // The snapshot is the whole point of the verb; everything else is a line.
     if let Some(text) = reply.get("text").and_then(serde_json::Value::as_str) {
+        // Why the full outline arrived when a difference was asked for. Said
+        // rather than left to be inferred from the length.
+        if let Some(reason) = reply.get("reason").and_then(serde_json::Value::as_str) {
+            eprintln!("note: {reason}");
+        }
         println!("{text}");
+    } else if let Some(message) = reply.get("message").and_then(serde_json::Value::as_str) {
+        println!("{message}");
     } else if let Some(moved) = reply.get("moved").and_then(serde_json::Value::as_bool) {
         let offset = reply.get("offset").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
         let height = reply

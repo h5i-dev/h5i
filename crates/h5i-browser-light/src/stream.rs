@@ -151,9 +151,44 @@ struct Session {
     /// console to feed and no claim to support. Inside a box it is set, and
     /// then it is a precondition: see [`crate::receipt::ActionLog::begin`].
     actions: Option<ActionLog>,
+
+    /// The last reading served to a control client, so the next one can be
+    /// expressed as its difference.
+    ///
+    /// Held per session rather than per client because there is one page: two
+    /// clients asking for deltas against different baselines would be two
+    /// answers about one thing.
+    last_snapshot: Option<crate::snapshot::Snapshot>,
+
+    /// Whether a human is typing a credential right now.
+    ///
+    /// While this is set the page is not readable by the agent — see
+    /// [`Session::login_refusal`]. The viewer keeps streaming, because the
+    /// human doing the typing has to see what they are typing.
+    login: bool,
 }
 
 impl Session {
+    /// Why a read was refused while a human is logging in.
+    ///
+    /// The whole point of the mode: a credential typed into a page the agent
+    /// can snapshot has been handed to the agent. Refusing the *read* is what
+    /// makes "log in for me" a thing a person can safely do, and it is
+    /// deliberately not a refusal of the session — the page still works, the
+    /// jar still fills, and everything resumes when the human says so.
+    fn login_refusal(verb: &str) -> Value {
+        json!({
+            "ok": false,
+            "error": format!(
+                "`{verb}` is refused while this session is in login mode: a credential typed \
+                 into a page the agent can read has been given to the agent. End login mode \
+                 with `session login --off` and the page becomes readable again, with whatever \
+                 session the login established still in the jar."
+            ),
+            "login": true,
+        })
+    }
+
     fn viewport(&self) -> (u32, u32) {
         let options = self.factory.options();
         (options.width, options.height)
@@ -252,6 +287,8 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         quality: options.quality,
         seq: 0,
         actions,
+        last_snapshot: None,
+        login: false,
     };
     run_session(session, rx, options.once);
 
@@ -620,8 +657,30 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
     let ok = answer.get("ok").and_then(Value::as_bool).unwrap_or(false);
     let url = answer.get("url").and_then(Value::as_str);
     let error = answer.get("error").and_then(Value::as_str);
+    // Which receipts this verb produced, read back out of the reply it just
+    // returned. The engine already stamped the link; this is what carries it
+    // into the log the console reads.
+    let caused: Vec<u64> = answer
+        .get("requests")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.get("seq").and_then(Value::as_u64))
+                .collect()
+        })
+        .unwrap_or_default();
     if let Some(log) = &session.actions {
-        log.finish(seq, verb, target.as_deref(), ok, url, error);
+        log.finish(
+            seq,
+            verb,
+            target.as_deref(),
+            crate::receipt::ActionOutcome {
+                ok,
+                url: url.map(str::to_string),
+                error: error.map(str::to_string),
+                requests: caused,
+            },
+        );
     }
     (answer, changed)
 }
@@ -632,6 +691,14 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 /// thing that knows who else is watching.
 fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
     let verb = request.get("verb").and_then(Value::as_str).unwrap_or("");
+
+    // Reads are refused while a human is typing a credential. `status` and
+    // `login` are not reads of the page: one reports the mode, the other is how
+    // it ends, and refusing either would make the mode impossible to leave.
+    if session.login && !matches!(verb, "status" | "login") {
+        return (Session::login_refusal(verb), false);
+    }
+
     match verb {
         // What the session is, for a client that just connected.
         "status" => (
@@ -644,25 +711,89 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 // which is what keeps a stolen snapshot worth less than a
                 // stolen jar.
                 "cookies": session.factory.broker().jar().len(),
+                "login": session.login,
             }),
             false,
         ),
 
-        "snapshot" => {
-            let snapshot = session.page.snapshot();
+        // Hand the page to the human for as long as it takes to log in.
+        //
+        // §9 of ROADMAP_BROWSER listed this as overdue rather than pending: it
+        // was supposed to arrive with the cookie jar, because a jar is what
+        // makes logging in worth doing and a readable page is what makes it
+        // unsafe.
+        "login" => {
+            let on = request.get("on").and_then(Value::as_bool).unwrap_or(true);
+            session.login = on;
+            // The baseline is dropped either way. A delta across a login would
+            // describe the page a human just used, which is the one thing this
+            // mode exists to keep out of the agent's hands.
+            session.last_snapshot = None;
             (
                 json!({
                     "ok": true,
-                    "url": session.page.url().to_string(),
-                    "text": snapshot.render(),
-                    // Stated rather than inferred: a caller that wants the
-                    // machine-readable form should not have to parse prose out
-                    // of the outline to learn the page had not finished.
-                    "settled": session.page.settled().map(|s| s.render()),
-                    "script": session.page.has_script(),
+                    "login": on,
+                    "cookies": session.factory.broker().jar().len(),
+                    "message": if on {
+                        "login mode is on: the page is no longer readable by the agent, and the \
+                         live view is yours. Type the credential there, then end this mode."
+                    } else {
+                        "login mode is off: the page is readable again, and whatever session \
+                         the login established is in the jar. The count is all that is \
+                         reported; no cookie value is readable through this engine."
+                    },
                 }),
                 false,
             )
+        }
+
+        "snapshot" => {
+            let snapshot = session.page.snapshot();
+            let wants_delta = request.get("delta").and_then(Value::as_bool).unwrap_or(false);
+
+            // The difference, when one was asked for and there is a baseline to
+            // difference against. Three hundred lines re-read after every click
+            // — of which four are new — is the wrong shape for an agent loop.
+            let delta = wants_delta
+                .then(|| session.last_snapshot.as_ref().map(|prev| snapshot.delta(prev)))
+                .flatten();
+
+            let mut reply = json!({
+                "ok": true,
+                "url": session.page.url().to_string(),
+                // Stated rather than inferred: a caller that wants the
+                // machine-readable form should not have to parse prose out
+                // of the outline to learn the page had not finished.
+                "settled": session.page.settled().map(|s| s.render()),
+                "script": session.page.has_script(),
+            });
+
+            match delta {
+                // A delta of a page that was replaced is as long as the page,
+                // so the full outline is the smaller answer. Which one this is
+                // is stated rather than left to be guessed from the shape.
+                Some(delta) if !delta.replaced => {
+                    reply["kind"] = json!("delta");
+                    reply["text"] = json!(delta.render());
+                    reply["delta"] = serde_json::to_value(&delta).unwrap_or(Value::Null);
+                }
+                Some(_) | None if wants_delta => {
+                    reply["kind"] = json!("full");
+                    reply["text"] = json!(snapshot.render());
+                    reply["reason"] = json!(
+                        "a delta was asked for; the page changed too much for one to be \
+                         shorter than the outline, or there was no earlier reading to \
+                         compare against"
+                    );
+                }
+                _ => {
+                    reply["kind"] = json!("full");
+                    reply["text"] = json!(snapshot.render());
+                }
+            }
+
+            session.last_snapshot = Some(snapshot);
+            (reply, false)
         }
 
         // Scrolling is the one thing a viewer could do that an agent could not,
@@ -799,7 +930,7 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                                 "ref": reference,
                                 "settled": settled,
                                 // The causal link, stamped by the one component
-                                // that knows it: this click, these requests.
+                                // that knows it: this click, these receipts.
                                 "requests": caused,
                             }),
                             true,
@@ -948,6 +1079,8 @@ mod tests {
             quality: 70,
             seq: 0,
             actions: None,
+            last_snapshot: None,
+            login: false,
         }
     }
 
@@ -972,6 +1105,8 @@ mod tests {
             quality: 70,
             seq: 0,
             actions: None,
+            last_snapshot: None,
+            login: false,
         }
     }
 
@@ -1516,5 +1651,165 @@ mod tests {
         let before = session.seq;
         broadcast_change(&mut session, &mut nobody);
         assert_eq!(session.seq, before, "no viewers, no frame");
+    }
+}
+
+#[cfg(test)]
+mod delta_and_login_tests {
+    use super::*;
+
+    fn page_session(html: &str) -> Session {
+        let broker = std::sync::Arc::new(
+            crate::net::Broker::new(
+                crate::policy::Policy::new(),
+                std::sync::Arc::new(crate::receipt::MemorySink::new()),
+                None,
+            )
+            .expect("broker"),
+        );
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+        let factory = crate::engine::PageFactory::new(
+            broker,
+            fonts.sources.clone(),
+            crate::engine::PageOptions::default(),
+        );
+        let base = url::Url::parse("https://app.example/").unwrap();
+        let page = factory.from_html(html, &base);
+        Session {
+            factory,
+            page,
+            quality: 70,
+            seq: 0,
+            actions: None,
+            last_snapshot: None,
+            login: false,
+        }
+    }
+
+    /// Change the page the way the engine itself does, so the test exercises
+    /// the real mutation path rather than a rebuilt document.
+    fn replace_inner_html(session: &mut Session, selector: &str, html: &str) {
+        let dom = session.page.dom();
+        let id = {
+            let doc = dom.borrow();
+            doc.query_selector_all(selector)
+                .ok()
+                .and_then(|ids| ids.first().copied())
+        };
+        let id = id.unwrap_or_else(|| panic!("no node matched `{selector}`"));
+        {
+            let mut doc = dom.borrow_mut();
+            doc.mutate().set_inner_html(id, html);
+        }
+        session.page.refresh();
+    }
+
+    #[test]
+    fn the_first_snapshot_is_full_and_the_next_one_is_the_difference() {
+        let mut session = page_session(
+            "<html><body><p>one</p><p>two</p><p>three</p><p>four</p><p>five</p></body></html>",
+        );
+
+        // Nothing to difference against yet, so the outline is the answer and
+        // the reply says so rather than sending an empty delta.
+        let (first, _) = control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));
+        assert_eq!(first["kind"], "full");
+        assert!(first["reason"].is_string(), "{first:?}");
+
+        // Nothing happened between the two reads.
+        let (second, _) = control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));
+        assert_eq!(second["kind"], "delta");
+        assert!(
+            second["text"].as_str().unwrap().contains("no change"),
+            "an agent that changed nothing needs to be told so, not handed the page again: {}",
+            second["text"]
+        );
+    }
+
+    #[test]
+    fn a_small_change_is_reported_as_a_small_change() {
+        let mut session = page_session(
+            "<html><body><ul><li>one</li><li>two</li><li>three</li><li>four</li>\
+             <li>five</li><li>six</li><li>seven</li><li>eight</li></ul></body></html>",
+        );
+        control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));
+
+        replace_inner_html(&mut session, "li:nth-child(2)", "TWO CHANGED");
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));
+        assert_eq!(reply["kind"], "delta");
+        let text = reply["text"].as_str().unwrap();
+        assert!(text.contains("TWO CHANGED"), "{text}");
+        assert!(!text.contains("seven"), "unchanged lines should not be re-sent: {text}");
+        // And it is still fenced: every added line came from the page.
+        assert!(text.contains(crate::snapshot::CONTENT_BEGIN), "{text}");
+    }
+
+    #[test]
+    fn a_page_that_replaced_itself_gets_the_outline_not_a_difference() {
+        let mut session = page_session(
+            "<html><body><p>alpha</p><p>beta</p><p>gamma</p><p>delta</p></body></html>",
+        );
+        control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));
+
+        replace_inner_html(&mut session, "body", "<p>wholly</p><p>different</p><p>now</p>");
+
+        // A difference as long as the page is technically true and useless.
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));
+        assert_eq!(reply["kind"], "full");
+        assert!(reply["text"].as_str().unwrap().contains("wholly"));
+    }
+
+    #[test]
+    fn login_mode_closes_the_page_to_the_agent_and_opens_again_on_request() {
+        let mut session = page_session("<html><body><p>secret form</p></body></html>");
+
+        let (on, _) = control_verb(&mut session, &json!({"verb": "login", "on": true}));
+        assert_eq!(on["login"], true);
+
+        // The page is not readable, and every way of reading it is refused —
+        // not only the one an honest client would use.
+        for verb in ["snapshot", "scroll", "click", "type", "submit", "navigate"] {
+            let (reply, _) = control_verb(&mut session, &json!({"verb": verb}));
+            assert_eq!(reply["ok"], false, "`{verb}` should be refused");
+            assert_eq!(reply["login"], true, "and should say why: {reply:?}");
+        }
+
+        // Status still answers, or the mode could not be observed...
+        let (status, _) = control_verb(&mut session, &json!({"verb": "status"}));
+        assert_eq!(status["ok"], true);
+        assert_eq!(status["login"], true);
+
+        // ...and login still answers, or the mode could not be left.
+        let (off, _) = control_verb(&mut session, &json!({"verb": "login", "on": false}));
+        assert_eq!(off["login"], false);
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "snapshot"}));
+        assert_eq!(reply["ok"], true);
+        assert!(reply["text"].as_str().unwrap().contains("secret form"));
+    }
+
+    #[test]
+    fn login_mode_reports_the_session_it_established_without_revealing_it() {
+        let mut session = page_session("<html><body><p>x</p></body></html>");
+        control_verb(&mut session, &json!({"verb": "login", "on": true}));
+        let (off, _) = control_verb(&mut session, &json!({"verb": "login", "on": false}));
+
+        // How many, never which — the same rule `status` follows.
+        assert!(off["cookies"].is_number(), "{off:?}");
+        let rendered = off.to_string();
+        assert!(!rendered.contains("Set-Cookie"), "{rendered}");
+    }
+
+    #[test]
+    fn a_delta_across_a_login_is_not_offered() {
+        let mut session = page_session("<html><body><p>before</p></body></html>");
+        control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));
+        control_verb(&mut session, &json!({"verb": "login", "on": true}));
+        control_verb(&mut session, &json!({"verb": "login", "on": false}));
+
+        // The baseline is dropped, because a difference across a login would
+        // describe the page the human just used.
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));
+        assert_eq!(reply["kind"], "full");
     }
 }

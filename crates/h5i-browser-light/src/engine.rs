@@ -515,7 +515,11 @@ impl Page {
     }
 
     /// Fire a real event at a node and let the page respond.
-    pub fn dispatch_event(&mut self, node_id: usize, kind: &str) -> Option<Vec<String>> {
+    pub fn dispatch_event(
+        &mut self,
+        node_id: usize,
+        kind: &str,
+    ) -> Option<Vec<crate::script::host::RequestLink>> {
         let script = self.script.as_mut()?;
         let _ = script.dispatch(node_id, kind);
         let settled = script.settle();

@@ -66,6 +66,13 @@ fn accept_for(initiator: Initiator) -> &'static str {
 /// an empty body and a reason — never an absence.
 #[derive(Debug, Clone)]
 pub struct FetchOutcome {
+    /// The receipt sequence number this request was recorded under.
+    ///
+    /// Carried out of the broker so a caller can say *which* receipt a page's
+    /// action produced. `None` when the request never reached the point of
+    /// being recorded, which is the same thing as there being no receipt to
+    /// name.
+    pub seq: Option<u64>,
     /// Response headers, in arrival order. Carried because `Response.headers`
     /// is how a page learns content type, pagination links and rate limits, and
     /// returning `null` from `headers.get` made every one of those look absent
@@ -86,7 +93,12 @@ impl FetchOutcome {
     }
 
     fn failed(url: Url, error: String) -> Self {
+        Self::failed_at(url, error, None)
+    }
+
+    fn failed_at(url: Url, error: String, seq: Option<u64>) -> Self {
         Self {
+            seq,
             headers: Vec::new(),
             final_url: url,
             body: Vec::new(),
@@ -244,7 +256,7 @@ impl Broker {
                 } else {
                     format!("denied by policy: {reason}")
                 };
-                return FetchOutcome::failed(current, message);
+                return FetchOutcome::failed_at(current, message, Some(seq));
             }
 
             // 2. The decision record, before any bytes move. If this cannot be
@@ -291,7 +303,7 @@ impl Broker {
                     outcome_record.cookies_sent = Some(cookies_sent);
                     outcome_record.error = Some(e.to_string());
                     let _ = self.sink.append(&outcome_record);
-                    return FetchOutcome::failed(current, e.to_string());
+                    return FetchOutcome::failed_at(current, e.to_string(), Some(seq));
                 }
             };
 
@@ -374,6 +386,7 @@ impl Broker {
                     outcome_record.bytes = Some(body.len() as u64);
                     let _ = self.sink.append(&outcome_record);
                     FetchOutcome {
+                        seq: Some(seq),
                         headers,
                         final_url: current,
                         body,
@@ -384,7 +397,7 @@ impl Broker {
                 Err(e) => {
                     outcome_record.error = Some(e.to_string());
                     let _ = self.sink.append(&outcome_record);
-                    FetchOutcome::failed(current, e.to_string())
+                    FetchOutcome::failed_at(current, e.to_string(), Some(seq))
                 }
             };
         }

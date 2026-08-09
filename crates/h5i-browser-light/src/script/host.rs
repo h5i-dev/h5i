@@ -79,7 +79,7 @@ pub struct Host {
     /// URLs script asked for, in order, so a caller can say which action caused
     /// which request. The receipt remains the record; this is only the link,
     /// stamped by the one component that knows the causal fact.
-    pub requests: RefCell<Vec<String>>,
+    pub requests: RefCell<Vec<RequestLink>>,
 
     /// Comment text, keyed by node id.
     ///
@@ -102,6 +102,23 @@ pub struct Host {
     /// them would have defined can be attributed to the refusal instead of
     /// being reported as an engine that lacks jQuery.
     pub refused_scripts: RefCell<Vec<String>>,
+}
+
+/// One request a page made, and the receipt it turned into.
+///
+/// The URL is known when the page asks; the sequence number only when the
+/// broker records it, which is why the two are filled in at different moments.
+/// Both are needed: the URL is what a human reads, and the sequence number is
+/// what joins this action to a row in the request log.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RequestLink {
+    /// The realm's own ticket, used to fill in `seq` when the answer arrives.
+    #[serde(skip)]
+    pub ticket: u64,
+    pub url: String,
+    /// Absent when the request never got as far as a receipt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
 }
 
 /// How many requests this engine will have on the wire at once.
