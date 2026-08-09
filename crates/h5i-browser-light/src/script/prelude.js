@@ -3597,7 +3597,7 @@
 
   /// Split one rule into its prelude and its body, or null if it has no body.
   function ruleParts(text) {
-    let depth = 0, quote = null;
+    let quote = null;
     for (let index = 0; index < text.length; index++) {
       const ch = text[index];
       if (quote) {
@@ -3609,7 +3609,6 @@
         const close = text.lastIndexOf("}");
         return { prelude: text.slice(0, index).trim(), body: text.slice(index + 1, close) };
       }
-      depth++;
     }
     return null;
   }
@@ -3623,6 +3622,14 @@
   class CSSRule {
     constructor(text, sheet) { this._text = text; this._sheet = sheet; }
     get cssText() { return this._text; }
+    /// Push this rule's new text back into the stylesheet it belongs to.
+    ///
+    /// Without this a mutation was a silent no-op: `cssRules` built a fresh
+    /// object per access, so `sheet.cssRules[0].style.color = "blue"` wrote to
+    /// a throwaway and the sheet still said red — success reported, nothing
+    /// changed. CSS-in-JS libraries mutate rules, so this was the worst kind of
+    /// wrong: quiet.
+    _changed() { if (this._sheet) this._sheet._rewriteFromRules(); }
     get parentStyleSheet() { return this._sheet ?? null; }
     get parentRule() { return null; }
     get type() {
@@ -3637,7 +3644,9 @@
     get selectorText() { return (ruleParts(this._text)?.prelude ?? "").trim(); }
     set selectorText(value) {
       const parts = ruleParts(this._text);
-      if (parts) this._text = `${String(value)} {${parts.body}}`;
+      if (!parts) return;
+      this._text = `${String(value)} {${parts.body}}`;
+      this._changed();
     }
     get style() {
       const rule = this;
@@ -3645,7 +3654,9 @@
         get: () => (ruleParts(rule._text)?.body ?? "").trim(),
         set: (text) => {
           const parts = ruleParts(rule._text);
-          if (parts) rule._text = `${parts.prelude} { ${text} }`;
+          if (!parts) return;
+          rule._text = `${parts.prelude} { ${text} }`;
+          rule._changed();
         },
       });
     }
@@ -3727,10 +3738,32 @@
       return this._element.textContent || "";
     }
 
+    /// The rules, cached against the text they were parsed from.
+    ///
+    /// Two reasons, and neither is only speed. A browser's `cssRules` hands
+    /// back the same object every time, so a page that keeps a rule and mutates
+    /// it later must keep hold of something real; and re-splitting on every
+    /// index made a loop over the rules quadratic in the size of the sheet.
     get cssRules() {
-      return splitRules(this._css()).map((text) => makeRule(text, this));
+      const css = this._css();
+      if (this._rulesFor !== css) {
+        this._rulesFor = css;
+        this._rules = splitRules(css).map((text) => makeRule(text, this));
+      }
+      return this._rules;
     }
     get rules() { return this.cssRules; }
+
+    /// Re-serialise the cached rules after one of them changed.
+    ///
+    /// `_rulesFor` is set to the text we just wrote, so the next read finds the
+    /// cache warm and the caller keeps the rule object it is holding.
+    _rewriteFromRules() {
+      if (!this._rules) return;
+      const text = this._rules.map((rule) => rule.cssText).join("\n");
+      this._rulesFor = text;
+      this._replaceAll(text);
+    }
 
     replaceSync(text) {
       this._text = String(text);

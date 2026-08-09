@@ -45,10 +45,6 @@ import re
 import subprocess
 import sys
 
-try:
-    import resource
-except ImportError:  # not POSIX
-    resource = None
 import time
 from pathlib import Path
 
@@ -120,22 +116,23 @@ def find_tests(root: Path, dirs, limit=None):
     return tests, generated, unscoreable
 
 
-def memory_cap(megabytes):
-    """Limit a child's address space, or None where that cannot be done.
+def capped(command, megabytes):
+    """Wrap a command so the child runs under an address-space limit.
 
     A WPT file is allowed to be hostile — several exist precisely to allocate
-    until something gives — and without this the kernel picks the victim, which
-    on a 8 GiB development box has been the whole session rather than the test.
-    A capped child dies alone and is recorded as one crash.
+    until something gives — and without a cap the kernel picks the victim, which
+    on this 8 GiB box has been the whole session rather than the test. A capped
+    child dies alone and is recorded as one crash.
+
+    Done through the shell rather than `preexec_fn`, which CPython documents as
+    unsafe in the presence of threads: this runner is a thread pool, and a fork
+    hook that takes a lock another thread holds deadlocks the worker with no
+    output to explain it. `exec` keeps the process count the same, so the child
+    the timeout kills is still the engine.
     """
-    if resource is None:
-        return None
-
-    def apply():
-        limit = megabytes * 1024 * 1024
-        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-
-    return apply
+    if os.name != "posix" or not megabytes:
+        return command
+    return ["/bin/sh", "-c", f'ulimit -v {megabytes * 1024}; exec "$0" "$@"', *command]
 
 
 def run_one(args):
@@ -145,9 +142,11 @@ def run_one(args):
     started = time.monotonic()
     try:
         proc = subprocess.run(
-            [str(BINARY), "open", "--script", "--json", "--max-snapshot-lines", "1", url],
+            capped(
+                [str(BINARY), "open", "--script", "--json", "--max-snapshot-lines", "1", url],
+                mem_mb,
+            ),
             capture_output=True, timeout=timeout,
-            preexec_fn=memory_cap(mem_mb),
         )
     except subprocess.TimeoutExpired:
         return {"test": rel, "outcome": "engine_timeout", "elapsed": time.monotonic() - started}

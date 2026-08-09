@@ -460,7 +460,14 @@ impl Script {
                 // page reported *nothing at all*. That was the single largest
                 // silent-failure bucket in WPT (§12.4).
                 let next = self.next_timer_due().unwrap_or(clock + TICK_MS);
-                clock = next.clamp(clock + TICK_MS, SETTLE_BUDGET_MS);
+                // `max` then `min`, not `clamp`: `clamp` panics when its lower
+                // bound exceeds its upper one, and here it can. A timer due
+                // within one tick of the budget leaves `clock + TICK_MS` past
+                // `SETTLE_BUDGET_MS`, and the engine aborted — taking the page,
+                // the snapshot and the receipts with it, which is the failure
+                // `insert_before` was hardened against three commits ago. Found
+                // by review, reproduced with a 9,999ms timer and a 20,000ms one.
+                clock = next.max(clock + TICK_MS).min(SETTLE_BUDGET_MS);
             }
 
             if clock >= SETTLE_BUDGET_MS {

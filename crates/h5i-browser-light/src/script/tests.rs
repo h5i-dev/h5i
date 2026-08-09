@@ -161,6 +161,27 @@ fn a_page_that_never_settles_is_cut_off_and_says_so() {
 }
 
 #[test]
+fn a_timer_landing_next_to_the_budget_does_not_abort_the_engine() {
+    // The clock jumps to the next timer rather than stepping toward it, and the
+    // jump used to be written with `clamp` — which panics when its lower bound
+    // exceeds its upper one. A timer due within one tick of the settle budget
+    // makes `clock + TICK_MS` larger than the budget, so this page aborted the
+    // process, taking the snapshot and the receipts with it.
+    //
+    // Two timers on purpose: the first has to land near the budget so the clock
+    // arrives there, and the second has to still be pending afterwards so the
+    // loop takes the jump again from that position.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script
+        .eval("setTimeout(() => {}, 9999); setTimeout(() => {}, 20000);")
+        .expect("runs");
+
+    let settled = script.settle();
+    assert!(settled.cut_off, "the 20s timer is past the budget: {settled:?}");
+    assert!(settled.timers_run >= 1, "the near-budget timer still ran: {settled:?}");
+}
+
+#[test]
 fn promises_settle_before_the_page_is_called_settled() {
     let (_page, mut script) = page_and_script("<html><body></body></html>");
     script

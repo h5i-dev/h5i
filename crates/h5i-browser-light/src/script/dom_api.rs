@@ -1305,28 +1305,28 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     };
 
     use style_traits::ToCss as _;
-    // `display` stays special because the tree knows better than the style
-    // does: an element in a `display: none` subtree, or one the box tree
-    // reconstructed, is described by what it was actually constructed as.
-    // `to_css_string`, not `{:?}`: Stylo's `Display` is a bitfield whose Debug
-    // form is `display(514)`, and handing an agent that instead of `block` is
-    // precisely the plausible lie this engine refuses.
-    if property == "display" {
-        return Ok(js_string!(node.display_constructed_as.to_css_string()).into());
-    }
+    // `display` used to be answered from `node.display_constructed_as`, which
+    // is what the *box tree* built, not what the cascade computed. Those are
+    // different questions and the difference is not subtle: every inline
+    // element reported `block`, because that is the box blitz constructs for a
+    // run of inline content. `getComputedStyle` is defined to return the
+    // computed value, so it now goes through the same longhand path as
+    // everything else and a `<span>` says `inline`.
+    //
+    // `snapshot.rs` was already reading `clone_display()` for its hidden-content
+    // filter, so the engine held two answers to one question and only the
+    // snapshot's was right. Found by review, after `innerText` used this to
+    // decide where the line breaks go and put one between two spans.
 
     use style::properties::{PropertyDeclarationId, PropertyId};
     let answer = match PropertyId::parse_enabled_for_all_content(&property) {
-        Ok(PropertyId::NonCustom(id)) => match id.as_longhand() {
-            Some(longhand) => {
-                Some(styles.computed_value_to_string(PropertyDeclarationId::Longhand(longhand)))
-            }
-            // A shorthand's computed value is its longhands re-serialised, and
-            // getting that subtly wrong is worse than not answering: a caller
-            // comparing `border` strings would be told two different borders
-            // match. Named as missing until it is done properly.
-            None => None,
-        },
+        // A shorthand resolves to `None` here and so names itself: its computed
+        // value is its longhands re-serialised, and getting that subtly wrong is
+        // worse than not answering, because a caller comparing two `border`
+        // strings would be told two different borders match.
+        Ok(PropertyId::NonCustom(id)) => id
+            .as_longhand()
+            .map(|longhand| styles.computed_value_to_string(PropertyDeclarationId::Longhand(longhand))),
         // `--custom-property`, which is how real pages theme themselves, so
         // this was a live gap rather than an obscure one.
         //
