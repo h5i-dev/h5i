@@ -1908,6 +1908,12 @@ Being explicit about these is a feature, since the claim is a security claim.
 
 ## 12. The browser: a local engine that runs script, and the order to build it
 
+> **The work is in [`ROADMAP_BROWSER.md`](ROADMAP_BROWSER.md)** as of 2026-08-09.
+> This section stays the authority on *scope and why*; that document is the
+> authority on *order*, and carries the bindings backlog, the security items
+> script introduced, and the assessment of Thalora as a source to read rather
+> than adopt.
+
 **Rewritten 2026-08-08.** The previous version of this section ordered script
 *last* and argued it should wait for the microVM tier. That order has been
 reconsidered, and the reasoning that changed it is below. This is a deliberate
