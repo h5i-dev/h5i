@@ -1050,12 +1050,104 @@ fn inner_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
         return Ok(JsValue::null());
     };
     let mut out = String::new();
+    let comments = host.comments.borrow();
     for child in &node.children {
-        if let Some(child) = doc.get_node(*child) {
-            out.push_str(&child.outer_html());
-        }
+        serialise(&doc, &comments, *child, &mut out);
     }
     Ok(js_string!(out).into())
+}
+
+/// Elements that never have children or a closing tag.
+const VOID_ELEMENTS: [&str; 14] = [
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+    "source", "track", "wbr",
+];
+
+/// Serialise one node and its subtree.
+///
+/// Written here rather than deferred to blitz's `outer_html`, which **drops
+/// comments**. That was harmless until comments started mattering: preact and
+/// React separate adjacent text with `<!-- -->` when rendering on the server, so
+/// a page that reads its own markup back and re-parses it — which sanitizers and
+/// template libraries do — was losing the markers hydration depends on.
+///
+/// A parsed comment's *text* is gone before this sees it: `NodeData::Comment`
+/// carries no payload, so blitz discards the content at parse time and only the
+/// comments this engine created have text to give back. The empty separator —
+/// the case that matters — round-trips exactly.
+fn serialise(
+    doc: &blitz_dom::BaseDocument,
+    comments: &std::collections::HashMap<usize, String>,
+    id: usize,
+    out: &mut String,
+) {
+    let Some(node) = doc.get_node(id) else { return };
+
+    match &node.data {
+        blitz_dom::NodeData::Comment => {
+            out.push_str("<!--");
+            out.push_str(comments.get(&id).map(String::as_str).unwrap_or(""));
+            out.push_str("-->");
+        }
+        blitz_dom::NodeData::Text(text) => {
+            escape_text(&text.content, out);
+        }
+        blitz_dom::NodeData::Element(el) | blitz_dom::NodeData::AnonymousBlock(el) => {
+            let name = el.name.local.as_ref();
+            out.push('<');
+            out.push_str(name);
+            if let Some(attrs) = node.attrs() {
+                for attr in attrs {
+                    out.push(' ');
+                    out.push_str(attr.name.local.as_ref());
+                    out.push_str("=\"");
+                    escape_attribute(&attr.value, out);
+                    out.push('"');
+                }
+            }
+            out.push('>');
+
+            if VOID_ELEMENTS.contains(&name) {
+                return;
+            }
+            for child in &node.children {
+                serialise(doc, comments, *child, out);
+            }
+            out.push_str("</");
+            out.push_str(name);
+            out.push('>');
+        }
+        _ => {
+            for child in &node.children {
+                serialise(doc, comments, *child, out);
+            }
+        }
+    }
+}
+
+/// Text content, with the three characters that would otherwise reopen markup.
+fn escape_text(text: &str, out: &mut String) {
+    for ch in text.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            other => out.push(other),
+        }
+    }
+}
+
+/// An attribute value, which additionally must not close its own quote.
+fn escape_attribute(value: &str, out: &mut String) {
+    for ch in value.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '"' => out.push_str("&quot;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            other => out.push(other),
+        }
+    }
 }
 
 /// The serialised markup *of* a node, itself included.
@@ -1063,10 +1155,12 @@ fn outer_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
     let doc = host.dom.borrow();
-    Ok(match doc.get_node(id) {
-        Some(node) => js_string!(node.outer_html()).into(),
-        None => JsValue::null(),
-    })
+    if doc.get_node(id).is_none() {
+        return Ok(JsValue::null());
+    }
+    let mut out = String::new();
+    serialise(&doc, &host.comments.borrow(), id, &mut out);
+    Ok(js_string!(out).into())
 }
 
 /// A node's border box in viewport coordinates: `[x, y, width, height]`.

@@ -633,3 +633,37 @@ fn writing_to_an_element_still_replaces_its_subtree() {
         reading.outline
     );
 }
+
+/// Reading markup back out must not lose what was in it. A sanitizer or a
+/// template library reads `innerHTML` and re-parses it, and preact and React
+/// separate adjacent text with `<!-- -->` when rendering on the server — so
+/// dropping comments quietly removed the markers hydration depends on.
+#[test]
+fn serialising_markup_keeps_comments_and_escapes_what_it_must() {
+    let reading = read(
+        "<html><body>\
+         <div id='a'><a href='/r'>v<!-- -->1.0.0</a></div>\
+         <div id='b'><img src='/x.png' alt='a &amp; b'><br></div>\
+         <div id='c'><p>5 &lt; 6 &amp;&amp; 7</p></div>\
+         <output id='out'></output>\
+         <script>\
+           const round = document.createElement('div');\
+           round.innerHTML = document.querySelector('#a').innerHTML;\
+           document.querySelector('#out').textContent = \
+             'comment=' + document.querySelector('#a').innerHTML + \
+             ' void=' + document.querySelector('#b').innerHTML + \
+             ' text=' + document.querySelector('#c').innerHTML + \
+             ' roundtrip=' + round.firstChild.childNodes.map(n => n.nodeType).join(',');\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("serialising markup");
+    // The separator survives...
+    reading.assert_shows("comment=<a href=\"/r\">v<!---->1.0.0</a>");
+    // ...void elements do not grow a closing tag...
+    reading.assert_shows("void=<img src=\"/x.png\" alt=\"a &amp; b\"><br>");
+    // ...text that would reopen markup is escaped...
+    reading.assert_shows("text=<p>5 &lt; 6 &amp;&amp; 7</p>");
+    // ...and re-parsing the result gives back text, comment, text.
+    reading.assert_shows("roundtrip=3,8,3");
+}
