@@ -505,14 +505,38 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     let id = arg_id(args, 0, context)?;
     let text = arg_string(args, 1, context)?;
     let host = host(context)?;
+
+    // A comment keeps its text beside the tree, because `NodeData::Comment`
+    // carries none.
+    if host.comments.borrow().contains_key(&id) {
+        host.comments.borrow_mut().insert(id, text);
+        host.mark_dirty();
+        return Ok(JsValue::undefined());
+    }
+
     {
         let mut doc = host.dom.borrow_mut();
+        // Writing to a *text* node replaces its own text. Writing to an element
+        // replaces its subtree. They were both taking the element path, so a
+        // text node had its (nonexistent) children cleared and a text child
+        // appended to it — and the write simply vanished.
+        //
+        // Text nodes were therefore immutable, which is the single most common
+        // mutation any reactive UI performs: every framework updates text by
+        // assigning `.data` or `.nodeValue` on the node it already has.
+        let is_text = matches!(
+            doc.get_node(id).map(|node| &node.data),
+            Some(blitz_dom::NodeData::Text(_))
+        );
+
         let mut mutator = doc.mutate();
-        // `textContent = x` replaces the subtree, which is what a page expects
-        // and what makes list rendering work at all.
-        mutator.remove_and_drop_all_children(id);
-        let text_id = mutator.create_text_node(&text);
-        mutator.append_children(id, &[text_id]);
+        if is_text {
+            mutator.set_node_text(id, &text);
+        } else {
+            mutator.remove_and_drop_all_children(id);
+            let text_id = mutator.create_text_node(&text);
+            mutator.append_children(id, &[text_id]);
+        }
     }
     host.mark_dirty();
     Ok(JsValue::undefined())

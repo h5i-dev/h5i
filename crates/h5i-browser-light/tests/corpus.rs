@@ -589,3 +589,47 @@ fn a_closed_shadow_root_is_not_handed_out() {
     // Still rendered, though: an agent reads what the page shows.
     reading.assert_shows("inside");
 }
+
+/// Text nodes must be writable. Every reactive UI updates text by assigning
+/// `.data` or `.nodeValue` on the node it already holds — it is the single most
+/// common mutation there is — and this engine was silently dropping all of it,
+/// because writing to a text node took the path meant for elements: clear the
+/// children (a text node has none) and append a new text child (meaningless).
+#[test]
+fn a_text_node_can_be_written_to() {
+    let reading = read(
+        "<html><body><p id='p'>original</p><output id='out'></output>\
+         <script>\
+           const t = document.querySelector('#p').firstChild;\
+           const seen = [];\
+           t.data = 'via data'; seen.push(t.data);\
+           t.nodeValue = 'via nodeValue'; seen.push(t.data);\
+           t.textContent = 'via textContent'; seen.push(t.parentNode.textContent);\
+           const made = document.createTextNode('fresh'); made.data = 'edited';\
+           seen.push(made.data);\
+           document.querySelector('#out').textContent = seen.join(' | ');\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("writing to a text node");
+    reading.assert_shows("via data | via nodeValue | via textContent | edited");
+}
+
+/// And writing to an *element* still replaces its subtree, which is the other
+/// half of the same binding and what makes list rendering work.
+#[test]
+fn writing_to_an_element_still_replaces_its_subtree() {
+    let reading = read(
+        "<html><body><div id='d'><span>old</span><b>more</b></div>\
+         <script>document.querySelector('#d').textContent = 'replaced';</script>\
+         </body></html>",
+    );
+
+    reading.assert_clean("writing to an element");
+    reading.assert_shows("replaced");
+    assert!(
+        !reading.outline.contains("old") && !reading.outline.contains("more"),
+        "the old subtree is gone: {}",
+        reading.outline
+    );
+}

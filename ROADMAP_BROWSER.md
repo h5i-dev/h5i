@@ -975,6 +975,42 @@ module graph is the one uninterruptible unit left (§8.14).
 
 ---
 
+### 8.16 The "cosmetic" duplication was text nodes being immutable
+
+preactjs.com rendered its version as `v11.0.0-beta.111.0.0-beta.1`. It looked
+cosmetic and was filed that way. It was not.
+
+Reproduced with real preact against the page's actual markup — a single text
+node `v1.0.0` hydrated against a vnode with two text children, which is what a
+prerendered page gives a component that renders `v{version}`:
+
+```
+before   kids=1  text="v1.0.0"
+after    kids=2  datas=["v1.0.0", "1.0.0"]      <- ours
+after    kids=2  datas=["v", "1.0.0"]           <- a browser
+```
+
+Preact assigns `dom.data = 'v'` to the node it is reusing. **That write did
+nothing**, because writing to a text node took the path meant for elements:
+clear the children — a text node has none — and append a new text child, which
+is meaningless. Blitz has `set_node_text` for exactly this and it was never
+called.
+
+So text nodes were immutable, and that is the single most common mutation any
+reactive UI performs: every framework updates text by assigning `.data` or
+`.nodeValue` to a node it already holds. The duplication was one visible symptom
+of a general failure to apply text updates at all.
+
+preactjs.com now reads **178 lines with script, matching its prerendered
+reading**, and shows `v11.0.0-beta.2` — the version it *fetched*, where before it
+showed the stale prerendered `beta.1` twice. The update applies now.
+
+Worth noting how it was found: not by reading the DOM code, but by reproducing
+the page's exact shape against the real library and comparing what each engine
+ends up with. The bug was three layers below where it showed.
+
+---
+
 ## 10. What is next, 2026-08-09
 
 Tiers 0 through 4 of the plan this section replaces are done. What the work
