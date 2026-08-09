@@ -397,3 +397,36 @@ fn an_empty_page_distinguishes_no_script_from_script_disabled() {
         reading.outline
     );
 }
+
+/// A page this engine's *parser* cannot read must still say so, by name.
+///
+/// This construct is valid JavaScript and Boa rejects it — see ROADMAP_BROWSER
+/// §8.11. Minified bundles that keep `/*! @license */` comments between
+/// declarators produce it, which is how lit.dev fails. Nothing here can fix
+/// that; what this pins is that the failure is *attributed* rather than silent,
+/// and that the rest of the page still reads.
+#[test]
+fn a_script_the_parser_cannot_read_is_named_and_does_not_take_the_page_with_it() {
+    let reading = read(
+        "<html><body><p>still readable</p>\
+         <script>const a = 1\n, b = 2;</script>\
+         <script>document.querySelector('p').setAttribute('data-ran', 'yes')</script>\
+         </body></html>",
+    );
+
+    reading.assert_shows("still readable");
+    assert!(
+        reading
+            .errors
+            .iter()
+            .any(|e| e.contains("inline script") && e.contains("SyntaxError")),
+        "the failure names the script it came from: {:?}",
+        reading.errors
+    );
+    // And a later script still runs: one unreadable script is not the page.
+    assert!(
+        reading.outline.contains("data-ran") || reading.errors.len() == 1,
+        "{:?}",
+        reading.errors
+    );
+}

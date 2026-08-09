@@ -760,20 +760,39 @@ defeats the `in` check the reporting one depends on.
 
 ### 8.11 Three things that are not ours, stated plainly
 
-1. **A Boa parser bug**, minimally reproduced. Any line terminator between a
-   declarator's initializer and the comma is rejected:
+1. **A Boa parser bug**, and it was worth doubting before reporting. The first
+   version of this note blamed a comment; the second blamed modules. Both were
+   wrong, and testing the doubt produced a far sharper bug:
 
    ```js
+   var   a = 1
+   , b = 2;        // parses
+   let   a = 1
+   , b = 2;        // SyntaxError: unexpected token ','
    const a = 1
-   , b = 2;        // SyntaxError in Boa; valid JavaScript
+   , b = 2;        // SyntaxError
+   let   a
+   , b;            // SyntaxError
    ```
 
-   Automatic semicolon insertion is applying where the spec forbids it — a comma
-   *can* continue a `VariableDeclarationList`, so no semicolon may be inserted.
-   Minified bundles that preserve `/*! @license */` comments between declarators
-   hit it, which is how lit.dev fails. Not fixable here, and not worth working
-   around: stripping comments from a page's own source would move every line
-   number and could corrupt string literals — the plausible-wrong answer again.
+   All four are valid JavaScript — node runs them, as script and as module. The
+   asymmetry is the finding: **`var` handles it and `let`/`const` do not**, so
+   this is a defect in the lexical-declaration path rather than a deliberate
+   choice about semicolon insertion. Per the grammar a `,` continues a
+   `BindingList`, so it is not an offending token and no semicolon may be
+   inserted.
+
+   Confirmed with this engine entirely out of the path — `Context::default()`,
+   `Source::from_bytes`, no host, no module loader, no HTML — so it is not ours.
+   Minified bundles that keep `/*! @license */` comments between declarators
+   produce exactly this shape, which is how lit.dev fails.
+
+   Not fixable here, and not worth working around: rewriting a page's own source
+   would move every line number we just gained and could corrupt string
+   literals — the plausible-wrong answer again. What *is* ours is that the
+   failure names the script it came from and does not take the rest of the page
+   with it, which `a_script_the_parser_cannot_read_is_named_and_does_not_take_the_page_with_it`
+   pins.
 2. **Two sites exceed any reasonable timeout** (lit.dev, material-web), and the
    cause is that they now get *further*. `DOMParser` unlocked execution that used
    to fail early, and removing the lying feature-detection stubs sent pages down
