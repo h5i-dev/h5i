@@ -2066,7 +2066,15 @@ cost permanently to avoid finishing the one engine that would remove it.
 
 ### 12.4 The order
 
-1. **The bindings layer, against a production React build.** Not a hand-written
+Items 1 to 3 are together what "JavaScript support" means to someone using this.
+They are numbered apart because each carries its own design decision, not
+because any of them is optional: 1 makes script run, 2 says when its result is
+safe to read, 3 is script's network.
+
+1. **Embed Boa, and build the bindings layer, against a production React
+   build.** Embedding is the small half: a dependency, a `Context`, and
+   evaluating `<script>` text. The bindings are the work, and the reason this
+   milestone is named after them. Not a hand-written
    `addEventListener` demo, which proves nothing about the shape of the problem,
    and not the Vite dev server, which drags in WebSocket, HMR and native ESM in
    one step. The surface is roughly: `window`, `document`, `Node`/`Element`/
