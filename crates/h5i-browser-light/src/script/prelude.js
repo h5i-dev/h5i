@@ -1118,6 +1118,22 @@
     // tag, so `el.innerHTML = el.innerHTML` destroyed the subtree.
     get innerHTML() { return api.innerHtml(this._id); }
     set innerHTML(html) { api.setInnerHtml(this._id, String(html)); }
+
+    /// `innerHTML`, plus the one thing `innerHTML` is specified *not* to do:
+    /// turn `<template shadowrootmode>` into a real shadow root.
+    ///
+    /// That difference is the entire reason the method exists, and it is how a
+    /// server-rendered component ships its shadow DOM as markup — so an engine
+    /// that aliased this to `innerHTML` would leave every declarative component
+    /// as an inert `<template>` that renders nothing.
+    ///
+    /// "Unsafe" is the spec's word for "does not sanitise", which is the same
+    /// contract `innerHTML` already has here. It is not a new hazard: page
+    /// markup reaching an agent is fenced as untrusted either way.
+    setHTMLUnsafe(html) {
+      api.setInnerHtml(this._id, String(html));
+      adoptDeclarativeShadowRoots(this);
+    }
     get outerHTML() { return api.outerHtml(this._id); }
     set outerHTML(html) {
       // Replacing an element with its own markup, which is how a component
@@ -1318,6 +1334,11 @@
       this._project();
     }
     get innerHTML() { return api.innerHtml(this._id); }
+    setHTMLUnsafe(html) {
+      api.setInnerHtml(this._id, String(html));
+      adoptDeclarativeShadowRoots(this);
+      this._project();
+    }
     appendChild(child) {
       const out = Element.prototype.appendChild.call(this, child);
       this._project();
@@ -1899,6 +1920,31 @@
                "embed", "frame", "applet", "slot"], "name", "name");
     reflectOn(["button", "param", "data"], "value", "value");
 
+    // Canvas asks for a drawing context and is told, honestly, that there
+    // is not one.
+    //
+    // `null` is not a stub and not the `missingApi` lie: it is what a browser
+    // returns for a context type it cannot provide, and the spec says so. The
+    // difference matters. With the method *absent*, a page calling
+    // `canvas.getContext("2d")` dies on "not a function" and its fallback
+    // branch never runs. With it present and answering null, the page learns
+    // canvas is unavailable and takes the branch it wrote for exactly this.
+    //
+    // What would be a lie is a context object that accepts `fillRect` and
+    // draws nothing — the page would believe it had painted. That is why there
+    // is no such object here, and why implementing 2D properly is a subsystem
+    // decision (§11.5.8) rather than something to fake on the way past.
+    //
+    // The ask is still recorded, so canvas keeps its place on the demand list
+    // instead of disappearing the moment it stopped throwing.
+    on(["canvas"], "getContext", {
+      value: function (kind) {
+        api.unsupported(`canvas.getContext(${String(kind)})`);
+        return null;
+      },
+      writable: true,
+    });
+
     // The sheet an element owns. Only `<style>` and `<link>` have one, and a
     // `<link>` that is not a stylesheet has none — `img.sheet` being undefined
     // is the point of putting it here rather than on Element.
@@ -1933,6 +1979,29 @@
         if (this[slot]) this.addEventListener(type, this[slot]);
       },
     });
+  }
+
+  /// Turn every `<template shadowrootmode>` inside `within` into a shadow root.
+  ///
+  /// Order matters and is the fiddly part: `attachShadow` takes the host's
+  /// light children out of the way first, so the template has to be removed
+  /// *before* the root is attached, or the template itself would be filed as
+  /// light content of the component it was supposed to become.
+  function adoptDeclarativeShadowRoots(within) {
+    const templates = api
+      .queryAll("template[shadowrootmode]", within._id)
+      .map(wrap)
+      .filter(Boolean);
+    for (const template of templates) {
+      const host = template.parentNode;
+      if (!host || host._shadow || host.nodeType !== 1) continue;
+      const mode = (api.getAttr(template._id, "shadowrootmode") || "open").toLowerCase();
+      const content = [...template.childNodes];
+      for (const node of content) detachFromParent(node);
+      template.remove();
+      const root = host.attachShadow({ mode: mode === "closed" ? "closed" : "open" });
+      for (const node of content) root.appendChild(node);
+    }
   }
 
   function camelToDash(name) {
@@ -2948,6 +3017,9 @@
     // This engine parses HTML and nothing else, so there is one honest answer.
     contentType: "text/html",
     // Adopting a sheet applies it. Assignment replaces the set, as in a browser.
+    /// What scrolls when the document scrolls. In standards mode that is
+    /// `<html>`, and code reads it to avoid the quirks-mode `<body>` split.
+    get scrollingElement() { return wrap(api.root()); },
     /// Every `<style>` and `<link rel=stylesheet>` the document has, as sheets.
     get styleSheets() { return styleSheetList(); },
     get adoptedStyleSheets() { return adoptedSheets.slice(); },
@@ -3926,7 +3998,62 @@
     }
   }
 
+  /// The `CSS` namespace: `CSS.escape` and `CSS.supports`.
+  ///
+  /// `supports` is answered by actually handing the declaration to Stylo rather
+  /// than by consulting a list, because a list is a second opinion about what
+  /// this engine supports and the two would drift the moment Stylo moved. It
+  /// also matters more than most answers: pages call `CSS.supports` in order to
+  /// take a *different code path*, so a wrong answer does not degrade the page,
+  /// it misroutes it.
+  const CSS = observed({
+    escape(value) {
+      // The spec's algorithm, which is not `encodeURIComponent` and not a
+      // regex over "special characters": the rules for a leading digit, a
+      // leading hyphen-digit, and NULL are each different, and a selector
+      // built from a wrong escape silently matches nothing.
+      const text = String(value);
+      let out = "";
+      for (let index = 0; index < text.length; index++) {
+        const code = text.charCodeAt(index);
+        const ch = text[index];
+        if (code === 0) { out += "\uFFFD"; continue; }
+        if ((code >= 0x1 && code <= 0x1f) || code === 0x7f
+          || (index === 0 && code >= 0x30 && code <= 0x39)
+          || (index === 1 && code >= 0x30 && code <= 0x39 && text.charCodeAt(0) === 0x2d)) {
+          out += "\\" + code.toString(16) + " ";
+          continue;
+        }
+        if (index === 0 && code === 0x2d && text.length === 1) { out += "\\" + ch; continue; }
+        if (code >= 0x80 || code === 0x2d || code === 0x5f
+          || (code >= 0x30 && code <= 0x39) || (code >= 0x41 && code <= 0x5a)
+          || (code >= 0x61 && code <= 0x7a)) {
+          out += ch;
+          continue;
+        }
+        out += "\\" + ch;
+      }
+      return out;
+    },
+    supports(propertyOrCondition, value) {
+      if (value !== undefined) {
+        return api.supportsCss(String(propertyOrCondition), String(value));
+      }
+      // The one-argument form takes a condition, `(display: grid)`. Only the
+      // plain parenthesised declaration is answered; `and`/`or`/`not` are a
+      // grammar rather than a declaration and are named rather than guessed.
+      const text = String(propertyOrCondition).trim();
+      const match = /^\(\s*([-\w]+)\s*:\s*([^]*?)\s*\)$/.exec(text);
+      if (!match) {
+        api.unsupported(`CSS.supports(${text.slice(0, 40)})`);
+        return false;
+      }
+      return api.supportsCss(match[1], match[2]);
+    },
+  }, "CSS");
+
   Object.assign(globalThis, {
+    CSS,
     addEventListener, removeEventListener, dispatchEvent,
     window,
     // The browsing context's view of itself. These are not stubs: §6 refuses

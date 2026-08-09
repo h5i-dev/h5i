@@ -65,6 +65,10 @@ style = { version = "0.19.0", package = "stylo" }
 smallvec = "1"
 # The selector types stylo's matching API is written in terms of.
 selectors = "0.39"
+# Pinned to the version Stylo resolves to, because `CSS.supports` hands a
+# `ParserInput` to Stylo's parser and two different cssparser versions would be
+# two different types. Stylo re-exports `Parser` but not `ParserInput`.
+cssparser = "0.37"
 
 # The atomic boa's job-cancellation token is built from. Named here only so the
 # token can be held in a struct field; it must be the same type boa hands back.

@@ -87,6 +87,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("outerHtml", 1, outer_html),
         ("rect", 1, rect),
         ("computedStyle", 2, computed_style),
+        ("supportsCss", 2, supports_css),
         ("parseUrl", 2, parse_url),
         ("viewport", 0, viewport),
         ("readCookies", 0, read_cookies),
@@ -1360,6 +1361,52 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
             js_string!("").into()
         }
     })
+}
+
+/// Whether Stylo can parse this declaration, which is what `CSS.supports` asks.
+///
+/// Answered by actually parsing it rather than by consulting a list. A list
+/// would be a second opinion about what this engine supports, and the two would
+/// drift the moment Stylo moved — and `CSS.supports` is a question pages ask
+/// precisely so they can take a *different code path*, so a wrong answer here
+/// does not degrade, it misroutes.
+fn supports_css(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let property = arg_string(args, 0, context)?;
+    let value = arg_string(args, 1, context)?;
+
+    use style::properties::{PropertyDeclaration, PropertyId, SourcePropertyDeclaration};
+    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+
+    let Ok(base) = ::url::Url::parse("about:blank") else {
+        return Ok(JsValue::from(false));
+    };
+    let url_data = UrlExtraData(style::servo_arc::Arc::new(base));
+    let parser_context = style::parser::ParserContext::new(
+        Origin::Author,
+        &url_data,
+        Some(CssRuleType::Style),
+        style_traits::ParsingMode::DEFAULT,
+        style::context::QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+        Default::default(),
+    );
+
+    let Ok(property_id) = PropertyId::parse(&property, &parser_context) else {
+        return Ok(JsValue::from(false));
+    };
+    let mut declaration = SourcePropertyDeclaration::default();
+    let mut input = cssparser::ParserInput::new(&value);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let supported = PropertyDeclaration::parse_into(
+        &mut declaration,
+        property_id,
+        &parser_context,
+        &mut parser,
+    )
+    .is_ok();
+    Ok(JsValue::from(supported))
 }
 
 /// Parse a URL against an optional base, using the same parser the broker uses.
