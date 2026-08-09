@@ -852,6 +852,34 @@ mod tests {
     }
 
     #[test]
+    fn script_is_opt_in_at_the_command_line() {
+        // The gate ROADMAP_BROWSER §3.3 asks for: script is a decision someone
+        // makes, never a default they inherit.
+        for argv in [
+            vec!["h5i-browser-light", "open", "https://x.example/", "--script"],
+            vec!["h5i-browser-light", "serve", "https://x.example/", "--script"],
+            vec!["h5i-browser-light", "capabilities", "--script"],
+        ] {
+            Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+        }
+    }
+
+    #[test]
+    fn capabilities_report_the_configuration_asked_about() {
+        // What h5i routes on is whether *this* invocation runs script, not what
+        // the binary could do if asked differently.
+        assert!(!Capabilities::current().javascript, "off unless asked");
+        assert!(!Capabilities::with_script(false).javascript);
+        assert!(Capabilities::with_script(true).javascript);
+
+        // The rest is a property of the engine either way, and stays honest.
+        let with = Capabilities::with_script(true);
+        assert!(with.fail_closed_receipts);
+        assert!(with.snapshot && with.screenshot && with.live_view);
+        assert!(!with.video && !with.webgl, "still absent, and still said so");
+    }
+
+    #[test]
     fn cli_parses_the_shapes_the_docs_promise() {
         // Cheap guard against a flag rename breaking the documented usage.
         Cli::try_parse_from([

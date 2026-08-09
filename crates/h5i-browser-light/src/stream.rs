@@ -951,6 +951,30 @@ mod tests {
         }
     }
 
+    /// A session whose page runs its own scripts, for the verbs that behave
+    /// differently once script is present.
+    fn scripted_session_with(html: &str) -> Session {
+        let broker = Arc::new(
+            Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+        );
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+        let options = crate::engine::PageOptions {
+            width: 400,
+            height: 200,
+            script: true,
+            ..Default::default()
+        };
+        let factory = PageFactory::new(broker, fonts.sources.clone(), options);
+        let page = factory.from_html(html, &Url::parse("https://app.example/").unwrap());
+        Session {
+            factory,
+            page,
+            quality: 70,
+            seq: 0,
+            actions: None,
+        }
+    }
+
     fn tall_page() -> &'static str {
         "<!doctype html><body><div style='height:4000px'>\
          <p>top</p><a href='/next'>next</a></div></body>"
@@ -1396,6 +1420,90 @@ mod tests {
         assert_eq!(reply["ok"], false);
         assert!(reply["error"].as_str().unwrap().contains("e404"));
         assert!(!changed);
+    }
+
+    #[test]
+    fn a_click_on_a_scripted_page_runs_the_handler_rather_than_following_a_link() {
+        // With script running, a click is an event before it is a navigation. A
+        // button with no href is only clickable at all because of its handler.
+        let mut session = scripted_session_with(
+            "<html><body><button id='b'>Add</button><ul id='l'></ul><script>\
+             document.querySelector('#b').addEventListener('click', () => { \
+               const li = document.createElement('li'); li.textContent = 'added'; \
+               document.querySelector('#l').appendChild(li); });\
+             </script></body></html>",
+        );
+
+        let reference = session
+            .page
+            .snapshot()
+            .refs
+            .iter()
+            .find(|r| r.name == "Add")
+            .expect("the button has a ref")
+            .id
+            .clone();
+
+        let (reply, changed) =
+            control_verb(&mut session, &json!({"verb": "click", "ref": reference}));
+
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert!(changed, "the page moved, so viewers get a frame");
+        assert!(
+            session.page.snapshot().render().contains("added"),
+            "the handler ran and the agent can see it:\n{}",
+            session.page.snapshot().render()
+        );
+        assert!(reply["settled"].is_string(), "the reply says whether it finished");
+    }
+
+    #[test]
+    fn a_click_reports_the_requests_it_caused() {
+        // The causal link, stamped by the one component that knows it. Empty
+        // here because the handler makes none, which is still the honest answer
+        // rather than a missing field.
+        let mut session = scripted_session_with(
+            "<html><body><button id='b'>Go</button><script>\
+             document.querySelector('#b').addEventListener('click', () => {});\
+             </script></body></html>",
+        );
+        let reference = session.page.snapshot().refs[0].id.clone();
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "click", "ref": reference}));
+
+        assert!(reply["requests"].is_array(), "{reply:?}");
+        assert_eq!(reply["requests"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn a_snapshot_says_whether_script_ran_and_whether_the_page_settled() {
+        let mut scripted = scripted_session_with("<html><body><p>hi</p></body></html>");
+        let (reply, _) = control_verb(&mut scripted, &json!({"verb": "snapshot"}));
+        assert_eq!(reply["script"], true);
+        assert!(reply["settled"].is_string(), "{reply:?}");
+
+        // And with script off, it says that too rather than leaving it unsaid.
+        let mut plain = session_with("<html><body><p>hi</p></body></html>");
+        let (reply, _) = control_verb(&mut plain, &json!({"verb": "snapshot"}));
+        assert_eq!(reply["script"], false);
+        assert!(reply["settled"].is_null());
+    }
+
+    #[test]
+    fn a_link_click_still_navigates_when_no_handler_took_it() {
+        // Script being on must not break the plain case: a link with an href
+        // and no listener is still followed.
+        let mut session = scripted_session_with(
+            "<html><body><a href='https://denied.test/'>go</a></body></html>",
+        );
+        let reference = session.page.snapshot().refs[0].id.clone();
+        let (reply, changed) =
+            control_verb(&mut session, &json!({"verb": "click", "ref": reference}));
+
+        // Refused by policy, which is the navigation path reporting itself
+        // rather than the click being silently swallowed by the event path.
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert!(!changed);
+        assert!(reply["error"].as_str().unwrap().contains("denied.test"), "{reply:?}");
     }
 
     #[test]
