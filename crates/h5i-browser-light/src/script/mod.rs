@@ -449,12 +449,25 @@ impl Script {
                         pending_timers: 0,
                     };
                 }
-                // Something is queued: advance the virtual clock toward it
-                // rather than sleeping.
-                clock += TICK_MS;
+                // Something is queued: jump the virtual clock to when it is
+                // actually due rather than stepping toward it.
+                //
+                // Stepping 16ms at a time was not just slow, it was a wall. A
+                // test harness that arms a ten-second timeout puts its timer at
+                // exactly the settle budget, and the budget check below fired
+                // before `run_due_timers` ever saw a clock that large — so the
+                // timer never ran, the harness never timed itself out, and the
+                // page reported *nothing at all*. That was the single largest
+                // silent-failure bucket in WPT (§12.4).
+                let next = self.next_timer_due().unwrap_or(clock + TICK_MS);
+                clock = next.clamp(clock + TICK_MS, SETTLE_BUDGET_MS);
             }
 
             if clock >= SETTLE_BUDGET_MS {
+                // One last pass at this clock before giving up, so a timer due
+                // exactly at the budget is run rather than stranded one tick
+                // short of its own deadline.
+                timers_run += self.run_due_timers(clock);
                 self.abandon_fetches();
                 self.run_queued_jobs();
                 self.collect_module_failures();
@@ -563,6 +576,20 @@ impl Script {
         match self.context.eval(Source::from_bytes(&source)) {
             Ok(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
             Err(_) => 0,
+        }
+    }
+
+    /// When the earliest waiting timer is due, in virtual milliseconds.
+    fn next_timer_due(&mut self) -> Option<u64> {
+        match self
+            .context
+            .eval(Source::from_bytes("__h5iNextTimerDue()"))
+        {
+            Ok(value) => match value.as_number() {
+                Some(due) if due >= 0.0 => Some(due as u64),
+                _ => None,
+            },
+            Err(_) => None,
         }
     }
 

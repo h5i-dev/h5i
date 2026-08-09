@@ -3110,6 +3110,21 @@
     return pending;
   };
 
+  /// When the earliest waiting timer is due, or -1 if none is.
+  ///
+  /// The settle loop uses this to jump the virtual clock to the next thing that
+  /// will actually happen, rather than stepping toward it 16ms at a time. A
+  /// page that sets one ten-second timeout should cost one step, not six
+  /// hundred and twenty-five, and stepping was not merely slow: it meant a
+  /// timer due at the settle budget was never reached at all.
+  globalThis.__h5iNextTimerDue = function () {
+    let soonest = -1;
+    for (const timer of timers.values()) {
+      if (soonest < 0 || timer.due < soonest) soonest = timer.due;
+    }
+    return soonest;
+  };
+
   defineLive({
     innerWidth: () => api.viewport().width,
     innerHeight: () => api.viewport().height,
