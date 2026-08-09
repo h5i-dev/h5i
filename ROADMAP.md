@@ -1883,8 +1883,9 @@ Being explicit about these is a feature, since the claim is a security claim.
    `create`/`exec`/`browser`/`diff`/`export`/`close`, TypeScript only, binary
    fetched on postinstall. No `agent.run()` until the resident session shape is
    settled, and Python only when someone asks for it.
-4. **How engine selection grows from explicit to routed (7.1 step 2).** The
-   first step is **built (M9, 2026-08-07)**: `[profile.X] engine = "..."` and
+4. **How engine selection grows from explicit to routed (7.1 step 2).**
+   **Deprioritised 2026-08-08 (§12.3): a box picks one engine at creation and
+   keeps it.** The first step is **built (M9, 2026-08-07)**: `[profile.X] engine = "..."` and
    `--engine`, pinned in the digest, refusing by name when the engine's
    tooling is absent, with no `auto` and no fallback. One correction the build
    forced: 7.1 claimed the knob's shape is "any CDP endpoint … the slot M10's
@@ -2015,6 +2016,35 @@ CDP is worth its own decision later rather than inheritance now: the argument
 for it is not ecosystem access but that agent-browser could then drive this
 engine, collapsing two agent interfaces into one. The argument against is that
 it is a second full surface next to a verb set that already exists and works.
+
+**And routing, which is the deliberate one.** §11 item 4 sketches a sequence
+that ends in per-origin routing: loopback to Chromium, the open web to the light
+engine. That is now **low priority, and not a goal of this direction at all.**
+A box picks one engine when it is created, and lives with it.
+
+The reason is that two browsers in one box is both heavy and strange. Heavy is
+obvious: Chromium's install, its updates and its surface, carried for a box that
+may never launch it. Strange is the part worth writing down, because the code
+already shows it. `sandbox_policy::browser_read_grants()` grants **every**
+engine's binaries rather than the pinned one, on the argument that the engine is
+enforced by what h5i launches. But an agent inside the box can invoke the other
+binary itself, which `browser_light_env` already concedes when it keeps
+`AGENT_BROWSER_ALLOWED_DOMAINS` set for an engine that never reads it: "if it
+does, this is the only thing standing between it and any host on the internet".
+So today the pin is a **launch choice, not a boundary**, and a box pinned to
+`h5i-light` still carries a Chromium an agent could start.
+
+Committing to one engine per box is what makes that honest. It narrows what a
+browser box installs, lets the grant list follow the pin, and turns the engine
+from something h5i happens to launch into something the box cannot step outside
+of. Whether the grants should actually narrow is a real question with a real
+counter-argument in that function's comment, about keeping the digest
+independent of host discovery. It is not settled here. It is only unblocked
+here, because it cannot even be asked while routing is a goal.
+
+If routing returns, it returns as an explicit opt-in after the engine can carry
+a real application on its own. Building it earlier means paying the two-browser
+cost permanently to avoid finishing the one engine that would remove it.
 
 ### 12.4 The order
 
