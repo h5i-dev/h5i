@@ -216,6 +216,11 @@ impl Script {
         loop {
             self.context.run_jobs();
 
+            // Layout observers are driven from here rather than from a frame
+            // clock, because this engine has no frames at rest: an observer
+            // that waited for a repaint would never fire at all.
+            self.run_layout_observers();
+
             let ran = self.run_due_timers(clock);
             timers_run += ran;
 
@@ -245,6 +250,12 @@ impl Script {
                 };
             }
         }
+    }
+
+    fn run_layout_observers(&mut self) {
+        let _ = self
+            .context
+            .eval(Source::from_bytes("__h5iRunLayoutObservers()"));
     }
 
     fn run_due_timers(&mut self, clock: u64) -> usize {

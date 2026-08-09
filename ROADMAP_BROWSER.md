@@ -165,7 +165,7 @@ refusing to give it.
 | **`getBoundingClientRect`** | every popover, dropdown, drag and virtual list | **cheap** — Blitz computes `final_layout` already |
 | **`getComputedStyle`** | feature detection and measurement | **cheap** — Stylo has it |
 | **`MutationObserver`** | frameworks depend on it; and it is the natural source for our own semantic delta | Thalora: `observers/mutation_observer.rs` |
-| **`IntersectionObserver`, `ResizeObserver`** | lazy loading, virtual lists, responsive components | needs layout, which we have; **the corpus asked for `IntersectionObserver` on 1 of 28 sites** |
+| ~~`IntersectionObserver`, `ResizeObserver`~~ | lazy loading, virtual lists, responsive components | **built 2026-08-09**, driven from the settle loop (§8.2) |
 | **`localStorage` / `sessionStorage`** | in-memory maps; absence throws or breaks init paths | deliberately non-persistent, see §6 |
 | **`history.pushState`** | SPA routing; without it client-side navigation silently does nothing | Thalora: `browser/history.rs` |
 
@@ -378,11 +378,59 @@ not globals.
 **What the corpus asks for next**, in its own order: `matchMedia` (answered now,
 still recorded), `document.cookie`, `IntersectionObserver`, `setInterval`.
 
-`document.cookie` is the interesting one, because it is a **deliberate refusal
-rather than a gap**. Exposing it would break the property that an agent can be
-logged in without ever reading the credential that makes it so (§2 of the crate
-README). It returns empty, so a page branching on it takes the no-cookie path.
-That should stay, and be stated, rather than being counted as missing work.
+`document.cookie` is the interesting one, because it looked like a deliberate
+refusal and turned out to be a false choice. See §8.2.
+
+### 8.2 Second run, same day: the list is empty, and that is not the same as done
+
+All four were built, and the corpus now asks for nothing:
+
+```
+27/28 loaded; 23 gave a usable outline
+ 0 rendered materially more *with* script
+ 0 failed to settle
+
+api                      sites  calls        console errors
+(nothing)                                    17  could not load https (cross-origin, denied)
+                                             13  TypeError
+                                              6  ReferenceError
+```
+
+**An empty unsupported list beside 19 anonymous errors is a misleading result,
+and it is the honest state of things.** Those errors come from pages touching
+DOM *properties* that return null or undefined, not from globals, so
+`missingApi` — which covers globals — cannot name them. The instrument now
+reports nothing because it cannot see what is left, which is a different fact
+from there being nothing left. Naming those is the next measurement problem, and
+it has to be solved before another run means much.
+
+What the four turned into:
+
+* **`matchMedia` answers from the real viewport.** Returning `false` to
+  everything is not neutral: a responsive layout asks and then commits to the
+  branch it was told, so a wrong answer is a wrong page rather than a missing
+  feature. `min-width`, `max-width`, `orientation` and `prefers-color-scheme`
+  have correct answers at a fixed viewport with a known scheme; a feature
+  outside that set still records itself.
+* **`document.cookie` exists, and honours `HttpOnly`.** The earlier framing —
+  that exposing it would break "an agent can be logged in without reading the
+  credential" — was a false choice, because a browser has the same problem and
+  solved it: a session cookie is almost always `HttpOnly`, and that flag is
+  exactly the line between what the wire carries and what script may see. The
+  jar had been parsing `HttpOnly` and dropping it, which was harmless until
+  script existed and is not now. Page script sees the non-`HttpOnly` cookies;
+  the session stays out of reach.
+* **`setInterval` repeats**, and deliberately does *not* hold the page open.
+  Waiting for a perpetual timer to drain would mean a page with a clock, a
+  carousel or an autosave could never be described as settled, and every
+  snapshot of it would carry a "still busy" note that told an agent nothing.
+  Virtual time advances only as far as pending one-shot work requires, and
+  intervals fire along the way.
+* **`IntersectionObserver` and `ResizeObserver`** are driven from the settle
+  loop rather than a frame clock, because this engine has no frames at rest and
+  an observer waiting for a repaint would never fire at all. Intersection
+  reports edges rather than every settle, so a page that lazy-loads on entry is
+  told once.
 
 ---
 

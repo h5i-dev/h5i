@@ -716,6 +716,198 @@
     }
   }
 
+  // A media query, answered from the viewport the engine actually renders at.
+  //
+  // Returning `false` to everything — which is what a stub does — is not
+  // neutral: a responsive layout asks `(min-width: …)` and then commits to the
+  // branch it was told, so a wrong answer is a wrong page rather than a missing
+  // feature. The features below have real answers here; anything else records
+  // itself and reports no match, so the gap is visible instead of guessed at.
+  function matchMedia(query) {
+    const text = String(query || "");
+    const view = api.viewport();
+    const list = {
+      media: text,
+      matches: evaluateQuery(text, view),
+      onchange: null,
+      // The viewport never changes size mid-session, so a listener here can
+      // never fire. Accepted silently rather than recorded, because a page
+      // registering one is not asking for anything we lack.
+      addListener() {}, removeListener() {},
+      addEventListener() {}, removeEventListener() {},
+      dispatchEvent() { return false; },
+    };
+    return list;
+  }
+
+  function evaluateQuery(text, view) {
+    const clauses = text.split(",").map((c) => c.trim()).filter(Boolean);
+    if (clauses.length === 0) return false;
+    // A comma-separated list is a disjunction, and `and` within a clause is a
+    // conjunction. That is the whole grammar a page in practice uses.
+    return clauses.some((clause) =>
+      clause
+        .split(/\band\b/)
+        .map((part) => part.trim())
+        .every((part) => evaluateFeature(part, view))
+    );
+  }
+
+  function evaluateFeature(part, view) {
+    const bare = part.replace(/^\(|\)$/g, "").trim().toLowerCase();
+    if (!bare) return false;
+    if (bare === "all" || bare === "screen") return true;
+    if (bare === "print" || bare === "speech") return false;
+
+    const at = bare.indexOf(":");
+    if (at < 0) {
+      api.unsupported(`matchMedia(${bare})`);
+      return false;
+    }
+    const name = bare.slice(0, at).trim();
+    const value = bare.slice(at + 1).trim();
+    const px = (v) => parseFloat(v.replace(/px$/, ""));
+
+    switch (name) {
+      case "min-width": return view.width >= px(value);
+      case "max-width": return view.width <= px(value);
+      case "width": return view.width === px(value);
+      case "min-height": return view.height >= px(value);
+      case "max-height": return view.height <= px(value);
+      case "height": return view.height === px(value);
+      case "orientation": return value === (view.width >= view.height ? "landscape" : "portrait");
+      case "prefers-color-scheme": return value === view.colorScheme;
+      // Nothing animates here and there is no pointer, so these are not
+      // guesses — they are what this engine is.
+      case "prefers-reduced-motion": return value === "reduce";
+      case "hover": return value === "none";
+      case "any-hover": return value === "none";
+      case "pointer": return value === "none";
+      case "any-pointer": return value === "none";
+      default:
+        api.unsupported(`matchMedia(${name})`);
+        return false;
+    }
+  }
+
+  // ── layout observers ─────────────────────────────────────────────────────
+  //
+  // Both are driven from the settle loop rather than from a frame clock: this
+  // engine has no frames at rest, and an observer that only fired on a repaint
+  // would never fire at all. Checked after layout has been resolved, so the
+  // rectangles they report are the ones that were actually laid out.
+
+  const intersectionObservers = [];
+  const resizeObservers = [];
+
+  class IntersectionObserver {
+    constructor(callback, options) {
+      this._callback = callback;
+      this._targets = [];
+      this._seen = new Map();
+      const raw = (options && options.threshold) ?? 0;
+      this._thresholds = Array.isArray(raw) ? raw.slice().sort() : [raw];
+      this.root = (options && options.root) || null;
+      this.rootMargin = (options && options.rootMargin) || "0px";
+    }
+    observe(target) {
+      if (!this._targets.includes(target)) this._targets.push(target);
+      if (!intersectionObservers.includes(this)) intersectionObservers.push(this);
+    }
+    unobserve(target) {
+      const at = this._targets.indexOf(target);
+      if (at >= 0) this._targets.splice(at, 1);
+    }
+    disconnect() {
+      this._targets.length = 0;
+      const at = intersectionObservers.indexOf(this);
+      if (at >= 0) intersectionObservers.splice(at, 1);
+    }
+    takeRecords() { return []; }
+
+    _check(view) {
+      const entries = [];
+      for (const target of this._targets) {
+        const [x, y, width, height] = api.rect(target._id) || [0, 0, 0, 0];
+        const visibleW = Math.max(0, Math.min(x + width, view.width) - Math.max(x, 0));
+        const visibleH = Math.max(0, Math.min(y + height, view.height) - Math.max(y, 0));
+        const area = width * height;
+        const ratio = area > 0 ? (visibleW * visibleH) / area : 0;
+        const isIntersecting = this._thresholds.some(
+          (t) => (t === 0 ? ratio > 0 : ratio >= t)
+        );
+        // Edges only: a page that lazy-loads on entry should be told once, not
+        // on every settle for as long as the element stays on screen.
+        if (this._seen.get(target._id) === isIntersecting) continue;
+        this._seen.set(target._id, isIntersecting);
+        entries.push({
+          target, isIntersecting, intersectionRatio: ratio,
+          boundingClientRect: target.getBoundingClientRect(),
+          intersectionRect: { x, y, width: visibleW, height: visibleH,
+                              top: y, left: x, right: x + visibleW, bottom: y + visibleH },
+          rootBounds: { x: 0, y: 0, width: view.width, height: view.height,
+                        top: 0, left: 0, right: view.width, bottom: view.height },
+          time: clock,
+        });
+      }
+      if (entries.length) deliverTo(this, entries);
+    }
+  }
+
+  class ResizeObserver {
+    constructor(callback) { this._callback = callback; this._targets = []; this._seen = new Map(); }
+    observe(target) {
+      if (!this._targets.includes(target)) this._targets.push(target);
+      if (!resizeObservers.includes(this)) resizeObservers.push(this);
+    }
+    unobserve(target) {
+      const at = this._targets.indexOf(target);
+      if (at >= 0) this._targets.splice(at, 1);
+    }
+    disconnect() {
+      this._targets.length = 0;
+      const at = resizeObservers.indexOf(this);
+      if (at >= 0) resizeObservers.splice(at, 1);
+    }
+
+    _check() {
+      const entries = [];
+      for (const target of this._targets) {
+        const [, , width, height] = api.rect(target._id) || [0, 0, 0, 0];
+        const previous = this._seen.get(target._id);
+        // The first observation always fires, which is what a browser does and
+        // what layout code depends on for its initial measurement.
+        if (previous && previous.width === width && previous.height === height) continue;
+        this._seen.set(target._id, { width, height });
+        entries.push({
+          target,
+          contentRect: { x: 0, y: 0, width, height, top: 0, left: 0, right: width, bottom: height },
+          borderBoxSize: [{ inlineSize: width, blockSize: height }],
+          contentBoxSize: [{ inlineSize: width, blockSize: height }],
+        });
+      }
+      if (entries.length) deliverTo(this, entries);
+    }
+  }
+
+  function deliverTo(observer, entries) {
+    try {
+      observer._callback(entries, observer);
+    } catch (error) {
+      console.error("observer callback threw: " + error);
+    }
+  }
+
+  // Called by the host after layout, once per settle round.
+  globalThis.__h5iRunLayoutObservers = function () {
+    if (intersectionObservers.length === 0 && resizeObservers.length === 0) return 0;
+    const view = api.viewport();
+    let ran = 0;
+    for (const observer of intersectionObservers.slice()) { observer._check(view); ran++; }
+    for (const observer of resizeObservers.slice()) { observer._check(); ran++; }
+    return ran;
+  };
+
   // ── mutation observation ─────────────────────────────────────────────────
   //
   // Records are produced by the mutating methods above rather than by polling
@@ -819,8 +1011,12 @@
       const root = wrap(api.root());
       if (root) root.removeEventListener(type, handler);
     },
-    get cookie() { api.unsupported("document.cookie"); return ""; },
-    set cookie(_v) { api.unsupported("document.cookie"); },
+    // Non-HttpOnly cookies only, exactly as a browser exposes them. The
+    // withholding is the point: a session credential is almost always HttpOnly,
+    // and anything script can read it can write into the DOM, where the agent
+    // reads it.
+    get cookie() { return api.readCookies(); },
+    set cookie(value) { api.writeCookie(String(value)); },
     get readyState() { return "complete"; },
   };
 
@@ -848,7 +1044,13 @@
 
   function setTimeout(fn, delay, ...args) {
     const id = nextTimer++;
-    timers.set(id, { fn, due: clock + Math.max(0, delay | 0), args });
+    timers.set(id, { fn, due: clock + Math.max(0, delay | 0), args, every: null });
+    return id;
+  }
+  function setInterval(fn, delay, ...args) {
+    const id = nextTimer++;
+    const every = Math.max(1, delay | 0);
+    timers.set(id, { fn, due: clock + every, args, every });
     return id;
   }
   function clearTimeout(id) { timers.delete(id); }
@@ -861,7 +1063,8 @@
     let ran = 0;
     for (const [id, timer] of [...timers.entries()].sort((a, b) => a[1].due - b[1].due)) {
       if (timer.due > clock) continue;
-      timers.delete(id);
+      if (timer.every === null) timers.delete(id);
+      else timer.due = clock + timer.every;
       try { timer.fn(...timer.args); } catch (error) {
         console.error("timer threw: " + error);
       }
@@ -869,7 +1072,18 @@
     }
     return ran;
   };
-  globalThis.__h5iPendingTimers = function () { return timers.size; };
+
+  // Only one-shot timers count as work outstanding. An interval is perpetual by
+  // definition, so waiting for the queue to drain would mean a page with a
+  // polling loop — a clock, a carousel, an autosave — could never be described
+  // as settled, and every snapshot of it would carry a "still busy" note that
+  // told an agent nothing. Intervals still fire while the clock advances; they
+  // just do not hold the page open.
+  globalThis.__h5iPendingTimers = function () {
+    let pending = 0;
+    for (const timer of timers.values()) if (timer.every === null) pending++;
+    return pending;
+  };
 
   // How the host reaches a node it knows only by id, to fire a real event at
   // it. Exposed rather than reimplemented on the Rust side so a synthetic
@@ -939,23 +1153,12 @@
     addEventListener, removeEventListener, dispatchEvent,
     window, document, console, location, history, performance,
     setTimeout, clearTimeout,
-    setInterval: (fn, d) => { api.unsupported("setInterval"); return setTimeout(fn, d); },
-    clearInterval: clearTimeout,
+    setInterval, clearInterval: clearTimeout,
     requestAnimationFrame: (fn) => setTimeout(() => fn(clock), 16),
     cancelAnimationFrame: clearTimeout,
     Node, Element, Text, Event,
     alert: () => api.unsupported("alert"),
-    matchMedia: (query) => {
-      // Answered rather than thrown, because a page that cannot ask about the
-      // viewport usually stops rendering entirely. `matches: false` is honest
-      // for a fixed-size headless viewport, and the call is still recorded.
-      api.unsupported("matchMedia");
-      return {
-        media: String(query || ""), matches: false, onchange: null,
-        addListener() {}, removeListener() {},
-        addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; },
-      };
-    },
+    matchMedia,
     URL, URLSearchParams,
     queueMicrotask: (fn) => { Promise.resolve().then(fn); },
     structuredClone: (value) => JSON.parse(JSON.stringify(value)),
@@ -1012,8 +1215,7 @@
     CustomEvent, UIEvent, MouseEvent, KeyboardEvent, InputEvent,
     DocumentFragment, Headers, Request, AbortController, AbortSignal, FormData,
     MutationObserver,
-    IntersectionObserver: class { constructor() { api.unsupported("IntersectionObserver"); } observe() {} disconnect() {} },
-    ResizeObserver: class { constructor() { api.unsupported("ResizeObserver"); } observe() {} disconnect() {} },
+    IntersectionObserver, ResizeObserver,
   });
 
   // `fetch`, over the host's broker. Every request is policy-checked and

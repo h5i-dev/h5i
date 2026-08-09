@@ -79,6 +79,9 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("rect", 1, rect),
         ("computedStyle", 2, computed_style),
         ("parseUrl", 2, parse_url),
+        ("viewport", 0, viewport),
+        ("readCookies", 0, read_cookies),
+        ("writeCookie", 1, write_cookie),
     ];
 
     let api = boa_engine::object::ObjectInitializer::new(context).build();
@@ -678,4 +681,44 @@ fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         context,
     )?;
     Ok(out.into())
+}
+
+/// The viewport a media query is asked about.
+///
+/// Real numbers, because they are real: the viewport has a fixed size and a
+/// known colour scheme, so `(min-width: 900px)` has a correct answer and
+/// returning `false` to everything would send responsive layouts down the wrong
+/// branch and keep them there.
+fn viewport(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+    let size = doc.viewport().window_size;
+
+    let out = boa_engine::object::ObjectInitializer::new(context).build();
+    out.set(js_string!("width"), size.0 as f64, false, context)?;
+    out.set(js_string!("height"), size.1 as f64, false, context)?;
+    // The engine renders with `ColorScheme::Light`; saying so is what lets a
+    // page pick the palette it will actually be screenshotted in.
+    out.set(js_string!("colorScheme"), js_string!("light"), false, context)?;
+    Ok(out.into())
+}
+
+/// `document.cookie`: the non-`HttpOnly` cookies for this document.
+///
+/// Deliberately not the wire header. A session credential is almost always
+/// `HttpOnly`, and withholding it is what keeps the property that an agent can
+/// be logged in without being able to read the thing that makes it so — because
+/// anything script can read, script can write into the DOM, and the agent reads
+/// the DOM.
+fn read_cookies(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let host = host(context)?;
+    Ok(js_string!(host.broker.jar().document_cookie(&host.base)).into())
+}
+
+/// `document.cookie = "..."`: store one cookie as the current document.
+fn write_cookie(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let header = arg_string(args, 0, context)?;
+    let host = host(context)?;
+    let stored = host.broker.jar().store(&host.base, [header.as_str()]);
+    Ok(JsValue::from(stored as f64))
 }

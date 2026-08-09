@@ -178,17 +178,18 @@ fn a_missing_web_api_is_recorded_rather_than_silently_stubbed() {
     let (_page, mut script) = page_and_script("<html><body><div id='d'></div></body></html>");
     script
         .eval(
-            "new IntersectionObserver(() => {}); new IntersectionObserver(() => {}); \
-             matchMedia('(min-width: 1px)');",
+            "try { new WebSocket('wss://x') } catch (e) {} \
+             try { new WebSocket('wss://y') } catch (e) {} \
+             try { customElements.define('a-b', class {}) } catch (e) {}",
         )
         .expect("runs");
 
     let reported = script.unsupported();
     let names: Vec<&str> = reported.iter().map(|(n, _)| n.as_str()).collect();
-    assert!(names.contains(&"IntersectionObserver"), "{reported:?}");
-    assert!(names.contains(&"matchMedia"), "{reported:?}");
+    assert!(names.contains(&"WebSocket"), "{reported:?}");
+    assert!(names.contains(&"customElements.define"), "{reported:?}");
     // Most-used first, because forty calls is likelier to be the problem than one.
-    assert_eq!(reported[0].0, "IntersectionObserver");
+    assert_eq!(reported[0].0, "WebSocket");
     assert_eq!(reported[0].1, 2);
 }
 
@@ -398,14 +399,14 @@ fn the_snapshot_says_when_a_page_needed_an_api_this_engine_lacks() {
 
     let page = factory.from_html(
         "<html><body><div id='d'>x</div><script>\
-         new IntersectionObserver(() => {}); matchMedia('(min-width: 1px)');\
+         try { new WebSocket('wss://x') } catch (e) {}\
          </script></body></html>",
         &url::Url::parse("https://app.example/").unwrap(),
     );
 
     let rendered = page.snapshot().render();
     assert!(rendered.contains("Web APIs this engine does not have"), "{rendered}");
-    assert!(rendered.contains("IntersectionObserver"), "{rendered}");
+    assert!(rendered.contains("WebSocket"), "{rendered}");
     // Outside the fence, because it is a fact about the reading, not the page.
     let fence = rendered.find(crate::snapshot::CONTENT_BEGIN).unwrap();
     assert!(rendered.find("note:").unwrap() < fence, "{rendered}");
@@ -1649,4 +1650,188 @@ fn an_empty_page_says_it_is_empty_rather_than_saying_nothing() {
     let rendered = page.snapshot().render();
     assert!(rendered.contains("no readable content"), "{rendered}");
     assert!(rendered.contains("ran them"), "it says whether script ran: {rendered}");
+}
+
+// ── what the corpus asked for ─────────────────────────────────────────────
+
+#[test]
+fn match_media_answers_from_the_viewport_the_engine_renders_at() {
+    // Returning false to everything is not neutral: a responsive layout asks
+    // and then commits to the branch it was told, so a wrong answer is a wrong
+    // page rather than a missing feature.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+
+    // The default viewport, which is what these pages are built with: 1280x720.
+    assert_eq!(script.eval_value("matchMedia('(min-width: 300px)').matches").unwrap(), "true");
+    assert_eq!(script.eval_value("matchMedia('(min-width: 1900px)').matches").unwrap(), "false");
+    assert_eq!(script.eval_value("matchMedia('(max-width: 1500px)').matches").unwrap(), "true");
+    assert_eq!(script.eval_value("matchMedia('(orientation: landscape)').matches").unwrap(), "true");
+    assert_eq!(
+        script.eval_value("matchMedia('(prefers-color-scheme: light)').matches").unwrap(),
+        "true",
+        "the scheme it will actually be screenshotted in"
+    );
+    assert_eq!(
+        script.eval_value("matchMedia('(prefers-color-scheme: dark)').matches").unwrap(),
+        "false"
+    );
+
+    // `and` within a clause conjoins; a comma-separated list disjoins.
+    assert_eq!(
+        script.eval_value("matchMedia('(min-width: 300px) and (max-width: 1500px)').matches").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script.eval_value("matchMedia('(min-width: 1900px), (max-width: 1500px)').matches").unwrap(),
+        "true",
+        "a comma-separated list is a disjunction"
+    );
+    assert_eq!(
+        script.eval_value("matchMedia('(min-width: 1900px) and (max-width: 1500px)').matches").unwrap(),
+        "false",
+        "and `and` within a clause is a conjunction"
+    );
+
+    // A feature with no real answer here names itself rather than guessing.
+    script.eval("matchMedia('(color-gamut: p3)')").expect("runs");
+    assert!(
+        script.unsupported().iter().any(|(n, _)| n.contains("color-gamut")),
+        "{:?}",
+        script.unsupported()
+    );
+}
+
+#[test]
+fn document_cookie_shows_what_a_browser_would_and_withholds_the_session() {
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let base = url::Url::parse("https://app.example/page").unwrap();
+    broker.jar().store(&base, ["sid=secret; HttpOnly", "theme=dark"]);
+
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let page = factory.from_html("<html><body></body></html>", &base);
+    let mut script = Script::new(page.dom(), broker.clone(), &base).expect("realm");
+
+    let visible = script.eval_value("document.cookie").unwrap();
+    assert!(visible.contains("theme=dark"), "{visible}");
+    assert!(
+        !visible.contains("secret"),
+        "the session credential stays out of script's reach: {visible}"
+    );
+
+    // And script can set one, which the jar then carries on the wire.
+    script.eval("document.cookie = 'lang=en; Path=/'").expect("sets");
+    assert!(script.eval_value("document.cookie").unwrap().contains("lang=en"));
+    let (wire, _) = broker.jar().header_for(&base).expect("sent");
+    assert!(wire.contains("lang=en"), "{wire}");
+    assert!(wire.contains("sid=secret"), "and the wire still carries the session: {wire}");
+}
+
+#[test]
+fn set_interval_repeats_but_does_not_hold_the_page_open() {
+    // An interval is perpetual by definition. Waiting for the queue to drain
+    // would mean a page with a clock or an autosave could never be described as
+    // settled, and every snapshot would carry a "still busy" note saying
+    // nothing. It fires while the clock advances; it does not block.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+
+    // Virtual time advances only as far as pending one-shot work requires, so
+    // an interval alone settles immediately with no time passed — which is the
+    // honest answer: nothing happened yet. It fires along the way while the
+    // clock is moving for another reason, which is what a real page looks like.
+    script
+        .eval(
+            "globalThis.ticks = 0; globalThis.id = setInterval(() => { ticks++ }, 50);              globalThis.done = false; setTimeout(() => { done = true }, 300);",
+        )
+        .expect("runs");
+
+    let settled = script.settle();
+    assert!(!settled.cut_off, "a polling page still settles: {settled:?}");
+    assert_eq!(script.eval_value("done").unwrap(), "true");
+
+    let ticks: u64 = script.eval_value("ticks").unwrap().parse().unwrap();
+    assert!(ticks > 1, "the interval repeated while the clock moved: {ticks}");
+
+    script.eval("clearInterval(id)").expect("clears");
+    let before: u64 = script.eval_value("ticks").unwrap().parse().unwrap();
+    script.eval("setTimeout(() => {}, 300)").expect("more work");
+    script.settle();
+    assert_eq!(
+        script.eval_value("ticks").unwrap().parse::<u64>().unwrap(),
+        before,
+        "clearInterval stops it even while time keeps moving"
+    );
+}
+
+#[test]
+fn an_intersection_observer_reports_what_is_on_screen_and_what_is_not() {
+    // Driven from the settle loop, because this engine has no frames at rest
+    // and an observer waiting for a repaint would never fire.
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='near' style='height:50px'>near</div>\
+         <div style='height:4000px'>spacer</div>\
+         <div id='far' style='height:50px'>far</div></body></html>",
+    );
+    script
+        .eval(
+            "globalThis.seen = {}; \
+             const o = new IntersectionObserver((entries) => { \
+               for (const e of entries) seen[e.target.id] = e.isIntersecting; }); \
+             o.observe(document.querySelector('#near')); \
+             o.observe(document.querySelector('#far'));",
+        )
+        .expect("runs");
+    script.settle();
+
+    assert_eq!(script.eval_value("seen.near").unwrap(), "true", "at the top of the viewport");
+    assert_eq!(
+        script.eval_value("seen.far").unwrap(),
+        "false",
+        "4000px down, and reported as not intersecting rather than not reported"
+    );
+}
+
+#[test]
+fn an_intersection_observer_reports_edges_rather_than_every_settle() {
+    // A page that lazy-loads on entry should be told once, not on every settle
+    // for as long as the element stays on screen.
+    let (_page, mut script) = page_and_script("<html><body><p id='p'>here</p></body></html>");
+    script
+        .eval(
+            "globalThis.calls = 0; \
+             const o = new IntersectionObserver(() => { calls++ }); \
+             o.observe(document.querySelector('#p'));",
+        )
+        .expect("runs");
+
+    script.settle();
+    let first: u64 = script.eval_value("calls").unwrap().parse().unwrap();
+    assert_eq!(first, 1, "the initial state is reported once");
+
+    script.settle();
+    assert_eq!(
+        script.eval_value("calls").unwrap().parse::<u64>().unwrap(),
+        first,
+        "and nothing changed, so nothing was delivered"
+    );
+}
+
+#[test]
+fn a_resize_observer_delivers_the_initial_measurement() {
+    // The first observation always fires, which is what a browser does and what
+    // layout code depends on for its initial measurement.
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='d' style='height:40px'>d</div></body></html>",
+    );
+    script
+        .eval(
+            "globalThis.size = null; \
+             const o = new ResizeObserver((entries) => { size = entries[0].contentRect }); \
+             o.observe(document.querySelector('#d'));",
+        )
+        .expect("runs");
+    script.settle();
+
+    assert_ne!(script.eval_value("size.width").unwrap(), "0", "a laid-out block has width");
+    assert_eq!(script.eval_value("size.height").unwrap(), "40");
 }
