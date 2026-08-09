@@ -446,6 +446,7 @@
     get textContent() { return api.getText(this._id); }
     set textContent(value) {
       api.setText(this._id, String(value));
+      if (observers.length === 0) return;
       record({
         type: "characterData", target: this, addedNodes: [], removedNodes: [],
         attributeName: null, oldValue: null,
@@ -715,22 +716,27 @@
 
     getAttribute(name) { return api.getAttr(this._id, String(name)); }
     setAttribute(name, value) {
-      const previous = api.getAttr(this._id, String(name));
+      // The old value is only wanted by an observer or a custom element, and
+      // reading it is a call into the tree. Skipping it when nobody is watching
+      // is most of what `setAttribute` used to cost.
+      const watched = observers.length > 0 || isCustom(this);
+      const previous = watched ? api.getAttr(this._id, String(name)) : null;
       api.setAttr(this._id, String(name), String(value));
-      record({
-        type: "attributes", target: this, addedNodes: [], removedNodes: [],
-        attributeName: String(name).toLowerCase(), oldValue: previous,
-      });
-      fireAttributeChanged(this, String(name).toLowerCase(), previous, String(value));
+      if (watched) {
+        const lowered = String(name).toLowerCase();
+        recordAttribute(this, lowered, previous);
+        fireAttributeChanged(this, lowered, previous, String(value));
+      }
     }
     removeAttribute(name) {
-      const previous = api.getAttr(this._id, String(name));
+      const watched = observers.length > 0 || isCustom(this);
+      const previous = watched ? api.getAttr(this._id, String(name)) : null;
       api.removeAttr(this._id, String(name));
-      record({
-        type: "attributes", target: this, addedNodes: [], removedNodes: [],
-        attributeName: String(name).toLowerCase(), oldValue: previous,
-      });
-      fireAttributeChanged(this, String(name).toLowerCase(), previous, null);
+      if (watched) {
+        const lowered = String(name).toLowerCase();
+        recordAttribute(this, lowered, previous);
+        fireAttributeChanged(this, lowered, previous, null);
+      }
     }
     hasAttribute(name) { return api.getAttr(this._id, String(name)) !== null; }
     toggleAttribute(name, force) {
@@ -1824,7 +1830,18 @@
     }
   }
 
+  function recordAttribute(target, attributeName, oldValue) {
+    if (observers.length === 0) return;
+    record({
+      type: "attributes", target, addedNodes: [], removedNodes: [],
+      attributeName, oldValue,
+    });
+  }
+
   function childListRecord(target, added, removed) {
+    // Built only if something will read it: the arrays and the object are pure
+    // waste on a page with no observer, and every insertion made one.
+    if (observers.length === 0) return;
     record({
       type: "childList",
       target,

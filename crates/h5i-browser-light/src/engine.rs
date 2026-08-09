@@ -515,6 +515,14 @@ impl Page {
         // module and a later callback are supposed to see.
         script.set_current_script(None);
 
+        // One budget for the whole phase, not one per stage. The settle used to
+        // arm a fresh deadline of its own, so a page that spent the script
+        // budget and then the job budget cost the sum of the two — lit.dev took
+        // 46 seconds against a 20-second intent. What is left of the phase is
+        // what settling gets.
+        let left = SCRIPT_PHASE_BUDGET.saturating_sub(phase_started.elapsed());
+        script.set_job_budget(left.max(std::time::Duration::from_secs(1)));
+
         for (_, source) in modules {
             if phase_started.elapsed() >= SCRIPT_PHASE_BUDGET {
                 skipped += 1;

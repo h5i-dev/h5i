@@ -821,10 +821,31 @@ defeats the `in` check the reporting one depends on.
    per ancestor, took it to **7 µs, the same as the detached case**.
 
    lit.dev went from three and a half minutes to fifty seconds, material-web
-   from a timeout to forty-five, and both now *return*: the job-queue deadline
-   fires and the page reports what it managed. The lesson is the one this file
-   keeps relearning — a number that looks like someone else's problem is worth
-   measuring before it is written down as one.
+   from a timeout to forty-five, and both now *return*. A second pass on the
+   mutation-record path — the old value of an attribute was read from the tree,
+   and a record object with two arrays allocated, on every write, whether or not
+   anything was observing — took the hot operations to:
+
+   ```
+   createElement    5.5 µs      textContent  2.0 µs
+   setAttribute     4.0 µs      appendChild  4.0 µs
+   ```
+
+   from 7 / 8.5 / 18 / 40.5 µs before either pass.
+
+   **And then the sites did not get faster**, which is the part worth writing
+   down. lit.dev renders in 0.27s without script and 46s with it, of which 0.5s
+   is network; the DOM is no longer where the time goes. Nor are the budgets: a
+   shared deadline across the script phase and the settle — they used to add up
+   — changed nothing either, because the time is inside a *single* evaluation
+   that neither a between-jobs token nor a between-scripts budget can interrupt.
+
+   So the original diagnosis was half right and recorded too confidently in both
+   directions. The engine was slow enough to turn a heavy page into a hang, and
+   fixing that was worth four times on the hot path; what is left really is one
+   uninterruptible unit of work, and bounding it needs an interrupt inside the
+   interpreter loop. That is still upstream, and it is now the only thing
+   standing between this engine and a page like lit.dev.
 3. **Total CPU is unbounded.** Boa exposes no wall-clock interrupt, so the
    engine bounds what it can — one loop, recursion depth, stack size — and a
    caller that cannot wait must impose its own timeout. Raising the loop bound

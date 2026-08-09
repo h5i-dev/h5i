@@ -125,7 +125,12 @@ const STACK_SIZE_LIMIT: usize = 128 * 1024;
 /// that returned in three minutes into one that had not returned in four.
 const LOOP_ITERATION_LIMIT: u64 = 5_000_000;
 
-/// How long the job queue may run before the engine tells it to stop.
+/// How long the job queue may run before the engine tells it to stop, when
+/// nobody has said otherwise.
+///
+/// `Page::run_scripts` overrides this with whatever is left of the script
+/// phase, so the two budgets do not add up. This value is the one a caller
+/// driving a realm directly gets.
 ///
 /// This is the wall-clock bound the other limits could not provide. A module
 /// graph evaluates entirely inside `run_jobs`, so neither the settle budget nor
