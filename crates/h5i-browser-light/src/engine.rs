@@ -195,6 +195,12 @@ impl Page {
                 base_url: Some(base_url.to_string()),
                 net_provider: Some(Arc::new(BrokerNet::new(broker))),
                 font_ctx: Some(fonts.context),
+                // Without this Blitz uses `DummyHtmlParserProvider` and
+                // `set_inner_html` silently does nothing: the old children are
+                // dropped and no new ones are parsed, so `el.innerHTML = x`
+                // empties the element. Supplying the real parser is what makes
+                // innerHTML, insertAdjacentHTML and template content work.
+                html_parser_provider: Some(Arc::new(blitz_html::HtmlProvider)),
                 // Forms dispatch through this. Without it Blitz's default
                 // provider does nothing at all, and a submit would look like a
                 // page that simply ignored the button.

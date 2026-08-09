@@ -163,6 +163,41 @@ impl Policy {
 
     /// The one decision point. Every request and every redirect hop comes
     /// through here.
+    /// Check a request made *by a document*.
+    ///
+    /// The document's origin is the argument that [`Self::check`] lacks, and it
+    /// exists for one reason: loopback. Loopback is reachable by default because
+    /// the box's dev server is the whole point of a browser box, and it bypasses
+    /// the egress proxy for the same reason. Once script runs, that combination
+    /// is a read primitive — a page from the open web could `fetch` the dev
+    /// server, read the source the agent is working on, and post it to any
+    /// allowed host, with the box's outer enforcement never seeing it.
+    ///
+    /// So loopback is reachable *from a loopback document*. A page the dev
+    /// server served may talk to the dev server; a page from the web may not.
+    /// `None` is a document with no origin of its own — a local file, or the
+    /// engine acting on the agent's explicit instruction — and is trusted,
+    /// because the agent naming a URL is not the same as a page reaching for one.
+    pub fn check_from(&self, url: &Url, document: Option<&Url>) -> Verdict {
+        if self.allow_loopback && url.host_str().is_some_and(is_loopback) {
+            let document_is_local = match document {
+                None => true,
+                Some(origin) => {
+                    origin.host_str().is_some_and(is_loopback) || origin.scheme() == "file"
+                }
+            };
+            if !document_is_local {
+                return Verdict::Deny(format!(
+                    "a page served from {} may not reach loopback ({}): only a page the \
+                     dev server itself served may talk to it",
+                    document.map(|d| d.origin().ascii_serialization()).unwrap_or_default(),
+                    url.host_str().unwrap_or_default(),
+                ));
+            }
+        }
+        self.check(url)
+    }
+
     pub fn check(&self, url: &Url) -> Verdict {
         match url.scheme() {
             // `data:` is inline in the document that already passed policy;

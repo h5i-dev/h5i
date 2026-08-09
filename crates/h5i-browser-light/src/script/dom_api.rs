@@ -74,6 +74,9 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("log", 2, log),
         ("unsupported", 1, unsupported),
         ("fetch", 3, fetch),
+        ("innerHtml", 1, inner_html),
+        ("outerHtml", 1, outer_html),
+        ("rect", 1, rect),
     ];
 
     let api = boa_engine::object::ObjectInitializer::new(context).build();
@@ -455,12 +458,15 @@ fn fetch(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
     host.requests.borrow_mut().push(resolved.to_string());
 
     let content_type = (!body.is_empty()).then_some("application/x-www-form-urlencoded");
-    let outcome = host.broker.send(
+    // The document's own origin travels with the request, so the policy can
+    // refuse a page from the web reaching the box's dev server (§3.1).
+    let outcome = host.broker.send_from(
         &resolved,
         crate::receipt::Initiator::Subresource,
         &method,
         body.as_bytes(),
         content_type,
+        Some(&host.base),
     );
 
     if let Some(error) = outcome.error {
@@ -483,4 +489,78 @@ fn reply_error(message: &str, context: &mut Context) -> JsResult<JsValue> {
     let reply = boa_engine::object::ObjectInitializer::new(context).build();
     reply.set(js_string!("error"), js_string!(message), false, context)?;
     Ok(reply.into())
+}
+
+
+/// The serialised markup *inside* a node.
+///
+/// Real serialisation, not the text content. The previous version returned
+/// `textContent`, which silently stripped every tag: a page doing
+/// `el.innerHTML = el.innerHTML` destroyed its own subtree and nothing said so.
+fn inner_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+    let Some(node) = doc.get_node(id) else {
+        return Ok(JsValue::null());
+    };
+    let mut out = String::new();
+    for child in &node.children {
+        if let Some(child) = doc.get_node(*child) {
+            out.push_str(&child.outer_html());
+        }
+    }
+    Ok(js_string!(out).into())
+}
+
+/// The serialised markup *of* a node, itself included.
+fn outer_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+    Ok(match doc.get_node(id) {
+        Some(node) => js_string!(node.outer_html()).into(),
+        None => JsValue::null(),
+    })
+}
+
+/// A node's border box in viewport coordinates: `[x, y, width, height]`.
+///
+/// Blitz stores each box's position relative to its parent, so the absolute
+/// position is the sum up the ancestor chain, minus the viewport scroll — which
+/// is what makes this a *client* rect rather than a document one. Answered
+/// rather than reported unsupported because the engine already computes it; the
+/// previous version returned zeros, which sends a positioning library into a
+/// loop that never converges.
+fn rect(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+
+    let Some(node) = doc.get_node(id) else {
+        return Ok(JsValue::null());
+    };
+    let size = node.final_layout.size;
+
+    let (mut x, mut y) = (0.0f32, 0.0f32);
+    let mut current = Some(id);
+    for _ in 0..256 {
+        let Some(node_id) = current else { break };
+        let Some(node) = doc.get_node(node_id) else { break };
+        x += node.final_layout.location.x;
+        y += node.final_layout.location.y;
+        current = node.parent;
+    }
+
+    let scroll = doc.viewport_scroll();
+    let array = boa_engine::object::builtins::JsArray::new(context);
+    for value in [
+        x as f64 - scroll.x,
+        y as f64 - scroll.y,
+        size.width as f64,
+        size.height as f64,
+    ] {
+        array.push(JsValue::from(value), context)?;
+    }
+    Ok(array.into())
 }

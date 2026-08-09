@@ -68,11 +68,48 @@
     get textContent() { return api.getText(this._id); }
     set textContent(value) { api.setText(this._id, String(value)); }
 
-    appendChild(child) { api.append(this._id, child._id); return child; }
+    appendChild(child) {
+      // Inserting a fragment inserts its children and leaves the fragment
+      // behind, which is the whole reason a fragment exists.
+      if (child instanceof DocumentFragment) {
+        for (const kid of child.childNodes) api.append(this._id, kid._id);
+        child._children.length = 0;
+        return child;
+      }
+      api.append(this._id, child._id);
+      return child;
+    }
     insertBefore(child, anchor) {
       if (!anchor) return this.appendChild(child);
+      if (child instanceof DocumentFragment) {
+        for (const kid of child.childNodes) api.insertBefore(anchor._id, kid._id);
+        child._children.length = 0;
+        return child;
+      }
       api.insertBefore(anchor._id, child._id);
       return child;
+    }
+    cloneNode(deep) {
+      const copy = this.nodeType === 3
+        ? document.createTextNode(this.textContent)
+        : document.createElement(this.tagName);
+      if (this.nodeType === 1) {
+        if (this.className) copy.className = this.className;
+        const style = api.getAttr(this._id, "style");
+        if (style) copy.setAttribute("style", style);
+        if (deep) copy.innerHTML = this.innerHTML;
+      }
+      return copy;
+    }
+    get nextSibling() {
+      const kids = this.parentNode ? this.parentNode.childNodes : [];
+      const at = kids.findIndex((n) => n._id === this._id);
+      return at >= 0 ? kids[at + 1] || null : null;
+    }
+    get previousSibling() {
+      const kids = this.parentNode ? this.parentNode.childNodes : [];
+      const at = kids.findIndex((n) => n._id === this._id);
+      return at > 0 ? kids[at - 1] : null;
     }
     removeChild(child) { api.removeNode(child._id); return child; }
     remove() { api.removeNode(this._id); }
@@ -102,6 +139,28 @@
     dispatchEvent(event) { return dispatch(this, event); }
   }
 
+  // A holder that is not in the document. Returning a `<div>` — which is what
+  // this did before — injected a real element that the page never created,
+  // breaking `.parent > .child` and the layout under it. Children live here
+  // until the fragment is inserted, and then they move.
+  class DocumentFragment {
+    constructor() { this._children = []; this.nodeType = 11; }
+    get childNodes() { return this._children.slice(); }
+    get firstChild() { return this._children[0] || null; }
+    appendChild(child) { this._children.push(child); return child; }
+    append(...items) {
+      for (const item of items) {
+        this.appendChild(item instanceof Node ? item : document.createTextNode(String(item)));
+      }
+    }
+    removeChild(child) {
+      const at = this._children.indexOf(child);
+      if (at >= 0) this._children.splice(at, 1);
+      return child;
+    }
+    querySelector() { api.unsupported("DocumentFragment.querySelector"); return null; }
+  }
+
   class Text extends Node {
     get data() { return this.textContent; }
     set data(v) { this.textContent = v; }
@@ -126,24 +185,162 @@
     get value() { return api.getValue(this._id); }
     set value(v) { api.setValue(this._id, String(v)); }
 
-    get innerHTML() { return api.getText(this._id); }
+    // Real serialisation. Returning textContent here silently stripped every
+    // tag, so `el.innerHTML = el.innerHTML` destroyed the subtree.
+    get innerHTML() { return api.innerHtml(this._id); }
     set innerHTML(html) { api.setInnerHtml(this._id, String(html)); }
+    get outerHTML() { return api.outerHtml(this._id); }
+
+    get style() { return new StyleDeclaration(this); }
+
+    get dataset() {
+      const node = this;
+      return new Proxy({}, {
+        get(_t, key) {
+          if (typeof key !== "string") return undefined;
+          const v = api.getAttr(node._id, "data-" + camelToDash(key));
+          return v === null ? undefined : v;
+        },
+        set(_t, key, value) {
+          api.setAttr(node._id, "data-" + camelToDash(String(key)), String(value));
+          return true;
+        },
+        has(_t, key) {
+          return api.getAttr(node._id, "data-" + camelToDash(String(key))) !== null;
+        },
+      });
+    }
 
     querySelector(sel) { return wrap(api.query(String(sel), this._id)); }
     querySelectorAll(sel) { return api.queryAll(String(sel), this._id).map(wrap); }
 
-    click() { dispatch(this, new Event("click", { bubbles: true })); }
+    matches(sel) {
+      // Asked of the document and filtered, because the selector engine
+      // underneath searches from the root. Correct, if not the cheapest route.
+      const id = this._id;
+      return api.queryAll(String(sel), 0).some((m) => m === id);
+    }
+    closest(sel) {
+      for (let n = this; n; n = n.parentNode) {
+        if (n.nodeType === 1 && n.matches(sel)) return n;
+      }
+      return null;
+    }
+
+    insertAdjacentHTML(position, html) {
+      const where = String(position).toLowerCase();
+      const host = document.createElement("div");
+      api.setInnerHtml(host._id, String(html));
+      const kids = host.childNodes;
+      if (where === "beforeend") { for (const k of kids) this.appendChild(k); }
+      else if (where === "afterbegin") {
+        const first = this.firstChild;
+        for (const k of kids) first ? this.insertBefore(k, first) : this.appendChild(k);
+      } else if (where === "beforebegin") {
+        for (const k of kids) this.parentNode.insertBefore(k, this);
+      } else if (where === "afterend") {
+        const parent = this.parentNode;
+        const next = this.nextSibling;
+        for (const k of kids) next ? parent.insertBefore(k, next) : parent.appendChild(k);
+      } else {
+        throw new TypeError("bad insertAdjacentHTML position: " + position);
+      }
+      host.remove();
+    }
+
+    click() { dispatch(this, new MouseEvent("click", { bubbles: true })); }
     focus() {}
     blur() {}
 
-    // Layout reads are the commonest thing a real app asks for that this
-    // engine does not answer yet. Reported rather than faked: zeros would send
-    // a positioning library into a loop that never converges.
+    // Answered from the layout the engine already computed. Returning zeros —
+    // which is what this did before — sends a positioning library into a loop
+    // that never converges.
     getBoundingClientRect() {
-      api.unsupported("Element.getBoundingClientRect");
-      return { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      const r = api.rect(this._id) || [0, 0, 0, 0];
+      const [x, y, width, height] = r;
+      return {
+        x, y, width, height,
+        top: y, left: x, right: x + width, bottom: y + height,
+        toJSON() { return { x, y, width, height, top: y, left: x, right: x + width, bottom: y + height }; },
+      };
     }
+    getClientRects() { return [this.getBoundingClientRect()]; }
+    get offsetWidth() { return this.getBoundingClientRect().width; }
+    get offsetHeight() { return this.getBoundingClientRect().height; }
+    get clientWidth() { return this.getBoundingClientRect().width; }
+    get clientHeight() { return this.getBoundingClientRect().height; }
   }
+
+  function camelToDash(name) {
+    return name.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+  }
+
+  // Inline style, backed by the element's own `style` attribute rather than by
+  // a parallel object, so what script sets is what the cascade sees and what a
+  // later `getAttribute("style")` returns. One source of truth, same rule the
+  // DOM follows.
+  class StyleDeclaration {
+    constructor(node) { this._node = node; }
+
+    _read() {
+      const raw = api.getAttr(this._node._id, "style") || "";
+      const out = new Map();
+      for (const part of raw.split(";")) {
+        const at = part.indexOf(":");
+        if (at < 0) continue;
+        const name = part.slice(0, at).trim().toLowerCase();
+        const value = part.slice(at + 1).trim();
+        if (name) out.set(name, value);
+      }
+      return out;
+    }
+    _write(map) {
+      const text = [...map.entries()].map(([k, v]) => `${k}: ${v}`).join("; ");
+      if (text) api.setAttr(this._node._id, "style", text);
+      else api.removeAttr(this._node._id, "style");
+    }
+
+    getPropertyValue(name) { return this._read().get(String(name).toLowerCase()) || ""; }
+    setProperty(name, value) {
+      const map = this._read();
+      if (value === "" || value === null || value === undefined) {
+        map.delete(String(name).toLowerCase());
+      } else {
+        map.set(String(name).toLowerCase(), String(value));
+      }
+      this._write(map);
+    }
+    removeProperty(name) {
+      const map = this._read();
+      const had = map.get(String(name).toLowerCase()) || "";
+      map.delete(String(name).toLowerCase());
+      this._write(map);
+      return had;
+    }
+    get cssText() { return api.getAttr(this._node._id, "style") || ""; }
+    set cssText(text) { api.setAttr(this._node._id, "style", String(text)); }
+  }
+
+  // `el.style.backgroundColor = 'red'` has to reach `background-color`, so the
+  // camelCase surface is a proxy over the dashed one rather than a second list
+  // that could disagree with it.
+  const styleHandler = {
+    get(target, key) {
+      if (typeof key !== "string" || key in target) return Reflect.get(target, key);
+      return target.getPropertyValue(camelToDash(key));
+    },
+    set(target, key, value) {
+      if (typeof key === "string" && !(key in target)) {
+        target.setProperty(camelToDash(key), value);
+        return true;
+      }
+      return Reflect.set(target, key, value);
+    },
+  };
+  const RawStyleDeclaration = StyleDeclaration;
+  StyleDeclaration = function (node) {
+    return new Proxy(new RawStyleDeclaration(node), styleHandler);
+  };
 
   // ── events ───────────────────────────────────────────────────────────────
 
@@ -154,14 +351,58 @@
       this.type = String(type);
       this.bubbles = !!(init && init.bubbles);
       this.cancelable = !!(init && init.cancelable);
+      this.composed = !!(init && init.composed);
       this.defaultPrevented = false;
       this.target = null;
       this.currentTarget = null;
+      this.eventPhase = 0;
+      this.timeStamp = clock;
+      this.isTrusted = false;
       this._stopped = false;
     }
-    preventDefault() { this.defaultPrevented = true; }
+    preventDefault() { if (this.cancelable !== false) this.defaultPrevented = true; }
     stopPropagation() { this._stopped = true; }
     stopImmediatePropagation() { this._stopped = true; }
+    composedPath() { return path(this.target || null); }
+  }
+
+  // The concrete types a page actually constructs and reads fields off. A
+  // single generic Event meant `event.detail` and `event.key` were undefined,
+  // which is the kind of gap a framework notices immediately and silently.
+  class CustomEvent extends Event {
+    constructor(type, init) { super(type, init); this.detail = (init && init.detail) ?? null; }
+  }
+  class UIEvent extends Event {
+    constructor(type, init) { super(type, init); this.detail = (init && init.detail) || 0; }
+  }
+  class MouseEvent extends UIEvent {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.clientX = i.clientX || 0; this.clientY = i.clientY || 0;
+      this.screenX = i.screenX || 0; this.screenY = i.screenY || 0;
+      this.pageX = i.pageX || this.clientX; this.pageY = i.pageY || this.clientY;
+      this.button = i.button || 0; this.buttons = i.buttons || 0;
+      this.altKey = !!i.altKey; this.ctrlKey = !!i.ctrlKey;
+      this.shiftKey = !!i.shiftKey; this.metaKey = !!i.metaKey;
+    }
+  }
+  class KeyboardEvent extends UIEvent {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.key = i.key || ""; this.code = i.code || "";
+      this.repeat = !!i.repeat; this.isComposing = !!i.isComposing;
+      this.altKey = !!i.altKey; this.ctrlKey = !!i.ctrlKey;
+      this.shiftKey = !!i.shiftKey; this.metaKey = !!i.metaKey;
+    }
+  }
+  class InputEvent extends UIEvent {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.data = i.data ?? null; this.inputType = i.inputType || "insertText";
+    }
   }
 
   function path(node) {
@@ -209,10 +450,7 @@
     get head() { return wrap(api.query("head", 0)); },
     createElement(tag) { return wrap(api.createElement(String(tag))); },
     createTextNode(text) { return wrap(api.createText(String(text))); },
-    createDocumentFragment() {
-      api.unsupported("document.createDocumentFragment");
-      return wrap(api.createElement("div"));
-    },
+    createDocumentFragment() { return new DocumentFragment(); },
     querySelector(sel) { return wrap(api.query(String(sel), 0)); },
     querySelectorAll(sel) { return api.queryAll(String(sel), 0).map(wrap); },
     getElementById(id) { return wrap(api.query("#" + String(id), 0)); },
@@ -294,18 +532,56 @@
     reload() { api.unsupported("location.reload"); },
   };
 
+  // Client-side routing goes through this, so a stub meant an SPA changed
+  // nothing when it navigated. In memory, current entry plus a short list: the
+  // page's own router reads `state` and listens for `popstate`, and both work.
+  const entries = [{ state: null, url: globalThis.__h5iUrl }];
+  let entryAt = 0;
   const history = {
-    length: 1,
-    pushState() { api.unsupported("history.pushState"); },
-    replaceState() { api.unsupported("history.replaceState"); },
-    back() { api.unsupported("history.back"); },
-    forward() { api.unsupported("history.forward"); },
+    get length() { return entries.length; },
+    get state() { return entries[entryAt].state ?? null; },
+    pushState(state, _title, url) {
+      entries.length = entryAt + 1;
+      entries.push({ state: state ?? null, url: url ? String(url) : entries[entryAt].url });
+      entryAt = entries.length - 1;
+    },
+    replaceState(state, _title, url) {
+      entries[entryAt] = { state: state ?? null, url: url ? String(url) : entries[entryAt].url };
+    },
+    go(delta) {
+      const next = entryAt + (delta | 0);
+      if (next < 0 || next >= entries.length) return;
+      entryAt = next;
+      const event = new Event("popstate", { bubbles: false });
+      event.state = entries[entryAt].state;
+      dispatch(wrap(api.root()), event);
+    },
+    back() { history.go(-1); },
+    forward() { history.go(1); },
   };
 
   const performance = { now: () => clock };
 
+  // Window-level listeners land on the root element, which is where document
+  // and window events already propagate to. Without these, `addEventListener`
+  // at global scope is simply undefined, and popstate/DOMContentLoaded
+  // handlers — which most routers install — throw on the way in.
+  function addEventListener(type, handler, options) {
+    const root = wrap(api.root());
+    if (root) root.addEventListener(type, handler, options);
+  }
+  function removeEventListener(type, handler) {
+    const root = wrap(api.root());
+    if (root) root.removeEventListener(type, handler);
+  }
+  function dispatchEvent(event) {
+    const root = wrap(api.root());
+    return root ? root.dispatchEvent(event) : true;
+  }
+
   const window = globalThis;
   Object.assign(globalThis, {
+    addEventListener, removeEventListener, dispatchEvent,
     window, document, console, location, history, performance,
     setTimeout, clearTimeout,
     setInterval: (fn, d) => { api.unsupported("setInterval"); return setTimeout(fn, d); },
@@ -316,8 +592,10 @@
     alert: () => api.unsupported("alert"),
     matchMedia: () => { api.unsupported("matchMedia"); return { matches: false, addListener() {}, addEventListener() {} }; },
     getComputedStyle: () => { api.unsupported("getComputedStyle"); return {}; },
-    localStorage: makeUnsupportedStorage("localStorage"),
-    sessionStorage: makeUnsupportedStorage("sessionStorage"),
+    localStorage: makeStorage(),
+    sessionStorage: makeStorage(),
+    CustomEvent, UIEvent, MouseEvent, KeyboardEvent, InputEvent,
+    DocumentFragment,
     MutationObserver: class { constructor() { api.unsupported("MutationObserver"); } observe() {} disconnect() {} },
     IntersectionObserver: class { constructor() { api.unsupported("IntersectionObserver"); } observe() {} disconnect() {} },
     ResizeObserver: class { constructor() { api.unsupported("ResizeObserver"); } observe() {} disconnect() {} },
@@ -347,12 +625,18 @@
   }
   globalThis.fetch = fetch;
 
-  function makeUnsupportedStorage(name) {
+  // In memory and nowhere else. A disposable box has no business writing a
+  // page's storage to a filesystem, and "restart the session" is a complete
+  // clear — the same rule the cookie jar follows.
+  function makeStorage() {
+    const map = new Map();
     return {
-      getItem() { api.unsupported(name); return null; },
-      setItem() { api.unsupported(name); },
-      removeItem() { api.unsupported(name); },
-      clear() { api.unsupported(name); },
+      getItem(k) { const v = map.get(String(k)); return v === undefined ? null : v; },
+      setItem(k, v) { map.set(String(k), String(v)); },
+      removeItem(k) { map.delete(String(k)); },
+      clear() { map.clear(); },
+      key(i) { return [...map.keys()][i] ?? null; },
+      get length() { return map.size; },
     };
   }
 })();

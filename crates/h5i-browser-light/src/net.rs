@@ -141,6 +141,23 @@ impl Broker {
         body: &[u8],
         content_type: Option<&str>,
     ) -> FetchOutcome {
+        self.send_from(url, initiator, method, body, content_type, None)
+    }
+
+    /// Send a request a *document* made, so the policy can reason about origin.
+    ///
+    /// The document is threaded through rather than stored on the broker because
+    /// one broker serves a whole session and the page underneath it changes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_from(
+        &self,
+        url: &Url,
+        initiator: Initiator,
+        method: &str,
+        body: &[u8],
+        content_type: Option<&str>,
+        document: Option<&Url>,
+    ) -> FetchOutcome {
         let mut current = url.clone();
         let mut initiator = initiator;
         let mut method = method.to_ascii_uppercase();
@@ -151,7 +168,7 @@ impl Broker {
 
             // 1. Policy. A denial is recorded as a pair like any other request,
             //    so the log shows what was attempted, not only what succeeded.
-            let verdict = self.policy.check(&current);
+            let verdict = self.policy.check_from(&current, document);
             if let Some(reason) = verdict.reason() {
                 let record = RequestRecord::request(seq, initiator, &method, current.as_str())
                     .denied(reason);
