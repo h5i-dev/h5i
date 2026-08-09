@@ -158,7 +158,7 @@ unsatisfiable request fails closed rather than leaving half a box behind.
 | `--profile <p>` | See [Profiles](#profiles). |
 | `--isolation <tier>` | See [Isolation tiers](#isolation-tiers). |
 | `--image <img>` | Base image for `isolation=container` and `isolation=microvm`. Pre-pulled; runs never pull. |
-| `--engine <e>` | Browser engine for the `browser` profile: `chromium` (default), `lightpanda`, or `h5i-light`. Pinned in the digest; never falls back. |
+| `--engine <e>` | Browser engine for the `browser` profile: `chromium` (default), `lightpanda`, or `h5i-light`. Pinned in the digest; never falls back. See [Choosing the engine](#choosing-the-engine). |
 
 A profile can also refuse individual browser actions, enforced by h5i on the
 daemon's control socket rather than advised:
@@ -444,6 +444,56 @@ The rules:
 - **Handing control back invalidates what the agent knew.** The page moved, so
   every `@ref` from its last snapshot may now point somewhere else. It must
   re-snapshot before acting, and acting first is refused rather than mis-clicked.
+
+### Choosing the engine
+
+`--engine` picks what runs pages in the box, and the choice is pinned in the
+digest: a run never quietly falls back to a different one.
+
+| engine | what it is |
+| --- | --- |
+| `chromium` (default) | A real browser. Everything works; it costs what a browser costs. |
+| `lightpanda` | A third-party headless engine. |
+| `h5i-light` | h5i's own engine, described below. |
+
+#### h5i-light
+
+An engine built for the case an agent is actually in: read a page, act on it,
+read what changed. It runs in **one process** and holds a page in roughly a
+seventh of the memory Chromium needs (76 MiB against 563 MiB, median over the
+same pages), from a binary a ninth the size. It is about 30% *slower* — it has
+an interpreter where Chromium has a JIT — and that trade is the whole point of
+choosing it deliberately rather than by default.
+
+It runs page JavaScript, follows redirects and `<meta refresh>`, keeps a cookie
+jar scoped to one origin, and puts **every request through the same broker as
+the rest of h5i**, so a page's own fetches are policy-checked and receipted like
+anything else. What it reads is an outline with `@ref` handles, not pixels.
+
+Two properties worth knowing before you rely on it:
+
+- **It says what it could not do.** A page needing an API this engine lacks gets
+  that API *named* in the snapshot rather than a blank space, and console errors
+  carry the script and line they came from. "The page is empty" and "I could not
+  read the page" are different answers, and it gives different answers.
+- **It is not a complete browser, and does not pretend to be.** Of twenty
+  single-page applications measured, eighteen read usefully and one not at all.
+  Canvas, WebSockets, Workers and IndexedDB are absent. For a page it cannot
+  read, the answer is `--engine chromium`.
+
+Driven directly, it has its own CLI — `h5i-browser-light --help` — including two
+verbs the size of a page makes worth having:
+
+```bash
+h5i-browser-light session snapshot --delta   # only what changed since last read
+h5i-browser-light session login              # hand the page to the human
+```
+
+`--delta` matters because re-reading three hundred lines after every click is
+the wrong shape for an agent loop. `session login` closes the page to the agent
+while a person types a credential into the live view: the session it establishes
+stays in the jar afterwards, and the agent can see *that* it is logged in
+without ever reading the cookie that says so.
 
 ### Driving the browser itself
 

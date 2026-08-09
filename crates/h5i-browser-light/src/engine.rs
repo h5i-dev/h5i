@@ -6,6 +6,8 @@
 //! the document after load. When Tier 2 adds a live view and Tier 3 adds
 //! script, the loop belongs around this, not inside it.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use anyrender::ImageRenderer;
@@ -29,6 +31,12 @@ pub struct PageOptions {
     pub height: u32,
     pub scale: f32,
     pub max_snapshot_lines: usize,
+    /// Run the page's own scripts.
+    ///
+    /// Off by default and opt-in at every layer above, because turning it on is
+    /// a change to what an untrusted page can do inside the box rather than a
+    /// rendering preference (ROADMAP §12.5).
+    pub script: bool,
 }
 
 impl Default for PageOptions {
@@ -38,6 +46,7 @@ impl Default for PageOptions {
             height: 720,
             scale: 1.0,
             max_snapshot_lines: 500,
+            script: false,
         }
     }
 }
@@ -103,13 +112,46 @@ impl blitz_traits::navigation::NavigationProvider for CapturedNavigation {
     }
 }
 
+/// The one real DOM, shared with the script realm.
+///
+/// `Rc<RefCell<_>>` rather than ownership because JavaScript reaches the same
+/// tree: a native binding invoked from a callback needs the document long after
+/// the call that registered it returned. `Rc` and not `Arc` because none of this
+/// crosses a thread — `Page` is not `Send` (see `stream`'s module docs), which
+/// is the constraint the whole session architecture already bends around.
+///
+/// The borrow discipline that keeps this from panicking: **a binding takes the
+/// borrow, mutates, and drops it before returning to JS.** Blitz's mutations
+/// never call back into script, so no binding can re-enter while holding one.
+pub type Dom = Rc<RefCell<BaseDocument>>;
+
 /// A loaded, resolved document.
 pub struct Page {
-    doc: BaseDocument,
+    doc: Dom,
     url: Url,
     options: PageOptions,
     /// Where [`CapturedNavigation`] leaves whatever the last form asked for.
     pending_navigation: Arc<std::sync::Mutex<Option<Submission>>>,
+    /// The script realm, when this page has one. `None` when script is off,
+    /// which is still the default: `capabilities.javascript` is the gate, and
+    /// flipping it is a threat-model decision rather than a feature flag
+    /// (ROADMAP §12.5).
+    script: Option<crate::script::Script>,
+    /// Whether `run_scripts` was called, regardless of whether it built a realm.
+    ///
+    /// A page with no script elements never gets one, so `script.is_some()`
+    /// alone cannot tell "script is off" from "there was nothing to run".
+    ran_scripts: bool,
+    /// Set when the layout engine panicked while reading this page.
+    ///
+    /// The outline that follows was produced from whatever state layout reached,
+    /// which is worth saying out loud: a short page and a half-laid-out one look
+    /// the same to a reader who is not told.
+    layout_failure: Option<String>,
+    /// What the last settle did, for the snapshot to report.
+    settled: Option<crate::script::Settled>,
+    /// Engine-level facts the next snapshot should carry.
+    notes: Vec<String>,
 }
 
 impl Page {
@@ -124,18 +166,114 @@ impl Page {
         fonts: FontSetup,
         options: PageOptions,
     ) -> Result<Self, H5iError> {
-        let outcome = broker.fetch(url, Initiator::Navigation);
-        if let Some(error) = outcome.error {
-            return Err(H5iError::Metadata(format!("could not open {url}: {error}")));
+        let mut target = url.clone();
+        // Where a `<meta refresh>` chain has already been, so a page that
+        // refreshes to itself — which news and dashboard pages do on purpose —
+        // is loaded once rather than forever.
+        let mut visited: Vec<Url> = vec![url.clone()];
+        let mut followed: Vec<String> = Vec::new();
+
+        for _ in 0..=MAX_META_REFRESH_HOPS {
+            let outcome = broker.fetch(&target, Initiator::Navigation);
+            if let Some(error) = outcome.error {
+                return Err(H5iError::Metadata(format!("could not open {target}: {error}")));
+            }
+
+            // Lossy on purpose: a page with one bad byte should render, and the
+            // alternative is refusing a document over an encoding detail nobody
+            // asked us to police.
+            let html = String::from_utf8_lossy(&outcome.body).into_owned();
+            let final_url = outcome.final_url.clone();
+            let status = outcome.status.unwrap_or(0);
+
+            // Decided before the page is built, because the marker lives in the
+            // markup we already hold and building is the expensive half.
+            let refresh = meta_refresh(&html, &final_url);
+            if let Some((delay, next)) = &refresh {
+                if *delay <= META_REFRESH_MAX_DELAY_SECONDS && !visited.contains(next) {
+                    followed.push(final_url.to_string());
+                    visited.push(next.clone());
+                    target = next.clone();
+                    continue;
+                }
+            }
+
+            let mut page = Self::from_html(&html, &final_url, broker, fonts, options);
+
+            // An HTTP error still has a body, and rendering it silently is how
+            // an agent ends up reading a 404 page as though it were the page it
+            // asked for. Found by the corpus: crates.io answered 404, the
+            // outline came back empty, and nothing anywhere said why.
+            if !(200..300).contains(&status) {
+                page.note(&format!(
+                    "the server answered {status} for this URL; what follows is whatever it \
+                     returned with that status, not the page that was asked for"
+                ));
+            }
+
+            // Frames are not loaded, and `contentDocument` answers null for
+            // them exactly as a browser does for a frame it will not let you
+            // into. Null is the right answer to give *script*; it is the wrong
+            // thing to leave an agent to infer, because the missing content
+            // looks like content the page never had.
+            let frames = {
+                let doc = page.doc.borrow();
+                doc.query_selector_all("iframe, frame")
+                    .map(|ids| ids.len())
+                    .unwrap_or(0)
+            };
+            if frames > 0 {
+                page.note(&format!(
+                    "this page has {frames} frame(s), whose content this engine does not load: \
+                     anything inside them is absent from the outline below, and script reading \
+                     `contentDocument` gets null"
+                ));
+            }
+
+            // A challenge is not the page, and an outline of one reads as a
+            // page that is simply empty. Naming it is the difference between an
+            // agent concluding "there is nothing here" and "I was blocked".
+            if let Some(marker) = challenge_marker(&html) {
+                page.note(&format!(
+                    "this looks like a bot challenge rather than the page that was asked for \
+                     (it says \"{marker}\"). The content below is the challenge. This engine \
+                     runs script but solves no proof-of-work and has no browser fingerprint to \
+                     offer, so this site is not readable from here."
+                ));
+            }
+
+            for from in &followed {
+                page.note(&format!(
+                    "{from} asked for a <meta refresh> and this engine followed it; what \
+                     follows is the page it named"
+                ));
+            }
+
+            // Present, but not followed. Saying which is the point: a page that
+            // refreshes in ten minutes is a page that intends to update itself,
+            // not one that redirected.
+            if let Some((delay, next)) = refresh {
+                if delay > META_REFRESH_MAX_DELAY_SECONDS {
+                    page.note(&format!(
+                        "this page asks to reload itself as {next} after {delay}s; that is a \
+                         page updating itself rather than a redirect, so it was not followed"
+                    ));
+                } else if visited.iter().filter(|v| **v == next).count() > 0 && followed.is_empty()
+                {
+                    page.note(&format!(
+                        "this page's <meta refresh> points at {next}, which is where we already \
+                         are; it was not followed"
+                    ));
+                }
+            }
+
+            return Ok(page);
         }
 
-        // Lossy on purpose: a page with one bad byte should render, and the
-        // alternative is refusing a document over an encoding detail nobody
-        // asked us to police.
-        let html = String::from_utf8_lossy(&outcome.body).into_owned();
-        let final_url = outcome.final_url.clone();
-
-        Ok(Self::from_html(&html, &final_url, broker, fonts, options))
+        Err(H5iError::Metadata(format!(
+            "could not open {url}: it redirected through more than {MAX_META_REFRESH_HOPS} \
+             <meta refresh> hops without arriving anywhere"
+        )))
     }
 
     /// Load HTML that is already in hand (a local file, or a test fixture).
@@ -166,6 +304,12 @@ impl Page {
                 base_url: Some(base_url.to_string()),
                 net_provider: Some(Arc::new(BrokerNet::new(broker))),
                 font_ctx: Some(fonts.context),
+                // Without this Blitz uses `DummyHtmlParserProvider` and
+                // `set_inner_html` silently does nothing: the old children are
+                // dropped and no new ones are parsed, so `el.innerHTML = x`
+                // empties the element. Supplying the real parser is what makes
+                // innerHTML, insertAdjacentHTML and template content work.
+                html_parser_provider: Some(Arc::new(blitz_html::HtmlProvider)),
                 // Forms dispatch through this. Without it Blitz's default
                 // provider does nothing at all, and a submit would look like a
                 // page that simply ignored the button.
@@ -179,14 +323,23 @@ impl Page {
         // already completed by the time parsing returns, but their results
         // arrive as messages that `resolve` drains at its *start*. The first
         // pass applies the stylesheets; the second lays out with them.
-        doc.resolve(0.0);
-        doc.resolve(0.0);
+        // A panic in either pass is caught and becomes a note on the reading.
+        let layout_failure = guard_layout(|| {
+            doc.resolve(0.0);
+            doc.resolve(0.0);
+        })
+        .err();
 
         Self {
-            doc,
+            doc: Rc::new(RefCell::new(doc)),
             url: base_url.clone(),
             options,
             pending_navigation,
+            script: None,
+            ran_scripts: false,
+            layout_failure,
+            settled: None,
+            notes: Vec::new(),
         }
     }
 
@@ -194,9 +347,398 @@ impl Page {
         &self.url
     }
 
+    /// Run the page's own scripts, then settle.
+    ///
+    /// Separate from loading because it is a policy decision, not a parsing
+    /// step: a caller that has not opted into script gets a page whose
+    /// `<script>` elements are inert, which is exactly what tiers 1 and 2 were.
+    pub fn run_scripts(&mut self, broker: Arc<Broker>) -> Result<(), H5iError> {
+        // In document order, inline and external together, because execution
+        // order is semantics: a bundle that defines a global in one script and
+        // uses it in the next breaks if they are reordered.
+        enum Source {
+            Inline(String),
+            External(String),
+            /// `type="module"`, inline or external. Deferred by definition and
+            /// therefore kept apart: modules evaluate after every classic
+            /// script, in their own document order.
+            ModuleInline(String),
+            ModuleExternal(String),
+        }
+
+        /// A script and the element it came from, so `document.currentScript`
+        /// can name that element while the code runs.
+        type Pending = (usize, Source);
+
+        let sources: Vec<Pending> = {
+            let doc = self.doc.borrow();
+            doc.query_selector_all("script")
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(|id| {
+                            let node = doc.get_node(*id)?;
+                            let attr = |name: &str| {
+                                node.attrs().and_then(|attrs| {
+                                    attrs
+                                        .iter()
+                                        .find(|a| a.name.local.as_ref() == name)
+                                        .map(|a| a.value.to_string())
+                                })
+                            };
+                            // What the `type` attribute means, which is not
+                            // "run it anyway". A page embeds data in script
+                            // elements — `application/json` for state,
+                            // `text/template` for markup — and those are data
+                            // blocks the spec says never execute. Running them
+                            // parses JSON as JavaScript and fills the console
+                            // with syntax errors that blame the page for
+                            // something it never asked us to do. Found by
+                            // pointing this at github.com.
+                            let kind = attr("type").unwrap_or_default();
+                            let kind = kind.trim().to_ascii_lowercase();
+                            let is_module = kind == "module";
+                            let is_classic = kind.is_empty()
+                                || matches!(
+                                    kind.as_str(),
+                                    "text/javascript"
+                                        | "application/javascript"
+                                        | "text/ecmascript"
+                                        | "application/ecmascript"
+                                        | "module"
+                                );
+                            if !is_classic {
+                                return None;
+                            }
+
+                            let source = match (attr("src"), is_module) {
+                                (Some(src), true) => Source::ModuleExternal(src),
+                                (Some(src), false) => Source::External(src),
+                                (None, is_module) => {
+                                    let text = node.text_content();
+                                    if text.trim().is_empty() {
+                                        return None;
+                                    } else if is_module {
+                                        Source::ModuleInline(text)
+                                    } else {
+                                        Source::Inline(text)
+                                    }
+                                }
+                            };
+                            Some((*id, source))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
+        // Nothing to run means nothing to build. Starting the realm costs about
+        // 15ms — the prelude is 113 KiB of JavaScript, parsed and evaluated from
+        // scratch — and a page with no script elements was paying all of it for
+        // a realm that would never be asked a question.
+        if sources.is_empty() {
+            self.ran_scripts = true;
+            // Trivially settled, and said so rather than left null: a page with
+            // no script has finished by definition, and "we do not know" is a
+            // different answer that an agent would have to act on differently.
+            self.settled = Some(crate::script::Settled {
+                elapsed_ms: 0,
+                timers_run: 0,
+                cut_off: false,
+                pending_timers: 0,
+            });
+            return Ok(());
+        }
+
+        let mut script = crate::script::Script::new(self.dom(), broker.clone(), &self.url)
+            .map_err(H5iError::Metadata)?;
+
+        // Classic scripts first, in document order, then modules in document
+        // order. That is the deferred semantics `type="module"` carries: a
+        // module never runs before a classic script that follows it in the
+        // markup, and a page that relies on that ordering breaks if we run them
+        // as they appear.
+        let (classic, modules): (Vec<Pending>, Vec<Pending>) =
+            sources.into_iter().partition(|(_, source)| {
+                matches!(source, Source::Inline(_) | Source::External(_))
+            });
+
+        let phase_started = std::time::Instant::now();
+        let mut skipped = 0usize;
+
+        for (index, (node, source)) in classic.into_iter().enumerate() {
+            if phase_started.elapsed() >= SCRIPT_PHASE_BUDGET {
+                skipped += 1;
+                continue;
+            }
+            // Which script this was. Boa 0.19 reports neither a line number nor
+            // a stack, so the element is the only locus available — and a bare
+            // "TypeError: cannot convert null" with no locus at all is the
+            // hardest kind of error for an agent to act on.
+            let where_from = match &source {
+                Source::External(src) => src.clone(),
+                _ => format!("inline script #{}", index + 1),
+            };
+            let code = match source {
+                Source::Inline(text) => text,
+                Source::External(src) => {
+                    // Fetched through the broker like every other subresource,
+                    // so a script file is policy-checked and receipted before it
+                    // is ever executed. A refusal is reported and the page runs
+                    // without it, which is what the agent needs to know.
+                    let Ok(url) = self.url.join(&src) else {
+                        script.note_error(&format!("script src `{src}` is not a URL"));
+                        continue;
+                    };
+                    let outcome = broker.fetch(&url, crate::receipt::Initiator::Subresource);
+                    if let Some(error) = outcome.error {
+                        script.note_refused_script(url.as_str());
+                        script.note_error(&format!("could not load {url}: {error}"));
+                        continue;
+                    }
+                    // Same rule as modules: an error page is not a script, and
+                    // running one produces a syntax error that blames the page.
+                    let status = outcome.status.unwrap_or(0);
+                    if !(200..300).contains(&status) {
+                        script.note_refused_script(url.as_str());
+                        script.note_error(&format!(
+                            "could not load {url}: the server answered {status}"
+                        ));
+                        continue;
+                    }
+                    String::from_utf8_lossy(&outcome.body).into_owned()
+                }
+                _ => unreachable!("partitioned above"),
+            };
+
+            script.set_current_script(Some(node));
+            if let Err(error) = script.eval_named(&code, &where_from) {
+                // Reported, not fatal: a page with one broken script is still a
+                // page, and the agent needs to know which half it is reading.
+                //
+                // Recorded as not-run too: a bundle that threw halfway leaves
+                // its globals undefined exactly as a refused one does, and the
+                // ReferenceError that follows should blame this, not the engine.
+                script.note_refused_script(&where_from);
+                script.note_error(&format!("{where_from}: {error}"));
+            }
+        }
+        // Null again once the classic scripts are done, because that is what a
+        // module and a later callback are supposed to see.
+        script.set_current_script(None);
+
+        // One budget for the whole phase, not one per stage. The settle used to
+        // arm a fresh deadline of its own, so a page that spent the script
+        // budget and then the job budget cost the sum of the two — lit.dev took
+        // 46 seconds against a 20-second intent. What is left of the phase is
+        // what settling gets.
+        let left = SCRIPT_PHASE_BUDGET.saturating_sub(phase_started.elapsed());
+        script.set_job_budget(left.max(std::time::Duration::from_secs(1)));
+
+        for (_, source) in modules {
+            if phase_started.elapsed() >= SCRIPT_PHASE_BUDGET {
+                skipped += 1;
+                continue;
+            }
+            let (code, path) = match source {
+                Source::ModuleInline(text) => (text, self.url.to_string()),
+                Source::ModuleExternal(src) => {
+                    // Fetched here rather than by the loader because this is the
+                    // entry point rather than an import, but through the same
+                    // broker and with the same origin, so it is receipted and
+                    // policed identically.
+                    let Ok(url) = self.url.join(&src) else {
+                        script.note_error(&format!("module src `{src}` is not a URL"));
+                        continue;
+                    };
+                    let outcome = broker.fetch(&url, crate::receipt::Initiator::Subresource);
+                    if let Some(error) = outcome.error {
+                        script.note_error(&format!("could not load {url}: {error}"));
+                        continue;
+                    }
+                    let status = outcome.status.unwrap_or(0);
+                    if !(200..300).contains(&status) {
+                        script.note_error(&format!(
+                            "could not load {url}: the server answered {status}"
+                        ));
+                        continue;
+                    }
+                    let text = String::from_utf8_lossy(&outcome.body).into_owned();
+                    (text, outcome.final_url.to_string())
+                }
+                _ => unreachable!("partitioned above"),
+            };
+
+            if let Err(error) = script.eval_module(&code, &path) {
+                script.note_error(&error);
+            }
+        }
+
+        let settled = script.settle();
+        if script.take_dirty() {
+            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+        }
+        // Drained and discarded: these are the page *loading* — its module
+        // graph and any fetch its startup made. Leaving them queued would
+        // attribute them to whatever the agent did first, and "this click
+        // caused these requests" is the one claim here that has to be exact.
+        if skipped > 0 {
+            script.note_error(&format!(
+                "this page's scripts took longer than {}s, so {skipped} of them were not run. \
+                 What follows was rendered by the ones that finished.",
+                SCRIPT_PHASE_BUDGET.as_secs()
+            ));
+        }
+
+        let _ = script.take_requests();
+        self.settled = Some(settled);
+        self.script = Some(script);
+        self.ran_scripts = true;
+        Ok(())
+    }
+
+    /// Fire a real event at a node and let the page respond.
+    pub fn dispatch_event(
+        &mut self,
+        node_id: usize,
+        kind: &str,
+    ) -> Option<Vec<crate::script::host::RequestLink>> {
+        let script = self.script.as_mut()?;
+        let _ = script.dispatch(node_id, kind);
+        let settled = script.settle();
+        let dirty = script.take_dirty();
+        let requests = script.take_requests();
+        self.settled = Some(settled);
+        if dirty {
+            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+        }
+        Some(requests)
+    }
+
+    /// Record an engine-level fact for the next snapshot to carry.
+    pub fn note(&mut self, text: &str) {
+        self.notes.push(text.to_string());
+    }
+
+    /// What the last settle did, if script ran.
+    pub fn settled(&self) -> Option<&crate::script::Settled> {
+        self.settled.as_ref()
+    }
+
+    /// Web APIs the page asked for and this engine does not have.
+    pub fn unsupported(&self) -> Vec<(String, usize)> {
+        self.script
+            .as_ref()
+            .map(|s| s.unsupported())
+            .unwrap_or_default()
+    }
+
+    /// What the page logged, for the console pane and the receipt.
+    pub fn console(&self) -> Vec<crate::script::host::ConsoleLine> {
+        self.script.as_ref().map(|s| s.console()).unwrap_or_default()
+    }
+
+    pub fn has_script(&self) -> bool {
+        // Whether this page ran script, not whether a realm exists: a page with
+        // no script elements never builds one, and reporting that as "script is
+        // off" would describe the session wrongly.
+        self.ran_scripts
+    }
+
+    /// A handle to the document, for the script realm.
+    ///
+    /// Handing out the `Rc` rather than a reference is the point: the script
+    /// realm outlives any single call into it, and both sides must see one tree.
+    pub fn dom(&self) -> Dom {
+        self.doc.clone()
+    }
+
+    /// Remember that layout broke, keeping the first failure.
+    ///
+    /// The first, because a later pass that happens to survive does not undo
+    /// the fact that the document was laid out incompletely — and an outline
+    /// read from it is short for a reason the agent should be told.
+    fn note_layout_failure(&mut self, outcome: Result<(), String>) {
+        if let Err(detail) = outcome {
+            if self.layout_failure.is_none() {
+                self.layout_failure = Some(detail);
+            }
+        }
+    }
+
+    /// Re-resolve style and layout after script changed the tree.
+    ///
+    /// Called once after a settle rather than after each mutation: a script that
+    /// appends fifty rows should lay out once, not fifty times.
+    pub fn refresh(&mut self) {
+        self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+    }
+
     /// The outline an agent reads.
+    ///
+    /// Carries the engine's own notes alongside it: whether the page had
+    /// finished settling, and which Web APIs it asked for that this engine does
+    /// not have. Both are outside the fence because both are facts about the
+    /// reading rather than about the page, and both exist so an agent can tell
+    /// "this page is empty" from "this page needed something I lack".
     pub fn snapshot(&self) -> Snapshot {
-        Snapshot::capture(&self.doc, self.url.as_str(), self.options.max_snapshot_lines)
+        let mut snapshot = Snapshot::capture(
+            &self.doc.borrow(),
+            self.url.as_str(),
+            self.options.max_snapshot_lines,
+            self.ran_scripts,
+        );
+
+        snapshot.notes.extend(self.notes.iter().cloned());
+
+        // Silence is the one answer an agent cannot act on. A page with nothing
+        // in it is either genuinely empty, blocked, or built by script this
+        // engine could not run — and which of those it is belongs in the
+        // outline rather than in the agent's imagination.
+        if snapshot.lines.is_empty() {
+            let scripts = self.doc.borrow().query_selector_all("script").map(|s| s.len()).unwrap_or(0);
+            snapshot.notes.push(format!(
+                "this page produced no readable content. It has {scripts} script element(s) \
+                 and this engine {}. If it needs JavaScript beyond what is listed above, the \
+                 chromium engine has more of it.",
+                match (self.script.is_some(), self.ran_scripts, scripts) {
+                    (true, _, _) => "ran them",
+                    // No realm because there was nothing to run, which is a
+                    // different fact from script being switched off.
+                    (false, true, 0) => "had none to run",
+                    (false, true, _) => "ran them",
+                    (false, false, _) => "did not run them (script is off)",
+                }
+            ));
+        }
+
+        if let Some(detail) = &self.layout_failure {
+            snapshot.notes.push(format!(
+                "this engine's layout stage failed on this page ({detail}). What follows was \
+                 read from a partly laid-out document and may be incomplete."
+            ));
+        }
+
+        if let Some(settled) = &self.settled {
+            if settled.cut_off {
+                snapshot.notes.push(settled.render());
+            }
+        }
+
+        let unsupported = self.unsupported();
+        if !unsupported.is_empty() {
+            let listed = unsupported
+                .iter()
+                .take(6)
+                .map(|(name, count)| format!("{name} x{count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            snapshot.notes.push(format!(
+                "this page used Web APIs this engine does not have ({listed}). \
+                 What depends on them did not run; the chromium engine has them."
+            ));
+        }
+
+        snapshot
     }
 
     /// Rasterise the viewport and encode it as a PNG.
@@ -207,11 +749,12 @@ impl Page {
 
         let mut renderer = VelloCpuImageRenderer::new(width, height);
         let mut rgba: Vec<u8> = Vec::new();
-        let doc = &mut self.doc;
+        let mut doc = self.doc.borrow_mut();
         renderer.render_to_vec(
-            |scene| paint_scene(scene, doc, scale, width, height, 0, 0),
+            |scene| paint_scene(scene, &mut doc, scale, width, height, 0, 0),
             &mut rgba,
         );
+        drop(doc);
 
         encode_png(&rgba, width, height)
     }
@@ -228,11 +771,12 @@ impl Page {
 
         let mut renderer = VelloCpuImageRenderer::new(width, height);
         let mut rgba: Vec<u8> = Vec::new();
-        let doc = &mut self.doc;
+        let mut doc = self.doc.borrow_mut();
         renderer.render_to_vec(
-            |scene| paint_scene(scene, doc, scale, width, height, 0, 0),
+            |scene| paint_scene(scene, &mut doc, scale, width, height, 0, 0),
             &mut rgba,
         );
+        drop(doc);
 
         encode_jpeg(&rgba, width, height, quality)
     }
@@ -247,28 +791,42 @@ impl Page {
     /// caller can say which of "no such ref" and "that is a link, not a field"
     /// happened.
     pub fn type_into(&mut self, node_id: usize, text: &str) -> bool {
-        let Some(node) = self.doc.get_node(node_id) else {
-            return false;
-        };
-        if node
-            .element_data()
+        let mut doc = self.doc.borrow_mut();
+        let takes_text = doc
+            .get_node(node_id)
+            .and_then(|node| node.element_data())
             .and_then(|el| el.text_input_data())
-            .is_none()
-        {
+            .is_some();
+        if !takes_text {
             return false;
         }
 
         // Focus first: the caret is drawn from it, so a viewer watching sees
         // the field an agent is typing into rather than text appearing in a
         // box nothing is pointing at.
-        self.doc.set_focus_to(node_id);
-        self.doc.with_text_input(node_id, |mut driver| {
+        doc.set_focus_to(node_id);
+        doc.with_text_input(node_id, |mut driver| {
             driver.select_all();
             driver.insert_or_replace_selection(text);
         });
         // Typing changes layout — a longer value can reflow the form — and
         // nothing else in this file re-resolves on the agent's behalf.
-        self.doc.resolve(0.0);
+        let _ = guard_layout(|| doc.resolve(0.0));
+        drop(doc);
+
+        // A *user* edit fires input then change, in that order. Script setting
+        // `.value` does not, and must not, or a framework that re-renders on
+        // its own write would loop. This is the user path, so it fires.
+        if let Some(script) = self.script.as_mut() {
+            let _ = script.dispatch(node_id, "input");
+            let _ = script.dispatch(node_id, "change");
+            let settled = script.settle();
+            let dirty = script.take_dirty();
+            self.settled = Some(settled);
+            if dirty {
+                self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+            }
+        }
         true
     }
 
@@ -279,7 +837,8 @@ impl Page {
     /// snapshot built from the attribute would show an agent the value it was
     /// served rather than the one it just typed.
     pub fn field_value(&self, node_id: usize) -> Option<String> {
-        let node = self.doc.get_node(node_id)?;
+        let doc = self.doc.borrow();
+        let node = doc.get_node(node_id)?;
         let input = node.element_data()?.text_input_data()?;
         Some(input.editor.text().to_string())
     }
@@ -307,7 +866,7 @@ impl Page {
                 H5iError::Metadata("that control is not inside a form this page defines".into())
             })?;
 
-        self.doc.submit_form(form_id, node_id);
+        self.doc.borrow_mut().submit_form(form_id, node_id);
 
         self.pending_navigation
             .lock()
@@ -324,7 +883,8 @@ impl Page {
 
     /// Walk up for a `<form>`, for controls Blitz's owner map does not cover.
     fn enclosing_form(&self, node_id: usize) -> Option<usize> {
-        let mut current = self.doc.get_node(node_id)?;
+        let doc = self.doc.borrow();
+        let mut current = doc.get_node(node_id)?;
         for _ in 0..64 {
             if current
                 .element_data()
@@ -332,14 +892,14 @@ impl Page {
             {
                 return Some(current.id);
             }
-            current = self.doc.get_node(current.parent?)?;
+            current = doc.get_node(current.parent?)?;
         }
         None
     }
 
     /// How far down the document the viewport currently sits.
     pub fn scroll_offset(&self) -> (f64, f64) {
-        let scroll = self.doc.viewport_scroll();
+        let scroll = self.doc.borrow().viewport_scroll();
         (scroll.x, scroll.y)
     }
 
@@ -354,7 +914,8 @@ impl Page {
     /// That is what the local test pages were, which is why nothing caught it
     /// until this ran against Wikipedia.
     pub fn content_height(&self) -> f64 {
-        let layout = &self.doc.root_element().final_layout;
+        let doc = self.doc.borrow();
+        let layout = &doc.root_element().final_layout;
         layout.size.height.max(layout.content_size.height) as f64
     }
 
@@ -385,7 +946,7 @@ impl Page {
         if (next_x - x).abs() < f64::EPSILON && (next_y - y).abs() < f64::EPSILON {
             return false;
         }
-        self.doc.set_viewport_scroll(blitz_dom::Point {
+        self.doc.borrow_mut().set_viewport_scroll(blitz_dom::Point {
             x: next_x,
             y: next_y,
         });
@@ -399,15 +960,14 @@ impl Page {
     /// document.
     pub fn link_at(&self, x: f32, y: f32) -> Option<Url> {
         let (scroll_x, scroll_y) = self.scroll_offset();
-        let hit = self
-            .doc
-            .hit(x + scroll_x as f32, y + scroll_y as f32)?;
+        let doc = self.doc.borrow();
+        let hit = doc.hit(x + scroll_x as f32, y + scroll_y as f32)?;
 
         // The hit lands on whatever box is topmost — often a text run inside
         // the anchor rather than the anchor itself — so walk up for the href.
         let mut node_id = hit.node_id;
         for _ in 0..16 {
-            let node = self.doc.get_node(node_id)?;
+            let node = doc.get_node(node_id)?;
             if let Some(href) = node
                 .attrs()
                 .and_then(|attrs| {
@@ -501,24 +1061,230 @@ impl PageFactory {
         ))
     }
 
-    pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
-        Page::open(
-            url,
-            self.broker.clone(),
-            self.fonts(),
-            self.options.clone(),
-        )
+    /// Load a page and, when the options ask for it, run its scripts.
+    ///
+    /// One place rather than at each call site, so no path can load a page with
+    /// script configured on and quietly not run it.
+    fn finish(&self, mut page: Page) -> Result<Page, H5iError> {
+        if self.options.script {
+            page.run_scripts(self.broker.clone())?;
+        }
+        Ok(page)
     }
 
+    /// Whether this factory runs page script, for `capabilities` and for the
+    /// engine line the viewers show.
+    pub fn runs_script(&self) -> bool {
+        self.options.script
+    }
+
+    pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
+        // Leaving an origin drops its cookies. See `cookies::Jar::retain_origin`
+        // for why that bound exists and what it costs.
+        let dropped = self.broker.jar().retain_origin(url);
+        let page = Page::open(url, self.broker.clone(), self.fonts(), self.options.clone())?;
+        let mut page = self.finish(page)?;
+        if dropped {
+            page.note(
+                "cookies from the previous origin were dropped on navigation: this engine \
+                 holds a session only for the origin currently loaded",
+            );
+        }
+        Ok(page)
+    }
+
+    /// Load HTML already in hand, running its scripts if the options ask.
+    ///
+    /// Infallible in the loading, because HTML always parses into something. A
+    /// script that failed to *run* is reported through the page's console
+    /// rather than here: one broken script does not make a page unreadable, and
+    /// the agent needs the half that worked.
     pub fn from_html(&self, html: &str, base_url: &Url) -> Page {
-        Page::from_html(
+        let mut page = Page::from_html(
             html,
             base_url,
             self.broker.clone(),
             self.fonts(),
             self.options.clone(),
-        )
+        );
+        if self.options.script {
+            if let Err(error) = page.run_scripts(self.broker.clone()) {
+                eprintln!("h5i-browser-light: the script realm failed to start: {error}");
+            }
+        }
+        page
     }
+}
+
+/// Resolve style and layout, surviving a panic in the layout engine.
+///
+/// Blitz can panic — the GNU bash manual, a single one-megabyte page, aborts it
+/// with `attempt to subtract with overflow` deep in layout construction. A
+/// panic is the one outcome an agent cannot act on: not a thin page, not an
+/// error it can read, but a dead process and no answer at all.
+///
+/// So the panic is caught and becomes a fact about the reading. The document is
+/// left in whatever state layout reached, which is why the caller records a
+/// note: a page that half-laid-out is a page whose outline may be short, and
+/// the agent should be told why rather than left to wonder.
+///
+/// `AssertUnwindSafe` because the document is behind a `RefCell` that a panic
+/// may leave mid-update. That is exactly the risk being accepted: a possibly
+/// incomplete tree, read and reported, in place of no process.
+fn guard_layout(body: impl FnOnce()) -> Result<(), String> {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+
+    outcome.map_err(|payload| {
+        let detail = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "the layout engine panicked".to_string());
+        detail
+    })
+}
+
+/// How many `<meta refresh>` hops to follow before giving up.
+///
+/// Low on purpose. A refresh chain longer than this is not a site pointing at
+/// its real address, it is a loop or a tracker bounce.
+const MAX_META_REFRESH_HOPS: usize = 3;
+
+/// How long the whole script phase may take before this engine stops starting
+/// more of it.
+///
+/// Boa exposes no wall-clock interrupt, so a single `eval` cannot be cut short —
+/// but a page is rarely one script, and this bounds a page that is slow because
+/// it has *many*. After the budget the remaining scripts are skipped and the
+/// snapshot says how many, so a thin outline is explained rather than
+/// mysterious.
+///
+/// Worth being exact about what it does not cover, because it was written
+/// hoping it would: a **module graph evaluates inside `run_jobs`**, which is one
+/// call that returns when it returns. lit.dev spends minutes there and this
+/// budget never gets a turn. Bounding that needs an interrupt Boa does not
+/// have, and a caller who cannot wait must still impose its own timeout.
+///
+/// Generous, because the alternative to a slow page is a wrong one: a page that
+/// merely needs four seconds should get them.
+const SCRIPT_PHASE_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The line between "this page redirected" and "this page updates itself".
+///
+/// json.org serves a one-line document whose only content is a `<meta refresh>`
+/// to `json-en.html`; the corpus recorded one line and no error, which reads as
+/// a site with nothing on it. A refresh further out than this is a dashboard or
+/// a scoreboard intending to reload later, and following it would be wrong.
+const META_REFRESH_MAX_DELAY_SECONDS: u64 = 15;
+
+/// Phrases that mean "you are being challenged", not "here is the page".
+///
+/// Matched against the raw markup because a challenge page renders to almost
+/// nothing — the whole problem is that its *outline* is indistinguishable from
+/// an empty page. Deliberately specific: a false positive would tell an agent
+/// it was blocked by a site that simply had little to say.
+const CHALLENGE_MARKERS: [&str; 10] = [
+    "enable javascript and cookies to continue",
+    "checking your browser before accessing",
+    "verifying you are human",
+    "cf-browser-verification",
+    "please enable cookies",
+    "ddos protection by",
+    "attention required! | cloudflare",
+    // pypi.org's search results, which say the page did not load rather than
+    // that you were challenged — but mean the same thing to a reader: what
+    // follows is not the page that was asked for.
+    "javascript is disabled in your browser",
+    "please enable javascript to proceed",
+    "a required part of this site couldn't load",
+];
+
+fn challenge_marker(html: &str) -> Option<&'static str> {
+    // Typographic apostrophes normalised to ASCII: pypi writes "couldn’t" with
+    // U+2019, and a matcher that only knows `'` would miss it while looking
+    // like it had checked.
+    let lowered = html.to_ascii_lowercase().replace(['\u{2019}', '\u{02BC}'], "'");
+    CHALLENGE_MARKERS
+        .into_iter()
+        .find(|marker| lowered.contains(marker))
+}
+
+/// The `<meta http-equiv="refresh">` target, if the document names one.
+///
+/// Parsed from the markup rather than the tree because this decides whether the
+/// tree is worth building at all. The content attribute is `delay` optionally
+/// followed by `; url=...`, with the quoting and spacing of twenty-five years of
+/// hand-written HTML, so it is parsed leniently on purpose.
+fn meta_refresh(html: &str, base: &Url) -> Option<(u64, Url)> {
+    let lowered = html.to_ascii_lowercase();
+    let mut from = 0usize;
+
+    while let Some(found) = lowered[from..].find("<meta") {
+        let start = from + found;
+        let end = lowered[start..].find('>').map(|e| start + e)?;
+        let tag = &html[start..end];
+        from = end;
+
+        let lowered_tag = tag.to_ascii_lowercase();
+        if !lowered_tag.contains("http-equiv") || !lowered_tag.contains("refresh") {
+            continue;
+        }
+        let Some(content) = attribute_value(tag, "content") else {
+            continue;
+        };
+
+        let mut parts = content.splitn(2, ';');
+        let delay = parts
+            .next()
+            .map(|d| d.trim().parse::<f64>().unwrap_or(0.0).max(0.0) as u64)
+            .unwrap_or(0);
+        let Some(rest) = parts.next() else { continue };
+        let target = rest
+            .trim()
+            .trim_start_matches(|c: char| c.is_ascii_alphabetic())
+            .trim_start()
+            .trim_start_matches('=')
+            .trim()
+            .trim_matches(|c| c == '\'' || c == '"');
+        if target.is_empty() {
+            continue;
+        }
+        if let Ok(url) = base.join(target) {
+            return Some((delay, url));
+        }
+    }
+    None
+}
+
+/// One attribute out of a raw tag, single or double quoted or bare.
+fn attribute_value(tag: &str, name: &str) -> Option<String> {
+    let lowered = tag.to_ascii_lowercase();
+    let mut from = 0usize;
+    while let Some(found) = lowered[from..].find(name) {
+        let at = from + found;
+        from = at + name.len();
+        // Must be a whole attribute name, not the tail of another one.
+        if at > 0 && !lowered.as_bytes()[at - 1].is_ascii_whitespace() {
+            continue;
+        }
+        let after = tag[from..].trim_start();
+        let Some(after) = after.strip_prefix('=') else {
+            continue;
+        };
+        let after = after.trim_start();
+        let value = match after.chars().next() {
+            Some(quote @ ('"' | '\'')) => after[1..].split(quote).next().unwrap_or(""),
+            // Unquoted: ends at whitespace or at the end of the tag. Splitting
+            // on whitespace alone kept the `>` and turned `content=ab>` into
+            // the value "ab>".
+            _ => after
+                .split(|c: char| c.is_ascii_whitespace() || c == '>')
+                .next()
+                .unwrap_or(""),
+        };
+        return Some(value.to_string());
+    }
+    None
 }
 
 /// Flatten the renderer's premultiplied RGBA onto an opaque white canvas.
@@ -956,5 +1722,78 @@ mod input_tests {
         let loose = ref_node(&page, "loose");
         let error = page.submit_form(loose).expect_err("nothing to submit");
         assert!(format!("{error}").contains("not inside a form"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+
+    #[test]
+    fn a_meta_refresh_is_parsed_the_way_hand_written_html_writes_it() {
+        let base = Url::parse("https://site.example/dir/page.html").unwrap();
+
+        // Twenty-five years of hand-written variants, all of which appear in
+        // the wild and all of which mean the same thing.
+        for markup in [
+            r#"<meta http-equiv="refresh" content="0; url=next.html">"#,
+            r#"<meta http-equiv="Refresh" content="0;URL=next.html">"#,
+            r#"<meta http-equiv=refresh content='0; url=next.html'>"#,
+            r#"<meta content="0; url=next.html" http-equiv="refresh">"#,
+            r#"<META HTTP-EQUIV="REFRESH" CONTENT="0; URL='next.html'">"#,
+        ] {
+            let found = meta_refresh(markup, &base);
+            assert_eq!(
+                found.map(|(delay, url)| (delay, url.to_string())),
+                Some((0, "https://site.example/dir/next.html".to_string())),
+                "failed on {markup}"
+            );
+        }
+
+        // The delay is read, not assumed.
+        assert_eq!(
+            meta_refresh(
+                r#"<meta http-equiv="refresh" content="600; url=/live">"#,
+                &base
+            )
+            .map(|(d, _)| d),
+            Some(600)
+        );
+
+        // A refresh with no URL reloads this page; that is not a redirect.
+        assert!(meta_refresh(r#"<meta http-equiv="refresh" content="30">"#, &base).is_none());
+        // And an unrelated meta is not one.
+        assert!(meta_refresh(r#"<meta name="description" content="0; url=x">"#, &base).is_none());
+        // `http-equiv="refresh-policy"` must not match on a substring.
+        assert!(meta_refresh("<p>content=\"0; url=x\"</p>", &base).is_none());
+    }
+
+    #[test]
+    fn a_challenge_page_is_recognised_and_an_ordinary_short_page_is_not() {
+        assert_eq!(
+            challenge_marker("<html><body>Enable JavaScript and cookies to continue</body></html>"),
+            Some("enable javascript and cookies to continue")
+        );
+        assert_eq!(
+            challenge_marker("<title>Attention Required! | Cloudflare</title>"),
+            Some("attention required! | cloudflare")
+        );
+        // A short page is not a challenge. Saying otherwise would tell an agent
+        // it was blocked by a site that simply had little to say.
+        assert_eq!(challenge_marker("<html><body><p>Not found.</p></body></html>"), None);
+        assert_eq!(
+            challenge_marker("<p>This article explains how to enable JavaScript.</p>"),
+            None
+        );
+    }
+
+    #[test]
+    fn an_attribute_is_read_whichever_way_it_was_quoted() {
+        assert_eq!(attribute_value(r#"<meta content="a b">"#, "content"), Some("a b".into()));
+        assert_eq!(attribute_value(r#"<meta content='a b'>"#, "content"), Some("a b".into()));
+        assert_eq!(attribute_value(r#"<meta content=ab>"#, "content"), Some("ab".into()));
+        // Not the tail of another attribute: `data-content` is not `content`.
+        assert_eq!(attribute_value(r#"<meta data-content="x">"#, "content"), None);
+        assert_eq!(attribute_value(r#"<meta charset="utf-8">"#, "content"), None);
     }
 }

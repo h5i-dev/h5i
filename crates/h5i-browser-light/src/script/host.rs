@@ -1,0 +1,232 @@
+//! The state a native binding reaches, and the rules for reaching it.
+//!
+//! Everything here is deliberately free of GC-managed values. Boa's host data
+//! must be `Trace`, and the only way to hold a `JsObject` correctly is to trace
+//! it; rather than do that for event handlers, timer callbacks and promise
+//! resolvers, **those all live on the JavaScript side** (see `prelude.js`) and
+//! this holds only plain Rust state. That is why every field below can be
+//! `unsafe_ignore_trace` honestly: none of them can reach the heap Boa collects.
+
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+
+use boa_engine::JsData;
+use boa_gc::{Finalize, Trace};
+
+use crate::engine::Dom;
+use crate::net::Broker;
+
+/// One line a page wrote to the console.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsoleLine {
+    pub level: String,
+    pub text: String,
+    /// `"page"` when the page called `console.*`, `"engine"` when this engine
+    /// is the one complaining.
+    ///
+    /// An agent reading a console needs to know which it is looking at: "the
+    /// site reported an error" and "the browser could not do something" call
+    /// for different responses, and they were indistinguishable.
+    pub source: String,
+    /// How many times in a row this exact line was said.
+    ///
+    /// remix.run logged one identical error **1486 times**, which is not
+    /// information — it is the same information, at a volume that buries
+    /// everything else and blows up the snapshot an agent reads.
+    pub repeats: usize,
+}
+
+fn page_source() -> String {
+    "page".to_string()
+}
+
+impl ConsoleLine {
+    pub fn page(level: &str, text: String) -> Self {
+        Self { level: level.to_string(), text, source: page_source(), repeats: 1 }
+    }
+
+    /// A line this engine said about itself, not about the page.
+    pub fn engine(level: &str, text: String) -> Self {
+        Self { level: level.to_string(), text, source: "engine".to_string(), repeats: 1 }
+    }
+}
+
+/// Append a line, collapsing an immediate repeat into a count.
+///
+/// Consecutive rather than global on purpose: a page that alternates two
+/// messages is saying something different from one that says the same thing
+/// twice, and collapsing across the whole log would lose the order an agent
+/// reads for cause and effect.
+pub fn push_console(log: &mut Vec<ConsoleLine>, line: ConsoleLine) {
+    if let Some(last) = log.last_mut() {
+        if last.text == line.text && last.level == line.level && last.source == line.source {
+            last.repeats += 1;
+            return;
+        }
+    }
+    log.push(line);
+}
+
+/// A Web API the page asked for and this engine does not have.
+///
+/// Counted rather than logged once, because "it called this forty times" and
+/// "it called this once at startup" are different facts about whether the page
+/// can work here at all.
+#[derive(Debug, Default)]
+pub struct Unsupported(pub BTreeMap<String, usize>);
+
+impl Unsupported {
+    pub fn record(&mut self, name: &str) {
+        *self.0.entry(name.to_string()).or_insert(0) += 1;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Most-used first: an API called forty times is more likely to be why the
+    /// page is broken than one called once.
+    pub fn ranked(&self) -> Vec<(String, usize)> {
+        let mut out: Vec<(String, usize)> = self
+            .0
+            .iter()
+            .map(|(name, count)| (name.clone(), *count))
+            .collect();
+        out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        out
+    }
+}
+
+/// What the native bindings act on.
+pub struct Host {
+    /// The one real DOM. See [`crate::engine::Dom`] for the borrow rule.
+    pub dom: Dom,
+
+    /// The same broker the document loaded through, so a request script makes
+    /// is policy-checked and receipted exactly like one the parser made. This
+    /// is the whole reason script belongs in *this* engine: nothing a page does
+    /// reaches the wire without a record, including the traffic every other
+    /// engine's evidence is thinnest about.
+    pub broker: std::sync::Arc<Broker>,
+
+    /// The page this document was loaded from, for resolving relative fetches.
+    pub base: url::Url,
+
+    /// Set whenever script changed the tree, so the engine knows to re-resolve
+    /// style and layout once rather than after every mutation.
+    pub dirty: RefCell<bool>,
+
+    pub console: RefCell<Vec<ConsoleLine>>,
+
+    pub unsupported: RefCell<Unsupported>,
+
+    /// URLs script asked for, in order, so a caller can say which action caused
+    /// which request. The receipt remains the record; this is only the link,
+    /// stamped by the one component that knows the causal fact.
+    pub requests: RefCell<Vec<RequestLink>>,
+
+    /// Comment text, keyed by node id.
+    ///
+    /// `NodeData::Comment` carries no payload in this version of blitz, and a
+    /// page that writes a comment marker and reads it back should get what it
+    /// wrote — so the text lives here rather than being quietly lost.
+    pub comments: RefCell<std::collections::HashMap<usize, String>>,
+
+    /// Requests script asked for that have not been answered yet.
+    ///
+    /// Ordered, so a page that issues ten requests starts them in the order it
+    /// wrote them rather than in whatever order a hash landed.
+    pub pending_fetches: RefCell<std::collections::BTreeMap<u64, FetchSlot>>,
+
+    /// Ticket numbers for those. Never reused within a realm, so a late reply
+    /// cannot resolve a promise that belongs to a later request.
+    pub next_fetch: std::cell::Cell<u64>,
+
+    /// Scripts the policy refused, so a `ReferenceError` for a global one of
+    /// them would have defined can be attributed to the refusal instead of
+    /// being reported as an engine that lacks jQuery.
+    pub refused_scripts: RefCell<Vec<String>>,
+}
+
+/// One request a page made, and the receipt it turned into.
+///
+/// The URL is known when the page asks; the sequence number only when the
+/// broker records it, which is why the two are filled in at different moments.
+/// Both are needed: the URL is what a human reads, and the sequence number is
+/// what joins this action to a row in the request log.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RequestLink {
+    /// The realm's own ticket, used to fill in `seq` when the answer arrives.
+    #[serde(skip)]
+    pub ticket: u64,
+    pub url: String,
+    /// Absent when the request never got as far as a receipt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+}
+
+/// How many requests this engine will have on the wire at once.
+///
+/// Six, which is what browsers settled on per host for HTTP/1.1 — enough that a
+/// page fanning out its data loads in parallel instead of in a queue, few
+/// enough that a page with two hundred images cannot spawn two hundred threads
+/// inside a box with a memory ceiling.
+pub const MAX_INFLIGHT_FETCHES: usize = 6;
+
+/// A request script made, waiting its turn or waiting for the wire.
+pub enum FetchSlot {
+    /// Accepted, not yet started: the in-flight limit was already reached.
+    Queued {
+        url: url::Url,
+        method: String,
+        body: Vec<u8>,
+        content_type: Option<String>,
+    },
+    /// On the wire, on its own thread, with the answer coming back here.
+    InFlight(std::sync::mpsc::Receiver<crate::net::FetchOutcome>),
+}
+
+/// How the [`Host`] reaches a native binding.
+///
+/// Boa's host data must be `Trace`, and `Rc<Host>` is not. The handle exists to
+/// carry the `unsafe_ignore_trace` in one place with one justification: `Host`
+/// holds no GC-managed value and cannot reach one, because every JS-side thing
+/// with a lifetime — listeners, timer callbacks, promise resolvers — lives in
+/// `prelude.js` where Boa's own collector already owns it.
+#[derive(Clone, Trace, Finalize, JsData)]
+pub struct HostHandle(#[unsafe_ignore_trace] pub std::rc::Rc<Host>);
+
+impl std::ops::Deref for HostHandle {
+    type Target = Host;
+    fn deref(&self) -> &Host {
+        &self.0
+    }
+}
+
+impl Host {
+    pub fn new(dom: Dom, broker: std::sync::Arc<Broker>, base: url::Url) -> Self {
+        Self {
+            dom,
+            broker,
+            base,
+            dirty: RefCell::new(false),
+            console: RefCell::new(Vec::new()),
+            unsupported: RefCell::new(Unsupported::default()),
+            requests: RefCell::new(Vec::new()),
+            comments: RefCell::new(std::collections::HashMap::new()),
+            pending_fetches: RefCell::new(std::collections::BTreeMap::new()),
+            next_fetch: std::cell::Cell::new(1),
+            refused_scripts: RefCell::new(Vec::new()),
+        }
+    }
+
+    pub fn mark_dirty(&self) {
+        *self.dirty.borrow_mut() = true;
+    }
+
+    pub fn take_dirty(&self) -> bool {
+        let was = *self.dirty.borrow();
+        *self.dirty.borrow_mut() = false;
+        was
+    }
+}

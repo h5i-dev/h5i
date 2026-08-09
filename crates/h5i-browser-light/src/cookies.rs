@@ -61,6 +61,13 @@ struct Cookie {
     /// process exits" — the same thing, since nothing is persisted.
     expires: Option<SystemTime>,
     secure: bool,
+    /// Withheld from `document.cookie`, as a browser withholds it.
+    ///
+    /// Parsed and dropped before this existed, which mattered the moment page
+    /// script could read cookies: a session credential is almost always
+    /// `HttpOnly`, and honouring the flag is what lets `document.cookie` exist
+    /// at all without handing an agent the thing it must not be able to read.
+    http_only: bool,
 }
 
 impl Cookie {
@@ -98,7 +105,24 @@ impl Jar {
         self.header_for_at(url, SystemTime::now())
     }
 
+    fn header_for_filtered(
+        &self,
+        url: &Url,
+        keep: impl Fn(&Cookie) -> bool,
+    ) -> Option<(String, usize)> {
+        self.header_for_inner(url, SystemTime::now(), &keep)
+    }
+
     fn header_for_at(&self, url: &Url, now: SystemTime) -> Option<(String, usize)> {
+        self.header_for_inner(url, now, &|_| true)
+    }
+
+    fn header_for_inner(
+        &self,
+        url: &Url,
+        now: SystemTime,
+        keep: &dyn Fn(&Cookie) -> bool,
+    ) -> Option<(String, usize)> {
         let host = url.host_str()?.to_ascii_lowercase();
         let secure_channel = is_secure(url);
         // The request's own path, not the default-path derivation below: that
@@ -121,6 +145,7 @@ impl Jar {
             .filter(|c| c.host == host)
             .filter(|c| !c.secure || secure_channel)
             .filter(|c| path_matches(&request_path, &c.path))
+            .filter(|c| keep(c))
             .collect();
 
         if matched.is_empty() {
@@ -192,11 +217,52 @@ impl Jar {
         self.len() == 0
     }
 
+    /// The `document.cookie` value for this document: the non-`HttpOnly`
+    /// cookies that match it, in the same form a browser exposes.
+    ///
+    /// Separate from [`Self::header_for`] because they answer different
+    /// questions. That one is what crosses the wire; this is what *page script*
+    /// may see, and the difference is the whole reason `HttpOnly` exists.
+    pub fn document_cookie(&self, url: &Url) -> String {
+        let Some((header, _)) = self.header_for_filtered(url, |c| !c.http_only) else {
+            return String::new();
+        };
+        header
+    }
+
     /// Forget everything. A complete logout, and what a session reset means.
     pub fn clear(&self) {
         if let Ok(mut jar) = self.cookies.lock() {
             jar.clear();
         }
+    }
+
+    /// Drop everything when a navigation leaves the origin that set it.
+    ///
+    /// The box replaces three of Chromium's four process-model reasons and not
+    /// the fourth: it protects the host from the box, and says nothing about two
+    /// origins sharing one address space. That did not matter until this engine
+    /// held cookies *and* ran script. It cannot be fixed without a process
+    /// split, so it is bounded instead — at any moment the jar holds only
+    /// cookies for the origin currently loaded, so a foreign origin's script
+    /// never runs alongside someone else's live session.
+    ///
+    /// The cost is real and belongs next to the guarantee: a login does not
+    /// survive a redirect through another origin, so OAuth-style flows that
+    /// bounce via an identity provider will not stay signed in.
+    ///
+    /// Returns whether anything was dropped, so a caller can say so rather than
+    /// leaving an agent to discover it by being logged out.
+    pub fn retain_origin(&self, origin: &Url) -> bool {
+        let Some(host) = origin.host_str().map(|h| h.to_ascii_lowercase()) else {
+            return false;
+        };
+        let Ok(mut jar) = self.cookies.lock() else {
+            return false;
+        };
+        let before = jar.len();
+        jar.retain(|cookie| cookie.host == host);
+        before != jar.len()
     }
 }
 
@@ -251,6 +317,7 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
 
     let mut path: Option<String> = None;
     let mut secure = false;
+    let mut http_only = false;
     let mut max_age: Option<i64> = None;
     let mut expires: Option<SystemTime> = None;
 
@@ -262,14 +329,15 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
         };
         match key.as_str() {
             "secure" => secure = true,
+            "httponly" => http_only = true,
             "path" if val.starts_with('/') => path = Some(val),
             "max-age" => max_age = val.parse::<i64>().ok(),
             "expires" => expires = httpdate::parse_http_date(&val).ok(),
             // `Domain` is read and deliberately dropped; see the module docs.
-            // `HttpOnly` and `SameSite` are no-ops here for a structural
-            // reason rather than an oversight: there is no script to hide a
-            // cookie from, and no third-party context to be lax about, because
-            // this engine makes one navigation at a time on the agent's behalf.
+            // `SameSite` is a no-op because this engine makes one navigation at
+            // a time on the agent's behalf, so there is no third-party context
+            // to be lax about. `HttpOnly` used to be one too, on the reasoning
+            // that there was no script to hide a cookie from. There is now.
             _ => {}
         }
     }
@@ -301,6 +369,7 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
         path,
         expires,
         secure,
+        http_only,
     })
 }
 
@@ -457,11 +526,78 @@ mod tests {
     }
 
     #[test]
+    fn leaving_an_origin_drops_its_session() {
+        // The site-isolation bound: with script and cookies in one address
+        // space, the jar must never hold one origin's credential while another
+        // origin's script is running.
+        let jar = Jar::new();
+        jar.store(&url("https://bank.example/"), ["sid=secret"]);
+        assert_eq!(jar.len(), 1);
+
+        assert!(
+            jar.retain_origin(&url("https://evil.example/page")),
+            "navigating away drops it, and says that it did"
+        );
+        assert!(jar.is_empty());
+        assert!(jar.header_for(&url("https://bank.example/")).is_none());
+    }
+
+    #[test]
+    fn staying_on_an_origin_keeps_the_session() {
+        let jar = Jar::new();
+        jar.store(&url("https://bank.example/"), ["sid=secret"]);
+
+        assert!(
+            !jar.retain_origin(&url("https://bank.example/account")),
+            "a same-origin navigation drops nothing"
+        );
+        assert!(jar.header_for(&url("https://bank.example/account")).is_some());
+    }
+
+    #[test]
     fn clearing_is_a_complete_logout() {
         let jar = Jar::new();
         jar.store(&url("https://a.example/"), ["sid=abc"]);
         jar.clear();
         assert!(jar.is_empty());
         assert!(jar.header_for(&url("https://a.example/")).is_none());
+    }
+}
+
+#[cfg(test)]
+mod http_only_tests {
+    use super::*;
+
+    fn url(s: &str) -> Url {
+        Url::parse(s).expect("test url")
+    }
+
+    #[test]
+    fn http_only_cookies_cross_the_wire_but_never_reach_script() {
+        // The distinction `document.cookie` rests on. A session credential is
+        // almost always HttpOnly, so honouring the flag is what lets page
+        // script read cookies at all without handing an agent — which can read
+        // whatever script writes into the DOM — the thing it must not have.
+        let jar = Jar::new();
+        jar.store(
+            &url("https://app.example/"),
+            ["sid=secret; HttpOnly", "theme=dark"],
+        );
+
+        let (wire, count) = jar.header_for(&url("https://app.example/")).expect("sent");
+        assert!(wire.contains("sid=secret"), "the wire carries both: {wire}");
+        assert!(wire.contains("theme=dark"), "{wire}");
+        assert_eq!(count, 2);
+
+        let visible = jar.document_cookie(&url("https://app.example/"));
+        assert!(!visible.contains("secret"), "script must not see it: {visible}");
+        assert!(visible.contains("theme=dark"), "but does see the rest: {visible}");
+    }
+
+    #[test]
+    fn document_cookie_is_empty_when_everything_is_http_only() {
+        let jar = Jar::new();
+        jar.store(&url("https://app.example/"), ["sid=secret; HttpOnly"]);
+        assert_eq!(jar.document_cookie(&url("https://app.example/")), "");
     }
 }

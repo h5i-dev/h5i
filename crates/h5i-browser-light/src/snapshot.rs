@@ -82,6 +82,229 @@ pub struct Snapshot {
     /// Set when the walk hit its line budget, so a caller never mistakes a
     /// truncated outline for a short page.
     pub truncated: bool,
+    /// Facts about *this engine's* reading of the page, not about the page.
+    ///
+    /// Rendered outside the fence, because that is exactly what they are: the
+    /// engine's own account of whether the page had finished and what it asked
+    /// for that we do not have. A page cannot write here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+/// What changed between two readings of a page.
+///
+/// The full outline is the wrong shape for an agent loop: three hundred lines
+/// re-read after every click, of which four are new. This is the same reading
+/// expressed as its difference, so the cost of a step is proportional to what
+/// the step did rather than to how big the page is.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Delta {
+    pub url: String,
+    /// Set when the delta is not worth reading and the full outline should be
+    /// sent instead.
+    ///
+    /// A navigation, or a page that replaced its own body, produces a
+    /// difference as long as the page itself; presenting that as "what changed"
+    /// would be technically true and useless.
+    pub replaced: bool,
+    pub url_changed: bool,
+    pub title_changed: bool,
+    pub added: Vec<Line>,
+    pub removed: Vec<Line>,
+    /// How much stayed put, so a caller can weigh the numbers against each
+    /// other rather than trusting this type's own threshold.
+    pub unchanged: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+/// Below this share of the previous outline surviving, the page is called
+/// replaced rather than changed.
+///
+/// A judgement, and stated as one: with a quarter of the page still standing
+/// there is something an agent recognises; below that, the difference *is* the
+/// page and the full outline is the smaller answer.
+const REPLACED_SURVIVAL: f64 = 0.25;
+
+impl Snapshot {
+    /// This reading, expressed as its difference from an earlier one.
+    pub fn delta(&self, previous: &Snapshot) -> Delta {
+        let url_changed = self.url != previous.url;
+        let title_changed = self.title != previous.title;
+
+        let before: Vec<String> = previous.lines.iter().map(line_identity).collect();
+        let after: Vec<String> = self.lines.iter().map(line_identity).collect();
+        let (kept_before, kept_after) = longest_common_subsequence(&before, &after);
+
+        let removed: Vec<Line> = previous
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| !kept_before.contains(at))
+            .map(|(_, line)| line.clone())
+            .collect();
+        let added: Vec<Line> = self
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| !kept_after.contains(at))
+            .map(|(_, line)| line.clone())
+            .collect();
+
+        let unchanged = kept_after.len();
+        let survival = if previous.lines.is_empty() {
+            0.0
+        } else {
+            unchanged as f64 / previous.lines.len() as f64
+        };
+
+        Delta {
+            url: self.url.clone(),
+            replaced: url_changed || survival < REPLACED_SURVIVAL,
+            url_changed,
+            title_changed,
+            added,
+            removed,
+            unchanged,
+            notes: self.notes.clone(),
+        }
+    }
+}
+
+impl Delta {
+    /// True when nothing moved.
+    ///
+    /// A result, and a common one: an agent that clicked something inert needs
+    /// to be told it did nothing, rather than re-reading the page looking for a
+    /// change that is not there.
+    pub fn is_empty(&self) -> bool {
+        !self.url_changed && !self.title_changed && self.added.is_empty() && self.removed.is_empty()
+    }
+
+    /// The difference, in the same fenced form a full snapshot uses.
+    ///
+    /// Fenced for the same reason: every line of `added` came from the page and
+    /// is data, not instruction.
+    pub fn render(&self) -> String {
+        let mut out = String::new();
+        if !self.url.is_empty() {
+            out.push_str(&format!("url: {}\n", one_line(&self.url)));
+        }
+        for note in &self.notes {
+            out.push_str(&format!("note: {}\n", one_line(note)));
+        }
+        if self.url_changed {
+            out.push_str("note: this is a different page than the one last read\n");
+        }
+
+        if self.is_empty() {
+            out.push_str("no change: this action did not alter the readable page\n");
+            return out;
+        }
+
+        out.push_str(&format!(
+            "changed: {} added, {} removed, {} unchanged\n",
+            self.added.len(),
+            self.removed.len(),
+            self.unchanged
+        ));
+        out.push_str(CONTENT_BEGIN);
+        out.push('\n');
+        out.push_str(UNTRUSTED_NOTE);
+        out.push_str("\n\n");
+        for line in &self.removed {
+            out.push_str("- ");
+            push_line(&mut out, line);
+        }
+        for line in &self.added {
+            out.push_str("+ ");
+            push_line(&mut out, line);
+        }
+        out.push_str(CONTENT_END);
+        out.push('\n');
+        out
+    }
+}
+
+/// One outline line, in the form both the snapshot and the delta use.
+fn push_line(out: &mut String, line: &Line) {
+    out.push_str(&"  ".repeat(line.depth.min(MAX_DEPTH)));
+    push_line_body(out, line);
+}
+
+/// Role, text, reference and target — the part both callers render identically.
+fn push_line_body(out: &mut String, line: &Line) {
+    out.push_str(&one_line(&line.role));
+    if !line.text.is_empty() {
+        out.push_str(&format!(" \"{}\"", one_line(&line.text)));
+    }
+    if let Some(reference) = &line.reference {
+        out.push_str(&format!(" [ref={}]", one_line(reference)));
+    }
+    if let Some(href) = &line.href {
+        out.push_str(&format!(" -> {}", one_line(href)));
+    }
+    out.push('\n');
+}
+
+/// What makes two lines "the same line" across readings.
+///
+/// The reference is deliberately excluded. The walker numbers references by
+/// position, so an element that kept its text but shifted down the page would
+/// otherwise read as a removal and an addition — every insertion near the top
+/// would renumber the rest of the page and report it all as new.
+fn line_identity(line: &Line) -> String {
+    format!(
+        "{}\u{1f}{}\u{1f}{}\u{1f}{}",
+        line.depth,
+        line.role,
+        line.text,
+        line.href.as_deref().unwrap_or("")
+    )
+}
+
+/// Indices, on each side, of the lines that survived.
+///
+/// A plain longest-common-subsequence. Quadratic, over a few hundred lines
+/// already capped by the snapshot's own budget — small enough that a cleverer
+/// algorithm would cost more to read than it saves to run.
+fn longest_common_subsequence(
+    before: &[String],
+    after: &[String],
+) -> (
+    std::collections::BTreeSet<usize>,
+    std::collections::BTreeSet<usize>,
+) {
+    let (n, m) = (before.len(), after.len());
+    let mut table = vec![0u32; (n + 1) * (m + 1)];
+    let at = |i: usize, j: usize| i * (m + 1) + j;
+
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            table[at(i, j)] = if before[i] == after[j] {
+                table[at(i + 1, j + 1)] + 1
+            } else {
+                table[at(i + 1, j)].max(table[at(i, j + 1)])
+            };
+        }
+    }
+
+    let mut kept_before = std::collections::BTreeSet::new();
+    let mut kept_after = std::collections::BTreeSet::new();
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < n && j < m {
+        if before[i] == after[j] {
+            kept_before.insert(i);
+            kept_after.insert(j);
+            i += 1;
+            j += 1;
+        } else if table[at(i + 1, j)] >= table[at(i, j + 1)] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    (kept_before, kept_after)
 }
 
 struct Walker<'a> {
@@ -91,11 +314,21 @@ struct Walker<'a> {
     next_ref: usize,
     max_lines: usize,
     truncated: bool,
+    /// Whether this reading ran the page's script, which is what decides
+    /// whether `<noscript>` is content or a message for somebody else.
+    scripted: bool,
 }
 
 impl Snapshot {
     /// Capture an outline of the resolved document.
-    pub fn capture(doc: &BaseDocument, url: &str, max_lines: usize) -> Self {
+    /// `scripted` decides what `<noscript>` means for this reading.
+    ///
+    /// A browser shows that content only when script is off. This engine was
+    /// showing it always, so a page whose script ran perfectly still handed an
+    /// agent the sentence "JavaScript is disabled in your browser" — which is
+    /// not a small cosmetic error but a direct contradiction of the reading it
+    /// appears in. crates.io's entire outline was that sentence.
+    pub fn capture(doc: &BaseDocument, url: &str, max_lines: usize, scripted: bool) -> Self {
         let mut walker = Walker {
             doc,
             lines: Vec::new(),
@@ -103,6 +336,7 @@ impl Snapshot {
             next_ref: 1,
             max_lines,
             truncated: false,
+            scripted,
         };
 
         let root_id = doc.root_element().id;
@@ -114,6 +348,7 @@ impl Snapshot {
             lines: walker.lines,
             refs: walker.refs,
             truncated: walker.truncated,
+            notes: Vec::new(),
         }
     }
 
@@ -144,6 +379,10 @@ impl Snapshot {
             out.push_str(&format!("url: {}\n", one_line(&self.url)));
         }
 
+        for note in &self.notes {
+            out.push_str(&format!("note: {}\n", one_line(note)));
+        }
+
         out.push_str(CONTENT_BEGIN);
         out.push('\n');
         out.push_str(UNTRUSTED_NOTE);
@@ -156,20 +395,9 @@ impl Snapshot {
         out.push('\n');
 
         for line in &self.lines {
-            let indent = "  ".repeat(line.depth.min(MAX_DEPTH));
-            out.push_str(&indent);
+            out.push_str(&"  ".repeat(line.depth.min(MAX_DEPTH)));
             out.push_str("- ");
-            out.push_str(&one_line(&line.role));
-            if !line.text.is_empty() {
-                out.push_str(&format!(" \"{}\"", one_line(&line.text)));
-            }
-            if let Some(reference) = &line.reference {
-                out.push_str(&format!(" [ref={}]", one_line(reference)));
-            }
-            if let Some(href) = &line.href {
-                out.push_str(&format!(" -> {}", one_line(href)));
-            }
-            out.push('\n');
+            push_line_body(&mut out, line);
         }
 
         if self.truncated {
@@ -247,6 +475,44 @@ impl Walker<'_> {
             tag.as_str(),
             "script" | "style" | "head" | "title" | "meta" | "link"
         ) {
+            return;
+        }
+
+        // `<noscript>` is addressed to a reader who did not run the script. If
+        // this reading did, it is not content — it is a message for somebody
+        // else, and including it contradicts the page around it.
+        if tag == "noscript" && self.scripted {
+            return;
+        }
+
+        // Content the page does not display is not content this reading should
+        // carry. Two reasons, and the second is the serious one:
+        //
+        // 1. The outline claims to be an account of what the page shows, and a
+        //    reader acting on a menu that is closed or a dialog that is hidden
+        //    is acting on something nobody can see.
+        // 2. Invisible text is the classic vehicle for instructions aimed at
+        //    whatever is reading the page. The untrusted-content fence exists
+        //    for exactly that threat, and text a human would never encounter
+        //    walks straight around it.
+        //
+        // Blitz resolves no primary styles for a node that is not rendered, so
+        // `display: none` — and the `hidden` attribute, which is that rule —
+        // are the same question and are answered by the style engine rather
+        // than re-derived here.
+        //
+        // Deliberately *not* `visibility: hidden`: that content still occupies
+        // its space, is routinely toggled by script, and is the shape
+        // off-screen accessibility text sometimes takes. Filtering it would
+        // risk deleting page content to fix a smaller problem.
+        let displayed = match node.primary_styles() {
+            // Blitz resolves no primary styles for a node it will not render.
+            None => false,
+            // And a node that has styles can still be `display: none` — which
+            // is the common case, since that is what a stylesheet says.
+            Some(styles) => !styles.clone_display().is_none(),
+        };
+        if !displayed {
             return;
         }
 
@@ -564,6 +830,7 @@ mod tests {
                 name: "Submit".to_string(),
                 href: None,
             }],
+            notes: Vec::new(),
             truncated: false,
         };
 
@@ -585,6 +852,7 @@ mod tests {
                 href: None,
             }],
             refs: Vec::new(),
+            notes: Vec::new(),
             truncated: true,
         };
         assert!(snapshot.render().contains("truncated"));
@@ -603,6 +871,7 @@ mod tests {
                 href: Some("https://example.com/guide".to_string()),
             }],
             refs: Vec::new(),
+            notes: Vec::new(),
             truncated: false,
         };
 
@@ -624,6 +893,7 @@ mod tests {
                 href: None,
             }],
             refs: Vec::new(),
+            notes: Vec::new(),
             truncated: false,
         };
         let rendered = snapshot.render();
@@ -667,6 +937,7 @@ mod tests {
                 href: Some(breakout.clone()),
             }],
             refs: Vec::new(),
+            notes: Vec::new(),
             truncated: false,
         };
 
@@ -708,6 +979,7 @@ mod tests {
                 href: None,
             }],
             refs: Vec::new(),
+            notes: Vec::new(),
             truncated: false,
         };
 

@@ -27,10 +27,57 @@ use url::Url;
 use crate::policy::Policy;
 use crate::receipt::{Initiator, RequestRecord, Sink};
 
+/// The one user agent: sent on the wire, and reported by `navigator.userAgent`.
+///
+/// Honest rather than imitative — it names this engine and does not claim to be
+/// Chrome. The `Mozilla/5.0 (compatible; ...)` shape is kept because it is the
+/// form content negotiation on real servers is written against, not because it
+/// disguises anything.
+///
+/// Shared with the script realm deliberately. A page that branches on the user
+/// agent server-side and again in script must see the same answer both times,
+/// or it renders for one engine and scripts for another.
+pub const USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (compatible; h5i-browser-light/",
+    env!("CARGO_PKG_VERSION"),
+    "; +https://github.com/h5i-dev/h5i)"
+);
+
+/// Matches `navigator.language`. A server that content-negotiates on this
+/// should get the same answer the page's script would give.
+pub const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9";
+
+/// What this engine will take, by what asked for it.
+///
+/// Not cosmetic: crates.io answered **404** to a request with no `Accept` at
+/// all, and the corpus recorded an empty page with no error. A server that
+/// content-negotiates cannot serve a client that never says what it wants.
+fn accept_for(initiator: Initiator) -> &'static str {
+    match initiator {
+        Initiator::Navigation | Initiator::Redirect => {
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        }
+        Initiator::Subresource => "*/*",
+    }
+}
+
+
 /// What a fetch produced. A denied or failed fetch is still an outcome, with
 /// an empty body and a reason — never an absence.
 #[derive(Debug, Clone)]
 pub struct FetchOutcome {
+    /// The receipt sequence number this request was recorded under.
+    ///
+    /// Carried out of the broker so a caller can say *which* receipt a page's
+    /// action produced. `None` when the request never reached the point of
+    /// being recorded, which is the same thing as there being no receipt to
+    /// name.
+    pub seq: Option<u64>,
+    /// Response headers, in arrival order. Carried because `Response.headers`
+    /// is how a page learns content type, pagination links and rate limits, and
+    /// returning `null` from `headers.get` made every one of those look absent
+    /// rather than unsupported.
+    pub headers: Vec<(String, String)>,
     pub final_url: Url,
     pub body: Vec<u8>,
     pub status: Option<u16>,
@@ -38,8 +85,21 @@ pub struct FetchOutcome {
 }
 
 impl FetchOutcome {
+    /// An outcome that never reached the wire. Public because the script realm
+    /// needs to answer a request it could not even start, rather than leaving
+    /// the page's promise pending forever.
+    pub fn refused(url: Url, error: String) -> Self {
+        Self::failed(url, error)
+    }
+
     fn failed(url: Url, error: String) -> Self {
+        Self::failed_at(url, error, None)
+    }
+
+    fn failed_at(url: Url, error: String, seq: Option<u64>) -> Self {
         Self {
+            seq,
+            headers: Vec::new(),
             final_url: url,
             body: Vec::new(),
             status: None,
@@ -79,7 +139,7 @@ impl Broker {
             // exactly the hops most worth seeing.
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(30))
-            .user_agent(concat!("h5i-browser-light/", env!("CARGO_PKG_VERSION")));
+            .user_agent(USER_AGENT);
 
         if let Some(proxy_url) = proxy.filter(|p| !p.trim().is_empty()) {
             let no_proxy = reqwest::NoProxy::from_string("localhost,127.0.0.1,::1");
@@ -141,7 +201,28 @@ impl Broker {
         body: &[u8],
         content_type: Option<&str>,
     ) -> FetchOutcome {
+        self.send_from(url, initiator, method, body, content_type, None)
+    }
+
+    /// Send a request a *document* made, so the policy can reason about origin.
+    ///
+    /// The document is threaded through rather than stored on the broker because
+    /// one broker serves a whole session and the page underneath it changes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_from(
+        &self,
+        url: &Url,
+        initiator: Initiator,
+        method: &str,
+        body: &[u8],
+        content_type: Option<&str>,
+        document: Option<&Url>,
+    ) -> FetchOutcome {
         let mut current = url.clone();
+        // What originally asked, kept separate from the per-hop initiator: a
+        // redirect chain that began as a navigation is still asking for a
+        // document, and a subresource that redirects is still a subresource.
+        let asked_as = initiator;
         let mut initiator = initiator;
         let mut method = method.to_ascii_uppercase();
         let mut body = body.to_vec();
@@ -151,14 +232,31 @@ impl Broker {
 
             // 1. Policy. A denial is recorded as a pair like any other request,
             //    so the log shows what was attempted, not only what succeeded.
-            let verdict = self.policy.check(&current);
+            let verdict = self.policy.check_from(&current, document);
             if let Some(reason) = verdict.reason() {
                 let record = RequestRecord::request(seq, initiator, &method, current.as_str())
                     .denied(reason);
                 if let Err(e) = self.record_pair(&record) {
                     return FetchOutcome::failed(current, format!("receipt sink refused: {e}"));
                 }
-                return FetchOutcome::failed(current, format!("denied by policy: {reason}"));
+                // A refused *redirect* is a different fact from a refused
+                // request, and the difference is actionable. vitejs.dev moved to
+                // vite.dev; the corpus reported only "origin is not in the
+                // allowlist" and an agent had no way to learn the site had
+                // moved. Following it automatically is not the fix — that would
+                // let any server route us out of the allowlist — but saying so
+                // is.
+                let message = if hop > 0 {
+                    format!(
+                        "the site redirected to {current}, which is not allowed: {reason}. \
+                         This engine will not follow a redirect out of the allowlist, because \
+                         a server could then choose where we go; allow that host if you meant \
+                         to follow it."
+                    )
+                } else {
+                    format!("denied by policy: {reason}")
+                };
+                return FetchOutcome::failed_at(current, message, Some(seq));
             }
 
             // 2. The decision record, before any bytes move. If this cannot be
@@ -178,7 +276,11 @@ impl Broker {
             let started = Instant::now();
             let verb = reqwest::Method::from_bytes(method.as_bytes())
                 .unwrap_or(reqwest::Method::GET);
-            let mut request = self.client.request(verb, current.clone());
+            let mut request = self
+                .client
+                .request(verb, current.clone())
+                .header(reqwest::header::ACCEPT, accept_for(asked_as))
+                .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE);
             if !body.is_empty() {
                 if let Some(kind) = content_type {
                     request = request.header(reqwest::header::CONTENT_TYPE, kind);
@@ -201,11 +303,18 @@ impl Broker {
                     outcome_record.cookies_sent = Some(cookies_sent);
                     outcome_record.error = Some(e.to_string());
                     let _ = self.sink.append(&outcome_record);
-                    return FetchOutcome::failed(current, e.to_string());
+                    return FetchOutcome::failed_at(current, e.to_string(), Some(seq));
                 }
             };
 
             let status = response.status();
+            let headers: Vec<(String, String)> = response
+                .headers()
+                .iter()
+                .filter_map(|(name, value)| {
+                    value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string()))
+                })
+                .collect();
 
             // Before the redirect branch, deliberately: a login flow sets its
             // session cookie on the 302 itself, so a jar that only looked at
@@ -277,6 +386,8 @@ impl Broker {
                     outcome_record.bytes = Some(body.len() as u64);
                     let _ = self.sink.append(&outcome_record);
                     FetchOutcome {
+                        seq: Some(seq),
+                        headers,
                         final_url: current,
                         body,
                         status: Some(status.as_u16()),
@@ -286,7 +397,7 @@ impl Broker {
                 Err(e) => {
                     outcome_record.error = Some(e.to_string());
                     let _ = self.sink.append(&outcome_record);
-                    FetchOutcome::failed(current, e.to_string())
+                    FetchOutcome::failed_at(current, e.to_string(), Some(seq))
                 }
             };
         }

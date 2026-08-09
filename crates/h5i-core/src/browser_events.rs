@@ -211,6 +211,13 @@ pub enum Key {
     Request(u64),
     /// The nth action in a batch of mediated records.
     Action(usize),
+    /// An action the light engine recorded, by its own sequence number.
+    ///
+    /// Distinct from [`Key::Action`] because that one is a per-batch index and
+    /// two polls would produce the same key for different actions. The light
+    /// engine numbers its actions itself, across the whole session, so the key
+    /// stays unambiguous however the log is chunked.
+    LightAction(u64),
 }
 
 /// An event before it has an id. Ingest produces these; the log assigns
@@ -394,6 +401,15 @@ fn clean(s: &str) -> String {
 /// half-written trailing line is the ordinary case, not an error — the engine
 /// appends while the console polls.
 pub fn ingest_request_log(text: &str) -> Vec<Draft> {
+    ingest_request_log_with(text, &std::collections::BTreeMap::new())
+}
+
+/// As [`ingest_request_log`], attributing each request to the action that
+/// caused it where the action log said so.
+pub fn ingest_request_log_with(
+    text: &str,
+    caused_by_action: &std::collections::BTreeMap<u64, u64>,
+) -> Vec<Draft> {
     let mut drafts = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -441,6 +457,12 @@ pub fn ingest_request_log(text: &str) -> Vec<Draft> {
                     Grade::FailClosed,
                 );
                 draft.key = Some(Key::Request(seq));
+                // Only where the engine actually said so. Nothing here infers a
+                // link from timing — a request that merely happened near an
+                // action is not a request that action caused.
+                if let Some(action_seq) = caused_by_action.get(&seq) {
+                    draft.caused_by = Some(Key::LightAction(*action_seq));
+                }
                 drafts.push(draft);
 
                 // A refusal is also a policy event, so it appears in the pane a
@@ -590,6 +612,20 @@ pub fn ingest_evidence(evidence: &crate::receipt::BrowserEvidence) -> Vec<Draft>
 /// exists to make "no record, no action" true inside the engine; rendering both
 /// would double every verb in the pane for no gain a reader could use.
 pub fn ingest_light_actions(text: &str) -> Vec<Draft> {
+    ingest_light_actions_with(text, &mut std::collections::BTreeMap::new())
+}
+
+/// As [`ingest_light_actions`], also reporting which action caused which
+/// receipt.
+///
+/// The map is filled here and read by [`ingest_request_log_with`], which is
+/// possible because the poller reads the action log before the request log —
+/// the one ordering dependency in this module, and the reason it is stated in
+/// `poll`'s own comment.
+pub fn ingest_light_actions_with(
+    text: &str,
+    caused: &mut std::collections::BTreeMap<u64, u64>,
+) -> Vec<Draft> {
     let mut drafts = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -621,14 +657,31 @@ pub fn ingest_light_actions(text: &str) -> Vec<Draft> {
             }
         }
 
-        drafts.push(Draft::new(
+        let action_seq = v.get("seq").and_then(serde_json::Value::as_u64);
+        let mut draft = Draft::new(
             EventKind::AgentAction {
                 action,
                 forwarded: ok,
             },
             Lane::BoxClaimed,
             Grade::BestEffort,
-        ));
+        );
+        if let Some(action_seq) = action_seq {
+            draft.key = Some(Key::LightAction(action_seq));
+            // "This click, these receipts" — stamped by the engine, which is
+            // the only component that knows the causal fact, and joined here
+            // against the request log's own numbering.
+            for request_seq in v
+                .get("requests")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_u64)
+            {
+                caused.insert(request_seq, action_seq);
+            }
+        }
+        drafts.push(draft);
     }
     drafts
 }
@@ -711,6 +764,10 @@ impl BoxStream {
         let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
         let env_dir = m.dir(h5i_root);
 
+        // Filled by the engine's action log and read by its request log, in
+        // that order. See the read-order note above: this is why it is fixed.
+        let mut caused: std::collections::BTreeMap<u64, u64> = std::collections::BTreeMap::new();
+
         let actions = crate::browser_proxy::actions_log(&env_dir);
         if let Some(growth) = grown(&actions, &mut self.actions_at) {
             if growth.restarted {
@@ -724,7 +781,8 @@ impl BoxStream {
                 if growth.restarted {
                     self.log.extend(reset_draft("the engine's action log"), &at);
                 }
-                self.log.extend(ingest_light_actions(&growth.text), &at);
+                    self.log
+                    .extend(ingest_light_actions_with(&growth.text, &mut caused), &at);
             }
         }
 
@@ -733,7 +791,8 @@ impl BoxStream {
                 if growth.restarted {
                     self.log.extend(reset_draft("the engine's request log"), &at);
                 }
-                self.log.extend(ingest_request_log(&growth.text), &at);
+                self.log
+                    .extend(ingest_request_log_with(&growth.text, &caused), &at);
             }
         }
 
@@ -1281,4 +1340,115 @@ mod tests {
         }
     }
 
+}
+
+#[cfg(test)]
+mod correlation_tests {
+    use super::*;
+
+    /// The engine's action log and request log, as the poller reads them.
+    fn linked(actions: &str, requests: &str) -> Vec<ViewerEvent> {
+        let mut caused = std::collections::BTreeMap::new();
+        let mut log = EventLog::new(64);
+        let at = "2026-08-09T00:00:00Z";
+        log.extend(ingest_light_actions_with(actions, &mut caused), at);
+        log.extend(ingest_request_log_with(requests, &caused), at);
+        log.since(0).into_iter().cloned().collect()
+    }
+
+    #[test]
+    fn a_request_names_the_action_that_caused_it() {
+        // What the engine writes: a click, and the receipts it produced.
+        let actions = r#"{"seq":7,"phase":"result","verb":"click","target":"e12","ok":true,"requests":[41,42]}"#;
+        let requests = concat!(
+            r#"{"seq":41,"phase":"request","url":"https://api.example/one","allowed":true}"#,
+            "\n",
+            r#"{"seq":42,"phase":"request","url":"https://api.example/two","allowed":true}"#,
+            "\n",
+            r#"{"seq":43,"phase":"request","url":"https://api.example/unrelated","allowed":true}"#,
+        );
+
+        let events = linked(actions, requests);
+        let action = events
+            .iter()
+            .find(|e| matches!(e.kind, EventKind::AgentAction { .. }))
+            .expect("the action is an event");
+
+        let requests: Vec<&ViewerEvent> = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::Request { .. }))
+            .collect();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(
+            requests[0].caused_by,
+            Some(action.id),
+            "the click's own requests point back at it"
+        );
+        assert_eq!(requests[1].caused_by, Some(action.id));
+        assert_eq!(
+            requests[2].caused_by, None,
+            "a request the action did not cause must not be attributed to it: \
+             nothing here infers a link from proximity"
+        );
+    }
+
+    #[test]
+    fn an_action_log_without_the_link_still_reads() {
+        // Older logs, and verbs that caused nothing, have no `requests` field.
+        let actions = r#"{"seq":1,"phase":"result","verb":"snapshot","ok":true}"#;
+        let requests = r#"{"seq":9,"phase":"request","url":"https://x.example/","allowed":true}"#;
+        let events = linked(actions, requests);
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|e| e.caused_by.is_none()));
+    }
+
+    #[test]
+    fn two_polls_do_not_confuse_one_actions_requests_for_anothers() {
+        // `Key::Action` is a per-batch index; the light engine's own sequence
+        // numbers are not, which is the whole reason for a separate key.
+        let mut caused = std::collections::BTreeMap::new();
+        let mut log = EventLog::new(64);
+        let at = "2026-08-09T00:00:00Z";
+
+        log.extend(
+            ingest_light_actions_with(
+                r#"{"seq":1,"phase":"result","verb":"click","ok":true,"requests":[10]}"#,
+                &mut caused,
+            ),
+            at,
+        );
+        log.extend(
+            ingest_light_actions_with(
+                r#"{"seq":2,"phase":"result","verb":"click","ok":true,"requests":[20]}"#,
+                &mut caused,
+            ),
+            at,
+        );
+        log.extend(
+            ingest_request_log_with(
+                concat!(
+                    r#"{"seq":10,"phase":"request","url":"https://a.example/","allowed":true}"#,
+                    "\n",
+                    r#"{"seq":20,"phase":"request","url":"https://b.example/","allowed":true}"#,
+                ),
+                &caused,
+            ),
+            at,
+        );
+
+        let events = log.since(0);
+        let actions: Vec<&ViewerEvent> = events
+            .iter()
+            .copied()
+            .filter(|e| matches!(e.kind, EventKind::AgentAction { .. }))
+            .collect();
+        let requests: Vec<&ViewerEvent> = events
+            .iter()
+            .copied()
+            .filter(|e| matches!(e.kind, EventKind::Request { .. }))
+            .collect();
+
+        assert_eq!(requests[0].caused_by, Some(actions[0].id));
+        assert_eq!(requests[1].caused_by, Some(actions[1].id));
+    }
 }

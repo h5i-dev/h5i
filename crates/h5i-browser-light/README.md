@@ -97,6 +97,7 @@ h5i-browser-light serve <url|path> [--addr 127.0.0.1:0] [--stream-file PATH]
                                    [--control-file PATH]
 h5i-browser-light session status | snapshot | navigate <url> | scroll <px>
                            | type <@ref> <text> | submit <@ref> | click <@ref>
+h5i-browser-light open|serve ... [--script]   # limited JavaScript preview
 h5i-browser-light capabilities     # what this engine can do, as JSON
 h5i-browser-light doctor           # fonts, proxy, allowlist, client
 ```
@@ -198,9 +199,95 @@ limits arrived with them rather than after:
   password is not replayed to wherever a server points next.
 
 Not built: **LOGIN mode** (5.10) — withholding frames and snapshots from the
-agent while a human types a credential. ROADMAP §11 item 5.5 says it should
-land with cookies rather than after. It has not, and until it does a human
+agent while a human types a credential. ROADMAP §12 says it should land with
+cookies rather than after. It has not, and until it does a human
 taking over to type a password is doing so on a page the agent can still read.
+
+### JavaScript, as a limited preview
+
+Off by default. `--script` turns it on, and `capabilities --script` reports what
+that configuration can do, because what h5i routes on is whether *this*
+invocation runs script rather than whether the binary could.
+
+```
+$ h5i-browser-light serve http://localhost:3000 --script
+$ h5i-browser-light session click @e1
+{"ok":true,"ref":"@e1","requests":["http://localhost:3000/api/item"],
+ "settled":"settled after 0ms"}
+```
+
+That reply is the point of the whole engine. The agent clicked, the page's own
+script ran, its `fetch` went through the same broker as everything else, the DOM
+changed, and the new item is in the next snapshot. The `requests` field is the
+causal link, stamped by the one component that knows it. The request log shows
+all three legs:
+
+```
+200 navigation  /index.html
+200 subresource /app.js          <- the script file, fetched before it ran
+200 subresource /api/item        <- what the click caused
+```
+
+Script-initiated traffic being first-class evidence is the lane where every
+other engine is thinnest, and it is only available to an engine that *is* the
+HTTP client.
+
+**How it is built.** Boa provides the language; the browser is ours. The Rust
+DOM is the single source of truth and every JS object naming a node is a wrapper
+over a `NodeId`, so the snapshot, the paint, the events and the script state
+cannot drift apart. The object model itself lives in a JavaScript prelude rather
+than in Rust, because event listeners, timer callbacks and promise resolvers are
+GC-managed and the engine that owns their lifetime should keep owning it. The
+Rust surface underneath is about twenty primitives taking ids and strings.
+
+**Settling is reported, not guessed.** "Run until settled" drains promise jobs
+and timers on a *virtual* clock, so a page's `setTimeout(1000)` costs an agent
+nothing and two runs of the same page settle identically. A page that never
+settles is cut off at a budget and says so, in the outline:
+
+```
+note: still busy after 2000ms (1 timers pending) — this page had not finished
+```
+
+A snapshot that quietly returned early is a wrong answer that looks like a right
+one, so that line exists rather than the silence.
+
+**Missing APIs are named, never stubbed silently.** What the page asked for and
+did not get appears outside the fence, most-used first:
+
+```
+note: this page used Web APIs this engine does not have
+      (Element.getBoundingClientRect x3, IntersectionObserver x1). What depends
+      on them did not run; the chromium engine has them.
+```
+
+That is the routing signal. Without it an agent cannot tell an empty page from
+one that needed the other engine.
+
+**ES modules work**, and `import "lodash"` does not become a request to a CDN.
+A bare specifier is refused by name, with what would have to exist instead —
+because a loader that silently rewrites one is an engine choosing destinations
+the page never named, inside a sandbox whose whole claim is that every request
+is policy-checked and receipted. Module fetches go through the same broker as
+everything else, carry the document origin, and appear in the request log.
+
+**What is not there.** `IntersectionObserver` and `ResizeObserver` report
+themselves as missing. `fetch` is synchronous underneath, so two requests run in
+order rather than at once, and `AbortController` cannot cancel one in flight. No
+iframes, workers, WebSocket, canvas, WebGL or WebAssembly.
+
+**Not yet verified: a production React build.** ROADMAP §12.4 sets that as the
+bar and it has not been cleared. What runs today is a hand-written application
+of the shape above. The gaps most likely to stop React first are the ones listed
+above, in that order.
+
+**The Boa version is pinned to 0.19 for a dependency reason, not a preference.**
+Boa 0.20+ requires `icu_normalizer ~2.0`; `parley`, which Blitz pulls for text,
+requires `^2.1.1`. Those ranges are disjoint and semver-compatible, so Cargo
+must pick one and cannot. 0.19 uses the 1.x line, which is semver-*incompatible*
+and therefore allowed to coexist — at the cost of two ICU stacks in the build.
+Upstream Boa has already moved `main` to `~2.2.0`, so this unwinds when that
+releases.
 
 ### The snapshot is fenced
 
@@ -266,7 +353,8 @@ receipts, the fail-closed broker, and the agent-facing snapshot.
 
 Tiers 1 and 2 of ROADMAP M10: static render, snapshot, screenshot, receipts,
 and a live view h5i's viewers can attach to. Plus the resident session and its
-verbs (ROADMAP §11 item 5.1). Tier 3 (policy-gated script) is not built.
+verbs (ROADMAP §12.1). Script is not built; ROADMAP §12 is the plan and
+§12.5 is what it costs.
 
 h5i can pin a box to this engine: `h5i box create --profile browser --engine
 h5i-light`, or `[profile.browser] engine = "h5i-light"`. A box pinned to it

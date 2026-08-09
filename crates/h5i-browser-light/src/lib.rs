@@ -36,6 +36,7 @@ pub mod fonts;
 pub mod net;
 pub mod policy;
 pub mod receipt;
+pub mod script;
 pub mod snapshot;
 pub mod stream;
 pub mod ws;
@@ -53,7 +54,13 @@ pub use receipt::{JsonlSink, MemorySink, RequestRecord, Sink};
 pub struct Capabilities {
     pub engine: String,
     pub version: String,
-    /// Tier 1 renders and snapshots; there is no script engine linked in.
+    /// Whether *this process* will run page script.
+    ///
+    /// Reported from the running configuration rather than from what the binary
+    /// is capable of, because the answer h5i routes on is "will this engine run
+    /// the page", not "could it". Script is opt-in (`--script`), and ROADMAP
+    /// §12.5 is why: turning it on changes the box's threat model, so it is a
+    /// decision someone makes rather than a default they inherit.
     pub javascript: bool,
     pub screenshot: bool,
     pub snapshot: bool,
@@ -70,10 +77,15 @@ pub struct Capabilities {
 
 impl Capabilities {
     pub fn current() -> Self {
+        Self::with_script(false)
+    }
+
+    /// What this engine can do with script either on or off.
+    pub fn with_script(javascript: bool) -> Self {
         Self {
             engine: "h5i-browser-light".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            javascript: false,
+            javascript,
             screenshot: true,
             snapshot: true,
             live_view: true,

@@ -138,7 +138,11 @@ enum Command {
     ///
     /// h5i reads this to decide what to route here rather than inferring it
     /// from a version number.
-    Capabilities,
+    Capabilities {
+        /// Report what this engine can do with `--script` on.
+        #[arg(long)]
+        script: bool,
+    },
 
     /// Report the environment: fonts, proxy, and what the policy would allow.
     Doctor {
@@ -157,6 +161,31 @@ enum SessionVerb {
     /// The page as a model should read it: the fenced outline, with `@ref`
     /// handles for the things that can be acted on.
     Snapshot {
+        /// Report only what changed since the last snapshot.
+        ///
+        /// Three hundred lines re-read after every click, of which four are
+        /// new, is the wrong shape for an agent loop. When the page changed too
+        /// much for a difference to be the shorter answer — a navigation, or a
+        /// page that replaced its own body — the full outline is sent instead
+        /// and the reply says which it is.
+        #[arg(long)]
+        delta: bool,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+    /// Hand the page to the human at the live view for as long as a login takes.
+    ///
+    /// While this is on the agent cannot read the page: a credential typed into
+    /// a page the agent can snapshot has been handed to the agent. The session
+    /// that the login establishes stays in the jar afterwards, and the agent can
+    /// see that it is logged in without ever reading the cookie that says so.
+    Login {
+        /// End login mode and make the page readable again.
+        #[arg(long, conflicts_with = "on")]
+        off: bool,
+        /// Begin login mode. The default.
+        #[arg(long)]
+        on: bool,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -265,6 +294,16 @@ struct ViewArgs {
     /// Most lines of outline to emit.
     #[arg(long, default_value_t = 500)]
     max_snapshot_lines: usize,
+
+    /// Run the page's own JavaScript. **Limited preview** — see the README for
+    /// what is and is not implemented.
+    ///
+    /// Off by default on purpose. With script off, page-borne prompt injection
+    /// has no delivery channel at all because no engine is running; turning it
+    /// on spends that, and it is a decision rather than a default (ROADMAP
+    /// §12.5).
+    #[arg(long)]
+    script: bool,
 }
 
 /// Writes to both sinks, and fails if either refuses.
@@ -293,8 +332,13 @@ fn main() {
 
 fn run() -> Result<(), H5iError> {
     match Cli::parse().command {
-        Command::Capabilities => {
-            println!("{}", serde_json::to_string_pretty(&Capabilities::current())?);
+        Command::Capabilities { script } => {
+            // Reported for the configuration asked about, because what h5i
+            // routes on is whether *this* invocation runs script.
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&Capabilities::with_script(script))?
+            );
             Ok(())
         }
         Command::Doctor { net } => doctor(&net),
@@ -354,6 +398,7 @@ fn load(
             height: view.height,
             scale: view.scale,
             max_snapshot_lines: view.max_snapshot_lines,
+            script: view.script,
         },
     );
 
@@ -404,7 +449,12 @@ fn serve(
 fn session(verb: SessionVerb) -> Result<(), H5iError> {
     let (at, request) = match &verb {
         SessionVerb::Status { at } => (at, serde_json::json!({"verb": "status"})),
-        SessionVerb::Snapshot { at } => (at, serde_json::json!({"verb": "snapshot"})),
+        SessionVerb::Snapshot { delta, at } => {
+            (at, serde_json::json!({"verb": "snapshot", "delta": delta}))
+        }
+        SessionVerb::Login { off, on: _, at } => {
+            (at, serde_json::json!({"verb": "login", "on": !off}))
+        }
         SessionVerb::Navigate { url, at } => {
             (at, serde_json::json!({"verb": "navigate", "url": url}))
         }
@@ -441,7 +491,14 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
 
     // The snapshot is the whole point of the verb; everything else is a line.
     if let Some(text) = reply.get("text").and_then(serde_json::Value::as_str) {
+        // Why the full outline arrived when a difference was asked for. Said
+        // rather than left to be inferred from the length.
+        if let Some(reason) = reply.get("reason").and_then(serde_json::Value::as_str) {
+            eprintln!("note: {reason}");
+        }
         println!("{text}");
+    } else if let Some(message) = reply.get("message").and_then(serde_json::Value::as_str) {
+        println!("{message}");
     } else if let Some(moved) = reply.get("moved").and_then(serde_json::Value::as_bool) {
         let offset = reply.get("offset").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
         let height = reply
@@ -638,6 +695,31 @@ fn open(
             "snapshot": snapshot,
             "text": page.text(),
             "requests": records,
+            // Machine-readable forms of what the snapshot says in prose, so a
+            // caller aggregating across many pages does not have to parse
+            // sentences back out of the outline.
+            "unsupported": page
+                .unsupported()
+                .into_iter()
+                .map(|(name, count)| serde_json::json!({ "api": name, "calls": count }))
+                .collect::<Vec<_>>(),
+            "console": page
+                .console()
+                .into_iter()
+                .map(|line| {
+                    serde_json::json!({
+                        "level": line.level,
+                        "text": line.text,
+                        // Which of the two is talking. "the site reported an
+                        // error" and "the browser could not do something" call
+                        // for different responses and were indistinguishable.
+                        "source": line.source,
+                        "repeats": line.repeats,
+                    })
+                })
+                .collect::<Vec<_>>(),
+            "settled": page.settled().map(|s| s.render()),
+            "script": page.has_script(),
             "screenshot": screenshot_bytes.as_ref().map(|(path, len)| serde_json::json!({
                 "path": path.display().to_string(),
                 "bytes": len,
@@ -829,6 +911,34 @@ mod tests {
             .is_err(),
             "--port and --control-file must not be given together"
         );
+    }
+
+    #[test]
+    fn script_is_opt_in_at_the_command_line() {
+        // The gate ROADMAP_BROWSER §3.3 asks for: script is a decision someone
+        // makes, never a default they inherit.
+        for argv in [
+            vec!["h5i-browser-light", "open", "https://x.example/", "--script"],
+            vec!["h5i-browser-light", "serve", "https://x.example/", "--script"],
+            vec!["h5i-browser-light", "capabilities", "--script"],
+        ] {
+            Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+        }
+    }
+
+    #[test]
+    fn capabilities_report_the_configuration_asked_about() {
+        // What h5i routes on is whether *this* invocation runs script, not what
+        // the binary could do if asked differently.
+        assert!(!Capabilities::current().javascript, "off unless asked");
+        assert!(!Capabilities::with_script(false).javascript);
+        assert!(Capabilities::with_script(true).javascript);
+
+        // The rest is a property of the engine either way, and stays honest.
+        let with = Capabilities::with_script(true);
+        assert!(with.fail_closed_receipts);
+        assert!(with.snapshot && with.screenshot && with.live_view);
+        assert!(!with.video && !with.webgl, "still absent, and still said so");
     }
 
     #[test]
