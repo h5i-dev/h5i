@@ -905,6 +905,39 @@ by writing a test that appends.
 
 ---
 
+### 8.14 Shadow DOM, flattened — and where the interrupt actually is
+
+**Shadow DOM is built**, after two sites asked for `Element.shadowRoot` once the
+performance work let them run far enough to want it. That is the rule this file
+keeps: nothing is built until a page asks, and lit.dev and material-web asked.
+
+This engine has one tree and blitz has no notion of a shadow one, so a shadow
+root is a **view of the host element** and everything a component renders into
+it lands in the host. The trade is stated rather than discovered:
+
+* **Kept**: the content renders and is therefore readable, `host` and `mode`
+  answer, `nodeType` is 11, a closed root is not handed out, and light children
+  are projected into a `<slot>` if the component declares one — otherwise held
+  aside, because a browser stops rendering them and showing a component's input
+  beside its output would be worse than showing neither.
+* **Lost**: encapsulation. `document.querySelector` reaches inside a shadow root
+  here and would not in a browser, and styles do not scope.
+
+That is the same flattening a browser's own accessibility tree performs, and for
+an engine whose product is a readable account of a page it is the right half to
+keep.
+
+**The interrupt exists, and not where it is needed.** §8.11 recorded that Boa
+exposes no way to stop a running evaluation. That was wrong:
+`Script::evaluate_async_with_budget` is public, and the VM yields to the caller
+every N instructions — a real interrupt, for classic scripts. `Module` has only
+`evaluate()`, with no budgeted variant, and lit.dev is modules end to end. So
+the mechanism is there, the upstream ask has a precise shape —
+`Module::evaluate_async_with_budget` — and until it exists a module graph is
+still one uninterruptible unit.
+
+---
+
 ## 10. What is next, 2026-08-09
 
 Tiers 0 through 4 of the plan this section replaces are done. What the work

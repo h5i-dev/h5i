@@ -528,3 +528,64 @@ fn moving_a_node_moves_it_rather_than_losing_it() {
     // throughout, because a move is a move.
     reading.assert_shows("ABC CAB ABC DBC");
 }
+
+/// A design-system component that renders into a shadow root.
+///
+/// Flattened: this engine has one tree, so shadow content lands in the host and
+/// is therefore *readable*, which is the half that decides whether an agent can
+/// use the page. Encapsulation is not enforced — `document.querySelector`
+/// reaches inside here and would not in a browser — and that trade is stated in
+/// `ShadowRoot` rather than discovered.
+#[test]
+fn a_component_that_renders_into_a_shadow_root_is_readable() {
+    let reading = read(
+        "<html><body><my-card><span>slotted content</span></my-card>\
+         <output id='out'></output>\
+         <script>\
+           class MyCard extends HTMLElement {\
+             connectedCallback() {\
+               const root = this.attachShadow({ mode: 'open' });\
+               root.innerHTML = '<div class=\"card\"><h2>Card title</h2><slot></slot></div>';\
+             }\
+           }\
+           customElements.define('my-card', MyCard);\
+           const card = document.querySelector('my-card');\
+           document.querySelector('#out').textContent = \
+             'mode=' + card.shadowRoot.mode + \
+             ' host=' + (card.shadowRoot.host === card) + \
+             ' type=' + card.shadowRoot.nodeType;\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("shadow DOM");
+    // What the component rendered is in the page and readable.
+    reading.assert_shows("Card title");
+    // And the light content it was given was projected into its slot rather
+    // than left doubled up beside the output.
+    reading.assert_shows("slotted content");
+    reading.assert_shows("mode=open host=true type=11");
+}
+
+/// A closed root answers null, because the component asked for that — the
+/// flattening already leaks more than a browser would.
+#[test]
+fn a_closed_shadow_root_is_not_handed_out() {
+    let reading = read(
+        "<html><body><x-closed></x-closed><output id='out'></output>\
+         <script>\
+           class Closed extends HTMLElement {\
+             connectedCallback() {\
+               this.attachShadow({ mode: 'closed' }).innerHTML = '<p>inside</p>';\
+             }\
+           }\
+           customElements.define('x-closed', Closed);\
+           document.querySelector('#out').textContent = \
+             'exposed=' + (document.querySelector('x-closed').shadowRoot !== null);\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("a closed shadow root");
+    reading.assert_shows("exposed=false");
+    // Still rendered, though: an agent reads what the page shows.
+    reading.assert_shows("inside");
+}

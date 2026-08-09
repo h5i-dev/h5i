@@ -978,6 +978,30 @@
     // Bring the element into view for a screenshot or a live viewer. The
     // outline an agent reads covers the whole document either way, so this
     // changes what a *human* watching sees and nothing about what is readable.
+    // Attach a shadow root, flattened into this element. See `ShadowRoot` for
+    // what that costs and why it is the right trade for a reading engine.
+    attachShadow(init) {
+      if (this._shadow) {
+        throw new Error("attachShadow: this element already has a shadow root");
+      }
+      const mode = String((init && init.mode) || "open");
+      // Light children are taken out of the way first. A browser stops
+      // rendering them once a shadow root exists unless they are slotted, and
+      // leaving them would show a component's input and its output at once.
+      const light = this.childNodes;
+      for (const kid of light) detachFromParent(kid);
+
+      const root = new ShadowRoot(this._id, mode);
+      root._light = light;
+      this._shadow = root;
+      return root;
+    }
+    // Null for a closed root, as in a browser: the component asked for that,
+    // and the flattening already leaks more than it should.
+    get shadowRoot() {
+      return this._shadow && this._shadow.mode === "open" ? this._shadow : null;
+    }
+
     scrollIntoView() { api.scrollToNode(this._id); }
     // An element does not scroll here — nothing clips and scrolls a subtree —
     // so this moves the document, which is what the caller wanted when the
@@ -1147,6 +1171,59 @@
     // every page writes compares the two.
     get clientWidth() { return (api.scrollMetrics(this._id) || [0, 0, 0, 0, 0, 0])[5]; }
     get clientHeight() { return (api.scrollMetrics(this._id) || [0, 0, 0, 0, 0])[4]; }
+  }
+
+  // What `attachShadow` hands back.
+  //
+  // This engine has one tree, and blitz has no notion of a shadow one — so a
+  // shadow root here is a *view of the host element*, and everything a
+  // component renders into it lands in the host. That is the flattening a
+  // browser's accessibility tree performs anyway, and it is what an agent
+  // wants: the component's rendered output, in the page, readable.
+  //
+  // The cost is stated rather than hidden: **encapsulation is not enforced**.
+  // `document.querySelector` reaches inside a shadow root here and would not in
+  // a browser, and styles do not scope. What is preserved is the part that
+  // decides whether a page can be read at all — the content renders, `host` and
+  // `mode` answer, and light children are projected into a `<slot>` if the
+  // component declares one.
+  class ShadowRoot extends Element {
+    constructor(hostId, mode) {
+      super(hostId);
+      this._mode = mode;
+      this._light = [];
+    }
+    get nodeType() { return 11; }
+    get nodeName() { return "#document-fragment"; }
+    get mode() { return this._mode; }
+    get host() { return wrap(this._id); }
+    get activeElement() { return null; }
+    get styleSheets() { return []; }
+    // The host is where content actually lives, so `innerHTML` on the root and
+    // on the host are the same string — and setting it re-runs projection,
+    // because the `<slot>` a component declares usually arrives with it.
+    set innerHTML(html) {
+      api.setInnerHtml(this._id, String(html));
+      this._project();
+    }
+    get innerHTML() { return api.innerHtml(this._id); }
+    appendChild(child) {
+      const out = Element.prototype.appendChild.call(this, child);
+      this._project();
+      return out;
+    }
+    // Put the light children where the component said they should go. One
+    // unnamed slot, which is what the overwhelming majority declare; a page
+    // using named slots keeps its light content out of the way instead, which
+    // is a gap worth reporting rather than guessing at.
+    _project() {
+      if (this._light.length === 0) return;
+      const slot = wrap(api.query("slot", this._id));
+      if (!slot) return;
+      const pending = this._light;
+      this._light = [];
+      for (const node of pending) slot.appendChild(node);
+    }
   }
 
   // What `<template>.content` hands back.
