@@ -87,25 +87,22 @@ change.**
 
 ## 3. Security: what script bought and what it cost
 
-### 3.1 The live hole, introduced 2026-08-09
+### 3.1 The loopback hole — **closed 2026-08-09**
 
-`Policy::check(&self, url: &Url)` takes **only a URL** — no origin, no
-initiator — and loopback is allowed unconditionally by default, deliberately,
-because the box's dev server is the point.
+`Policy::check` took only a URL, and loopback is allowed unconditionally by
+default because the box's dev server is the point. Before script, an untrusted
+page could *cause* a loopback request but not read the response. With `--script`
+it could `fetch` the dev server, read the body, and POST it anywhere in
+`net.egress` — a read primitive against the code the agent is working on, past
+the egress proxy that never sees loopback.
 
-Before script, an untrusted page could *cause* a loopback request
-(`<img src="http://127.0.0.1:3000/admin">`) but could not **read the response**.
-With `--script` it can `fetch` loopback, read the body, and POST it to anything
-in `net.egress`. That is a read primitive against the code the agent is working
-on, and loopback explicitly bypasses the egress proxy, so the box's outer
-enforcement never sees it.
+Closed by `Policy::check_from(url, document)`: loopback is reachable **from a
+loopback document**. A page served by the dev server may talk to it; a page from
+the open web may not. Tested both directions
+(`a_web_page_cannot_read_the_dev_server_and_never_reaches_the_wire`,
+`the_dev_servers_own_page_still_reaches_it`).
 
-**Fix, and it is the next thing to build:** loopback is reachable *from a
-loopback document*. A page served by the dev server may talk to the dev server;
-a page from the open web may not. That requires `check` to take the document
-origin, which it does not today.
-
-Worth stating alongside the pure-Rust claim: this is a **logic** bug, and Rust
+Worth keeping in front of the reader: this was a **logic** bug, and Rust
 prevents none of them. "Fewer memory bugs" is honest; "safer browser" is earned
 by the origin model, not the language.
 
@@ -118,10 +115,15 @@ the fourth — it protects the host from the box and says nothing about two
 origins sharing one address space.
 
 That did not matter while the engine held nothing worth stealing. The cookie jar
-shipped on 2026-08-08 and script on 2026-08-09, so it matters now. Blitz and
-Stylo being Rust is the current mitigation. One of these must be chosen before
-this is called production-grade: one origin per session, clearing the jar across
-origins, or keeping the jar out of the process that runs script.
+shipped on 2026-08-08 and script on 2026-08-09, so it mattered.
+
+**Answered 2026-08-09, by the second of the three options**: the jar is cleared
+on cross-origin navigation (`Jar::retain_origin`), so one session holds one
+origin's cookies and a page can never be in the same address space as another
+origin's session. The cost is stated where a user meets it — leaving an origin
+drops its login, and the snapshot says so rather than letting the agent discover
+it by being logged out. `document.cookie` additionally withholds `HttpOnly`,
+which is the line between what the wire carries and what script may read.
 
 ### 3.3 The gate, still honoured
 
@@ -132,20 +134,28 @@ flipped by default and nothing should until 3.1 and 3.2 are answered. See
 
 ---
 
-## 4. Fix first: three things that are wrong, not missing
+## 4. Three things that were wrong rather than missing — **all fixed**
 
-"Missing" is honest and reports itself. These are worse: they corrupt a page
+"Missing" is honest and reports itself. These were worse: they corrupted a page
 while looking like they worked, which is the failure mode the fence and the
-unsupported-API log exist to prevent. They also pollute any measurement taken
-before they are fixed.
+unsupported-API log exist to prevent, and they polluted every measurement taken
+before they were fixed. Kept here because the *class* is the lesson, not the
+three bugs.
 
-1. **`innerHTML` getter returns `textContent`.** All markup is stripped, so
-   `el.innerHTML = el.innerHTML` destroys the subtree.
-2. **`createDocumentFragment()` returns a `<div>`.** Appending a fragment injects
-   a real element that should not exist, breaking `.parent > .child` and layout.
-3. **`Element.style` does not exist**, so `el.style.display = 'none'` throws.
-   Loud rather than silent, but it kills the script at that line, and inline
-   style is everywhere.
+1. ~~`innerHTML` getter returned `textContent`~~ — all markup stripped, so
+   `el.innerHTML = el.innerHTML` destroyed the subtree. Now a real serialisation.
+   The root cause was upstream of the getter: `DocumentConfig` never set an
+   `html_parser_provider`, so `set_inner_html` silently did nothing.
+2. ~~`createDocumentFragment()` returned a `<div>`~~ — appending a fragment
+   injected a real element that broke `.parent > .child` and layout. Now a real
+   fragment, and one that can be searched (§8.6).
+3. ~~`Element.style` did not exist~~ — `el.style.display = 'none'` threw and
+   killed the script at that line. Now a real `StyleDeclaration`.
+
+The same class keeps recurring and is worth naming: **a plausible answer is
+worse than no answer.** `matchMedia` returning false to everything, `scrollTop`
+computed from the bounding rect, `structuredClone` via a JSON round trip, and
+`clientHeight` for `documentElement` were all this bug wearing different clothes.
 
 ---
 
@@ -160,36 +170,42 @@ refusing to give it.
 
 | | why | note |
 | --- | --- | --- |
-| **ES modules and `import()`** | every production bundle ships `<script type="module">`; today they do not execute at all | Boa has a `ModuleLoader`; read Thalora's for shape but **not for policy** — see §7.2 |
-| **`Element.style` (CSSOM)** | `el.style.display = 'none'` is ubiquitous | Thalora: `browser/cssom.rs` |
-| **`getBoundingClientRect`** | every popover, dropdown, drag and virtual list | **cheap** — Blitz computes `final_layout` already |
-| **`getComputedStyle`** | feature detection and measurement | **cheap** — Stylo has it |
-| **`MutationObserver`** | frameworks depend on it; and it is the natural source for our own semantic delta | Thalora: `observers/mutation_observer.rs` |
+| ~~ES modules and `import()`~~ | every production bundle ships `<script type="module">` | **built**, through the broker; bare specifiers are refused rather than rewritten to a CDN |
+| ~~`Element.style` (CSSOM)~~ | `el.style.display = 'none'` is ubiquitous | **built** |
+| ~~`getBoundingClientRect`~~ | every popover, dropdown, drag and virtual list | **built** — Blitz computes `final_layout` already |
+| ~~`getComputedStyle`~~ | feature detection and measurement | **built** — via Stylo's `to_css_string`, not `Debug` |
+| ~~`MutationObserver`~~ | frameworks depend on it | **built**. The semantic delta went its own way in the end — diffing two outlines, not observing mutations (§8.7) |
 | ~~`IntersectionObserver`, `ResizeObserver`~~ | lazy loading, virtual lists, responsive components | **built 2026-08-09**, driven from the settle loop (§8.2) |
-| **`localStorage` / `sessionStorage`** | in-memory maps; absence throws or breaks init paths | deliberately non-persistent, see §6 |
-| **`history.pushState`** | SPA routing; without it client-side navigation silently does nothing | Thalora: `browser/history.rs` |
+| ~~`localStorage` / `sessionStorage`~~ | absence throws or breaks init paths | **built**, deliberately non-persistent — see §6 |
+| ~~`history.pushState`~~ | SPA routing | **built**, and it moves `location` with it — for a while it did not, so a router reading its own route back got the page it had already left |
 
 ### Tier B — blocks a large fraction of real applications
 
-* Real event types: `MouseEvent`, `KeyboardEvent`, `InputEvent`, `CustomEvent`
-  with `detail`, plus `key`, `clientX/Y`. Thalora: `events/` is 7.6k lines and
-  the best single map of what is needed here.
-* Form semantics: `input`/`change` on typing, checkbox, radio, `select`,
-  `FormData`. Thalora: `misc/form_data.rs`, `misc/form.rs`.
-* `closest()`, `matches()`, `dataset`, `cloneNode`, `insertAdjacentHTML`,
-  a real `DOMTokenList`. Thalora: `dom/domtokenlist`, `dom/element.rs`.
-* `AbortController`, `Headers`, `Request`, and concurrent `fetch`. Ours is
-  synchronous underneath, so two requests run in order rather than at once.
-* `window.scrollTo` and scroll events.
+All built, most of it driven by §8 rather than by this list:
+
+* Real event types — `MouseEvent`, `KeyboardEvent`, `InputEvent`, `CustomEvent`
+  with `detail` — plus `on*` handler properties.
+* Form semantics: `input`/`change` on typing, checkbox, radio, `select` with a
+  live `selectedIndex`, `FormData`.
+* `closest()`, `matches()`, `dataset`, `cloneNode`, `insertAdjacentHTML`, a real
+  `DOMTokenList` over whichever attribute holds the tokens.
+* `AbortController`, `Headers`, `Request`, and **concurrent `fetch`** — six on
+  the wire at once, so an SPA's fan-out is no longer a waterfall of our making.
+* `window.scrollTo`, `scrollY`, and the viewport dimensions, which nothing had
+  ever exposed.
 
 ### Tier C — the tail
 
-Canvas 2D, WebSocket, Workers, **WebAssembly**, Shadow DOM and custom elements
-(design systems use them), SVG DOM, Streams, `TextEncoder`/`TextDecoder`,
-`structuredClone`, `crypto.getRandomValues`.
+Built since, because a real page asked: **custom elements** (define, upgrade
+existing markup, the lifecycle callbacks), `TextEncoder`/`TextDecoder`,
+`structuredClone`, `crypto.getRandomValues` and `randomUUID` over the OS CSPRNG,
+`XMLHttpRequest` over the same queue `fetch` uses.
 
-None of these is scheduled. Each is added when the corpus in §8 says a real page
-needed it, not before.
+Still absent, and still unscheduled: Canvas 2D, WebSocket, Workers,
+**WebAssembly**, Shadow DOM, SVG DOM, Streams. Shadow DOM is the interesting
+one — the application corpus includes two design-system sites that use it, and
+neither asked for it, because their documentation pages are server-rendered.
+That is the rule working: nothing here is added until a page in §8 needs it.
 
 ---
 
@@ -547,6 +563,126 @@ What the four turned into:
 
 ---
 
+### 8.6 A second corpus: applications, not documents
+
+The document corpus reached zero asks and zero anonymous errors, and then
+stopped being informative — **because four of its 28 pages still rendered
+nothing and not one of them was a missing API**:
+
+| site | why | not |
+|---|---|---|
+| crates.io | server answered **404** to a request that sent no `Accept` | an API gap |
+| stackoverflow | **403** bot wall, rendering as one line | an API gap |
+| json.org | a `<meta refresh>` this engine never followed | an API gap |
+| vitejs.dev | redirected to vite.dev, correctly refused, unhelpfully explained | an API gap |
+
+That inverted the plan: the next frontier was the network layer and the honesty
+of the report around it, not more bindings. All four are fixed (§8.8), and
+crates.io answers 200 and json.org renders 299 lines instead of 1.
+
+So the corpus was **pointed at applications instead** — SPAs, interactive demos,
+design systems — because a documentation corpus will never ask for routing,
+storage or template cloning when it contains nothing that does them. It named,
+immediately and specifically:
+
+* **`<template>.content`** — and this was not a small gap. Its absence made
+  `template.content.cloneNode(true)` throw `cannot convert 'null' or 'undefined'
+  to object`, which was the *entire text* of **fifteen module failures**. Clone,
+  query, fill, append is how every framework renders a row.
+* **Scoped selector queries that do not scope.** `query_selector_all` always
+  starts at the document root and the engine narrowed by ancestry afterwards, so
+  a **detached** subtree was invisible — which is every cloned template before it
+  is inserted, exactly when a framework searches one. Stylo's fast path consults
+  the document's id and class caches and reports "handled, nothing found" rather
+  than falling through, so scoped queries now walk the subtree and match element
+  by element. `matches()` had the same bug and answered false for anything
+  detached.
+* **`location.pathname`**, which was undefined, and `pushState`, which never
+  moved the address at all.
+* `relList`, `attributes`, `firstElementChild`, `getAnimations`,
+  `document.contentType`, `meta.content`, `on*` handlers.
+
+### 8.7 What the instrument caught in its own reflection, twice more
+
+* **A framework's private field is not an API gap.** Solid reads
+  `document._$DX_DELEGATE` before setting it, and the ask list carried it as
+  something this engine was missing. No web platform property begins with `_` or
+  `$`.
+* **"module failed" names nothing** — the same anonymity §8.3 removed from
+  script errors, one level up. Modules now carry their specifier into the
+  failure. The reporting proxy also watches `location`, `history`, `navigator`,
+  `performance`, the storages and `crypto`, which is where the last unnamed
+  failures were hiding.
+
+**The corpus now lives in the repository**, after a crash took the only copy
+along with the scratchpad it sat in. `corpus/run.py` is the network instrument;
+`tests/corpus.rs` is the part CI runs — the same patterns against local
+fixtures, asserting the two properties that matter, and it found two real bugs
+the moment it was written.
+
+Applications corpus: 20/20 load, one ask left, **zero anonymous errors**.
+Fourteen module failures remain, each now attributed to a named bundle. Going
+further needs source positions, which is the concrete cost of the Boa
+constraint below and the clearest argument for revisiting it.
+
+### 8.8 The network layer
+
+Not bindings, and the reason four pages read as empty:
+
+* **Request fidelity.** No `Accept`, no `Accept-Language`, and a user agent that
+  named only the crate. The agent string is honest rather than imitative — it
+  names this engine and does not claim to be Chrome — and is now one constant
+  shared with `navigator.userAgent`, because a page that branches on it
+  server-side and again in script must see the same string twice.
+* **`<meta refresh>`** is followed, with a hop limit and a visited set, and a
+  refresh further out than 15 seconds is *reported* rather than followed: that is
+  a page updating itself, not a redirect.
+* **A refused redirect names its target.** Following it automatically would let
+  a server route us out of the allowlist; saying where it wanted to go costs
+  nothing.
+* **Bot challenges are named**, because a challenge page renders to almost
+  nothing and its outline is otherwise indistinguishable from an empty page.
+* **`fetch` is concurrent** — six on the wire at once, the browsers' per-host
+  figure, chosen so a page with two hundred images cannot become two hundred
+  threads inside a box with a memory ceiling. Waiting on the wire uses *real*
+  time against its own budget, since the virtual clock is free to advance and a
+  round trip is not.
+
+### 8.9 What it costs, measured
+
+`cargo run --release --example perf`, on this machine, 2026-08-09:
+
+```
+reading a page                   no script    script     outline
+10 sections   (~90 nodes)            2.0ms    20.3ms      60 lines
+100 sections  (~900 nodes)          10.4ms    29.9ms     500 lines
+500 sections  (~4500 nodes)         65.5ms    85.9ms     500 lines
+
+memory: 15 MiB resident per 500-section page
+
+a DOM property read, over 20000 reads
+  plain object, no proxy             775 ns
+  watched node, known property      2460 ns
+  watched node, read from tree      6173 ns
+    → the proxy trap                1685 ns
+    → reaching into the tree        3712 ns
+```
+
+Three things worth saying plainly:
+
+1. **Starting the script realm costs ~20ms flat**, which dominates a small page.
+   That is the prelude being parsed and evaluated once per page.
+2. **The reporting proxy costs ~1.7µs per property read.** That is the price of
+   being able to name what a page asked for and we lack, paid on the hottest
+   path in the engine.
+3. **An optimisation was tried and rejected.** Precomputing the set of known
+   property names, so the trap does a hash lookup instead of walking the
+   prototype chain, changed nothing measurable — the cost is Boa dispatching
+   into a JavaScript trap at all, not the test inside it. The complexity was
+   reverted rather than kept for a number that did not move.
+
+---
+
 ## 9. What "production-grade" means here
 
 Not "80% of the web". That number splits by an order of magnitude — reading
@@ -555,23 +691,65 @@ driving interactive applications is Kitesurf's 215,000 web platform tests, which
 is quarters of work and a different product. The bar for this engine is narrower
 and checkable:
 
-1. §4 fixed, so nothing corrupts a page silently.
-2. §3.1 fixed, so an untrusted page cannot read the box's dev server.
-3. §3.2 answered, so cookies and script sharing an address space is a decision.
+1. ~~§4 fixed~~, so nothing corrupts a page silently. **Done.**
+2. ~~§3.1 fixed~~, so an untrusted page cannot read the box's dev server.
+   **Done** — origin-aware policy.
+3. ~~§3.2 answered~~, so cookies and script sharing an address space is a
+   decision. **Done** — one origin per session, jar cleared on leaving it.
 4. A production React build renders, is drivable, and reports honestly what it
-   could not do.
-5. Every page either works or **says which API it needed** — never a silent
-   wrong answer.
+   could not do. **Partly.** It renders and reports honestly; it does not
+   hydrate — see the fourteen attributed module failures in §8.7.
+5. ~~Every page either works or says which API it needed~~, never a silent wrong
+   answer. **Done, and this is the one that took the most work**: an empty ask
+   list beside an unattributable error is the same lie in a nicer shape, which
+   is why §8.3 and §8.7 exist. Both corpora now report **zero anonymous errors**.
 6. `h5i box view`, `--term` and `h5i ui` all attach and stay attached, with the
-   control lock enforced.
-7. **LOGIN mode**, so a human typing a credential is not doing it on a page the
-   agent can snapshot.
+   control lock enforced. **Unchanged.**
+7. ~~**LOGIN mode**~~, so a human typing a credential is not doing it on a page
+   the agent can snapshot. **Done** — `session login`, refusing every verb that
+   reads or drives the page while a human is typing.
 
-(7) is overdue rather than pending: it was supposed to arrive *with* cookies and
-did not.
+The differentiator is no longer only half-built: the engine stamps the causal
+link, the action log records which receipts each verb produced, and **`h5i ui`
+now draws it** — a click and the requests it caused, joined by receipt number
+rather than inferred from timing. The semantic delta shipped alongside it, so a
+step costs what the step did rather than the size of the page.
 
 The differentiator is not on that list because it is not a browser feature:
 action-to-request correlation rendered in `h5i ui`, and a semantic delta instead
 of a full outline every step. The engine now stamps the causal link; the console
 does not yet draw it. That is the work that makes this h5i's browser rather than
 a small browser that happens to run here.
+
+---
+
+## 10. What is next, 2026-08-09
+
+Tiers 0 through 4 of the plan this section replaces are done. What the work
+itself surfaced, in the order the evidence supports:
+
+1. **The fourteen module failures.** Every one is now attributed to a named
+   bundle and none can be localised further, because Boa 0.19 reports neither a
+   line number nor a stack. This is the single largest remaining gap between
+   "reads a page" and "drives an application", and it is blocked on (2).
+2. **Boa 0.21, which is blocked on `icu_normalizer`.** 0.21 maps a program
+   counter to `(function_name, SourcePath, Position)`; 0.19 and 0.20 have
+   nothing. 0.21 wants `~2.0.0` and parley wants `^2.1.1` — both 2.x, so cargo
+   must pick one and no version satisfies both. Verified by attempting the
+   upgrade, not by reading. The unblock is upstream: either boa relaxes the pin
+   or blitz's parley moves. Worth watching rather than working around; vendoring
+   a fork of an engine is a maintenance burden that outlives the problem.
+3. **The realm costs ~20ms to start** and is rebuilt per page. A resident
+   session that reuses one realm across navigations would remove it from every
+   step after the first. Measured, not guessed — see §8.9.
+4. **Shadow DOM**, if and when a page in §8 asks. Two design-system sites in the
+   application corpus use it and neither asked, because their docs pages are
+   server-rendered. Adding it now would be building for a page we have not met.
+5. **A corpus that needs a login.** Everything measured so far is public, so
+   LOGIN mode and the cookie jar are tested but not *exercised* against a real
+   session-gated application. That is the next honest extension of §8, and the
+   one most likely to find something surprising.
+
+The rule that produced everything above stays: **nothing is built until a page
+asks for it, and an instrument that cannot name what is missing is fixed before
+anything it failed to name.**
