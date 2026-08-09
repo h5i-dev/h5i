@@ -734,3 +734,69 @@ fn layout_runs_behind_a_guard_that_reports_rather_than_aborts() {
         reading.outline
     );
 }
+
+/// `document.write`, emulated where it can be. A browser inserts at the
+/// parser's position; this engine parses first and runs scripts after, so
+/// "the parser's position" is the script doing the writing — which is the same
+/// place for the one deliberate use, an inline script emitting markup in situ.
+#[test]
+fn document_write_puts_markup_where_the_script_is() {
+    let reading = read(
+        "<html><body><p>before</p>\
+         <script>document.write('<p id=\"w\">written in place</p>');</script>\
+         <p>after</p></body></html>",
+    );
+
+    reading.assert_clean("document.write");
+    reading.assert_shows("written in place");
+    // In place: between what preceded the script and what followed it.
+    let outline = &reading.outline;
+    let before = outline.find("before").unwrap();
+    let written = outline.find("written in place").unwrap();
+    let after = outline.find("after").unwrap();
+    assert!(before < written && written < after, "order is wrong:\n{outline}");
+}
+
+/// Called with no script running, a browser would implicitly `document.open()`
+/// and wipe the page. That is refused by name rather than emulated: the call
+/// would have been harmless during parsing, and the difference is this engine's
+/// script timing rather than the page's intent.
+#[test]
+fn document_write_after_parsing_refuses_rather_than_wiping_the_page() {
+    let reading = read(
+        "<html><body><p>keep me</p>\
+         <script>setTimeout(() => document.write('<p>too late</p>'), 0);</script>\
+         </body></html>",
+    );
+
+    reading.assert_shows("keep me");
+    assert!(
+        reading
+            .unsupported
+            .iter()
+            .any(|(name, _)| name.contains("document.write")),
+        "the refusal is named: {:?}",
+        reading.unsupported
+    );
+}
+
+/// A constructable stylesheet, backed by a real `<style>` so its rules reach
+/// the style engine rather than being remembered and ignored.
+#[test]
+fn a_constructed_stylesheet_can_be_adopted() {
+    let reading = read(
+        "<html><head><title>t</title></head><body><output id='out'></output>\
+         <script>\
+           const sheet = new CSSStyleSheet();\
+           sheet.replaceSync('.x { color: red }');\
+           sheet.insertRule('.y { color: blue }');\
+           document.adoptedStyleSheets = [sheet];\
+           document.querySelector('#out').textContent = \
+             'adopted=' + document.adoptedStyleSheets.length + \
+             ' styles=' + document.getElementsByTagName('style').length;\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("constructable stylesheets");
+    reading.assert_shows("adopted=1 styles=1");
+}

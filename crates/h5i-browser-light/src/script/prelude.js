@@ -2204,6 +2204,8 @@
     }
   }
 
+  let adoptedSheets = [];
+
   const documentImpl = {
     get documentElement() { return wrap(api.root()); },
     get body() { return wrap(api.body()); },
@@ -2214,6 +2216,44 @@
     // the element is created under its local name, which is what the renderer
     // can do something with.
     createElementNS(_namespace, tag) { return wrap(api.createElement(String(tag))); },
+    // `document.write`, emulated where it can be and refused where it cannot.
+    //
+    // A browser inserts the markup at the parser's position, which is right
+    // after the script doing the writing. This engine parses the whole document
+    // before running anything, so "the parser's position" does not exist — but
+    // `currentScript` does, and inserting after it is the same place for the one
+    // use that is deliberate: an inline script emitting markup in situ, which is
+    // what caniuse.com does with `<style>.static-only{display:none}</style>`.
+    //
+    // Called with no script running — from a timer, a promise, a module — a
+    // browser would implicitly `document.open()` and **wipe the page**. That is
+    // not emulated. Doing so would destroy a document over a call that in a
+    // browser would have happened during parsing and been harmless; the
+    // difference is this engine's script timing, not the page's intent. It is
+    // refused by name instead.
+    write(...parts) {
+      const markup = parts.join("");
+      const id = globalThis.__h5iCurrentScript;
+      const script = id === null || id === undefined ? null : wrap(id);
+      if (!script || !script.parentNode) {
+        api.unsupported("document.write (after parsing)");
+        return;
+      }
+      const host = document.createElement("div");
+      host.innerHTML = markup;
+      const parent = script.parentNode;
+      const next = script.nextSibling;
+      for (const kid of host.childNodes) {
+        if (next) parent.insertBefore(kid, next);
+        else parent.appendChild(kid);
+      }
+    },
+    writeln(...parts) { this.write(...parts, "\n"); },
+    // `open` and `close` exist so a page that brackets its writes does not throw
+    // on the bracket. Neither replaces the document, for the reason above.
+    open() { return document; },
+    close() {},
+
     createRange() { return observed(new Range(), "Range"); },
     // The pre-constructor way of making an event, still emitted by older
     // libraries and by anything compiled for old targets. The event is inert
@@ -2302,6 +2342,12 @@
     },
     // This engine parses HTML and nothing else, so there is one honest answer.
     contentType: "text/html",
+    // Adopting a sheet applies it. Assignment replaces the set, as in a browser.
+    get adoptedStyleSheets() { return adoptedSheets.slice(); },
+    set adoptedStyleSheets(sheets) {
+      adoptedSheets = Array.from(sheets || []);
+      for (const sheet of adoptedSheets) if (sheet && sheet._apply) sheet._apply();
+    },
 
     // Empty, and true: this engine sends no `Referer`, so a page told anything
     // else would be told a lie about a request it can check.
@@ -2768,6 +2814,48 @@
     }
   }
 
+  // A constructable stylesheet, backed by a real `<style>` element.
+  //
+  // Design systems build one, fill it with `replaceSync`, and adopt it — and a
+  // page that cannot construct one throws before rendering anything. Backing it
+  // with a `<style>` in the head means the rules actually reach Stylo, so
+  // `display: none` still hides things from the outline, which is the part that
+  // changes what an agent reads.
+  //
+  // `cssRules` is deliberately **not** defined. This engine does not model rules
+  // individually, and answering an empty list for a sheet that plainly has rules
+  // would be the confident wrong answer it keeps having to refuse — so it goes
+  // unanswered, and reports itself.
+  class CSSStyleSheet {
+    constructor() {
+      this._text = "";
+      this._element = null;
+      this.disabled = false;
+    }
+    replaceSync(text) {
+      this._text = String(text);
+      this._apply();
+    }
+    replace(text) {
+      this.replaceSync(text);
+      return Promise.resolve(this);
+    }
+    insertRule(rule, _index) {
+      this._text += String(rule);
+      this._apply();
+      return 0;
+    }
+    _apply() {
+      if (!this._element) {
+        const head = wrap(api.query("head", 0)) || document.body;
+        if (!head) return;
+        this._element = document.createElement("style");
+        head.appendChild(this._element);
+      }
+      this._element.textContent = this._text;
+    }
+  }
+
   // ── text encoding, randomness, cloning, and the old request object ───────
 
   // UTF-8, written out rather than approximated. `escape`/`unescape` round
@@ -3060,7 +3148,7 @@
     // is `Element` here because this engine has one element class; the check
     // that matters is the one pages actually write.
     Node, Element, Text, Comment, CharacterData, DocumentFragment, DOMTokenList, Range,
-    EventTarget, DOMParser,
+    EventTarget, DOMParser, CSSStyleSheet, ShadowRoot,
     HTMLElement: Element,
     // The per-tag constructors, which pages use two ways: `instanceof
     // HTMLAnchorElement` to ask what they are holding, and `extends

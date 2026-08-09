@@ -3055,9 +3055,9 @@ fn a_frameworks_private_field_is_not_reported_as_a_missing_api() {
     );
 
     // A name that could be a real API is still reported.
-    script.eval("void document.adoptedStyleSheets;").unwrap();
+    script.eval("void document.pictureInPictureElement;").unwrap();
     assert!(
-        script.unsupported().iter().any(|(n, _)| n == "document.adoptedStyleSheets"),
+        script.unsupported().iter().any(|(n, _)| n == "document.pictureInPictureElement"),
         "{:?}",
         script.unsupported()
     );

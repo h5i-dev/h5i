@@ -1099,6 +1099,55 @@ matcher rather than in the engine.
 
 ---
 
+### 8.19 Two of the three were worth building; one was not an API
+
+`document.write`, `CSSStyleSheet` and `document.respec` came out of the
+structures corpus. Checking each before building it turned out to matter.
+
+**`document.respec` is not a web API.** The W3C pages call
+`document.respec.ready.then(...)` — it is ReSpec's own global, a page expando in
+the same class as Solid's `_$DX_DELEGATE`, and implementing it would have been
+implementing someone's variable name. It stays reported, and the ask list
+carrying it is the cost of a filter that cannot know every library's field.
+
+**`document.write` is emulated where it can be and refused where it cannot.** A
+browser inserts at the parser's position; this engine parses the whole document
+before running anything, so that position does not exist — but `currentScript`
+does, and inserting after it is the same place for the one deliberate use:
+caniuse.com writes `<style>.static-only{display:none}</style>` from an inline
+script. Called with no script running, a browser would implicitly `open()` and
+**wipe the page**; that is refused by name instead, because the call would have
+been harmless during parsing and the difference is this engine's script timing
+rather than the page's intent.
+
+**`CSSStyleSheet` is backed by a real `<style>` element**, so an adopted sheet's
+rules reach Stylo rather than being remembered and ignored. `cssRules` is
+deliberately left undefined: this engine does not model rules individually, and
+answering an empty list for a sheet that plainly has rules is the confident
+wrong answer it keeps having to refuse.
+
+**And a bigger thing fell out of testing them.** The written
+`<style>display:none</style>` did not hide anything — because **the outline does
+not filter hidden content at all**. `display: none`, `visibility: hidden` and
+the `hidden` attribute all appear in the reading:
+
+```
+paragraph 'visible'
+paragraph 'display none'          <- a user cannot see this
+paragraph 'visibility hidden'     <- nor this
+paragraph 'hidden attribute'      <- nor this
+```
+
+That is a fidelity problem and a safety one. This engine's product is a faithful
+account of what a page shows, and text a user cannot see is the classic vehicle
+for instructions aimed at whatever is reading — the fence in §1 exists for
+exactly that threat and this walks around it. It is the next thing to fix, and
+it deserves care rather than a quick filter: content revealed later by script,
+and the difference between `display: none` and off-screen accessibility text,
+both decide whether a filter helps or quietly deletes the page.
+
+---
+
 ## 10. What is next, 2026-08-09
 
 Tiers 0 through 4 of the plan this section replaces are done. What the work
