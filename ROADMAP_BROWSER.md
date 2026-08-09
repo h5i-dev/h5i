@@ -1227,6 +1227,12 @@ other way.
 
 ## 10. What is next, 2026-08-09
 
+> **Superseded in part by §11.** This section is the queue as it stood before
+> Kitesurf was re-read against a built engine; §11.5 is the current one. Kept
+> because items 1 and 2 record how they were closed, and because item 4 is a
+> useful example of the rule working: Shadow DOM was listed here as "if and when
+> a page asks", a page asked, and §8.14 built it.
+
 Tiers 0 through 4 of the plan this section replaces are done. What the work
 itself surfaced, in the order the evidence supports:
 
@@ -1264,3 +1270,197 @@ itself surfaced, in the order the evidence supports:
 The rule that produced everything above stays: **nothing is built until a page
 asks for it, and an instrument that cannot name what is missing is fixed before
 anything it failed to name.**
+
+---
+
+## 11. Kitesurf, re-read against a built engine, 2026-08-09
+
+`ROADMAP.md` §7.1 surveyed Kitesurf on 2026-08-07 and drew the routing rule from
+it: two engines, by origin, one policy. That section remains the authority on
+*position*. This one is narrower and later. The engine now exists, so the
+question is no longer "what does this mean for scope" but **"what does the
+comparison change about the order of work"**, which is what this file is for.
+
+### 11.1 The stack is less shared than it looks
+
+Read casually, Kitesurf is this engine with a Cloudflare account attached: Blitz
+for HTML and layout, Stylo for CSS, Parley for text shaping, Rust throughout.
+The JS is the exception and it is the important one. **Page script runs on V8**,
+because a Worker already is V8; Boa appears only for `eval`, as a stand-in until
+Workers exposes dynamic evaluation natively. `ROADMAP.md`:2010 recorded this and
+it stands.
+
+Three things follow, and the first two are corrections to a comparison that is
+tempting to make and wrong:
+
+* **The wall-time figures are not comparable.** Kitesurf reports 1.7-1.8x slower
+  than Chromium; §8.17 measured this engine at roughly 1.3x. That is not a win.
+  Theirs includes an isolate boundary and a WASM-compiled DOM; ours includes an
+  interpreter where theirs has a JIT. Different corpora, different hardware,
+  different bottlenecks. Neither number bounds the other and neither should be
+  quoted against the other.
+* **Boa still carries no precedent.** The hope that Kitesurf's success validated
+  Boa for real web applications does not survive reading what Kitesurf runs
+  script on. It does not use Boa for that. This engine is the precedent, which
+  means §8's corpus is not a nice-to-have measurement, it is the only evidence
+  that exists. The swap trigger at `ROADMAP.md`:2013 is unchanged.
+* **Memory is the comparison that survives.** Kitesurf reports 4.7-7.0x less
+  than Chromium; §8.17 measured 7.4x. Those are close, measured the same way,
+  and both are large. This is the number to state.
+
+### 11.2 What the comparison does not change
+
+Three of Kitesurf's stated gaps are already answered here and should not be
+re-opened as work:
+
+* **Video and WebGL.** Not in scope for the light engine, and not a gap, because
+  a coding agent testing a video player is testing its own application, which is
+  loopback, which routes to Chromium. Kitesurf must name these because it has no
+  Chromium half. We do (§7.1).
+* **Persistent authenticated sessions.** Kitesurf cannot have them; this is the
+  one place where "there is a human at this machine" is a capability and not a
+  limitation. `session login` hands the page to the person at the viewer and
+  takes it back (§5.4, §8.20). Answered, though see 11.6.
+* **Speed.** Never the claim, for the reason at the top of this file: shipping
+  less browser beats any benchmark table, so a benchmark table is not a moat.
+
+### 11.3 What it does change: two gaps, and one advantage never stated
+
+**Gap 1: CDP.** The ecosystem converged on the Chrome DevTools Protocol, and
+Kitesurf speaks it, which means everything already written against Playwright,
+Puppeteer and `chrome-remote-interface` works there and not here. This engine
+has a bespoke JSON control channel that nothing else targets. The session state
+that CDP would need already exists behind `serve`; what is missing is the wire
+format and an honest account of the subset.
+
+**Gap 2: conformance.** Kitesurf can say 215,000+ Web Platform Tests. This
+engine can say seventy pages across four corpora. The corpora have been worth
+every hour spent on them and they found things WPT never would, because they are
+real pages. But they cannot answer "what fraction of the platform is
+implemented", and that is the question every capability decision below depends
+on. **This is an instrument gap before it is a capability gap**, which by this
+file's own rule puts it ahead of the capabilities it would measure.
+
+**The advantage: reach.** A cloud browser cannot open `localhost:3000`, a
+staging host, an internal admin panel, or anything behind a VPN. For a *coding*
+agent that is not an edge case, it is a large share of everything it needs to
+look at. This has never been written down as a property of the design, and it is
+a stronger and more concrete statement than "local-first" or "private": it is
+not that we decline to send the page elsewhere, it is that for these pages there
+is nowhere to send it from. It belongs beside receipts in how this engine is
+described.
+
+### 11.4 MCP: decided against, 2026-08-09
+
+Kitesurf ships an MCP server and this engine will not, because the two are
+answering different questions. MCP exists to give an agent a tool surface across
+a process boundary it cannot cross. **Here there is no such boundary**: the
+agent runs on this machine, in the same box as the engine, and
+`h5i-browser-light session snapshot` is already a tool it can call. A protocol
+server would wrap the CLI in a socket so that the thing on the other end could
+call the CLI.
+
+The condition that would reopen this is specific: an agent that must drive this
+engine **without being able to run a subprocess**. If one appears, MCP is the
+right answer for it and this decision was still right until then.
+
+Note that CDP (11.3) is not the same call and does not fall to the same
+argument. MCP would re-expose verbs the CLI already exposes to a caller that can
+already call them; CDP would let a large body of *existing* software drive this
+engine, none of which is going to be rewritten against our CLI.
+
+### 11.5 The queue
+
+Ordered by what the evidence supports, not by size.
+
+**First, because it is the least-verified thing we claim.**
+
+1. **A corpus that needs a login.** Unchanged from §10.5 and now more urgent, not
+   less: 11.2 names authenticated sessions as an answered gap, and it is answered
+   by a mechanism that has never been exercised against a real session-gated
+   application. The strongest claim in this file rests on the least-tested code
+   in it.
+
+**Second, because everything after it is better informed.**
+
+2. **Run the Web Platform Tests.** Start where the corpus already lives:
+   `dom/`, `html/dom/`, `css/cssom/`. Needs a `testharness.js` driver, a
+   committed baseline, and a CI gate on regression rather than on an absolute
+   number.
+3. **Publish the number, whatever it is.** A measured forty thousand is worth
+   more than an unmeasured claim, and an engine that names what it cannot do
+   (§8.3) does not get to make an exception for its own conformance.
+
+**Third, the interoperability work, sized once 2 has told us what we can claim.**
+
+4. **A CDP subset over WebSocket.** The useful floor: `Target` attach/create,
+   `Page.navigate|captureScreenshot|loadEventFired`,
+   `Runtime.evaluate|callFunctionOn|consoleAPICalled`,
+   `DOM.getDocument|querySelector|getBoxModel`,
+   `Input.dispatchMouseEvent|dispatchKeyEvent`, `Network` request/response
+   events plus cookie get and set, `Emulation.setDeviceMetricsOverride`.
+5. **The unimplemented half of CDP must be loud.** A partial protocol that
+   answers to the name of the whole one is the `missingApi` lie at protocol
+   scale (§8.4): Playwright will call methods we do not have, and a silent or
+   plausible answer there is worse than an error, for exactly the reason a
+   plausible wrong answer is worse than no answer anywhere else in this engine.
+   An unimplemented method returns a named error and the conformance list is
+   published.
+6. **REST quick actions**: screenshot, extract, PDF. Nearly free once 4 exists.
+
+**Fourth, the gaps the corpus itself found.** These are §8's list and are ordered
+by how many pages asked.
+
+7. Boa `Module::evaluate_async_with_budget` (lit.dev evaluates unbounded, §8.14),
+   the Boa `let`/`const` parser bug (§8.11), the blitz layout panic (§8.18). All
+   three are upstream's and all three are filed.
+8. **Canvas 2D**, the largest single missing API by corpus demand.
+9. **WebSocket and EventSource.** A live application shows nothing without them.
+10. **IndexedDB**, in memory only, consistent with §6's storage line.
+11. **`getComputedStyle` answers almost nothing** (`color` came back empty). It
+    is implemented far enough to look implemented, which §8.3 established is the
+    worst state for anything in this engine to be in.
+12. **crates.io renders nothing** and the cause is still unknown. SvelteKit-
+    shaped; the entry path was verified working in isolation, so the failure is
+    somewhere the isolation removed.
+
+**Fifth, performance, none of which is urgent.**
+
+13. **Reuse the realm across navigations.** ~20ms per page, rebuilt every time,
+    measured in §8.9.
+14. **Cache the prelude's bytecode.** Three thousand lines of JavaScript parsed
+    per realm.
+15. There is no JIT and there will not be one. The cost is stated in 11.1 and
+    the answer to it is 11.3's reach and §8.17's memory, not a faster
+    interpreter.
+
+**Sixth, the moat, which is mostly already built and under-described.**
+
+16. **Receipts as a checkable artifact.** The one thing Kitesurf's announcement
+    does not address at all. Today the guarantee is "no receipt, no request" and
+    it is true; what it is not is *verifiable by someone who does not trust the
+    binary that wrote it*.
+17. **Measure and state the delta snapshot** (§8.20). No comparable engine
+    appears to have one, and re-reading three hundred lines after every click is
+    the shape everyone else's agent loop is stuck in.
+
+### 11.6 Two conflicts to settle deliberately
+
+Both are cases where §6's "never" list collides with something 11.5 wants. Each
+should be decided in writing rather than discovered in a corpus run.
+
+**Login flows use iframes and popups; §6 refuses both.** The strongest claim in
+11.2 is persistent authenticated sessions, and real-world OAuth is an iframe or
+a popup almost every time. §5.4's human handoff sidesteps part of this, because
+a person at the viewer can complete a flow the engine could not drive, but it
+does not help when the flow needs a second browsing context to *exist* at all.
+Either §6 gains a narrow, argued exception for authentication boundaries, or the
+login claim is honestly scoped down to form posts. It cannot stay as it is: item
+11.5.1 will decide this whether or not it is decided first, and it is better
+written down in advance.
+
+**PDF.** §6 refuses "printing", by which it meant the print UI, and item 11.5.6
+wants `printToPDF`. These are not the same feature: one is chrome around a page,
+the other is a serialisation of it, and an agent asked to keep a record of what
+it read wants the second. Recommended as an exception, on the grounds that the
+raster path (`blitz-paint`, vello_cpu) already produces everything it needs.
