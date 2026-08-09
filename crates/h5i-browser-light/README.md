@@ -264,12 +264,17 @@ note: this page used Web APIs this engine does not have
 That is the routing signal. Without it an agent cannot tell an empty page from
 one that needed the other engine.
 
-**What is not there.** ES modules and `import`, so a bundle using them will not
-run. `MutationObserver`, `IntersectionObserver`, `ResizeObserver`,
-`getBoundingClientRect`, `localStorage`, `history` and `getComputedStyle` are
-present only to report themselves as missing. `fetch` is synchronous underneath,
-so two requests run in order rather than at once. No iframes, workers,
-WebSocket, canvas or WebGL.
+**ES modules work**, and `import "lodash"` does not become a request to a CDN.
+A bare specifier is refused by name, with what would have to exist instead —
+because a loader that silently rewrites one is an engine choosing destinations
+the page never named, inside a sandbox whose whole claim is that every request
+is policy-checked and receipted. Module fetches go through the same broker as
+everything else, carry the document origin, and appear in the request log.
+
+**What is not there.** `IntersectionObserver` and `ResizeObserver` report
+themselves as missing. `fetch` is synchronous underneath, so two requests run in
+order rather than at once, and `AbortController` cannot cancel one in flight. No
+iframes, workers, WebSocket, canvas, WebGL or WebAssembly.
 
 **Not yet verified: a production React build.** ROADMAP §12.4 sets that as the
 bar and it has not been cleared. What runs today is a hand-written application

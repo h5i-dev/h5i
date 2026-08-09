@@ -27,10 +27,11 @@
 
 mod dom_api;
 pub mod host;
+pub mod modules;
 
 use std::rc::Rc;
 
-use boa_engine::{js_string, Context, JsValue, Source};
+use boa_engine::{js_string, Context, JsValue, Module, Source};
 
 use crate::engine::Dom;
 use host::{ConsoleLine, Host, HostHandle};
@@ -80,6 +81,9 @@ impl Settled {
 pub struct Script {
     context: Context,
     host: Rc<Host>,
+    /// Module evaluations whose outcome is not known yet. See
+    /// [`Script::collect_module_failures`].
+    pending_modules: Vec<boa_engine::object::builtins::JsPromise>,
 }
 
 impl Script {
@@ -90,8 +94,15 @@ impl Script {
         base: &url::Url,
     ) -> Result<Self, String> {
         let url = base.to_string();
-        let mut context = Context::default();
         let host = Rc::new(Host::new(dom, broker, base.clone()));
+        // The loader is built before the context because the context owns it,
+        // and it needs the host to reach the broker. Nothing else in the realm
+        // is allowed to fetch, so this is the only door modules have.
+        let loader = Rc::new(modules::BrokerModuleLoader::new(host.clone()));
+        let mut context = Context::builder()
+            .module_loader(loader)
+            .build()
+            .map_err(|e| format!("could not build the script realm: {e}"))?;
         context.insert_data(HostHandle(host.clone()));
 
         dom_api::install(&mut context).map_err(|e| e.to_string())?;
@@ -106,7 +117,11 @@ impl Script {
             .eval(Source::from_bytes(PRELUDE))
             .map_err(|e| format!("the browser prelude failed to load: {e}"))?;
 
-        Ok(Self { context, host })
+        Ok(Self {
+            context,
+            host,
+            pending_modules: Vec::new(),
+        })
     }
 
     /// Run one script from the page. An error is returned, not swallowed: a
@@ -116,6 +131,62 @@ impl Script {
             .eval(Source::from_bytes(source))
             .map(|_| ())
             .map_err(|error| error.to_string())
+    }
+
+    /// Run one module from the page.
+    ///
+    /// Modules are deferred by definition: they parse now and evaluate when
+    /// their whole import graph has loaded, which is why this returns nothing
+    /// and the result arrives during [`Self::settle`]. A failure to *parse* is
+    /// returned here; a failure to load an import surfaces as a rejected
+    /// promise, which `settle` reports through the console.
+    pub fn eval_module(&mut self, source: &str, path: &str) -> Result<(), String> {
+        let source = Source::from_reader(source.as_bytes(), Some(std::path::Path::new(path)));
+        let module = Module::parse(source, None, &mut self.context)
+            .map_err(|error| format!("module did not parse: {error}"))?;
+
+        // Kept rather than attached to: the outcome is read in `settle`, after
+        // the jobs that decide it have run. A module whose import failed
+        // otherwise rejects into nothing and the page looks merely empty.
+        let promise = module.load_link_evaluate(&mut self.context);
+        self.pending_modules.push(promise);
+        Ok(())
+    }
+
+    /// Report any module that failed to load or threw, once the jobs that would
+    /// settle it have run.
+    fn collect_module_failures(&mut self) {
+        let pending = std::mem::take(&mut self.pending_modules);
+        let mut still_pending = Vec::new();
+
+        for promise in pending {
+            match promise.state() {
+                boa_engine::builtins::promise::PromiseState::Pending => still_pending.push(promise),
+                boa_engine::builtins::promise::PromiseState::Fulfilled(_) => {}
+                boa_engine::builtins::promise::PromiseState::Rejected(reason) => {
+                    let text = reason
+                        .to_string(&mut self.context)
+                        .map(|s| s.to_std_string_escaped())
+                        .unwrap_or_else(|_| "<unrenderable>".to_string());
+                    self.host.console.borrow_mut().push(ConsoleLine {
+                        level: "error".to_string(),
+                        text: format!("module failed: {text}"),
+                    });
+                }
+            }
+        }
+
+        // A module still pending when the page settled is one whose imports
+        // never arrived. Said plainly, because an agent reading a thin outline
+        // would otherwise blame the page.
+        for _ in &still_pending {
+            self.host.console.borrow_mut().push(ConsoleLine {
+                level: "error".to_string(),
+                text: "a module was still loading when the page settled: its imports did not \
+                       finish arriving"
+                    .to_string(),
+            });
+        }
     }
 
     /// Evaluate and return the completion value, for tests and for a future
@@ -152,6 +223,7 @@ impl Script {
                 // Nothing was due now. If something is still queued, advance
                 // the virtual clock toward it rather than sleeping.
                 if self.pending_timers() == 0 {
+                    self.collect_module_failures();
                     return Settled {
                         elapsed_ms: clock,
                         timers_run,
@@ -164,6 +236,7 @@ impl Script {
 
             if clock >= SETTLE_BUDGET_MS {
                 self.context.run_jobs();
+                self.collect_module_failures();
                 return Settled {
                     elapsed_ms: clock,
                     timers_run,

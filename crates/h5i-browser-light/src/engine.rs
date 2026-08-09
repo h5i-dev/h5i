@@ -246,6 +246,11 @@ impl Page {
         enum Source {
             Inline(String),
             External(String),
+            /// `type="module"`, inline or external. Deferred by definition and
+            /// therefore kept apart: modules evaluate after every classic
+            /// script, in their own document order.
+            ModuleInline(String),
+            ModuleExternal(String),
         }
 
         let sources: Vec<Source> = {
@@ -255,17 +260,29 @@ impl Page {
                     ids.iter()
                         .filter_map(|id| {
                             let node = doc.get_node(*id)?;
-                            let src = node.attrs().and_then(|attrs| {
-                                attrs
-                                    .iter()
-                                    .find(|a| a.name.local.as_ref() == "src")
-                                    .map(|a| a.value.to_string())
-                            });
-                            match src {
-                                Some(src) => Some(Source::External(src)),
-                                None => {
+                            let attr = |name: &str| {
+                                node.attrs().and_then(|attrs| {
+                                    attrs
+                                        .iter()
+                                        .find(|a| a.name.local.as_ref() == name)
+                                        .map(|a| a.value.to_string())
+                                })
+                            };
+                            let is_module = attr("type")
+                                .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("module"));
+
+                            match (attr("src"), is_module) {
+                                (Some(src), true) => Some(Source::ModuleExternal(src)),
+                                (Some(src), false) => Some(Source::External(src)),
+                                (None, is_module) => {
                                     let text = node.text_content();
-                                    (!text.trim().is_empty()).then_some(Source::Inline(text))
+                                    if text.trim().is_empty() {
+                                        None
+                                    } else if is_module {
+                                        Some(Source::ModuleInline(text))
+                                    } else {
+                                        Some(Source::Inline(text))
+                                    }
                                 }
                             }
                         })
@@ -277,7 +294,16 @@ impl Page {
         let mut script = crate::script::Script::new(self.dom(), broker.clone(), &self.url)
             .map_err(H5iError::Metadata)?;
 
-        for source in sources {
+        // Classic scripts first, in document order, then modules in document
+        // order. That is the deferred semantics `type="module"` carries: a
+        // module never runs before a classic script that follows it in the
+        // markup, and a page that relies on that ordering breaks if we run them
+        // as they appear.
+        let (classic, modules): (Vec<Source>, Vec<Source>) = sources.into_iter().partition(|s| {
+            matches!(s, Source::Inline(_) | Source::External(_))
+        });
+
+        for source in classic {
             let code = match source {
                 Source::Inline(text) => text,
                 Source::External(src) => {
@@ -294,8 +320,18 @@ impl Page {
                         script.note_error(&format!("could not load {url}: {error}"));
                         continue;
                     }
+                    // Same rule as modules: an error page is not a script, and
+                    // running one produces a syntax error that blames the page.
+                    let status = outcome.status.unwrap_or(0);
+                    if !(200..300).contains(&status) {
+                        script.note_error(&format!(
+                            "could not load {url}: the server answered {status}"
+                        ));
+                        continue;
+                    }
                     String::from_utf8_lossy(&outcome.body).into_owned()
                 }
+                _ => unreachable!("partitioned above"),
             };
 
             if let Err(error) = script.eval(&code) {
@@ -305,10 +341,50 @@ impl Page {
             }
         }
 
+        for source in modules {
+            let (code, path) = match source {
+                Source::ModuleInline(text) => (text, self.url.to_string()),
+                Source::ModuleExternal(src) => {
+                    // Fetched here rather than by the loader because this is the
+                    // entry point rather than an import, but through the same
+                    // broker and with the same origin, so it is receipted and
+                    // policed identically.
+                    let Ok(url) = self.url.join(&src) else {
+                        script.note_error(&format!("module src `{src}` is not a URL"));
+                        continue;
+                    };
+                    let outcome = broker.fetch(&url, crate::receipt::Initiator::Subresource);
+                    if let Some(error) = outcome.error {
+                        script.note_error(&format!("could not load {url}: {error}"));
+                        continue;
+                    }
+                    let status = outcome.status.unwrap_or(0);
+                    if !(200..300).contains(&status) {
+                        script.note_error(&format!(
+                            "could not load {url}: the server answered {status}"
+                        ));
+                        continue;
+                    }
+                    let text = String::from_utf8_lossy(&outcome.body).into_owned();
+                    (text, outcome.final_url.to_string())
+                }
+                _ => unreachable!("partitioned above"),
+            };
+
+            if let Err(error) = script.eval_module(&code, &path) {
+                script.note_error(&error);
+            }
+        }
+
         let settled = script.settle();
         if script.take_dirty() {
             self.doc.borrow_mut().resolve(0.0);
         }
+        // Drained and discarded: these are the page *loading* — its module
+        // graph and any fetch its startup made. Leaving them queued would
+        // attribute them to whatever the agent did first, and "this click
+        // caused these requests" is the one claim here that has to be exact.
+        let _ = script.take_requests();
         self.settled = Some(settled);
         self.script = Some(script);
         Ok(())

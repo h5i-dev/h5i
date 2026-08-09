@@ -1184,3 +1184,303 @@ fn a_refused_script_src_is_reported_and_the_page_survives() {
         page.console()
     );
 }
+
+// ── ES modules ────────────────────────────────────────────────────────────
+
+/// Serves a fixed map of path to JavaScript, counting what was asked for.
+fn module_server(
+    files: Vec<(&'static str, &'static str)>,
+) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = asked.clone();
+
+    std::thread::spawn(move || {
+        for incoming in listener.incoming() {
+            let Ok(stream) = incoming else { return };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line);
+            let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+            loop {
+                let mut h = String::new();
+                if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() { break; }
+            }
+            log.lock().unwrap().push(path.clone());
+
+            let mut stream = stream;
+            match files.iter().find(|(p, _)| *p == path) {
+                Some((_, body)) => {
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                }
+                None => {
+                    let _ = write!(stream, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                }
+            }
+            let _ = stream.flush();
+        }
+    });
+    (port, asked)
+}
+
+fn scripted_factory(broker: Arc<Broker>) -> PageFactory {
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let options = PageOptions { script: true, ..Default::default() };
+    PageFactory::new(broker, fonts.sources.clone(), options)
+}
+
+#[test]
+fn a_module_graph_loads_and_evaluates() {
+    // The shape a bundle actually has: an entry that imports, a dependency that
+    // imports further, and named plus default exports.
+    let (port, asked) = module_server(vec![
+        ("/entry.js", "import { greet } from './lib/greet.js';\
+                       document.querySelector('#out').textContent = greet('world');"),
+        ("/lib/greet.js", "import punctuation from './punctuation.js';\
+                           export const greet = (who) => `hello ${who}${punctuation}`;"),
+        ("/lib/punctuation.js", "export default '!';"),
+    ]);
+
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+
+    let page = factory.from_html(
+        r#"<html><body><p id="out">before</p>
+           <script type="module" src="/entry.js"></script></body></html>"#,
+        &base,
+    );
+
+    assert!(
+        page.snapshot().render().contains("hello world!"),
+        "the graph evaluated:\n{}\nconsole: {:?}",
+        page.snapshot().render(),
+        page.console()
+    );
+
+    // Relative imports resolved against the *importing module*, not the page:
+    // `./punctuation.js` inside `/lib/greet.js` is `/lib/punctuation.js`.
+    let paths = asked.lock().unwrap().clone();
+    assert!(paths.contains(&"/lib/punctuation.js".to_string()), "{paths:?}");
+}
+
+#[test]
+fn a_module_imported_twice_is_fetched_once() {
+    let (port, asked) = module_server(vec![
+        ("/entry.js", "import './a.js'; import './b.js'; import './shared.js';"),
+        ("/a.js", "import './shared.js';"),
+        ("/b.js", "import './shared.js';"),
+        ("/shared.js", "globalThis.__loads = (globalThis.__loads || 0) + 1;"),
+    ]);
+
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let _page = factory.from_html(
+        r#"<html><body><script type="module" src="/entry.js"></script></body></html>"#,
+        &base,
+    );
+
+    let shared = asked.lock().unwrap().iter().filter(|p| *p == "/shared.js").count();
+    assert_eq!(shared, 1, "the module cache holds: {:?}", asked.lock().unwrap());
+}
+
+#[test]
+fn every_module_is_fetched_through_the_broker_and_receipted() {
+    // The property that makes script belong in *this* engine: there is no
+    // request class without a record, modules included.
+    let (port, _asked) = module_server(vec![
+        ("/entry.js", "import './dep.js';"),
+        ("/dep.js", "globalThis.ok = true;"),
+    ]);
+
+    let sink = Arc::new(MemorySink::new());
+    let broker = Arc::new(Broker::new(Policy::new(), sink.clone(), None).unwrap());
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let _page = factory.from_html(
+        r#"<html><body><script type="module" src="/entry.js"></script></body></html>"#,
+        &base,
+    );
+
+    let logged = sink.fetched_urls();
+    assert!(logged.iter().any(|u| u.ends_with("/entry.js")), "{logged:?}");
+    assert!(logged.iter().any(|u| u.ends_with("/dep.js")), "{logged:?}");
+}
+
+#[test]
+fn a_bare_specifier_is_refused_and_the_page_is_told_why() {
+    // The trap. `import "lodash"` must not become a request to a CDN the page
+    // never named, and the failure must be legible rather than an empty page.
+    let (port, asked) = module_server(vec![("/entry.js", "import _ from 'lodash';")]);
+
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let page = factory.from_html(
+        r#"<html><body><p>here</p><script type="module" src="/entry.js"></script></body></html>"#,
+        &base,
+    );
+
+    assert!(
+        page.console().iter().any(|l| l.text.contains("lodash")),
+        "the failure names the specifier: {:?}",
+        page.console()
+    );
+    assert!(
+        page.unsupported().iter().any(|(name, _)| name.contains("lodash")),
+        "and reaches the snapshot's unsupported list: {:?}",
+        page.unsupported()
+    );
+    assert!(
+        page.snapshot().render().contains("here"),
+        "the rest of the page still renders"
+    );
+
+    // Nothing was invented: only what the page actually asked for was fetched.
+    let paths = asked.lock().unwrap().clone();
+    assert_eq!(paths, vec!["/entry.js".to_string()], "{paths:?}");
+}
+
+#[test]
+fn an_inline_module_resolves_imports_against_the_page() {
+    let (port, _asked) = module_server(vec![(
+        "/lib.js",
+        "export const value = 'from the module';",
+    )]);
+
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/index.html")).unwrap();
+
+    let page = factory.from_html(
+        r#"<html><body><p id="out">before</p>
+           <script type="module">
+             import { value } from './lib.js';
+             document.querySelector('#out').textContent = value;
+           </script></body></html>"#,
+        &base,
+    );
+
+    assert!(
+        page.snapshot().render().contains("from the module"),
+        "{}\nconsole: {:?}",
+        page.snapshot().render(),
+        page.console()
+    );
+}
+
+#[test]
+fn modules_run_after_classic_scripts_because_they_are_deferred() {
+    // `type="module"` is deferred by definition: it never runs before a classic
+    // script that follows it in the markup.
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let factory = scripted_factory(broker);
+
+    let page = factory.from_html(
+        r#"<html><body><p id="out"></p>
+           <script type="module">globalThis.order.push('module');
+             document.querySelector('#out').textContent = globalThis.order.join(',');</script>
+           <script>globalThis.order = ['classic'];</script>
+           </body></html>"#,
+        &url::Url::parse("https://app.example/").unwrap(),
+    );
+
+    assert!(
+        page.snapshot().render().contains("classic,module"),
+        "the classic script ran first despite coming second in the markup:\n{}",
+        page.snapshot().render()
+    );
+}
+
+#[test]
+fn a_module_that_fails_to_load_is_reported_rather_than_leaving_a_blank() {
+    let (port, _asked) = module_server(vec![("/entry.js", "import './missing.js';")]);
+
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let page = factory.from_html(
+        r#"<html><body><p>visible</p><script type="module" src="/entry.js"></script></body></html>"#,
+        &base,
+    );
+
+    assert!(
+        page.console().iter().any(|l| l.text.contains("module failed")),
+        "an agent reading a thin outline learns why: {:?}",
+        page.console()
+    );
+    assert!(page.snapshot().render().contains("visible"));
+}
+
+#[test]
+fn a_module_may_not_reach_the_dev_server_from_a_page_the_web_served() {
+    // The origin rule covers modules too, which is the point of routing them
+    // through the same broker rather than a loader-local client.
+    let (port, asked) = module_server(vec![("/secret.js", "globalThis.leaked = true;")]);
+
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let factory = scripted_factory(broker.clone());
+    let evil = url::Url::parse("https://evil.example/page").unwrap();
+
+    let page = factory.from_html(
+        &format!(
+            r#"<html><body><script type="module">import 'http://127.0.0.1:{port}/secret.js';</script></body></html>"#
+        ),
+        &evil,
+    );
+
+    assert!(
+        page.console().iter().any(|l| l.text.contains("loopback")),
+        "refused, and the page is told: {:?}",
+        page.console()
+    );
+    assert!(asked.lock().unwrap().is_empty(), "no bytes reached the dev server");
+}
+
+#[test]
+fn a_click_is_credited_only_with_what_it_caused() {
+    // The correlation is the differentiator, so it has to be exact. Page load
+    // fetches a module graph; the first click must not inherit it.
+    let (port, _asked) = module_server(vec![
+        ("/entry.js", "import './dep.js';\
+                       document.querySelector('#b').addEventListener('click', () => { \
+                         fetch('/clicked'); });"),
+        ("/dep.js", "globalThis.loaded = true;"),
+        ("/clicked", "{}"),
+    ]);
+
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+
+    let mut page = factory.from_html(
+        r#"<html><body><button id="b">Go</button>
+           <script type="module" src="/entry.js"></script></body></html>"#,
+        &base,
+    );
+
+    let button = page
+        .snapshot()
+        .refs
+        .iter()
+        .find(|r| r.name == "Go")
+        .expect("the button has a ref")
+        .node_id;
+
+    let caused = page.dispatch_event(button, "click").expect("dispatched");
+    assert_eq!(
+        caused.len(),
+        1,
+        "the module graph belongs to page load, not to the click: {caused:?}"
+    );
+    assert!(caused[0].ends_with("/clicked"), "{caused:?}");
+}
