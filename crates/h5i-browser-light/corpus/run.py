@@ -190,6 +190,10 @@ def measure(binary, name, sites):
             print(f"  FAIL   {url}", flush=True)
             continue
         base = without or {"lines": 0, "refs": 0, "denied": 0}
+        # Substituting the no-script reading when the script run fails is how a
+        # timeout disappears from a report: the row looks like a page that
+        # rendered, because the *other* run of it did. Recorded instead.
+        script_failed = with_js is None
         js = with_js or base
 
         for api, calls in js.get("unsupported", {}).items():
@@ -210,11 +214,17 @@ def measure(binary, name, sites):
             "errors": len(js.get("errors", [])),
             "page_errors": js.get("page_errors", 0),
             "cut_off": bool(js.get("settled") and "still busy" in str(js["settled"])),
+            "script_failed": script_failed,
+            # Script that *loses* content is its own kind of failure, and it
+            # looks like success in a column that only counts lines.
+            "script_lost": js["lines"] < base["lines"] * 0.8,
         })
         print(
             f"  {js['lines']:>4} lines ({base['lines']:>4} w/o)  {js['refs']:>3} refs  "
             f"{len(js.get('errors', [])):>2} err  {js.get('page_errors', 0):>3} page  "
-            f"{js['denied']:>2} denied  {url}",
+            f"{js['denied']:>2} denied  {url}"
+            + ("   [script run FAILED — this row is the no-script reading]" if script_failed else "")
+            + ("   [script LOST content]" if js["lines"] < base["lines"] * 0.8 else ""),
             flush=True,
         )
 
@@ -223,6 +233,12 @@ def measure(binary, name, sites):
     print(f"\n{len(rows)}/{len(sites)} loaded; {rendered} gave a usable outline (>=5 lines)")
     print(f"{len(gained)} rendered materially more *with* script")
     print(f"{sum(1 for r in rows if r['cut_off'])} did not settle within budget")
+    broken = [r["url"] for r in rows if r["script_failed"]]
+    lost = [r["url"] for r in rows if r["script_lost"] and not r["script_failed"]]
+    if broken:
+        print(f"{len(broken)} could not be read *with* script at all: {', '.join(broken)}")
+    if lost:
+        print(f"{len(lost)} rendered materially LESS with script: {', '.join(lost)}")
     if failures:
         print(f"failed entirely: {', '.join(failures)}")
 
