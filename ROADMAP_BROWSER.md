@@ -1011,6 +1011,54 @@ ends up with. The bug was three layers below where it showed.
 
 ---
 
+### 8.17 Measured against Chromium
+
+`corpus/compare.py`, on this machine, both engines asked to do the same job:
+fetch a page, run its script, produce a readable serialisation. Peak resident
+memory is sampled across the **whole process tree**, because Chromium is
+multi-process and measuring only the process we launched would flatter this
+engine by several hundred megabytes for nothing.
+
+```
+page                    h5i                 chromium
+documentation page       59 MiB   0.6s       513 MiB   0.8s
+reference page           76 MiB   1.2s       563 MiB   0.4s
+wiki article             73 MiB   0.5s       585 MiB   0.6s
+news front page          56 MiB   0.9s       537 MiB   0.7s
+single-page app          77 MiB   0.4s       541 MiB   0.4s
+framework docs site      77 MiB   1.3s       580 MiB   1.0s
+
+median peak RSS          76 MiB              563 MiB      7.4x less
+median wall               0.9s                 0.7s       ~30% slower
+install size           34 MiB               302 MiB      8.9x smaller
+processes per page          1                    7
+```
+
+**What these numbers are, and are not.**
+
+They are honest about the trade: this engine holds a page in about a seventh of
+the memory, in one process rather than seven, from a binary a ninth the size —
+and it is *slower*, because Chromium has a JIT and this has an interpreter.
+Anyone quoting the memory figure without the speed one is quoting half a
+measurement.
+
+They are also not a claim of equivalence, and the corpus in §8.6 is the reason:
+of twenty applications, this engine reads seventeen usefully and **one not at
+all**. Chromium reads all twenty. The right sentence is "a seventh of the memory
+for the pages it can read", and the second half of that is doing real work.
+
+The comparison deliberately records what each run actually *read*, so a run that
+produced nothing cannot appear as a fast, small success. The counts are not
+comparable to each other — ours is a summarised outline capped at 300 lines,
+Chromium's is a raw DOM dump — and they are there to prove each engine did the
+work, not to be divided by one another.
+
+Worth stating for anyone reaching for these in a comparison: this is one page
+per process, which is how an agent reads. A long-lived Chromium amortises its
+browser and GPU processes across many tabs and would look better per page.
+
+---
+
 ## 10. What is next, 2026-08-09
 
 Tiers 0 through 4 of the plan this section replaces are done. What the work
