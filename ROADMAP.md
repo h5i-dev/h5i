@@ -1983,16 +1983,34 @@ Once `fetch` and XHR route through the existing broker, script-initiated traffic
 becomes policy-checked and receipted like everything else, which is the lane
 where every other engine's evidence is thinnest.
 
-**Engine choice: Boa first, and explicitly replaceable.** Boa embeds in Rust
-with no C++ boundary, which makes it the fastest way to find out whether this
-works at all. It is not the fastest way to *run* anything: it is an interpreter
-with no JIT, QuickJS generally benchmarks ahead of it, and V8 is an order of
-magnitude beyond both. Kitesurf uses V8 for page script and Boa mainly for
-`eval`, so Boa carries no precedent for web-app compatibility. The risk is
-specific and points at the demo: a React production bundle does one large burst
-of compute at hydration, and an engine choice made for build speed could produce
-a comparison where h5i is visibly slower than Chrome on click-to-update, which
-is the number people look at.
+**Engine choice: Boa, chosen rather than benchmarked into.** An earlier draft of
+this section made a three-engine shootout the first milestone. That was wrong,
+and it is worth saying why rather than quietly dropping it: the urgent thing is a
+real browser that works inside the sandbox, and the shootout was a proxy for a
+question the vertical slice answers directly. Build the slice, run a real
+application, and you have the number the benchmark was estimating.
+
+Boa is the right first engine for a reason stronger than "easiest". It is pure
+Rust, so it adds no C toolchain to a build this project has repeatedly paid to
+keep hermetic: `system-fonts` was turned off to avoid libfontconfig, and the
+cross-check matrix compiles this workspace for windows-msvc, darwin and musl.
+That last one is not theoretical. `ring`'s C build already blocks cross-checking
+to windows-msvc from a Linux host, and QuickJS or V8 would add another
+dependency of exactly that kind to the one crate that is meant to be portable.
+Boa costs nothing there.
+
+What Boa costs instead is speed, and the cost should be stated: it is an
+interpreter with no JIT, QuickJS generally benchmarks ahead of it, and V8 is an
+order of magnitude beyond both. Kitesurf uses V8 for page script and Boa mainly
+for `eval`, so Boa carries no precedent for web-app compatibility. A React
+production bundle does one large burst of compute at hydration, and that is
+where an interpreter is worst.
+
+So the engine sits behind a seam, and the trigger for revisiting it is a
+measurement from the real thing rather than a schedule item: **if hydration of
+the target application is slow enough to make the Chromium comparison
+embarrassing, that is the signal to swap.** Not before. The swap is affordable
+precisely because of the next paragraph.
 
 **The asset is the bindings layer, not the engine.** The Rust DOM is the single
 source of truth and JS objects are thin wrappers over stable `NodeId`s. A second
@@ -2048,14 +2066,7 @@ cost permanently to avoid finishing the one engine that would remove it.
 
 ### 12.4 The order
 
-1. **Measure the engine before building against it.** A day. Run a
-   compute-representative workload, ideally the parse-and-execute of a real
-   React production bundle up to its first missing DOM API, in Boa, QuickJS and
-   V8, and get the order of magnitude. Three times slower than QuickJS is fine.
-   Thirty times is not, and finding out after the bindings are written against
-   Boa's embedding API is the expensive way to learn it.
-
-2. **The bindings layer, against a production React build.** Not a hand-written
+1. **The bindings layer, against a production React build.** Not a hand-written
    `addEventListener` demo, which proves nothing about the shape of the problem,
    and not the Vite dev server, which drags in WebSocket, HMR and native ESM in
    one step. The surface is roughly: `window`, `document`, `Node`/`Element`/
@@ -2069,30 +2080,33 @@ cost permanently to avoid finishing the one engine that would remove it.
    incomplete at the moment it reads it, which is the same rule the fence
    follows.
 
-3. **Quiescence, reported rather than guessed.** "Run JS until settled" is a
+2. **Quiescence, reported rather than guessed.** "Run JS until settled" is a
    subsystem, not a phrase. No pending microtasks, no timer due inside a stated
    window, no in-flight brokered request, and a hard timeout. Playwright
    deprecated `networkidle` for good reasons. The snapshot states which it was:
    settled after 340ms, or still busy at cutoff. A snapshot that quietly
    returned early is a wrong answer that looks like a right one.
 
-4. **`fetch` through the broker, and the correlation that falls out of it.**
+3. **`fetch` through the broker, and the correlation that falls out of it.**
    Old item 3, and in this design it stops being extra work: the engine is the
    one component that knows a click caused a request, and `browser_events`
    already carries `caused_by` for exactly this and currently only wires
    request to response. This is the differentiator, and it is a field we will
    already be holding.
 
-5. **LOGIN mode, and takeover as a recorded policy event.** Old item 5, now
+4. **LOGIN mode, and takeover as a recorded policy event.** Old item 5, now
    overdue rather than pending: the cookie jar it was supposed to arrive with
    shipped on 2026-08-08 without it. Until it lands, a human taking over to type
    a password does so on a page the agent can still snapshot.
 
-6. **The comparison, run and published with its caveats.** Same app, same host,
+5. **The comparison, run and published with its caveats.** Same app, same host,
    against Chromium: startup, peak RSS, navigate-to-ready, click-to-DOM-update,
    click-to-visible-frame, idle CPU, binary size. Publish the losses too. If
    click-to-visible-frame is worse, that is a finding about raster and encode
-   and it belongs next to the memory win, not behind it.
+   and it belongs next to the memory win, not behind it. This is also where the
+   engine question gets answered: click-to-DOM-update on a real application is
+   the number that says whether Boa stays, so the shootout that used to be
+   milestone one happens here, once, against something that matters.
 
 ### 12.5 The gate that is not a milestone
 
