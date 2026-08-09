@@ -862,6 +862,16 @@ engine's compatibility bar rather than React, and the light engine earns its
 place on the strength of receipts and a containment story Chromium
 structurally cannot give us.
 
+**Superseded in part, 2026-08-08.** The survey above is accurate and still
+worth reading; its *conclusion* is not. "Two engines, one policy" assumed
+routing lets a box avoid Chromium, and it does not:
+`sandbox_policy::browser_read_grants()` chains every engine's candidates, so an
+`h5i-light` box grants Chrome's and agent-browser's paths anyway and the
+environment still installs and updates Chromium. Routing saves runtime RSS and
+nothing else. §12 records the decision that replaced it: one local engine that
+runs script and renders on demand, with Chromium kept as the fidelity fallback
+rather than as the answer to "what about JavaScript".
+
 ### 7.2 Owning the daemon socket (proposed; the interception point open item 1 asks for)
 
 Open item 1 records that the control lock is advisory because no h5i process
@@ -1272,7 +1282,7 @@ defects fell out of the run, both fixed:
    test page was unstyled, so the whole suite agreed with the bug. Found by
    pointing the thing at Wikipedia, which is the entire argument for doing that.
 
-**The resident session, 2026-08-08 (§11 item 5.1).** `serve` now holds a page
+**The resident session, 2026-08-08 (§12.1).** `serve` now holds a page
 that several viewers and a control channel share, and
 `h5i-browser-light session status|snapshot|navigate|click` drives it. A control
 verb that moves the page broadcasts to every viewer, so the live view shows the
@@ -1287,7 +1297,7 @@ The architecture was chosen by the compiler, not by preference: **`Page` is not
 exist. One thread owns the page and everything else reaches it by channel. That
 is the shape a multi-driver session wants regardless; here it was not optional.
 
-**Untrusted-content marking, 2026-08-08 (§11 item 5.4).** The rendered snapshot
+**Untrusted-content marking, 2026-08-08 (§12.1).** The rendered snapshot
 now fences page content and names it as data. Pulled ahead of its position in
 the list because §11 called it "the only item on this list whose absence is a
 live hole rather than a missing feature" while ranking it fourth, and it depends
@@ -1332,7 +1342,7 @@ generalises `fetch` rather than sitting beside it, because every guarantee lives
 in that loop and a POST that took a shortcut would be the one request with no
 receipt.
 
-The cookie jar is deliberately narrower than a browser's, and item 5.5's warning
+The cookie jar is deliberately narrower than a browser's, and §12's LOGIN-mode warning
 is why the narrowings arrived with it rather than after:
 
 - **Host-only.** `Domain` is ignored. Honouring it correctly needs a public
@@ -1355,12 +1365,12 @@ measures overflow *within* a box, which is zero for an unstyled page whose root
 simply grew.
 
 **Still open. LOGIN mode is not built**, and it is the one item this entry was
-warned about: §11 item 5.5 pairs it with cookies precisely because a session
+warned about: §12 pairs LOGIN mode with cookies precisely because a session
 with cookies is the first version of this browser where a stolen credential is
 worth having. Until it lands, a human taking over to type a password does so on
 a page the agent can still snapshot. File uploads are dropped rather than read,
 which is a deliberate refusal to acquire filesystem reach. Tier 3 (policy-gated
-script) stays unbuilt for the reasons in §11 item 5.6.
+script) is now in scope, and the cost of putting it there is §12.5.
 
 **Corrected 2026-08-08.** This entry also said "nothing wires h5i to this
 engine yet — M9's `--engine` knob does not exist, so using it in a box is
@@ -1895,78 +1905,202 @@ Being explicit about these is a feature, since the claim is a security claim.
    that drop, the only commitment is the shape: fetch through our proxy,
    receipts as the network log, script off by default for untrusted origins.
 
-## 12. Finishing the browser: the order, and why it is this order
+## 12. The browser: a local engine that runs script, and the order to build it
 
-Sections 7 and 8 say what the browser layer is; this says what is left before it
-is a **real, secure, agentic browser in a sandbox** rather than a fail-closed
-page fetcher with a good audit trail and a live view. Written as a sequence
-because the dependencies are real: taken out of order, several of these items
-either cannot be built or make the system less safe than it is today.
+**Rewritten 2026-08-08.** The previous version of this section ordered script
+*last* and argued it should wait for the microVM tier. That order has been
+reconsidered, and the reasoning that changed it is below. This is a deliberate
+change of direction, not an accretion: it widens §3's scope cut, which said keep
+`env` and `sandbox` and cut everything else. Read §12.5 before treating any of
+it as approved.
 
-Most of what follows is already recorded somewhere in this file; the sequence is
-the part that was not, along with items 1, 2b and 4, which were not written down
-at all.
+### 12.1 What the previous sequence produced
 
-1. **A resident session for the engine.** The root gap, and the one that makes
-   four other things possible rather than being one of five equals. Today every
-   `h5i-browser-light open` renders its own page and exits, so there is no
-   continuity: no navigate-then-click-then-read, **no cookies at all**
-   (`net.rs` has no cookie handling of any kind), no login anywhere, and no way
-   for a live view to show the page *the agent* is driving rather than the page
-   the serving process happened to open — the caveat M11a's page pane has to
-   print today. Chromium does not have this problem, because agent-browser is
-   one daemon owning one browser; matching that shape is the work.
+Its first four items are built. Recorded here because the sequence worked, and
+because what it found is the argument for the next one.
 
-2. **A real input surface, and an agent interface to reach it.** These ship
-   together or neither is usable.
-   - **(a)** Input stops at scrolling and link clicks (recorded in M10's tier 2
-     entry). With a session but no typing or form submission, an agent still
-     cannot get past a login form, so the session buys little on its own.
-   - **(b)** **There is no agent-facing interface for this engine, and the skill
-     currently tells an agent to do something that will fail.** `skills/h5i/`
-     teaches `agent-browser open/snapshot/click @e2/fill @e3` — the CDP surface.
-     `h5i-browser-light` does not speak CDP (§11 item 4), so in an
-     `h5i-light` box those verbs are wrong, and the skill says nothing about the
-     engine at all. Two engines means two agent interfaces and only one of them
-     is written down. Whether the answer is a verb set on our binary or a CDP
-     subset it learns to speak is open; that it is undocumented today is not.
+* **A resident session** (old item 1). `serve` holds a page several viewers and
+  a control channel share. Built 2026-08-08, along with the finding that made it
+  the only possible shape: `Page` is not `Send`, so one thread owns the page and
+  everything else reaches it by channel.
+* **A real input surface and an agent interface** (old item 2). `session
+  status|snapshot|navigate|scroll|type|submit|click`, plus a cookie jar, so a
+  login works end to end. The skill is engine-aware.
+* **Untrusted-content marking** (old item 4), pulled forward because it was the
+  only item whose absence was a live hole. The snapshot is fenced, and the fence
+  rests on a tested one-line invariant rather than on a secret.
 
-3. **Action-to-request correlation, at the sources.** Neither the mediator's
-   records nor the engine's request log carries the other's id, so nothing can
-   answer "what did this click fetch" (recorded in M11a's open list). Worth
-   doing while items 1 and 2 are already opening both files: the correlation has
-   to be *stamped* by whoever knows the causal link, because a viewer inferring
-   it from timing would be inventing evidence.
+Two items remain from that list and survive into this one unchanged in
+substance: **action-to-request correlation** (old item 3) and **LOGIN mode with
+takeover as a recorded event** (old item 5).
 
-4. **Marking page content as untrusted where the agent reads it.** The snapshot
-   and page text an agent consumes are attacker-controllable input that arrives
-   looking exactly like instructions, and nothing marks that boundary today.
-   Note what the existing defences do and do not cover: `sanitize_display`
-   protects the *viewer's* chrome from page strings (5.10), and no-script
-   removes the commonest *delivery channel* (7.1) — neither is a measure at the
-   point where an agent reads a page and decides what to do next. Cheap relative
-   to everything else here, and the only item on this list whose absence is a
-   live hole rather than a missing feature.
+### 12.2 The decision: a local, stateful browser that runs script
 
-5. **LOGIN mode, and takeover as a recorded policy event.** LOGIN mode —
-   withholding frames and snapshots from the agent while a human types a
-   credential — is described and deliberately unbuilt at 5.10; recording the
-   takeover window itself in the receipt is M11a's remaining exit criterion.
-   Both belong *after* item 1 and *before* item 6, and the reason is item 1: a
-   session with cookies is the first version of this browser where a stolen
-   credential is worth having, so the protection has to land with the thing it
-   protects rather than after it.
+Three things moved.
 
-6. **Script, policy-gated — last, and the trade stated plainly.** M10 tier 3 and
-   §11 item 5 already describe the shape: off by default, gated by policy before
-   evaluation, on for origins a human named. What belongs here is the cost. The
-   strongest security property this engine currently has is that no JavaScript
-   engine is linked into it at all, so page-borne prompt injection has no
-   delivery channel *by construction* rather than by filtering. Linking one
-   spends that, permanently, and the phrase "absent by construction" must stop
-   being used the moment it happens. Meanwhile the containment story underneath
-   is still the weaker one: the mediator is enforcement against a compliant
-   agent, not containment against an evasive one (7.2, §9), because the daemon
-   lives inside the box and Landlock grants are per-box. So this waits on the
-   microVM tier being real, or it is the one step in this list that makes the
-   system less safe than it was.
+**Two engines does not avoid Chromium.** 7.1 answered "what about script" with
+routing: light engine for reading, Chromium for the rest. But
+`browser_read_grants()` chains *every* engine's candidates, so an `h5i-light`
+box grants Chrome's and agent-browser's paths anyway, and the environment still
+installs Chromium, still updates it, still carries its surface. Routing saves
+runtime RSS and nothing else. That is the fact that undercuts the two-engine
+answer, and it is checkable in this repository rather than a matter of opinion.
+
+**The local position is unoccupied.** Kitesurf is cloud-first: it runs on
+Cloudflare Workers and depends on Dynamic Workers, Worker-to-Worker RPC and
+Static Assets. The open-sourcing language is "customers can deploy it to their
+own Cloudflare account", which is not "runs as a local binary inside a
+disposable sandbox next to the repository". Lightpanda runs script and does not
+render. Nobody is building a browser that runs script, renders on demand, and
+lives inside the coding agent's own sandbox.
+
+**Being one process is an advantage we can take and they cannot.** Kitesurf
+serialises a scene from its page realm to a separate renderer because that split
+*is* part of its security model. Ours is not: the box is the boundary. So DOM,
+style tree, layout tree, display list, tile cache and semantic tree can live in
+one process and update incrementally, which is exactly where their own numbers
+say the cost is. Cloudflare reports Kitesurf using 3-7x less CPU and memory than
+Chromium while being 1.7-1.8x *slower* in wall time, dominated by rasterisation
+and image encoding. Measured here independently, release build, 1280x720: encode
+5.9ms, alpha flatten 0.84ms, rasterise 1.2ms, whole page load 2.97ms. Two
+implementations of the same stack landing on the same bottleneck is evidence
+that it is structural.
+
+So the claim is not speed. By Kitesurf's own wall-time numbers this class of
+engine is slower than Chromium, and a benchmark table is a claim anyone can beat
+by shipping less browser. The claim is the closed loop:
+
+> The agent clicked Add. That click caused exactly one request, `POST
+> /api/items`. Here is the receipt, written before the request went out. Here is
+> the DOM delta it produced. Here is the frame the human saw.
+
+Chromium cannot produce that line, because its Fetch lane is best-effort and its
+records are host-observed at best. Kitesurf cannot easily produce it either,
+because the causal link spans its renderer split. It falls out here almost for
+free, for one reason: **script makes the receipts story stronger, not weaker.**
+Once `fetch` and XHR route through the existing broker, script-initiated traffic
+becomes policy-checked and receipted like everything else, which is the lane
+where every other engine's evidence is thinnest.
+
+**Engine choice: Boa first, and explicitly replaceable.** Boa embeds in Rust
+with no C++ boundary, which makes it the fastest way to find out whether this
+works at all. It is not the fastest way to *run* anything: it is an interpreter
+with no JIT, QuickJS generally benchmarks ahead of it, and V8 is an order of
+magnitude beyond both. Kitesurf uses V8 for page script and Boa mainly for
+`eval`, so Boa carries no precedent for web-app compatibility. The risk is
+specific and points at the demo: a React production bundle does one large burst
+of compute at hydration, and an engine choice made for build speed could produce
+a comparison where h5i is visibly slower than Chrome on click-to-update, which
+is the number people look at.
+
+**The asset is the bindings layer, not the engine.** The Rust DOM is the single
+source of truth and JS objects are thin wrappers over stable `NodeId`s. A second
+tree inside the JS engine would let the snapshot, the paint, the events and the
+script state drift apart, and every bug after that is unfixable. Done this way,
+swapping Boa for QuickJS or V8 later costs the embedding glue and keeps the
+bindings.
+
+### 12.3 What this is not
+
+Named so they can be refused in review rather than argued about each time. None
+of these is in scope for the first version, and the README should say **limited
+JavaScript preview** rather than "JavaScript support":
+
+CDP and Playwright compatibility. The plugin API. Iframes. Service workers.
+WebSocket. Canvas and WebGL. Media. Chrome extensions. Pixel-perfect rendering.
+Vite's dev server, HMR and `import.meta.hot`. Cross-origin authenticated
+browsing.
+
+CDP is worth its own decision later rather than inheritance now: the argument
+for it is not ecosystem access but that agent-browser could then drive this
+engine, collapsing two agent interfaces into one. The argument against is that
+it is a second full surface next to a verb set that already exists and works.
+
+### 12.4 The order
+
+1. **Measure the engine before building against it.** A day. Run a
+   compute-representative workload, ideally the parse-and-execute of a real
+   React production bundle up to its first missing DOM API, in Boa, QuickJS and
+   V8, and get the order of magnitude. Three times slower than QuickJS is fine.
+   Thirty times is not, and finding out after the bindings are written against
+   Boa's embedding API is the expensive way to learn it.
+
+2. **The bindings layer, against a production React build.** Not a hand-written
+   `addEventListener` demo, which proves nothing about the shape of the problem,
+   and not the Vite dev server, which drags in WebSocket, HMR and native ESM in
+   one step. The surface is roughly: `window`, `document`, `Node`/`Element`/
+   `Text`, creation and insertion and removal, attributes, `classList`,
+   `querySelector`, `textContent`, events with capture and bubble, `click`/
+   `input`/`submit`, promises and the microtask queue, timers,
+   `requestAnimationFrame`, `fetch`/`Response`/`Headers`/`URL`, `location`,
+   `history`, `console`, `performance`, and invalidation of style, layout and
+   paint on mutation. Missing APIs are **logged as unsupported and surfaced in
+   the snapshot**, never silently stubbed: an agent needs to know the outline is
+   incomplete at the moment it reads it, which is the same rule the fence
+   follows.
+
+3. **Quiescence, reported rather than guessed.** "Run JS until settled" is a
+   subsystem, not a phrase. No pending microtasks, no timer due inside a stated
+   window, no in-flight brokered request, and a hard timeout. Playwright
+   deprecated `networkidle` for good reasons. The snapshot states which it was:
+   settled after 340ms, or still busy at cutoff. A snapshot that quietly
+   returned early is a wrong answer that looks like a right one.
+
+4. **`fetch` through the broker, and the correlation that falls out of it.**
+   Old item 3, and in this design it stops being extra work: the engine is the
+   one component that knows a click caused a request, and `browser_events`
+   already carries `caused_by` for exactly this and currently only wires
+   request to response. This is the differentiator, and it is a field we will
+   already be holding.
+
+5. **LOGIN mode, and takeover as a recorded policy event.** Old item 5, now
+   overdue rather than pending: the cookie jar it was supposed to arrive with
+   shipped on 2026-08-08 without it. Until it lands, a human taking over to type
+   a password does so on a page the agent can still snapshot.
+
+6. **The comparison, run and published with its caveats.** Same app, same host,
+   against Chromium: startup, peak RSS, navigate-to-ready, click-to-DOM-update,
+   click-to-visible-frame, idle CPU, binary size. Publish the losses too. If
+   click-to-visible-frame is worse, that is a finding about raster and encode
+   and it belongs next to the memory win, not behind it.
+
+### 12.5 The gate that is not a milestone
+
+`capabilities.javascript` flipping to `true` is a change to the box's threat
+model, and it must be an explicit decision rather than the consequence of a
+prototype working.
+
+**What it spends.** Today the strongest security property this engine has is
+that no JavaScript engine is linked into it at all, so page-borne prompt
+injection has no delivery channel *by construction* rather than by filtering.
+The moment script runs, that sentence must stop being used, and the
+untrusted-content fence goes from a second line of defence to the only one.
+
+**Site isolation is the one thing the box does not replace.** Chromium's process
+model exists to contain a compromised renderer: filesystem, network privilege,
+crash isolation, and cross-origin theft. The box covers the first three at a
+stronger boundary than a renderer sandbox. It does not cover the fourth, because
+it protects the host from the box and says nothing about origin A and origin B
+sharing one address space. That did not matter while the engine held nothing
+worth stealing. It matters now: the cookie jar shipped on 2026-08-08, and script
+is what puts attacker-controlled input in the same process as it. Blitz and
+Stylo being Rust is the current mitigation, and adding a JS engine written in C
+or C++ is precisely what erodes it. Cheap options exist and one must be chosen
+before this ships: one origin per session, clearing the jar across origins, or
+keeping the jar out of the process that runs script.
+
+**Limits belong to the box, not to the engine's good behaviour.** Reliable
+in-engine interruption of a runaway script is hard; a wall-clock deadline and a
+memory ceiling enforced from outside are not. `builtin_browser` currently sets
+`mem_bytes` to 12GB and `max_procs` to 1024, both sized for a Chrome that spawns
+renderer processes. An `h5i-light` box running script should die at a few
+hundred megabytes.
+
+**And the containment underneath is still the weaker story.** The mediator is
+enforcement against a compliant agent, not containment against an evasive one
+(7.2, §9). Running untrusted script inside that is the step that makes the
+system less safe than it is today. The previous version of this section
+concluded that this waits on the microVM tier. That conclusion has not been
+refuted by anything above; it has been *outvoted* by the judgement that an agent
+browser which cannot run script is not a product. Both halves of that sentence
+should stay written down.

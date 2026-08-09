@@ -198,8 +198,8 @@ limits arrived with them rather than after:
   password is not replayed to wherever a server points next.
 
 Not built: **LOGIN mode** (5.10) — withholding frames and snapshots from the
-agent while a human types a credential. ROADMAP §11 item 5.5 says it should
-land with cookies rather than after. It has not, and until it does a human
+agent while a human types a credential. ROADMAP §12 says it should land with
+cookies rather than after. It has not, and until it does a human
 taking over to type a password is doing so on a page the agent can still read.
 
 ### The snapshot is fenced
@@ -266,7 +266,8 @@ receipts, the fail-closed broker, and the agent-facing snapshot.
 
 Tiers 1 and 2 of ROADMAP M10: static render, snapshot, screenshot, receipts,
 and a live view h5i's viewers can attach to. Plus the resident session and its
-verbs (ROADMAP §11 item 5.1). Tier 3 (policy-gated script) is not built.
+verbs (ROADMAP §12.1). Script is not built; ROADMAP §12 is the plan and
+§12.5 is what it costs.
 
 h5i can pin a box to this engine: `h5i box create --profile browser --engine
 h5i-light`, or `[profile.browser] engine = "h5i-light"`. A box pinned to it
