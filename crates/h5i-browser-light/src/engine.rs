@@ -573,6 +573,21 @@ impl Page {
             }
         }
 
+        // The document is now as loaded as it is going to get, so say so.
+        // Before settling, because these callbacks start timers and fetches of
+        // their own and those are part of loading the page rather than of
+        // whatever the agent does next.
+        //
+        // This is one call and it unblocked an entire test suite: testharness.js
+        // gates every result it will ever report on a single `load` listener
+        // (`on_event(window, 'load', ...)`), with no `readyState` fallback, so
+        // an engine that never fires it scores nothing while looking merely
+        // slow. Real pages hid this because `readyState` answered "complete"
+        // and their fallback path ran.
+        if let Err(error) = script.eval("__h5iFireLifecycle()") {
+            script.note_error(&format!("the load lifecycle could not be fired: {error}"));
+        }
+
         let settled = script.settle();
         if script.take_dirty() {
             self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));

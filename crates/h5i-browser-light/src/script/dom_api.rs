@@ -482,6 +482,19 @@ fn insert_before(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     let host = host(context)?;
     {
         let mut doc = host.dom.borrow_mut();
+        // blitz inserts relative to the anchor's parent and unwraps it, so an
+        // anchor with no parent aborts the process. Checked here rather than
+        // only in the prelude because a panic is not a DOM error: it takes the
+        // page, the snapshot and the receipts with it, and WPT reaches this
+        // path on purpose (`ChildNode-after`, `-before`, `-replaceWith`).
+        if doc.get_node(anchor).map(|node| node.parent.is_none()).unwrap_or(true) {
+            return Err(boa_engine::JsNativeError::error()
+                .with_message(
+                    "insertBefore: the reference node has no parent, so there is \
+                     nowhere to insert before it",
+                )
+                .into());
+        }
         let mut mutator = doc.mutate();
         mutator.insert_nodes_before(anchor, &[new_id]);
     }

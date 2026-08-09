@@ -531,6 +531,16 @@
     }
     insertBefore(child, anchor) {
       if (!anchor) return this.appendChild(child);
+      // The spec's pre-insert step, and not a formality: without it the anchor
+      // reaches blitz, which inserts relative to the anchor's parent and
+      // unwraps it. A caller that passes a node from somewhere else is asking
+      // for a NotFoundError and was getting a dead process.
+      if (anchor.parentNode !== this) {
+        throw new DOMException(
+          "insertBefore: the reference node is not a child of this node",
+          "NotFoundError",
+        );
+      }
       if (child && child.nodeType === 11) {
         for (const kid of child.childNodes) api.insertBefore(anchor._id, kid._id);
         if (child._children) child._children.length = 0;
@@ -1140,25 +1150,54 @@
       return null;
     }
 
-    insertAdjacentHTML(position, html) {
+    /// The placement rule the three `insertAdjacent*` methods share.
+    ///
+    /// They differ only in what they are handed — parsed markup, a text node,
+    /// an element — so the four positions are worked out once here. Returns
+    /// whether anything was inserted: `beforebegin` and `afterend` on a node
+    /// with no parent are a no-op by spec rather than an error, and
+    /// `insertAdjacentElement` has to return null for exactly that case.
+    _insertAdjacent(position, nodes) {
       const where = String(position).toLowerCase();
+      if (where === "beforeend") {
+        for (const node of nodes) this.appendChild(node);
+        return true;
+      }
+      if (where === "afterbegin") {
+        const first = this.firstChild;
+        for (const node of nodes) first ? this.insertBefore(node, first) : this.appendChild(node);
+        return true;
+      }
+      if (where === "beforebegin" || where === "afterend") {
+        const parent = this.parentNode;
+        if (!parent) return false;
+        if (where === "beforebegin") {
+          for (const node of nodes) parent.insertBefore(node, this);
+          return true;
+        }
+        const next = this.nextSibling;
+        for (const node of nodes) next ? parent.insertBefore(node, next) : parent.appendChild(node);
+        return true;
+      }
+      // A DOMException rather than the TypeError this used to throw: the spec
+      // names this one, and a caller catching by type should find what the spec
+      // told it to expect.
+      throw new DOMException(
+        "not one of beforebegin, afterbegin, beforeend, afterend: " + position,
+        "SyntaxError",
+      );
+    }
+    insertAdjacentHTML(position, html) {
       const host = document.createElement("div");
       api.setInnerHtml(host._id, String(html));
-      const kids = host.childNodes;
-      if (where === "beforeend") { for (const k of kids) this.appendChild(k); }
-      else if (where === "afterbegin") {
-        const first = this.firstChild;
-        for (const k of kids) first ? this.insertBefore(k, first) : this.appendChild(k);
-      } else if (where === "beforebegin") {
-        for (const k of kids) this.parentNode.insertBefore(k, this);
-      } else if (where === "afterend") {
-        const parent = this.parentNode;
-        const next = this.nextSibling;
-        for (const k of kids) next ? parent.insertBefore(k, next) : parent.appendChild(k);
-      } else {
-        throw new TypeError("bad insertAdjacentHTML position: " + position);
-      }
+      this._insertAdjacent(position, [...host.childNodes]);
       host.remove();
+    }
+    insertAdjacentText(position, text) {
+      this._insertAdjacent(position, [document.createTextNode(String(text))]);
+    }
+    insertAdjacentElement(position, element) {
+      return this._insertAdjacent(position, [element]) ? element : null;
     }
 
     click() {
@@ -2321,7 +2360,7 @@
     // reads it.
     get cookie() { return api.readCookies(); },
     set cookie(value) { api.writeCookie(String(value)); },
-    get readyState() { return "complete"; },
+    get readyState() { return documentReadyState; },
 
     // A document is node type 9 and its child is the root element. Scripts that
     // walk upward from a node and stop at the document depend on both.
@@ -2571,7 +2610,13 @@
       if (timer.every === null) timers.delete(id);
       else timer.due = clock + timer.every;
       try { timer.fn(...timer.args); } catch (error) {
-        console.error("timer threw: " + error);
+        // With the stack, because without it this said only "timer threw" and
+        // the one thing a caller needs — which line — was the one thing it
+        // withheld. A timer callback is by definition detached from whatever
+        // scheduled it, so it is the error that can least afford to be
+        // anonymous.
+        const where = error && error.stack ? "\n" + error.stack : "";
+        console.error("timer threw: " + error + where);
       }
       ran++;
     }
@@ -2605,6 +2650,41 @@
   // it. Exposed rather than reimplemented on the Rust side so a synthetic
   // click takes exactly the path a page's own `.click()` takes.
   globalThis.__h5iWrapById = wrap;
+
+  /// How far through loading the document says it is.
+  ///
+  /// This was the constant `"complete"` until WPT was pointed at the engine.
+  /// A constant is the answer that makes the *common* idiom work — the one that
+  /// reads `readyState === "loading"` and otherwise initialises immediately —
+  /// so every page in §8's four corpora took the immediate branch and nothing
+  /// looked wrong. What it hid is that the other branch never arrived, because
+  /// no lifecycle event was ever fired at all (§11.5.2).
+  let documentReadyState = "loading";
+
+  /// Fire the document lifecycle: DOMContentLoaded, then load.
+  ///
+  /// Called once by the host after every script in the document has been
+  /// evaluated, and before settling, so the callbacks these wake are settled
+  /// along with everything else they start.
+  ///
+  /// Both are dispatched at the root element because that is where this engine
+  /// puts `window` and `document` listeners alike, so a page that waits on
+  /// either sees them. `load` deliberately does not bubble, matching a browser:
+  /// a page that listens for `load` on a container to catch its images must not
+  /// be told the document is one.
+  globalThis.__h5iFireLifecycle = function () {
+    const root = wrap(api.root());
+    const at = (event) => { if (root) root.dispatchEvent(event); };
+
+    documentReadyState = "interactive";
+    at(new Event("readystatechange"));
+    at(new Event("DOMContentLoaded", { bubbles: true }));
+
+    documentReadyState = "complete";
+    at(new Event("readystatechange"));
+    at(new Event("load"));
+    at(new Event("pageshow"));
+  };
 
   // ── the rest of the window ───────────────────────────────────────────────
 
@@ -3063,6 +3143,20 @@
   Object.assign(globalThis, {
     addEventListener, removeEventListener, dispatchEvent,
     window,
+    // The browsing context's view of itself. These are not stubs: §6 refuses
+    // iframes and popups, so this document is always a top-level context with
+    // no children, and every value below is what a real browser reports for
+    // one. `self` in particular gates a great deal of library code — the whole
+    // of testharness.js walks `w != w.parent` from `self` before it can run a
+    // single assertion, so its absence read as "the engine cannot run WPT"
+    // rather than as one missing binding.
+    self: window,
+    parent: window,
+    top: window,
+    frames: window,
+    length: 0,
+    frameElement: null,
+    opener: null,
     document,
     console,
     // Same reporting rule as `document`: a method missing from one of these was
