@@ -3368,3 +3368,40 @@ fn an_identical_line_repeated_is_counted_rather_than_repeated() {
     let after = script.console();
     assert_eq!(after.iter().filter(|l| l.text == "a").count(), 2);
 }
+
+#[test]
+fn a_page_that_never_stops_working_is_stopped_and_told_so() {
+    let (_page, mut script) = page_and_script("<html><body><p>rendered</p></body></html>");
+    script.set_job_budget(std::time::Duration::from_millis(300));
+
+    // Many small jobs, which is the shape a promise-driven page actually has:
+    // each `.then` is its own job, so the queue gets a turn between them and a
+    // deadline can be honoured. A single job that never returns is a different
+    // shape and beyond this — see JOB_QUEUE_BUDGET.
+    script
+        .eval(
+            "let chain = Promise.resolve(); \
+             for (let i = 0; i < 200000; i++) { \
+               chain = chain.then(() => { let n = 0; for (let k = 0; k < 2000; k++) n += k; return n }); \
+             }",
+        )
+        .expect("runs");
+
+    let started = std::time::Instant::now();
+    let settled = script.settle();
+    let took = started.elapsed();
+
+    assert!(settled.cut_off, "the settle reports that it did not finish");
+    assert!(
+        took < std::time::Duration::from_secs(10),
+        "the engine came back rather than working forever: {took:?}"
+    );
+    assert!(
+        script
+            .console()
+            .iter()
+            .any(|line| line.text.contains("still working") && line.source == "engine"),
+        "and says so, in its own voice: {:?}",
+        script.console()
+    );
+}

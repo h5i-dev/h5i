@@ -1959,6 +1959,19 @@
     // can do something with.
     createElementNS(_namespace, tag) { return wrap(api.createElement(String(tag))); },
     createRange() { return observed(new Range(), "Range"); },
+    // The pre-constructor way of making an event, still emitted by older
+    // libraries and by anything compiled for old targets. The event is inert
+    // until `initEvent` names it, which is exactly how the legacy API works.
+    createEvent(kind) {
+      const event = new Event("", {});
+      event.initEvent = (type, bubbles, cancelable) => {
+        event.type = String(type);
+        event.bubbles = !!bubbles;
+        event.cancelable = !!cancelable;
+      };
+      void kind;
+      return event;
+    },
     elementFromPoint(x, y) { return wrap(api.elementFromPoint(Number(x), Number(y))); },
     elementsFromPoint(x, y) {
       const found = wrap(api.elementFromPoint(Number(x), Number(y)));
@@ -2023,6 +2036,14 @@
     get location() { return location; },
     get URL() { return currentAddress; },
     get documentURI() { return currentAddress; },
+    // What relative URLs on this page resolve against — the `<base href>` if
+    // the page set one, and the address otherwise.
+    get baseURI() {
+      const base = wrap(api.query("base[href]", 0));
+      if (!base) return currentAddress;
+      const parts = api.parseUrl(api.getAttr(base._id, "href") || "", currentAddress);
+      return parts ? parts.href : currentAddress;
+    },
     // This engine parses HTML and nothing else, so there is one honest answer.
     contentType: "text/html",
 
@@ -2344,7 +2365,53 @@
     forward() { history.go(1); },
   };
 
-  const performance = { now: () => clock };
+  // `now()` returns the *virtual* clock, deliberately: everything else in this
+  // engine measures a page's own timeline rather than the wall, and a page that
+  // computed a duration from a real clock would get a number about how loaded
+  // this machine was.
+  const performanceEntries = [];
+  const performanceMarks = new Map();
+  const performance = {
+    now: () => clock,
+    timeOrigin: 0,
+    mark(name, options) {
+      const at = options && typeof options.startTime === "number" ? options.startTime : clock;
+      performanceMarks.set(String(name), at);
+      const entry = { name: String(name), entryType: "mark", startTime: at, duration: 0 };
+      performanceEntries.push(entry);
+      return entry;
+    },
+    measure(name, startOrOptions, endMark) {
+      const startName = typeof startOrOptions === "object" && startOrOptions !== null
+        ? startOrOptions.start
+        : startOrOptions;
+      const start = performanceMarks.get(String(startName)) ?? 0;
+      const end = endMark === undefined ? clock : (performanceMarks.get(String(endMark)) ?? clock);
+      const entry = {
+        name: String(name),
+        entryType: "measure",
+        startTime: start,
+        duration: Math.max(0, end - start),
+      };
+      performanceEntries.push(entry);
+      return entry;
+    },
+    getEntries() { return performanceEntries.slice(); },
+    getEntriesByName(name, type) {
+      return performanceEntries.filter(
+        (e) => e.name === String(name) && (type === undefined || e.entryType === type),
+      );
+    },
+    getEntriesByType(type) {
+      return performanceEntries.filter((e) => e.entryType === String(type));
+    },
+    clearMarks(name) {
+      if (name === undefined) performanceMarks.clear();
+      else performanceMarks.delete(String(name));
+    },
+    clearMeasures() {},
+    clearResourceTimings() {},
+  };
 
   // Window-level listeners land on the root element, which is where document
   // and window events already propagate to. Without these, `addEventListener`
@@ -2364,6 +2431,46 @@
   }
 
   const window = globalThis;
+  /// A `Blob` that actually holds its bytes.
+  ///
+  /// Pages build one to hand to `URL.createObjectURL`, to read back as text, or
+  /// to measure. A stub would satisfy the constructor and then lie about `size`,
+  /// which is the shape of bug this engine keeps having to remove.
+  class Blob {
+    constructor(parts, options) {
+      // Bytes, not characters: `size` is a byte count, and a blob of "café" is
+      // five bytes rather than four. Getting that wrong is the whole reason to
+      // store the encoded form.
+      const encoder = new TextEncoder();
+      const chunks = [];
+      for (const part of parts ?? []) {
+        if (part instanceof Blob) chunks.push(...part._bytes);
+        else if (part instanceof Uint8Array) chunks.push(...part);
+        else if (part && part.buffer) chunks.push(...new Uint8Array(part.buffer));
+        else chunks.push(...encoder.encode(String(part)));
+      }
+      this._bytes = chunks;
+      this.type = String((options && options.type) || "");
+    }
+    get size() { return this._bytes.length; }
+    text() { return Promise.resolve(new TextDecoder().decode(new Uint8Array(this._bytes))); }
+    arrayBuffer() { return Promise.resolve(new Uint8Array(this._bytes).buffer); }
+    bytes() { return Promise.resolve(new Uint8Array(this._bytes)); }
+    slice(start, end, type) {
+      const cut = new Blob([], { type: type ?? this.type });
+      cut._bytes = this._bytes.slice(start, end);
+      return cut;
+    }
+  }
+
+  class File extends Blob {
+    constructor(parts, name, options) {
+      super(parts, options);
+      this.name = String(name);
+      this.lastModified = 0;
+    }
+  }
+
   // ── text encoding, randomness, cloning, and the old request object ───────
 
   // UTF-8, written out rather than approximated. `escape`/`unescape` round
@@ -2597,6 +2704,14 @@
       // server-side and again in script must see the same string both times,
       // or it renders for one engine and scripts for another.
       userAgent: api.userAgent(),
+      // Every browser answers "Netscape" here, and `appVersion` is the agent
+      // string with its product token removed. Both are derived from the one
+      // constant rather than written again, so they cannot drift from it.
+      appName: "Netscape",
+      appVersion: api.userAgent().replace(/^Mozilla\//, ""),
+      appCodeName: "Mozilla",
+      product: "Gecko",
+      vendor: "",
       platform: "", language: "en-US", languages: ["en-US"],
       onLine: true, cookieEnabled: false, maxTouchPoints: 0,
     }, "navigator"),
@@ -2662,7 +2777,7 @@
     customElements, NodeFilter, NodeIterator, TreeWalker,
 
     crypto: observed(crypto, "crypto"),
-    TextEncoder, TextDecoder, XMLHttpRequest,
+    TextEncoder, TextDecoder, XMLHttpRequest, Blob, File,
     getComputedStyle: (element) => {
       // Reads what Stylo resolved. Properties outside the curated set record
       // themselves as unsupported rather than returning a plausible lie: a
@@ -2680,8 +2795,8 @@
         }
       );
     },
-    localStorage: observed(makeStorage(), "localStorage"),
-    sessionStorage: observed(makeStorage(), "sessionStorage"),
+    localStorage: makeStorage(),
+    sessionStorage: makeStorage(),
     CustomEvent, UIEvent, MouseEvent, KeyboardEvent, InputEvent,
     DocumentFragment, Headers, Request, AbortController, AbortSignal, FormData,
     MutationObserver,
@@ -2765,7 +2880,7 @@
   // clear — the same rule the cookie jar follows.
   function makeStorage() {
     const map = new Map();
-    return {
+    const api = {
       getItem(k) { const v = map.get(String(k)); return v === undefined ? null : v; },
       setItem(k, v) { map.set(String(k), String(v)); },
       removeItem(k) { map.delete(String(k)); },
@@ -2773,5 +2888,42 @@
       key(i) { return [...map.keys()][i] ?? null; },
       get length() { return map.size; },
     };
+
+    // `storage.theme` is not a property that might be missing — it *is* the
+    // Storage API for a key, and it reads and writes the same map `getItem`
+    // does. Watching this object with the reporting proxy therefore turned
+    // every key any page ever read into a "missing API": the document corpus
+    // listed `localStorage.currentTheme` and `sessionStorage.sveltekit:scroll`
+    // as gaps in this engine, which would have buried the real ones.
+    //
+    // So it is a proxy that implements the named-property access instead of
+    // reporting it. The methods win over keys, as they do in a browser — a page
+    // storing something under "getItem" gets it back through `getItem("getItem")`.
+    return new Proxy(api, {
+      get(target, key) {
+        if (typeof key === "symbol" || key in target) return Reflect.get(target, key);
+        const value = map.get(String(key));
+        return value === undefined ? undefined : value;
+      },
+      set(target, key, value) {
+        if (typeof key === "symbol" || key in target) return Reflect.set(target, key, value);
+        map.set(String(key), String(value));
+        return true;
+      },
+      has(target, key) {
+        return key in target || map.has(String(key));
+      },
+      deleteProperty(target, key) {
+        if (key in target) return Reflect.deleteProperty(target, key);
+        map.delete(String(key));
+        return true;
+      },
+      ownKeys() { return [...map.keys()]; },
+      getOwnPropertyDescriptor(target, key) {
+        if (key in target) return Reflect.getOwnPropertyDescriptor(target, key);
+        if (!map.has(String(key))) return undefined;
+        return { value: map.get(String(key)), writable: true, enumerable: true, configurable: true };
+      },
+    });
   }
 })();

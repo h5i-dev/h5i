@@ -66,6 +66,10 @@ smallvec = "1"
 # The selector types stylo's matching API is written in terms of.
 selectors = "0.39"
 
+# The atomic boa's job-cancellation token is built from. Named here only so the
+# token can be held in a struct field; it must be the same type boa hands back.
+portable-atomic = "1"
+
 # Blocking client on purpose: `NetProvider::fetch` is called synchronously
 # from Blitz's parse/resolve, there is no runtime to await on, and a browser
 # that fetches one subresource at a time is a browser whose receipt order is

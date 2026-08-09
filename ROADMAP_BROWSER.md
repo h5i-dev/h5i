@@ -799,13 +799,25 @@ defeats the `in` check the reporting one depends on.
    polyfill paths they had previously skipped. lit.dev went from failing in
    seconds to **seven minutes** of real work.
 
-   A wall-clock budget on the script phase was added and does not fix it: a
-   module graph evaluates inside `run_jobs`, which is one call that returns when
-   it returns, so the budget never gets a turn. The budget is kept because it
-   does bound a page that is slow for having *many* scripts, and its comment
-   says plainly what it cannot reach. Bounding the rest needs an interrupt Boa
-   does not expose. **More correct and unusably slower is still a bad trade, and
-   this is the clearest open problem in the engine.**
+   Two bounds were added and the second one works, for one of the two shapes a
+   slow page has:
+
+   * **Many jobs.** Boa's job executor checks a cancellation token between jobs,
+     and `get_cancellation_token` hands it out as an `Arc<AtomicBool>` — so a
+     watchdog thread can set it, which is the only wall-clock lever the engine
+     offers. A page building 200,000 promise jobs is now stopped at 15 seconds,
+     renders what it had, and says so in the engine's own voice. This is the
+     shape a promise-driven page actually has.
+   * **One long job.** lit.dev is the other shape: its module graph evaluates
+     depth-first inside a *single* job, so the token is never checked and the
+     watchdog never gets a turn. Nothing available reaches it — the
+     loop-iteration limit does not trip because the work is spread across many
+     loops each under the bound.
+
+   So the engine returns for pages that are slow because they do many things,
+   and still does not for a page that is slow because it does one enormous
+   thing. Fixing that needs an interrupt inside the interpreter loop, which is
+   an upstream change. **It remains the clearest open problem in the engine.**
 3. **Total CPU is unbounded.** Boa exposes no wall-clock interrupt, so the
    engine bounds what it can — one loop, recursion depth, stack size — and a
    caller that cannot wait must impose its own timeout. Raising the loop bound

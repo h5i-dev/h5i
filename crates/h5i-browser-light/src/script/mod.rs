@@ -31,6 +31,8 @@ pub mod modules;
 
 use std::rc::Rc;
 
+use std::time::Duration;
+
 use boa_engine::{js_string, Context, Module, Source};
 
 use crate::engine::Dom;
@@ -113,6 +115,20 @@ const STACK_SIZE_LIMIT: usize = 128 * 1024;
 /// that returned in three minutes into one that had not returned in four.
 const LOOP_ITERATION_LIMIT: u64 = 5_000_000;
 
+/// How long the job queue may run before the engine tells it to stop.
+///
+/// This is the wall-clock bound the other limits could not provide. A module
+/// graph evaluates entirely inside `run_jobs`, so neither the settle budget nor
+/// the script-phase budget ever got a turn — lit.dev spent **seven minutes**
+/// there. Boa checks a cancellation token between jobs, and a watchdog thread
+/// sets it, because by the time the deadline matters this thread is the one
+/// that is stuck.
+///
+/// It bounds work *between* jobs, not inside one: a single job that never
+/// returns is still beyond reach, and the loop-iteration limit is the only
+/// guard there. Together they cover the two shapes that actually occur.
+const JOB_QUEUE_BUDGET: Duration = Duration::from_secs(15);
+
 /// What a settle actually did, so a caller never has to guess.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settled {
@@ -154,6 +170,17 @@ pub struct Script {
     /// failed" names nothing — the same anonymity §8.3 removed from script
     /// errors, one level up. An agent cannot act on it and neither can we.
     pending_modules: Vec<(String, boa_engine::object::builtins::JsPromise)>,
+
+    /// Set from a watchdog thread to make the job queue give up.
+    ///
+    /// The engine has to come back. Boa checks this between jobs, which covers
+    /// the case that actually bites — a module graph is many jobs, and lit.dev
+    /// spent seven minutes in one `run_jobs` call working through one.
+    cancel: std::sync::Arc<portable_atomic::AtomicBool>,
+
+    /// How long the job queue may run. Overridable so a test can prove the
+    /// deadline fires without waiting the real budget out.
+    job_budget: Duration,
 }
 
 impl Script {
@@ -169,7 +196,15 @@ impl Script {
         // and it needs the host to reach the broker. Nothing else in the realm
         // is allowed to fetch, so this is the only door modules have.
         let loader = Rc::new(modules::BrokerModuleLoader::new(host.clone()));
+        // Our own executor, so its cancellation token is reachable. The token
+        // is an `Arc<AtomicBool>` the executor checks *between jobs*, which is
+        // the only wall-clock lever Boa offers: `run_jobs` otherwise returns
+        // when it returns, and a module graph evaluates entirely inside it.
+        let executor = std::rc::Rc::new(boa_engine::job::SimpleJobExecutor::new());
+        let cancel = executor.get_cancellation_token();
+
         let mut context = Context::builder()
+            .job_executor(executor)
             .module_loader(loader)
             .build()
             .map_err(|e| format!("could not build the script realm: {e}"))?;
@@ -208,6 +243,8 @@ impl Script {
 
         Ok(Self {
             context,
+            cancel,
+            job_budget: JOB_QUEUE_BUDGET,
             host,
             pending_modules: Vec::new(),
         })
@@ -321,6 +358,21 @@ impl Script {
     /// is spent, and the difference is reported rather than hidden. A snapshot
     /// that quietly returned early is a wrong answer that looks like a right one.
     pub fn settle(&mut self) -> Settled {
+        let budget = self.job_budget;
+        let (mut settled, cut_short) =
+            self.with_job_deadline(budget, |script| script.settle_inner());
+        if cut_short {
+            settled.cut_off = true;
+            self.note_error(&format!(
+                "this page's script was still working after {:.0?}, so the engine stopped it. \
+                 What follows is what it had rendered by then.",
+                budget
+            ));
+        }
+        settled
+    }
+
+    fn settle_inner(&mut self) -> Settled {
         let mut clock = 0u64;
         let mut timers_run = 0usize;
         let network_started = std::time::Instant::now();
@@ -399,6 +451,54 @@ impl Script {
                 };
             }
         }
+    }
+
+    /// Shorten the job-queue deadline. For tests, and for a caller that knows
+    /// it cannot wait the default out.
+    pub fn set_job_budget(&mut self, budget: Duration) {
+        self.job_budget = budget;
+    }
+
+    /// Run `body` with a wall-clock deadline on the job queue.
+    ///
+    /// A thread rather than a check in the loop, because the loop is exactly
+    /// what is stuck: by the time the budget matters this thread is blocked
+    /// inside `run_jobs`, and only something outside it can say stop.
+    ///
+    /// Returns whether the deadline fired, so the page can be told it was cut
+    /// off rather than left to look merely thin.
+    fn with_job_deadline<T>(&mut self, budget: Duration, body: impl FnOnce(&mut Self) -> T) -> (T, bool) {
+        let cancel = self.cancel.clone();
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watching = finished.clone();
+        let deadline = std::time::Instant::now() + budget;
+
+        let watchdog = std::thread::Builder::new()
+            .name("h5i-script-deadline".to_string())
+            .spawn(move || {
+                while std::time::Instant::now() < deadline {
+                    if watching.load(std::sync::atomic::Ordering::Relaxed) {
+                        return false;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                if watching.load(std::sync::atomic::Ordering::Relaxed) {
+                    return false;
+                }
+                cancel.store(true, portable_atomic::Ordering::Relaxed);
+                true
+            })
+            .ok();
+
+        let out = body(self);
+        finished.store(true, std::sync::atomic::Ordering::Relaxed);
+        let fired = watchdog.and_then(|w| w.join().ok()).unwrap_or(false);
+
+        // Boa clears the flag itself when it acts on it, but a deadline that
+        // fired after the last job would leave it set for the next call.
+        self.cancel
+            .store(false, portable_atomic::Ordering::Relaxed);
+        (out, fired)
     }
 
     /// Run the microtask queue, reporting anything that escaped it.
