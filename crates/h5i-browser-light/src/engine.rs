@@ -139,6 +139,8 @@ pub struct Page {
     script: Option<crate::script::Script>,
     /// What the last settle did, for the snapshot to report.
     settled: Option<crate::script::Settled>,
+    /// Engine-level facts the next snapshot should carry.
+    notes: Vec<String>,
 }
 
 impl Page {
@@ -224,6 +226,7 @@ impl Page {
             pending_navigation,
             script: None,
             settled: None,
+            notes: Vec::new(),
         }
     }
 
@@ -325,6 +328,11 @@ impl Page {
         Some(requests)
     }
 
+    /// Record an engine-level fact for the next snapshot to carry.
+    pub fn note(&mut self, text: &str) {
+        self.notes.push(text.to_string());
+    }
+
     /// What the last settle did, if script ran.
     pub fn settled(&self) -> Option<&crate::script::Settled> {
         self.settled.as_ref()
@@ -376,6 +384,8 @@ impl Page {
             self.url.as_str(),
             self.options.max_snapshot_lines,
         );
+
+        snapshot.notes.extend(self.notes.iter().cloned());
 
         if let Some(settled) = &self.settled {
             if settled.cut_off {
@@ -471,6 +481,21 @@ impl Page {
         // Typing changes layout — a longer value can reflow the form — and
         // nothing else in this file re-resolves on the agent's behalf.
         doc.resolve(0.0);
+        drop(doc);
+
+        // A *user* edit fires input then change, in that order. Script setting
+        // `.value` does not, and must not, or a framework that re-renders on
+        // its own write would loop. This is the user path, so it fires.
+        if let Some(script) = self.script.as_mut() {
+            let _ = script.dispatch(node_id, "input");
+            let _ = script.dispatch(node_id, "change");
+            let settled = script.settle();
+            let dirty = script.take_dirty();
+            self.settled = Some(settled);
+            if dirty {
+                self.doc.borrow_mut().resolve(0.0);
+            }
+        }
         true
     }
 
@@ -723,8 +748,18 @@ impl PageFactory {
     }
 
     pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
+        // Leaving an origin drops its cookies. See `cookies::Jar::retain_origin`
+        // for why that bound exists and what it costs.
+        let dropped = self.broker.jar().retain_origin(url);
         let page = Page::open(url, self.broker.clone(), self.fonts(), self.options.clone())?;
-        self.finish(page)
+        let mut page = self.finish(page)?;
+        if dropped {
+            page.note(
+                "cookies from the previous origin were dropped on navigation: this engine \
+                 holds a session only for the origin currently loaded",
+            );
+        }
+        Ok(page)
     }
 
     /// Load HTML already in hand, running its scripts if the options ask.

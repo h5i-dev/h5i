@@ -198,6 +198,34 @@ impl Jar {
             jar.clear();
         }
     }
+
+    /// Drop everything when a navigation leaves the origin that set it.
+    ///
+    /// The box replaces three of Chromium's four process-model reasons and not
+    /// the fourth: it protects the host from the box, and says nothing about two
+    /// origins sharing one address space. That did not matter until this engine
+    /// held cookies *and* ran script. It cannot be fixed without a process
+    /// split, so it is bounded instead — at any moment the jar holds only
+    /// cookies for the origin currently loaded, so a foreign origin's script
+    /// never runs alongside someone else's live session.
+    ///
+    /// The cost is real and belongs next to the guarantee: a login does not
+    /// survive a redirect through another origin, so OAuth-style flows that
+    /// bounce via an identity provider will not stay signed in.
+    ///
+    /// Returns whether anything was dropped, so a caller can say so rather than
+    /// leaving an agent to discover it by being logged out.
+    pub fn retain_origin(&self, origin: &Url) -> bool {
+        let Some(host) = origin.host_str().map(|h| h.to_ascii_lowercase()) else {
+            return false;
+        };
+        let Ok(mut jar) = self.cookies.lock() else {
+            return false;
+        };
+        let before = jar.len();
+        jar.retain(|cookie| cookie.host == host);
+        before != jar.len()
+    }
 }
 
 /// Loopback over http is still a first-party channel, and the dev server is
@@ -454,6 +482,35 @@ mod tests {
         let jar = Jar::new();
         jar.store(&url("http://localhost:3000/"), ["sid=abc; Secure"]);
         assert!(jar.header_for(&url("http://localhost:3000/")).is_some());
+    }
+
+    #[test]
+    fn leaving_an_origin_drops_its_session() {
+        // The site-isolation bound: with script and cookies in one address
+        // space, the jar must never hold one origin's credential while another
+        // origin's script is running.
+        let jar = Jar::new();
+        jar.store(&url("https://bank.example/"), ["sid=secret"]);
+        assert_eq!(jar.len(), 1);
+
+        assert!(
+            jar.retain_origin(&url("https://evil.example/page")),
+            "navigating away drops it, and says that it did"
+        );
+        assert!(jar.is_empty());
+        assert!(jar.header_for(&url("https://bank.example/")).is_none());
+    }
+
+    #[test]
+    fn staying_on_an_origin_keeps_the_session() {
+        let jar = Jar::new();
+        jar.store(&url("https://bank.example/"), ["sid=secret"]);
+
+        assert!(
+            !jar.retain_origin(&url("https://bank.example/account")),
+            "a same-origin navigation drops nothing"
+        );
+        assert!(jar.header_for(&url("https://bank.example/account")).is_some());
     }
 
     #[test]

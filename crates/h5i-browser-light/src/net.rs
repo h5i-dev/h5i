@@ -31,6 +31,11 @@ use crate::receipt::{Initiator, RequestRecord, Sink};
 /// an empty body and a reason — never an absence.
 #[derive(Debug, Clone)]
 pub struct FetchOutcome {
+    /// Response headers, in arrival order. Carried because `Response.headers`
+    /// is how a page learns content type, pagination links and rate limits, and
+    /// returning `null` from `headers.get` made every one of those look absent
+    /// rather than unsupported.
+    pub headers: Vec<(String, String)>,
     pub final_url: Url,
     pub body: Vec<u8>,
     pub status: Option<u16>,
@@ -40,6 +45,7 @@ pub struct FetchOutcome {
 impl FetchOutcome {
     fn failed(url: Url, error: String) -> Self {
         Self {
+            headers: Vec::new(),
             final_url: url,
             body: Vec::new(),
             status: None,
@@ -223,6 +229,13 @@ impl Broker {
             };
 
             let status = response.status();
+            let headers: Vec<(String, String)> = response
+                .headers()
+                .iter()
+                .filter_map(|(name, value)| {
+                    value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string()))
+                })
+                .collect();
 
             // Before the redirect branch, deliberately: a login flow sets its
             // session cookie on the 302 itself, so a jar that only looked at
@@ -294,6 +307,7 @@ impl Broker {
                     outcome_record.bytes = Some(body.len() as u64);
                     let _ = self.sink.append(&outcome_record);
                     FetchOutcome {
+                        headers,
                         final_url: current,
                         body,
                         status: Some(status.as_u16()),

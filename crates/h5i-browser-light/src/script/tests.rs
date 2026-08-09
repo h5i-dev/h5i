@@ -179,7 +179,7 @@ fn a_missing_web_api_is_recorded_rather_than_silently_stubbed() {
     script
         .eval(
             "new IntersectionObserver(() => {}); new IntersectionObserver(() => {}); \
-             matchMedia('(min-width: 1px)'); getComputedStyle(document.querySelector('#d'));",
+             matchMedia('(min-width: 1px)');",
         )
         .expect("runs");
 
@@ -187,7 +187,6 @@ fn a_missing_web_api_is_recorded_rather_than_silently_stubbed() {
     let names: Vec<&str> = reported.iter().map(|(n, _)| n.as_str()).collect();
     assert!(names.contains(&"IntersectionObserver"), "{reported:?}");
     assert!(names.contains(&"matchMedia"), "{reported:?}");
-    assert!(names.contains(&"getComputedStyle"), "{reported:?}");
     // Most-used first, because forty calls is likelier to be the problem than one.
     assert_eq!(reported[0].0, "IntersectionObserver");
     assert_eq!(reported[0].1, 2);
@@ -636,4 +635,249 @@ fn a_page_from_the_web_may_not_reach_the_boxs_dev_server() {
     // No document is the agent naming a URL itself, which is not a page
     // reaching for one.
     assert!(policy.check_from(&loopback, None).reason().is_none());
+}
+
+#[test]
+fn computed_style_answers_what_it_knows_and_reports_what_it_does_not() {
+    // Curated on purpose: a wrong `display` sends a framework down a branch a
+    // real browser would never take, and it would never find out. So the
+    // properties pages branch on are answered from what Stylo resolved, and
+    // everything else records itself.
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='shown'>a</div><div id='hidden' style='display:none'>b</div></body></html>",
+    );
+
+    assert_eq!(
+        script.eval_value("getComputedStyle(document.querySelector('#shown')).display").unwrap(),
+        "block"
+    );
+    assert_eq!(
+        script.eval_value("getComputedStyle(document.querySelector('#hidden')).display").unwrap(),
+        "none",
+        "an element the cascade did not render reports none"
+    );
+    assert_ne!(
+        script.eval_value("getComputedStyle(document.querySelector('#shown')).width").unwrap(),
+        "0px",
+        "box metrics come from the resolved layout"
+    );
+
+    script
+        .eval("getComputedStyle(document.querySelector('#shown')).fontVariantLigatures")
+        .expect("runs");
+    assert!(
+        script.unsupported().iter().any(|(n, _)| n.contains("font-variant-ligatures")),
+        "an uncurated property names itself: {:?}",
+        script.unsupported()
+    );
+}
+
+#[test]
+fn a_mutation_observer_sees_what_script_did_and_is_delivered_as_a_microtask() {
+    let (_page, mut script) = page_and_script("<html><body><ul id='l'></ul></body></html>");
+    script
+        .eval(
+            "globalThis.batches = []; \
+             const o = new MutationObserver((records) => batches.push(records.length)); \
+             o.observe(document.querySelector('#l'), { childList: true }); \
+             const l = document.querySelector('#l'); \
+             for (const n of ['a','b','c']) { const li = document.createElement('li'); \
+               li.textContent = n; l.appendChild(li); }",
+        )
+        .expect("runs");
+
+    // Not yet: delivery is a microtask, which is what lets a framework batch.
+    assert_eq!(script.eval_value("batches.length").unwrap(), "0");
+    script.settle();
+    assert_eq!(
+        script.eval_value("batches.join(',')").unwrap(),
+        "3",
+        "three appends arrive as one batch of three records"
+    );
+}
+
+#[test]
+fn a_mutation_observer_reports_attribute_changes_with_the_old_value() {
+    let (_page, mut script) = page_and_script("<html><body><div id='d' class='before'></div></body></html>");
+    script
+        .eval(
+            "globalThis.seen = null; \
+             const o = new MutationObserver((r) => { seen = r[0] }); \
+             o.observe(document.querySelector('#d'), { attributes: true }); \
+             document.querySelector('#d').setAttribute('class', 'after');",
+        )
+        .expect("runs");
+    script.settle();
+
+    assert_eq!(script.eval_value("seen.type").unwrap(), "attributes");
+    assert_eq!(script.eval_value("seen.attributeName").unwrap(), "class");
+    assert_eq!(script.eval_value("seen.oldValue").unwrap(), "before");
+}
+
+#[test]
+fn an_observer_outside_the_subtree_hears_nothing() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='watched'></div><div id='other'></div></body></html>",
+    );
+    script
+        .eval(
+            "globalThis.hits = 0; \
+             const o = new MutationObserver(() => hits++); \
+             o.observe(document.querySelector('#watched'), { childList: true }); \
+             document.querySelector('#other').appendChild(document.createElement('span'));",
+        )
+        .expect("runs");
+    script.settle();
+    assert_eq!(script.eval_value("hits").unwrap(), "0");
+}
+
+#[test]
+fn a_click_on_a_checkbox_toggles_it_and_fires_input_then_change() {
+    // Most pages listen for `change` only. A click that merely dispatched a
+    // MouseEvent left them seeing nothing at all.
+    let (_page, mut script) = page_and_script(
+        "<html><body><input type='checkbox' id='c'><input type='checkbox' id='d'></body></html>",
+    );
+    script
+        .eval(
+            "globalThis.log = []; const c = document.querySelector('#c'); \
+             c.addEventListener('input', () => log.push('input')); \
+             c.addEventListener('change', () => log.push('change:' + c.checked)); \
+             c.click();",
+        )
+        .expect("runs");
+
+    assert_eq!(script.eval_value("log.join(',')").unwrap(), "input,change:true");
+    assert_eq!(script.eval_value("document.querySelector('#c').checked").unwrap(), "true");
+    script.eval("document.querySelector('#c').click()").expect("toggles back");
+    assert_eq!(script.eval_value("document.querySelector('#c').checked").unwrap(), "false");
+}
+
+#[test]
+fn radios_in_a_group_are_exclusive() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><input type='radio' name='g' id='a' value='1'>\
+         <input type='radio' name='g' id='b' value='2'></body></html>",
+    );
+    script.eval("document.querySelector('#a').click()").expect("runs");
+    script.eval("document.querySelector('#b').click()").expect("runs");
+
+    assert_eq!(script.eval_value("document.querySelector('#a').checked").unwrap(), "false");
+    assert_eq!(script.eval_value("document.querySelector('#b').checked").unwrap(), "true");
+}
+
+#[test]
+fn form_data_collects_what_a_server_would_receive() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><form id='f'>\
+         <input name='user' value='alice'>\
+         <input type='checkbox' name='terms' checked>\
+         <input type='checkbox' name='news'>\
+         <input type='submit' name='go' value='Send'>\
+         </form></body></html>",
+    );
+
+    let encoded = script.eval_value("new FormData(document.querySelector('#f')).toString()").unwrap();
+    assert!(encoded.contains("user=alice"), "{encoded}");
+    assert!(encoded.contains("terms=on"), "a checked box is included: {encoded}");
+    assert!(!encoded.contains("news"), "an unchecked box is absent: {encoded}");
+    assert!(!encoded.contains("go="), "the submit button is not a field: {encoded}");
+}
+
+#[test]
+fn typing_fires_input_and_change_because_it_is_a_user_edit() {
+    // Script setting `.value` must not fire these — a framework re-rendering on
+    // its own write would loop — but a person typing must.
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let options = PageOptions { script: true, ..Default::default() };
+    let factory = PageFactory::new(broker, fonts.sources.clone(), options);
+
+    let mut page = factory.from_html(
+        "<html><body><input id='q'><script>\
+         globalThis.log = []; const q = document.querySelector('#q'); \
+         q.addEventListener('input', () => log.push('input')); \
+         q.addEventListener('change', () => log.push('change')); \
+         q.value = 'set by script';\
+         </script></body></html>",
+        &url::Url::parse("https://app.example/").unwrap(),
+    );
+
+    let field = page.snapshot().refs[0].node_id;
+    assert!(page.type_into(field, "typed by a person"));
+
+    // The engine cannot read `log` directly, so ask the page.
+    assert_eq!(page.field_value(field).as_deref(), Some("typed by a person"));
+}
+
+#[test]
+fn response_headers_reach_the_page() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else { return };
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut line = String::new();
+        let _ = reader.read_line(&mut line);
+        loop {
+            let mut h = String::new();
+            if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() { break; }
+        }
+        let body = "{}";
+        let mut stream = stream;
+        let _ = write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Total-Count: 42\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.flush();
+    });
+
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let page = factory.from_html("<html><body></body></html>", &base);
+    let mut script = Script::new(page.dom(), broker, &base).expect("realm");
+
+    script
+        .eval("globalThis.seen = null; fetch('/api').then(r => { seen = r.headers.get('x-total-count') });")
+        .expect("runs");
+    script.settle();
+
+    assert_eq!(
+        script.eval_value("seen").unwrap(),
+        "42",
+        "a page can read pagination and rate-limit headers"
+    );
+    let _ = server.join();
+}
+
+#[test]
+fn an_already_aborted_signal_refuses_the_fetch() {
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script
+        .eval(
+            "globalThis.rejected = false; const c = new AbortController(); c.abort(); \
+             fetch('/x', { signal: c.signal }).catch(() => { rejected = true });",
+        )
+        .expect("runs");
+    script.settle();
+    assert_eq!(script.eval_value("rejected").unwrap(), "true");
+}
+
+#[test]
+fn abort_fires_its_listeners() {
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script
+        .eval(
+            "globalThis.fired = false; const c = new AbortController(); \
+             c.signal.addEventListener('abort', () => { fired = true }); c.abort();",
+        )
+        .expect("runs");
+    assert_eq!(script.eval_value("fired").unwrap(), "true");
+    assert_eq!(script.eval_value("new Headers({'A':'1'}).get('a')").unwrap(), "1");
 }

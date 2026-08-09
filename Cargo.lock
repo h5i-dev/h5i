@@ -1261,6 +1261,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "stylo_traits",
  "tempfile",
  "url",
 ]

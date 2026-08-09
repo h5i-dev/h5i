@@ -77,6 +77,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("innerHtml", 1, inner_html),
         ("outerHtml", 1, outer_html),
         ("rect", 1, rect),
+        ("computedStyle", 2, computed_style),
     ];
 
     let api = boa_engine::object::ObjectInitializer::new(context).build();
@@ -482,6 +483,15 @@ fn fetch(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
     reply.set(js_string!("status"), status as f64, false, context)?;
     reply.set(js_string!("url"), js_string!(outcome.final_url.to_string()), false, context)?;
     reply.set(js_string!("text"), js_string!(text), false, context)?;
+
+    let headers = boa_engine::object::builtins::JsArray::new(context);
+    for (name, value) in &outcome.headers {
+        let pair = boa_engine::object::builtins::JsArray::new(context);
+        pair.push(JsValue::from(js_string!(name.as_str())), context)?;
+        pair.push(JsValue::from(js_string!(value.as_str())), context)?;
+        headers.push(pair, context)?;
+    }
+    reply.set(js_string!("headers"), headers, false, context)?;
     Ok(reply.into())
 }
 
@@ -563,4 +573,62 @@ fn rect(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
         array.push(JsValue::from(value), context)?;
     }
     Ok(array.into())
+}
+
+/// A curated set of computed values, read from the styles Stylo resolved.
+///
+/// Curated rather than complete because Stylo's per-property accessors are
+/// generated at build time and there is no stable generic "give me property X
+/// as a string" on `ComputedValues` to bind against. So this answers the
+/// properties pages actually branch on — visibility checks and box metrics —
+/// and anything else records itself as unsupported rather than returning a
+/// plausible lie. A wrong `display` is worse than a missing one: it sends a
+/// framework down a branch the real browser would never take.
+fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let property = arg_string(args, 1, context)?.to_lowercase();
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+
+    let Some(node) = doc.get_node(id) else {
+        return Ok(JsValue::null());
+    };
+
+    // Box metrics come from layout, which is resolved and therefore true.
+    let layout = &node.final_layout;
+    let answer = match property.as_str() {
+        "width" => Some(format!("{}px", layout.size.width)),
+        "height" => Some(format!("{}px", layout.size.height)),
+        _ => None,
+    };
+    if let Some(answer) = answer {
+        return Ok(js_string!(answer).into());
+    }
+
+    let Some(styles) = node.primary_styles() else {
+        // No primary styles means the node is not rendered — `display: none`
+        // is the honest answer for a visibility question about it.
+        return Ok(match property.as_str() {
+            "display" => js_string!("none").into(),
+            _ => js_string!("").into(),
+        });
+    };
+
+    use style_traits::ToCss as _;
+    let answer = match property.as_str() {
+        // `to_css_string`, not `{:?}`: Stylo's `Display` is a bitfield whose
+        // Debug form is `display(514)`, and handing an agent that instead of
+        // `block` is precisely the plausible lie this engine refuses.
+        "display" => node.display_constructed_as.to_css_string(),
+        "visibility" => styles.clone_visibility().to_css_string(),
+        "position" => styles.clone_position().to_css_string(),
+        "opacity" => styles.clone_opacity().to_string(),
+        other => {
+            host.unsupported
+                .borrow_mut()
+                .record(&format!("getComputedStyle({other})"));
+            String::new()
+        }
+    };
+    Ok(js_string!(answer).into())
 }

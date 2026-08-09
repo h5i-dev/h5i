@@ -196,10 +196,19 @@ impl Script {
 
     /// Fire an event at a node, the way a real click would.
     pub fn dispatch(&mut self, node_id: usize, event_type: &str) -> Result<(), String> {
+        // Constructed by kind rather than always as a bare `Event`, because a
+        // handler reading `event.key` or `event.clientX` off a click gets
+        // `undefined` otherwise and takes a branch it should not.
+        let constructor = match event_type {
+            "click" | "mousedown" | "mouseup" => "MouseEvent",
+            "keydown" | "keyup" | "keypress" => "KeyboardEvent",
+            "input" => "InputEvent",
+            _ => "Event",
+        };
         let source = format!(
             "(() => {{ const target = __h5iWrapById({node_id}); \
-             if (target) target.dispatchEvent(new Event({event_type:?}, {{ bubbles: true }})); \
-             }})()"
+             if (target) target.dispatchEvent(new {constructor}({event_type:?}, \
+               {{ bubbles: true, cancelable: true }})); }})()"
         );
         self.eval(&source)
     }

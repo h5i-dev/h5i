@@ -66,17 +66,27 @@
     get lastChild() { const c = this.childNodes; return c[c.length - 1] || null; }
 
     get textContent() { return api.getText(this._id); }
-    set textContent(value) { api.setText(this._id, String(value)); }
+    set textContent(value) {
+      api.setText(this._id, String(value));
+      record({
+        type: "characterData", target: this, addedNodes: [], removedNodes: [],
+        attributeName: null, oldValue: null,
+      });
+      childListRecord(this, [], []);
+    }
 
     appendChild(child) {
       // Inserting a fragment inserts its children and leaves the fragment
       // behind, which is the whole reason a fragment exists.
       if (child instanceof DocumentFragment) {
-        for (const kid of child.childNodes) api.append(this._id, kid._id);
+        const moved = child.childNodes;
+        for (const kid of moved) api.append(this._id, kid._id);
         child._children.length = 0;
+        childListRecord(this, moved, []);
         return child;
       }
       api.append(this._id, child._id);
+      childListRecord(this, [child], []);
       return child;
     }
     insertBefore(child, anchor) {
@@ -87,6 +97,7 @@
         return child;
       }
       api.insertBefore(anchor._id, child._id);
+      childListRecord(this, [child], []);
       return child;
     }
     cloneNode(deep) {
@@ -111,8 +122,16 @@
       const at = kids.findIndex((n) => n._id === this._id);
       return at > 0 ? kids[at - 1] : null;
     }
-    removeChild(child) { api.removeNode(child._id); return child; }
-    remove() { api.removeNode(this._id); }
+    removeChild(child) {
+      api.removeNode(child._id);
+      childListRecord(this, [], [child]);
+      return child;
+    }
+    remove() {
+      const parent = this.parentNode;
+      api.removeNode(this._id);
+      if (parent) childListRecord(parent, [], [this]);
+    }
     append(...items) {
       for (const item of items) {
         this.appendChild(item instanceof Node ? item : document.createTextNode(String(item)));
@@ -172,8 +191,22 @@
     get children() { return this.childNodes.filter((n) => n.nodeType === 1); }
 
     getAttribute(name) { return api.getAttr(this._id, String(name)); }
-    setAttribute(name, value) { api.setAttr(this._id, String(name), String(value)); }
-    removeAttribute(name) { api.removeAttr(this._id, String(name)); }
+    setAttribute(name, value) {
+      const previous = api.getAttr(this._id, String(name));
+      api.setAttr(this._id, String(name), String(value));
+      record({
+        type: "attributes", target: this, addedNodes: [], removedNodes: [],
+        attributeName: String(name).toLowerCase(), oldValue: previous,
+      });
+    }
+    removeAttribute(name) {
+      const previous = api.getAttr(this._id, String(name));
+      api.removeAttr(this._id, String(name));
+      record({
+        type: "attributes", target: this, addedNodes: [], removedNodes: [],
+        attributeName: String(name).toLowerCase(), oldValue: previous,
+      });
+    }
     hasAttribute(name) { return api.getAttr(this._id, String(name)) !== null; }
 
     get id() { return this.getAttribute("id") || ""; }
@@ -182,8 +215,44 @@
     set className(v) { this.setAttribute("class", v); }
     get classList() { return new ClassList(this); }
 
-    get value() { return api.getValue(this._id); }
-    set value(v) { api.setValue(this._id, String(v)); }
+    get value() {
+      const tag = this.tagName;
+      if (tag === "SELECT") {
+        const chosen = this.querySelectorAll("option").find((o) => o.selected);
+        return chosen ? chosen.value : "";
+      }
+      if (tag === "OPTION") {
+        const explicit = api.getAttr(this._id, "value");
+        return explicit === null ? this.textContent : explicit;
+      }
+      const kind = (api.getAttr(this._id, "type") || "").toLowerCase();
+      if (kind === "checkbox" || kind === "radio") {
+        const v = api.getAttr(this._id, "value");
+        return v === null ? "on" : v;
+      }
+      return api.getValue(this._id);
+    }
+    set value(v) {
+      api.setValue(this._id, String(v));
+      // A page that sets `.value` from script does not get input/change: the
+      // spec fires those for *user* edits, and a framework that re-rendered on
+      // its own write would loop. `Page::type_into` is the user path.
+    }
+
+    get checked() { return api.getAttr(this._id, "checked") !== null; }
+    set checked(on) {
+      if (on) api.setAttr(this._id, "checked", "");
+      else api.removeAttr(this._id, "checked");
+    }
+    get selected() { return api.getAttr(this._id, "selected") !== null; }
+    set selected(on) {
+      if (on) api.setAttr(this._id, "selected", "");
+      else api.removeAttr(this._id, "selected");
+    }
+    get disabled() { return api.getAttr(this._id, "disabled") !== null; }
+    get name() { return api.getAttr(this._id, "name") || ""; }
+    get type() { return (api.getAttr(this._id, "type") || "text").toLowerCase(); }
+    get options() { return this.querySelectorAll("option"); }
 
     // Real serialisation. Returning textContent here silently stripped every
     // tag, so `el.innerHTML = el.innerHTML` destroyed the subtree.
@@ -248,7 +317,30 @@
       host.remove();
     }
 
-    click() { dispatch(this, new MouseEvent("click", { bubbles: true })); }
+    click() {
+      // A real click on a checkbox toggles it *and* fires input then change,
+      // in that order. A page that only listens for `change` — which is most
+      // of them — sees nothing without this.
+      const kind = this.type;
+      if (this.tagName === "INPUT" && (kind === "checkbox" || kind === "radio")) {
+        if (kind === "radio") {
+          const name = this.name;
+          if (name) {
+            for (const other of document.querySelectorAll(`input[type=radio][name="${name}"]`)) {
+              other.checked = false;
+            }
+          }
+          this.checked = true;
+        } else {
+          this.checked = !this.checked;
+        }
+        dispatch(this, new MouseEvent("click", { bubbles: true }));
+        dispatch(this, new InputEvent("input", { bubbles: true }));
+        dispatch(this, new Event("change", { bubbles: true }));
+        return;
+      }
+      dispatch(this, new MouseEvent("click", { bubbles: true }));
+    }
     focus() {}
     blur() {}
 
@@ -442,6 +534,194 @@
     return !event.defaultPrevented;
   }
 
+  // A case-insensitive header map, which is what `Headers` is: `get("ETag")`
+  // must find a header the server spelled `etag`.
+  class Headers {
+    constructor(init) {
+      this._map = new Map();
+      if (init instanceof Headers) for (const [k, v] of init._map) this._map.set(k, v);
+      else if (Array.isArray(init)) for (const [k, v] of init) this.append(k, v);
+      else if (init && typeof init === "object") {
+        for (const k of Object.keys(init)) this.set(k, init[k]);
+      }
+    }
+    get(name) { const v = this._map.get(String(name).toLowerCase()); return v === undefined ? null : v; }
+    set(name, value) { this._map.set(String(name).toLowerCase(), String(value)); }
+    has(name) { return this._map.has(String(name).toLowerCase()); }
+    delete(name) { this._map.delete(String(name).toLowerCase()); }
+    append(name, value) {
+      const key = String(name).toLowerCase();
+      const existing = this._map.get(key);
+      this._map.set(key, existing === undefined ? String(value) : existing + ", " + value);
+    }
+    forEach(fn) { for (const [k, v] of this._map) fn(v, k, this); }
+    keys() { return this._map.keys(); }
+    values() { return this._map.values(); }
+    entries() { return this._map.entries(); }
+    [Symbol.iterator]() { return this._map.entries(); }
+  }
+
+  class Request {
+    constructor(input, init) {
+      this.url = typeof input === "string" ? input : String(input && input.url);
+      const i = init || {};
+      this.method = (i.method || "GET").toUpperCase();
+      this.headers = new Headers(i.headers);
+      this.body = i.body ?? null;
+      this.signal = i.signal || null;
+    }
+  }
+
+  // Real enough to be useful: a fetch already aborted is refused, and abort
+  // fires its listeners. It cannot cancel a request in flight, because this
+  // engine's fetch is synchronous underneath — that limit is stated rather
+  // than papered over with a promise that never settles.
+  class AbortSignal {
+    constructor() { this.aborted = false; this.reason = undefined; this._listeners = []; }
+    addEventListener(type, handler) { if (type === "abort") this._listeners.push(handler); }
+    removeEventListener(type, handler) {
+      if (type !== "abort") return;
+      const at = this._listeners.indexOf(handler);
+      if (at >= 0) this._listeners.splice(at, 1);
+    }
+    throwIfAborted() { if (this.aborted) throw this.reason; }
+    static abort(reason) {
+      const s = new AbortSignal();
+      s.aborted = true;
+      s.reason = reason ?? new Error("aborted");
+      return s;
+    }
+  }
+
+  class AbortController {
+    constructor() { this.signal = new AbortSignal(); }
+    abort(reason) {
+      if (this.signal.aborted) return;
+      this.signal.aborted = true;
+      this.signal.reason = reason ?? new Error("aborted");
+      const event = new Event("abort", { bubbles: false });
+      for (const handler of this.signal._listeners.slice()) {
+        try { handler.call(this.signal, event); } catch (e) { console.error("abort listener threw: " + e); }
+      }
+      if (typeof this.signal.onabort === "function") this.signal.onabort(event);
+    }
+  }
+
+  class FormData {
+    constructor(form) {
+      this._entries = [];
+      if (form) {
+        for (const field of form.querySelectorAll("input, select, textarea")) {
+          const name = field.name;
+          if (!name || field.disabled) continue;
+          const kind = field.type;
+          if ((kind === "checkbox" || kind === "radio") && !field.checked) continue;
+          if (kind === "submit" || kind === "button" || kind === "file") continue;
+          this._entries.push([name, field.value]);
+        }
+      }
+    }
+    append(k, v) { this._entries.push([String(k), String(v)]); }
+    set(k, v) {
+      this.delete(k);
+      this.append(k, v);
+    }
+    get(k) { const hit = this._entries.find(([n]) => n === String(k)); return hit ? hit[1] : null; }
+    getAll(k) { return this._entries.filter(([n]) => n === String(k)).map(([, v]) => v); }
+    has(k) { return this._entries.some(([n]) => n === String(k)); }
+    delete(k) { this._entries = this._entries.filter(([n]) => n !== String(k)); }
+    entries() { return this._entries[Symbol.iterator](); }
+    keys() { return this._entries.map(([n]) => n)[Symbol.iterator](); }
+    values() { return this._entries.map(([, v]) => v)[Symbol.iterator](); }
+    [Symbol.iterator]() { return this.entries(); }
+    toString() {
+      return this._entries
+        .map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v))
+        .join("&");
+    }
+  }
+
+  // ── mutation observation ─────────────────────────────────────────────────
+  //
+  // Records are produced by the mutating methods above rather than by polling
+  // the tree, because those methods are the only way script can change it. That
+  // is also the honest limit: a change made by the *parser* (an external script
+  // arriving, say) is not observed, so this reports what script did rather than
+  // everything that happened. Callbacks are delivered as a microtask, which is
+  // when a real browser delivers them and what lets a framework batch.
+
+  const observers = [];
+  let deliveryQueued = false;
+
+  class MutationObserver {
+    constructor(callback) { this._callback = callback; this._records = []; this._targets = []; }
+    observe(target, options) {
+      this._targets.push({ target, options: options || { childList: true } });
+      if (!observers.includes(this)) observers.push(this);
+    }
+    disconnect() {
+      this._targets.length = 0;
+      const at = observers.indexOf(this);
+      if (at >= 0) observers.splice(at, 1);
+    }
+    takeRecords() { const r = this._records; this._records = []; return r; }
+  }
+
+  function observes(entry, record) {
+    const { target, options } = entry;
+    const inScope = options.subtree
+      ? target.contains(record.target)
+      : target._id === record.target._id;
+    if (!inScope) return false;
+    if (record.type === "childList") return !!options.childList;
+    if (record.type === "attributes") {
+      if (!options.attributes) return false;
+      const filter = options.attributeFilter;
+      return !filter || filter.includes(record.attributeName);
+    }
+    if (record.type === "characterData") return !!options.characterData;
+    return false;
+  }
+
+  function record(mutation) {
+    if (observers.length === 0) return;
+    let queued = false;
+    for (const observer of observers) {
+      if (observer._targets.some((entry) => observes(entry, mutation))) {
+        observer._records.push(mutation);
+        queued = true;
+      }
+    }
+    if (queued && !deliveryQueued) {
+      deliveryQueued = true;
+      Promise.resolve().then(deliver);
+    }
+  }
+
+  function deliver() {
+    deliveryQueued = false;
+    for (const observer of observers.slice()) {
+      const records = observer.takeRecords();
+      if (records.length === 0) continue;
+      try {
+        observer._callback(records, observer);
+      } catch (error) {
+        console.error("MutationObserver callback threw: " + error);
+      }
+    }
+  }
+
+  function childListRecord(target, added, removed) {
+    record({
+      type: "childList",
+      target,
+      addedNodes: added || [],
+      removedNodes: removed || [],
+      attributeName: null,
+      oldValue: null,
+    });
+  }
+
   // ── document and window ──────────────────────────────────────────────────
 
   const document = {
@@ -591,12 +871,28 @@
     Node, Element, Text, Event,
     alert: () => api.unsupported("alert"),
     matchMedia: () => { api.unsupported("matchMedia"); return { matches: false, addListener() {}, addEventListener() {} }; },
-    getComputedStyle: () => { api.unsupported("getComputedStyle"); return {}; },
+    getComputedStyle: (element) => {
+      // Reads what Stylo resolved. Properties outside the curated set record
+      // themselves as unsupported rather than returning a plausible lie: a
+      // wrong `display` sends a framework down a branch a real browser never
+      // would, and it would never find out.
+      if (!element || element._id === undefined) return { getPropertyValue: () => "" };
+      const read = (name) => api.computedStyle(element._id, String(name)) || "";
+      return new Proxy(
+        { getPropertyValue: read },
+        {
+          get(target, key) {
+            if (typeof key !== "string" || key in target) return Reflect.get(target, key);
+            return read(camelToDash(key));
+          },
+        }
+      );
+    },
     localStorage: makeStorage(),
     sessionStorage: makeStorage(),
     CustomEvent, UIEvent, MouseEvent, KeyboardEvent, InputEvent,
-    DocumentFragment,
-    MutationObserver: class { constructor() { api.unsupported("MutationObserver"); } observe() {} disconnect() {} },
+    DocumentFragment, Headers, Request, AbortController, AbortSignal, FormData,
+    MutationObserver,
     IntersectionObserver: class { constructor() { api.unsupported("IntersectionObserver"); } observe() {} disconnect() {} },
     ResizeObserver: class { constructor() { api.unsupported("ResizeObserver"); } observe() {} disconnect() {} },
   });
@@ -604,22 +900,34 @@
   // `fetch`, over the host's broker. Every request is policy-checked and
   // receipted before it moves, which is the property this engine exists for.
   function fetch(input, init) {
-    const url = typeof input === "string" ? input : String(input && input.url);
-    const method = (init && init.method) || "GET";
-    let body = (init && init.body) || "";
-    if (body && typeof body !== "string") {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const signal = (init && init.signal) || request.signal;
+    if (signal && signal.aborted) {
+      return Promise.reject(signal.reason ?? new Error("aborted"));
+    }
+
+    let body = request.body ?? "";
+    if (body instanceof FormData) body = body.toString();
+    else if (body && typeof body !== "string") {
       try { body = JSON.stringify(body); } catch (_) { body = String(body); }
     }
-    const res = api.fetch(url, method, body);
+
+    const res = api.fetch(request.url, request.method, body);
     if (res.error) return Promise.reject(new Error(res.error));
+
+    const headers = new Headers();
+    for (const [name, value] of res.headers || []) headers.append(name, value);
 
     const response = {
       ok: res.ok,
       status: res.status,
+      statusText: res.status === 200 ? "OK" : "",
       url: res.url,
-      headers: { get() { api.unsupported("Response.headers"); return null; } },
+      redirected: res.url !== request.url,
+      headers,
       text: () => Promise.resolve(res.text),
       json: () => Promise.resolve(JSON.parse(res.text)),
+      clone() { return { ...response }; },
     };
     return Promise.resolve(response);
   }
