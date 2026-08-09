@@ -165,8 +165,22 @@ impl Page {
         // asked us to police.
         let html = String::from_utf8_lossy(&outcome.body).into_owned();
         let final_url = outcome.final_url.clone();
+        let status = outcome.status.unwrap_or(0);
 
-        Ok(Self::from_html(&html, &final_url, broker, fonts, options))
+        let mut page = Self::from_html(&html, &final_url, broker, fonts, options);
+
+        // An HTTP error still has a body, and rendering it silently is how an
+        // agent ends up reading a 404 page as though it were the page it asked
+        // for. Found by the corpus: crates.io answered 404, the outline came
+        // back empty, and nothing anywhere said why.
+        if !(200..300).contains(&status) {
+            page.note(&format!(
+                "the server answered {status} for this URL; what follows is whatever it \
+                 returned with that status, not the page that was asked for"
+            ));
+        }
+
+        Ok(page)
     }
 
     /// Load HTML that is already in hand (a local file, or a test fixture).
@@ -484,6 +498,20 @@ impl Page {
         );
 
         snapshot.notes.extend(self.notes.iter().cloned());
+
+        // Silence is the one answer an agent cannot act on. A page with nothing
+        // in it is either genuinely empty, blocked, or built by script this
+        // engine could not run — and which of those it is belongs in the
+        // outline rather than in the agent's imagination.
+        if snapshot.lines.is_empty() {
+            let scripts = self.doc.borrow().query_selector_all("script").map(|s| s.len()).unwrap_or(0);
+            snapshot.notes.push(format!(
+                "this page produced no readable content. It has {scripts} script element(s) \
+                 and this engine {}. If it needs JavaScript beyond what is listed above, the \
+                 chromium engine has more of it.",
+                if self.script.is_some() { "ran them" } else { "did not run them (script is off)" }
+            ));
+        }
 
         if let Some(settled) = &self.settled {
             if settled.cut_off {

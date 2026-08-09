@@ -165,7 +165,7 @@ refusing to give it.
 | **`getBoundingClientRect`** | every popover, dropdown, drag and virtual list | **cheap** — Blitz computes `final_layout` already |
 | **`getComputedStyle`** | feature detection and measurement | **cheap** — Stylo has it |
 | **`MutationObserver`** | frameworks depend on it; and it is the natural source for our own semantic delta | Thalora: `observers/mutation_observer.rs` |
-| **`IntersectionObserver`, `ResizeObserver`** | lazy loading, virtual lists, responsive components | needs layout, which we have |
+| **`IntersectionObserver`, `ResizeObserver`** | lazy loading, virtual lists, responsive components | needs layout, which we have; **the corpus asked for `IntersectionObserver` on 1 of 28 sites** |
 | **`localStorage` / `sessionStorage`** | in-memory maps; absence throws or breaks init paths | deliberately non-persistent, see §6 |
 | **`history.pushState`** | SPA routing; without it client-side navigation silently does nothing | Thalora: `browser/history.rs` |
 
@@ -327,6 +327,62 @@ happen *after* §4, or the results measure our own bugs.
 
 Where the corpus and Thalora's inventory agree, build it. Where they disagree,
 the corpus wins: it is this decade's web, not a specification of it.
+
+### 8.1 First run, 2026-08-09
+
+28 sites: docs, references, wikis, standards, package pages, news, and a few
+script-heavy ones so the failures would be honest.
+
+```
+27/28 loaded; 23 gave a usable outline (>=5 lines)
+ 0 rendered materially more *with* script
+ 0 failed to settle within budget
+
+api                      sites  calls        console errors
+matchMedia                   4      5        17  could not load https (cross-origin, denied)
+document.cookie              3      7        13  TypeError
+IntersectionObserver         1      1         6  ReferenceError
+setInterval                  1      1
+```
+
+**It found three bugs before it found any missing APIs**, which is the argument
+for running it at all:
+
+* `<script type="application/json">` was being **executed**. Every `<script>`
+  ran regardless of `type`, so pages embedding state as JSON — github.com does —
+  had it parsed as JavaScript, filling the console with syntax errors that blamed
+  the page.
+* **HTTP errors were rendered as the page.** crates.io answered 404, the engine
+  rendered the error body, and the outline came back empty with nothing anywhere
+  saying why. The status was in the request log and nowhere an agent looks.
+* **Missing APIs did not name themselves.** A global we never defined threw a
+  bare `ReferenceError`; a method on a half-defined object threw
+  `TypeError: not a callable function`. Neither reached the unsupported list, so
+  the measurement could not see them — the method depends on missing things
+  reporting themselves, and they were not.
+
+**The headline result: for the pages agents actually read, script adds nothing
+to the outline.** Not one of 28 sites rendered materially more with `--script`
+than without. Docs, references and wikis are server-rendered; script adds
+interactivity, not content. That is a real finding about the workload and it
+argues the reading case was close to solved before any of this.
+
+Two caveats keep it from being stronger than it is. The harness allows only the
+page's own host and a few common CDNs, so **17 cross-origin scripts were denied
+by policy** and those bundles never ran — the script-heavy end of the corpus is
+therefore under-tested. And the remaining 13 TypeErrors and 6 ReferenceErrors are
+still anonymous: they come from pages touching DOM properties we return
+null/undefined for, which the `missingApi` list does not cover because they are
+not globals.
+
+**What the corpus asks for next**, in its own order: `matchMedia` (answered now,
+still recorded), `document.cookie`, `IntersectionObserver`, `setInterval`.
+
+`document.cookie` is the interesting one, because it is a **deliberate refusal
+rather than a gap**. Exposing it would break the property that an agent can be
+logged in without ever reading the credential that makes it so (§2 of the crate
+README). It returns empty, so a page branching on it takes the no-cookie path.
+That should stay, and be stated, rather than being counted as missing work.
 
 ---
 

@@ -1591,3 +1591,62 @@ fn queue_microtask_and_structured_clone_are_real() {
     assert_eq!(script.eval_value("copy.b.c").unwrap(), "3");
     assert_eq!(script.eval_value("copy.a.length").unwrap(), "2");
 }
+
+#[test]
+fn an_http_error_page_is_not_presented_as_the_page_that_was_asked_for() {
+    // Found by the corpus: crates.io answered 404, the outline came back empty,
+    // and nothing anywhere said why. The body of an error response still
+    // renders, so without this an agent reads a 404 page as the real one.
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else { return };
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut line = String::new();
+        let _ = reader.read_line(&mut line);
+        loop {
+            let mut h = String::new();
+            if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() { break; }
+        }
+        let body = "<html><body><h1>Not Found</h1></body></html>";
+        let mut stream = stream;
+        let _ = write!(
+            stream,
+            "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.flush();
+    });
+
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let factory = scripted_factory(broker);
+    let page = factory
+        .open(&url::Url::parse(&format!("http://127.0.0.1:{port}/gone")).unwrap())
+        .expect("a 404 still loads a page");
+
+    let rendered = page.snapshot().render();
+    assert!(rendered.contains("the server answered 404"), "{rendered}");
+    assert!(
+        rendered.contains("not the page that was asked for"),
+        "and says what that means: {rendered}"
+    );
+    let _ = server.join();
+}
+
+#[test]
+fn an_empty_page_says_it_is_empty_rather_than_saying_nothing() {
+    // Silence is the one answer an agent cannot act on.
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let factory = scripted_factory(broker);
+    let page = factory.from_html(
+        "<html><head><title>t</title></head><body></body></html>",
+        &url::Url::parse("https://app.example/").unwrap(),
+    );
+
+    let rendered = page.snapshot().render();
+    assert!(rendered.contains("no readable content"), "{rendered}");
+    assert!(rendered.contains("ran them"), "it says whether script ran: {rendered}");
+}
