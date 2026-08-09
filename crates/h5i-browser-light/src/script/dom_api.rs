@@ -1326,9 +1326,28 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
             // match. Named as missing until it is done properly.
             None => None,
         },
-        // `--custom-property`. Pages read these for theming, so this is a real
-        // gap rather than an obscure one, and it is named as itself.
-        Ok(PropertyId::Custom(_)) => None,
+        // `--custom-property`, which is how real pages theme themselves, so
+        // this was a live gap rather than an obscure one.
+        //
+        // Looked up by walking `property_at`, which is the public way in: the
+        // keyed `get` wants a `PropertyDescriptors` for the registration, and
+        // an unregistered custom property — which is nearly all of them — has
+        // none. An unset one answers "" rather than naming itself, because ""
+        // is what a browser says and the property is not *missing*, it is
+        // simply not set.
+        Ok(PropertyId::Custom(name)) => {
+            let customs = styles.custom_properties();
+            let mut answer = String::new();
+            let mut index = 0usize;
+            while let Some((key, value)) = customs.property_at(index) {
+                if *key == name {
+                    answer = value.as_ref().map(|v| v.to_css_string()).unwrap_or_default();
+                    break;
+                }
+                index += 1;
+            }
+            Some(answer)
+        }
         Err(()) => None,
     };
 

@@ -916,49 +916,6 @@
       this.setAttribute("href", url.href);
     }
 
-    get value() {
-      const tag = this.tagName;
-      if (tag === "SELECT") {
-        const chosen = this.querySelectorAll("option").find((o) => o.selected);
-        return chosen ? chosen.value : "";
-      }
-      if (tag === "OPTION") {
-        const explicit = api.getAttr(this._id, "value");
-        return explicit === null ? this.textContent : explicit;
-      }
-      const kind = (api.getAttr(this._id, "type") || "").toLowerCase();
-      if (kind === "checkbox" || kind === "radio") {
-        const v = api.getAttr(this._id, "value");
-        return v === null ? "on" : v;
-      }
-      return api.getValue(this._id);
-    }
-    set value(v) {
-      api.setValue(this._id, String(v));
-      // A page that sets `.value` from script does not get input/change: the
-      // spec fires those for *user* edits, and a framework that re-rendered on
-      // its own write would loop. `Page::type_into` is the user path.
-    }
-
-    get checked() { return api.getAttr(this._id, "checked") !== null; }
-    set checked(on) {
-      if (on) api.setAttr(this._id, "checked", "");
-      else api.removeAttr(this._id, "checked");
-    }
-    get selected() { return api.getAttr(this._id, "selected") !== null; }
-    set selected(on) {
-      if (on) api.setAttr(this._id, "selected", "");
-      else api.removeAttr(this._id, "selected");
-    }
-    // `href` and `src` are *resolved*, which is the difference between the
-    // property and `getAttribute`. A page comparing `link.href` to
-    // `location.href`, or reading `script.src` to find its own origin, gets the
-    // absolute URL a browser would give it rather than the raw `../x` in the
-    // markup.
-    get href() { return this._resolved("href"); }
-    set href(v) { this.setAttribute("href", v); }
-    get src() { return this._resolved("src"); }
-    set src(v) { this.setAttribute("src", v); }
     _resolved(name) {
       const raw = api.getAttr(this._id, name);
       if (raw === null) return "";
@@ -1092,8 +1049,6 @@
     set lang(v) { this.setAttribute("lang", v); }
     get title() { return api.getAttr(this._id, "title") || ""; }
     set title(v) { this.setAttribute("title", v); }
-    get alt() { return api.getAttr(this._id, "alt") || ""; }
-    set alt(v) { this.setAttribute("alt", v); }
 
     // Bring the element into view for a screenshot or a live viewer. The
     // outline an agent reads covers the whole document either way, so this
@@ -1157,15 +1112,6 @@
       return anchor ? this.insertBefore(option, anchor) : this.appendChild(option);
     }
 
-    get disabled() { return api.getAttr(this._id, "disabled") !== null; }
-    set disabled(on) {
-      if (on) this.setAttribute("disabled", "");
-      else this.removeAttribute("disabled");
-    }
-    get name() { return api.getAttr(this._id, "name") || ""; }
-    set name(v) { this.setAttribute("name", v); }
-    get type() { return (api.getAttr(this._id, "type") || "text").toLowerCase(); }
-    set type(v) { this.setAttribute("type", v); }
     get options() { return this.querySelectorAll("option"); }
 
     // Real serialisation. Returning textContent here silently stripped every
@@ -1189,7 +1135,7 @@
     // name by design — it is already a proxy over the dashed surface — so there
     // is no such thing as a name it is missing, and wrapping one proxy in
     // another defeats the `in` check the reporting one relies on.
-    get style() { return new StyleDeclaration(this); }
+    get style() { return new StyleDeclaration(inlineStyleSource(this)); }
     set style(text) { this.setAttribute("style", String(text)); }
 
     get dataset() {
@@ -1847,6 +1793,126 @@
     Object.assign(globalThis, interfaces);
   }
 
+  // ── the properties that are not plain reflections ────────────────────────
+  //
+  // These nine sat on Element until WPT probed them, which meant
+  // `"checked" in document.createElement("div")` was true and
+  // `document.createElement("div").type` was `"text"`. That is the
+  // `missingApi` lie at property scale: feature detection asks before it uses,
+  // and every one of these is something code branches on.
+  //
+  // Each is installed on exactly the interfaces the spec gives it. The ones
+  // that *are* plain reflections are listed here too, so the whole set of
+  // "which tags have this" is in one place rather than split between two
+  // mechanisms.
+  {
+    const on = (tags, name, descriptor) => {
+      for (const tag of tags) {
+        const Interface = TAG_CLASSES.get(tag);
+        if (!Interface) continue;
+        Object.defineProperty(Interface.prototype, name, {
+          configurable: true, ...descriptor,
+        });
+      }
+    };
+    const reflectOn = (tags, idl, content, type, options) => {
+      for (const tag of tags) {
+        const Interface = TAG_CLASSES.get(tag);
+        if (Interface) reflect(Interface.prototype, idl, content, type ?? "string", options ?? {});
+      }
+    };
+
+    // `href` and `src` are *resolved*, which is the difference between the
+    // property and `getAttribute`. A page comparing `link.href` to
+    // `location.href`, or reading `script.src` to find its own origin, gets the
+    // absolute URL a browser would give it rather than the raw `../x` in the
+    // markup.
+    on(["a", "area", "link", "base"], "href", {
+      get() { return this._resolved("href"); },
+      set(v) { this.setAttribute("href", v); },
+    });
+    on(["img", "script", "embed", "source", "track", "audio", "video", "input"], "src", {
+      get() { return this._resolved("src"); },
+      set(v) { this.setAttribute("src", v); },
+    });
+
+    // The current value of a form control, which is not the `value` attribute:
+    // a typed-in `<input>` and a `<select>` both answer from state, and
+    // `<option>` falls back to its own text. `defaultValue` is the spec's name
+    // for the attribute half and is reflected in the table above.
+    on(["input", "option", "select", "textarea"], "value", {
+      get() {
+        const tag = this.tagName;
+        if (tag === "SELECT") {
+          const chosen = this.querySelectorAll("option").find((o) => o.selected);
+          return chosen ? chosen.value : "";
+        }
+        if (tag === "OPTION") {
+          const explicit = api.getAttr(this._id, "value");
+          return explicit === null ? this.textContent : explicit;
+        }
+        const kind = (api.getAttr(this._id, "type") || "").toLowerCase();
+        if (kind === "checkbox" || kind === "radio") {
+          const v = api.getAttr(this._id, "value");
+          return v === null ? "on" : v;
+        }
+        return api.getValue(this._id);
+      },
+      set(v) {
+        api.setValue(this._id, String(v));
+        // A page that sets `.value` from script does not get input/change: the
+        // spec fires those for *user* edits, and a framework that re-rendered
+        // on its own write would loop. `Page::type_into` is the user path.
+      },
+    });
+
+    on(["input"], "checked", {
+      get() { return api.getAttr(this._id, "checked") !== null; },
+      set(on_) {
+        if (on_) api.setAttr(this._id, "checked", "");
+        else api.removeAttr(this._id, "checked");
+      },
+    });
+    on(["option"], "selected", {
+      get() { return api.getAttr(this._id, "selected") !== null; },
+      set(on_) {
+        if (on_) api.setAttr(this._id, "selected", "");
+        else api.removeAttr(this._id, "selected");
+      },
+    });
+
+    // `<input>` is the one element whose missing `type` is not the empty
+    // string: an input with no type attribute is a text input, and code reads
+    // `input.type` to decide how to treat it.
+    on(["input"], "type", {
+      get() { return (api.getAttr(this._id, "type") || "text").toLowerCase(); },
+      set(v) { this.setAttribute("type", v); },
+    });
+    reflectOn(["a", "link", "script", "style", "embed", "object", "source",
+               "param", "ol", "ul", "li", "button"], "type", "type");
+
+    reflectOn(["img", "area", "input", "applet"], "alt", "alt");
+    reflectOn(["input", "button", "select", "optgroup", "option", "textarea",
+               "fieldset", "link", "style"], "disabled", "disabled", "bool");
+    reflectOn(["form", "input", "select", "textarea", "button", "output",
+               "fieldset", "object", "param", "map", "meta", "a", "img",
+               "embed", "frame", "applet", "slot"], "name", "name");
+    reflectOn(["button", "param", "data"], "value", "value");
+
+    // The sheet an element owns. Only `<style>` and `<link>` have one, and a
+    // `<link>` that is not a stylesheet has none — `img.sheet` being undefined
+    // is the point of putting it here rather than on Element.
+    on(["style", "link"], "sheet", {
+      get() {
+        if (this.tagName === "LINK") {
+          const rel = (api.getAttr(this._id, "rel") || "").toLowerCase();
+          if (!rel.split(/\s+/).includes("stylesheet")) return null;
+        }
+        return CSSStyleSheet.forElement(this);
+      },
+    });
+  }
+
   const HANDLER_EVENTS = [
     "click", "dblclick", "mousedown", "mouseup", "mouseover", "mouseout", "mousemove",
     "input", "change", "submit", "focus", "blur", "keydown", "keyup", "keypress",
@@ -1878,10 +1944,16 @@
   // later `getAttribute("style")` returns. One source of truth, same rule the
   // DOM follows.
   class StyleDeclaration {
-    constructor(node) { this._node = node; }
+    /// `source` is a get/set pair for the declaration *text*.
+    ///
+    /// An element's inline style reads and writes its `style` attribute; a rule
+    /// inside a stylesheet reads and writes its own body. One parser and one
+    /// serialiser for both, rather than a second copy that could disagree with
+    /// this one about what `color:red;;` means.
+    constructor(source) { this._source = source; }
 
     _read() {
-      const raw = api.getAttr(this._node._id, "style") || "";
+      const raw = this._source.get();
       const out = new Map();
       for (const part of raw.split(";")) {
         const at = part.indexOf(":");
@@ -1893,10 +1965,10 @@
       return out;
     }
     _write(map) {
-      const text = [...map.entries()].map(([k, v]) => `${k}: ${v}`).join("; ");
-      if (text) api.setAttr(this._node._id, "style", text);
-      else api.removeAttr(this._node._id, "style");
+      this._source.set([...map.entries()].map(([k, v]) => `${k}: ${v}`).join("; "));
     }
+    get length() { return this._read().size; }
+    item(index) { return [...this._read().keys()][index] ?? ""; }
 
     getPropertyValue(name) { return this._read().get(String(name).toLowerCase()) || ""; }
     setProperty(name, value) {
@@ -1915,8 +1987,21 @@
       this._write(map);
       return had;
     }
-    get cssText() { return api.getAttr(this._node._id, "style") || ""; }
-    set cssText(text) { api.setAttr(this._node._id, "style", String(text)); }
+    get cssText() { return this._source.get(); }
+    set cssText(text) { this._source.set(String(text)); }
+  }
+
+  /// The backing an element's inline style uses: its own `style` attribute, so
+  /// what script sets is what the cascade sees and what `getAttribute("style")`
+  /// returns.
+  function inlineStyleSource(node) {
+    return {
+      get: () => api.getAttr(node._id, "style") || "",
+      set: (text) => {
+        if (text) api.setAttr(node._id, "style", text);
+        else api.removeAttr(node._id, "style");
+      },
+    };
   }
 
   // `el.style.backgroundColor = 'red'` has to reach `background-color`, so the
@@ -1936,8 +2021,8 @@
     },
   };
   const RawStyleDeclaration = StyleDeclaration;
-  StyleDeclaration = function (node) {
-    return new Proxy(new RawStyleDeclaration(node), styleHandler);
+  StyleDeclaration = function (source) {
+    return new Proxy(new RawStyleDeclaration(source), styleHandler);
   };
 
   // ── events ───────────────────────────────────────────────────────────────
@@ -2863,6 +2948,8 @@
     // This engine parses HTML and nothing else, so there is one honest answer.
     contentType: "text/html",
     // Adopting a sheet applies it. Assignment replaces the set, as in a browser.
+    /// Every `<style>` and `<link rel=stylesheet>` the document has, as sheets.
+    get styleSheets() { return styleSheetList(); },
     get adoptedStyleSheets() { return adoptedSheets.slice(); },
     set adoptedStyleSheets(sheets) {
       adoptedSheets = Array.from(sheets || []);
@@ -3396,12 +3483,183 @@
   // individually, and answering an empty list for a sheet that plainly has rules
   // would be the confident wrong answer it keeps having to refuse — so it goes
   // unanswered, and reports itself.
+  /// Split a stylesheet into its top-level rules.
+  ///
+  /// Brace matching that knows about strings and comments, which is all
+  /// `cssRules` needs: where each rule starts and ends. **It is not a CSS
+  /// parser and does not pretend to be one** — the cascade is Stylo's, this
+  /// only reports the text back in the shape the CSSOM asks for. A declaration
+  /// this splitter mis-slices would still be applied correctly to the page,
+  /// because the page's styles never come through here.
+  function splitRules(css) {
+    const found = [];
+    let depth = 0, start = 0, index = 0, quote = null;
+    while (index < css.length) {
+      const ch = css[index];
+      if (quote) {
+        if (ch === "\\") index++;
+        else if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === "/" && css[index + 1] === "*") {
+        const end = css.indexOf("*/", index + 2);
+        index = end < 0 ? css.length : end + 1;
+      } else if (ch === "{") {
+        depth++;
+      } else if (ch === "}") {
+        if (--depth <= 0) {
+          found.push(css.slice(start, index + 1));
+          start = index + 1;
+          depth = 0;
+        }
+      } else if (depth === 0 && ch === ";") {
+        // `@import`, `@charset` and friends: a rule with no block at all.
+        found.push(css.slice(start, index + 1));
+        start = index + 1;
+      }
+      index++;
+    }
+    if (start < css.length) found.push(css.slice(start));
+    return found.map((text) => text.trim()).filter(Boolean);
+  }
+
+  /// Split one rule into its prelude and its body, or null if it has no body.
+  function ruleParts(text) {
+    let depth = 0, quote = null;
+    for (let index = 0; index < text.length; index++) {
+      const ch = text[index];
+      if (quote) {
+        if (ch === "\\") index++;
+        else if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === "{") {
+        const close = text.lastIndexOf("}");
+        return { prelude: text.slice(0, index).trim(), body: text.slice(index + 1, close) };
+      }
+      depth++;
+    }
+    return null;
+  }
+
+  const RULE_TYPES = {
+    style: 1, import: 3, media: 4, "font-face": 5, page: 6, keyframes: 7,
+    namespace: 10, supports: 12, "counter-style": 11, "font-feature-values": 14,
+    layer: 0, container: 0, property: 0, scope: 0, starting: 0,
+  };
+
+  class CSSRule {
+    constructor(text, sheet) { this._text = text; this._sheet = sheet; }
+    get cssText() { return this._text; }
+    get parentStyleSheet() { return this._sheet ?? null; }
+    get parentRule() { return null; }
+    get type() {
+      const parts = ruleParts(this._text) ?? { prelude: this._text };
+      if (!parts.prelude.startsWith("@")) return RULE_TYPES.style;
+      const name = parts.prelude.slice(1).split(/[\s({]/)[0].toLowerCase();
+      return RULE_TYPES[name] ?? 0;
+    }
+  }
+
+  class CSSStyleRule extends CSSRule {
+    get selectorText() { return (ruleParts(this._text)?.prelude ?? "").trim(); }
+    set selectorText(value) {
+      const parts = ruleParts(this._text);
+      if (parts) this._text = `${String(value)} {${parts.body}}`;
+    }
+    get style() {
+      const rule = this;
+      return new StyleDeclaration({
+        get: () => (ruleParts(rule._text)?.body ?? "").trim(),
+        set: (text) => {
+          const parts = ruleParts(rule._text);
+          if (parts) rule._text = `${parts.prelude} { ${text} }`;
+        },
+      });
+    }
+  }
+
+  /// `@media`, `@supports` and the other rules that contain rules.
+  class CSSGroupingRule extends CSSRule {
+    get conditionText() { return (ruleParts(this._text)?.prelude ?? "").replace(/^@\w+\s*/, "").trim(); }
+    get cssRules() {
+      return splitRules(ruleParts(this._text)?.body ?? "").map((text) => makeRule(text, this._sheet));
+    }
+  }
+
+  function makeRule(text, sheet) {
+    const parts = ruleParts(text);
+    if (!parts) return new CSSRule(text, sheet);
+    if (!parts.prelude.startsWith("@")) return new CSSStyleRule(text, sheet);
+    const name = parts.prelude.slice(1).split(/[\s({]/)[0].toLowerCase();
+    if (name === "media" || name === "supports" || name === "container"
+      || name === "layer" || name === "scope") {
+      return new CSSGroupingRule(text, sheet);
+    }
+    return new CSSRule(text, sheet);
+  }
+
+  /// A stylesheet, either constructed by script or belonging to an element.
+  ///
+  /// Both directions matter and they are not the same object. A constructed
+  /// sheet (`new CSSStyleSheet()`, for `adoptedStyleSheets`) *writes* a
+  /// `<style>` element into the document. An element's own sheet — `<style>` or
+  /// `<link rel=stylesheet>` — *reads* what is already there. Until WPT asked,
+  /// only the first existed, so `document.styleSheets` and `el.sheet` were the
+  /// two most-wanted CSSOM gaps on the list at 3,779 calls between them.
   class CSSStyleSheet {
-    constructor() {
+    constructor(options) {
       this._text = "";
       this._element = null;
-      this.disabled = false;
+      this._owned = false;
+      this.disabled = !!(options && options.disabled);
+      if (options && options.media) this._media = String(options.media);
     }
+
+    /// The sheet an element owns, cached on the element so two reads of
+    /// `el.sheet` are the same object, as they are in a browser.
+    static forElement(element) {
+      if (element._sheet) return element._sheet;
+      const sheet = new CSSStyleSheet();
+      sheet._element = element;
+      sheet._owned = true;
+      element._sheet = sheet;
+      return sheet;
+    }
+
+    get ownerNode() { return this._element; }
+    get ownerRule() { return null; }
+    get parentStyleSheet() { return null; }
+    get type() { return "text/css"; }
+    get title() {
+      const raw = this._element ? api.getAttr(this._element._id, "title") : null;
+      return raw || null;
+    }
+    get media() {
+      if (this._media !== undefined) return this._media;
+      return (this._element && api.getAttr(this._element._id, "media")) || "";
+    }
+    /// Null for a `<style>` and for a constructed sheet, as in a browser: only
+    /// a sheet that came from a URL has one.
+    get href() {
+      if (!this._element || this._element.tagName !== "LINK") return null;
+      return this._element.href || null;
+    }
+
+    _css() {
+      if (!this._owned) return this._text;
+      // A `<link>`'s bytes were fetched and parsed natively and never reach
+      // script, so its rules are not readable here. Empty rather than wrong,
+      // and the same answer a browser gives for a cross-origin sheet.
+      if (this._element.tagName === "LINK") return "";
+      return this._element.textContent || "";
+    }
+
+    get cssRules() {
+      return splitRules(this._css()).map((text) => makeRule(text, this));
+    }
+    get rules() { return this.cssRules; }
+
     replaceSync(text) {
       this._text = String(text);
       this._apply();
@@ -3410,10 +3668,29 @@
       this.replaceSync(text);
       return Promise.resolve(this);
     }
-    insertRule(rule, _index) {
-      this._text += String(rule);
+    insertRule(rule, index) {
+      const rules = splitRules(this._css());
+      const at = index === undefined ? 0 : Math.min(Number(index) || 0, rules.length);
+      rules.splice(at, 0, String(rule));
+      this._replaceAll(rules.join("\n"));
+      return at;
+    }
+    deleteRule(index) {
+      const rules = splitRules(this._css());
+      const at = Number(index) || 0;
+      if (at < 0 || at >= rules.length) {
+        throw new DOMException(`there is no rule ${at} to delete`, "IndexSizeError");
+      }
+      rules.splice(at, 1);
+      this._replaceAll(rules.join("\n"));
+    }
+    _replaceAll(text) {
+      if (this._owned) {
+        if (this._element.tagName !== "LINK") this._element.textContent = text;
+        return;
+      }
+      this._text = text;
       this._apply();
-      return 0;
     }
     _apply() {
       if (!this._element) {
@@ -3424,6 +3701,25 @@
       }
       this._element.textContent = this._text;
     }
+  }
+
+  /// Every sheet the document owns, in document order.
+  ///
+  /// Indexed as well as iterable, because `document.styleSheets[0]` is how
+  /// almost every caller reaches for it.
+  function styleSheetList() {
+    const sheets = api
+      .queryAll("style, link[rel~=stylesheet i]", 0)
+      .map(wrap)
+      .filter(Boolean)
+      .map((element) => CSSStyleSheet.forElement(element));
+    const list = {
+      get length() { return sheets.length; },
+      item: (index) => sheets[index] ?? null,
+      [Symbol.iterator]: () => sheets[Symbol.iterator](),
+    };
+    sheets.forEach((sheet, index) => { list[index] = sheet; });
+    return list;
   }
 
   // ── text encoding, randomness, cloning, and the old request object ───────
