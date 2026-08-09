@@ -42,6 +42,27 @@
     return list;
   }
 
+  /// Take a node out of whatever parent it is in, before putting it somewhere.
+  ///
+  /// The DOM defines insertion as removing the node from its old parent first,
+  /// and this engine was not doing it: the tree underneath drops a node
+  /// inserted while still parented, so *moving* a node deleted it. Three
+  /// appends followed by two moves left one child of three.
+  ///
+  /// That is the operation a keyed diff is built out of. It is why preactjs.com
+  /// rendered its shell and its sidebar and then nothing where the article
+  /// should be: preact reorders by re-inserting nodes it already has, and every
+  /// reorder threw one away.
+  ///
+  /// Deliberately the raw detach rather than `removeChild`: a move is one
+  /// operation, and firing a disconnect for the half of it that is a removal
+  /// would tell a custom element it had left a document it is still in.
+  function detachFromParent(node) {
+    if (!node || node._id === undefined || node._id === null) return;
+    if (api.parent(node._id) === null || api.parent(node._id) === undefined) return;
+    api.removeNode(node._id);
+  }
+
   function wrap(id) {
     if (id === null || id === undefined) return null;
     let existing = wrappers.get(id);
@@ -465,6 +486,7 @@
         notifyConnection(this);
         return child;
       }
+      detachFromParent(child);
       api.append(this._id, child._id);
       childListRecord(this, [child], []);
       notifyConnection(child);
@@ -478,6 +500,7 @@
         notifyConnection(this);
         return child;
       }
+      detachFromParent(child);
       api.insertBefore(anchor._id, child._id);
       childListRecord(this, [child], []);
       notifyConnection(child);

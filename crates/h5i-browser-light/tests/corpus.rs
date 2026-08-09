@@ -41,8 +41,12 @@ fn read(html: &str) -> Reading {
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options);
     let base = url::Url::parse("https://fixture.example/").unwrap();
 
-    let mut page = factory.from_html(html, &base);
-    page.run_scripts(broker).expect("the realm starts");
+    // `PageFactory::from_html` already runs the page's scripts when the options
+    // ask for them. Running them again here ran every fixture twice, which is
+    // harmless for a script that only assigns — and wrong for one that appends,
+    // which is how this was found.
+    let _ = broker;
+    let page = factory.from_html(html, &base);
 
     Reading {
         outline: page.snapshot().render(),
@@ -492,4 +496,35 @@ fn walking_up_from_an_element_reaches_the_document() {
 
     reading.assert_clean("walking to the document");
     reading.assert_shows("top=9 isDocument=true hasBody=true parentElementAtRoot=true");
+}
+
+/// Inserting a node that already has a parent must *move* it, not lose it.
+///
+/// The DOM defines insertion as removing from the old parent first, and this
+/// engine was skipping that step — the tree underneath drops a node inserted
+/// while still parented, so every reorder deleted one. That is the operation a
+/// keyed diff is built out of, and it is why preactjs.com rendered its shell
+/// and its sidebar and then nothing where the article should be.
+#[test]
+fn moving_a_node_moves_it_rather_than_losing_it() {
+    let reading = read(
+        "<html><body><div id='host'></div><output id='out'></output>\
+         <script>\
+           const host = document.querySelector('#host');\
+           const made = ['A', 'B', 'C'].map(t => { \
+             const n = document.createElement('i'); n.textContent = t; host.appendChild(n); return n });\
+           const order = () => host.childNodes.map(n => n.textContent).join('');\
+           const steps = [order()];\
+           host.insertBefore(made[2], made[0]);  steps.push(order());\
+           host.appendChild(made[2]);            steps.push(order());\
+           const fresh = document.createElement('i'); fresh.textContent = 'D';\
+           host.replaceChild(fresh, host.firstChild); steps.push(order());\
+           document.querySelector('#out').textContent = steps.join(' ');\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("moving nodes");
+    // built, C to front, C back to the end, first replaced — three children
+    // throughout, because a move is a move.
+    reading.assert_shows("ABC CAB ABC DBC");
 }
