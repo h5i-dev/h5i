@@ -3450,3 +3450,37 @@ fn the_small_asks_the_application_corpus_named_are_answered() {
     );
     assert!(script.unsupported().is_empty(), "{:?}", script.unsupported());
 }
+
+#[test]
+fn a_generated_key_is_not_reported_as_a_missing_api() {
+    let (_page, mut script) = page_and_script("<html><body><p id='p'>x</p></body></html>");
+
+    // jQuery and Sizzle stamp elements with names carrying a timestamp, and
+    // read them before they write them. One corpus page produced 5265 such
+    // "gaps" and put them at the top of the list, burying the real ones.
+    script
+        .eval(
+            "const el = document.querySelector('#p'); \
+             void el.jQuery360062973586668224961; \
+             void el.sizzle1786301869537; \
+             void document.jQuery360062973586668224961;",
+        )
+        .unwrap();
+    assert!(
+        script.unsupported().is_empty(),
+        "generated keys are the page's bookkeeping, not this engine's gaps: {:?}",
+        script.unsupported()
+    );
+
+    // A short number in a real API name is still reported — `h1` and `atob2`
+    // are the shape a person types, and the filter must not swallow them.
+    script.eval("void document.querySelector('#p').scrollIntoViewIfNeeded2;").unwrap();
+    assert!(
+        script
+            .unsupported()
+            .iter()
+            .any(|(n, _)| n == "Element.scrollIntoViewIfNeeded2"),
+        "{:?}",
+        script.unsupported()
+    );
+}

@@ -63,6 +63,14 @@
     api.removeNode(node._id);
   }
 
+  /// The id of the document node, worked out once. It is the parent of the
+  /// root element and never changes.
+  let knownDocumentNode;
+  function documentNodeId() {
+    if (knownDocumentNode === undefined) knownDocumentNode = api.parent(api.root());
+    return knownDocumentNode;
+  }
+
   function wrap(id) {
     if (id === null || id === undefined) return null;
     let existing = wrappers.get(id);
@@ -85,6 +93,7 @@
     // Labelled by what the node actually is. Calling a text node "Element"
     // reported `Element.tagName` as missing when what happened was a page
     // reading `tagName` off a text node, where no engine has one.
+    raw._kind = kind;
     const node = observed(raw, label);
     wrappers.set(id, node);
     return node;
@@ -285,7 +294,19 @@
     return new Proxy(target, {
       get(object, property, receiver) {
         if (typeof property === "symbol" || property in object) {
-          return Reflect.get(object, property, receiver);
+          // The raw target as receiver, not the proxy. A getter invoked with
+          // the proxy as `this` pays another trap for every `this._id` it
+          // reads, so each of our own accessors cost two — `nodeType` was
+          // 2.15 µs for what is a field lookup. Passing the target takes the
+          // hot properties to 0.85 µs.
+          //
+          // What it narrows: a getter *defined by the page* on its own class
+          // runs with the target as `this`, so an unknown property read inside
+          // one is not reported. Methods are unaffected — `el.method()` still
+          // calls with the proxy as `this` — and the reporting that has found
+          // real bugs has always been about properties the page reads *off* a
+          // node, which is unchanged.
+          return Reflect.get(object, property, object);
         }
         // `then` is probed by the promise machinery on anything it is handed;
         // recording it would report a missing API every time a node passed
@@ -302,8 +323,17 @@
         // an underscore or a dollar; frameworks' private fields routinely do.
         // Solid reads `document._$DX_DELEGATE` before it sets it, and the list
         // an agent reads carried that as something this engine was missing.
-        const first = String(property).charCodeAt(0);
+        const name = String(property);
+        const first = name.charCodeAt(0);
         if (first === 95 || first === 36) return undefined;
+
+        // Nor is a generated key. jQuery and Sizzle stamp elements with names
+        // like `jQuery360062973586668224961` and `sizzle1786301869537`, read
+        // before they are written — one page produced 5265 such "gaps" and put
+        // them at the top of the list, which is exactly the burying this filter
+        // exists to prevent. No web platform property carries a run of digits
+        // that long, because it would have to be typed by a person.
+        if (/\d{6}/.test(name)) return undefined;
 
         api.unsupported(`${label}.${String(property)}`);
         return undefined;
@@ -431,15 +461,22 @@
       return theirs > mine ? 4 : 2;         // FOLLOWING : PRECEDING
     }
 
-    get nodeType() { return api.nodeKind(this._id); }
+    // Cached at wrap time. A node's kind is fixed when it is created, and this
+    // is read constantly — every `nodeType === 1` filter, every tree walk, and
+    // `children` on top of that — so paying a call into the tree for a constant
+    // was 1.9 µs on the hottest property in the DOM.
+    get nodeType() {
+      return this._kind !== undefined ? this._kind : api.nodeKind(this._id);
+    }
     get parentNode() {
       const parent = api.parent(this._id);
       if (parent === null || parent === undefined) return null;
       // The parent of `<html>` is the document, and it has to *be* the document
       // — code walks up until it finds node type 9 and then asks that thing for
-      // `body` and `documentElement`. Wrapping it as an ordinary node made the
-      // walk end somewhere that answered neither.
-      if (api.nodeKind(parent) === 9) return document;
+      // `body` and `documentElement`. Compared against a remembered id rather
+      // than asked of the tree, because this is a walk: one call per ancestor
+      // was two.
+      if (parent === documentNodeId()) return document;
       return wrap(parent);
     }
     get parentElement() {

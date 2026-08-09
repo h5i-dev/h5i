@@ -938,6 +938,43 @@ still one uninterruptible unit.
 
 ---
 
+### 8.15 A review pass: what it found in its own work
+
+Going back over what had been built, rather than forward.
+
+**Our own accessors were paying the reporting trap twice.** A getter invoked
+with the proxy as `this` pays another trap for every `this._id` it reads, so
+each accessor cost two. Passing the raw target as the receiver:
+
+```
+nodeType     2.15 -> 0.85 µs      tagName      1.80 -> 0.95 µs
+parentNode   2.75 -> 1.55 µs      children    10.45 -> 7.75 µs
+```
+
+What it narrows is stated where the code is: a getter *defined by the page* on
+its own class now runs with the target as `this`, so an unknown property read
+inside one is not reported. Methods are unaffected, and the reporting that has
+found real bugs has always been about properties a page reads *off* a node.
+
+Two smaller ones on the same path: a node's kind is fixed when it is created and
+was being asked of the tree on every `nodeType` read, and the document node's id
+is constant and was being re-derived on every step of every upward walk.
+
+**The ask list was being buried by generated keys.** jQuery and Sizzle stamp
+elements with names like `jQuery360062973586668224961` and
+`sizzle1786301869537` and read them before writing them; one corpus page
+produced **5265 such "gaps"** and put them at the top of the list. No web
+platform property carries a six-digit run, because it would have to be typed by
+a person — so those are filtered, alongside the `_` and `$` prefixes already
+filtered for the same reason.
+
+**Where the application corpus stands after all of it:** 20/20 load, 17 usable
+outlines, 2 render materially more with script, **0 render less**, 0 anonymous
+errors, and **1 site** that cannot be read with script at all — lit.dev, whose
+module graph is the one uninterruptible unit left (§8.14).
+
+---
+
 ## 10. What is next, 2026-08-09
 
 Tiers 0 through 4 of the plan this section replaces are done. What the work
