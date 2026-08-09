@@ -1464,3 +1464,169 @@ wants `printToPDF`. These are not the same feature: one is chrome around a page,
 the other is a serialisation of it, and an agent asked to keep a record of what
 it read wants the second. Recommended as an exception, on the grounds that the
 raster path (`blitz-paint`, vello_cpu) already produces everything it needs.
+
+---
+
+## 12. Running WPT, 2026-08-09
+
+§11.5.2 argued that seventy corpus pages cannot answer "what fraction of the
+platform is implemented", and put conformance ahead of the capabilities it
+would measure. This is that work. The rule it operates under is §8's: **an
+instrument that cannot name what is missing is fixed before anything it failed
+to name**, and the instrument needed fixing three times before its numbers were
+worth quoting.
+
+### 12.1 The instrument
+
+`wpt/serve.py` serves a WPT checkout and substitutes one file.
+`resources/testharnessreport.js` is shipped by WPT as an empty seam for a vendor
+to fill, so ours fills it and the results come back through the console, which
+`open --json` already reports. **Nothing was added to the engine to make it
+measurable.** An instrument that requires the subject to grow a port for it is
+measuring something other than the subject.
+
+`wpt/run.py` keeps six outcomes apart and lets only three contribute subtests:
+
+| | |
+| --- | --- |
+| `ok` / `harness_error` / `harness_timeout` | the harness reported. Real data. |
+| `no_report` | the engine exited cleanly and the harness never reported. **Unmeasured, not zero.** |
+| `engine_timeout` / `engine_crash` | unmeasured. |
+
+`no_report` is the bucket worth chasing: it is where one engine gap stops a file
+before it can say what it failed, so emptying it moves the score in steps rather
+than in ones. Every fix in 12.2 came out of it.
+
+`wpt/sweep.sh` runs one directory at a time and `wpt/merge.py` totals them.
+Chunked for a reason learned the hard way: a single process holding two hours of
+results loses all of them when something kills it, and something did. Each test
+process also runs under an address-space cap, because several WPT files allocate
+until something gives and without a cap the kernel picks the victim — which on
+this 8 GiB box was the whole session rather than the test.
+
+### 12.2 Twenty files, four bugs, and a suite that scored zero
+
+The first twenty files scored **0**. Not because the engine was that far off:
+one missing binding stopped testharness.js before its first assertion.
+
+* **`self` was undefined.** testharness walks `w != w.parent` from `self` before
+  it can run anything. Added with `parent`, `top`, `frames`, `length`,
+  `frameElement` and `opener` — not stubs, because §6 refuses iframes and
+  popups, so this document is always a top-level context and every value is what
+  a real browser reports for one.
+* **The load lifecycle was never fired.** No `DOMContentLoaded`, no `load`, and
+  `document.readyState` was the constant `"complete"`. That constant is exactly
+  why four corpora never caught it: it makes the *common* idiom work — read
+  `readyState === "loading"`, otherwise initialise now — so every page took the
+  immediate branch and nothing looked wrong. The other branch never arrived.
+  testharness gates every result it will ever report on one `load` listener with
+  no readyState fallback, so it scored nothing while looking merely slow.
+* **`insertBefore` with an unparented reference node killed the process**, which
+  WPT does on purpose. A panic is not a DOM error: it takes the page, the
+  snapshot and the receipts with it.
+* **`insertAdjacentText` was missing**, which blocked eight files at once
+  because testharness renders its own results table with it.
+
+Twenty files went 0 → 199. The fifth fix is the one that found the fourth:
+**timer errors now carry a stack**. They said only "timer threw" and withheld
+the one thing a caller needs. That has since been applied to all eight callbacks
+that swallow an error — a listener, a timer, an observer are each detached from
+whatever scheduled them, so the message is all the reader gets.
+
+### 12.3 What the instrument was getting wrong about itself
+
+Two corrections, both of which made the engine look worse than it is:
+
+**276 of 1,503 files never load testharness.js.** Reftests compare renderings
+and crashtests only have to not crash; neither can report a result no matter how
+well the engine runs it. They were sitting in the unmeasured bucket looking like
+engine failures. Counted and named separately, unmeasured fell from 643 to 367
+without a single test changing behaviour.
+
+**A large share of WPT is not on disk.** `x.any.js` becomes `x.any.html`,
+`x.any.worker.html` and more at serve time, and a static server cannot produce
+them. 3,833 such endpoints are skipped and the count is printed, so the
+denominator is never mistaken for "all of WPT".
+
+### 12.4 The baseline, and what it asked for
+
+Full on-disk sweep: **33,754 subtests passing of 212,028 scored**, 25,393 files,
+of which 16,857 reported and 8,536 did not. 36,450 further files were skipped as
+unscoreable and 3,833 as generated.
+
+The most valuable output is not the score, it is the demand list — every API the
+tests asked for and this engine does not have, counted. The top of it:
+
+```
+3944  Element.hasChildNodes        1197  getComputedStyle(margin-left)
+2208  Element.sheet                1012  getComputedStyle(scale)
+1571  document.styleSheets          972  Element.offsetTop
+1501  Element.getContext            926  getComputedStyle(z-index)
+1468  Element.setHTMLUnsafe         863  navigator.serviceWorker
+```
+
+`hasChildNodes` is one line and was asked for 3,944 times, more than twice
+anything else. Nothing in four hand-picked corpora used it and everything in the
+DOM test suite does. That is the case for a conformance suite in one sentence.
+
+### 12.5 What was built, and what was deliberately not
+
+**Typed reflection.** `dir` is an enumerated attribute whose IDL getter answers
+"" for anything that is not one of its keywords, so `setAttribute("dir", "5%")`
+reads back as "" in a browser and read back as "5%" here. WPT sets every
+reflected attribute to sixty-odd hostile values and checks exactly that, which
+is how an engine scores zero on an attribute it believed it had. There is now
+one `reflect()` with a type per shape — string, nullable, bool, long, ulong,
+enumerated, url — and `long` implements the spec's rules for parsing integers,
+which are not `Number()`.
+
+**Per-tag interfaces.** Sixty tags now carry their own class and the spec's
+reflection table, because `colSpan` belongs to `<td>` and hanging it on every
+element makes `"colSpan" in div` true — the same lie the removed `missingApi`
+stubs told.
+
+**Every computed longhand.** The note in `computed_style` claimed Stylo had no
+generic accessor to bind against, so six properties were hand-listed and
+everything else answered "". That was a wrong belief about the dependency, not a
+considered scope: `computed_value_to_string` does exactly this. `color` came
+back empty (§11.5.11) and now returns `rgb(0, 0, 0)`.
+
+**Not chased: the legacy CJK encoding tests**, which are ~17,000 failing
+subtests and the largest single bucket in the corpus. They need legacy encoder
+tables in the URL serialiser, wptserve variants, and `<iframe>`, which §6
+refuses outright. Seventeen thousand subtests of legacy CJK URL percent-encoding
+is the clearest opportunity this suite offers to move a number without improving
+the engine for anyone, and taking it would make every other number here mean
+less.
+
+### 12.6 Reading the number honestly
+
+Three things move this score and only one of them is engineering:
+
+1. **Implementing more.** On a fixed nine-directory sample, 5,345 → 6,876.
+   html/dom alone, 3,223 → 6,035 across the two reflection commits.
+2. **Measuring more.** Going from nine directories to all 223 took the total to
+   33,754 without a line of engine code. This is legitimate — Kitesurf's 215,000
+   is across all of WPT too — but it is not improvement, and a report that
+   blurred the two would be worth nothing.
+3. **Counting more honestly**, which moves it *down* as often as up.
+
+So the targets are worth restating in those terms. **10,000 is passed**, and
+mostly by (2). **50,000** is reachable by (1): the demand list above is
+mechanical work — CSSOM `sheet` and `styleSheets`, the remaining computed-style
+resolutions, the offset metrics — and 8,536 files still report nothing at all,
+each worth many subtests. **100,000** is not reachable on this path. It needs
+the generated endpoints, which means serving what wptserve serves, and it needs
+whole subsystems this engine does not have and mostly should not: canvas,
+service workers, XSLT. The honest ceiling for the current design should be
+measured before it is promised.
+
+### 12.7 What is next
+
+1. **Empty the `no_report` bucket.** 8,536 files report nothing; the causes are
+   already grouped by the runner and the top few will cover most of them.
+2. **CSSOM**: `Element.sheet`, `document.styleSheets`. 3,779 asks between them.
+3. **The remaining computed values**: shorthands, custom properties, and the
+   layout-dependent resolutions Stylo alone cannot know.
+4. **A CI gate on regression**, not on an absolute number: the baseline is
+   committed, and a change that drops it should have to say why.
