@@ -925,6 +925,20 @@
     // case-insensitive and canonically lower, while `tagName` is upper.
     get localName() { return this.tagName.toLowerCase(); }
 
+    get contentEditable() {
+      const raw = api.getAttr(this._id, "contenteditable");
+      return raw === null ? "inherit" : (raw === "" ? "true" : raw);
+    }
+    set contentEditable(v) { this.setAttribute("contenteditable", v); }
+    get isContentEditable() {
+      for (let n = this; n; n = n.parentElement) {
+        const raw = api.getAttr(n._id, "contenteditable");
+        if (raw === "true" || raw === "") return true;
+        if (raw === "false") return false;
+      }
+      return false;
+    }
+
     get lang() { return api.getAttr(this._id, "lang") || ""; }
     set lang(v) { this.setAttribute("lang", v); }
     get title() { return api.getAttr(this._id, "title") || ""; }
@@ -2179,11 +2193,28 @@
     get implementation() {
       return observed({
         hasFeature: () => true,
+        // The same shape `DOMParser` produces, which is what this is for: a
+        // detached document to build markup in. It shares this engine's one
+        // tree, so it is a subtree presented as a document rather than a second
+        // one — enough for building and querying, which is all it is used for.
+        createHTMLDocument: (title) =>
+          new DOMParser().parseFromString(
+            `<title>${String(title ?? "")}</title>`,
+            "text/html",
+          ),
         // A second document is genuinely out of reach here — there is one tree,
         // and it is the page. A page using this to parse HTML off to the side
         // gets a named refusal instead of a silently broken document.
       }, "document.implementation");
     },
+
+    // The famous one. Legacy code uses `document.all` to detect old IE, and the
+    // detection works because it is the only object in JavaScript that is
+    // falsy while being an object. That cannot be reproduced here — Boa has no
+    // `[[IsHTMLDDA]]` — so this returns the collection and *not* the falsiness,
+    // which is the honest half: a page feature-detecting with it will take the
+    // "modern browser" branch, which is the correct one for this engine.
+    get all() { return collection(api.queryAll("*", 0).map(wrap), "HTMLCollection"); },
 
     get activeElement() { return wrap(api.body()); },
     get hidden() { return false; },
@@ -2802,6 +2833,17 @@
       vendor: "",
       platform: "", language: "en-US", languages: ["en-US"],
       onLine: true, cookieEnabled: false, maxTouchPoints: 0,
+      hardwareConcurrency: 1,
+      // False, and true: this is not a driven browser in the WebDriver sense.
+      // A page fingerprinting for automation gets the same answer a person's
+      // browser gives, because the answer is not about who is asking.
+      webdriver: false,
+      // `userAgentData` and `scheduling` are deliberately *not* declared here.
+      // Writing `userAgentData: undefined` would make `'userAgentData' in
+      // navigator` answer true, which is the same lie the `missingApi` stubs
+      // told: a page checking before using would take the branch for an API
+      // that is not there. Left absent, they behave as they do in Firefox, and
+      // the reporting proxy still names them.
     }, "navigator"),
     // Named rather than absent. A page reaching for these gets a message that
     // says which API it wanted, and the name reaches the snapshot.

@@ -2532,16 +2532,17 @@ fn the_remaining_document_and_element_asks_answer_from_the_page() {
         script.unsupported()
     );
 
-    // A second document really is out of reach, and says so by name.
-    script.eval("try { document.implementation.createHTMLDocument('x') } catch (e) {}").unwrap();
-    assert!(
+    // A second document is not out of reach after all: it is the same subtree
+    // shape `DOMParser` returns, which is what the method is used for.
+    assert_eq!(
         script
-            .unsupported()
-            .iter()
-            .any(|(n, _)| n == "document.implementation.createHTMLDocument"),
-        "{:?}",
-        script.unsupported()
+            .eval_value(
+                "document.implementation.createHTMLDocument('x').body.tagName"
+            )
+            .unwrap(),
+        "BODY"
     );
+    assert!(script.unsupported().is_empty(), "{:?}", script.unsupported());
 }
 
 #[test]
@@ -3404,4 +3405,48 @@ fn a_page_that_never_stops_working_is_stopped_and_told_so() {
         "and says so, in its own voice: {:?}",
         script.console()
     );
+}
+
+#[test]
+fn the_small_asks_the_application_corpus_named_are_answered() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='e' contenteditable><span id='inner'>x</span></div>\
+         <p id='p'>y</p></body></html>",
+    );
+
+    assert_eq!(script.eval_value("document.all.length > 0").unwrap(), "true");
+    assert_eq!(
+        script.eval_value("document.querySelector('#e').contentEditable").unwrap(),
+        "true"
+    );
+    // Inherited down the tree, which is what makes it different from the
+    // attribute: a child of an editable region is editable too.
+    assert_eq!(
+        script.eval_value("document.querySelector('#inner').isContentEditable").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('#p').isContentEditable").unwrap(),
+        "false"
+    );
+    assert_eq!(script.eval_value("navigator.webdriver").unwrap(), "false");
+
+    // Declared-as-undefined would make this true, which is the lie the removed
+    // stubs told: a page checking before using takes the branch for an API that
+    // is not there.
+    assert_eq!(
+        script.eval_value("String('userAgentData' in navigator)").unwrap(),
+        "false"
+    );
+
+    assert_eq!(
+        script
+            .eval_value(
+                "const d = document.implementation.createHTMLDocument('t'); \
+                 d.head.tagName + ':' + d.title"
+            )
+            .unwrap(),
+        "HEAD:t"
+    );
+    assert!(script.unsupported().is_empty(), "{:?}", script.unsupported());
 }
