@@ -702,3 +702,35 @@ fn the_platform_error_type_can_be_constructed() {
     reading.assert_clean("DOMException");
     reading.assert_shows("AbortError/20/true/the operation was aborted");
 }
+
+/// A panic in the layout engine must not end the process.
+///
+/// Blitz panics on the GNU bash manual — one megabyte of single-page HTML —
+/// with `attempt to subtract with overflow` deep in layout construction. A
+/// panic is the one outcome an agent cannot act on: not a thin page, not an
+/// error it can read, but a dead process and no answer. This pins the *shape*
+/// of the guard with a page that lays out normally; the real page is in the
+/// structures corpus, where it now returns 500 lines and a note saying the
+/// layout stage failed.
+#[test]
+fn layout_runs_behind_a_guard_that_reports_rather_than_aborts() {
+    // Deeply nested and wide, which is the shape that provokes layout edge
+    // cases, and must simply work.
+    let mut html = String::from("<html><body>");
+    for depth in 0..40 {
+        html.push_str(&format!("<div class='d{depth}'><table><tr><td>"));
+    }
+    html.push_str("deep content");
+    for _ in 0..40 {
+        html.push_str("</td></tr></table></div>");
+    }
+    html.push_str("</body></html>");
+
+    let reading = read(&html);
+    reading.assert_shows("deep content");
+    assert!(
+        !reading.outline.contains("layout stage failed"),
+        "this page lays out fine: {}",
+        reading.outline
+    );
+}

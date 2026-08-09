@@ -1059,6 +1059,46 @@ browser and GPU processes across many tabs and would look better per page.
 
 ---
 
+### 8.18 Two more corpora, and the crash they found
+
+Two writing systems' worth of blind spot, and a shape of page neither corpus
+contained.
+
+**International** — fourteen pages in CJK, Arabic, Hebrew, Persian, Thai,
+Devanagari, Greek, Cyrillic and Vietnamese. Text shaping, bidi and CJK line
+breaking all run through parley, and every page measured until now was Latin: in
+an engine whose entire product is extracted text, none of it had ever been
+exercised. **14/14 load, 14 usable outlines, zero errors, zero anonymous
+errors**, and the extracted text is correct — checked character by character
+rather than by line count, because a corpus that counts lines would happily
+report three hundred lines of mojibake.
+
+**Structures** — big tables, forms, search results, plain RFCs, and markup old
+enough to predate the conventions the rest of the web settled on. This one paid
+immediately.
+
+**The GNU bash manual crashed the engine.** One megabyte of single-page HTML,
+and blitz panics with `attempt to subtract with overflow` in layout
+construction. A panic is the one outcome an agent cannot act on: not a thin
+page, not an error it can read, but a dead process and no answer at all.
+
+Layout now runs behind a guard. The panic is caught, the document is read in
+whatever state layout reached, and the snapshot says so — the page returns **500
+lines and a note** where it used to return a stack trace and an exit code. The
+first failure is kept rather than the last, because a later pass that happens to
+survive does not undo the fact that the tree was laid out incompletely.
+
+`AssertUnwindSafe` is the honest part of that: the document is behind a
+`RefCell` a panic may leave mid-update, and reading a possibly-incomplete tree is
+exactly the risk being taken in exchange for not having a dead process.
+
+Also found and not yet built: `document.write` (caniuse), `CSSStyleSheet`,
+`document.respec` (W3C specs). And pypi's search page is a JavaScript-detection
+interstitial the challenge matcher does not recognise, which is a gap in the
+matcher rather than in the engine.
+
+---
+
 ## 10. What is next, 2026-08-09
 
 Tiers 0 through 4 of the plan this section replaces are done. What the work

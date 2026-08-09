@@ -66,6 +66,45 @@ DOCUMENTS = [
     "https://redis.io/docs/latest/commands/get/",
 ]
 
+# Writing systems this engine had never been pointed at. Text shaping, bidi and
+# CJK line breaking all run through parley, and every page measured until now was
+# Latin — so nothing here had ever been exercised, in an engine whose entire
+# product is extracted text.
+INTERNATIONAL = [
+    # CJK: no spaces between words, so line breaking and text extraction differ.
+    "https://ja.wikipedia.org/wiki/寿司",
+    "https://zh.wikipedia.org/wiki/茶",
+    "https://ko.wikipedia.org/wiki/김치",
+    "https://developer.mozilla.org/ja/docs/Web/API/fetch",
+    "https://www.aozora.gr.jp/cards/000148/files/789_14547.html",
+    # Right-to-left, and bidirectional where Latin is embedded in it.
+    "https://ar.wikipedia.org/wiki/قهوة",
+    "https://he.wikipedia.org/wiki/ספר",
+    "https://fa.wikipedia.org/wiki/چای",
+    # Other scripts and diacritics.
+    "https://ru.wikipedia.org/wiki/Чай",
+    "https://el.wikipedia.org/wiki/Καφές",
+    "https://hi.wikipedia.org/wiki/चाय",
+    "https://th.wikipedia.org/wiki/ชา",
+    # Latin, but heavily accented and hyphenated.
+    "https://de.wikipedia.org/wiki/Kaffee",
+    "https://vi.wikipedia.org/wiki/Trà",
+]
+
+# Shapes an agent meets constantly and the other corpora do not contain: big
+# tables, forms, plain-text standards, and markup old enough to predate the
+# conventions the rest of the web settled on.
+STRUCTURES = [
+    "https://en.wikipedia.org/wiki/List_of_countries_by_GDP_(nominal)",
+    "https://www.w3.org/TR/WCAG21/",
+    "https://datatracker.ietf.org/doc/html/rfc2616",
+    "https://www.gnu.org/software/bash/manual/bash.html",
+    "https://news.ycombinator.com/newest",
+    "https://pypi.org/search/?q=requests",
+    "https://www.rfc-editor.org/rfc/rfc9110.html",
+    "https://caniuse.com/fetch",
+]
+
 # Applications: routing, client-side rendering, local state, custom elements.
 APPLICATIONS = [
     "https://vite.dev/guide/",
@@ -268,11 +307,18 @@ def measure(binary, name, sites):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", default=DEFAULT_BIN)
-    parser.add_argument("--only", choices=["documents", "applications"])
+    parser.add_argument(
+        "--only", choices=["documents", "applications", "international", "structures"]
+    )
     parser.add_argument("--json-out")
     args = parser.parse_args()
 
-    corpora = {"documents": DOCUMENTS, "applications": APPLICATIONS}
+    corpora = {
+        "documents": DOCUMENTS,
+        "applications": APPLICATIONS,
+        "international": INTERNATIONAL,
+        "structures": STRUCTURES,
+    }
     if args.only:
         corpora = {args.only: corpora[args.only]}
 

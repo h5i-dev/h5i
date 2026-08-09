@@ -142,6 +142,12 @@ pub struct Page {
     /// A page with no script elements never gets one, so `script.is_some()`
     /// alone cannot tell "script is off" from "there was nothing to run".
     ran_scripts: bool,
+    /// Set when the layout engine panicked while reading this page.
+    ///
+    /// The outline that follows was produced from whatever state layout reached,
+    /// which is worth saying out loud: a short page and a half-laid-out one look
+    /// the same to a reader who is not told.
+    layout_failure: Option<String>,
     /// What the last settle did, for the snapshot to report.
     settled: Option<crate::script::Settled>,
     /// Engine-level facts the next snapshot should carry.
@@ -317,8 +323,12 @@ impl Page {
         // already completed by the time parsing returns, but their results
         // arrive as messages that `resolve` drains at its *start*. The first
         // pass applies the stylesheets; the second lays out with them.
-        doc.resolve(0.0);
-        doc.resolve(0.0);
+        // A panic in either pass is caught and becomes a note on the reading.
+        let layout_failure = guard_layout(|| {
+            doc.resolve(0.0);
+            doc.resolve(0.0);
+        })
+        .err();
 
         Self {
             doc: Rc::new(RefCell::new(doc)),
@@ -327,6 +337,7 @@ impl Page {
             pending_navigation,
             script: None,
             ran_scripts: false,
+            layout_failure,
             settled: None,
             notes: Vec::new(),
         }
@@ -564,7 +575,7 @@ impl Page {
 
         let settled = script.settle();
         if script.take_dirty() {
-            self.doc.borrow_mut().resolve(0.0);
+            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
         }
         // Drained and discarded: these are the page *loading* — its module
         // graph and any fetch its startup made. Leaving them queued would
@@ -598,7 +609,7 @@ impl Page {
         let requests = script.take_requests();
         self.settled = Some(settled);
         if dirty {
-            self.doc.borrow_mut().resolve(0.0);
+            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
         }
         Some(requests)
     }
@@ -641,12 +652,25 @@ impl Page {
         self.doc.clone()
     }
 
+    /// Remember that layout broke, keeping the first failure.
+    ///
+    /// The first, because a later pass that happens to survive does not undo
+    /// the fact that the document was laid out incompletely — and an outline
+    /// read from it is short for a reason the agent should be told.
+    fn note_layout_failure(&mut self, outcome: Result<(), String>) {
+        if let Err(detail) = outcome {
+            if self.layout_failure.is_none() {
+                self.layout_failure = Some(detail);
+            }
+        }
+    }
+
     /// Re-resolve style and layout after script changed the tree.
     ///
     /// Called once after a settle rather than after each mutation: a script that
     /// appends fifty rows should lay out once, not fifty times.
     pub fn refresh(&mut self) {
-        self.doc.borrow_mut().resolve(0.0);
+        self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
     }
 
     /// The outline an agent reads.
@@ -683,6 +707,13 @@ impl Page {
                     (false, true, _) => "ran them",
                     (false, false, _) => "did not run them (script is off)",
                 }
+            ));
+        }
+
+        if let Some(detail) = &self.layout_failure {
+            snapshot.notes.push(format!(
+                "this engine's layout stage failed on this page ({detail}). What follows was \
+                 read from a partly laid-out document and may be incomplete."
             ));
         }
 
@@ -779,7 +810,7 @@ impl Page {
         });
         // Typing changes layout — a longer value can reflow the form — and
         // nothing else in this file re-resolves on the agent's behalf.
-        doc.resolve(0.0);
+        let _ = guard_layout(|| doc.resolve(0.0));
         drop(doc);
 
         // A *user* edit fires input then change, in that order. Script setting
@@ -792,7 +823,7 @@ impl Page {
             let dirty = script.take_dirty();
             self.settled = Some(settled);
             if dirty {
-                self.doc.borrow_mut().resolve(0.0);
+                self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
             }
         }
         true
@@ -1082,6 +1113,34 @@ impl PageFactory {
         }
         page
     }
+}
+
+/// Resolve style and layout, surviving a panic in the layout engine.
+///
+/// Blitz can panic — the GNU bash manual, a single one-megabyte page, aborts it
+/// with `attempt to subtract with overflow` deep in layout construction. A
+/// panic is the one outcome an agent cannot act on: not a thin page, not an
+/// error it can read, but a dead process and no answer at all.
+///
+/// So the panic is caught and becomes a fact about the reading. The document is
+/// left in whatever state layout reached, which is why the caller records a
+/// note: a page that half-laid-out is a page whose outline may be short, and
+/// the agent should be told why rather than left to wonder.
+///
+/// `AssertUnwindSafe` because the document is behind a `RefCell` that a panic
+/// may leave mid-update. That is exactly the risk being accepted: a possibly
+/// incomplete tree, read and reported, in place of no process.
+fn guard_layout(body: impl FnOnce()) -> Result<(), String> {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+
+    outcome.map_err(|payload| {
+        let detail = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "the layout engine panicked".to_string());
+        detail
+    })
 }
 
 /// How many `<meta refresh>` hops to follow before giving up.
