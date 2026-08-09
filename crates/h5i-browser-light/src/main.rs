@@ -138,7 +138,11 @@ enum Command {
     ///
     /// h5i reads this to decide what to route here rather than inferring it
     /// from a version number.
-    Capabilities,
+    Capabilities {
+        /// Report what this engine can do with `--script` on.
+        #[arg(long)]
+        script: bool,
+    },
 
     /// Report the environment: fonts, proxy, and what the policy would allow.
     Doctor {
@@ -265,6 +269,16 @@ struct ViewArgs {
     /// Most lines of outline to emit.
     #[arg(long, default_value_t = 500)]
     max_snapshot_lines: usize,
+
+    /// Run the page's own JavaScript. **Limited preview** — see the README for
+    /// what is and is not implemented.
+    ///
+    /// Off by default on purpose. With script off, page-borne prompt injection
+    /// has no delivery channel at all because no engine is running; turning it
+    /// on spends that, and it is a decision rather than a default (ROADMAP
+    /// §12.5).
+    #[arg(long)]
+    script: bool,
 }
 
 /// Writes to both sinks, and fails if either refuses.
@@ -293,8 +307,13 @@ fn main() {
 
 fn run() -> Result<(), H5iError> {
     match Cli::parse().command {
-        Command::Capabilities => {
-            println!("{}", serde_json::to_string_pretty(&Capabilities::current())?);
+        Command::Capabilities { script } => {
+            // Reported for the configuration asked about, because what h5i
+            // routes on is whether *this* invocation runs script.
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&Capabilities::with_script(script))?
+            );
             Ok(())
         }
         Command::Doctor { net } => doctor(&net),
@@ -354,6 +373,7 @@ fn load(
             height: view.height,
             scale: view.scale,
             max_snapshot_lines: view.max_snapshot_lines,
+            script: view.script,
         },
     );
 

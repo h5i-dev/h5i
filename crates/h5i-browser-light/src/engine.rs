@@ -6,6 +6,8 @@
 //! the document after load. When Tier 2 adds a live view and Tier 3 adds
 //! script, the loop belongs around this, not inside it.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use anyrender::ImageRenderer;
@@ -29,6 +31,12 @@ pub struct PageOptions {
     pub height: u32,
     pub scale: f32,
     pub max_snapshot_lines: usize,
+    /// Run the page's own scripts.
+    ///
+    /// Off by default and opt-in at every layer above, because turning it on is
+    /// a change to what an untrusted page can do inside the box rather than a
+    /// rendering preference (ROADMAP §12.5).
+    pub script: bool,
 }
 
 impl Default for PageOptions {
@@ -38,6 +46,7 @@ impl Default for PageOptions {
             height: 720,
             scale: 1.0,
             max_snapshot_lines: 500,
+            script: false,
         }
     }
 }
@@ -103,13 +112,33 @@ impl blitz_traits::navigation::NavigationProvider for CapturedNavigation {
     }
 }
 
+/// The one real DOM, shared with the script realm.
+///
+/// `Rc<RefCell<_>>` rather than ownership because JavaScript reaches the same
+/// tree: a native binding invoked from a callback needs the document long after
+/// the call that registered it returned. `Rc` and not `Arc` because none of this
+/// crosses a thread — `Page` is not `Send` (see `stream`'s module docs), which
+/// is the constraint the whole session architecture already bends around.
+///
+/// The borrow discipline that keeps this from panicking: **a binding takes the
+/// borrow, mutates, and drops it before returning to JS.** Blitz's mutations
+/// never call back into script, so no binding can re-enter while holding one.
+pub type Dom = Rc<RefCell<BaseDocument>>;
+
 /// A loaded, resolved document.
 pub struct Page {
-    doc: BaseDocument,
+    doc: Dom,
     url: Url,
     options: PageOptions,
     /// Where [`CapturedNavigation`] leaves whatever the last form asked for.
     pending_navigation: Arc<std::sync::Mutex<Option<Submission>>>,
+    /// The script realm, when this page has one. `None` when script is off,
+    /// which is still the default: `capabilities.javascript` is the gate, and
+    /// flipping it is a threat-model decision rather than a feature flag
+    /// (ROADMAP §12.5).
+    script: Option<crate::script::Script>,
+    /// What the last settle did, for the snapshot to report.
+    settled: Option<crate::script::Settled>,
 }
 
 impl Page {
@@ -183,10 +212,12 @@ impl Page {
         doc.resolve(0.0);
 
         Self {
-            doc,
+            doc: Rc::new(RefCell::new(doc)),
             url: base_url.clone(),
             options,
             pending_navigation,
+            script: None,
+            settled: None,
         }
     }
 
@@ -194,9 +225,173 @@ impl Page {
         &self.url
     }
 
+    /// Run the page's own scripts, then settle.
+    ///
+    /// Separate from loading because it is a policy decision, not a parsing
+    /// step: a caller that has not opted into script gets a page whose
+    /// `<script>` elements are inert, which is exactly what tiers 1 and 2 were.
+    pub fn run_scripts(&mut self, broker: Arc<Broker>) -> Result<(), H5iError> {
+        // In document order, inline and external together, because execution
+        // order is semantics: a bundle that defines a global in one script and
+        // uses it in the next breaks if they are reordered.
+        enum Source {
+            Inline(String),
+            External(String),
+        }
+
+        let sources: Vec<Source> = {
+            let doc = self.doc.borrow();
+            doc.query_selector_all("script")
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(|id| {
+                            let node = doc.get_node(*id)?;
+                            let src = node.attrs().and_then(|attrs| {
+                                attrs
+                                    .iter()
+                                    .find(|a| a.name.local.as_ref() == "src")
+                                    .map(|a| a.value.to_string())
+                            });
+                            match src {
+                                Some(src) => Some(Source::External(src)),
+                                None => {
+                                    let text = node.text_content();
+                                    (!text.trim().is_empty()).then_some(Source::Inline(text))
+                                }
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
+        let mut script = crate::script::Script::new(self.dom(), broker.clone(), &self.url)
+            .map_err(H5iError::Metadata)?;
+
+        for source in sources {
+            let code = match source {
+                Source::Inline(text) => text,
+                Source::External(src) => {
+                    // Fetched through the broker like every other subresource,
+                    // so a script file is policy-checked and receipted before it
+                    // is ever executed. A refusal is reported and the page runs
+                    // without it, which is what the agent needs to know.
+                    let Ok(url) = self.url.join(&src) else {
+                        script.note_error(&format!("script src `{src}` is not a URL"));
+                        continue;
+                    };
+                    let outcome = broker.fetch(&url, crate::receipt::Initiator::Subresource);
+                    if let Some(error) = outcome.error {
+                        script.note_error(&format!("could not load {url}: {error}"));
+                        continue;
+                    }
+                    String::from_utf8_lossy(&outcome.body).into_owned()
+                }
+            };
+
+            if let Err(error) = script.eval(&code) {
+                // Reported, not fatal: a page with one broken script is still a
+                // page, and the agent needs to know which half it is reading.
+                script.note_error(&error);
+            }
+        }
+
+        let settled = script.settle();
+        if script.take_dirty() {
+            self.doc.borrow_mut().resolve(0.0);
+        }
+        self.settled = Some(settled);
+        self.script = Some(script);
+        Ok(())
+    }
+
+    /// Fire a real event at a node and let the page respond.
+    pub fn dispatch_event(&mut self, node_id: usize, kind: &str) -> Option<Vec<String>> {
+        let script = self.script.as_mut()?;
+        let _ = script.dispatch(node_id, kind);
+        let settled = script.settle();
+        let dirty = script.take_dirty();
+        let requests = script.take_requests();
+        self.settled = Some(settled);
+        if dirty {
+            self.doc.borrow_mut().resolve(0.0);
+        }
+        Some(requests)
+    }
+
+    /// What the last settle did, if script ran.
+    pub fn settled(&self) -> Option<&crate::script::Settled> {
+        self.settled.as_ref()
+    }
+
+    /// Web APIs the page asked for and this engine does not have.
+    pub fn unsupported(&self) -> Vec<(String, usize)> {
+        self.script
+            .as_ref()
+            .map(|s| s.unsupported())
+            .unwrap_or_default()
+    }
+
+    /// What the page logged, for the console pane and the receipt.
+    pub fn console(&self) -> Vec<crate::script::host::ConsoleLine> {
+        self.script.as_ref().map(|s| s.console()).unwrap_or_default()
+    }
+
+    pub fn has_script(&self) -> bool {
+        self.script.is_some()
+    }
+
+    /// A handle to the document, for the script realm.
+    ///
+    /// Handing out the `Rc` rather than a reference is the point: the script
+    /// realm outlives any single call into it, and both sides must see one tree.
+    pub fn dom(&self) -> Dom {
+        self.doc.clone()
+    }
+
+    /// Re-resolve style and layout after script changed the tree.
+    ///
+    /// Called once after a settle rather than after each mutation: a script that
+    /// appends fifty rows should lay out once, not fifty times.
+    pub fn refresh(&mut self) {
+        self.doc.borrow_mut().resolve(0.0);
+    }
+
     /// The outline an agent reads.
+    ///
+    /// Carries the engine's own notes alongside it: whether the page had
+    /// finished settling, and which Web APIs it asked for that this engine does
+    /// not have. Both are outside the fence because both are facts about the
+    /// reading rather than about the page, and both exist so an agent can tell
+    /// "this page is empty" from "this page needed something I lack".
     pub fn snapshot(&self) -> Snapshot {
-        Snapshot::capture(&self.doc, self.url.as_str(), self.options.max_snapshot_lines)
+        let mut snapshot = Snapshot::capture(
+            &self.doc.borrow(),
+            self.url.as_str(),
+            self.options.max_snapshot_lines,
+        );
+
+        if let Some(settled) = &self.settled {
+            if settled.cut_off {
+                snapshot.notes.push(settled.render());
+            }
+        }
+
+        let unsupported = self.unsupported();
+        if !unsupported.is_empty() {
+            let listed = unsupported
+                .iter()
+                .take(6)
+                .map(|(name, count)| format!("{name} x{count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            snapshot.notes.push(format!(
+                "this page used Web APIs this engine does not have ({listed}). \
+                 What depends on them did not run; the chromium engine has them."
+            ));
+        }
+
+        snapshot
     }
 
     /// Rasterise the viewport and encode it as a PNG.
@@ -207,11 +402,12 @@ impl Page {
 
         let mut renderer = VelloCpuImageRenderer::new(width, height);
         let mut rgba: Vec<u8> = Vec::new();
-        let doc = &mut self.doc;
+        let mut doc = self.doc.borrow_mut();
         renderer.render_to_vec(
-            |scene| paint_scene(scene, doc, scale, width, height, 0, 0),
+            |scene| paint_scene(scene, &mut doc, scale, width, height, 0, 0),
             &mut rgba,
         );
+        drop(doc);
 
         encode_png(&rgba, width, height)
     }
@@ -228,11 +424,12 @@ impl Page {
 
         let mut renderer = VelloCpuImageRenderer::new(width, height);
         let mut rgba: Vec<u8> = Vec::new();
-        let doc = &mut self.doc;
+        let mut doc = self.doc.borrow_mut();
         renderer.render_to_vec(
-            |scene| paint_scene(scene, doc, scale, width, height, 0, 0),
+            |scene| paint_scene(scene, &mut doc, scale, width, height, 0, 0),
             &mut rgba,
         );
+        drop(doc);
 
         encode_jpeg(&rgba, width, height, quality)
     }
@@ -247,28 +444,27 @@ impl Page {
     /// caller can say which of "no such ref" and "that is a link, not a field"
     /// happened.
     pub fn type_into(&mut self, node_id: usize, text: &str) -> bool {
-        let Some(node) = self.doc.get_node(node_id) else {
-            return false;
-        };
-        if node
-            .element_data()
+        let mut doc = self.doc.borrow_mut();
+        let takes_text = doc
+            .get_node(node_id)
+            .and_then(|node| node.element_data())
             .and_then(|el| el.text_input_data())
-            .is_none()
-        {
+            .is_some();
+        if !takes_text {
             return false;
         }
 
         // Focus first: the caret is drawn from it, so a viewer watching sees
         // the field an agent is typing into rather than text appearing in a
         // box nothing is pointing at.
-        self.doc.set_focus_to(node_id);
-        self.doc.with_text_input(node_id, |mut driver| {
+        doc.set_focus_to(node_id);
+        doc.with_text_input(node_id, |mut driver| {
             driver.select_all();
             driver.insert_or_replace_selection(text);
         });
         // Typing changes layout — a longer value can reflow the form — and
         // nothing else in this file re-resolves on the agent's behalf.
-        self.doc.resolve(0.0);
+        doc.resolve(0.0);
         true
     }
 
@@ -279,7 +475,8 @@ impl Page {
     /// snapshot built from the attribute would show an agent the value it was
     /// served rather than the one it just typed.
     pub fn field_value(&self, node_id: usize) -> Option<String> {
-        let node = self.doc.get_node(node_id)?;
+        let doc = self.doc.borrow();
+        let node = doc.get_node(node_id)?;
         let input = node.element_data()?.text_input_data()?;
         Some(input.editor.text().to_string())
     }
@@ -307,7 +504,7 @@ impl Page {
                 H5iError::Metadata("that control is not inside a form this page defines".into())
             })?;
 
-        self.doc.submit_form(form_id, node_id);
+        self.doc.borrow_mut().submit_form(form_id, node_id);
 
         self.pending_navigation
             .lock()
@@ -324,7 +521,8 @@ impl Page {
 
     /// Walk up for a `<form>`, for controls Blitz's owner map does not cover.
     fn enclosing_form(&self, node_id: usize) -> Option<usize> {
-        let mut current = self.doc.get_node(node_id)?;
+        let doc = self.doc.borrow();
+        let mut current = doc.get_node(node_id)?;
         for _ in 0..64 {
             if current
                 .element_data()
@@ -332,14 +530,14 @@ impl Page {
             {
                 return Some(current.id);
             }
-            current = self.doc.get_node(current.parent?)?;
+            current = doc.get_node(current.parent?)?;
         }
         None
     }
 
     /// How far down the document the viewport currently sits.
     pub fn scroll_offset(&self) -> (f64, f64) {
-        let scroll = self.doc.viewport_scroll();
+        let scroll = self.doc.borrow().viewport_scroll();
         (scroll.x, scroll.y)
     }
 
@@ -354,7 +552,8 @@ impl Page {
     /// That is what the local test pages were, which is why nothing caught it
     /// until this ran against Wikipedia.
     pub fn content_height(&self) -> f64 {
-        let layout = &self.doc.root_element().final_layout;
+        let doc = self.doc.borrow();
+        let layout = &doc.root_element().final_layout;
         layout.size.height.max(layout.content_size.height) as f64
     }
 
@@ -385,7 +584,7 @@ impl Page {
         if (next_x - x).abs() < f64::EPSILON && (next_y - y).abs() < f64::EPSILON {
             return false;
         }
-        self.doc.set_viewport_scroll(blitz_dom::Point {
+        self.doc.borrow_mut().set_viewport_scroll(blitz_dom::Point {
             x: next_x,
             y: next_y,
         });
@@ -399,15 +598,14 @@ impl Page {
     /// document.
     pub fn link_at(&self, x: f32, y: f32) -> Option<Url> {
         let (scroll_x, scroll_y) = self.scroll_offset();
-        let hit = self
-            .doc
-            .hit(x + scroll_x as f32, y + scroll_y as f32)?;
+        let doc = self.doc.borrow();
+        let hit = doc.hit(x + scroll_x as f32, y + scroll_y as f32)?;
 
         // The hit lands on whatever box is topmost — often a text run inside
         // the anchor rather than the anchor itself — so walk up for the href.
         let mut node_id = hit.node_id;
         for _ in 0..16 {
-            let node = self.doc.get_node(node_id)?;
+            let node = doc.get_node(node_id)?;
             if let Some(href) = node
                 .attrs()
                 .and_then(|attrs| {
@@ -501,23 +699,48 @@ impl PageFactory {
         ))
     }
 
-    pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
-        Page::open(
-            url,
-            self.broker.clone(),
-            self.fonts(),
-            self.options.clone(),
-        )
+    /// Load a page and, when the options ask for it, run its scripts.
+    ///
+    /// One place rather than at each call site, so no path can load a page with
+    /// script configured on and quietly not run it.
+    fn finish(&self, mut page: Page) -> Result<Page, H5iError> {
+        if self.options.script {
+            page.run_scripts(self.broker.clone())?;
+        }
+        Ok(page)
     }
 
+    /// Whether this factory runs page script, for `capabilities` and for the
+    /// engine line the viewers show.
+    pub fn runs_script(&self) -> bool {
+        self.options.script
+    }
+
+    pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
+        let page = Page::open(url, self.broker.clone(), self.fonts(), self.options.clone())?;
+        self.finish(page)
+    }
+
+    /// Load HTML already in hand, running its scripts if the options ask.
+    ///
+    /// Infallible in the loading, because HTML always parses into something. A
+    /// script that failed to *run* is reported through the page's console
+    /// rather than here: one broken script does not make a page unreadable, and
+    /// the agent needs the half that worked.
     pub fn from_html(&self, html: &str, base_url: &Url) -> Page {
-        Page::from_html(
+        let mut page = Page::from_html(
             html,
             base_url,
             self.broker.clone(),
             self.fonts(),
             self.options.clone(),
-        )
+        );
+        if self.options.script {
+            if let Err(error) = page.run_scripts(self.broker.clone()) {
+                eprintln!("h5i-browser-light: the script realm failed to start: {error}");
+            }
+        }
+        page
     }
 }
 

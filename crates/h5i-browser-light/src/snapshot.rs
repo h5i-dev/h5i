@@ -82,6 +82,13 @@ pub struct Snapshot {
     /// Set when the walk hit its line budget, so a caller never mistakes a
     /// truncated outline for a short page.
     pub truncated: bool,
+    /// Facts about *this engine's* reading of the page, not about the page.
+    ///
+    /// Rendered outside the fence, because that is exactly what they are: the
+    /// engine's own account of whether the page had finished and what it asked
+    /// for that we do not have. A page cannot write here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 struct Walker<'a> {
@@ -114,6 +121,7 @@ impl Snapshot {
             lines: walker.lines,
             refs: walker.refs,
             truncated: walker.truncated,
+            notes: Vec::new(),
         }
     }
 
@@ -142,6 +150,10 @@ impl Snapshot {
         // page claiming it: this is the URL the broker actually fetched.
         if !self.url.is_empty() {
             out.push_str(&format!("url: {}\n", one_line(&self.url)));
+        }
+
+        for note in &self.notes {
+            out.push_str(&format!("note: {}\n", one_line(note)));
         }
 
         out.push_str(CONTENT_BEGIN);
@@ -564,6 +576,7 @@ mod tests {
                 name: "Submit".to_string(),
                 href: None,
             }],
+            notes: Vec::new(),
             truncated: false,
         };
 
@@ -585,6 +598,7 @@ mod tests {
                 href: None,
             }],
             refs: Vec::new(),
+            notes: Vec::new(),
             truncated: true,
         };
         assert!(snapshot.render().contains("truncated"));
@@ -603,6 +617,7 @@ mod tests {
                 href: Some("https://example.com/guide".to_string()),
             }],
             refs: Vec::new(),
+            notes: Vec::new(),
             truncated: false,
         };
 
@@ -624,6 +639,7 @@ mod tests {
                 href: None,
             }],
             refs: Vec::new(),
+            notes: Vec::new(),
             truncated: false,
         };
         let rendered = snapshot.render();
@@ -667,6 +683,7 @@ mod tests {
                 href: Some(breakout.clone()),
             }],
             refs: Vec::new(),
+            notes: Vec::new(),
             truncated: false,
         };
 
@@ -708,6 +725,7 @@ mod tests {
                 href: None,
             }],
             refs: Vec::new(),
+            notes: Vec::new(),
             truncated: false,
         };
 

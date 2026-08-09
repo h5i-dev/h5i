@@ -2116,6 +2116,66 @@ safe to read, 3 is script's network.
    the number that says whether Boa stays, so the shootout that used to be
    milestone one happens here, once, against something that matters.
 
+### 12.4a Built, 2026-08-09: items 1 to 3
+
+The vertical slice runs. An agent clicks, the page's script executes, its
+`fetch` goes through the broker and is receipted, the DOM changes, and the
+change is in the outline the agent reads:
+
+```
+$ h5i-browser-light session click @e1
+{"ok":true,"ref":"@e1","requests":["http://localhost:8231/api/item"],
+ "settled":"settled after 0ms"}
+```
+
+with all three legs in the request log: the navigation, `/app.js` fetched
+*before* it ran, and the `/api/item` the click caused.
+
+**What the shape turned out to be.** The Rust DOM is the single source of truth
+and JS objects are wrappers over `NodeId`s, as 12.2 required. What 12.2 did not
+anticipate is that the object model itself belongs in a **JavaScript prelude**
+rather than in Rust: event listeners, timer callbacks and promise resolvers are
+GC-managed values, and holding them on the Rust side means tracing them through
+Boa's collector. Putting them where Boa already owns their lifetime left a Rust
+surface of about twenty primitives taking ids and strings, and made
+capture/bubble propagation ordinary code instead of a lifetime problem.
+
+**Quiescence is a virtual clock.** Promise jobs and timers drain against a clock
+the engine advances, not the wall: a page's `setTimeout(1000)` costs an agent
+nothing, and two runs of the same page settle identically. That was chosen for
+determinism and turned out to matter more than the speed — it is the same
+argument as §12.4's "reported rather than guessed", applied to time itself.
+
+**Two things bit, and neither was performance.**
+
+1. **Boa does not compose with our tree.** Boa 0.20+ needs `icu_normalizer
+   ~2.0`; `parley`, which Blitz pulls for text, needs `^2.1.1`. Disjoint and
+   semver-compatible, so Cargo must unify and cannot. Boa 0.19 uses the 1.x
+   line, which is semver-*incompatible* and therefore allowed to coexist, so the
+   pin is 0.19 and the build carries two ICU stacks. Upstream has already moved
+   `main` to `~2.2.0`, so this unwinds on their next release. Worth noting that
+   the first thing to bite was dependency composition rather than speed, which
+   is the argument for building before benchmarking, made by accident.
+2. **A test hung and looked like a slow build.** Its fake server accepted two
+   connections while the test made one, so `join` waited forever. It read as
+   compile time, and was diagnosed as compile time, until the user checked. The
+   same pattern had already shipped in the cookie tests, where it worked only
+   because that test happened to make exactly two requests.
+
+**Boa 0.19's conformance was checked rather than assumed**, since it is two
+releases behind: eighteen syntax cases a bundler actually emits (optional
+chaining, nullish coalescing, class and private fields, generators,
+`Symbol.iterator`, `Proxy`/`Reflect`, spread, destructuring) all run, and
+microtasks drain.
+
+**Not cleared: a production React build.** §12.4 item 1 sets that as the bar and
+what runs today is a hand-written application. The gaps that will stop React
+first, in order: no ES modules or `import`; `MutationObserver`,
+`IntersectionObserver` and `ResizeObserver` report themselves missing rather
+than working; `getBoundingClientRect` returns zeros and says so. Each is
+recorded in the snapshot when a page asks for it, so the next attempt starts
+from a list rather than a guess.
+
 ### 12.5 The gate that is not a milestone
 
 `capabilities.javascript` flipping to `true` is a change to the box's threat
@@ -2140,6 +2200,11 @@ Stylo being Rust is the current mitigation, and adding a JS engine written in C
 or C++ is precisely what erodes it. Cheap options exist and one must be chosen
 before this ships: one origin per session, clearing the jar across origins, or
 keeping the jar out of the process that runs script.
+
+**The gate is honoured so far.** `capabilities.javascript` reports the *running*
+configuration, script is opt-in behind `--script`, and with it off a page's
+`<script>` elements are inert exactly as they were. Nothing has flipped by
+default, and nothing should until the rest of this subsection is answered.
 
 **Limits belong to the box, not to the engine's good behaviour.** Reliable
 in-engine interruption of a runaway script is hard; a wall-clock deadline and a

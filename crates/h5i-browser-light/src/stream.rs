@@ -651,7 +651,16 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         "snapshot" => {
             let snapshot = session.page.snapshot();
             (
-                json!({"ok": true, "url": session.page.url().to_string(), "text": snapshot.render()}),
+                json!({
+                    "ok": true,
+                    "url": session.page.url().to_string(),
+                    "text": snapshot.render(),
+                    // Stated rather than inferred: a caller that wants the
+                    // machine-readable form should not have to parse prose out
+                    // of the outline to learn the page had not finished.
+                    "settled": session.page.settled().map(|s| s.render()),
+                    "script": session.page.has_script(),
+                }),
                 false,
             )
         }
@@ -768,9 +777,40 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                     false,
                 );
             };
-            let Some(href) = entry.href.clone() else {
+            let node_id = entry.node_id;
+            let role = entry.role.clone();
+            let href = entry.href.clone();
+
+            // With script running, a click is an event before it is a
+            // navigation. A page that handles the click and calls
+            // `preventDefault` never wanted the href followed, and a button
+            // with no href is only clickable at all because of its handler.
+            if session.page.has_script() {
+                if let Some(caused) = session.page.dispatch_event(node_id, "click") {
+                    let settled = session
+                        .page
+                        .settled()
+                        .map(|s| s.render())
+                        .unwrap_or_default();
+                    if href.is_none() {
+                        return (
+                            json!({
+                                "ok": true,
+                                "ref": reference,
+                                "settled": settled,
+                                // The causal link, stamped by the one component
+                                // that knows it: this click, these requests.
+                                "requests": caused,
+                            }),
+                            true,
+                        );
+                    }
+                }
+            }
+
+            let Some(href) = href else {
                 return (
-                    error_reply(&format!("`{reference}` is a {} with nothing to follow", entry.role)),
+                    error_reply(&format!("`{reference}` is a {role} with nothing to follow")),
                     false,
                 );
             };
