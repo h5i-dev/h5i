@@ -180,14 +180,14 @@ fn a_missing_web_api_is_recorded_rather_than_silently_stubbed() {
         .eval(
             "try { new WebSocket('wss://x') } catch (e) {} \
              try { new WebSocket('wss://y') } catch (e) {} \
-             try { customElements.define('a-b', class {}) } catch (e) {}",
+             try { indexedDB.open('db') } catch (e) {}",
         )
         .expect("runs");
 
     let reported = script.unsupported();
     let names: Vec<&str> = reported.iter().map(|(n, _)| n.as_str()).collect();
     assert!(names.contains(&"WebSocket"), "{reported:?}");
-    assert!(names.contains(&"customElements.define"), "{reported:?}");
+    assert!(names.contains(&"indexedDB.open"), "{reported:?}");
     // Most-used first, because forty calls is likelier to be the problem than one.
     assert_eq!(reported[0].0, "WebSocket");
     assert_eq!(reported[0].1, 2);
@@ -1526,20 +1526,20 @@ fn an_api_this_engine_lacks_names_itself_instead_of_throwing_anonymously() {
     script
         .eval(
             "globalThis.said = ''; \
-             try { customElements.define('x-y', class {}) } catch (e) { said = String(e) } \
+             try { indexedDB.open('db') } catch (e) { said = String(e) } \
              try { new WebSocket('wss://x') } catch (e) {} \
              try { navigator.clipboard.writeText('x') } catch (e) {}",
         )
         .expect("runs");
 
     assert!(
-        script.eval_value("said").unwrap().contains("customElements.define"),
+        script.eval_value("said").unwrap().contains("indexedDB.open"),
         "the message names what was wanted: {}",
         script.eval_value("said").unwrap()
     );
 
     let reported: Vec<String> = script.unsupported().into_iter().map(|(n, _)| n).collect();
-    assert!(reported.iter().any(|n| n == "customElements.define"), "{reported:?}");
+    assert!(reported.iter().any(|n| n == "indexedDB.open"), "{reported:?}");
     assert!(reported.iter().any(|n| n == "WebSocket"), "{reported:?}");
     assert!(
         reported.iter().any(|n| n == "navigator.clipboard.writeText"),
@@ -2177,4 +2177,530 @@ fn node_constructors_answer_instanceof() {
         "true"
     );
     assert_eq!(script.eval_value("({}) instanceof Node").unwrap(), "false");
+}
+
+// ── custom elements ──────────────────────────────────────────────────────────
+
+#[test]
+fn defining_a_component_upgrades_the_markup_already_on_the_page() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><my-card label='Kelp'></my-card></body></html>",
+    );
+
+    // The order that matters: markup first, definition second. A page that
+    // ships server-rendered HTML and defines its components in a deferred
+    // bundle — which is most of them — renders nothing if define() does not
+    // reach back for what is already there.
+    script
+        .eval(
+            "class MyCard extends HTMLElement { \
+               static get observedAttributes() { return ['label'] } \
+               connectedCallback() { this.setAttribute('data-connected', '1') } \
+               attributeChangedCallback(name, before, after) { \
+                 this.textContent = 'card: ' + after; \
+               } \
+             } \
+             customElements.define('my-card', MyCard)",
+        )
+        .expect("defines");
+
+    assert_eq!(
+        script.eval_value("document.querySelector('my-card').textContent").unwrap(),
+        "card: Kelp",
+        "observed attributes should be delivered on upgrade, or a component that \
+         renders from attributeChangedCallback renders blank"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('my-card').getAttribute('data-connected')")
+            .unwrap(),
+        "1"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('my-card') instanceof MyCard").unwrap(),
+        "true"
+    );
+}
+
+#[test]
+fn a_component_created_after_definition_runs_its_lifecycle_in_order() {
+    let (_page, mut script) = page_and_script("<html><body><div id='host'></div></body></html>");
+
+    script
+        .eval(
+            "globalThis.log = []; \
+             class MyThing extends HTMLElement { \
+               constructor() { super(); log.push('constructed') } \
+               connectedCallback() { log.push('connected:' + this.isConnected) } \
+               disconnectedCallback() { log.push('disconnected') } \
+             } \
+             customElements.define('my-thing', MyThing); \
+             const el = document.createElement('my-thing'); \
+             log.push('created'); \
+             document.querySelector('#host').appendChild(el); \
+             el.remove();",
+        )
+        .expect("runs");
+
+    // Constructed at creation, connected only once in the tree, disconnected on
+    // removal. `isConnected` has to be true by the time the callback runs, or a
+    // component that measures itself measures a detached node.
+    assert_eq!(
+        script.eval_value("log.join(' > ')").unwrap(),
+        "constructed > created > connected:true > disconnected"
+    );
+}
+
+#[test]
+fn a_component_is_not_connected_twice_and_a_detached_one_is_not_connected_at_all() {
+    let (_page, mut script) = page_and_script("<html><body><div id='host'></div></body></html>");
+
+    script
+        .eval(
+            "globalThis.count = 0; \
+             class MyDup extends HTMLElement { connectedCallback() { count += 1 } } \
+             customElements.define('my-dup', MyDup); \
+             const loose = document.createElement('my-dup'); \
+             const holder = document.createElement('div'); \
+             holder.appendChild(loose); \
+             const host = document.querySelector('#host'); \
+             host.appendChild(document.createElement('my-dup')); \
+             host.appendChild(document.createElement('my-dup'));",
+        )
+        .expect("runs");
+
+    // Two in the document, one in a detached holder that must not fire.
+    assert_eq!(script.eval_value("String(count)").unwrap(), "2");
+}
+
+#[test]
+fn a_component_whose_constructor_throws_does_not_take_the_page_with_it() {
+    let (_page, mut script) = page_and_script("<html><body><my-bad></my-bad><p>after</p></body></html>");
+
+    script
+        .eval(
+            "class Bad extends HTMLElement { constructor() { super(); throw new Error('boom') } } \
+             customElements.define('my-bad', Bad)",
+        )
+        .expect("define itself should not throw");
+
+    // The rest of the page is still readable, and the failure is on the record.
+    assert_eq!(
+        script.eval_value("document.querySelector('p').textContent").unwrap(),
+        "after"
+    );
+    assert!(
+        script.console().iter().any(|line| line.text.contains("my-bad")
+            && line.text.contains("threw while upgrading")),
+        "{:?}",
+        script.console()
+    );
+}
+
+#[test]
+fn a_custom_element_name_without_a_dash_is_refused() {
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+
+    // The spec's rule, and a real one: a name without a dash could collide with
+    // an element the parser already knows.
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { try { customElements.define('card', class extends HTMLElement {}) } \
+                  catch (e) { return e.constructor.name } })()"
+            )
+            .unwrap(),
+        "SyntaxError"
+    );
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { customElements.define('a-b', class extends HTMLElement {}); \
+                  try { customElements.define('a-b', class extends HTMLElement {}) } \
+                  catch (e) { return 'refused twice' } })()"
+            )
+            .unwrap(),
+        "refused twice"
+    );
+}
+
+#[test]
+fn when_defined_resolves_for_a_component_registered_later() {
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+
+    script
+        .eval(
+            "globalThis.seen = 'waiting'; \
+             customElements.whenDefined('my-late').then(() => { seen = 'defined' }); \
+             customElements.define('my-late', class extends HTMLElement {});",
+        )
+        .expect("runs");
+    script.settle();
+
+    assert_eq!(script.eval_value("seen").unwrap(), "defined");
+    assert_eq!(
+        script.eval_value("typeof customElements.get('my-late')").unwrap(),
+        "function"
+    );
+}
+
+// ── traversal, comments, and the rest of what the corpus named ───────────────
+
+#[test]
+fn a_comment_is_a_real_node_and_stays_out_of_the_text() {
+    let (page, mut script) = page_and_script("<html><body><div id='d'>text</div></body></html>");
+
+    script
+        .eval(
+            "const c = document.createComment('list-anchor'); \
+             document.querySelector('#d').appendChild(c);",
+        )
+        .expect("runs");
+
+    // A marker that were secretly a text node would show up in the outline an
+    // agent reads, which is the whole reason this is not a text node.
+    assert_eq!(
+        script.eval_value("document.querySelector('#d').textContent").unwrap(),
+        "text"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('#d').lastChild.nodeType").unwrap(),
+        "8"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('#d').lastChild.data").unwrap(),
+        "list-anchor"
+    );
+    assert!(
+        !page.snapshot().render().contains("list-anchor"),
+        "a comment must not reach the outline"
+    );
+}
+
+#[test]
+fn a_node_iterator_walks_the_types_it_was_asked_for() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='r'>one<span>two</span>three</div></body></html>",
+    );
+
+    assert_eq!(
+        script
+            .eval_value(
+                "const it = document.createNodeIterator( \
+                   document.querySelector('#r'), NodeFilter.SHOW_TEXT); \
+                 const out = []; let n; while ((n = it.nextNode())) out.push(n.textContent); \
+                 out.join('|')"
+            )
+            .unwrap(),
+        "one|two|three"
+    );
+    // The caller's own filter narrows it further.
+    assert_eq!(
+        script
+            .eval_value(
+                "const w = document.createTreeWalker( \
+                   document.querySelector('#r'), NodeFilter.SHOW_ELEMENT, \
+                   (node) => node.tagName === 'SPAN' \
+                     ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP); \
+                 const first = w.nextNode(); first ? first.tagName : 'none'"
+            )
+            .unwrap(),
+        "SPAN"
+    );
+}
+
+#[test]
+fn document_position_and_containment_agree_with_the_tree() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='a'><span id='inner'>x</span></div><div id='b'>y</div></body></html>",
+    );
+
+    script
+        .eval(
+            "globalThis.a = document.querySelector('#a'); \
+             globalThis.b = document.querySelector('#b'); \
+             globalThis.inner = document.querySelector('#inner');",
+        )
+        .unwrap();
+
+    // 4 = FOLLOWING, 2 = PRECEDING, 20 = CONTAINED_BY | FOLLOWING.
+    assert_eq!(script.eval_value("a.compareDocumentPosition(b)").unwrap(), "4");
+    assert_eq!(script.eval_value("b.compareDocumentPosition(a)").unwrap(), "2");
+    assert_eq!(script.eval_value("a.compareDocumentPosition(inner)").unwrap(), "20");
+    assert_eq!(script.eval_value("inner.compareDocumentPosition(a)").unwrap(), "10");
+    assert_eq!(script.eval_value("a.compareDocumentPosition(a)").unwrap(), "0");
+    assert_eq!(script.eval_value("a.contains(inner)").unwrap(), "true");
+    assert_eq!(script.eval_value("b.contains(inner)").unwrap(), "false");
+
+    // A detached node is disconnected, and its root is its own top.
+    assert_eq!(
+        script
+            .eval_value("const loose = document.createElement('div'); \
+                         String(loose.isConnected) + ' ' + (loose.getRootNode() === loose)")
+            .unwrap(),
+        "false true"
+    );
+    assert_eq!(script.eval_value("inner.getRootNode() === document").unwrap(), "true");
+}
+
+#[test]
+fn the_remaining_document_and_element_asks_answer_from_the_page() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><input name='who' value='start'><textarea>original</textarea>\
+         <input name='who' value='second'></body></html>",
+    );
+
+    assert_eq!(script.eval_value("document.getElementsByName('who').length").unwrap(), "2");
+
+    // defaultValue is what a reset restores — the attribute, not the live value.
+    script.eval("document.querySelector('input').value = 'typed'").unwrap();
+    assert_eq!(script.eval_value("document.querySelector('input').value").unwrap(), "typed");
+    assert_eq!(
+        script.eval_value("document.querySelector('input').defaultValue").unwrap(),
+        "start"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('textarea').defaultValue").unwrap(),
+        "original"
+    );
+
+    // Import is clone, because there is one document.
+    assert_eq!(
+        script
+            .eval_value(
+                "const copy = document.importNode(document.querySelector('textarea'), true); \
+                 copy.tagName"
+            )
+            .unwrap(),
+        "TEXTAREA"
+    );
+
+    // Absent in a real browser too, so defined-as-undefined rather than named
+    // as a gap this engine has.
+    assert_eq!(script.eval_value("typeof document.namespaceURI").unwrap(), "undefined");
+    assert_eq!(script.eval_value("String(document.ownerDocument)").unwrap(), "null");
+    assert_eq!(
+        script.eval_value("document.documentElement.namespaceURI").unwrap(),
+        "http://www.w3.org/1999/xhtml"
+    );
+    assert!(
+        script.unsupported().is_empty(),
+        "none of that should read as a gap: {:?}",
+        script.unsupported()
+    );
+
+    // A second document really is out of reach, and says so by name.
+    script.eval("try { document.implementation.createHTMLDocument('x') } catch (e) {}").unwrap();
+    assert!(
+        script
+            .unsupported()
+            .iter()
+            .any(|(n, _)| n == "document.implementation.createHTMLDocument"),
+        "{:?}",
+        script.unsupported()
+    );
+}
+
+#[test]
+fn scroll_metrics_describe_the_document_and_agree_with_each_other() {
+    let (mut page, mut script) = page_and_script(
+        "<html><body><div style='height: 4000px'>tall</div></body></html>",
+    );
+    page.refresh();
+
+    // The "am I at the bottom" expression every page writes.
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const d = document.documentElement; \
+                   return String(d.scrollHeight > d.clientHeight) })()"
+            )
+            .unwrap(),
+        "true"
+    );
+    script.eval("document.documentElement.scrollTop = 500").unwrap();
+    assert_eq!(
+        script.eval_value("document.documentElement.scrollTop").unwrap(),
+        "500"
+    );
+    // Clamped to the document rather than accepted blindly.
+    script.eval("document.documentElement.scrollTop = 99999").unwrap();
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const d = document.documentElement; \
+                   return String(d.scrollTop <= d.scrollHeight - d.clientHeight) })()"
+            )
+            .unwrap(),
+        "true"
+    );
+}
+
+#[test]
+fn the_window_knows_how_big_it_is() {
+    let (mut page, mut script) = page_and_script(
+        "<html><body><div style='height: 4000px'>tall</div></body></html>",
+    );
+    page.refresh();
+
+    // Nothing exposed these before, and a bare undefined on the global object is
+    // exactly what the reporting proxy cannot see: a layout that measures rather
+    // than asking matchMedia got NaN out of its own arithmetic.
+    assert_eq!(script.eval_value("window.innerWidth").unwrap(), "1280");
+    assert_eq!(script.eval_value("window.innerHeight").unwrap(), "720");
+    assert_eq!(script.eval_value("window.scrollY").unwrap(), "0");
+    script.eval("window.scrollTo(0, 300)").unwrap();
+    assert_eq!(script.eval_value("window.scrollY").unwrap(), "300");
+    script.eval("window.scrollBy(0, 100)").unwrap();
+    assert_eq!(script.eval_value("window.pageYOffset").unwrap(), "400");
+    script.eval("window.scrollTo({ top: 50 })").unwrap();
+    assert_eq!(script.eval_value("window.scrollY").unwrap(), "50");
+}
+
+#[test]
+fn a_global_missing_because_a_script_was_refused_is_not_called_an_engine_gap() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // The corpus reported `$` twice and it was jQuery from a denied CDN. Listing
+    // that beside real gaps invites building something nobody asked for.
+    script.note_refused_script("https://code.jquery.com/jquery-latest.min.js");
+    let error = script.eval("$('#x').hide()").unwrap_err();
+    script.note_error(&error);
+
+    assert!(
+        script.unsupported().is_empty(),
+        "a refused script is not a missing binding: {:?}",
+        script.unsupported()
+    );
+    let console = script.console();
+    assert!(
+        console.iter().any(|line| line.text.contains("code.jquery.com")
+            && line.text.contains("it refused the request")),
+        "the report should say what actually happened: {console:?}"
+    );
+}
+
+#[test]
+fn an_uncaught_error_says_which_script_it_came_from() {
+    let broker = Arc::new(
+        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+    );
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let options = PageOptions { script: true, ..Default::default() };
+    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options);
+    let base = url::Url::parse("https://app.example/").unwrap();
+
+    // Boa 0.19 reports neither a line number nor a stack, so the element is the
+    // only locus there is — and "TypeError: cannot convert null" with no locus
+    // at all is the hardest kind of error for an agent to act on.
+    let mut page = factory.from_html(
+        "<html><body><script>var ok = 1;</script>\
+         <script>document.querySelector('#absent').focus()</script></body></html>",
+        &base,
+    );
+    page.run_scripts(broker).unwrap();
+
+    assert!(
+        page.console().iter().any(|line| line.text.contains("inline script #2")),
+        "{:?}",
+        page.console()
+    );
+}
+
+#[test]
+fn a_node_is_named_by_what_it_actually_is() {
+    let (_page, mut script) = page_and_script("<html><body><div id='d'>text</div></body></html>");
+
+    // Labelling every node "Element" reported `Element.tagName` as a missing
+    // API when what happened was a page reading `tagName` off a text node.
+    // ...and an element property read off a text node is not a gap at all:
+    // every engine returns undefined there, so claiming one would send us
+    // building something that does not exist.
+    script
+        .eval("void document.querySelector('#d').firstChild.tagName")
+        .unwrap();
+    assert!(
+        script.unsupported().is_empty(),
+        "a browser answers undefined here too: {:?}",
+        script.unsupported()
+    );
+
+    // A property no engine defines anywhere is still reported, under the name
+    // of the node that was actually asked.
+    script
+        .eval("void document.querySelector('#d').firstChild.wholeTextEventually")
+        .unwrap();
+    let reported: Vec<String> = script.unsupported().into_iter().map(|(n, _)| n).collect();
+    assert!(
+        reported.iter().any(|n| n == "Text.wholeTextEventually"),
+        "the name should be the node's own: {reported:?}"
+    );
+}
+
+#[test]
+fn our_own_bookkeeping_is_not_reported_as_a_missing_api() {
+    let (_page, mut script) = page_and_script("<html><body><div id='host'></div></body></html>");
+
+    // The connected flag used to live on the node, so a page touching an
+    // element before we had set it saw our field named as a gap.
+    script
+        .eval(
+            "class MyNote extends HTMLElement { connectedCallback() {} } \
+             customElements.define('my-note', MyNote); \
+             document.querySelector('#host').appendChild(document.createElement('my-note'));",
+        )
+        .unwrap();
+
+    let reported: Vec<String> = script.unsupported().into_iter().map(|(n, _)| n).collect();
+    assert!(
+        !reported.iter().any(|n| n.contains("_h5i")),
+        "internals must not reach the list an agent reads: {reported:?}"
+    );
+}
+
+#[test]
+fn a_scoped_tag_search_only_sees_the_subtree() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='a'><p>one</p><p>two</p></div><p>outside</p></body></html>",
+    );
+
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#a').getElementsByTagName('p').length")
+            .unwrap(),
+        "2"
+    );
+    assert_eq!(script.eval_value("document.getElementsByTagName('p').length").unwrap(), "3");
+}
+
+#[test]
+fn a_script_that_threw_explains_the_globals_it_never_defined() {
+    let broker = Arc::new(
+        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+    );
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let options = PageOptions { script: true, ..Default::default() };
+    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options);
+    let base = url::Url::parse("https://app.example/").unwrap();
+
+    // A bundle that throws halfway leaves its globals undefined exactly as a
+    // refused one does, so the ReferenceError that follows should blame it.
+    let mut page = factory.from_html(
+        "<html><body><script>throw new Error('boom'); globalThis.jQuery = 1;</script>\
+         <script>jQuery.ready()</script></body></html>",
+        &base,
+    );
+    page.run_scripts(broker).unwrap();
+
+    assert!(
+        !page.unsupported().iter().any(|(name, _)| name == "jQuery"),
+        "not an engine gap: {:?}",
+        page.unsupported()
+    );
+    assert!(
+        page.console().iter().any(|line| line.text.contains("`jQuery` is missing")
+            && line.text.contains("inline script #1")),
+        "{:?}",
+        page.console()
+    );
 }

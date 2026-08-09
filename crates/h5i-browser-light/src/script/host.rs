@@ -80,6 +80,18 @@ pub struct Host {
     /// which request. The receipt remains the record; this is only the link,
     /// stamped by the one component that knows the causal fact.
     pub requests: RefCell<Vec<String>>,
+
+    /// Comment text, keyed by node id.
+    ///
+    /// `NodeData::Comment` carries no payload in this version of blitz, and a
+    /// page that writes a comment marker and reads it back should get what it
+    /// wrote — so the text lives here rather than being quietly lost.
+    pub comments: RefCell<std::collections::HashMap<usize, String>>,
+
+    /// Scripts the policy refused, so a `ReferenceError` for a global one of
+    /// them would have defined can be attributed to the refusal instead of
+    /// being reported as an engine that lacks jQuery.
+    pub refused_scripts: RefCell<Vec<String>>,
 }
 
 /// How the [`Host`] reaches a native binding.
@@ -109,6 +121,8 @@ impl Host {
             console: RefCell::new(Vec::new()),
             unsupported: RefCell::new(Unsupported::default()),
             requests: RefCell::new(Vec::new()),
+            comments: RefCell::new(std::collections::HashMap::new()),
+            refused_scripts: RefCell::new(Vec::new()),
         }
     }
 

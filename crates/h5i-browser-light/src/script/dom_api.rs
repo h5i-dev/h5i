@@ -83,6 +83,9 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("readCookies", 0, read_cookies),
         ("writeCookie", 1, write_cookie),
         ("scrollToNode", 1, scroll_to_node),
+        ("createComment", 1, create_comment),
+        ("scrollMetrics", 1, scroll_metrics),
+        ("setScrollTop", 2, set_scroll_top),
     ];
 
     let api = boa_engine::object::ObjectInitializer::new(context).build();
@@ -172,6 +175,11 @@ fn query_all(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
 fn get_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
+    // A comment's text lives beside the tree, so it is answered before the tree
+    // is consulted at all.
+    if let Some(text) = host.comments.borrow().get(&id) {
+        return Ok(JsValue::from(js_string!(text.as_str())));
+    }
     let doc = host.dom.borrow();
     Ok(match doc.get_node(id) {
         Some(node) => js_string!(node.text_content()).into(),
@@ -296,6 +304,129 @@ fn create_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     };
     host.mark_dirty();
     Ok(JsValue::from(id as f64))
+}
+
+/// A real comment node, because a marker that is secretly a text node shows up
+/// in `textContent` and in the outline an agent reads.
+///
+/// Template libraries anchor themselves to comments — an empty list leaves
+/// behind `<!--list-->` and the library finds its place again by it.
+fn create_comment(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let text = arg_string(args, 0, context)?;
+    let host = host(context)?;
+    let id = {
+        let mut doc = host.dom.borrow_mut();
+        let id = doc.create_node(blitz_dom::NodeData::Comment);
+        // The data is kept beside the node rather than in it: `NodeData::Comment`
+        // carries no text in this version of blitz, and a page that writes a
+        // comment and reads it back should get what it wrote.
+        host.comments.borrow_mut().insert(id, text);
+        id
+    };
+    host.mark_dirty();
+    Ok(JsValue::from(id as f64))
+}
+
+/// `scrollTop`/`scrollHeight` and their siblings, in one call.
+///
+/// Six values rather than six bindings because a page asking for one almost
+/// always asks for the next in the same expression — `el.scrollTop + el.clientHeight
+/// >= el.scrollHeight` is how every "am I at the bottom" check is written.
+fn scroll_metrics(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+
+    let Some(node) = doc.get_node(id) else {
+        return Ok(JsValue::null());
+    };
+
+    // The document scrolls; an ordinary element in this engine does not, because
+    // nothing here clips and scrolls a subtree. Saying so plainly beats
+    // reporting a scrollTop that can never change.
+    let (view_w, view_h) = doc.viewport().window_size;
+    let values: [f64; 6] = if is_document_scroller(&doc, id) {
+        let scroll = doc.viewport_scroll();
+        let content = document_height(&doc);
+        [
+            scroll.y,
+            scroll.x,
+            content.max(view_h as f64),
+            view_w as f64,
+            view_h as f64,
+            view_w as f64,
+        ]
+    } else {
+        // `client*` is the box; `scroll*` is the box or its overflow, whichever
+        // is larger. Collapsing the two would make the bottom-check above read
+        // "already at the bottom" for every element that has more inside it.
+        let box_height = node.final_layout.size.height as f64;
+        let box_width = node.final_layout.size.width as f64;
+        [
+            0.0,
+            0.0,
+            element_height(node),
+            box_width.max(node.final_layout.content_size.width as f64),
+            box_height,
+            box_width,
+        ]
+    };
+
+    let array = boa_engine::object::builtins::JsArray::new(context);
+    for value in values {
+        array.push(JsValue::from(value), context)?;
+    }
+    Ok(array.into())
+}
+
+/// `documentElement` and `body` both stand for the page — pages read scroll
+/// position off whichever one they were taught.
+fn is_document_scroller(doc: &blitz_dom::BaseDocument, id: usize) -> bool {
+    if id == doc.root_element().id {
+        return true;
+    }
+    doc.query_selector_all("body")
+        .ok()
+        .and_then(|ids| ids.first().copied())
+        == Some(id)
+}
+
+/// How tall the document actually is.
+///
+/// `size.height` alone reads as one screen for a page whose root box simply
+/// grew past the viewport — the same trap `Page::max_scroll_y` documents, and
+/// the reason a naive `scrollHeight` reported a 4000px page as unscrollable.
+fn document_height(doc: &blitz_dom::BaseDocument) -> f64 {
+    let layout = &doc.root_element().final_layout;
+    layout.size.height.max(layout.content_size.height) as f64
+}
+
+fn element_height(node: &blitz_dom::Node) -> f64 {
+    node.final_layout
+        .size
+        .height
+        .max(node.final_layout.content_size.height) as f64
+}
+
+/// Scroll the document to an absolute offset. Backs `documentElement.scrollTop = y`.
+fn set_scroll_top(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let _id = arg_id(args, 0, context)?;
+    let y = args
+        .get(1)
+        .unwrap_or(&JsValue::undefined())
+        .to_number(context)?;
+    let host = host(context)?;
+    let mut doc = host.dom.borrow_mut();
+
+    let view_h = doc.viewport().window_size.1 as f64;
+    let max = (document_height(&doc) - view_h).max(0.0);
+    let x = doc.viewport_scroll().x;
+
+    doc.set_viewport_scroll(blitz_dom::Point {
+        x,
+        y: y.clamp(0.0, max),
+    });
+    Ok(JsValue::undefined())
 }
 
 fn append(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -574,12 +705,8 @@ fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         current = node.parent;
     }
 
-    let viewport_height = doc.viewport().window_size.1 as f32;
-    let content_height = doc
-        .get_node(doc.root_element().id)
-        .map(|root| root.final_layout.size.height)
-        .unwrap_or(0.0);
-    let max = (content_height - viewport_height).max(0.0);
+    let viewport_height = doc.viewport().window_size.1 as f64;
+    let max = (document_height(&doc) - viewport_height).max(0.0) as f32;
 
     doc.set_viewport_scroll(blitz_dom::Point {
         x: 0.0,

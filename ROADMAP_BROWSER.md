@@ -443,6 +443,80 @@ Two things the remaining list should not be misread as:
   behaviour, reported honestly, and no amount of API work removes it. Naming
   *where* it happened needs source positions from Boa, which is a separate job.
 
+### 8.4 Answering the named list, and what it caught in the answers
+
+Everything §8.3 surfaced is built. In order of what they were worth:
+
+* **Custom elements, for real.** `define` upgrades the markup already on the
+  page, delivers the initial values of `observedAttributes`, and runs
+  `connectedCallback` once the node is genuinely in the tree. Defining without
+  upgrading would have been the worse kind of half-support: a page that renders
+  its markup server-side and defines its components in a deferred bundle — most
+  of them — would register everything, see no error, and render nothing. The id
+  reaches the constructor out of band through a construction slot, because
+  `super()` takes no arguments and the class never sees the node it is
+  attaching to.
+* **Real comment nodes**, so a template library's anchor stays out of the
+  outline an agent reads instead of appearing as stray text.
+* **`scrollTop`/`scrollHeight`/`clientHeight`** answering from the document
+  rather than from the element's own box, since `scrollTop + clientHeight >=
+  scrollHeight` is how every bottom-of-page check is written and it has to be
+  *true at the bottom*. `clientHeight` already existed, computed from the
+  bounding rect, which for `documentElement` is the page height rather than the
+  window — so the idiom read "already at the bottom" everywhere.
+* **`window.innerWidth`/`innerHeight`/`scrollY`** and the scroll methods, which
+  nothing had ever exposed. This one the instrument could not have found:
+  nothing wraps the global object, so they were simply undefined, and a layout
+  that measures instead of asking `matchMedia` got `NaN` out of its own
+  arithmetic. Found while chasing an unrelated scroll bug.
+* `compareDocumentPosition`, `contains`, `getRootNode`, `isConnected`,
+  `defaultValue`, `getElementsByTagName`, `getElementsByName`, `importNode`,
+  `createNodeIterator`/`createTreeWalker`, and `implementation` — which names
+  `createHTMLDocument` as refused rather than handing back a broken document,
+  because a second document really is out of reach when there is one tree.
+
+**The run after that caught three bugs in the answers themselves**, which is the
+argument for the instrument in one line:
+
+| reported | what it actually was |
+|---|---|
+| `Element._h5iConnected` | *our own* bookkeeping flag, stored on the node, read before it was set |
+| `Element.tagName` | a page reading `tagName` off a **text** node — every node was labelled "Element" |
+| `$`, still | jQuery that *loaded and threw*, not one that was refused |
+
+All three are fixed: the flag moved off the nodes, labels follow the node's
+actual type, and a script that throws is recorded as not-run alongside one that
+was refused — its globals are undefined either way.
+
+That left one ask, `Text.tagName`, and it was a false positive worth a rule:
+**a gap is only a gap if a real browser would have answered.** An element
+property read off a text node returns undefined in every engine there is, so
+claiming it would have sent us building something that does not exist. The
+proxy now stays quiet in exactly that case, and `document.namespaceURI` and
+`ownerDocument` are defined-as-undefined and null for the same reason.
+
+### 8.5 Where the corpus stands
+
+```
+27/28 loaded; 23 gave a usable outline; 0 failed to settle
+asks: (none)
+errors: 33, of which 0 are anonymous
+        17  cross-origin subresources the corpus policy denied
+         3  "`$` is missing because a script this page needed did not run: ..."
+        13  page errors, each prefixed with the script it came from
+```
+
+**Zero anonymous errors is the number that matters**, not the empty ask list.
+Every remaining line names either a request we refused or the script that
+threw. Boa 0.19 gives neither a line number nor a stack, so the script element
+is the finest locus available; a real position needs engine support we do not
+have, and that is now the only thing in the way of an agent debugging a page it
+is reading.
+
+One page also rendered materially more *with* script for the first time — the
+Rust book, 35 lines to 171 — which is the first evidence in this file that
+running script buys an agent anything at all on a real documentation site.
+
 What the four turned into:
 
 * **`matchMedia` answers from the real viewport.** Returning `false` to

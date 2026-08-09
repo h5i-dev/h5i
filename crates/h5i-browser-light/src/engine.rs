@@ -345,7 +345,15 @@ impl Page {
                 matches!(source, Source::Inline(_) | Source::External(_))
             });
 
-        for (node, source) in classic {
+        for (index, (node, source)) in classic.into_iter().enumerate() {
+            // Which script this was. Boa 0.19 reports neither a line number nor
+            // a stack, so the element is the only locus available — and a bare
+            // "TypeError: cannot convert null" with no locus at all is the
+            // hardest kind of error for an agent to act on.
+            let where_from = match &source {
+                Source::External(src) => src.clone(),
+                _ => format!("inline script #{}", index + 1),
+            };
             let code = match source {
                 Source::Inline(text) => text,
                 Source::External(src) => {
@@ -359,6 +367,7 @@ impl Page {
                     };
                     let outcome = broker.fetch(&url, crate::receipt::Initiator::Subresource);
                     if let Some(error) = outcome.error {
+                        script.note_refused_script(url.as_str());
                         script.note_error(&format!("could not load {url}: {error}"));
                         continue;
                     }
@@ -366,6 +375,7 @@ impl Page {
                     // running one produces a syntax error that blames the page.
                     let status = outcome.status.unwrap_or(0);
                     if !(200..300).contains(&status) {
+                        script.note_refused_script(url.as_str());
                         script.note_error(&format!(
                             "could not load {url}: the server answered {status}"
                         ));
@@ -380,7 +390,12 @@ impl Page {
             if let Err(error) = script.eval(&code) {
                 // Reported, not fatal: a page with one broken script is still a
                 // page, and the agent needs to know which half it is reading.
-                script.note_error(&error);
+                //
+                // Recorded as not-run too: a bundle that threw halfway leaves
+                // its globals undefined exactly as a refused one does, and the
+                // ReferenceError that follows should blame this, not the engine.
+                script.note_refused_script(&where_from);
+                script.note_error(&format!("{where_from}: {error}"));
             }
         }
         // Null again once the classic scripts are done, because that is what a

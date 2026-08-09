@@ -326,6 +326,33 @@ impl Script {
         let Some((name, _)) = rest.split_once(" is not defined") else {
             return;
         };
+
+        // A global the page expected because a script we refused would have
+        // defined it is not a binding this engine lacks. The corpus reported
+        // `$` twice and it was jQuery from a denied CDN — listing that beside
+        // real gaps invites building something nobody asked for. Say what
+        // actually happened instead.
+        let (first, count) = {
+            let refused = self.host.refused_scripts.borrow();
+            (refused.first().cloned(), refused.len())
+        };
+        if let Some(first) = first {
+            let and_others = if count > 1 {
+                format!(" (and {} other script{})", count - 1, if count > 2 { "s" } else { "" })
+            } else {
+                String::new()
+            };
+            self.host.console.borrow_mut().push(ConsoleLine {
+                level: "error".to_string(),
+                text: format!(
+                    "`{}` is missing because a script this page needed did not run: \
+                     {first}{and_others}. This engine did not refuse the API, it refused \
+                     the request.",
+                    name.trim()
+                ),
+            });
+            return;
+        }
         // Only accept something shaped like an identifier, so a page that puts
         // this phrasing in a thrown string cannot write arbitrary text into the
         // list an agent reads.
@@ -346,6 +373,15 @@ impl Script {
     /// configuring it. Returning null unconditionally is right for a module and
     /// wrong for an inline classic script, and the wrong one reads as "this page
     /// has no configuration" rather than as a gap.
+    /// Remember a script that did not finish: refused by policy, or loaded and
+    /// then threw.
+    ///
+    /// Either way its globals are undefined, so a later `ReferenceError` is
+    /// explained by that rather than counted as a binding this engine lacks.
+    pub fn note_refused_script(&self, url: &str) {
+        self.host.refused_scripts.borrow_mut().push(url.to_string());
+    }
+
     pub fn set_current_script(&mut self, node: Option<usize>) {
         let code = match node {
             Some(id) => format!("globalThis.__h5iCurrentScript = {id};"),

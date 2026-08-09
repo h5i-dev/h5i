@@ -22,9 +22,194 @@
     if (id === null || id === undefined) return null;
     let existing = wrappers.get(id);
     if (existing) return existing;
-    const node = observed(api.isElement(id) ? new Element(id) : new Text(id), "Element");
+    // Re-entrant construction — a custom element's constructor asking the
+    // document for itself — gets a plain wrapper rather than recursing forever.
+    if (constructing.has(id)) return observed(new Element(id), "Element");
+
+
+    let raw;
+    let label;
+    if (comments.has(id)) { raw = new Comment(id); label = "Comment"; }
+    else if (api.isElement(id)) { raw = constructElement(id); label = "Element"; }
+    else { raw = new Text(id); label = "Text"; }
+
+    // Labelled by what the node actually is. Calling a text node "Element"
+    // reported `Element.tagName` as missing when what happened was a page
+    // reading `tagName` off a text node, where no engine has one.
+    const node = observed(raw, label);
     wrappers.set(id, node);
     return node;
+  }
+
+  // ── custom elements ──────────────────────────────────────────────────────
+  //
+  // The corpus asked for `customElements.define` once it could get that far,
+  // which happened only after `HTMLElement` existed for `class X extends
+  // HTMLElement` to name. Defining without upgrading would be the worse kind of
+  // half-support: the page would register its components, see no error, and
+  // render nothing.
+
+  const definitions = new Map();
+  const constructing = new Set();
+  // Which custom elements have had `connectedCallback` run. Kept beside the
+  // nodes rather than on them: a flag stored as a property is a property, and
+  // the reporting proxy rightly named our own bookkeeping as a missing API the
+  // first time a page's code reached a node before we had set it.
+  const connected = new Set();
+  const comments = new Set();
+  let upgrading = null;
+
+  function constructElement(id) {
+    const definition = definitions.get(api.tagName(id).toLowerCase());
+    if (!definition) return new Element(id);
+
+    const previousUpgrade = upgrading;
+    upgrading = id;
+    constructing.add(id);
+    try {
+      return new definition.ctor();
+    } catch (error) {
+      // A component whose constructor throws must not take the page with it.
+      console.error(`custom element <${definition.name}> threw while upgrading: ${error}`);
+      return new Element(id);
+    } finally {
+      upgrading = previousUpgrade;
+      constructing.delete(id);
+    }
+  }
+
+  function isCustom(node) {
+    return node && node.nodeType === 1 && definitions.has(api.tagName(node._id).toLowerCase());
+  }
+
+  /// Every custom element at or under `node`, in document order.
+  function collectCustom(node) {
+    const found = [];
+    const visit = (n) => {
+      if (!n || n.nodeType !== 1) return;
+      if (isCustom(n)) found.push(n);
+      for (const kid of n.children) visit(kid);
+    };
+    visit(node);
+    return found;
+  }
+
+  function notifyConnection(node) {
+    if (!node || node.nodeType !== 1 || !node.isConnected) return;
+    for (const found of collectCustom(node)) fireConnected(found);
+  }
+
+  function fireConnected(node) {
+    if (connected.has(node._id)) return;
+    connected.add(node._id);
+    try {
+      if (typeof node.connectedCallback === "function") node.connectedCallback();
+    } catch (error) {
+      console.error(`custom element connectedCallback threw: ${error}`);
+    }
+  }
+
+  function fireDisconnected(node) {
+    if (!connected.has(node._id)) return;
+    connected.delete(node._id);
+    try {
+      if (typeof node.disconnectedCallback === "function") node.disconnectedCallback();
+    } catch (error) {
+      console.error(`custom element disconnectedCallback threw: ${error}`);
+    }
+  }
+
+  function fireAttributeChanged(node, name, oldValue, newValue) {
+    if (!isCustom(node)) return;
+    const observedNames = node.constructor && node.constructor.observedAttributes;
+    if (!Array.isArray(observedNames) || !observedNames.includes(name)) return;
+    try {
+      if (typeof node.attributeChangedCallback === "function") {
+        node.attributeChangedCallback(name, oldValue, newValue);
+      }
+    } catch (error) {
+      console.error(`custom element attributeChangedCallback threw: ${error}`);
+    }
+  }
+
+  const pendingDefinitions = new Map();
+
+  const customElements = {
+    define(name, ctor, options) {
+      const key = String(name).toLowerCase();
+      // The spec's rule, and worth keeping: a name without a dash could collide
+      // with an element the parser already knows.
+      if (!key.includes("-")) {
+        throw new SyntaxError(`custom element name \`${key}\` must contain a dash`);
+      }
+      if (definitions.has(key)) {
+        throw new Error(`custom element \`${key}\` is already defined`);
+      }
+      if (options && options.extends) {
+        api.unsupported("customElements.define({ extends })");
+      }
+      definitions.set(key, { name: key, ctor });
+
+      // Upgrade what is already on the page. Without this, a page that ships
+      // its markup server-side and defines its components afterwards — which is
+      // most of them — would define and then do nothing.
+      for (const id of api.queryAll(key, 0)) {
+        wrappers.delete(id);
+        const node = wrap(id);
+        // The observed attributes have their initial values delivered, as they
+        // are on upgrade in a real engine, or a component that only renders
+        // from `attributeChangedCallback` renders blank.
+        const observedNames = ctor.observedAttributes;
+        if (Array.isArray(observedNames)) {
+          for (const attribute of observedNames) {
+            const value = api.getAttr(id, attribute);
+            if (value !== null) fireAttributeChanged(node, attribute, null, value);
+          }
+        }
+        if (node.isConnected) fireConnected(node);
+      }
+
+      const waiting = pendingDefinitions.get(key);
+      if (waiting) { pendingDefinitions.delete(key); waiting.forEach((resolve) => resolve(ctor)); }
+    },
+    get(name) {
+      const definition = definitions.get(String(name).toLowerCase());
+      return definition ? definition.ctor : undefined;
+    },
+    getName(ctor) {
+      for (const [key, definition] of definitions) {
+        if (definition.ctor === ctor) return key;
+      }
+      return null;
+    },
+    whenDefined(name) {
+      const key = String(name).toLowerCase();
+      const definition = definitions.get(key);
+      if (definition) return Promise.resolve(definition.ctor);
+      return new Promise((resolve) => {
+        const waiting = pendingDefinitions.get(key) || [];
+        waiting.push(resolve);
+        pendingDefinitions.set(key, waiting);
+      });
+    },
+    upgrade(node) {
+      for (const found of collectCustom(node)) {
+        if (found.isConnected) fireConnected(found);
+      }
+    },
+  };
+
+  /// Every node in the tree, in document order. Used for the two questions that
+  /// need it — `compareDocumentPosition` and the traversal objects — and
+  /// rebuilt each time, because script mutates the tree between calls.
+  function documentOrder() {
+    const out = [];
+    const visit = (id) => {
+      out.push(id);
+      for (const kid of api.children(id)) visit(kid);
+    };
+    visit(api.root());
+    return out;
   }
 
   // Wrap an object we own so that reading a property it does not have is
@@ -51,6 +236,13 @@
         // recording it would report a missing API every time a node passed
         // through an await.
         if (property === "then") return undefined;
+
+        // A gap is only a gap if a real browser would have answered. Reading
+        // `tagName` off a text node gets undefined in every engine there is —
+        // reporting it would send us building something that does not exist,
+        // and the corpus did exactly that until this rule was written.
+        if (label !== "Element" && property in Element.prototype) return undefined;
+
         api.unsupported(`${label}.${String(property)}`);
         return undefined;
       },
@@ -86,7 +278,47 @@
   }
 
   class Node {
-    constructor(id) { this._id = id; }
+    constructor(id) {
+      // `undefined` means "the element currently being upgraded". A custom
+      // element's constructor runs as `super()` with no arguments — the class
+      // never sees the node it is being attached to — so the id arrives out of
+      // band, exactly as the construction stack works in a real engine.
+      this._id = id === undefined ? upgrading : id;
+    }
+
+    get ownerDocument() { return document; }
+    get isConnected() {
+      const root = api.root();
+      for (let n = this._id; n !== null && n !== undefined; n = api.parent(n)) {
+        if (n === root) return true;
+      }
+      return false;
+    }
+    getRootNode() {
+      // The document when attached, the top of the detached fragment when not
+      // — which is how code decides whether it is inside the page yet.
+      if (this.isConnected) return document;
+      let top = this;
+      while (top.parentNode) top = top.parentNode;
+      return top;
+    }
+    contains(other) {
+      for (let n = other; n; n = n.parentNode) {
+        if (n._id === this._id) return true;
+      }
+      return false;
+    }
+    compareDocumentPosition(other) {
+      if (!other || other._id === undefined) return 1; // DISCONNECTED
+      if (other._id === this._id) return 0;
+      if (this.contains(other)) return 20;  // CONTAINED_BY | FOLLOWING
+      if (other.contains(this)) return 10;  // CONTAINS | PRECEDING
+      const order = documentOrder();
+      const mine = order.indexOf(this._id);
+      const theirs = order.indexOf(other._id);
+      if (mine < 0 || theirs < 0) return 1; // DISCONNECTED
+      return theirs > mine ? 4 : 2;         // FOLLOWING : PRECEDING
+    }
 
     get nodeType() { return api.isElement(this._id) ? 1 : 3; }
     get parentNode() { return wrap(api.parent(this._id)); }
@@ -124,6 +356,7 @@
       }
       api.append(this._id, child._id);
       childListRecord(this, [child], []);
+      notifyConnection(child);
       return child;
     }
     insertBefore(child, anchor) {
@@ -135,6 +368,7 @@
       }
       api.insertBefore(anchor._id, child._id);
       childListRecord(this, [child], []);
+      notifyConnection(child);
       return child;
     }
     cloneNode(deep) {
@@ -160,14 +394,18 @@
       return at > 0 ? kids[at - 1] : null;
     }
     removeChild(child) {
+      const leaving = collectCustom(child);
       api.removeNode(child._id);
       childListRecord(this, [], [child]);
+      for (const node of leaving) fireDisconnected(node);
       return child;
     }
     remove() {
       const parent = this.parentNode;
+      const leaving = collectCustom(this);
       api.removeNode(this._id);
       if (parent) childListRecord(parent, [], [this]);
+      for (const node of leaving) fireDisconnected(node);
     }
     prepend(...items) {
       const first = this.firstChild;
@@ -229,6 +467,15 @@
     set data(v) { this.textContent = v; }
   }
 
+  // A real comment node, not a text node wearing a hat: a marker that showed up
+  // in `textContent` would appear in the outline an agent reads.
+  class Comment extends Node {
+    get nodeType() { return 8; }
+    get nodeName() { return "#comment"; }
+    get data() { return api.getText(this._id); }
+    get nodeValue() { return api.getText(this._id); }
+  }
+
   class Element extends Node {
     get tagName() { return api.tagName(this._id); }
     get nodeName() { return this.tagName; }
@@ -242,6 +489,7 @@
         type: "attributes", target: this, addedNodes: [], removedNodes: [],
         attributeName: String(name).toLowerCase(), oldValue: previous,
       });
+      fireAttributeChanged(this, String(name).toLowerCase(), previous, String(value));
     }
     removeAttribute(name) {
       const previous = api.getAttr(this._id, String(name));
@@ -250,6 +498,7 @@
         type: "attributes", target: this, addedNodes: [], removedNodes: [],
         attributeName: String(name).toLowerCase(), oldValue: previous,
       });
+      fireAttributeChanged(this, String(name).toLowerCase(), previous, null);
     }
     hasAttribute(name) { return api.getAttr(this._id, String(name)) !== null; }
 
@@ -327,6 +576,34 @@
       return parts ? parts[part] : "";
     }
 
+    // HTML, always: this engine parses HTML and nothing else. `document` has no
+    // such property in the DOM at all, which is why it is *defined as undefined*
+    // there rather than left to report itself as a gap.
+    get namespaceURI() { return "http://www.w3.org/1999/xhtml"; }
+
+    // What a reset button restores, and what `dirty` checks compare against.
+    // The attribute for an input, the original text for a textarea — the two
+    // places HTML keeps it.
+    get defaultValue() {
+      if (this.tagName === "TEXTAREA") return api.getText(this._id);
+      return api.getAttr(this._id, "value") || "";
+    }
+    set defaultValue(v) {
+      if (this.tagName === "TEXTAREA") this.textContent = String(v);
+      else this.setAttribute("value", v);
+    }
+
+    // `el.scrollTop + el.clientHeight >= el.scrollHeight` is how every
+    // "am I at the bottom" check is written, so all six come from one call and
+    // agree with each other. Only the document actually scrolls here: nothing
+    // in this engine clips and scrolls a subtree, and a scrollTop that can
+    // never change is better reported as zero than invented.
+    get scrollTop() { return (api.scrollMetrics(this._id) || [0])[0]; }
+    set scrollTop(y) { api.setScrollTop(this._id, Number(y)); }
+    get scrollLeft() { return (api.scrollMetrics(this._id) || [0, 0])[1]; }
+    get scrollHeight() { return (api.scrollMetrics(this._id) || [0, 0, 0])[2]; }
+    get scrollWidth() { return (api.scrollMetrics(this._id) || [0, 0, 0, 0])[3]; }
+
     get lang() { return api.getAttr(this._id, "lang") || ""; }
     set lang(v) { this.setAttribute("lang", v); }
     get title() { return api.getAttr(this._id, "title") || ""; }
@@ -394,6 +671,8 @@
 
     querySelector(sel) { return wrap(api.query(String(sel), this._id)); }
     querySelectorAll(sel) { return api.queryAll(String(sel), this._id).map(wrap); }
+    getElementsByTagName(tag) { return api.queryAll(String(tag), this._id).map(wrap); }
+    getElementsByClassName(cls) { return api.queryAll("." + String(cls), this._id).map(wrap); }
 
     matches(sel) {
       // Asked of the document and filtered, because the selector engine
@@ -471,8 +750,11 @@
     getClientRects() { return [this.getBoundingClientRect()]; }
     get offsetWidth() { return this.getBoundingClientRect().width; }
     get offsetHeight() { return this.getBoundingClientRect().height; }
-    get clientWidth() { return this.getBoundingClientRect().width; }
-    get clientHeight() { return this.getBoundingClientRect().height; }
+    // Not the bounding rect: for `documentElement` and `body` this is the
+    // *viewport*, not the element's own height, and the bottom-of-page check
+    // every page writes compares the two.
+    get clientWidth() { return (api.scrollMetrics(this._id) || [0, 0, 0, 0, 0, 0])[5]; }
+    get clientHeight() { return (api.scrollMetrics(this._id) || [0, 0, 0, 0, 0])[4]; }
   }
 
   function camelToDash(name) {
@@ -1103,6 +1385,113 @@
 
   // ── document and window ──────────────────────────────────────────────────
 
+  // ── traversal ────────────────────────────────────────────────────────────
+  //
+  // `whatToShow` is a bitmask over node types, where the bit is `1 << (type-1)`:
+  // element 1, text 4, comment 128. That arithmetic is the whole filter, plus
+  // the caller's own function.
+
+  const NodeFilter = {
+    SHOW_ALL: 0xffffffff,
+    SHOW_ELEMENT: 1,
+    SHOW_TEXT: 4,
+    SHOW_COMMENT: 128,
+    FILTER_ACCEPT: 1,
+    FILTER_REJECT: 2,
+    FILTER_SKIP: 3,
+  };
+
+  function accepts(node, whatToShow, filter) {
+    if (!node) return false;
+    if (!(whatToShow & (1 << (node.nodeType - 1)))) return false;
+    if (!filter) return true;
+    const verdict = typeof filter === "function" ? filter(node) : filter.acceptNode(node);
+    return verdict === NodeFilter.FILTER_ACCEPT;
+  }
+
+  /// Shared by both traversal objects: the subtree rooted at `root`, filtered.
+  function traversable(root, whatToShow, filter) {
+    const out = [];
+    const visit = (id) => {
+      const node = wrap(id);
+      if (accepts(node, whatToShow, filter)) out.push(node);
+      for (const kid of api.children(id)) visit(kid);
+    };
+    visit(root._id);
+    return out;
+  }
+
+  class NodeIterator {
+    constructor(root, whatToShow, filter) {
+      this.root = root;
+      this.whatToShow = whatToShow;
+      this.filter = filter;
+      this.referenceNode = root;
+      this._at = -1;
+    }
+    _list() { return traversable(this.root, this.whatToShow, this.filter); }
+    nextNode() {
+      const list = this._list();
+      this._at += 1;
+      if (this._at >= list.length) { this._at = list.length; return null; }
+      this.referenceNode = list[this._at];
+      return this.referenceNode;
+    }
+    previousNode() {
+      const list = this._list();
+      this._at -= 1;
+      if (this._at < 0) { this._at = -1; return null; }
+      this.referenceNode = list[this._at];
+      return this.referenceNode;
+    }
+    detach() {}
+  }
+
+  class TreeWalker {
+    constructor(root, whatToShow, filter) {
+      this.root = root;
+      this.whatToShow = whatToShow;
+      this.filter = filter;
+      this.currentNode = root;
+    }
+    _list() { return traversable(this.root, this.whatToShow, this.filter); }
+    _step(by) {
+      const list = this._list();
+      const at = list.findIndex((n) => n._id === this.currentNode._id);
+      const next = list[(at < 0 ? (by > 0 ? -1 : list.length) : at) + by];
+      if (!next) return null;
+      this.currentNode = next;
+      return next;
+    }
+    nextNode() { return this._step(1); }
+    previousNode() { return this._step(-1); }
+    parentNode() {
+      for (let n = this.currentNode.parentNode; n; n = n.parentNode) {
+        if (accepts(n, this.whatToShow, this.filter)) { this.currentNode = n; return n; }
+        if (n._id === this.root._id) break;
+      }
+      return null;
+    }
+    firstChild() {
+      for (const kid of this.currentNode.childNodes) {
+        if (accepts(kid, this.whatToShow, this.filter)) { this.currentNode = kid; return kid; }
+      }
+      return null;
+    }
+    nextSibling() {
+      for (let n = this.currentNode.nextSibling; n; n = n.nextSibling) {
+        if (accepts(n, this.whatToShow, this.filter)) { this.currentNode = n; return n; }
+      }
+      return null;
+    }
+    previousSibling() {
+      for (let n = this.currentNode.previousSibling; n; n = n.previousSibling) {
+        if (accepts(n, this.whatToShow, this.filter)) { this.currentNode = n; return n; }
+      }
+      return null;
+    }
+  }
+
   const documentImpl = {
     get documentElement() { return wrap(api.root()); },
     get body() { return wrap(api.body()); },
@@ -1110,6 +1499,24 @@
     createElement(tag) { return wrap(api.createElement(String(tag))); },
     createTextNode(text) { return wrap(api.createText(String(text))); },
     createDocumentFragment() { return new DocumentFragment(); },
+    createComment(text) {
+      const id = api.createComment(String(text));
+      comments.add(id);
+      return wrap(id);
+    },
+    // One document means importing is cloning. Saying that plainly is better
+    // than a stub that returns nothing and leaves the caller inserting null.
+    importNode(node, deep) { return node.cloneNode(deep); },
+    adoptNode(node) { return node; },
+    createNodeIterator(root, whatToShow, filter) {
+      return new NodeIterator(root, whatToShow === undefined ? NodeFilter.SHOW_ALL : whatToShow, filter);
+    },
+    createTreeWalker(root, whatToShow, filter) {
+      return new TreeWalker(root, whatToShow === undefined ? NodeFilter.SHOW_ALL : whatToShow, filter);
+    },
+    getElementsByName(name) {
+      return api.queryAll(`[name="${String(name).replace(/"/g, '\\"')}"]`, 0).map(wrap);
+    },
     querySelector(sel) { return wrap(api.query(String(sel), 0)); },
     querySelectorAll(sel) { return api.queryAll(String(sel), 0).map(wrap); },
     getElementById(id) { return wrap(api.query("#" + String(id), 0)); },
@@ -1176,6 +1583,24 @@
 
     // Nothing is focused until something is: this engine has no focus ring, and
     // the body is what a browser reports in that state.
+    // A Document has no `namespaceURI` and its `ownerDocument` is null — both
+    // are true of a real browser. Defined rather than absent so the reporting
+    // proxy does not name them as gaps: something no engine has is not
+    // something this engine is missing.
+    namespaceURI: undefined,
+    ownerDocument: null,
+    get implementation() {
+      return {
+        hasFeature: () => true,
+        // A second document is genuinely out of reach here — there is one tree,
+        // and it is the page. A page using this to parse HTML off to the side
+        // gets a named refusal instead of a silently broken document.
+        createHTMLDocument: missingApi("document.implementation.createHTMLDocument"),
+        createDocument: missingApi("document.implementation.createDocument"),
+        createDocumentType: missingApi("document.implementation.createDocumentType"),
+      };
+    },
+
     get activeElement() { return wrap(api.body()); },
     get hidden() { return false; },
     get visibilityState() { return "visible"; },
@@ -1254,6 +1679,22 @@
       String.fromCharCode(parseInt(wide || byte, 16)));
   }
 
+  // Defined rather than assigned, and the distinction is not cosmetic:
+  // `Object.assign` invokes a getter and copies the value it returns, so a
+  // scroll offset written that way freezes at whatever it was when the prelude
+  // ran. Anything on the global object that changes over the life of the page
+  // belongs here.
+  //
+  // These are also a gap the reporting proxy could never have found — nothing
+  // wraps the global object, so `window.innerWidth` was simply undefined, and a
+  // layout that measures instead of asking `matchMedia` got NaN out of its own
+  // arithmetic.
+  function defineLive(properties) {
+    for (const [name, get] of Object.entries(properties)) {
+      Object.defineProperty(globalThis, name, { get, configurable: true, enumerable: true });
+    }
+  }
+
   function render(v) {
     if (typeof v === "string") return v;
     try { return JSON.stringify(v) ?? String(v); } catch (_) { return String(v); }
@@ -1310,6 +1751,17 @@
     for (const timer of timers.values()) if (timer.every === null) pending++;
     return pending;
   };
+
+  defineLive({
+    innerWidth: () => api.viewport().width,
+    innerHeight: () => api.viewport().height,
+    outerWidth: () => api.viewport().width,
+    outerHeight: () => api.viewport().height,
+    scrollX: () => document.documentElement.scrollLeft,
+    scrollY: () => document.documentElement.scrollTop,
+    pageXOffset: () => document.documentElement.scrollLeft,
+    pageYOffset: () => document.documentElement.scrollTop,
+  });
 
   // How the host reaches a node it knows only by id, to fire a real event at
   // it. Exposed rather than reimplemented on the Rust side so a synthetic
@@ -1405,16 +1857,27 @@
     // it first. It has to be the same object, not a copy, or a page that stores
     // state on one and reads it from the other loses it.
     get self() { return globalThis; },
+
+    devicePixelRatio: 1,
+    scrollTo(x, y) {
+      const top = typeof x === "object" && x !== null ? x.top : y;
+      api.setScrollTop(api.root(), Number(top) || 0);
+    },
+    scroll(x, y) { globalThis.scrollTo(x, y); },
+    scrollBy(x, y) {
+      const by = typeof x === "object" && x !== null ? x.top : y;
+      api.setScrollTop(api.root(), document.documentElement.scrollTop + (Number(by) || 0));
+    },
     btoa, atob, escape, unescape,
 
     // The constructors, exposed for `instanceof` — which is how library code
     // asks "is this a node?" before deciding what to do with it. `HTMLElement`
     // is `Element` here because this engine has one element class; the check
     // that matters is the one pages actually write.
-    Node, Element, Text, DocumentFragment,
+    Node, Element, Text, Comment, DocumentFragment,
     HTMLElement: Element,
+    customElements, NodeFilter, NodeIterator, TreeWalker,
 
-    customElements: missingApi("customElements"),
     WebSocket: missingApi("WebSocket"),
     Worker: missingApi("Worker"),
     SharedWorker: missingApi("SharedWorker"),
