@@ -73,7 +73,10 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("setValue", 2, set_value),
         ("log", 2, log),
         ("unsupported", 1, unsupported),
-        ("fetch", 3, fetch),
+        ("fetchStart", 3, fetch_start),
+        ("fetchDrain", 0, fetch_drain),
+        ("fetchPending", 0, fetch_pending),
+        ("userAgent", 0, user_agent),
         ("innerHtml", 1, inner_html),
         ("outerHtml", 1, outer_html),
         ("rect", 1, rect),
@@ -582,7 +585,19 @@ fn unsupported(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
 ///
 /// The URL is recorded before the answer is returned, so a caller can correlate
 /// the click that ran this script with the request it caused.
-fn fetch(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+/// The one user agent, so the prelude cannot hold a second copy that drifts.
+fn user_agent(_this: &JsValue, _args: &[JsValue], _context: &mut Context) -> JsResult<JsValue> {
+    Ok(JsValue::from(js_string!(crate::net::USER_AGENT)))
+}
+
+/// Accept a request from script and hand back a ticket.
+///
+/// Nothing goes on the wire here. The request joins an ordered queue, and
+/// [`fetch_drain`] starts it when a slot is free — which is what makes two
+/// `fetch` calls actually overlap instead of running one after the other. The
+/// old binding did the whole round trip inline, so a page that fanned out ten
+/// requests paid for them in series and every SPA waterfall was our own.
+fn fetch_start(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let target = arg_string(args, 0, context)?;
     let method = arg_string(args, 1, context).unwrap_or_else(|_| "GET".to_string());
     let body = arg_string(args, 2, context).unwrap_or_default();
@@ -594,18 +609,155 @@ fn fetch(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
     };
     host.requests.borrow_mut().push(resolved.to_string());
 
-    let content_type = (!body.is_empty()).then_some("application/x-www-form-urlencoded");
-    // The document's own origin travels with the request, so the policy can
-    // refuse a page from the web reaching the box's dev server (§3.1).
-    let outcome = host.broker.send_from(
-        &resolved,
-        crate::receipt::Initiator::Subresource,
-        &method,
-        body.as_bytes(),
-        content_type,
-        Some(&host.base),
+    let id = host.next_fetch.get();
+    host.next_fetch.set(id + 1);
+    host.pending_fetches.borrow_mut().insert(
+        id,
+        crate::script::host::FetchSlot::Queued {
+            url: resolved,
+            method,
+            content_type: (!body.is_empty())
+                .then(|| "application/x-www-form-urlencoded".to_string()),
+            body: body.into_bytes(),
+        },
     );
+    Ok(JsValue::from(id as f64))
+}
 
+/// Start what can be started, and return whatever has come back.
+///
+/// Called from the settle loop, so the page's promises resolve as the network
+/// answers rather than at some arbitrary later point.
+fn fetch_drain(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let host = host(context)?;
+
+    // 1. Fill the free slots, in the order the page asked.
+    {
+        let mut pending = host.pending_fetches.borrow_mut();
+        let mut in_flight = pending
+            .values()
+            .filter(|slot| matches!(slot, crate::script::host::FetchSlot::InFlight(_)))
+            .count();
+
+        let startable: Vec<u64> = pending
+            .iter()
+            .filter(|(_, slot)| matches!(slot, crate::script::host::FetchSlot::Queued { .. }))
+            .map(|(id, _)| *id)
+            .collect();
+
+        for id in startable {
+            if in_flight >= crate::script::host::MAX_INFLIGHT_FETCHES {
+                break;
+            }
+            let Some(crate::script::host::FetchSlot::Queued {
+                url,
+                method,
+                body,
+                content_type,
+            }) = pending.remove(&id)
+            else {
+                continue;
+            };
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            let broker = host.broker.clone();
+            // Kept for the error path, which needs to name the request that
+            // could not be started after the closure has taken the original.
+            let named = url.clone();
+            // The document's own origin travels with the request, so the policy
+            // can refuse a page from the web reaching the box's dev server
+            // (§3.1). It is cloned rather than borrowed because this leaves the
+            // thread that owns the realm.
+            let document = host.base.clone();
+            let spawned = std::thread::Builder::new()
+                .name(format!("h5i-fetch-{id}"))
+                .spawn(move || {
+                    let outcome = broker.send_from(
+                        &url,
+                        crate::receipt::Initiator::Subresource,
+                        &method,
+                        &body,
+                        content_type.as_deref(),
+                        Some(&document),
+                    );
+                    // A closed receiver means the realm went away; there is
+                    // nobody left to tell.
+                    let _ = tx.send(outcome);
+                });
+
+            match spawned {
+                Ok(_) => {
+                    pending.insert(id, crate::script::host::FetchSlot::InFlight(rx));
+                    in_flight += 1;
+                }
+                Err(error) => {
+                    // Out of threads is a real answer, not a hang.
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let _ = tx.send(crate::net::FetchOutcome::refused(
+                        named,
+                        format!("could not start the request: {error}"),
+                    ));
+                    pending.insert(id, crate::script::host::FetchSlot::InFlight(rx));
+                }
+            }
+        }
+    }
+
+    // 2. Collect what has arrived. Taken out of the map first so the borrow is
+    //    released before any JS object is built.
+    let mut arrived: Vec<(u64, crate::net::FetchOutcome)> = Vec::new();
+    {
+        let mut pending = host.pending_fetches.borrow_mut();
+        // Exactly one `try_recv` per slot. Asking twice — once to find out
+        // whether an answer was there and again to take it — takes the value on
+        // the first call and finds an empty channel on the second, which read
+        // as every request ending without an answer.
+        let ids: Vec<u64> = pending.keys().copied().collect();
+        for id in ids {
+            let taken = match pending.get(&id) {
+                Some(crate::script::host::FetchSlot::InFlight(rx)) => match rx.try_recv() {
+                    Ok(outcome) => Some(outcome),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                    // The worker died without sending: report it rather than
+                    // leaving the page's promise pending forever.
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        Some(crate::net::FetchOutcome::refused(
+                            host.base.clone(),
+                            "the request ended without an answer".to_string(),
+                        ))
+                    }
+                },
+                _ => None,
+            };
+            if let Some(outcome) = taken {
+                pending.remove(&id);
+                arrived.push((id, outcome));
+            }
+        }
+    }
+
+    let out = boa_engine::object::builtins::JsArray::new(context);
+    for (id, outcome) in arrived {
+        let pair = boa_engine::object::builtins::JsArray::new(context);
+        pair.push(JsValue::from(id as f64), context)?;
+        pair.push(reply_value(outcome, context)?, context)?;
+        out.push(pair, context)?;
+    }
+    Ok(out.into())
+}
+
+/// How many requests are still owed an answer, so `settle` knows to wait.
+fn fetch_pending(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let host = host(context)?;
+    let count = host.pending_fetches.borrow().len();
+    Ok(JsValue::from(count as f64))
+}
+
+/// The shape script sees for one finished request.
+fn reply_value(
+    outcome: crate::net::FetchOutcome,
+    context: &mut Context,
+) -> JsResult<JsValue> {
     if let Some(error) = outcome.error {
         // A refusal is an answer. The promise rejects and the page sees it,
         // rather than the engine pretending the request never happened.

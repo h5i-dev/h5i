@@ -88,10 +88,41 @@ pub struct Host {
     /// wrote — so the text lives here rather than being quietly lost.
     pub comments: RefCell<std::collections::HashMap<usize, String>>,
 
+    /// Requests script asked for that have not been answered yet.
+    ///
+    /// Ordered, so a page that issues ten requests starts them in the order it
+    /// wrote them rather than in whatever order a hash landed.
+    pub pending_fetches: RefCell<std::collections::BTreeMap<u64, FetchSlot>>,
+
+    /// Ticket numbers for those. Never reused within a realm, so a late reply
+    /// cannot resolve a promise that belongs to a later request.
+    pub next_fetch: std::cell::Cell<u64>,
+
     /// Scripts the policy refused, so a `ReferenceError` for a global one of
     /// them would have defined can be attributed to the refusal instead of
     /// being reported as an engine that lacks jQuery.
     pub refused_scripts: RefCell<Vec<String>>,
+}
+
+/// How many requests this engine will have on the wire at once.
+///
+/// Six, which is what browsers settled on per host for HTTP/1.1 — enough that a
+/// page fanning out its data loads in parallel instead of in a queue, few
+/// enough that a page with two hundred images cannot spawn two hundred threads
+/// inside a box with a memory ceiling.
+pub const MAX_INFLIGHT_FETCHES: usize = 6;
+
+/// A request script made, waiting its turn or waiting for the wire.
+pub enum FetchSlot {
+    /// Accepted, not yet started: the in-flight limit was already reached.
+    Queued {
+        url: url::Url,
+        method: String,
+        body: Vec<u8>,
+        content_type: Option<String>,
+    },
+    /// On the wire, on its own thread, with the answer coming back here.
+    InFlight(std::sync::mpsc::Receiver<crate::net::FetchOutcome>),
 }
 
 /// How the [`Host`] reaches a native binding.
@@ -122,6 +153,8 @@ impl Host {
             unsupported: RefCell::new(Unsupported::default()),
             requests: RefCell::new(Vec::new()),
             comments: RefCell::new(std::collections::HashMap::new()),
+            pending_fetches: RefCell::new(std::collections::BTreeMap::new()),
+            next_fetch: std::cell::Cell::new(1),
             refused_scripts: RefCell::new(Vec::new()),
         }
     }

@@ -2704,3 +2704,187 @@ fn a_script_that_threw_explains_the_globals_it_never_defined() {
         page.console()
     );
 }
+
+// ── the network layer ────────────────────────────────────────────────────────
+
+/// A server that holds every request open for `delay`, so overlapping requests
+/// take one delay in total and serialised ones take N.
+fn slow_server(delay: std::time::Duration) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let peak = std::sync::Arc::new(AtomicUsize::new(0));
+    let live = std::sync::Arc::new(AtomicUsize::new(0));
+    let (peak_out, peak_in, live_in) = (peak.clone(), peak.clone(), live.clone());
+
+    std::thread::spawn(move || {
+        for incoming in listener.incoming() {
+            let Ok(stream) = incoming else { return };
+            let (peak_in, live_in) = (peak_in.clone(), live_in.clone());
+            std::thread::spawn(move || {
+                // How many were being served at once, which is the only
+                // observation that distinguishes concurrent from sequential.
+                let now = live_in.fetch_add(1, Ordering::SeqCst) + 1;
+                peak_in.fetch_max(now, Ordering::SeqCst);
+
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut h = String::new();
+                    if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() {
+                        break;
+                    }
+                }
+                std::thread::sleep(delay);
+                let body = "ok";
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.flush();
+                live_in.fetch_sub(1, Ordering::SeqCst);
+            });
+        }
+    });
+    (port, peak_out)
+}
+
+#[test]
+fn requests_overlap_instead_of_queueing_behind_each_other() {
+    use std::sync::atomic::Ordering;
+    let (port, peak) = slow_server(std::time::Duration::from_millis(120));
+
+    let broker = Arc::new(
+        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+    );
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let page = factory.from_html("<html><body></body></html>", &base);
+    let mut script = Script::new(page.dom(), broker, &base).expect("realm");
+
+    // Five requests a page issues together. Serialised they cost five delays;
+    // overlapping they cost one — and the server can see the difference.
+    script
+        .eval(
+            "globalThis.done = 0; \
+             for (let i = 0; i < 5; i++) fetch('/api/' + i).then(() => { done += 1 });",
+        )
+        .expect("runs");
+
+    let started = std::time::Instant::now();
+    script.settle();
+    let elapsed = started.elapsed();
+
+    assert_eq!(script.eval_value("String(done)").unwrap(), "5", "all five answered");
+    assert!(
+        peak.load(Ordering::SeqCst) > 1,
+        "the server should have seen more than one request in flight at once, saw {}",
+        peak.load(Ordering::SeqCst)
+    );
+    assert!(
+        elapsed < std::time::Duration::from_millis(500),
+        "five 120ms requests overlapping should not cost five delays, took {elapsed:?}"
+    );
+}
+
+#[test]
+fn more_requests_than_slots_still_all_finish() {
+    use std::sync::atomic::Ordering;
+    let (port, peak) = slow_server(std::time::Duration::from_millis(30));
+
+    let broker = Arc::new(
+        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+    );
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let page = factory.from_html("<html><body></body></html>", &base);
+    let mut script = Script::new(page.dom(), broker, &base).expect("realm");
+
+    // Twice the in-flight limit. The queue is the point: a page with two
+    // hundred images must not become two hundred threads inside a box with a
+    // memory ceiling, and none of them may be dropped either.
+    script
+        .eval(
+            "globalThis.done = 0; \
+             for (let i = 0; i < 12; i++) fetch('/api/' + i).then(() => { done += 1 });",
+        )
+        .expect("runs");
+    script.settle();
+
+    assert_eq!(script.eval_value("String(done)").unwrap(), "12");
+    assert!(
+        peak.load(Ordering::SeqCst) <= crate::script::host::MAX_INFLIGHT_FETCHES,
+        "never more than the limit on the wire at once, saw {}",
+        peak.load(Ordering::SeqCst)
+    );
+}
+
+#[test]
+fn the_wire_says_what_this_engine_is_and_what_it_will_accept() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut seen = String::new();
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim().is_empty() {
+                break;
+            }
+            seen.push_str(&line);
+        }
+        let body = "<html><body><p>hi</p></body></html>";
+        let mut stream = stream;
+        let _ = write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.flush();
+        seen
+    });
+
+    let broker = Arc::new(
+        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+    );
+    let url = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let _ = broker.fetch(&url, crate::receipt::Initiator::Navigation);
+
+    let seen = server.join().unwrap().to_ascii_lowercase();
+    // crates.io answered 404 to a request that said nothing about what it
+    // wanted, and the corpus recorded an empty page with no error.
+    assert!(
+        seen.contains("accept: text/html"),
+        "a navigation has to say it wants a document: {seen}"
+    );
+    assert!(seen.contains("accept-language:"), "{seen}");
+    assert!(
+        seen.contains("h5i-browser-light"),
+        "the user agent names this engine rather than imitating another: {seen}"
+    );
+}
+
+#[test]
+fn the_wire_agent_and_the_scripted_one_are_the_same_string() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // A page that branches on the user agent server-side and again in script
+    // must see the same answer both times, or it renders for one engine and
+    // scripts for another.
+    assert_eq!(
+        script.eval_value("navigator.userAgent").unwrap(),
+        crate::net::USER_AGENT
+    );
+}

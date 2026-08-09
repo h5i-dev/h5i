@@ -49,6 +49,20 @@ const SETTLE_BUDGET_MS: u64 = 2_000;
 /// timing depends on how loaded the machine was is a run nobody can reproduce.
 const TICK_MS: u64 = 16;
 
+/// How long to wait, in *real* time, for requests that are actually on the wire.
+///
+/// Separate from [`SETTLE_BUDGET_MS`] because that budget is virtual: it counts
+/// the time a page's timers believe has passed, and advancing it costs nothing.
+/// A network round trip costs what it costs, and a page that fetches its content
+/// is not idle while it waits — settling it early would report an empty page as
+/// finished. Bounded all the same: a server that never answers must not become
+/// this engine hanging.
+const NETWORK_BUDGET_MS: u64 = 10_000;
+
+/// How long to sleep between checks while waiting on the wire. Short enough not
+/// to add measurable latency, long enough not to spin a core.
+const NETWORK_POLL_MS: u64 = 2;
+
 /// What a settle actually did, so a caller never has to guess.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settled {
@@ -212,6 +226,7 @@ impl Script {
     pub fn settle(&mut self) -> Settled {
         let mut clock = 0u64;
         let mut timers_run = 0usize;
+        let network_started = std::time::Instant::now();
 
         loop {
             self.context.run_jobs();
@@ -221,13 +236,47 @@ impl Script {
             // that waited for a repaint would never fire at all.
             self.run_layout_observers();
 
+            // Requests that have come back resolve their promises here, which
+            // is what lets `fetch` be concurrent: the host starts up to six at
+            // once and this is where the page learns any of them finished.
+            let outstanding = self.drain_fetches();
+
             let ran = self.run_due_timers(clock);
             timers_run += ran;
 
             if ran == 0 {
-                // Nothing was due now. If something is still queued, advance
-                // the virtual clock toward it rather than sleeping.
                 if self.pending_timers() == 0 {
+                    // Nothing queued and nothing due — but a page waiting on the
+                    // network is not idle, and calling it settled would report
+                    // an empty page as finished. Wait in *real* time, since a
+                    // round trip does not care about our virtual clock.
+                    if outstanding > 0 {
+                        if network_started.elapsed().as_millis() as u64 >= NETWORK_BUDGET_MS {
+                            self.abandon_fetches();
+                            self.context.run_jobs();
+                            self.collect_module_failures();
+                            return Settled {
+                                elapsed_ms: clock,
+                                timers_run,
+                                cut_off: true,
+                                pending_timers: self.pending_timers(),
+                            };
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(NETWORK_POLL_MS));
+                        continue;
+                    }
+
+                    // A reply that arrived in *this* pass resolved a promise,
+                    // and the continuation it queued has not run yet. Returning
+                    // here would report the page settled with its own `.then`
+                    // still pending — which is exactly what a synchronous fetch
+                    // used to hide, because it resolved during `eval` and the
+                    // loop's first `run_jobs` picked the callback up.
+                    self.context.run_jobs();
+                    if self.pending_timers() > 0 || self.drain_fetches() > 0 {
+                        continue;
+                    }
+
                     self.collect_module_failures();
                     return Settled {
                         elapsed_ms: clock,
@@ -236,10 +285,13 @@ impl Script {
                         pending_timers: 0,
                     };
                 }
+                // Something is queued: advance the virtual clock toward it
+                // rather than sleeping.
                 clock += TICK_MS;
             }
 
             if clock >= SETTLE_BUDGET_MS {
+                self.abandon_fetches();
                 self.context.run_jobs();
                 self.collect_module_failures();
                 return Settled {
@@ -250,6 +302,30 @@ impl Script {
                 };
             }
         }
+    }
+
+    /// Resolve whatever has come back, and report how much is still owed.
+    fn drain_fetches(&mut self) -> usize {
+        match self
+            .context
+            .eval(Source::from_bytes("__h5iDrainFetches()"))
+        {
+            Ok(JsValue::Integer(n)) => n.max(0) as usize,
+            Ok(JsValue::Rational(n)) => n.max(0.0) as usize,
+            _ => 0,
+        }
+    }
+
+    /// Reject what will never be answered.
+    ///
+    /// A promise left pending forever is a page that looks like it is still
+    /// working when nothing is, and an agent reading that has no way to tell
+    /// the difference from a page that is merely slow.
+    fn abandon_fetches(&mut self) {
+        let _ = self.context.eval(Source::from_bytes(
+            "__h5iAbandonFetches('the page stopped waiting for this request: it had not \
+             answered when the settle budget ran out')",
+        ));
     }
 
     fn run_layout_observers(&mut self) {

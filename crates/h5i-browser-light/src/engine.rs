@@ -155,32 +155,95 @@ impl Page {
         fonts: FontSetup,
         options: PageOptions,
     ) -> Result<Self, H5iError> {
-        let outcome = broker.fetch(url, Initiator::Navigation);
-        if let Some(error) = outcome.error {
-            return Err(H5iError::Metadata(format!("could not open {url}: {error}")));
+        let mut target = url.clone();
+        // Where a `<meta refresh>` chain has already been, so a page that
+        // refreshes to itself — which news and dashboard pages do on purpose —
+        // is loaded once rather than forever.
+        let mut visited: Vec<Url> = vec![url.clone()];
+        let mut followed: Vec<String> = Vec::new();
+
+        for _ in 0..=MAX_META_REFRESH_HOPS {
+            let outcome = broker.fetch(&target, Initiator::Navigation);
+            if let Some(error) = outcome.error {
+                return Err(H5iError::Metadata(format!("could not open {target}: {error}")));
+            }
+
+            // Lossy on purpose: a page with one bad byte should render, and the
+            // alternative is refusing a document over an encoding detail nobody
+            // asked us to police.
+            let html = String::from_utf8_lossy(&outcome.body).into_owned();
+            let final_url = outcome.final_url.clone();
+            let status = outcome.status.unwrap_or(0);
+
+            // Decided before the page is built, because the marker lives in the
+            // markup we already hold and building is the expensive half.
+            let refresh = meta_refresh(&html, &final_url);
+            if let Some((delay, next)) = &refresh {
+                if *delay <= META_REFRESH_MAX_DELAY_SECONDS && !visited.contains(next) {
+                    followed.push(final_url.to_string());
+                    visited.push(next.clone());
+                    target = next.clone();
+                    continue;
+                }
+            }
+
+            let mut page = Self::from_html(&html, &final_url, broker, fonts, options);
+
+            // An HTTP error still has a body, and rendering it silently is how
+            // an agent ends up reading a 404 page as though it were the page it
+            // asked for. Found by the corpus: crates.io answered 404, the
+            // outline came back empty, and nothing anywhere said why.
+            if !(200..300).contains(&status) {
+                page.note(&format!(
+                    "the server answered {status} for this URL; what follows is whatever it \
+                     returned with that status, not the page that was asked for"
+                ));
+            }
+
+            // A challenge is not the page, and an outline of one reads as a
+            // page that is simply empty. Naming it is the difference between an
+            // agent concluding "there is nothing here" and "I was blocked".
+            if let Some(marker) = challenge_marker(&html) {
+                page.note(&format!(
+                    "this looks like a bot challenge rather than the page that was asked for \
+                     (it says \"{marker}\"). The content below is the challenge. This engine \
+                     runs script but solves no proof-of-work and has no browser fingerprint to \
+                     offer, so this site is not readable from here."
+                ));
+            }
+
+            for from in &followed {
+                page.note(&format!(
+                    "{from} asked for a <meta refresh> and this engine followed it; what \
+                     follows is the page it named"
+                ));
+            }
+
+            // Present, but not followed. Saying which is the point: a page that
+            // refreshes in ten minutes is a page that intends to update itself,
+            // not one that redirected.
+            if let Some((delay, next)) = refresh {
+                if delay > META_REFRESH_MAX_DELAY_SECONDS {
+                    page.note(&format!(
+                        "this page asks to reload itself as {next} after {delay}s; that is a \
+                         page updating itself rather than a redirect, so it was not followed"
+                    ));
+                } else if visited.iter().filter(|v| **v == next).count() > 0 && followed.is_empty()
+                {
+                    page.note(&format!(
+                        "this page's <meta refresh> points at {next}, which is where we already \
+                         are; it was not followed"
+                    ));
+                }
+            }
+
+            return Ok(page);
         }
 
-        // Lossy on purpose: a page with one bad byte should render, and the
-        // alternative is refusing a document over an encoding detail nobody
-        // asked us to police.
-        let html = String::from_utf8_lossy(&outcome.body).into_owned();
-        let final_url = outcome.final_url.clone();
-        let status = outcome.status.unwrap_or(0);
-
-        let mut page = Self::from_html(&html, &final_url, broker, fonts, options);
-
-        // An HTTP error still has a body, and rendering it silently is how an
-        // agent ends up reading a 404 page as though it were the page it asked
-        // for. Found by the corpus: crates.io answered 404, the outline came
-        // back empty, and nothing anywhere said why.
-        if !(200..300).contains(&status) {
-            page.note(&format!(
-                "the server answered {status} for this URL; what follows is whatever it \
-                 returned with that status, not the page that was asked for"
-            ));
-        }
-
-        Ok(page)
+        Err(H5iError::Metadata(format!(
+            "could not open {url}: it redirected through more than {MAX_META_REFRESH_HOPS} \
+             <meta refresh> hops without arriving anywhere"
+        )))
     }
 
     /// Load HTML that is already in hand (a local file, or a test fixture).
@@ -936,6 +999,121 @@ impl PageFactory {
     }
 }
 
+/// How many `<meta refresh>` hops to follow before giving up.
+///
+/// Low on purpose. A refresh chain longer than this is not a site pointing at
+/// its real address, it is a loop or a tracker bounce.
+const MAX_META_REFRESH_HOPS: usize = 3;
+
+/// The line between "this page redirected" and "this page updates itself".
+///
+/// json.org serves a one-line document whose only content is a `<meta refresh>`
+/// to `json-en.html`; the corpus recorded one line and no error, which reads as
+/// a site with nothing on it. A refresh further out than this is a dashboard or
+/// a scoreboard intending to reload later, and following it would be wrong.
+const META_REFRESH_MAX_DELAY_SECONDS: u64 = 15;
+
+/// Phrases that mean "you are being challenged", not "here is the page".
+///
+/// Matched against the raw markup because a challenge page renders to almost
+/// nothing — the whole problem is that its *outline* is indistinguishable from
+/// an empty page. Deliberately specific: a false positive would tell an agent
+/// it was blocked by a site that simply had little to say.
+const CHALLENGE_MARKERS: [&str; 7] = [
+    "enable javascript and cookies to continue",
+    "checking your browser before accessing",
+    "verifying you are human",
+    "cf-browser-verification",
+    "please enable cookies",
+    "ddos protection by",
+    "attention required! | cloudflare",
+];
+
+fn challenge_marker(html: &str) -> Option<&'static str> {
+    let lowered = html.to_ascii_lowercase();
+    CHALLENGE_MARKERS
+        .into_iter()
+        .find(|marker| lowered.contains(marker))
+}
+
+/// The `<meta http-equiv="refresh">` target, if the document names one.
+///
+/// Parsed from the markup rather than the tree because this decides whether the
+/// tree is worth building at all. The content attribute is `delay` optionally
+/// followed by `; url=...`, with the quoting and spacing of twenty-five years of
+/// hand-written HTML, so it is parsed leniently on purpose.
+fn meta_refresh(html: &str, base: &Url) -> Option<(u64, Url)> {
+    let lowered = html.to_ascii_lowercase();
+    let mut from = 0usize;
+
+    while let Some(found) = lowered[from..].find("<meta") {
+        let start = from + found;
+        let end = lowered[start..].find('>').map(|e| start + e)?;
+        let tag = &html[start..end];
+        from = end;
+
+        let lowered_tag = tag.to_ascii_lowercase();
+        if !lowered_tag.contains("http-equiv") || !lowered_tag.contains("refresh") {
+            continue;
+        }
+        let Some(content) = attribute_value(tag, "content") else {
+            continue;
+        };
+
+        let mut parts = content.splitn(2, ';');
+        let delay = parts
+            .next()
+            .map(|d| d.trim().parse::<f64>().unwrap_or(0.0).max(0.0) as u64)
+            .unwrap_or(0);
+        let Some(rest) = parts.next() else { continue };
+        let target = rest
+            .trim()
+            .trim_start_matches(|c: char| c.is_ascii_alphabetic())
+            .trim_start()
+            .trim_start_matches('=')
+            .trim()
+            .trim_matches(|c| c == '\'' || c == '"');
+        if target.is_empty() {
+            continue;
+        }
+        if let Ok(url) = base.join(target) {
+            return Some((delay, url));
+        }
+    }
+    None
+}
+
+/// One attribute out of a raw tag, single or double quoted or bare.
+fn attribute_value(tag: &str, name: &str) -> Option<String> {
+    let lowered = tag.to_ascii_lowercase();
+    let mut from = 0usize;
+    while let Some(found) = lowered[from..].find(name) {
+        let at = from + found;
+        from = at + name.len();
+        // Must be a whole attribute name, not the tail of another one.
+        if at > 0 && !lowered.as_bytes()[at - 1].is_ascii_whitespace() {
+            continue;
+        }
+        let after = tag[from..].trim_start();
+        let Some(after) = after.strip_prefix('=') else {
+            continue;
+        };
+        let after = after.trim_start();
+        let value = match after.chars().next() {
+            Some(quote @ ('"' | '\'')) => after[1..].split(quote).next().unwrap_or(""),
+            // Unquoted: ends at whitespace or at the end of the tag. Splitting
+            // on whitespace alone kept the `>` and turned `content=ab>` into
+            // the value "ab>".
+            _ => after
+                .split(|c: char| c.is_ascii_whitespace() || c == '>')
+                .next()
+                .unwrap_or(""),
+        };
+        return Some(value.to_string());
+    }
+    None
+}
+
 /// Flatten the renderer's premultiplied RGBA onto an opaque white canvas.
 ///
 /// Blitz paints no base layer, so a page that declares no `background-color`
@@ -1371,5 +1549,78 @@ mod input_tests {
         let loose = ref_node(&page, "loose");
         let error = page.submit_form(loose).expect_err("nothing to submit");
         assert!(format!("{error}").contains("not inside a form"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+
+    #[test]
+    fn a_meta_refresh_is_parsed_the_way_hand_written_html_writes_it() {
+        let base = Url::parse("https://site.example/dir/page.html").unwrap();
+
+        // Twenty-five years of hand-written variants, all of which appear in
+        // the wild and all of which mean the same thing.
+        for markup in [
+            r#"<meta http-equiv="refresh" content="0; url=next.html">"#,
+            r#"<meta http-equiv="Refresh" content="0;URL=next.html">"#,
+            r#"<meta http-equiv=refresh content='0; url=next.html'>"#,
+            r#"<meta content="0; url=next.html" http-equiv="refresh">"#,
+            r#"<META HTTP-EQUIV="REFRESH" CONTENT="0; URL='next.html'">"#,
+        ] {
+            let found = meta_refresh(markup, &base);
+            assert_eq!(
+                found.map(|(delay, url)| (delay, url.to_string())),
+                Some((0, "https://site.example/dir/next.html".to_string())),
+                "failed on {markup}"
+            );
+        }
+
+        // The delay is read, not assumed.
+        assert_eq!(
+            meta_refresh(
+                r#"<meta http-equiv="refresh" content="600; url=/live">"#,
+                &base
+            )
+            .map(|(d, _)| d),
+            Some(600)
+        );
+
+        // A refresh with no URL reloads this page; that is not a redirect.
+        assert!(meta_refresh(r#"<meta http-equiv="refresh" content="30">"#, &base).is_none());
+        // And an unrelated meta is not one.
+        assert!(meta_refresh(r#"<meta name="description" content="0; url=x">"#, &base).is_none());
+        // `http-equiv="refresh-policy"` must not match on a substring.
+        assert!(meta_refresh("<p>content=\"0; url=x\"</p>", &base).is_none());
+    }
+
+    #[test]
+    fn a_challenge_page_is_recognised_and_an_ordinary_short_page_is_not() {
+        assert_eq!(
+            challenge_marker("<html><body>Enable JavaScript and cookies to continue</body></html>"),
+            Some("enable javascript and cookies to continue")
+        );
+        assert_eq!(
+            challenge_marker("<title>Attention Required! | Cloudflare</title>"),
+            Some("attention required! | cloudflare")
+        );
+        // A short page is not a challenge. Saying otherwise would tell an agent
+        // it was blocked by a site that simply had little to say.
+        assert_eq!(challenge_marker("<html><body><p>Not found.</p></body></html>"), None);
+        assert_eq!(
+            challenge_marker("<p>This article explains how to enable JavaScript.</p>"),
+            None
+        );
+    }
+
+    #[test]
+    fn an_attribute_is_read_whichever_way_it_was_quoted() {
+        assert_eq!(attribute_value(r#"<meta content="a b">"#, "content"), Some("a b".into()));
+        assert_eq!(attribute_value(r#"<meta content='a b'>"#, "content"), Some("a b".into()));
+        assert_eq!(attribute_value(r#"<meta content=ab>"#, "content"), Some("ab".into()));
+        // Not the tail of another attribute: `data-content` is not `content`.
+        assert_eq!(attribute_value(r#"<meta data-content="x">"#, "content"), None);
+        assert_eq!(attribute_value(r#"<meta charset="utf-8">"#, "content"), None);
     }
 }

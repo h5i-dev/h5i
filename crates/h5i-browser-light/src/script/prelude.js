@@ -1843,7 +1843,10 @@
     requestIdleCallback: (fn) => setTimeout(() => fn({ didTimeout: false, timeRemaining: () => 0 }), 1),
     cancelIdleCallback: clearTimeout,
     navigator: {
-      userAgent: "Mozilla/5.0 (compatible; h5i-browser-light)",
+      // From the host, not a second copy: a page that branches on the agent
+      // server-side and again in script must see the same string both times,
+      // or it renders for one engine and scripts for another.
+      userAgent: api.userAgent(),
       platform: "", language: "en-US", languages: ["en-US"],
       onLine: true, cookieEnabled: false, maxTouchPoints: 0,
       clipboard: missingApi("navigator.clipboard"),
@@ -1935,12 +1938,22 @@
       try { body = JSON.stringify(body); } catch (_) { body = String(body); }
     }
 
-    const res = api.fetch(request.url, request.method, body);
-    if (res.error) return Promise.reject(new Error(res.error));
+    // Handed to the host and answered later. The whole point of the ticket is
+    // that two calls to `fetch` overlap: the old binding did the round trip
+    // inline, so a page that fanned out ten requests paid for them in series
+    // and every SPA waterfall was ours rather than the site's.
+    const id = api.fetchStart(request.url, request.method, body);
+    return new Promise((resolve, reject) => {
+      pendingFetches.set(id, { resolve, reject, request, signal });
+    });
+  }
+  globalThis.fetch = fetch;
 
+  const pendingFetches = new Map();
+
+  function responseFrom(res, request) {
     const headers = new Headers();
     for (const [name, value] of res.headers || []) headers.append(name, value);
-
     const response = {
       ok: res.ok,
       status: res.status,
@@ -1952,9 +1965,35 @@
       json: () => Promise.resolve(JSON.parse(res.text)),
       clone() { return { ...response }; },
     };
-    return Promise.resolve(response);
+    return response;
   }
-  globalThis.fetch = fetch;
+
+  // Driven by the settle loop, so a page's promises resolve as the network
+  // answers rather than at some arbitrary later point. Returns how much is
+  // still owed, which is what tells `settle` there is real work outstanding.
+  globalThis.__h5iDrainFetches = function () {
+    for (const [id, res] of api.fetchDrain()) {
+      const waiting = pendingFetches.get(id);
+      if (!waiting) continue;
+      pendingFetches.delete(id);
+      if (waiting.signal && waiting.signal.aborted) {
+        waiting.reject(waiting.signal.reason ?? new Error("aborted"));
+      } else if (res.error) {
+        waiting.reject(new Error(res.error));
+      } else {
+        waiting.resolve(responseFrom(res, waiting.request));
+      }
+    }
+    return api.fetchPending();
+  };
+
+  // Everything still owed an answer when the page ran out of budget. Rejecting
+  // is the honest end: a promise left pending forever is a page that looks like
+  // it is still working when nothing is.
+  globalThis.__h5iAbandonFetches = function (why) {
+    for (const [, waiting] of pendingFetches) waiting.reject(new Error(why));
+    pendingFetches.clear();
+  };
 
   // In memory and nowhere else. A disposable box has no business writing a
   // page's storage to a filesystem, and "restart the session" is a complete
