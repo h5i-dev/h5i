@@ -808,16 +808,23 @@ defeats the `in` check the reporting one depends on.
      offers. A page building 200,000 promise jobs is now stopped at 15 seconds,
      renders what it had, and says so in the engine's own voice. This is the
      shape a promise-driven page actually has.
-   * **One long job.** lit.dev is the other shape: its module graph evaluates
-     depth-first inside a *single* job, so the token is never checked and the
-     watchdog never gets a turn. Nothing available reaches it — the
-     loop-iteration limit does not trip because the work is spread across many
-     loops each under the bound.
+   * **One long job.** lit.dev looked like the other shape — a module graph
+     evaluating depth-first inside a *single* job, beyond any token check.
 
-   So the engine returns for pages that are slow because they do many things,
-   and still does not for a page that is slow because it does one enormous
-   thing. Fixing that needs an interrupt inside the interpreter loop, which is
-   an upstream change. **It remains the clearest open problem in the engine.**
+   **That second diagnosis was wrong, and wrong in the most useful direction.**
+   The page was not pathological; *this engine* was slow enough to make it look
+   that way. `appendChild` into the document cost 40 µs against 13 µs for a
+   detached one, because every insertion walked to the root to ask whether it
+   was connected and then walked the inserted subtree looking for custom
+   elements — on pages that had defined none. An early return when nothing is
+   defined, and a native `isConnected` that walks in Rust instead of one call
+   per ancestor, took it to **7 µs, the same as the detached case**.
+
+   lit.dev went from three and a half minutes to fifty seconds, material-web
+   from a timeout to forty-five, and both now *return*: the job-queue deadline
+   fires and the page reports what it managed. The lesson is the one this file
+   keeps relearning — a number that looks like someone else's problem is worth
+   measuring before it is written down as one.
 3. **Total CPU is unbounded.** Boa exposes no wall-clock interrupt, so the
    engine bounds what it can — one loop, recursion depth, stack size — and a
    caller that cannot wait must impose its own timeout. Raising the loop bound

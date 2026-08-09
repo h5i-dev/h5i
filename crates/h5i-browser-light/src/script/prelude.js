@@ -113,6 +113,7 @@
   /// Every custom element at or under `node`, in document order.
   function collectCustom(node) {
     const found = [];
+    if (definitions.size === 0) return found;
     const visit = (n) => {
       if (!n || n.nodeType !== 1) return;
       if (isCustom(n)) found.push(n);
@@ -123,6 +124,11 @@
   }
 
   function notifyConnection(node) {
+    // Nothing to notify if nothing is defined, and most pages define nothing.
+    // Without this every insertion walked to the root and then over the whole
+    // inserted subtree to find custom elements that could not exist — which
+    // made attaching a node cost three times what building one detached does.
+    if (definitions.size === 0) return;
     if (!node || node.nodeType !== 1 || !node.isConnected) return;
     for (const found of collectCustom(node)) fireConnected(found);
   }
@@ -377,13 +383,7 @@
     }
 
     get ownerDocument() { return document; }
-    get isConnected() {
-      const root = api.root();
-      for (let n = this._id; n !== null && n !== undefined; n = api.parent(n)) {
-        if (n === root) return true;
-      }
-      return false;
-    }
+    get isConnected() { return api.isConnected(this._id); }
     getRootNode() {
       // The document when attached, the top of the detached fragment when not
       // — which is how code decides whether it is inside the page yet.

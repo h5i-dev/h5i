@@ -79,6 +79,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("userAgent", 0, user_agent),
         ("attrNames", 1, attr_names),
         ("nodeKind", 1, node_kind),
+        ("isConnected", 1, is_connected),
         ("randomBytes", 1, random_bytes),
         ("matchesSelector", 2, matches_selector),
         ("elementFromPoint", 2, element_from_point),
@@ -716,6 +717,30 @@ fn random_bytes(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
         out.push(JsValue::from(byte as f64), context)?;
     }
     Ok(out.into())
+}
+
+/// Is this node attached to the document?
+///
+/// One call instead of one per ancestor. The JavaScript version asked `parent`
+/// in a loop, so the cost of an `appendChild` grew with how deep the page was —
+/// and every insertion pays it, because a node has to be connected before its
+/// `connectedCallback` can run.
+fn is_connected(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+
+    let root = doc.root_element().id;
+    let mut current = Some(id);
+    // Bounded, because a corrupt tree must not become an infinite loop here.
+    for _ in 0..4096 {
+        let Some(node_id) = current else { break };
+        if node_id == root {
+            return Ok(JsValue::from(true));
+        }
+        current = doc.get_node(node_id).and_then(|node| node.parent);
+    }
+    Ok(JsValue::from(false))
 }
 
 /// What kind of node this is, in DOM numbering.

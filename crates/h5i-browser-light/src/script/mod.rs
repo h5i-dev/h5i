@@ -50,8 +50,18 @@ const PRELUDE: &str = include_str!("prelude.js");
 /// this engine, and it should say so.
 const PRELUDE_PATH: &str = "<h5i browser prelude>";
 
-/// How long a settle may take before it is cut off and *reported* as cut off.
-const SETTLE_BUDGET_MS: u64 = 2_000;
+/// How much *virtual* time a settle may cover before it is cut off and reported
+/// as cut off.
+///
+/// Raised from two seconds once there was a real bound to lean on. Virtual time
+/// is free — advancing it costs only the work the page actually does — so this
+/// number was never protecting against a slow page, it was standing in for a
+/// wall-clock guard that did not exist. [`JOB_QUEUE_BUDGET`] is that guard now.
+///
+/// Two seconds was cutting real applications off mid-render: preactjs.com
+/// fetches its content, then needs five virtual seconds to render it, and was
+/// being stopped at two with its own data already in hand.
+const SETTLE_BUDGET_MS: u64 = 10_000;
 
 /// How far the virtual clock advances per settle round.
 ///
