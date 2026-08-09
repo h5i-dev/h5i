@@ -1000,6 +1000,13 @@
     // Lowercase, always: this engine parses HTML, where the local name is
     // case-insensitive and canonically lower, while `tagName` is upper.
     get localName() { return this.tagName.toLowerCase(); }
+    /// Always null, and that is the answer rather than a gap: this engine
+    /// parses HTML and nothing else (`document.contentType` says so), and every
+    /// element in an HTML document is in the HTML namespace with no prefix.
+    /// It was being *reported* as missing, which is the reverse of the mistake
+    /// the reporting proxy exists to catch — naming as absent something no
+    /// browser would answer differently.
+    get prefix() { return null; }
 
     get contentEditable() {
       const raw = api.getAttr(this._id, "contenteditable");
@@ -1351,20 +1358,134 @@
     });
   }
 
-  // Boolean and numeric reflections, which convert rather than pass through.
-  Object.defineProperty(Element.prototype, "hidden", {
-    configurable: true,
-    get() { return api.getAttr(this._id, "hidden") !== null; },
-    set(on) { if (on) this.setAttribute("hidden", ""); else this.removeAttribute("hidden"); },
+  /// Reflect an IDL property onto a content attribute, with the *type* the
+  /// spec gives it.
+  ///
+  /// The type is not decoration, and this mechanism exists because passing the
+  /// string through looked like it worked. `dir` is an enumerated attribute:
+  /// its IDL getter answers `""` for anything that is not one of its keywords,
+  /// so `el.setAttribute("dir", "5%")` reads back as `""` in a browser and read
+  /// back as `"5%"` here. WPT sets every reflected attribute to sixty-odd
+  /// hostile values and checks exactly that, which is how an engine can score
+  /// zero on an attribute it believed it supported.
+  ///
+  /// One definition per shape rather than a hand-written getter and setter per
+  /// attribute, because there are a great many of them and the interesting part
+  /// is the conversion, not the plumbing.
+  function reflect(idl, content, type = "string", options = {}) {
+    const parseInteger = (raw) => {
+      // The spec's rules for parsing integers, which are not `Number()`:
+      // leading whitespace is skipped, trailing garbage ends the number, and
+      // anything else is a failure rather than a NaN to paper over.
+      const match = /^[ \t\n\f\r]*([+-]?[0-9]+)/.exec(raw ?? "");
+      if (!match) return null;
+      const value = Number(match[1]);
+      return Number.isSafeInteger(value) ? value : null;
+    };
+    const get = {
+      string() { return api.getAttr(this._id, content) ?? ""; },
+      // Nullable, unlike a plain DOMString: the ARIA properties report `null`
+      // for an attribute that is absent rather than an empty string, and a test
+      // that distinguishes the two is testing something real.
+      nullable() { return api.getAttr(this._id, content); },
+      bool() { return api.getAttr(this._id, content) !== null; },
+      long() {
+        const value = parseInteger(api.getAttr(this._id, content));
+        return value === null ? (options.default ?? 0) : value;
+      },
+      ulong() {
+        const value = parseInteger(api.getAttr(this._id, content));
+        if (value === null || value < 0) return options.default ?? 0;
+        return value;
+      },
+      enumerated() {
+        const raw = api.getAttr(this._id, content);
+        if (raw === null) return options.missing ?? "";
+        const lower = String(raw).toLowerCase();
+        // Aliases first: a keyword can have more than one spelling that maps to
+        // the same state, and the empty string is the one that matters —
+        // `<div contenteditable>` is the "true" state, so an implementation
+        // that only matched the literal keywords reported "inherit" for the
+        // most common way anyone writes it.
+        if (options.aliases && lower in options.aliases) return options.aliases[lower];
+        const found = options.keywords.find((word) => word.toLowerCase() === lower);
+        return found ?? options.invalid ?? "";
+      },
+      url() {
+        const raw = api.getAttr(this._id, content);
+        if (raw === null) return "";
+        const parts = api.parseUrl(String(raw), this.baseURI);
+        // An unparseable URL reflects as the literal attribute, which is what a
+        // browser does and is more useful than an empty string when debugging.
+        return parts ? parts.href : String(raw);
+      },
+    }[type];
+    const set = type === "bool"
+      ? function (on) {
+        if (on) this.setAttribute(content, "");
+        else this.removeAttribute(content);
+      }
+      : type === "long" || type === "ulong"
+        ? function (value) {
+          const number = Number(value);
+          this.setAttribute(content, String(Number.isFinite(number) ? Math.trunc(number) : 0));
+        }
+        : function (value) {
+          // `null` on a nullable reflection removes the attribute; everywhere
+          // else it stringifies, so `el.dir = null` really does write "null".
+          if (value === null && type === "nullable") this.removeAttribute(content);
+          else this.setAttribute(content, String(value));
+        };
+    Object.defineProperty(Element.prototype, idl, { configurable: true, get, set });
+  }
+
+  // The attributes every HTML element carries. `hidden` and `tabIndex` were
+  // the only two of these that existed, hand-written, before WPT was pointed
+  // at the engine.
+  reflect("hidden", "hidden", "bool");
+  reflect("autofocus", "autofocus", "bool");
+  reflect("tabIndex", "tabindex", "long", { default: -1 });
+  reflect("accessKey", "accesskey");
+  reflect("slot", "slot");
+  reflect("nonce", "nonce");
+  reflect("dir", "dir", "enumerated", { keywords: ["ltr", "rtl", "auto"] });
+  reflect("contentEditable", "contenteditable", "enumerated", {
+    keywords: ["true", "false", "plaintext-only"],
+    aliases: { "": "true" },
+    missing: "inherit",
+    invalid: "inherit",
   });
-  Object.defineProperty(Element.prototype, "tabIndex", {
-    configurable: true,
-    get() {
-      const raw = api.getAttr(this._id, "tabindex");
-      return raw === null ? -1 : Number(raw) || 0;
-    },
-    set(value) { this.setAttribute("tabindex", String(Number(value) || 0)); },
+  reflect("autocapitalize", "autocapitalize", "enumerated", {
+    keywords: ["none", "off", "on", "sentences", "words", "characters"],
   });
+  reflect("inputMode", "inputmode", "enumerated", {
+    keywords: ["none", "text", "tel", "url", "email", "numeric", "decimal", "search"],
+  });
+  reflect("enterKeyHint", "enterkeyhint", "enumerated", {
+    keywords: ["enter", "done", "go", "next", "previous", "search", "send"],
+  });
+  reflect("popover", "popover", "enumerated", {
+    keywords: ["auto", "manual"], invalid: "manual",
+  });
+
+  // ARIA, which reflects mechanically: every one of these is `aria-` followed
+  // by the rest of the name lowercased, with no word separator —
+  // `ariaHasPopup` is `aria-haspopup`, not `aria-has-popup`. Written as a list
+  // rather than as forty pairs because the mapping has no exceptions.
+  for (const name of [
+    "ariaAtomic", "ariaAutoComplete", "ariaBrailleLabel", "ariaBrailleRoleDescription",
+    "ariaBusy", "ariaChecked", "ariaColCount", "ariaColIndex", "ariaColIndexText",
+    "ariaColSpan", "ariaCurrent", "ariaDescription", "ariaDisabled", "ariaExpanded",
+    "ariaHasPopup", "ariaHidden", "ariaInvalid", "ariaKeyShortcuts", "ariaLabel",
+    "ariaLevel", "ariaLive", "ariaModal", "ariaMultiLine", "ariaMultiSelectable",
+    "ariaOrientation", "ariaPlaceholder", "ariaPosInSet", "ariaPressed", "ariaReadOnly",
+    "ariaRelevant", "ariaRequired", "ariaRoleDescription", "ariaRowCount", "ariaRowIndex",
+    "ariaRowIndexText", "ariaRowSpan", "ariaSelected", "ariaSetSize", "ariaSort",
+    "ariaValueMax", "ariaValueMin", "ariaValueNow", "ariaValueText",
+  ]) {
+    reflect(name, "aria-" + name.slice(4).toLowerCase(), "nullable");
+  }
+  reflect("role", "role", "nullable");
 
   const HANDLER_EVENTS = [
     "click", "dblclick", "mousedown", "mouseup", "mouseover", "mouseout", "mousemove",

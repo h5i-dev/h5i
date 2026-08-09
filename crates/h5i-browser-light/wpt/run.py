@@ -44,6 +44,11 @@ import os
 import re
 import subprocess
 import sys
+
+try:
+    import resource
+except ImportError:  # not POSIX
+    resource = None
 import time
 from pathlib import Path
 
@@ -75,8 +80,15 @@ HARNESS_STATUS = {0: "OK", 1: "ERROR", 2: "TIMEOUT", 3: "PRECONDITION_FAILED"}
 
 
 def find_tests(root: Path, dirs, limit=None):
-    """Every on-disk HTML test under `dirs`, plus a count of what is generated."""
-    tests, generated = [], 0
+    """Every on-disk HTML test under `dirs`, plus counts of what was left out.
+
+    Returns (tests, generated, unscoreable). A file that never loads
+    testharness.js cannot report a result no matter how well the engine runs it
+    — reftests compare renderings, crashtests only have to not crash — so
+    counting them as engine failures would inflate the unmeasured bucket with
+    files that were never ours to pass. They are counted and named instead.
+    """
+    tests, generated, unscoreable = [], 0, 0
     roots = [root / d for d in dirs] if dirs else [root]
     for base in roots:
         if not base.exists():
@@ -95,21 +107,47 @@ def find_tests(root: Path, dirs, limit=None):
                 continue
             if SKIP_FILE.search(name):
                 continue
+            try:
+                body = path.read_text(encoding="utf8", errors="replace")
+            except OSError:
+                continue
+            if "testharness.js" not in body:
+                unscoreable += 1
+                continue
             tests.append(str(rel))
     if limit:
         tests = tests[:limit]
-    return tests, generated
+    return tests, generated, unscoreable
+
+
+def memory_cap(megabytes):
+    """Limit a child's address space, or None where that cannot be done.
+
+    A WPT file is allowed to be hostile — several exist precisely to allocate
+    until something gives — and without this the kernel picks the victim, which
+    on a 8 GiB development box has been the whole session rather than the test.
+    A capped child dies alone and is recorded as one crash.
+    """
+    if resource is None:
+        return None
+
+    def apply():
+        limit = megabytes * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+
+    return apply
 
 
 def run_one(args):
     """Run one test file. Returns a dict that always names its own outcome."""
-    rel, port, timeout = args
+    rel, port, timeout, mem_mb = args
     url = f"http://127.0.0.1:{port}/{rel}"
     started = time.monotonic()
     try:
         proc = subprocess.run(
             [str(BINARY), "open", "--script", "--json", "--max-snapshot-lines", "1", url],
             capture_output=True, timeout=timeout,
+            preexec_fn=memory_cap(mem_mb),
         )
     except subprocess.TimeoutExpired:
         return {"test": rel, "outcome": "engine_timeout", "elapsed": time.monotonic() - started}
@@ -182,6 +220,8 @@ def main():
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--out", default=None)
+    parser.add_argument("--mem-mb", type=int, default=1200,
+                        help="address-space cap per test process")
     opts = parser.parse_args()
 
     if not BINARY.exists():
@@ -190,18 +230,19 @@ def main():
     root = Path(opts.wpt).expanduser()
     serve.WPT_ROOT = str(root)
     dirs = None if opts.all else opts.dirs
-    tests, generated = find_tests(root, dirs, opts.limit)
+    tests, generated, unscoreable = find_tests(root, dirs, opts.limit)
     if not tests:
         sys.exit("no tests found")
 
     httpd, port = serve.start()
-    print(f"{len(tests)} test files, {opts.jobs} jobs, {generated} generated endpoints skipped",
+    print(f"{len(tests)} testharness files, {opts.jobs} jobs | skipped: "
+          f"{generated} generated endpoints, {unscoreable} files that load no testharness",
           flush=True)
 
     results = []
     started = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=opts.jobs) as pool:
-        work = [(t, port, opts.timeout) for t in tests]
+        work = [(t, port, opts.timeout, opts.mem_mb) for t in tests]
         for i, result in enumerate(pool.map(run_one, work), 1):
             results.append(result)
             if i % 50 == 0 or i == len(tests):
@@ -211,7 +252,7 @@ def main():
                       flush=True)
     httpd.shutdown()
 
-    summary = summarise(results, generated, time.monotonic() - started)
+    summary = summarise(results, generated, unscoreable, time.monotonic() - started)
     report(summary, results)
     if opts.out:
         Path(opts.out).parent.mkdir(parents=True, exist_ok=True)
@@ -221,7 +262,7 @@ def main():
     return 0
 
 
-def summarise(results, generated, elapsed):
+def summarise(results, generated, unscoreable, elapsed):
     outcomes, subtests, unsupported = {}, {}, {}
     for r in results:
         outcomes[r["outcome"]] = outcomes.get(r["outcome"], 0) + 1
@@ -235,6 +276,7 @@ def summarise(results, generated, elapsed):
         "files_measured": measured,
         "files_unmeasured": len(results) - measured,
         "generated_endpoints_skipped": generated,
+        "unscoreable_files_skipped": unscoreable,
         "outcomes": outcomes,
         "subtests": subtests,
         "subtests_total": sum(subtests.values()),
