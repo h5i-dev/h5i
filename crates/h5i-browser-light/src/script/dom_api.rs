@@ -80,6 +80,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("attrNames", 1, attr_names),
         ("randomBytes", 1, random_bytes),
         ("matchesSelector", 2, matches_selector),
+        ("elementFromPoint", 2, element_from_point),
         ("innerHtml", 1, inner_html),
         ("outerHtml", 1, outer_html),
         ("rect", 1, rect),
@@ -613,6 +614,43 @@ fn unsupported(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
 ///
 /// The URL is recorded before the answer is returned, so a caller can correlate
 /// the click that ran this script with the request it caused.
+/// The topmost element at a viewport coordinate.
+///
+/// The same hit test the viewer uses to resolve a human's click, exposed to
+/// script. The hit lands on whatever box is topmost — often a text run inside
+/// the element rather than the element — so it walks up to the nearest element,
+/// which is what `elementFromPoint` is defined to return.
+fn element_from_point(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let x = args
+        .first()
+        .unwrap_or(&JsValue::undefined())
+        .to_number(context)? as f32;
+    let y = args
+        .get(1)
+        .unwrap_or(&JsValue::undefined())
+        .to_number(context)? as f32;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+
+    let scroll = doc.viewport_scroll();
+    let Some(hit) = doc.hit(x + scroll.x as f32, y + scroll.y as f32) else {
+        return Ok(JsValue::null());
+    };
+
+    let mut id = hit.node_id;
+    for _ in 0..16 {
+        match doc.get_node(id) {
+            Some(node) if node.is_element() => return Ok(JsValue::from(id as f64)),
+            Some(node) => match node.parent {
+                Some(parent) => id = parent,
+                None => break,
+            },
+            None => break,
+        }
+    }
+    Ok(JsValue::null())
+}
+
 /// Does this one element match the selector?
 ///
 /// Asked of the element's parent and filtered, because stylo's query walks

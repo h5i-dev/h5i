@@ -18,6 +18,24 @@
 
   const wrappers = new Map(); // id -> Node, so identity holds across lookups
 
+  /// A live-enough `NodeList`/`HTMLCollection`.
+  ///
+  /// An array, because everything in this engine already treats one as a list
+  /// and frameworks reach for `map` and `filter` on the result — but with the
+  /// two methods a real collection has and an array does not. `list.item(0)`
+  /// was `undefined`, and calling it is "not a callable function", which is
+  /// exactly the error fourteen module failures reported and nothing named.
+  ///
+  /// Watched like everything else, so the next missing method reports itself
+  /// instead of surfacing as an uncallable undefined somewhere else entirely.
+  function collection(nodes, label) {
+    const list = nodes.slice();
+    list.item = (index) => list[index] ?? null;
+    list.namedItem = (name) =>
+      list.find((n) => n.id === String(name) || n.getAttribute?.("name") === String(name)) ?? null;
+    return observed(list, label || "NodeList");
+  }
+
   function wrap(id) {
     if (id === null || id === undefined) return null;
     let existing = wrappers.get(id);
@@ -277,6 +295,16 @@
       this._write(this._all().filter((n) => !names.includes(n)));
     }
     contains(name) { return this._all().includes(name); }
+    item(index) { return this._all()[index] ?? null; }
+    get length() { return this._all().length; }
+    get value() { return this._all().join(" "); }
+    set value(v) { api.setAttr(this._node._id, this._attr, String(v)); }
+    forEach(fn, thisArg) { this._all().forEach(fn, thisArg); }
+    keys() { return this._all().keys(); }
+    values() { return this._all().values(); }
+    entries() { return this._all().entries(); }
+    [Symbol.iterator]() { return this._all()[Symbol.iterator](); }
+    toString() { return this.value; }
     toggle(name, force) {
       const has = this.contains(name);
       const want = force === undefined ? !has : !!force;
@@ -428,6 +456,34 @@
       if (parent) childListRecord(parent, [], [this]);
       for (const node of leaving) fireDisconnected(node);
     }
+    /// Insert siblings, and replace. All four are the same operation seen from
+    /// four angles, and all four are what a framework calls to move a node.
+    after(...items) {
+      const parent = this.parentNode;
+      if (!parent) return;
+      const next = this.nextSibling;
+      for (const item of items) {
+        const node = item instanceof Node ? item : document.createTextNode(String(item));
+        next ? parent.insertBefore(node, next) : parent.appendChild(node);
+      }
+    }
+    before(...items) {
+      const parent = this.parentNode;
+      if (!parent) return;
+      for (const item of items) {
+        const node = item instanceof Node ? item : document.createTextNode(String(item));
+        parent.insertBefore(node, this);
+      }
+    }
+    replaceWith(...items) {
+      this.before(...items);
+      this.remove();
+    }
+    replaceChildren(...items) {
+      for (const kid of this.childNodes) kid.remove();
+      this.append(...items);
+    }
+
     prepend(...items) {
       const first = this.firstChild;
       for (const item of items) {
@@ -527,7 +583,7 @@
   class Element extends Node {
     get tagName() { return api.tagName(this._id); }
     get nodeName() { return this.tagName; }
-    get children() { return this.childNodes.filter((n) => n.nodeType === 1); }
+    get children() { return collection(this.childNodes.filter((n) => n.nodeType === 1), "HTMLCollection"); }
 
     getAttribute(name) { return api.getAttr(this._id, String(name)); }
     setAttribute(name, value) {
@@ -549,13 +605,28 @@
       fireAttributeChanged(this, String(name).toLowerCase(), previous, null);
     }
     hasAttribute(name) { return api.getAttr(this._id, String(name)) !== null; }
+    toggleAttribute(name, force) {
+      const has = this.hasAttribute(name);
+      const want = force === undefined ? !has : !!force;
+      if (want) this.setAttribute(name, "");
+      else this.removeAttribute(name);
+      return want;
+    }
+    // Namespaces are not modelled — this engine parses HTML and nothing else —
+    // so the namespace is dropped and the local name is used. Dropping it is
+    // right for the case that actually occurs (`setAttributeNS(null, ...)`) and
+    // honest for the rest: the attribute is set, under the name given.
+    setAttributeNS(_namespace, name, value) { this.setAttribute(name, value); }
+    getAttributeNS(_namespace, name) { return this.getAttribute(name); }
+    removeAttributeNS(_namespace, name) { this.removeAttribute(name); }
+    hasAttributeNS(_namespace, name) { return this.hasAttribute(name); }
 
     get id() { return this.getAttribute("id") || ""; }
     set id(v) { this.setAttribute("id", v); }
     get className() { return this.getAttribute("class") || ""; }
     set className(v) { this.setAttribute("class", v); }
-    get classList() { return new DOMTokenList(this, "class"); }
-    get relList() { return new DOMTokenList(this, "rel"); }
+    get classList() { return observed(new DOMTokenList(this, "class"), "DOMTokenList"); }
+    get relList() { return observed(new DOMTokenList(this, "rel"), "DOMTokenList"); }
 
     get value() {
       const tag = this.tagName;
@@ -711,6 +782,17 @@
     // outline an agent reads covers the whole document either way, so this
     // changes what a *human* watching sees and nothing about what is readable.
     scrollIntoView() { api.scrollToNode(this._id); }
+    // An element does not scroll here — nothing clips and scrolls a subtree —
+    // so this moves the document, which is what the caller wanted when the
+    // element was the document's own scroller.
+    scrollTo(x, y) {
+      const top = typeof x === "object" && x !== null ? x.top : y;
+      api.setScrollTop(this._id, Number(top) || 0);
+    }
+    scrollBy(x, y) {
+      const by = typeof x === "object" && x !== null ? x.top : y;
+      api.setScrollTop(this._id, this.scrollTop + (Number(by) || 0));
+    }
 
     // `<select>`. `selectedIndex` is how form code both reads and sets a
     // choice, and assigning it has to move the `selected` attribute or the
@@ -745,6 +827,10 @@
     set innerHTML(html) { api.setInnerHtml(this._id, String(html)); }
     get outerHTML() { return api.outerHtml(this._id); }
 
+    // Deliberately not watched. A style declaration answers *any* CSS property
+    // name by design — it is already a proxy over the dashed surface — so there
+    // is no such thing as a name it is missing, and wrapping one proxy in
+    // another defeats the `in` check the reporting one relies on.
     get style() { return new StyleDeclaration(this); }
 
     get dataset() {
@@ -766,9 +852,9 @@
     }
 
     querySelector(sel) { return wrap(api.query(String(sel), this._id)); }
-    querySelectorAll(sel) { return api.queryAll(String(sel), this._id).map(wrap); }
-    getElementsByTagName(tag) { return api.queryAll(String(tag), this._id).map(wrap); }
-    getElementsByClassName(cls) { return api.queryAll("." + String(cls), this._id).map(wrap); }
+    querySelectorAll(sel) { return collection(api.queryAll(String(sel), this._id).map(wrap)); }
+    getElementsByTagName(tag) { return collection(api.queryAll(String(tag), this._id).map(wrap), "HTMLCollection"); }
+    getElementsByClassName(cls) { return collection(api.queryAll("." + String(cls), this._id).map(wrap), "HTMLCollection"); }
 
     matches(sel) { return api.matchesSelector(this._id, String(sel)); }
     closest(sel) {
@@ -1624,11 +1710,82 @@
     }
   }
 
+  /// The parts of `Range` pages actually use.
+  ///
+  /// Two of them, really: `createContextualFragment`, which is how a library
+  /// turns a string of markup into nodes, and `getBoundingClientRect`, which is
+  /// how it measures text. The rest of the interface is a selection model this
+  /// engine has no use for, and anything reached for beyond what is here
+  /// reports itself rather than silently doing nothing.
+  class Range {
+    constructor() {
+      this.startContainer = null;
+      this.endContainer = null;
+      this.collapsed = true;
+    }
+    selectNode(node) { this.selectNodeContents(node); }
+    selectNodeContents(node) {
+      this.startContainer = node;
+      this.endContainer = node;
+      this.collapsed = false;
+    }
+    setStart(node, _offset) { this.startContainer = node; this.collapsed = false; }
+    setEnd(node, _offset) { this.endContainer = node; this.collapsed = false; }
+    collapse(toStart) {
+      this.collapsed = true;
+      if (toStart) this.endContainer = this.startContainer;
+      else this.startContainer = this.endContainer;
+    }
+    get commonAncestorContainer() { return this.startContainer; }
+    getBoundingClientRect() {
+      return this.startContainer && this.startContainer.getBoundingClientRect
+        ? this.startContainer.getBoundingClientRect()
+        : { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    }
+    getClientRects() { return [this.getBoundingClientRect()]; }
+    createContextualFragment(html) {
+      const host = document.createElement("div");
+      host.innerHTML = String(html);
+      const fragment = new DocumentFragment();
+      for (const kid of host.childNodes) fragment.appendChild(kid);
+      return fragment;
+    }
+    deleteContents() {
+      if (this.startContainer) for (const kid of this.startContainer.childNodes) kid.remove();
+    }
+    cloneRange() {
+      const copy = new Range();
+      copy.startContainer = this.startContainer;
+      copy.endContainer = this.endContainer;
+      copy.collapsed = this.collapsed;
+      return copy;
+    }
+    detach() {}
+    toString() {
+      return this.startContainer ? this.startContainer.textContent : "";
+    }
+  }
+
   const documentImpl = {
     get documentElement() { return wrap(api.root()); },
     get body() { return wrap(api.body()); },
     get head() { return wrap(api.query("head", 0)); },
     createElement(tag) { return wrap(api.createElement(String(tag))); },
+    // SVG and MathML arrive through this, and every framework that draws an
+    // icon calls it. The namespace is dropped because this engine models one:
+    // the element is created under its local name, which is what the renderer
+    // can do something with.
+    createElementNS(_namespace, tag) { return wrap(api.createElement(String(tag))); },
+    createRange() { return observed(new Range(), "Range"); },
+    elementFromPoint(x, y) { return wrap(api.elementFromPoint(Number(x), Number(y))); },
+    elementsFromPoint(x, y) {
+      const found = wrap(api.elementFromPoint(Number(x), Number(y)));
+      // The ancestors of the hit, topmost first, which is what the plural form
+      // returns and what a library walking for a scroll container wants.
+      const out = [];
+      for (let n = found; n; n = n.parentNode) if (n.nodeType === 1) out.push(n);
+      return collection(out);
+    },
     createTextNode(text) { return wrap(api.createText(String(text))); },
     createDocumentFragment() { return new DocumentFragment(); },
     createComment(text) {
@@ -1650,10 +1807,10 @@
       return api.queryAll(`[name="${String(name).replace(/"/g, '\\"')}"]`, 0).map(wrap);
     },
     querySelector(sel) { return wrap(api.query(String(sel), 0)); },
-    querySelectorAll(sel) { return api.queryAll(String(sel), 0).map(wrap); },
+    querySelectorAll(sel) { return collection(api.queryAll(String(sel), 0).map(wrap)); },
     getElementById(id) { return wrap(api.query("#" + String(id), 0)); },
-    getElementsByTagName(tag) { return api.queryAll(String(tag), 0).map(wrap); },
-    getElementsByClassName(cls) { return api.queryAll("." + String(cls), 0).map(wrap); },
+    getElementsByTagName(tag) { return collection(api.queryAll(String(tag), 0).map(wrap), "HTMLCollection"); },
+    getElementsByClassName(cls) { return collection(api.queryAll("." + String(cls), 0).map(wrap), "HTMLCollection"); },
     addEventListener(type, handler, options) {
       const root = wrap(api.root());
       if (root) root.addEventListener(type, handler, options);
@@ -2277,7 +2434,7 @@
     // asks "is this a node?" before deciding what to do with it. `HTMLElement`
     // is `Element` here because this engine has one element class; the check
     // that matters is the one pages actually write.
-    Node, Element, Text, Comment, DocumentFragment, DOMTokenList,
+    Node, Element, Text, Comment, DocumentFragment, DOMTokenList, Range,
     HTMLElement: Element,
     customElements, NodeFilter, NodeIterator, TreeWalker,
 

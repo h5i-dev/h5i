@@ -99,13 +99,19 @@ pub fn resolve(specifier: &str, base: &Url) -> Result<Url, String> {
 }
 
 impl ModuleLoader for BrokerModuleLoader {
-    fn load_imported_module(
-        &self,
+    /// Fetch and parse one imported module.
+    ///
+    /// Async in Boa 0.21, and *synchronous underneath*: the broker blocks, and
+    /// this returns an already-finished future. That is deliberate rather than
+    /// lazy — a module graph has to be resolved before the page can run at all,
+    /// so there is no work to overlap it with, and the borrow of the context is
+    /// never held across a suspension point because there is none.
+    async fn load_imported_module(
+        self: Rc<Self>,
         referrer: Referrer,
         specifier: JsString,
-        finish_load: Box<dyn FnOnce(JsResult<Module>, &mut Context)>,
-        context: &mut Context,
-    ) {
+        context: &RefCell<&mut Context>,
+    ) -> JsResult<Module> {
         let specifier = specifier.to_std_string_escaped();
         let base = self.base_for(&referrer);
 
@@ -120,17 +126,14 @@ impl ModuleLoader for BrokerModuleLoader {
                     .unsupported
                     .borrow_mut()
                     .record(&format!("import {specifier}"));
-                finish_load(
-                    Err(JsError::from_native(JsNativeError::typ().with_message(reason))),
-                    context,
-                );
-                return;
+                return Err(JsError::from_native(
+                    JsNativeError::typ().with_message(reason),
+                ));
             }
         };
 
         if let Some(cached) = self.cache.borrow().get(resolved.as_str()) {
-            finish_load(Ok(cached.clone()), context);
-            return;
+            return Ok(cached.clone());
         }
 
         let outcome = self.host.broker.send_from(
@@ -155,13 +158,9 @@ impl ModuleLoader for BrokerModuleLoader {
             });
 
         if let Some(error) = outcome.error {
-            finish_load(
-                Err(JsError::from_native(JsNativeError::typ().with_message(format!(
-                    "could not load module {resolved}: {error}"
-                )))),
-                context,
-            );
-            return;
+            return Err(JsError::from_native(JsNativeError::typ().with_message(
+                format!("could not load module {resolved}: {error}"),
+            )));
         }
 
         // An HTTP error is not a module. The fetch *succeeded* — the server
@@ -172,13 +171,9 @@ impl ModuleLoader for BrokerModuleLoader {
         // Both are worse than saying the file is missing.
         let status = outcome.status.unwrap_or(0);
         if !(200..300).contains(&status) {
-            finish_load(
-                Err(JsError::from_native(JsNativeError::typ().with_message(format!(
-                    "could not load module {resolved}: the server answered {status}"
-                )))),
-                context,
-            );
-            return;
+            return Err(JsError::from_native(JsNativeError::typ().with_message(
+                format!("could not load module {resolved}: the server answered {status}"),
+            )));
         }
 
         let body = String::from_utf8_lossy(&outcome.body).into_owned();
@@ -190,19 +185,17 @@ impl ModuleLoader for BrokerModuleLoader {
         let final_url = outcome.final_url.to_string();
         let source = Source::from_reader(body.as_bytes(), Some(Path::new(&final_url)));
 
-        match Module::parse(source, None, context) {
+        let parsed = Module::parse(source, None, &mut context.borrow_mut());
+        match parsed {
             Ok(module) => {
                 self.cache
                     .borrow_mut()
                     .insert(resolved.to_string(), module.clone());
-                finish_load(Ok(module), context);
+                Ok(module)
             }
-            Err(error) => finish_load(
-                Err(JsError::from_native(JsNativeError::syntax().with_message(
-                    format!("{resolved} is not a valid module: {error}"),
-                ))),
-                context,
-            ),
+            Err(error) => Err(JsError::from_native(JsNativeError::syntax().with_message(
+                format!("{resolved} is not a valid module: {error}"),
+            ))),
         }
     }
 }

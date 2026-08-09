@@ -469,7 +469,7 @@ impl Page {
             };
 
             script.set_current_script(Some(node));
-            if let Err(error) = script.eval(&code) {
+            if let Err(error) = script.eval_named(&code, &where_from) {
                 // Reported, not fatal: a page with one broken script is still a
                 // page, and the agent needs to know which half it is reading.
                 //

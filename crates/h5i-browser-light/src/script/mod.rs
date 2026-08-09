@@ -31,7 +31,7 @@ pub mod modules;
 
 use std::rc::Rc;
 
-use boa_engine::{js_string, Context, JsValue, Module, Source};
+use boa_engine::{js_string, Context, Module, Source};
 
 use crate::engine::Dom;
 use host::{ConsoleLine, Host, HostHandle};
@@ -147,8 +147,23 @@ impl Script {
     /// Run one script from the page. An error is returned, not swallowed: a
     /// page whose script threw is a fact the agent needs.
     pub fn eval(&mut self, source: &str) -> Result<(), String> {
+        self.eval_named(source, "inline script")
+    }
+
+    /// Run one script, under a name that will appear in its stack trace.
+    ///
+    /// The name matters more than it looks. Boa 0.21 reports a position per
+    /// frame, but the *path* comes from the source it was given — and a source
+    /// built from bytes has none, so every frame read `unknown at :2:18`. A line
+    /// number with no file is barely better than no line number when a page has
+    /// nine scripts.
+    ///
+    /// Lines are counted from the start of *this* script, not of the document,
+    /// which is the only frame of reference an inline script has.
+    pub fn eval_named(&mut self, source: &str, name: &str) -> Result<(), String> {
+        let source = Source::from_reader(source.as_bytes(), Some(std::path::Path::new(name)));
         self.context
-            .eval(Source::from_bytes(source))
+            .eval(source)
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
@@ -186,10 +201,11 @@ impl Script {
                 }
                 boa_engine::builtins::promise::PromiseState::Fulfilled(_) => {}
                 boa_engine::builtins::promise::PromiseState::Rejected(reason) => {
-                    let text = reason
-                        .to_string(&mut self.context)
-                        .map(|s| s.to_std_string_escaped())
-                        .unwrap_or_else(|_| "<unrenderable>".to_string());
+                    // Through `JsError` rather than by stringifying the thrown
+                    // value: the value renders as "TypeError: ..." and stops
+                    // there, while the error carries the stack trace Boa 0.21
+                    // records — which is the whole reason for being on 0.21.
+                    let text = boa_engine::JsError::from_opaque(reason).to_string();
                     self.host.console.borrow_mut().push(ConsoleLine {
                         level: "error".to_string(),
                         text: format!("{name}: module failed: {text}"),
@@ -238,7 +254,7 @@ impl Script {
         let network_started = std::time::Instant::now();
 
         loop {
-            self.context.run_jobs();
+            self.run_queued_jobs();
 
             // Layout observers are driven from here rather than from a frame
             // clock, because this engine has no frames at rest: an observer
@@ -262,7 +278,7 @@ impl Script {
                     if outstanding > 0 {
                         if network_started.elapsed().as_millis() as u64 >= NETWORK_BUDGET_MS {
                             self.abandon_fetches();
-                            self.context.run_jobs();
+                            self.run_queued_jobs();
                             self.collect_module_failures();
                             return Settled {
                                 elapsed_ms: clock,
@@ -281,7 +297,7 @@ impl Script {
                     // still pending — which is exactly what a synchronous fetch
                     // used to hide, because it resolved during `eval` and the
                     // loop's first `run_jobs` picked the callback up.
-                    self.context.run_jobs();
+                    self.run_queued_jobs();
                     if self.pending_timers() > 0 || self.drain_fetches() > 0 {
                         continue;
                     }
@@ -301,7 +317,7 @@ impl Script {
 
             if clock >= SETTLE_BUDGET_MS {
                 self.abandon_fetches();
-                self.context.run_jobs();
+                self.run_queued_jobs();
                 self.collect_module_failures();
                 return Settled {
                     elapsed_ms: clock,
@@ -313,15 +329,27 @@ impl Script {
         }
     }
 
+    /// Run the microtask queue, reporting anything that escaped it.
+    ///
+    /// Boa 0.21 returns a result here where 0.19 returned nothing. An error
+    /// reaching this point is one no `.catch` handled — an unhandled rejection,
+    /// or a job that threw — and it was previously invisible in both engines:
+    /// 0.19 could not tell us, and swallowing it now would keep a page looking
+    /// like it worked when part of it did not.
+    fn run_queued_jobs(&mut self) {
+        if let Err(error) = self.context.run_jobs() {
+            self.note_error(&format!("unhandled in a queued job: {error}"));
+        }
+    }
+
     /// Resolve whatever has come back, and report how much is still owed.
     fn drain_fetches(&mut self) -> usize {
         match self
             .context
             .eval(Source::from_bytes("__h5iDrainFetches()"))
         {
-            Ok(JsValue::Integer(n)) => n.max(0) as usize,
-            Ok(JsValue::Rational(n)) => n.max(0.0) as usize,
-            _ => 0,
+            Ok(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
+            Err(_) => 0,
         }
     }
 
@@ -346,9 +374,8 @@ impl Script {
     fn run_due_timers(&mut self, clock: u64) -> usize {
         let source = format!("__h5iRunTimers({clock})");
         match self.context.eval(Source::from_bytes(&source)) {
-            Ok(JsValue::Integer(n)) => n.max(0) as usize,
-            Ok(JsValue::Rational(n)) => n.max(0.0) as usize,
-            _ => 0,
+            Ok(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
+            Err(_) => 0,
         }
     }
 
@@ -357,9 +384,8 @@ impl Script {
             .context
             .eval(Source::from_bytes("__h5iPendingTimers()"))
         {
-            Ok(JsValue::Integer(n)) => n.max(0) as usize,
-            Ok(JsValue::Rational(n)) => n.max(0.0) as usize,
-            _ => 0,
+            Ok(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
+            Err(_) => 0,
         }
     }
 

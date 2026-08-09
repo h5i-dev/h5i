@@ -70,6 +70,13 @@ jobs:
       # `--locked` throughout: Cargo.lock is committed and the release build
       # uses it, so a manifest change that never updated the lockfile has to
       # fail on a PR rather than surface at tag time.
+      # The build patches boa to a fork. This proves the fork is upstream's own
+      # release plus nothing but the icu version relaxation — the whole security
+      # argument for patching an engine that runs untrusted page script is that
+      # it is checkable, so it is checked.
+      - name: The patched boa is upstream plus only the icu pin relaxation
+        run: ./scripts/verify_boa_fork.sh
+
       - name: cargo clippy (deny warnings)
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
