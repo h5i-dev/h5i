@@ -164,6 +164,7 @@
 <a class="t2" href="#h5i-ui">h5i ui</a>
 <a class="t2" href="#h5i-browser">h5i browser</a>
 <div class="t3group">
+<a class="t3" href="#choosing-the-engine">Choosing the engine</a>
 <a class="t3" href="#driving-the-browser-itself">Driving the browser itself</a>
 </div>
 <a class="t2" href="#h5i-skill">h5i skill</a>
@@ -367,7 +368,7 @@ unsatisfiable request fails closed rather than leaving half a box behind.</p>
 </tr>
 <tr>
 <td><code>--engine &lt;e&gt;</code></td>
-<td>Browser engine for the <code>browser</code> profile: <code>chromium</code> (default), <code>lightpanda</code>, or <code>h5i-light</code>. Pinned in the digest; never falls back.</td>
+<td>Browser engine for the <code>browser</code> profile: <code>chromium</code> (default), <code>lightpanda</code>, or <code>h5i-light</code>. Pinned in the digest; never falls back. See <a href="#choosing-the-engine">Choosing the engine</a>.</td>
 </tr>
 </tbody>
 </table>
@@ -621,6 +622,63 @@ h5i browser url &lt;name&gt; [--port n]    # the viewer URL, token included
   every <code>@ref</code> from its last snapshot may now point somewhere else. It must
   re-snapshot before acting, and acting first is refused rather than mis-clicked.</li>
 </ul>
+<h3 id="choosing-the-engine">Choosing the engine</h3>
+<p><code>--engine</code> picks what runs pages in the box, and the choice is pinned in the
+digest: a run never quietly falls back to a different one.</p>
+<table>
+<thead>
+<tr>
+<th>engine</th>
+<th>what it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>chromium</code> (default)</td>
+<td>A real browser. Everything works; it costs what a browser costs.</td>
+</tr>
+<tr>
+<td><code>lightpanda</code></td>
+<td>A third-party headless engine.</td>
+</tr>
+<tr>
+<td><code>h5i-light</code></td>
+<td>h5i's own engine, described below.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="h5i-light">h5i-light</h4>
+<p>An engine built for the case an agent is actually in: read a page, act on it,
+read what changed. It runs in <strong>one process</strong> and holds a page in roughly a
+seventh of the memory Chromium needs (76 MiB against 563 MiB, median over the
+same pages), from a binary a ninth the size. It is about 30% <em>slower</em> — it has
+an interpreter where Chromium has a JIT — and that trade is the whole point of
+choosing it deliberately rather than by default.</p>
+<p>It runs page JavaScript, follows redirects and <code>&lt;meta refresh&gt;</code>, keeps a cookie
+jar scoped to one origin, and puts <strong>every request through the same broker as
+the rest of h5i</strong>, so a page's own fetches are policy-checked and receipted like
+anything else. What it reads is an outline with <code>@ref</code> handles, not pixels.</p>
+<p>Two properties worth knowing before you rely on it:</p>
+<ul>
+<li><strong>It says what it could not do.</strong> A page needing an API this engine lacks gets
+  that API <em>named</em> in the snapshot rather than a blank space, and console errors
+  carry the script and line they came from. "The page is empty" and "I could not
+  read the page" are different answers, and it gives different answers.</li>
+<li><strong>It is not a complete browser, and does not pretend to be.</strong> Of twenty
+  single-page applications measured, eighteen read usefully and one not at all.
+  Canvas, WebSockets, Workers and IndexedDB are absent. For a page it cannot
+  read, the answer is <code>--engine chromium</code>.</li>
+</ul>
+<p>Driven directly, it has its own CLI — <code>h5i-browser-light --help</code> — including two
+verbs the size of a page makes worth having:</p>
+<pre><code class="language-bash">h5i-browser-light session snapshot --delta   # only what changed since last read
+h5i-browser-light session login              # hand the page to the human
+</code></pre>
+<p><code>--delta</code> matters because re-reading three hundred lines after every click is
+the wrong shape for an agent loop. <code>session login</code> closes the page to the agent
+while a person types a credential into the live view: the session it establishes
+stays in the jar afterwards, and the agent can see <em>that</em> it is logged in
+without ever reading the cookie that says so.</p>
 <h3 id="driving-the-browser-itself">Driving the browser itself</h3>
 <p>That is <code>agent-browser</code>, run <strong>inside</strong> the box, and its <code>--help</code> is the verb
 table. h5i does not wrap it: forty automation verbs behind a second CLI would
