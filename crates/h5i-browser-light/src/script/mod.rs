@@ -63,6 +63,47 @@ const NETWORK_BUDGET_MS: u64 = 10_000;
 /// to add measurable latency, long enough not to spin a core.
 const NETWORK_POLL_MS: u64 = 2;
 
+/// How deep script may recurse before the engine stops it.
+///
+/// Boa's default is 512 frames, which a production bundle exceeds during its
+/// own initialisation — deeply nested module factories and framework internals
+/// get there without anything being wrong. Next.js's chunk hit it while merely
+/// starting up, and the page reported a runtime limit instead of rendering.
+///
+/// Still a bound: the point of the limit is that a runaway page cannot take the
+/// stack with it, and this engine runs untrusted script inside a box with a
+/// memory ceiling.
+const RECURSION_LIMIT: usize = 4_000;
+
+/// How many value slots the interpreter stack may hold.
+///
+/// Raised with the recursion limit, and it has to be: the default 10240 slots
+/// runs out at roughly 800 frames, so raising the frame count alone changed
+/// nothing — the *stack* limit was what a deep call actually hit. Each frame
+/// costs several slots, so this is sized to the frame budget above with room
+/// for the locals a real function holds.
+const STACK_SIZE_LIMIT: usize = 128 * 1024;
+
+/// How many times a single loop may go round before the engine stops it.
+///
+/// The settle loop bounds virtual time and network waiting, but neither covers
+/// the one case that matters most: a single `eval` that never returns. A page
+/// that loops forever would hang this engine indefinitely, and an agent waiting
+/// on it has no way to tell that from a slow page.
+///
+/// Generous — a real page parsing or laying out its own data can legitimately
+/// iterate millions of times — but finite, because "always returns" is a
+/// property worth more than the last page that needed one more round. A page
+/// that trips it still renders what it managed, and the limit is *reported*, so
+/// a thin outline is explained rather than mysterious.
+///
+/// Worth being exact about what this does not do: it bounds one loop, not total
+/// work. Boa exposes no wall-clock interrupt, so a page with a thousand slow
+/// loops is still slow, and a caller that cannot wait must impose its own
+/// timeout — the corpus harness does. Raising this to 50 million turned a site
+/// that returned in three minutes into one that had not returned in four.
+const LOOP_ITERATION_LIMIT: u64 = 5_000_000;
+
 /// What a settle actually did, so a caller never has to guess.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settled {
@@ -123,6 +164,22 @@ impl Script {
             .module_loader(loader)
             .build()
             .map_err(|e| format!("could not build the script realm: {e}"))?;
+        // Boa's default recursion ceiling is low enough that a real production
+        // bundle hits it: Next.js's chunk exceeded it while merely initialising,
+        // and the page reported "exceeded maximum number of recursive calls"
+        // instead of rendering. Raised, not removed — the limit is what stops a
+        // runaway page from taking the stack with it, and this engine runs
+        // untrusted script inside a box with a memory ceiling.
+        context
+            .runtime_limits_mut()
+            .set_recursion_limit(RECURSION_LIMIT);
+        context
+            .runtime_limits_mut()
+            .set_stack_size_limit(STACK_SIZE_LIMIT);
+        context
+            .runtime_limits_mut()
+            .set_loop_iteration_limit(LOOP_ITERATION_LIMIT);
+
         context.insert_data(HostHandle(host.clone()));
 
         dom_api::install(&mut context).map_err(|e| e.to_string())?;

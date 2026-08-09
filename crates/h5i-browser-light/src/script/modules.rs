@@ -26,8 +26,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 
-use boa_engine::module::{ModuleLoader, Referrer};
-use boa_engine::{Context, JsError, JsNativeError, JsResult, JsString, Module, Source};
+use boa_engine::module::{ModuleLoader, ModuleRequest, Referrer};
+use boa_engine::{Context, JsError, JsNativeError, JsResult, Module, Source};
 use url::Url;
 
 use super::host::Host;
@@ -44,6 +44,9 @@ pub struct BrokerModuleLoader {
     /// specifier, because `./a.js` from two directories is two modules and
     /// `../a.js` and `./a.js` can be one.
     cache: RefCell<HashMap<String, Module>>,
+    /// Resolved URL to the URL it was actually served from, for
+    /// `import.meta.url`. They differ when a redirect moved the module.
+    paths: RefCell<HashMap<String, String>>,
 }
 
 impl BrokerModuleLoader {
@@ -51,6 +54,7 @@ impl BrokerModuleLoader {
         Self {
             host,
             cache: RefCell::new(HashMap::new()),
+            paths: RefCell::new(HashMap::new()),
         }
     }
 
@@ -98,6 +102,21 @@ pub fn resolve(specifier: &str, base: &Url) -> Result<Url, String> {
     ))
 }
 
+impl BrokerModuleLoader {
+    /// Where a module was served from, for `import.meta.url`.
+    fn url_of(&self, module: &Module) -> Option<String> {
+        let path = module.path()?.to_string_lossy().into_owned();
+        // The path a module was parsed under *is* its final URL — see the
+        // comment where the source is built — so the map is a lookup by either.
+        self.paths
+            .borrow()
+            .values()
+            .find(|url| **url == path)
+            .cloned()
+            .or(Some(path))
+    }
+}
+
 impl ModuleLoader for BrokerModuleLoader {
     /// Fetch and parse one imported module.
     ///
@@ -109,10 +128,13 @@ impl ModuleLoader for BrokerModuleLoader {
     async fn load_imported_module(
         self: Rc<Self>,
         referrer: Referrer,
-        specifier: JsString,
+        request: ModuleRequest,
         context: &RefCell<&mut Context>,
     ) -> JsResult<Module> {
-        let specifier = specifier.to_std_string_escaped();
+        // Import attributes (`with { type: "json" }`) are deliberately ignored:
+        // this engine serves one kind of module, and a page asking for another
+        // gets the same answer it would if the file were not there.
+        let specifier = request.specifier().to_std_string_escaped();
         let base = self.base_for(&referrer);
 
         let resolved = match resolve(&specifier, &base) {
@@ -185,6 +207,14 @@ impl ModuleLoader for BrokerModuleLoader {
         let final_url = outcome.final_url.to_string();
         let source = Source::from_reader(body.as_bytes(), Some(Path::new(&final_url)));
 
+        // Remember where this module came from, so `import.meta.url` can answer.
+        // Without it, `new URL("./x.css", import.meta.url)` gets `undefined` as
+        // its base and throws `Invalid URL` — which is how one asset path took
+        // down a whole bundle.
+        self.paths
+            .borrow_mut()
+            .insert(resolved.to_string(), final_url.clone());
+
         let parsed = Module::parse(source, None, &mut context.borrow_mut());
         match parsed {
             Ok(module) => {
@@ -196,6 +226,27 @@ impl ModuleLoader for BrokerModuleLoader {
             Err(error) => Err(JsError::from_native(JsNativeError::syntax().with_message(
                 format!("{resolved} is not a valid module: {error}"),
             ))),
+        }
+    }
+
+    /// Fill in `import.meta` for one module.
+    ///
+    /// `url` only, which is the property that carries weight: bundlers resolve
+    /// every sibling asset against it, so a module without one cannot find its
+    /// own stylesheet.
+    fn init_import_meta(
+        self: Rc<Self>,
+        import_meta: &boa_engine::JsObject,
+        module: &Module,
+        context: &mut Context,
+    ) {
+        if let Some(url) = self.url_of(module) {
+            let _ = import_meta.set(
+                boa_engine::js_string!("url"),
+                boa_engine::js_string!(url.as_str()),
+                false,
+                context,
+            );
         }
     }
 }

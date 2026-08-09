@@ -296,6 +296,12 @@
     }
     contains(name) { return this._all().includes(name); }
     item(index) { return this._all()[index] ?? null; }
+    // False, and deliberately. `supports` asks whether *this engine* acts on a
+    // token — `rel="preload"`, `sandbox="allow-scripts"` — and this one acts on
+    // none of them. Answering true would send a page down a path expecting
+    // behaviour that will not happen, which is the plausible-wrong answer this
+    // engine keeps having to refuse.
+    supports() { return false; }
     get length() { return this._all().length; }
     get value() { return this._all().join(" "); }
     set value(v) { api.setAttr(this._node._id, this._attr, String(v)); }
@@ -313,6 +319,42 @@
     }
     get length() { return this._all().length; }
     toString() { return this._all().join(" "); }
+  }
+
+  /// The base every event-dispatching thing extends, including code that has
+  /// nothing to do with the document.
+  ///
+  /// Frameworks write `class Store extends EventTarget`, and its absence was a
+  /// bare `ReferenceError: EventTarget is not defined` that took down whole
+  /// bundles. Deliberately *not* the DOM's `Node`: a store is not in the tree,
+  /// and giving it a node id it does not have would be the plausible-wrong
+  /// answer this engine keeps having to avoid.
+  class EventTarget {
+    addEventListener(type, handler, options) {
+      if (typeof handler !== "function" && typeof handler?.handleEvent !== "function") return;
+      (this.__listeners ??= new Map()).set(handler, { type: String(type), options });
+    }
+    removeEventListener(type, handler) {
+      void type;
+      this.__listeners?.delete(handler);
+    }
+    dispatchEvent(event) {
+      if (!event || typeof event.type !== "string") return true;
+      if (event.target === null || event.target === undefined) {
+        try { event.target = this; event.currentTarget = this; } catch (_) {}
+      }
+      for (const [handler, registered] of this.__listeners ?? []) {
+        if (registered.type !== event.type) continue;
+        try {
+          if (typeof handler === "function") handler.call(this, event);
+          else handler.handleEvent(event);
+        } catch (error) {
+          console.error(`a ${event.type} listener threw: ${error}`);
+        }
+        if (registered.options && registered.options.once) this.__listeners.delete(handler);
+      }
+      return !event.defaultPrevented;
+    }
   }
 
   class Node {
@@ -770,6 +812,10 @@
     // right one to take.
     get contentDocument() { return null; }
     get contentWindow() { return null; }
+
+    // Lowercase, always: this engine parses HTML, where the local name is
+    // case-insensitive and canonically lower, while `tagName` is upper.
+    get localName() { return this.tagName.toLowerCase(); }
 
     get lang() { return api.getAttr(this._id, "lang") || ""; }
     set lang(v) { this.setAttribute("lang", v); }
@@ -1766,6 +1812,48 @@
     }
   }
 
+  /// `new DOMParser().parseFromString(html, "text/html")`.
+  ///
+  /// How a library turns a string of markup into something it can query —
+  /// sanitizers, template engines and lit all do it. What comes back is a
+  /// parsed subtree presented as a document, not a second document: this engine
+  /// has one tree, so the result shares its arena. That is enough for reading
+  /// and querying, which is all this is used for, and no script inside the
+  /// string runs — which is the property a sanitizer is relying on anyway.
+  class DOMParser {
+    parseFromString(markup, type) {
+      const kind = String(type || "text/html").toLowerCase();
+      if (kind !== "text/html" && kind !== "application/xhtml+xml") {
+        api.unsupported(`DOMParser.parseFromString(${kind})`);
+      }
+      const root = document.createElement("html");
+      const body = document.createElement("body");
+      root.appendChild(body);
+      body.innerHTML = String(markup);
+
+      return observed({
+        documentElement: root,
+        body,
+        head: null,
+        nodeType: 9,
+        contentType: kind,
+        get title() {
+          const found = body.querySelector("title");
+          return found ? found.textContent : "";
+        },
+        querySelector: (sel) => body.querySelector(sel),
+        querySelectorAll: (sel) => body.querySelectorAll(sel),
+        getElementById: (id) => body.querySelector("#" + String(id)),
+        getElementsByTagName: (tag) => body.getElementsByTagName(tag),
+        getElementsByClassName: (cls) => body.getElementsByClassName(cls),
+        createElement: (tag) => document.createElement(tag),
+        createTextNode: (text) => document.createTextNode(text),
+        importNode: (node, deep) => node.cloneNode(deep),
+        adoptNode: (node) => node,
+      }, "parsed document");
+    }
+  }
+
   const documentImpl = {
     get documentElement() { return wrap(api.root()); },
     get body() { return wrap(api.body()); },
@@ -1988,7 +2076,30 @@
 
   function render(v) {
     if (typeof v === "string") return v;
-    try { return JSON.stringify(v) ?? String(v); } catch (_) { return String(v); }
+    if (v === null || v === undefined) return String(v);
+
+    // An Error has no enumerable own properties, so `JSON.stringify` renders it
+    // as `{}`. A page logging its own failures then fills the console with
+    // hundreds of lines that say nothing — remix.run produced 1487 of them —
+    // and the one thing an agent needed, the message, was the part thrown away.
+    if (v instanceof Error || (typeof v?.message === "string" && typeof v?.name === "string")) {
+      return v.stack ? `${v.name}: ${v.message}\n${v.stack}` : `${v.name}: ${v.message}`;
+    }
+    if (typeof v === "function") return `[function ${v.name || "anonymous"}]`;
+    if (v instanceof Node) return v.outerHTML ?? String(v);
+
+    try {
+      const text = JSON.stringify(v);
+      // `{}` for an object that plainly has contents means the contents were
+      // not enumerable; say what it is rather than showing an empty shape.
+      if (text === "{}" ) {
+        const name = v.constructor?.name;
+        return name && name !== "Object" ? `[${name}]` : String(v);
+      }
+      return text ?? String(v);
+    } catch (_) {
+      return String(v);
+    }
   }
 
   // ── timers ───────────────────────────────────────────────────────────────
@@ -2434,8 +2545,29 @@
     // asks "is this a node?" before deciding what to do with it. `HTMLElement`
     // is `Element` here because this engine has one element class; the check
     // that matters is the one pages actually write.
-    Node, Element, Text, Comment, DocumentFragment, DOMTokenList, Range,
+    Node, Element, Text, Comment, DocumentFragment, DOMTokenList, Range, EventTarget, DOMParser,
     HTMLElement: Element,
+    // The per-tag constructors, which pages use two ways: `instanceof
+    // HTMLAnchorElement` to ask what they are holding, and `extends
+    // HTMLButtonElement` to build on one. Every one is `Element` because this
+    // engine has a single element class, so `instanceof` answers "is this an
+    // element" rather than "is this a button" — a coarser answer than a browser
+    // gives, and a far better one than `ReferenceError`, which is what these
+    // were and which took whole bundles down with them.
+    ...Object.fromEntries(
+      [
+        "Anchor", "Area", "Audio", "Base", "Body", "BR", "Button", "Canvas", "Data",
+        "DataList", "Details", "Dialog", "Div", "DList", "Embed", "FieldSet", "Form",
+        "Head", "Heading", "HR", "Html", "IFrame", "Image", "Input", "Label", "Legend",
+        "LI", "Link", "Map", "Media", "Menu", "Meta", "Meter", "Mod", "Object", "OList",
+        "OptGroup", "Option", "Output", "Paragraph", "Param", "Picture", "Pre",
+        "Progress", "Quote", "Script", "Select", "Slot", "Source", "Span", "Style",
+        "Table", "TableCaption", "TableCell", "TableCol", "TableRow", "TableSection",
+        "Template", "TextArea", "Time", "Title", "Track", "UList", "Unknown", "Video",
+      ].map((name) => [`HTML${name}Element`, Element]),
+    ),
+    SVGElement: Element,
+    CharacterData: Text,
     customElements, NodeFilter, NodeIterator, TreeWalker,
 
     WebSocket: missingApi("WebSocket"),

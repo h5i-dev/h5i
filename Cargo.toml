@@ -55,23 +55,43 @@ serde_json = { workspace = true }
 [profile.dev]
 debug = false
 
-# Boa 0.21 is the first version that maps a program counter back to a source
-# position, which is what lets a page's error say *where* it happened. It cannot
-# be used unpatched: 0.21.1 pins `icu_normalizer`, `icu_properties` and
-# `icu_segmenter` to `~2.0.0`, which excludes the versions parley requires — and
-# parley arrives through blitz, so it is not ours to choose.
+# Boa, pinned to a revision of upstream rather than to a release.
 #
-# The fork is boa at its own v0.21.1 tag plus one commit relaxing those three
-# pins to `2`; nothing else differs, and `scripts/verify_boa_fork.sh` proves it.
-# Upstream `main` has already made the same change, so this lasts only until the
-# next boa release — at which point delete this block and depend on it normally.
+# 0.21 is the first version that maps a program counter back to a source
+# position — what lets a page's error say *where* it happened — but the 0.21.1
+# release pins ,  and  to
+# , which excludes the versions parley requires. Parley arrives through
+# blitz, so it is not ours to choose, and no released boa can be used with it.
 #
-# Pinned by revision rather than branch: a branch is a moving target, and a
-# moving target in a dependency that executes untrusted page script is not one.
+# Upstream has already relaxed those pins on , so this needs no fork and
+# no patched source: it is boa's own tree at one commit. That release is five
+# months old and boa releases infrequently, so the revision also buys five
+# months of engine and parser fixes over the tag.
+#
+# Pinned by revision, never a branch: an unreleased tree is a moving target, and
+# a moving target in a dependency that executes untrusted page script is not
+# one. Moving the pin is a deliberate act with a test run behind it.
+# Boa, pinned to a revision of upstream rather than to a release.
+#
+# 0.21 is the first version that maps a program counter back to a source
+# position — what lets a page error say *where* it happened — but the 0.21.1
+# release pins icu_normalizer, icu_properties and icu_segmenter to "~2.0.0",
+# which excludes the versions parley requires. Parley arrives through blitz, so
+# it is not ours to choose, and no released boa can be used alongside it.
+#
+# Upstream has already relaxed those pins on main, so this needs no fork and no
+# patched source: it is boa own tree at one commit. That release is five months
+# old and boa releases infrequently, so the revision also buys five months of
+# engine and parser fixes over the tag — including ones this engine needs.
+#
+# Pinned by revision, never a branch: an unreleased tree is a moving target, and
+# a moving target in a dependency that executes untrusted page script is not
+# one. Moving the pin is a deliberate act with a corpus run behind it.
+#
+# boa_gc is patched too, and not for the pins: we derive Trace for the host
+# handle, and a derive from the registry copy does not satisfy a trait from the
+# pinned one. Two copies of a crate that defines a trait are two traits.
 [patch.crates-io]
-boa_engine = { git = "https://github.com/h5i-dev/boa", rev = "312bbd702781c7e2d101fda2a19ca3d1fc9d24bc" }
-boa_parser = { git = "https://github.com/h5i-dev/boa", rev = "312bbd702781c7e2d101fda2a19ca3d1fc9d24bc" }
-# `boa_gc` too, and this one is not about the pins: we derive `Trace` for the
-# host handle, and a derive from the registry's boa_gc does not satisfy a trait
-# from the fork's. Two copies of a crate that defines a trait are two traits.
-boa_gc = { git = "https://github.com/h5i-dev/boa", rev = "312bbd702781c7e2d101fda2a19ca3d1fc9d24bc" }
+boa_engine = { git = "https://github.com/boa-dev/boa", rev = "334caed3134975054cd490cdacfe7d0400302832" }
+boa_parser = { git = "https://github.com/boa-dev/boa", rev = "334caed3134975054cd490cdacfe7d0400302832" }
+boa_gc = { git = "https://github.com/boa-dev/boa", rev = "334caed3134975054cd490cdacfe7d0400302832" }

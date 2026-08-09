@@ -723,22 +723,113 @@ a small browser that happens to run here.
 
 ---
 
+### 8.10 Source positions, and what they found
+
+Boa 0.21 maps a program counter back to a source position. It is pinned by
+**revision of upstream `main`**, not by release: the 0.21.1 release pins three
+icu crates to `~2.0.0`, which excludes what parley requires, and parley arrives
+through blitz. Upstream relaxed those pins after the release, so a pinned commit
+needs no fork and no patched source — and buys five months of engine and parser
+fixes over a five-month-old tag, which turned out to matter.
+
+Two other routes were tried and rejected with evidence. **Vendoring** the two
+crates worked and cost 7.5 MB and 508 files for a two-line change. **Forking**
+at `v0.21.1` plus one commit also worked, and is one commit, one file, six
+lines — but it is a fork to carry, and upstream `main` had already made the same
+change for free.
+
+Errors now read:
+
+```
+inline script #2: TypeError: cannot convert 'null' or 'undefined' to object
+    at inner (inline script #2:2:18)
+    at outer (inline script #2:3:32)
+    at <main> (inline script #2:4:6)
+```
+
+The *path* mattered as much as the line: a source built from bytes carries none,
+so every frame said `unknown at :2:18`, and a line number without a file is
+barely better than nothing when a page has nine scripts.
+
+**Module failures: 14 → 4.** The positions named every cause within an hour:
+
+| named cause | fix |
+| --- | --- |
+| `EventTarget is not defined` | a real base class, independent of the tree — a store is not a node |
+| `HTMLAnchorElement`, `HTMLButtonElement`, `HTMLTemplateElement`, … | the per-tag constructor family, all aliasing `Element` |
+| `Invalid URL: /assets/…` | `import.meta.url`, which bundlers resolve every sibling asset against |
+| `RuntimeLimit: exceeded recursive calls` | Boa's 512-frame default, which Next.js exceeded while merely initialising |
+| `DOMParser is not defined` | parse-to-subtree, with no script inside it running |
+| `not a callable function` | collections that were not collections — see below |
+
+That last one was the instrument's blind spot again, and the most instructive.
+The reporting proxy watched `document` and nodes but **not the collections and
+token lists this engine builds itself**, so `querySelectorAll(...).item(0)` was
+undefined and calling it produced exactly that unnamed error. Collections and
+`DOMTokenList` are now watched, and immediately named their own gaps:
+`createElementNS` (every framework that draws an SVG icon), `after`/`before`/
+`replaceWith`/`replaceChildren`, `toggleAttribute`, `localName`, the namespaced
+attribute methods, `createRange` and `elementFromPoint`.
+
+`StyleDeclaration` is deliberately *not* watched: it answers any CSS property by
+design, so it has no name it is missing, and wrapping one proxy in another
+defeats the `in` check the reporting one depends on.
+
+### 8.11 Three things that are not ours, stated plainly
+
+1. **A Boa parser bug**, minimally reproduced. Any line terminator between a
+   declarator's initializer and the comma is rejected:
+
+   ```js
+   const a = 1
+   , b = 2;        // SyntaxError in Boa; valid JavaScript
+   ```
+
+   Automatic semicolon insertion is applying where the spec forbids it — a comma
+   *can* continue a `VariableDeclarationList`, so no semicolon may be inserted.
+   Minified bundles that preserve `/*! @license */` comments between declarators
+   hit it, which is how lit.dev fails. Not fixable here, and not worth working
+   around: stripping comments from a page's own source would move every line
+   number and could corrupt string literals — the plausible-wrong answer again.
+2. **Two sites now exceed the harness timeout** (lit.dev, material-web) where
+   they previously returned quickly. That is *because* they now get further:
+   `DOMParser` unlocked execution that used to fail early. More correct and
+   slower is still an unhappy trade for an agent, and it is recorded rather than
+   hidden.
+3. **Total CPU is unbounded.** Boa exposes no wall-clock interrupt, so the
+   engine bounds what it can — one loop, recursion depth, stack size — and a
+   caller that cannot wait must impose its own timeout. Raising the loop bound
+   from 5 to 50 million turned a site that returned in three minutes into one
+   that had not returned in four; the bound stays low enough to return, and
+   trips are reported so a thin outline is explained rather than mysterious.
+
+Both limits had to move together: raising the frame count alone changed nothing,
+because the *stack size* was what a deep call actually hit.
+
+### 8.12 A page's own errors, made legible
+
+`console.error(someError)` rendered as `{}`, because an Error has no enumerable
+own properties and the console used `JSON.stringify`. remix.run produced **1487
+lines saying exactly that**, and the message — the one part an agent needed —
+was what got thrown away. Errors now render as name, message and trace;
+functions and DOM nodes say what they are; and an object that stringifies to
+`{}` reports its constructor rather than an empty shape.
+
+---
+
 ## 10. What is next, 2026-08-09
 
 Tiers 0 through 4 of the plan this section replaces are done. What the work
 itself surfaced, in the order the evidence supports:
 
-1. **The fourteen module failures.** Every one is now attributed to a named
-   bundle and none can be localised further, because Boa 0.19 reports neither a
-   line number nor a stack. This is the single largest remaining gap between
-   "reads a page" and "drives an application", and it is blocked on (2).
-2. **Boa 0.21, which is blocked on `icu_normalizer`.** 0.21 maps a program
-   counter to `(function_name, SourcePath, Position)`; 0.19 and 0.20 have
-   nothing. 0.21 wants `~2.0.0` and parley wants `^2.1.1` — both 2.x, so cargo
-   must pick one and no version satisfies both. Verified by attempting the
-   upgrade, not by reading. The unblock is upstream: either boa relaxes the pin
-   or blitz's parley moves. Worth watching rather than working around; vendoring
-   a fork of an engine is a maintenance burden that outlives the problem.
+1. ~~The fourteen module failures~~ — **four left** (§8.10), each with a stack
+   trace. Two are the Boa parser bug of §8.11 and are upstream's to fix.
+2. ~~Boa 0.21~~ — **done**, pinned to a revision of upstream `main` (§8.10).
+   The pin should move to a release when boa cuts one, and the `[patch]` block
+   deleted at that point.
+3. **Two sites that now time out**, lit.dev and material-web, because they get
+   further than they used to. Either the engine gets faster or the corpus learns
+   to report a partial render as a result rather than a failure.
 3. **The realm costs ~20ms to start** and is rebuilt per page. A resident
    session that reuses one realm across navigations would remove it from every
    step after the first. Measured, not guessed — see §8.9.

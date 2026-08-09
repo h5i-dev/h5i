@@ -82,8 +82,8 @@ clap = { version = "4.5.60", features = ["derive"] }
 # client half, kept at the same versions so the workspace holds one copy.
 sha1 = "0.10"
 base64 = "0.22"
-boa_engine = { version = "=0.21.1", default-features = false }
-boa_gc = "=0.21.1"
+boa_engine = { version = "=1.0.0-dev", default-features = false }
+boa_gc = "=1.0.0-dev"
 
 [dev-dependencies]
 tempfile = "3.8"

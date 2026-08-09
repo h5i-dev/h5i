@@ -287,3 +287,90 @@ fn a_broken_page_reports_errors_that_name_their_source() {
         reading.errors
     );
 }
+
+/// The engine must always come back. Boa exposes no wall-clock interrupt, so a
+/// bounded loop is the only backstop there is — and a page that trips it should
+/// still render what it managed, with the reason on the record.
+#[test]
+fn a_runaway_loop_is_stopped_and_reported_rather_than_hanging() {
+    let reading = read(
+        "<html><body><p>rendered before the loop</p>\
+         <script>let n = 0; while (true) { n += 1 }</script>\
+         </body></html>",
+    );
+
+    reading.assert_shows("rendered before the loop");
+    assert!(
+        reading
+            .errors
+            .iter()
+            .any(|e| e.contains("iteration") || e.contains("RuntimeLimit")),
+        "the limit should be named, not silently swallowed: {:?}",
+        reading.errors
+    );
+}
+
+/// Deep recursion is bounded too, and the bound is high enough that a real
+/// bundle's initialisation does not trip it — Next.js's did at Boa's default.
+#[test]
+fn recursion_is_bounded_well_above_what_a_real_bundle_needs() {
+    let reading = read(
+        "<html><body><output id='out'></output>\
+         <script>\
+           function down(n) { return n === 0 ? 0 : 1 + down(n - 1) }\
+           document.querySelector('#out').textContent = 'depth=' + down(1500);\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("deep but bounded recursion");
+    reading.assert_shows("depth=1500");
+}
+
+/// A page that parses markup out of a string, which is how sanitizers and
+/// template libraries work. What comes back is a parsed subtree presented as a
+/// document; no script inside it runs, which is the property they rely on.
+#[test]
+fn markup_can_be_parsed_out_of_a_string_without_running_it() {
+    let reading = read(
+        "<html><body><output id='out'></output>\
+         <script>\
+           globalThis.ran = false;\
+           const parsed = new DOMParser().parseFromString(\
+             '<div class=\"card\"><h2>Title</h2><script>globalThis.ran = true<\\/script></div>',\
+             'text/html');\
+           document.querySelector('#out').textContent = \
+             'found=' + parsed.querySelector('.card h2').textContent + ' ran=' + ran;\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("DOMParser");
+    reading.assert_shows("found=Title");
+    reading.assert_shows("ran=false");
+}
+
+/// A page logging its own failures must produce something an agent can act on.
+/// `JSON.stringify` renders an Error as `{}` because none of its properties are
+/// enumerable — remix.run filled the console with 1487 lines saying exactly
+/// that, and the message, the one useful part, was what got thrown away.
+#[test]
+fn a_logged_error_says_what_it_was() {
+    let reading = read(
+        "<html><body><p>x</p>\
+         <script>console.error(new TypeError('the specific thing that failed'))</script>\
+         </body></html>",
+    );
+
+    assert!(
+        reading
+            .errors
+            .iter()
+            .any(|e| e.contains("the specific thing that failed")),
+        "{:?}",
+        reading.errors
+    );
+    assert!(
+        !reading.errors.iter().any(|e| e.trim() == "{}"),
+        "{:?}",
+        reading.errors
+    );
+}

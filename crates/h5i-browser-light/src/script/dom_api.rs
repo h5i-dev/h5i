@@ -135,7 +135,7 @@ fn query_all(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         let doc = host.dom.borrow();
         matches_within(&doc, scope, &selector)
     };
-    let array = boa_engine::object::builtins::JsArray::new(context);
+    let array = boa_engine::object::builtins::JsArray::new(context)?;
     for id in ids {
         array.push(JsValue::from(id as f64), context)?;
     }
@@ -264,7 +264,7 @@ fn children(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
         let doc = host.dom.borrow();
         doc.get_node(id).map(|n| n.children.clone()).unwrap_or_default()
     };
-    let array = boa_engine::object::builtins::JsArray::new(context);
+    let array = boa_engine::object::builtins::JsArray::new(context)?;
     for child in ids {
         array.push(JsValue::from(child as f64), context)?;
     }
@@ -404,7 +404,7 @@ fn scroll_metrics(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         ]
     };
 
-    let array = boa_engine::object::builtins::JsArray::new(context);
+    let array = boa_engine::object::builtins::JsArray::new(context)?;
     for value in values {
         array.push(JsValue::from(value), context)?;
     }
@@ -653,26 +653,32 @@ fn element_from_point(_this: &JsValue, args: &[JsValue], context: &mut Context) 
 
 /// Does this one element match the selector?
 ///
-/// Asked of the element's parent and filtered, because stylo's query walks
-/// *descendants* of the node it is given. Rooting at the element itself would
-/// never return the element itself. When there is no parent — a freshly created
-/// node, or the root — the element is its own scope and the answer comes from
-/// the document, which is the only case where that is still correct.
+/// A direct predicate on the element — no traversal at all. An earlier version
+/// asked the *parent* for all its matching descendants and checked membership,
+/// which made every `matches()` call walk a subtree and every `closest()` walk
+/// one per ancestor. On a page whose framework calls `closest` in a render loop
+/// that is quadratic, and it took a real site from seconds to minutes.
 fn matches_selector(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let selector = arg_string(args, 1, context)?;
     let host = host(context)?;
     let doc = host.dom.borrow();
 
-    let scope = doc.get_node(id).and_then(|node| node.parent);
-    let found = match scope {
-        Some(parent) => matches_within(&doc, parent, &selector),
-        // No parent: the node is detached and alone, so nothing containing it
-        // can be searched. Ask the document — which finds it only if it is
-        // attached — and accept that a lone detached node answers false.
-        None => matches_within(&doc, 0, &selector),
+    let Ok(list) = doc.try_parse_selector_list(&selector) else {
+        return Ok(JsValue::from(false));
     };
-    Ok(JsValue::from(found.contains(&id)))
+    let Some(node) = doc.get_node(id) else {
+        return Ok(JsValue::from(false));
+    };
+    if !node.is_element() {
+        return Ok(JsValue::from(false));
+    }
+
+    Ok(JsValue::from(style::dom_apis::element_matches(
+        &node,
+        &list,
+        style::context::QuirksMode::NoQuirks,
+    )))
 }
 
 /// Bytes from the operating system's CSPRNG, for `crypto.getRandomValues`.
@@ -701,7 +707,7 @@ fn random_bytes(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
             .into());
     }
 
-    let out = boa_engine::object::builtins::JsArray::new(context);
+    let out = boa_engine::object::builtins::JsArray::new(context)?;
     for byte in bytes {
         out.push(JsValue::from(byte as f64), context)?;
     }
@@ -728,7 +734,7 @@ fn attr_names(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
         })
         .unwrap_or_default();
 
-    let out = boa_engine::object::builtins::JsArray::new(context);
+    let out = boa_engine::object::builtins::JsArray::new(context)?;
     for name in names {
         out.push(JsValue::from(js_string!(name.as_str())), context)?;
     }
@@ -901,9 +907,9 @@ fn fetch_drain(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsR
         }
     }
 
-    let out = boa_engine::object::builtins::JsArray::new(context);
+    let out = boa_engine::object::builtins::JsArray::new(context)?;
     for (id, outcome) in arrived {
-        let pair = boa_engine::object::builtins::JsArray::new(context);
+        let pair = boa_engine::object::builtins::JsArray::new(context)?;
         pair.push(JsValue::from(id as f64), context)?;
         pair.push(reply_value(outcome, context)?, context)?;
         out.push(pair, context)?;
@@ -937,9 +943,9 @@ fn reply_value(
     reply.set(js_string!("url"), js_string!(outcome.final_url.to_string()), false, context)?;
     reply.set(js_string!("text"), js_string!(text), false, context)?;
 
-    let headers = boa_engine::object::builtins::JsArray::new(context);
+    let headers = boa_engine::object::builtins::JsArray::new(context)?;
     for (name, value) in &outcome.headers {
-        let pair = boa_engine::object::builtins::JsArray::new(context);
+        let pair = boa_engine::object::builtins::JsArray::new(context)?;
         pair.push(JsValue::from(js_string!(name.as_str())), context)?;
         pair.push(JsValue::from(js_string!(value.as_str())), context)?;
         headers.push(pair, context)?;
@@ -1053,7 +1059,7 @@ fn rect(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
     }
 
     let scroll = doc.viewport_scroll();
-    let array = boa_engine::object::builtins::JsArray::new(context);
+    let array = boa_engine::object::builtins::JsArray::new(context)?;
     for value in [
         x as f64 - scroll.x,
         y as f64 - scroll.y,
