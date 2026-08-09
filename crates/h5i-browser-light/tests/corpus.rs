@@ -430,3 +430,66 @@ fn a_script_the_parser_cannot_read_is_named_and_does_not_take_the_page_with_it()
         reading.errors
     );
 }
+
+/// Server-rendered markup, hydrated. Preact and React both separate adjacent
+/// text with `<!-- -->` when they render on the server, so a comment the
+/// *parser* produced has to be a comment — it was coming back as an empty text
+/// node, and a hydrator that sees text where it expects a comment decides the
+/// markup does not match and renders the page a second time beside the first.
+#[test]
+fn a_comment_from_the_parser_is_a_comment() {
+    let reading = read(
+        "<html><body><a id='v'>v<!-- -->1.0.0</a><output id='out'></output>\
+         <script>\
+           const kids = document.querySelector('#v').childNodes;\
+           document.querySelector('#out').textContent = \
+             'types=' + kids.map(n => n.nodeType).join(',');\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("a parsed comment");
+    reading.assert_shows("types=3,8,3");
+}
+
+/// A parsed document always has a head, even for a fragment of markup with
+/// none. Returning null was enough to take preactjs.com's markup component down
+/// with a null dereference, and the page then re-rendered everything it had
+/// already server-rendered — 178 lines of readable page became 31.
+#[test]
+fn a_parsed_document_has_the_parts_a_real_one_has() {
+    let reading = read(
+        "<html><body><output id='out'></output>\
+         <script>\
+           const doc = new DOMParser().parseFromString('<p class=\"x\">hi</p>', 'text/html');\
+           document.querySelector('#out').textContent = \
+             'head=' + (doc.head ? doc.head.tagName : 'MISSING') + \
+             ' body=' + doc.body.tagName + \
+             ' found=' + doc.querySelector('.x').textContent;\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("a parsed document");
+    reading.assert_shows("head=HEAD body=BODY found=hi");
+}
+
+/// The parent of `<html>` is the document, and it has to *be* the document:
+/// code walks up until it finds node type 9 and then asks that thing for
+/// `body`, so ending the walk on an ordinary node ends it nowhere useful.
+#[test]
+fn walking_up_from_an_element_reaches_the_document() {
+    let reading = read(
+        "<html><body><p id='p'>x</p><output id='out'></output>\
+         <script>\
+           let n = document.querySelector('#p');\
+           let steps = 0;\
+           while (n.parentNode && steps < 10) { n = n.parentNode; steps += 1 }\
+           document.querySelector('#out').textContent = \
+             'top=' + n.nodeType + ' isDocument=' + (n === document) + \
+             ' hasBody=' + !!n.body + \
+             ' parentElementAtRoot=' + (document.documentElement.parentElement === null);\
+         </script></body></html>",
+    );
+
+    reading.assert_clean("walking to the document");
+    reading.assert_shows("top=9 isDocument=true hasBody=true parentElementAtRoot=true");
+}

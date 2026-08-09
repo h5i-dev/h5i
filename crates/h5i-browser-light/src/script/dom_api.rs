@@ -78,6 +78,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("fetchPending", 0, fetch_pending),
         ("userAgent", 0, user_agent),
         ("attrNames", 1, attr_names),
+        ("nodeKind", 1, node_kind),
         ("randomBytes", 1, random_bytes),
         ("matchesSelector", 2, matches_selector),
         ("elementFromPoint", 2, element_from_point),
@@ -715,6 +716,29 @@ fn random_bytes(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
         out.push(JsValue::from(byte as f64), context)?;
     }
     Ok(out.into())
+}
+
+/// What kind of node this is, in DOM numbering.
+///
+/// Asked of the tree rather than remembered on the JavaScript side. A set of
+/// ids populated by `createComment` only knows about comments *script* made,
+/// so every comment the parser produced came back as a text node — and preact
+/// and React both separate adjacent text with `<!-- -->` when they render on
+/// the server. Hydration saw text where it expected a comment, decided the
+/// markup did not match, and rendered the page a second time beside the first.
+fn node_kind(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+
+    let kind = match doc.get_node(id).map(|node| &node.data) {
+        Some(blitz_dom::NodeData::Element(_)) | Some(blitz_dom::NodeData::AnonymousBlock(_)) => 1,
+        Some(blitz_dom::NodeData::Text(_)) => 3,
+        Some(blitz_dom::NodeData::Comment) => 8,
+        Some(blitz_dom::NodeData::Document) => 9,
+        _ => 0,
+    };
+    Ok(JsValue::from(kind as f64))
 }
 
 /// Every attribute on an element, in source order.

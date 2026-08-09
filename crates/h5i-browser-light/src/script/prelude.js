@@ -51,10 +51,14 @@
     if (constructing.has(id)) return observed(new Element(id), "Element");
 
 
+    // The tree decides what a node is. A set of ids on this side only knew
+    // about comments script had made, so every comment the *parser* produced
+    // was wrapped as a text node.
     let raw;
     let label;
-    if (comments.has(id)) { raw = new Comment(id); label = "Comment"; }
-    else if (api.isElement(id)) { raw = constructElement(id); label = "Element"; }
+    const kind = api.nodeKind(id);
+    if (kind === 8) { raw = new Comment(id); label = "Comment"; }
+    else if (kind === 1) { raw = constructElement(id); label = "Element"; }
     else { raw = new Text(id); label = "Text"; }
 
     // Labelled by what the node actually is. Calling a text node "Element"
@@ -406,15 +410,34 @@
       return theirs > mine ? 4 : 2;         // FOLLOWING : PRECEDING
     }
 
-    get nodeType() { return api.isElement(this._id) ? 1 : 3; }
-    get parentNode() { return wrap(api.parent(this._id)); }
-    get parentElement() { return this.parentNode; }
+    get nodeType() { return api.nodeKind(this._id); }
+    get parentNode() {
+      const parent = api.parent(this._id);
+      if (parent === null || parent === undefined) return null;
+      // The parent of `<html>` is the document, and it has to *be* the document
+      // — code walks up until it finds node type 9 and then asks that thing for
+      // `body` and `documentElement`. Wrapping it as an ordinary node made the
+      // walk end somewhere that answered neither.
+      if (api.nodeKind(parent) === 9) return document;
+      return wrap(parent);
+    }
+    get parentElement() {
+      const parent = this.parentNode;
+      return parent && parent.nodeType === 1 ? parent : null;
+    }
     get childNodes() { return api.children(this._id).map(wrap); }
     get firstChild() { return this.childNodes[0] || null; }
     get lastChild() { const c = this.childNodes; return c[c.length - 1] || null; }
 
     // Text for a text node, null for an element — the distinction is the whole
     // reason the property exists, and code that walks a tree branches on it.
+    get nodeName() {
+      if (this.nodeType === 3) return "#text";
+      if (this.nodeType === 8) return "#comment";
+      if (this.nodeType === 11) return "#document-fragment";
+      return api.tagName(this._id);
+    }
+
     get nodeValue() { return this.nodeType === 3 ? api.getText(this._id) : null; }
     set nodeValue(value) {
       if (this.nodeType === 3) this.textContent = value;
@@ -489,6 +512,17 @@
       const kids = this.parentNode ? this.parentNode.childNodes : [];
       const at = kids.findIndex((n) => n._id === this._id);
       return at > 0 ? kids[at - 1] : null;
+    }
+    replaceChild(fresh, stale) {
+      // Core DOM, and its absence is not a small gap: a hydrator that cannot
+      // replace a node creates a new one beside it, which is how a page ends up
+      // rendering its own content twice.
+      if (!stale || stale.parentNode?._id !== this._id) {
+        throw new TypeError("replaceChild: the node to replace is not a child of this node");
+      }
+      this.insertBefore(fresh, stale);
+      this.removeChild(stale);
+      return stale;
     }
     removeChild(child) {
       const leaving = collectCustom(child);
@@ -614,17 +648,63 @@
     }
   }
 
-  class Text extends Node {
+  /// The `CharacterData` interface, shared by text and comment nodes.
+  ///
+  /// `splitText` is the one that matters and the one that was missing:
+  /// hydration splits a server-rendered text node when several vnodes share it,
+  /// and a hydrator that cannot split creates fresh nodes instead — which is
+  /// how preactjs.com rendered its version number twice and lost 147 lines of
+  /// the page behind the mismatch.
+  class CharacterData extends Node {
     get data() { return this.textContent; }
     set data(v) { this.textContent = v; }
+    get length() { return this.data.length; }
+    substringData(offset, count) { return this.data.substr(offset, count); }
+    appendData(text) { this.data = this.data + String(text); }
+    insertData(offset, text) {
+      const current = this.data;
+      this.data = current.slice(0, offset) + String(text) + current.slice(offset);
+    }
+    deleteData(offset, count) {
+      const current = this.data;
+      this.data = current.slice(0, offset) + current.slice(offset + count);
+    }
+    replaceData(offset, count, text) {
+      const current = this.data;
+      this.data = current.slice(0, offset) + String(text) + current.slice(offset + count);
+    }
+  }
+
+  class Text extends CharacterData {
+    get wholeText() {
+      // Adjacent text nodes read as one run, which is what the property means.
+      let text = "";
+      let first = this;
+      while (first.previousSibling && first.previousSibling.nodeType === 3) {
+        first = first.previousSibling;
+      }
+      for (let n = first; n && n.nodeType === 3; n = n.nextSibling) text += n.data;
+      return text;
+    }
+    splitText(offset) {
+      const current = this.data;
+      const at = Math.max(0, Math.min(Number(offset) || 0, current.length));
+      const tail = document.createTextNode(current.slice(at));
+      this.data = current.slice(0, at);
+      const parent = this.parentNode;
+      if (parent) {
+        const next = this.nextSibling;
+        if (next) parent.insertBefore(tail, next);
+        else parent.appendChild(tail);
+      }
+      return tail;
+    }
   }
 
   // A real comment node, not a text node wearing a hat: a marker that showed up
   // in `textContent` would appear in the outline an agent reads.
-  class Comment extends Node {
+  class Comment extends CharacterData {
     get nodeType() { return 8; }
-    get nodeName() { return "#comment"; }
-    get data() { return api.getText(this._id); }
     get nodeValue() { return api.getText(this._id); }
   }
 
@@ -1921,25 +2001,33 @@
         api.unsupported(`DOMParser.parseFromString(${kind})`);
       }
       const root = document.createElement("html");
+      const head = document.createElement("head");
       const body = document.createElement("body");
+      root.appendChild(head);
       root.appendChild(body);
       body.innerHTML = String(markup);
 
       return observed({
         documentElement: root,
         body,
-        head: null,
+        // A real parsed document always has a head, even for a fragment of
+        // markup that contains none. Returning null here was enough to take
+        // preactjs.com's markup component down with a null dereference, and the
+        // page then re-rendered everything it had already server-rendered.
+        head,
         nodeType: 9,
         contentType: kind,
         get title() {
           const found = body.querySelector("title");
           return found ? found.textContent : "";
         },
-        querySelector: (sel) => body.querySelector(sel),
-        querySelectorAll: (sel) => body.querySelectorAll(sel),
-        getElementById: (id) => body.querySelector("#" + String(id)),
-        getElementsByTagName: (tag) => body.getElementsByTagName(tag),
-        getElementsByClassName: (cls) => body.getElementsByClassName(cls),
+        querySelector: (sel) => root.querySelector(sel),
+        querySelectorAll: (sel) => root.querySelectorAll(sel),
+        getElementById: (id) => root.querySelector("#" + String(id)),
+        getElementsByTagName: (tag) => root.getElementsByTagName(tag),
+        getElementsByClassName: (cls) => root.getElementsByClassName(cls),
+        createDocumentFragment: () => new DocumentFragment(),
+        createComment: (text) => document.createComment(text),
         createElement: (tag) => document.createElement(tag),
         createTextNode: (text) => document.createTextNode(text),
         importNode: (node, deep) => node.cloneNode(deep),
@@ -2751,7 +2839,8 @@
     // asks "is this a node?" before deciding what to do with it. `HTMLElement`
     // is `Element` here because this engine has one element class; the check
     // that matters is the one pages actually write.
-    Node, Element, Text, Comment, DocumentFragment, DOMTokenList, Range, EventTarget, DOMParser,
+    Node, Element, Text, Comment, CharacterData, DocumentFragment, DOMTokenList, Range,
+    EventTarget, DOMParser,
     HTMLElement: Element,
     // The per-tag constructors, which pages use two ways: `instanceof
     // HTMLAnchorElement` to ask what they are holding, and `extends
