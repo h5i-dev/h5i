@@ -2744,6 +2744,30 @@
     }
   }
 
+  /// The error type the platform throws, as distinct from a plain `Error`.
+  ///
+  /// Libraries construct it (`new DOMException('aborted', 'AbortError')`) and
+  /// branch on `.name`, and an abort path that cannot build its own error
+  /// throws a `ReferenceError` instead — which is how excalidraw's bundle died
+  /// before rendering anything.
+  class DOMException extends Error {
+    constructor(message, name) {
+      super(String(message ?? ""));
+      this.name = String(name ?? "Error");
+    }
+    // The legacy numeric codes, which older code still compares against.
+    get code() {
+      return {
+        IndexSizeError: 1, HierarchyRequestError: 3, WrongDocumentError: 4,
+        InvalidCharacterError: 5, NoModificationAllowedError: 7, NotFoundError: 8,
+        NotSupportedError: 9, InvalidStateError: 11, SyntaxError: 12,
+        InvalidModificationError: 13, NamespaceError: 14, InvalidAccessError: 15,
+        SecurityError: 18, NetworkError: 19, AbortError: 20, TimeoutError: 23,
+        DataCloneError: 25,
+      }[this.name] ?? 0;
+    }
+  }
+
   // ── text encoding, randomness, cloning, and the old request object ───────
 
   // UTF-8, written out rather than approximated. `escape`/`unescape` round
@@ -3062,7 +3086,7 @@
     customElements, NodeFilter, NodeIterator, TreeWalker,
 
     crypto: observed(crypto, "crypto"),
-    TextEncoder, TextDecoder, XMLHttpRequest, Blob, File,
+    TextEncoder, TextDecoder, XMLHttpRequest, Blob, File, DOMException,
     getComputedStyle: (element) => {
       // Reads what Stylo resolved. Properties outside the curated set record
       // themselves as unsupported rather than returning a plausible lie: a

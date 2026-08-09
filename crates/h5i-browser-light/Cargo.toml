@@ -86,7 +86,12 @@ clap = { version = "4.5.60", features = ["derive"] }
 # client half, kept at the same versions so the workspace holds one copy.
 sha1 = "0.10"
 base64 = "0.22"
-boa_engine = { version = "=1.0.0-dev", default-features = false }
+# `annex-b` is the standard's own name for "the legacy behaviour every browser
+# actually implements": `String.prototype.substr`, the HTML string methods, and
+# the sloppy-mode parser rules including HTML-like comments in scripts. Leaving
+# it off made this engine stricter than any browser — excalidraw's colour parser
+# calls `substr` and died on `not a callable function`.
+boa_engine = { version = "=1.0.0-dev", default-features = false, features = ["annex-b"] }
 boa_gc = "=1.0.0-dev"
 
 [dev-dependencies]

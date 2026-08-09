@@ -667,3 +667,38 @@ fn serialising_markup_keeps_comments_and_escapes_what_it_must() {
     // ...and re-parsing the result gives back text, comment, text.
     reading.assert_shows("roundtrip=3,8,3");
 }
+
+/// The legacy surface every browser implements. Annex B is the standard's own
+/// name for it, and leaving boa's feature off made this engine stricter than
+/// any browser: excalidraw's colour parser calls `substr` and died on "not a
+/// callable function".
+#[test]
+fn the_legacy_string_surface_a_browser_has_is_present() {
+    let reading = read(
+        "<html><body><output id='out'></output>\
+         <script>\
+           const s = '#AABBCC';\
+           document.querySelector('#out').textContent = \
+             'substr=' + s.substr(-2) + ' bold=' + ('x'.bold ? 'yes' : 'no');\
+         </script></body></html>",
+    );
+    reading.assert_clean("annex-b string methods");
+    reading.assert_shows("substr=CC bold=yes");
+}
+
+/// `DOMException` is the error the platform throws, and libraries construct it
+/// and branch on `.name`. Without it an abort path throws a `ReferenceError`
+/// instead, which is how excalidraw's bundle died before rendering anything.
+#[test]
+fn the_platform_error_type_can_be_constructed() {
+    let reading = read(
+        "<html><body><output id='out'></output>\
+         <script>\
+           const e = new DOMException('the operation was aborted', 'AbortError');\
+           document.querySelector('#out').textContent = \
+             e.name + '/' + e.code + '/' + (e instanceof Error) + '/' + e.message;\
+         </script></body></html>",
+    );
+    reading.assert_clean("DOMException");
+    reading.assert_shows("AbortError/20/true/the operation was aborted");
+}
