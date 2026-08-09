@@ -267,7 +267,11 @@ impl Page {
             ModuleExternal(String),
         }
 
-        let sources: Vec<Source> = {
+        /// A script and the element it came from, so `document.currentScript`
+        /// can name that element while the code runs.
+        type Pending = (usize, Source);
+
+        let sources: Vec<Pending> = {
             let doc = self.doc.borrow();
             doc.query_selector_all("script")
                 .map(|ids| {
@@ -307,20 +311,21 @@ impl Page {
                                 return None;
                             }
 
-                            match (attr("src"), is_module) {
-                                (Some(src), true) => Some(Source::ModuleExternal(src)),
-                                (Some(src), false) => Some(Source::External(src)),
+                            let source = match (attr("src"), is_module) {
+                                (Some(src), true) => Source::ModuleExternal(src),
+                                (Some(src), false) => Source::External(src),
                                 (None, is_module) => {
                                     let text = node.text_content();
                                     if text.trim().is_empty() {
-                                        None
+                                        return None;
                                     } else if is_module {
-                                        Some(Source::ModuleInline(text))
+                                        Source::ModuleInline(text)
                                     } else {
-                                        Some(Source::Inline(text))
+                                        Source::Inline(text)
                                     }
                                 }
-                            }
+                            };
+                            Some((*id, source))
                         })
                         .collect()
                 })
@@ -335,11 +340,12 @@ impl Page {
         // module never runs before a classic script that follows it in the
         // markup, and a page that relies on that ordering breaks if we run them
         // as they appear.
-        let (classic, modules): (Vec<Source>, Vec<Source>) = sources.into_iter().partition(|s| {
-            matches!(s, Source::Inline(_) | Source::External(_))
-        });
+        let (classic, modules): (Vec<Pending>, Vec<Pending>) =
+            sources.into_iter().partition(|(_, source)| {
+                matches!(source, Source::Inline(_) | Source::External(_))
+            });
 
-        for source in classic {
+        for (node, source) in classic {
             let code = match source {
                 Source::Inline(text) => text,
                 Source::External(src) => {
@@ -370,14 +376,18 @@ impl Page {
                 _ => unreachable!("partitioned above"),
             };
 
+            script.set_current_script(Some(node));
             if let Err(error) = script.eval(&code) {
                 // Reported, not fatal: a page with one broken script is still a
                 // page, and the agent needs to know which half it is reading.
                 script.note_error(&error);
             }
         }
+        // Null again once the classic scripts are done, because that is what a
+        // module and a later callback are supposed to see.
+        script.set_current_script(None);
 
-        for source in modules {
+        for (_, source) in modules {
             let (code, path) = match source {
                 Source::ModuleInline(text) => (text, self.url.to_string()),
                 Source::ModuleExternal(src) => {

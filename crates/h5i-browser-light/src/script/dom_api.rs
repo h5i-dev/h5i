@@ -82,6 +82,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("viewport", 0, viewport),
         ("readCookies", 0, read_cookies),
         ("writeCookie", 1, write_cookie),
+        ("scrollToNode", 1, scroll_to_node),
     ];
 
     let api = boa_engine::object::ObjectInitializer::new(context).build();
@@ -546,6 +547,47 @@ fn outer_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
 /// rather than reported unsupported because the engine already computes it; the
 /// previous version returned zeros, which sends a positioning library into a
 /// loop that never converges.
+/// Put a node at the top of the viewport, clamped to the document.
+///
+/// Backs `Element.scrollIntoView`. It moves what a screenshot or a live viewer
+/// shows and nothing about what the text outline contains, because that outline
+/// covers the whole document regardless of where the viewport sits — so a page
+/// that scrolls to its content is not thereby made more readable, only more
+/// watchable.
+fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let mut doc = host.dom.borrow_mut();
+
+    if doc.get_node(id).is_none() {
+        return Ok(JsValue::undefined());
+    }
+
+    // Absolute position, by walking to the root — the same sum `rect` makes,
+    // before the scroll offset is taken back out of it.
+    let mut y = 0.0f32;
+    let mut current = Some(id);
+    for _ in 0..256 {
+        let Some(node_id) = current else { break };
+        let Some(node) = doc.get_node(node_id) else { break };
+        y += node.final_layout.location.y;
+        current = node.parent;
+    }
+
+    let viewport_height = doc.viewport().window_size.1 as f32;
+    let content_height = doc
+        .get_node(doc.root_element().id)
+        .map(|root| root.final_layout.size.height)
+        .unwrap_or(0.0);
+    let max = (content_height - viewport_height).max(0.0);
+
+    doc.set_viewport_scroll(blitz_dom::Point {
+        x: 0.0,
+        y: y.clamp(0.0, max) as f64,
+    });
+    Ok(JsValue::undefined())
+}
+
 fn rect(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;

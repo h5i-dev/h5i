@@ -305,10 +305,53 @@ impl Script {
     /// Record an error the host saw, so it lands with the page's own console
     /// output rather than in a stream nobody reads.
     pub fn note_error(&self, text: &str) {
+        self.name_missing_global(text);
         self.host.console.borrow_mut().push(ConsoleLine {
             level: "error".to_string(),
             text: text.to_string(),
         });
+    }
+
+    /// Record the identifier behind a `ReferenceError` as an API we lack.
+    ///
+    /// The prelude can trap an unknown property on an object it owns, but it
+    /// cannot trap a name that was never declared: `Sentry.init(...)` throws
+    /// before any object is consulted. The thrown message is the only evidence
+    /// there is, and it happens to carry exactly the missing name. Reading it
+    /// back turns six anonymous console lines into six named gaps.
+    fn name_missing_global(&self, text: &str) {
+        let Some((_, rest)) = text.split_once("ReferenceError: ") else {
+            return;
+        };
+        let Some((name, _)) = rest.split_once(" is not defined") else {
+            return;
+        };
+        // Only accept something shaped like an identifier, so a page that puts
+        // this phrasing in a thrown string cannot write arbitrary text into the
+        // list an agent reads.
+        let name = name.trim();
+        let identifier = !name.is_empty()
+            && !name.starts_with(|c: char| c.is_ascii_digit())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+        if identifier {
+            self.host.unsupported.borrow_mut().record(name);
+        }
+    }
+
+    /// Point `document.currentScript` at the element whose code is about to run.
+    ///
+    /// A page reads it to find its own tag and the `data-` attributes
+    /// configuring it. Returning null unconditionally is right for a module and
+    /// wrong for an inline classic script, and the wrong one reads as "this page
+    /// has no configuration" rather than as a gap.
+    pub fn set_current_script(&mut self, node: Option<usize>) {
+        let code = match node {
+            Some(id) => format!("globalThis.__h5iCurrentScript = {id};"),
+            None => "globalThis.__h5iCurrentScript = null;".to_string(),
+        };
+        let _ = self.context.eval(Source::from_bytes(&code));
     }
 
     pub fn console(&self) -> Vec<ConsoleLine> {

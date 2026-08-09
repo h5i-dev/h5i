@@ -404,6 +404,45 @@ reports nothing because it cannot see what is left, which is a different fact
 from there being nothing left. Naming those is the next measurement problem, and
 it has to be solved before another run means much.
 
+### 8.3 Fixing the instrument, which was the actual next task
+
+Two blind spots, closed:
+
+* **Unknown properties on objects we own.** `wrap()` and `document` now return a
+  `Proxy` whose `get` records a name that is on neither the prototype chain nor
+  the object itself. A property we implement takes the plain path, and so does
+  an expando the page assigned and reads back, so **a working page records
+  nothing at all** — the list stays a list of gaps rather than a log of traffic.
+* **Undeclared globals.** No proxy can trap `Sentry.init(...)`: it throws before
+  any object is consulted. The thrown `ReferenceError` carries the name, so
+  `note_error` reads it back. Only identifier-shaped names are accepted, because
+  the list is read by an agent and a page must not get to write into it by
+  throwing a chosen string.
+
+The run immediately after named 15 properties where there had been fog, and a
+second pass named five globals. Answering both rounds moved the errors:
+
+| | before | naming fix | answered |
+|---|---|---|---|
+| named asks | 0 | 15 | 14 |
+| `TypeError` | 13 | 13 | 10 |
+| `ReferenceError` | 6 | 6 | 3 |
+
+**`TypeError` went 8 → 10 partway through, and that was progress.** Exposing
+`HTMLElement` let `class X extends HTMLElement` get *further* before failing, at
+`customElements.define` — which the list now names. A count going up because
+pages reach deeper is the shape of a real measurement.
+
+Two things the remaining list should not be misread as:
+
+* **`$` is not an engine gap.** It is jQuery, from a CDN the corpus policy
+  denied. The page is right to fail; the fix is a policy decision about asset
+  hosts, not a binding.
+* **The residual `TypeError`s are mostly selector misses** — `querySelector`
+  returning null for markup that genuinely is not there. That is correct
+  behaviour, reported honestly, and no amount of API work removes it. Naming
+  *where* it happened needs source positions from Boa, which is a separate job.
+
 What the four turned into:
 
 * **`matchMedia` answers from the real viewport.** Returning `false` to

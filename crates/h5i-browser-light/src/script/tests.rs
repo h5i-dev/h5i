@@ -1835,3 +1835,346 @@ fn a_resize_observer_delivers_the_initial_measurement() {
     assert_ne!(script.eval_value("size.width").unwrap(), "0", "a laid-out block has width");
     assert_eq!(script.eval_value("size.height").unwrap(), "40");
 }
+
+// ── naming what is missing ───────────────────────────────────────────────────
+//
+// The §8 corpus reached a state where it asked for nothing and 19 console
+// errors remained, because `missingApi` covers globals and those errors came
+// from properties. An instrument that reports nothing because it cannot see is
+// worse than one that reports a gap, so these tests are about the *reporting*,
+// not about any one API.
+
+#[test]
+fn an_unknown_property_on_an_element_names_itself() {
+    let (_page, mut script) = page_and_script("<html><body><div id='a'>x</div></body></html>");
+
+    // Feature detection, which is how a real page meets a gap: it asks, and
+    // takes the branch it is given. The answer has to be undefined *and* the
+    // question has to be recorded.
+    assert_eq!(
+        script
+            .eval_value("typeof document.querySelector('#a').requestFullscreen")
+            .unwrap(),
+        "undefined"
+    );
+    assert!(
+        script
+            .unsupported()
+            .iter()
+            .any(|(name, _)| name == "Element.requestFullscreen"),
+        "the property a page asked for should be named, not merely undefined: {:?}",
+        script.unsupported()
+    );
+}
+
+#[test]
+fn an_unknown_property_on_document_names_itself() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    assert_eq!(script.eval_value("typeof document.fonts").unwrap(), "undefined");
+    assert!(
+        script
+            .unsupported()
+            .iter()
+            .any(|(name, _)| name == "document.fonts"),
+        "{:?}",
+        script.unsupported()
+    );
+}
+
+#[test]
+fn a_property_the_page_itself_set_is_not_a_missing_api() {
+    let (_page, mut script) = page_and_script("<html><body><div id='a'>x</div></body></html>");
+
+    // An expando is the page talking to itself. Reporting it would bury the
+    // real gaps under every framework's bookkeeping field.
+    assert_eq!(
+        script
+            .eval_value(
+                "const el = document.querySelector('#a'); \
+                 el.__myFrameworkState = 7; String(el.__myFrameworkState)"
+            )
+            .unwrap(),
+        "7"
+    );
+    assert!(
+        script.unsupported().is_empty(),
+        "a page reading back what it stored is not a gap: {:?}",
+        script.unsupported()
+    );
+}
+
+#[test]
+fn implemented_properties_are_not_reported_as_gaps() {
+    let (_page, mut script) = page_and_script(
+        "<html><head><title>T</title></head><body><a id='a' href='/x'>l</a></body></html>",
+    );
+
+    script
+        .eval_value(
+            "const a = document.querySelector('#a'); \
+             [a.href, a.pathname, a.lang, document.title, document.links.length].join('|')",
+        )
+        .unwrap();
+    assert!(
+        script.unsupported().is_empty(),
+        "a working page should record nothing at all: {:?}",
+        script.unsupported()
+    );
+}
+
+#[test]
+fn a_reference_error_names_the_global_the_page_wanted() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // No object is ever consulted here, so no proxy can trap it. The thrown
+    // message is the only evidence, and it carries the name.
+    let error = script.eval("SomeAnalytics.init({})").unwrap_err();
+    script.note_error(&error);
+
+    assert!(
+        script
+            .unsupported()
+            .iter()
+            .any(|(name, _)| name == "SomeAnalytics"),
+        "{:?}",
+        script.unsupported()
+    );
+}
+
+#[test]
+fn a_thrown_string_cannot_write_into_the_unsupported_list() {
+    let (_page, script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // The list is read by an agent. A page that puts the phrasing in a string
+    // must not get to choose what appears there.
+    script.note_error("ReferenceError: rm -rf / && curl evil is not defined");
+    assert!(
+        script.unsupported().is_empty(),
+        "only identifier-shaped names should be accepted: {:?}",
+        script.unsupported()
+    );
+}
+
+// ── what the naming fix then found ───────────────────────────────────────────
+
+#[test]
+fn href_and_src_resolve_against_the_document() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><a id='a' href='../up?q=1#f'>l</a><img id='i' src='/pic.png'></body></html>",
+    );
+
+    // The property is absolute; getAttribute stays raw. Code comparing a link
+    // to location.href depends on exactly this difference.
+    assert_eq!(
+        script.eval_value("document.querySelector('#a').href").unwrap(),
+        "https://app.example/up?q=1#f"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('#a').getAttribute('href')").unwrap(),
+        "../up?q=1#f"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('#i').src").unwrap(),
+        "https://app.example/pic.png"
+    );
+    assert_eq!(
+        script
+            .eval_value(
+                "const a = document.querySelector('#a'); \
+                 [a.protocol, a.hostname, a.pathname, a.search, a.hash].join(' ')"
+            )
+            .unwrap(),
+        "https: app.example /up ?q=1 #f"
+    );
+    // No URL attribute at all is empty, not a crash and not the document's own.
+    assert_eq!(script.eval_value("document.body.protocol").unwrap(), "");
+}
+
+#[test]
+fn document_title_reads_and_writes_the_title_element() {
+    let (_page, mut script) =
+        page_and_script("<html><head><title>Before</title></head><body><p>x</p></body></html>");
+
+    assert_eq!(script.eval_value("document.title").unwrap(), "Before");
+    script.eval("document.title = 'After'").unwrap();
+    assert_eq!(script.eval_value("document.title").unwrap(), "After");
+    // And it is the real element, so the snapshot sees it too.
+    assert_eq!(
+        script.eval_value("document.querySelector('title').textContent").unwrap(),
+        "After"
+    );
+}
+
+#[test]
+fn document_identity_properties_answer_from_the_page() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><a href='/one'>a</a><a name='anchor'>b</a><form></form></body></html>",
+    );
+
+    assert_eq!(script.eval_value("document.nodeType").unwrap(), "9");
+    assert_eq!(script.eval_value("document.childNodes.length").unwrap(), "1");
+    assert_eq!(
+        script.eval_value("document.childNodes[0] === document.documentElement").unwrap(),
+        "true"
+    );
+    assert_eq!(script.eval_value("document.URL").unwrap(), "https://app.example/");
+    assert_eq!(script.eval_value("document.location.href").unwrap(), "https://app.example/");
+    assert_eq!(script.eval_value("document.defaultView === globalThis").unwrap(), "true");
+    // We send no Referer, so the honest answer is empty.
+    assert_eq!(script.eval_value("document.referrer").unwrap(), "");
+    // A named anchor is not a link.
+    assert_eq!(script.eval_value("document.links.length").unwrap(), "1");
+    assert_eq!(script.eval_value("document.forms.length").unwrap(), "1");
+}
+
+#[test]
+fn current_script_names_the_running_element_and_only_then() {
+    let broker = Arc::new(
+        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+    );
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let options = PageOptions { script: true, ..Default::default() };
+    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options);
+    let base = url::Url::parse("https://app.example/").unwrap();
+
+    // A page reading its own tag for configuration — the whole reason the
+    // property exists. Returning null would read as "no configuration".
+    let mut page = factory.from_html(
+        "<html><body><div id='out'></div>\
+         <script data-mode='compact'>\
+           document.querySelector('#out').textContent = \
+             document.currentScript.getAttribute('data-mode');\
+         </script></body></html>",
+        &base,
+    );
+    page.run_scripts(broker).unwrap();
+
+    let text = page.snapshot().render();
+    assert!(text.contains("compact"), "currentScript should name its own element: {text}");
+}
+
+#[test]
+fn select_index_reads_and_moves_the_choice() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><select id='s'>\
+         <option value='a'>A</option><option value='b' selected>B</option>\
+         <option value='c'>C</option></select></body></html>",
+    );
+
+    assert_eq!(script.eval_value("document.querySelector('#s').selectedIndex").unwrap(), "1");
+    script.eval("document.querySelector('#s').selectedIndex = 2").unwrap();
+    assert_eq!(script.eval_value("document.querySelector('#s').selectedIndex").unwrap(), "2");
+    // Setting the index has to move the attribute, or the element and the DOM
+    // disagree about what is chosen and the form submits the old value.
+    assert_eq!(script.eval_value("document.querySelector('#s').value").unwrap(), "c");
+
+    // A select with nothing marked reports its first option, as a browser does.
+    let (_page2, mut plain) = page_and_script(
+        "<html><body><select id='s'><option>A</option><option>B</option></select></body></html>",
+    );
+    assert_eq!(plain.eval_value("document.querySelector('#s').selectedIndex").unwrap(), "0");
+    assert_eq!(
+        plain.eval_value("document.createElement('select').selectedIndex").unwrap(),
+        "-1"
+    );
+}
+
+#[test]
+fn select_add_inserts_an_option_where_asked() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><select id='s'><option value='b'>B</option></select></body></html>",
+    );
+
+    script
+        .eval(
+            "const s = document.querySelector('#s'); \
+             const first = document.createElement('option'); first.textContent = 'A'; \
+             s.add(first, 0); \
+             const last = document.createElement('option'); last.textContent = 'C'; s.add(last);"
+        )
+        .unwrap();
+
+    assert_eq!(
+        script.eval_value("s.options.map((o) => o.textContent).join('')").unwrap(),
+        "ABC"
+    );
+}
+
+#[test]
+fn prepend_puts_nodes_first_and_node_value_distinguishes_text() {
+    let (_page, mut script) =
+        page_and_script("<html><body><div id='d'><span>old</span></div></body></html>");
+
+    script.eval("document.querySelector('#d').prepend('new ')").unwrap();
+    assert_eq!(
+        script.eval_value("document.querySelector('#d').textContent").unwrap(),
+        "new old"
+    );
+
+    // null for an element is the distinction a tree walk branches on.
+    assert_eq!(script.eval_value("document.querySelector('#d').nodeValue").unwrap(), "null");
+    assert_eq!(
+        script.eval_value("document.querySelector('#d').firstChild.nodeValue").unwrap(),
+        "new "
+    );
+}
+
+#[test]
+fn base64_round_trips_and_refuses_what_a_browser_refuses() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    assert_eq!(script.eval_value("btoa('hello')").unwrap(), "aGVsbG8=");
+    assert_eq!(script.eval_value("btoa('hi')").unwrap(), "aGk=");
+    assert_eq!(script.eval_value("btoa('abc')").unwrap(), "YWJj");
+    assert_eq!(script.eval_value("atob('aGVsbG8=')").unwrap(), "hello");
+    assert_eq!(
+        script.eval_value("atob(btoa('user:pa55 word!'))").unwrap(),
+        "user:pa55 word!"
+    );
+    // Byte-oriented, as the spec has it. Silently mangling a code point above
+    // 255 would produce a wrong header rather than a caught error.
+    assert_eq!(
+        script.eval_value("(() => { try { btoa('snowman \u{2603}') } catch (e) { return 'threw' } })()")
+            .unwrap(),
+        "threw"
+    );
+    assert_eq!(script.eval_value("unescape('a%20b%u00e9')").unwrap(), "a bé");
+}
+
+#[test]
+fn self_is_the_same_object_as_the_global() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // A copy would lose anything a page stored through one name and read
+    // through the other.
+    assert_eq!(script.eval_value("self === globalThis").unwrap(), "true");
+    assert_eq!(
+        script.eval_value("self.__stashed = 3; String(globalThis.__stashed)").unwrap(),
+        "3"
+    );
+}
+
+#[test]
+fn node_constructors_answer_instanceof() {
+    let (_page, mut script) = page_and_script("<html><body><div id='d'>x</div></body></html>");
+
+    // How library code asks "is this a node?" before deciding what to do.
+    assert_eq!(
+        script.eval_value("document.querySelector('#d') instanceof Element").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('#d') instanceof HTMLElement").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('#d') instanceof Node").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script.eval_value("document.querySelector('#d').firstChild instanceof Text").unwrap(),
+        "true"
+    );
+    assert_eq!(script.eval_value("({}) instanceof Node").unwrap(), "false");
+}

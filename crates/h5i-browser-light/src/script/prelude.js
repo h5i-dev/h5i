@@ -22,9 +22,39 @@
     if (id === null || id === undefined) return null;
     let existing = wrappers.get(id);
     if (existing) return existing;
-    const node = api.isElement(id) ? new Element(id) : new Text(id);
+    const node = observed(api.isElement(id) ? new Element(id) : new Text(id), "Element");
     wrappers.set(id, node);
     return node;
+  }
+
+  // Wrap an object we own so that reading a property it does not have is
+  // *recorded* rather than silently undefined.
+  //
+  // The corpus found the gap this closes. `missingApi` names globals, so
+  // `WebSocket` reports itself — but a page reading `el.scrollIntoView` or
+  // `document.activeElement` got `undefined`, then threw
+  // `TypeError: not a callable function` somewhere further along, and nothing
+  // anywhere named the property. The measurement could not see what was left,
+  // which is a different thing from nothing being left.
+  //
+  // Only genuinely unknown names are recorded. Anything on the prototype chain
+  // is a property we implement, and anything the page itself assigned is an
+  // expando it expects to read back — both take the plain path, so a working
+  // page records nothing at all.
+  function observed(target, label) {
+    return new Proxy(target, {
+      get(object, property, receiver) {
+        if (typeof property === "symbol" || property in object) {
+          return Reflect.get(object, property, receiver);
+        }
+        // `then` is probed by the promise machinery on anything it is handed;
+        // recording it would report a missing API every time a node passed
+        // through an await.
+        if (property === "then") return undefined;
+        api.unsupported(`${label}.${String(property)}`);
+        return undefined;
+      },
+    });
   }
 
   class ClassList {
@@ -64,6 +94,13 @@
     get childNodes() { return api.children(this._id).map(wrap); }
     get firstChild() { return this.childNodes[0] || null; }
     get lastChild() { const c = this.childNodes; return c[c.length - 1] || null; }
+
+    // Text for a text node, null for an element — the distinction is the whole
+    // reason the property exists, and code that walks a tree branches on it.
+    get nodeValue() { return this.nodeType === 3 ? api.getText(this._id) : null; }
+    set nodeValue(value) {
+      if (this.nodeType === 3) this.textContent = value;
+    }
 
     get textContent() { return api.getText(this._id); }
     set textContent(value) {
@@ -131,6 +168,13 @@
       const parent = this.parentNode;
       api.removeNode(this._id);
       if (parent) childListRecord(parent, [], [this]);
+    }
+    prepend(...items) {
+      const first = this.firstChild;
+      for (const item of items) {
+        const node = item instanceof Node ? item : document.createTextNode(String(item));
+        first ? this.insertBefore(node, first) : this.appendChild(node);
+      }
     }
     append(...items) {
       for (const item of items) {
@@ -249,6 +293,74 @@
       if (on) api.setAttr(this._id, "selected", "");
       else api.removeAttr(this._id, "selected");
     }
+    // `href` and `src` are *resolved*, which is the difference between the
+    // property and `getAttribute`. A page comparing `link.href` to
+    // `location.href`, or reading `script.src` to find its own origin, gets the
+    // absolute URL a browser would give it rather than the raw `../x` in the
+    // markup.
+    get href() { return this._resolved("href"); }
+    set href(v) { this.setAttribute("href", v); }
+    get src() { return this._resolved("src"); }
+    set src(v) { this.setAttribute("src", v); }
+    _resolved(name) {
+      const raw = api.getAttr(this._id, name);
+      if (raw === null) return "";
+      const parts = api.parseUrl(String(raw), globalThis.__h5iUrl);
+      return parts ? parts.href : raw;
+    }
+
+    // The pieces of that URL, which is how link-handling code decides whether a
+    // click stays on the site. Empty on an element with no URL attribute, as in
+    // a browser, rather than absent.
+    get protocol() { return this._urlPart("protocol"); }
+    get hostname() { return this._urlPart("hostname"); }
+    get host() { return this._urlPart("host"); }
+    get port() { return this._urlPart("port"); }
+    get pathname() { return this._urlPart("pathname"); }
+    get search() { return this._urlPart("search"); }
+    get hash() { return this._urlPart("hash"); }
+    get origin() { return this._urlPart("origin"); }
+    _urlPart(part) {
+      const raw = api.getAttr(this._id, "href") ?? api.getAttr(this._id, "src");
+      if (raw === null) return "";
+      const parts = api.parseUrl(String(raw), globalThis.__h5iUrl);
+      return parts ? parts[part] : "";
+    }
+
+    get lang() { return api.getAttr(this._id, "lang") || ""; }
+    set lang(v) { this.setAttribute("lang", v); }
+    get title() { return api.getAttr(this._id, "title") || ""; }
+    set title(v) { this.setAttribute("title", v); }
+    get alt() { return api.getAttr(this._id, "alt") || ""; }
+    set alt(v) { this.setAttribute("alt", v); }
+
+    // Bring the element into view for a screenshot or a live viewer. The
+    // outline an agent reads covers the whole document either way, so this
+    // changes what a *human* watching sees and nothing about what is readable.
+    scrollIntoView() { api.scrollToNode(this._id); }
+
+    // `<select>`. `selectedIndex` is how form code both reads and sets a
+    // choice, and assigning it has to move the `selected` attribute or the
+    // element and the DOM disagree about what is chosen.
+    get selectedIndex() {
+      const options = this.options;
+      const at = options.findIndex((o) => o.selected);
+      // A `<select>` with nothing marked selects its first option; -1 is only
+      // right when there are no options at all.
+      if (at >= 0) return at;
+      return options.length ? 0 : -1;
+    }
+    set selectedIndex(index) {
+      const options = this.options;
+      const want = Number(index);
+      options.forEach((option, at) => { option.selected = at === want; });
+    }
+    add(option, before) {
+      if (before === undefined || before === null) return this.appendChild(option);
+      const anchor = typeof before === "number" ? this.options[before] : before;
+      return anchor ? this.insertBefore(option, anchor) : this.appendChild(option);
+    }
+
     get disabled() { return api.getAttr(this._id, "disabled") !== null; }
     get name() { return api.getAttr(this._id, "name") || ""; }
     get type() { return (api.getAttr(this._id, "type") || "text").toLowerCase(); }
@@ -991,7 +1103,7 @@
 
   // ── document and window ──────────────────────────────────────────────────
 
-  const document = {
+  const documentImpl = {
     get documentElement() { return wrap(api.root()); },
     get body() { return wrap(api.body()); },
     get head() { return wrap(api.query("head", 0)); },
@@ -1018,7 +1130,60 @@
     get cookie() { return api.readCookies(); },
     set cookie(value) { api.writeCookie(String(value)); },
     get readyState() { return "complete"; },
+
+    // A document is node type 9 and its child is the root element. Scripts that
+    // walk upward from a node and stop at the document depend on both.
+    get nodeType() { return 9; },
+    get nodeName() { return "#document"; },
+    get childNodes() { const root = wrap(api.root()); return root ? [root] : []; },
+    get defaultView() { return globalThis; },
+    get location() { return location; },
+    get URL() { return globalThis.__h5iUrl; },
+    get documentURI() { return globalThis.__h5iUrl; },
+
+    // Empty, and true: this engine sends no `Referer`, so a page told anything
+    // else would be told a lie about a request it can check.
+    get referrer() { return ""; },
+
+    get title() {
+      const el = wrap(api.query("title", 0));
+      return el ? el.textContent : "";
+    },
+    set title(value) {
+      let el = wrap(api.query("title", 0));
+      if (!el) {
+        const head = wrap(api.query("head", 0));
+        if (!head) return;
+        el = document.createElement("title");
+        head.appendChild(el);
+      }
+      el.textContent = String(value);
+    },
+
+    // Set by the host around each classic script, null inside a module or a
+    // later callback — the same rule a browser follows.
+    get currentScript() {
+      const id = globalThis.__h5iCurrentScript;
+      return id === null || id === undefined ? null : wrap(id);
+    },
+
+    get forms() { return api.queryAll("form", 0).map(wrap); },
+    get images() { return api.queryAll("img", 0).map(wrap); },
+    get scripts() { return api.queryAll("script", 0).map(wrap); },
+    // Only anchors that actually have an href, which is what the collection is
+    // defined to hold — a named anchor is not a link.
+    get links() { return api.queryAll("a[href], area[href]", 0).map(wrap); },
+
+    // Nothing is focused until something is: this engine has no focus ring, and
+    // the body is what a browser reports in that state.
+    get activeElement() { return wrap(api.body()); },
+    get hidden() { return false; },
+    get visibilityState() { return "visible"; },
   };
+
+  // Same rule for `document`: a page reading `document.activeElement` or
+  // `document.fonts` should produce a named gap, not a silent undefined.
+  const document = observed(documentImpl, "document");
 
   const console = {
     log: (...a) => api.log("log", a.map(render).join(" ")),
@@ -1027,6 +1192,67 @@
     error: (...a) => api.log("error", a.map(render).join(" ")),
     debug: (...a) => api.log("debug", a.map(render).join(" ")),
   };
+
+  // ── base64 and the legacy escapes ────────────────────────────────────────
+  //
+  // Named by the corpus once ReferenceErrors could name themselves. Small
+  // enough that a stub reporting them as missing would cost more than the
+  // implementation, and a page encoding a data: URI or a basic-auth header
+  // fails outright without them.
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+  function btoa(input) {
+    const text = String(input);
+    let out = "";
+    for (let i = 0; i < text.length; i += 3) {
+      const a = text.charCodeAt(i);
+      const b = text.charCodeAt(i + 1);
+      const c = text.charCodeAt(i + 2);
+      // Byte-oriented by definition: btoa on a code point above 255 throws in
+      // a browser rather than mangling it, and a page that catches that is
+      // entitled to the same answer here.
+      if (a > 255 || (b === b && b > 255) || (c === c && c > 255)) {
+        throw new TypeError("btoa: the string contains characters outside of Latin1");
+      }
+      const triple = (a << 16) | ((b || 0) << 8) | (c || 0);
+      out += B64[(triple >> 18) & 63] + B64[(triple >> 12) & 63]
+        + (Number.isNaN(b) ? "=" : B64[(triple >> 6) & 63])
+        + (Number.isNaN(c) ? "=" : B64[triple & 63]);
+    }
+    return out;
+  }
+
+  function atob(input) {
+    const text = String(input).replace(/[ \t\n\f\r]/g, "").replace(/=+$/, "");
+    let out = "";
+    let bits = 0;
+    let held = 0;
+    for (const ch of text) {
+      const value = B64.indexOf(ch);
+      if (value < 0) throw new TypeError("atob: the string is not valid base64");
+      held = (held << 6) | value;
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        out += String.fromCharCode((held >> bits) & 255);
+      }
+    }
+    return out;
+  }
+
+  function escape(input) {
+    return String(input).replace(/[^A-Za-z0-9@*_+\-./]/g, (ch) => {
+      const code = ch.charCodeAt(0);
+      return code < 256
+        ? "%" + code.toString(16).toUpperCase().padStart(2, "0")
+        : "%u" + code.toString(16).toUpperCase().padStart(4, "0");
+    });
+  }
+
+  function unescape(input) {
+    return String(input).replace(/%u([0-9a-fA-F]{4})|%([0-9a-fA-F]{2})/g, (_m, wide, byte) =>
+      String.fromCharCode(parseInt(wide || byte, 16)));
+  }
 
   function render(v) {
     if (typeof v === "string") return v;
@@ -1175,6 +1401,19 @@
     },
     // Named rather than absent. A page reaching for these gets a message that
     // says which API it wanted, and the name reaches the snapshot.
+    // `self` is `window` under another name, and worker-shaped code reaches for
+    // it first. It has to be the same object, not a copy, or a page that stores
+    // state on one and reads it from the other loses it.
+    get self() { return globalThis; },
+    btoa, atob, escape, unescape,
+
+    // The constructors, exposed for `instanceof` — which is how library code
+    // asks "is this a node?" before deciding what to do with it. `HTMLElement`
+    // is `Element` here because this engine has one element class; the check
+    // that matters is the one pages actually write.
+    Node, Element, Text, DocumentFragment,
+    HTMLElement: Element,
+
     customElements: missingApi("customElements"),
     WebSocket: missingApi("WebSocket"),
     Worker: missingApi("Worker"),
