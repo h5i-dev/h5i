@@ -867,6 +867,44 @@ functions and DOM nodes say what they are; and an object that stringifies to
 
 ---
 
+### 8.13 Insertion was not moving nodes, which is what a keyed diff is made of
+
+preactjs.com rendered 178 lines without script and 65 with it, with no errors
+and nothing on the unsupported list — its shell and its sidebar, and nothing
+where the article should be. Four things had to be ruled out before the cause
+showed itself: the content JSON arrived (35 KB, 200), `DOMParser` parsed all
+31 KB of it correctly (557 elements, 108 body children), the page settled rather
+than being cut off, and the walk a markup renderer performs over a parsed tree
+worked exactly as it should.
+
+The bug was one line below all of that. **Inserting a node that already had a
+parent lost it:**
+
+```
+built                    ABC   (3 children)
+insertBefore(C, A)       AB    (2)   <- C gone
+insertBefore(A, B)       B     (1)   <- A gone
+```
+
+The DOM defines insertion as removing the node from its old parent first. This
+engine skipped that, and the tree underneath drops a node inserted while still
+parented — so every *move* was a deletion. That is the operation a keyed diff is
+built out of: preact reorders by re-inserting nodes it already holds, and each
+reorder threw one away until the article was gone.
+
+Detaching first fixes it, and preactjs.com now reads **178 lines with script,
+matching its prerendered reading exactly**.
+
+Two things worth keeping from how it was found. The failure was invisible to
+every instrument in this project — no error, no unnamed API, no anonymous
+console line — because nothing was *wrong* from the page's point of view; it
+asked for a move and got a deletion. And the fixture harness had been running
+every page's scripts twice, since `PageFactory::from_html` already runs them:
+harmless for a script that assigns, wrong for one that appends. Both were found
+by writing a test that appends.
+
+---
+
 ## 10. What is next, 2026-08-09
 
 Tiers 0 through 4 of the plan this section replaces are done. What the work
