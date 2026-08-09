@@ -984,7 +984,14 @@ itself surfaced, in the order the evidence supports:
    trace. Two are the Boa parser bug of §8.11 and are upstream's to fix.
 2. ~~Boa 0.21~~ — **done**, pinned to a revision of upstream `main` (§8.10).
    The pin should move to a release when boa cuts one, and the `[patch]` block
-   deleted at that point.
+   deleted then. That is no longer a thing to remember:
+   `scripts/check_boa_release.sh` asks crates.io on every CI run whether a
+   published boa's icu requirements have stopped clashing with blitz's parley,
+   and fails the build the day one has. It reads parley's requirement from the
+   lockfile rather than assuming it, so it stays true when blitz moves, and it
+   has a floor at 0.21 — the first version with source positions — because
+   older releases predate the icu dependency and so "do not clash" while being
+   unusable. The first draft recommended 0.17 for exactly that reason.
 3. **Two sites that now time out**, lit.dev and material-web, because they get
    further than they used to. Either the engine gets faster or the corpus learns
    to report a partial render as a result rather than a failure.
