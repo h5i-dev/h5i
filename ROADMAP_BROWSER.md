@@ -650,78 +650,61 @@ Not bindings, and the reason four pages read as empty:
 
 ### 8.9 What it costs, measured
 
-`cargo run --release --example perf`, on this machine, 2026-08-09:
+`cargo run --release --example perf`. Two rounds, and the second is mostly the
+Boa upgrade paying for itself:
 
 ```
-reading a page                   no script    script     outline
-10 sections   (~90 nodes)            2.0ms    20.3ms      60 lines
-100 sections  (~900 nodes)          10.4ms    29.9ms     500 lines
-500 sections  (~4500 nodes)         65.5ms    85.9ms     500 lines
-
-memory: 15 MiB resident per 500-section page
-
-a DOM property read, over 20000 reads
-  plain object, no proxy             775 ns
-  watched node, known property      2460 ns
-  watched node, read from tree      6173 ns
-    → the proxy trap                1685 ns
-    → reaching into the tree        3712 ns
+a DOM property read              on 0.19      on main
+  plain object, no proxy            775 ns       92 ns
+  watched node, known property     2460 ns      706 ns
+  watched node, read from tree     6173 ns     1534 ns
 ```
 
-Three things worth saying plainly:
+Four times faster for nothing but a dependency bump, which is the single
+strongest argument for pinning a revision over a five-month-old release.
 
-1. **Starting the script realm costs ~20ms flat**, which dominates a small page.
-   That is the prelude being parsed and evaluated once per page.
-2. **The reporting proxy costs ~1.7µs per property read.** That is the price of
-   being able to name what a page asked for and we lack, paid on the hottest
-   path in the engine.
-3. **An optimisation was tried and rejected.** Precomputing the set of known
-   property names, so the trap does a hash lookup instead of walking the
-   prototype chain, changed nothing measurable — the cost is Boa dispatching
-   into a JavaScript trap at all, not the test inside it. The complexity was
-   reverted rather than kept for a number that did not move.
+Three things then changed on our side, each measured before and after:
 
----
+1. **A page with no script no longer builds a realm.** That costs ~15 ms — 114
+   KiB of prelude parsed and evaluated — and a page with nothing to run was
+   paying all of it for a realm never asked a question. It is also reported
+   correctly now: "had none to run" is a different fact from "script is off",
+   and a page with no script is *settled* rather than unknown.
+2. **Collections are no longer watched.** Wrapping a query result in the
+   reporting proxy cost **3.9x on iteration** — 674 µs against 174 µs for a
+   400-node result — because every index read goes through a trap and
+   `for (const el of query)` is the hottest line in DOM code. An array already
+   answers everything a `NodeList` does except `item` and `namedItem`, which are
+   implemented, so the naming it bought was small and the price was not.
+3. **`matches()` is a direct predicate.** It had been asking the *parent* for
+   all matching descendants and checking membership, which made `closest()`
+   walk a subtree per ancestor — quadratic on any page whose framework calls it
+   in a render loop, and worth minutes on a real site.
 
-## 9. What "production-grade" means here
+```
+reading a page                no script     script     outline
+10 sections  (~90 nodes)          1.5ms     37.4ms      60 lines
+100 sections (~900 nodes)        12.7ms     54.1ms     500 lines
+500 sections (~4500 nodes)       69.8ms    166.2ms     500 lines
 
-Not "80% of the web". That number splits by an order of magnitude — reading
-server-rendered pages is close to solved and mostly does not need script at all;
-driving interactive applications is Kitesurf's 215,000 web platform tests, which
-is quarters of work and a different product. The bar for this engine is narrower
-and checkable:
+starting the script realm        15.9ms per page
+queries, 200 calls each
+  document.querySelectorAll        361 µs
+  section.querySelectorAll           6 µs
+  iterating a 400-node result      169 µs
+```
 
-1. ~~§4 fixed~~, so nothing corrupts a page silently. **Done.**
-2. ~~§3.1 fixed~~, so an untrusted page cannot read the box's dev server.
-   **Done** — origin-aware policy.
-3. ~~§3.2 answered~~, so cookies and script sharing an address space is a
-   decision. **Done** — one origin per session, jar cleared on leaving it.
-4. A production React build renders, is drivable, and reports honestly what it
-   could not do. **Partly.** It renders and reports honestly; it does not
-   hydrate — see the fourteen attributed module failures in §8.7.
-5. ~~Every page either works or says which API it needed~~, never a silent wrong
-   answer. **Done, and this is the one that took the most work**: an empty ask
-   list beside an unattributable error is the same lie in a nicer shape, which
-   is why §8.3 and §8.7 exist. Both corpora now report **zero anonymous errors**.
-6. `h5i box view`, `--term` and `h5i ui` all attach and stay attached, with the
-   control lock enforced. **Unchanged.**
-7. ~~**LOGIN mode**~~, so a human typing a credential is not doing it on a page
-   the agent can snapshot. **Done** — `session login`, refusing every verb that
-   reads or drives the page while a human is typing.
+The remaining fixed cost is the realm: 114 KiB of JavaScript parsed per page.
+Reusing one across navigations would remove it, and is *not* safe — a page could
+leave state for whatever loads next, which is the same reason the cookie jar is
+cleared across origins.
 
-The differentiator is no longer only half-built: the engine stamps the causal
-link, the action log records which receipts each verb produced, and **`h5i ui`
-now draws it** — a click and the requests it caused, joined by receipt number
-rather than inferred from timing. The semantic delta shipped alongside it, so a
-step costs what the step did rather than the size of the page.
-
-The differentiator is not on that list because it is not a browser feature:
-action-to-request correlation rendered in `h5i ui`, and a semantic delta instead
-of a full outline every step. The engine now stamps the causal link; the console
-does not yet draw it. That is the work that makes this h5i's browser rather than
-a small browser that happens to run here.
-
----
+**Measured and rejected**, twice, and both are recorded so nobody tries again:
+precomputing the set of known property names so the reporting trap does a hash
+lookup instead of walking the prototype chain changed nothing (the cost is Boa
+dispatching into a JavaScript trap at all); and raising the loop bound from 5 to
+50 million turned a site that returned in three minutes into one that had not
+returned in four.
 
 ### 8.10 Source positions, and what they found
 

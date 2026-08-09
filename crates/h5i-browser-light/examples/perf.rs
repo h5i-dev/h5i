@@ -34,6 +34,18 @@ fn document(rows: usize) -> String {
     html
 }
 
+/// The same page, with a script on it.
+///
+/// The plain document has none, so once a scriptless page stopped building a
+/// realm the "script" column measured nothing at all. A column that reports a
+/// cost nobody pays is worse than no column.
+fn document_with_script(rows: usize) -> String {
+    let mut html = document(rows);
+    let script = "<script>        let seen = 0;         for (const a of document.querySelectorAll('a')) seen += a.textContent.length;         document.querySelector('h2').setAttribute('data-seen', String(seen));        </script>";
+    html.insert_str(html.len() - "</body></html>".len(), script);
+    html
+}
+
 fn factory(script: bool) -> (PageFactory, Arc<Broker>) {
     let broker = Arc::new(
         Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
@@ -100,8 +112,9 @@ fn main() {
         });
 
         let (scripted, broker) = factory(true);
+        let scripted_html = document_with_script(rows);
         let with_script = time(5, || {
-            let mut page = scripted.from_html(&html, &url);
+            let mut page = scripted.from_html(&scripted_html, &url);
             page.run_scripts(broker.clone()).expect("realm");
             page.refresh();
             let _ = page.snapshot();
@@ -141,6 +154,65 @@ fn main() {
             (after.saturating_sub(before)) as f64 / 4.0 / 1024.0
         );
         drop(pages);
+    }
+
+    // ── starting the realm ──────────────────────────────────────────────────
+    //
+    // A fixed cost paid once per page, which dominates a small one: the prelude
+    // is parsed and evaluated from scratch every time.
+    {
+        let url = url::Url::parse("https://bench.example/").unwrap();
+        let (factory, broker) = factory(true);
+        let page = factory.from_html(&document(10), &url);
+
+        let start = time(5, || {
+            let _ = h5i_browser_light::script::Script::new(page.dom(), broker.clone(), &url)
+                .expect("realm");
+        });
+        println!("\nstarting the script realm: {start:.1?} per page");
+        println!(
+            "  prelude is {} lines / {} KiB of JavaScript, parsed and evaluated each time",
+            include_str!("../src/script/prelude.js").lines().count(),
+            include_str!("../src/script/prelude.js").len() / 1024,
+        );
+    }
+
+    // ── queries and collections ─────────────────────────────────────────────
+    {
+        let url = url::Url::parse("https://bench.example/").unwrap();
+        let (factory, broker) = factory(true);
+        let mut page = factory.from_html(&document(200), &url);
+        page.run_scripts(broker.clone()).expect("realm");
+        let mut script =
+            h5i_browser_light::script::Script::new(page.dom(), broker, &url).expect("realm");
+
+        let document_wide = time(5, || {
+            script
+                .eval("(() => { let n = 0; for (let i = 0; i < 200; i++) \
+                        n += document.querySelectorAll('a').length; return n })()")
+                .expect("runs");
+        });
+        let scoped = time(5, || {
+            script
+                .eval("(() => { const s = document.querySelector('section'); let n = 0; \
+                        for (let i = 0; i < 200; i++) n += s.querySelectorAll('a').length; \
+                        return n })()")
+                .expect("runs");
+        });
+        let iterate = time(5, || {
+            script
+                .eval("(() => { const all = document.querySelectorAll('a'); let n = 0; \
+                        for (let i = 0; i < 200; i++) for (const a of all) n += 1; return n })()")
+                .expect("runs");
+        });
+
+        println!("\nqueries over a 200-section page (1800 nodes), 200 calls each:");
+        println!("  document.querySelectorAll('a')  {document_wide:>9.1?}  ({:.0} us each)",
+            document_wide.as_nanos() as f64 / 200.0 / 1000.0);
+        println!("  section.querySelectorAll('a')   {scoped:>9.1?}  ({:.0} us each)",
+            scoped.as_nanos() as f64 / 200.0 / 1000.0);
+        println!("  iterating a 400-node result     {iterate:>9.1?}  ({:.0} us each)",
+            iterate.as_nanos() as f64 / 200.0 / 1000.0);
     }
 
     // ── the reporting proxy ─────────────────────────────────────────────────

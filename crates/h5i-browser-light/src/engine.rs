@@ -137,6 +137,11 @@ pub struct Page {
     /// flipping it is a threat-model decision rather than a feature flag
     /// (ROADMAP §12.5).
     script: Option<crate::script::Script>,
+    /// Whether `run_scripts` was called, regardless of whether it built a realm.
+    ///
+    /// A page with no script elements never gets one, so `script.is_some()`
+    /// alone cannot tell "script is off" from "there was nothing to run".
+    ran_scripts: bool,
     /// What the last settle did, for the snapshot to report.
     settled: Option<crate::script::Settled>,
     /// Engine-level facts the next snapshot should carry.
@@ -321,6 +326,7 @@ impl Page {
             options,
             pending_navigation,
             script: None,
+            ran_scripts: false,
             settled: None,
             notes: Vec::new(),
         }
@@ -413,6 +419,24 @@ impl Page {
                 })
                 .unwrap_or_default()
         };
+
+        // Nothing to run means nothing to build. Starting the realm costs about
+        // 15ms — the prelude is 113 KiB of JavaScript, parsed and evaluated from
+        // scratch — and a page with no script elements was paying all of it for
+        // a realm that would never be asked a question.
+        if sources.is_empty() {
+            self.ran_scripts = true;
+            // Trivially settled, and said so rather than left null: a page with
+            // no script has finished by definition, and "we do not know" is a
+            // different answer that an agent would have to act on differently.
+            self.settled = Some(crate::script::Settled {
+                elapsed_ms: 0,
+                timers_run: 0,
+                cut_off: false,
+                pending_timers: 0,
+            });
+            return Ok(());
+        }
 
         let mut script = crate::script::Script::new(self.dom(), broker.clone(), &self.url)
             .map_err(H5iError::Metadata)?;
@@ -530,6 +554,7 @@ impl Page {
         let _ = script.take_requests();
         self.settled = Some(settled);
         self.script = Some(script);
+        self.ran_scripts = true;
         Ok(())
     }
 
@@ -575,7 +600,10 @@ impl Page {
     }
 
     pub fn has_script(&self) -> bool {
-        self.script.is_some()
+        // Whether this page ran script, not whether a realm exists: a page with
+        // no script elements never builds one, and reporting that as "script is
+        // off" would describe the session wrongly.
+        self.ran_scripts
     }
 
     /// A handle to the document, for the script realm.
@@ -620,7 +648,14 @@ impl Page {
                 "this page produced no readable content. It has {scripts} script element(s) \
                  and this engine {}. If it needs JavaScript beyond what is listed above, the \
                  chromium engine has more of it.",
-                if self.script.is_some() { "ran them" } else { "did not run them (script is off)" }
+                match (self.script.is_some(), self.ran_scripts, scripts) {
+                    (true, _, _) => "ran them",
+                    // No realm because there was nothing to run, which is a
+                    // different fact from script being switched off.
+                    (false, true, 0) => "had none to run",
+                    (false, true, _) => "ran them",
+                    (false, false, _) => "did not run them (script is off)",
+                }
             ));
         }
 

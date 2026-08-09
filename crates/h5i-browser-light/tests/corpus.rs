@@ -374,3 +374,26 @@ fn a_logged_error_says_what_it_was() {
         reading.errors
     );
 }
+
+/// A page with no script must not pay for a script realm. Building one costs
+/// about 15 ms — 114 KiB of prelude parsed and evaluated — and a page with
+/// nothing to run was paying all of it for a realm never asked a question.
+#[test]
+fn a_page_with_no_script_is_still_settled_and_says_why() {
+    let reading = read("<html><body><p>plain markup</p></body></html>");
+
+    reading.assert_clean("a page with no script");
+    reading.assert_shows("plain markup");
+}
+
+/// And the note distinguishes "there was nothing to run" from "script is off",
+/// which are different facts about why a page might be empty.
+#[test]
+fn an_empty_page_distinguishes_no_script_from_script_disabled() {
+    let reading = read("<html><head><title>t</title></head><body></body></html>");
+    assert!(
+        reading.outline.contains("had none to run"),
+        "{}",
+        reading.outline
+    );
+}

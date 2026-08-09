@@ -1687,7 +1687,12 @@ fn an_empty_page_says_it_is_empty_rather_than_saying_nothing() {
 
     let rendered = page.snapshot().render();
     assert!(rendered.contains("no readable content"), "{rendered}");
-    assert!(rendered.contains("ran them"), "it says whether script ran: {rendered}");
+    // The page has no script elements, and saying "ran them" about nothing is
+    // less useful than saying there was nothing to run.
+    assert!(
+        rendered.contains("had none to run"),
+        "it says what happened to the page's script: {rendered}"
+    );
 }
 
 // ── what the corpus asked for ─────────────────────────────────────────────

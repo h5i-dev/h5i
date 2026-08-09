@@ -26,14 +26,20 @@
   /// was `undefined`, and calling it is "not a callable function", which is
   /// exactly the error fourteen module failures reported and nothing named.
   ///
-  /// Watched like everything else, so the next missing method reports itself
-  /// instead of surfacing as an uncallable undefined somewhere else entirely.
+  /// Deliberately *not* watched, and this one was measured rather than argued.
+  /// Wrapping the list in the reporting proxy cost 3.9x on iteration — 674us
+  /// against 174us for a 400-node result — because every index read goes
+  /// through a trap, and `for (const el of query)` is the hottest line in DOM
+  /// code. An array already answers everything a `NodeList` does except `item`
+  /// and `namedItem`, which are right here, so the naming it bought was small
+  /// and the price was not.
   function collection(nodes, label) {
+    void label;
     const list = nodes.slice();
     list.item = (index) => list[index] ?? null;
     list.namedItem = (name) =>
       list.find((n) => n.id === String(name) || n.getAttribute?.("name") === String(name)) ?? null;
-    return observed(list, label || "NodeList");
+    return list;
   }
 
   function wrap(id) {
