@@ -1189,6 +1189,42 @@ only knew `'` would have missed it while looking like it had checked.
 
 ---
 
+### 8.21 Hidden content is no longer read, and Chromium settled the argument
+
+The outline carried `display: none` content, the `hidden` attribute, and
+`visibility: hidden`. Two problems, and the second is the serious one: the
+outline claims to be an account of what a page *shows*, and invisible text is the
+classic vehicle for instructions aimed at whatever is reading it — the threat the
+untrusted-content fence exists for, walked around by text a human never meets.
+
+`display: none` and `hidden` are filtered now, asked of the style engine rather
+than re-derived: a node with no primary styles is not rendered, and a node with
+styles can still resolve to `display: none`, which is the common case because it
+is what a stylesheet says. The first attempt checked only the former and filtered
+the attribute while missing every CSS rule — the difference between the two took
+a probe to find.
+
+**`visibility: hidden` is deliberately kept.** That content occupies its space,
+is routinely toggled by script, and is a shape off-screen accessibility text
+sometimes takes; filtering it would risk deleting page content to fix a smaller
+problem.
+
+**The measurement then produced an alarming number, and it was right.** The Rust
+book fell from 171 lines to **6**. That is the failure mode this change was
+warned against — silently deleting a page — so it was checked against Chromium
+rather than reasoned about: Chromium's DOM for the same page carries
+`<html class="js light">` and **no `sidebar-visible` class**, so mdBook's sidebar
+is not shown there either.
+
+The six lines are the chapter: its heading, its opening paragraph, its list. The
+165 that went were navigation **no reader ever sees**, and this engine had been
+handing them to agents as page content. A number that looks like a regression is
+worth checking against a browser before it is treated as one — and worth checking
+before it is treated as a success, which is the same discipline pointing the
+other way.
+
+---
+
 ## 10. What is next, 2026-08-09
 
 Tiers 0 through 4 of the plan this section replaces are done. What the work

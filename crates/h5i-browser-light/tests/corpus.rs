@@ -1005,3 +1005,51 @@ fn a_router_click_moves_both_the_view_and_the_address() {
         "the document's own URL is unchanged — the router moved, not the fetch"
     );
 }
+
+/// Content the page does not display must not reach the reading.
+///
+/// Two reasons, and the second is the serious one: the outline claims to be an
+/// account of what a page *shows*, and invisible text is the classic vehicle for
+/// instructions aimed at whatever is reading it — which is the threat the
+/// untrusted-content fence exists for, and which text a human never encounters
+/// walks straight around.
+#[test]
+fn hidden_content_is_not_in_the_reading() {
+    let reading = read(
+        "<html><head><style>.gone { display: none } .shown { display: block }</style></head>\
+         <body>\
+         <p class='shown'>visible content</p>\
+         <p class='gone'>hidden by a stylesheet</p>\
+         <p style='display:none'>hidden by an inline style</p>\
+         <div hidden><p>hidden by the attribute</p></div>\
+         <div class='gone'><p>a child of a hidden parent</p></div>\
+         </body></html>",
+    );
+
+    reading.assert_shows("visible content");
+    for hidden in [
+        "hidden by a stylesheet",
+        "hidden by an inline style",
+        "hidden by the attribute",
+        "a child of a hidden parent",
+    ] {
+        assert!(
+            !reading.outline.contains(hidden),
+            "{hidden:?} is not displayed and must not be read:\n{}",
+            reading.outline
+        );
+    }
+}
+
+/// `visibility: hidden` is deliberately *kept*. That content still occupies its
+/// space, is routinely toggled by script, and is a shape off-screen
+/// accessibility text sometimes takes — filtering it would risk deleting page
+/// content to fix a smaller problem than `display: none` poses.
+#[test]
+fn visibility_hidden_is_deliberately_still_read() {
+    let reading = read(
+        "<html><head><style>.invis { visibility: hidden }</style></head>\
+         <body><p class='invis'>still occupies its space</p></body></html>",
+    );
+    reading.assert_shows("still occupies its space");
+}

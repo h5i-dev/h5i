@@ -485,6 +485,37 @@ impl Walker<'_> {
             return;
         }
 
+        // Content the page does not display is not content this reading should
+        // carry. Two reasons, and the second is the serious one:
+        //
+        // 1. The outline claims to be an account of what the page shows, and a
+        //    reader acting on a menu that is closed or a dialog that is hidden
+        //    is acting on something nobody can see.
+        // 2. Invisible text is the classic vehicle for instructions aimed at
+        //    whatever is reading the page. The untrusted-content fence exists
+        //    for exactly that threat, and text a human would never encounter
+        //    walks straight around it.
+        //
+        // Blitz resolves no primary styles for a node that is not rendered, so
+        // `display: none` — and the `hidden` attribute, which is that rule —
+        // are the same question and are answered by the style engine rather
+        // than re-derived here.
+        //
+        // Deliberately *not* `visibility: hidden`: that content still occupies
+        // its space, is routinely toggled by script, and is the shape
+        // off-screen accessibility text sometimes takes. Filtering it would
+        // risk deleting page content to fix a smaller problem.
+        let displayed = match node.primary_styles() {
+            // Blitz resolves no primary styles for a node it will not render.
+            None => false,
+            // And a node that has styles can still be `display: none` — which
+            // is the common case, since that is what a stylesheet says.
+            Some(styles) => !styles.clone_display().is_none(),
+        };
+        if !displayed {
+            return;
+        }
+
         let descriptor = describe(&tag, node);
 
         match descriptor {
