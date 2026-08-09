@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Is there a *published* boa we could use instead of the pinned revision?
 #
-# The workspace patches boa to a git commit because every released version pins
+# h5i-browser-light depends on boa by git revision because every released version pins
 # `icu_normalizer`, `icu_properties` and `icu_segmenter` to `~2.0.0`, which
 # excludes the versions parley requires — and parley arrives through blitz, so
 # it is not ours to choose. Upstream relaxed those pins after 0.21.1, so the
@@ -90,9 +90,10 @@ done
 if [ -n "$usable" ]; then
   echo
   echo "::error::boa_engine $usable is published and its icu requirements no longer clash with parley."
-  echo "The [patch.crates-io] block in Cargo.toml exists only to work around that clash."
-  echo "Delete it, and change the =1.0.0-dev requirements in"
-  echo "crates/h5i-browser-light/Cargo.toml to \"$usable\"."
+  echo "The git dependency in crates/h5i-browser-light/Cargo.toml exists only to work"
+  echo "around that clash. Replace both boa lines with plain requirements:"
+  echo "    boa_engine = { version = \"$usable\", default-features = false, features = [\"annex-b\"] }"
+  echo "    boa_gc = \"$usable\""
   exit 1
 fi
 

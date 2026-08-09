@@ -70,8 +70,8 @@ jobs:
       # `--locked` throughout: Cargo.lock is committed and the release build
       # uses it, so a manifest change that never updated the lockfile has to
       # fail on a PR rather than surface at tag time.
-      # The workspace patches boa to a git revision because no published version
-      # can coexist with blitz's parley. That is a thing to undo, not to keep,
+      # h5i-browser-light depends on boa by git revision because no published
+      # version can coexist with blitz's parley. That is a thing to undo, not to keep,
       # and "it is on the list" is how a temporary patch becomes permanent — so
       # the question is asked here rather than remembered. Fails the day a
       # usable release exists, and is quiet until then.

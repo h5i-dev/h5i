@@ -91,8 +91,8 @@ base64 = "0.22"
 # the sloppy-mode parser rules including HTML-like comments in scripts. Leaving
 # it off made this engine stricter than any browser — excalidraw's colour parser
 # calls `substr` and died on `not a callable function`.
-boa_engine = { version = "=1.0.0-dev", default-features = false, features = ["annex-b"] }
-boa_gc = "=1.0.0-dev"
+boa_engine = { git = "https://github.com/boa-dev/boa", rev = "334caed3134975054cd490cdacfe7d0400302832", default-features = false, features = ["annex-b"] }
+boa_gc = { git = "https://github.com/boa-dev/boa", rev = "334caed3134975054cd490cdacfe7d0400302832" }
 
 [dev-dependencies]
 tempfile = "3.8"

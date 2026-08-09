@@ -1232,7 +1232,12 @@ itself surfaced, in the order the evidence supports:
 
 1. ~~The fourteen module failures~~ — **four left** (§8.10), each with a stack
    trace. Two are the Boa parser bug of §8.11 and are upstream's to fix.
-2. ~~Boa 0.21~~ — **done**, pinned to a revision of upstream `main` (§8.10).
+2. ~~Boa 0.21~~ — **done**, pinned by revision on the dependency itself rather
+   than through `[patch.crates-io]`: `=1.0.0-dev` *looked* like a pin and pinned
+   nothing, since upstream's `main` carries that version string while changing
+   daily. The commit hash now sits in the manifest of the crate that depends on
+   it, where a reader looks for it, and nothing else in the workspace depends on
+   boa so the patch indirection bought nothing (§8.10).
    The pin should move to a release when boa cuts one, and the `[patch]` block
    deleted then. That is no longer a thing to remember:
    `scripts/check_boa_release.sh` asks crates.io on every CI run whether a
