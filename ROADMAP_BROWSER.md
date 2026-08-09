@@ -1148,6 +1148,47 @@ both decide whether a filter helps or quietly deletes the page.
 
 ---
 
+### 8.20 Driving a page, and the sentence that contradicted itself
+
+**Every corpus until now loaded a page and read it. None clicked anything.** An
+agent's loop is read, act, read the difference — so two thirds of what this
+engine is for went unmeasured, while the session verbs, the semantic delta and
+the action-to-request correlation were all built and tested only in isolation.
+
+`tests/corpus.rs` now drives as well as reads. Four fixtures, each asserting on
+what the *delta* reports rather than on the page, because a change nobody can
+see is the same as no change:
+
+* typing into a field and submitting adds an item — and the delta names the new
+  item without reporting the rest of the page as replaced;
+* clicking a filter that rewrites a list reports the items that went and **not**
+  the footer that did not;
+* clicking something inert reports *no change*, which is a result an agent needs
+  rather than the page handed back to be re-read;
+* a router click moves the view and the address together, while the document's
+  own URL stays put — the router moved, not the fetch.
+
+They pass, which is worth stating plainly: the interaction path works, and it
+had never been measured end to end.
+
+**And `<noscript>` was in the outline.** A browser shows that content only when
+script is off; this engine showed it always. So a page whose script ran
+perfectly still handed an agent the sentence *"JavaScript is disabled in your
+browser"* — not a cosmetic slip but a direct contradiction of the reading it
+appeared in. crates.io's **entire outline was that sentence**.
+
+crates.io now reports zero lines and a note saying so, which is the honest
+answer: its SvelteKit app really does render nothing here. Why it does remains
+undiagnosed — the entry shape reproduces perfectly in isolation, dynamic
+`import()`, `currentScript.parentElement` and all 75 subresources check out
+individually — and it is better recorded as unexplained than as fixed.
+
+pypi's search page joins the challenge matcher, which also normalises
+typographic apostrophes: pypi writes "couldn't" with U+2019, and a matcher that
+only knew `'` would have missed it while looking like it had checked.
+
+---
+
 ## 10. What is next, 2026-08-09
 
 Tiers 0 through 4 of the plan this section replaces are done. What the work

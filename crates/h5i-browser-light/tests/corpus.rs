@@ -800,3 +800,208 @@ fn a_constructed_stylesheet_can_be_adopted() {
     reading.assert_clean("constructable stylesheets");
     reading.assert_shows("adopted=1 styles=1");
 }
+
+// ── driving a page, not just reading one ─────────────────────────────────────
+//
+// Every corpus above loads a page and reads it. None of them clicks anything —
+// and an agent's loop is read, act, read the difference, so two thirds of the
+// product went unmeasured. These drive the page and assert on what the *delta*
+// reports, because a change nobody can see is the same as no change.
+
+/// Read the page, act on it, and read the difference.
+struct Driver {
+    page: h5i_browser_light::engine::Page,
+    last: h5i_browser_light::snapshot::Snapshot,
+}
+
+impl Driver {
+    fn open(html: &str) -> Self {
+        let broker = Arc::new(
+            Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+        );
+        let fonts = h5i_browser_light::fonts::load(
+            &[],
+            &h5i_browser_light::fonts::default_font_dirs(),
+            Some(2),
+        );
+        let options = PageOptions {
+            script: true,
+            ..Default::default()
+        };
+        let factory = PageFactory::new(broker, fonts.sources.clone(), options);
+        let base = url::Url::parse("https://fixture.example/").unwrap();
+        let page = factory.from_html(html, &base);
+        let last = page.snapshot();
+        Self { page, last }
+    }
+
+    /// The node behind an `@ref`, which is how an agent names what to act on.
+    fn node(&self, reference: &str) -> usize {
+        self.last
+            .resolve(reference)
+            .unwrap_or_else(|| panic!("no such reference {reference} in:\n{}", self.last.render()))
+            .node_id
+    }
+
+    /// A reference whose line contains `text`, so a test names things the way a
+    /// reader would rather than by counting.
+    fn find(&self, text: &str) -> String {
+        self.last
+            .lines
+            .iter()
+            .find(|line| line.text.contains(text))
+            .and_then(|line| line.reference.clone())
+            .unwrap_or_else(|| panic!("nothing actionable says {text:?} in:\n{}", self.last.render()))
+    }
+
+    fn click(&mut self, reference: &str) -> h5i_browser_light::snapshot::Delta {
+        let node = self.node(reference);
+        self.page.dispatch_event(node, "click");
+        self.settle()
+    }
+
+    fn type_into(&mut self, reference: &str, text: &str) -> h5i_browser_light::snapshot::Delta {
+        let node = self.node(reference);
+        assert!(self.page.type_into(node, text), "typing was refused");
+        self.settle()
+    }
+
+    fn settle(&mut self) -> h5i_browser_light::snapshot::Delta {
+        self.page.refresh();
+        let fresh = self.page.snapshot();
+        let delta = fresh.delta(&self.last);
+        self.last = fresh;
+        delta
+    }
+}
+
+/// The shape of every todo list: type, submit, see the item appear.
+#[test]
+fn typing_and_submitting_adds_an_item_the_delta_reports() {
+    let mut driver = Driver::open(
+        "<html><body><form id='f'><input id='new' placeholder='what needs doing'></form>\
+         <ul id='list'></ul>\
+         <script>\
+           document.querySelector('#f').addEventListener('submit', (e) => {\
+             e.preventDefault();\
+             const field = document.querySelector('#new');\
+             if (!field.value) return;\
+             const item = document.createElement('li');\
+             item.textContent = field.value;\
+             document.querySelector('#list').appendChild(item);\
+             field.value = '';\
+           });\
+         </script></body></html>",
+    );
+
+    let field = driver.find("what needs doing");
+    driver.type_into(&field, "buy milk");
+
+    // Submitting through the form's own handler, as pressing return would.
+    let node = driver.node(&field);
+    driver.page.dispatch_event(node, "submit");
+    let delta = driver.settle();
+
+    assert!(!delta.is_empty(), "the page changed and the delta says so");
+    assert!(
+        delta.added.iter().any(|line| line.text.contains("buy milk")),
+        "the new item is in the delta rather than only in the page: {:?}",
+        delta.added
+    );
+    assert!(
+        delta.removed.len() < 3,
+        "adding one item should not read as the page being replaced: {:?}",
+        delta.removed
+    );
+}
+
+/// Clicking a control that rewrites part of the page: the delta must report
+/// what changed and *not* the parts that did not.
+#[test]
+fn clicking_a_filter_reports_only_what_changed() {
+    let mut driver = Driver::open(
+        "<html><body>\
+         <button id='toggle'>show completed</button>\
+         <ul id='list'><li>alpha</li><li>beta</li><li>gamma</li></ul>\
+         <p id='footer'>3 items</p>\
+         <script>\
+           let showing = true;\
+           document.querySelector('#toggle').addEventListener('click', () => {\
+             showing = !showing;\
+             document.querySelector('#list').innerHTML = showing\
+               ? '<li>alpha</li><li>beta</li><li>gamma</li>'\
+               : '<li>gamma</li>';\
+           });\
+         </script></body></html>",
+    );
+
+    let toggle = driver.find("show completed");
+    let delta = driver.click(&toggle);
+
+    assert!(
+        delta.removed.iter().any(|l| l.text.contains("alpha")),
+        "the filtered-out items are reported as removed: {:?}",
+        delta.removed
+    );
+    assert!(
+        !delta.removed.iter().any(|l| l.text.contains("3 items")),
+        "the footer did not change and must not appear in the delta: {:?}",
+        delta.removed
+    );
+    assert!(!delta.replaced, "one list changing is not the page being replaced");
+}
+
+/// An inert control is a result an agent needs: it did nothing, and the reading
+/// should say so rather than hand back the page again to be re-read.
+#[test]
+fn clicking_something_inert_reports_no_change() {
+    let mut driver = Driver::open(
+        "<html><body><button id='dead'>does nothing</button><p>content</p></body></html>",
+    );
+
+    let dead = driver.find("does nothing");
+    let delta = driver.click(&dead);
+
+    assert!(delta.is_empty(), "nothing changed: {:?}", delta);
+    assert!(
+        delta.render().contains("no change"),
+        "and the rendering says so plainly: {}",
+        delta.render()
+    );
+}
+
+/// Client-side routing: the address moves and the view changes together, which
+/// is the pair an agent needs to trust that a click navigated.
+#[test]
+fn a_router_click_moves_both_the_view_and_the_address() {
+    let mut driver = Driver::open(
+        "<html><body><a id='go' href='/two'>go to page two</a>\
+         <main id='view'>page one</main>\
+         <script>\
+           document.querySelector('#go').addEventListener('click', (e) => {\
+             e.preventDefault();\
+             history.pushState({}, '', '/two');\
+             document.querySelector('#view').textContent = 'page two';\
+           });\
+         </script></body></html>",
+    );
+
+    let link = driver.find("go to page two");
+    let delta = driver.click(&link);
+
+    assert!(
+        delta.added.iter().any(|l| l.text.contains("page two")),
+        "the new view is reported: {:?}",
+        delta.added
+    );
+    assert!(
+        delta.removed.iter().any(|l| l.text.contains("page one")),
+        "and the old one is reported gone: {:?}",
+        delta.removed
+    );
+    assert_eq!(
+        driver.page.url().path(),
+        "/",
+        "the document's own URL is unchanged — the router moved, not the fetch"
+    );
+}

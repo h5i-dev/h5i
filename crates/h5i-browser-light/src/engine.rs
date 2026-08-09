@@ -685,6 +685,7 @@ impl Page {
             &self.doc.borrow(),
             self.url.as_str(),
             self.options.max_snapshot_lines,
+            self.ran_scripts,
         );
 
         snapshot.notes.extend(self.notes.iter().cloned());
@@ -1182,7 +1183,7 @@ const META_REFRESH_MAX_DELAY_SECONDS: u64 = 15;
 /// nothing — the whole problem is that its *outline* is indistinguishable from
 /// an empty page. Deliberately specific: a false positive would tell an agent
 /// it was blocked by a site that simply had little to say.
-const CHALLENGE_MARKERS: [&str; 7] = [
+const CHALLENGE_MARKERS: [&str; 10] = [
     "enable javascript and cookies to continue",
     "checking your browser before accessing",
     "verifying you are human",
@@ -1190,10 +1191,19 @@ const CHALLENGE_MARKERS: [&str; 7] = [
     "please enable cookies",
     "ddos protection by",
     "attention required! | cloudflare",
+    // pypi.org's search results, which say the page did not load rather than
+    // that you were challenged — but mean the same thing to a reader: what
+    // follows is not the page that was asked for.
+    "javascript is disabled in your browser",
+    "please enable javascript to proceed",
+    "a required part of this site couldn't load",
 ];
 
 fn challenge_marker(html: &str) -> Option<&'static str> {
-    let lowered = html.to_ascii_lowercase();
+    // Typographic apostrophes normalised to ASCII: pypi writes "couldn’t" with
+    // U+2019, and a matcher that only knows `'` would miss it while looking
+    // like it had checked.
+    let lowered = html.to_ascii_lowercase().replace(['\u{2019}', '\u{02BC}'], "'");
     CHALLENGE_MARKERS
         .into_iter()
         .find(|marker| lowered.contains(marker))

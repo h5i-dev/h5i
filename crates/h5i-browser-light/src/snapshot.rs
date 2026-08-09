@@ -314,11 +314,21 @@ struct Walker<'a> {
     next_ref: usize,
     max_lines: usize,
     truncated: bool,
+    /// Whether this reading ran the page's script, which is what decides
+    /// whether `<noscript>` is content or a message for somebody else.
+    scripted: bool,
 }
 
 impl Snapshot {
     /// Capture an outline of the resolved document.
-    pub fn capture(doc: &BaseDocument, url: &str, max_lines: usize) -> Self {
+    /// `scripted` decides what `<noscript>` means for this reading.
+    ///
+    /// A browser shows that content only when script is off. This engine was
+    /// showing it always, so a page whose script ran perfectly still handed an
+    /// agent the sentence "JavaScript is disabled in your browser" — which is
+    /// not a small cosmetic error but a direct contradiction of the reading it
+    /// appears in. crates.io's entire outline was that sentence.
+    pub fn capture(doc: &BaseDocument, url: &str, max_lines: usize, scripted: bool) -> Self {
         let mut walker = Walker {
             doc,
             lines: Vec::new(),
@@ -326,6 +336,7 @@ impl Snapshot {
             next_ref: 1,
             max_lines,
             truncated: false,
+            scripted,
         };
 
         let root_id = doc.root_element().id;
@@ -464,6 +475,13 @@ impl Walker<'_> {
             tag.as_str(),
             "script" | "style" | "head" | "title" | "meta" | "link"
         ) {
+            return;
+        }
+
+        // `<noscript>` is addressed to a reader who did not run the script. If
+        // this reading did, it is not content — it is a message for somebody
+        // else, and including it contradicts the page around it.
+        if tag == "noscript" && self.scripted {
             return;
         }
 
