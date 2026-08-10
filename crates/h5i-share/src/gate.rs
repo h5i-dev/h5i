@@ -327,7 +327,7 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
     // did not, so `Transfer-Encoding: identity` was refused as ambiguous.
     let chunked = headers_named(&headers, "transfer-encoding")
         .iter()
-        .any(|v| v.to_ascii_lowercase().contains("chunked"));
+        .any(|v| lists_token(v, "chunked"));
     if lengths.len() > 1 || (chunked && !lengths.is_empty()) {
         return None;
     }

@@ -829,7 +829,14 @@ fn response_framing(head: &[u8]) -> Framing {
             // Only `chunked` frames a body. `identity` is legal, deprecated,
             // and means "no encoding" — grading it as chunked stripped a
             // perfectly good `Content-Length`.
-            "transfer-encoding" if value.to_ascii_lowercase().contains("chunked") => {
+            // Token-wise, not substring: `contains` would read a value like
+            // `x-chunked-foo` as chunked, and the whole point of this branch is
+            // to agree with what the box is actually going to do.
+            "transfer-encoding"
+                if value
+                    .split(',')
+                    .any(|t| t.trim().eq_ignore_ascii_case("chunked")) =>
+            {
                 chunked = true;
             }
             "content-length" => {
@@ -1079,6 +1086,23 @@ mod response_tests {
         assert_eq!(response_framing(head), Framing::Ambiguous);
         let text = String::from_utf8(strip_lengths(close_the_connection(head))).expect("utf8");
         assert!(!text.to_lowercase().contains("content-length"), "{text}");
+    }
+
+    #[test]
+    fn a_header_value_that_merely_contains_the_word_is_not_chunked() {
+        // `contains` would read this as chunked and stop framing on a perfectly
+        // good length, which is a truncated download.
+        assert_eq!(
+            response_framing(
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: x-chunked-foo\r\nContent-Length: 4\r\n\r\n"
+            ),
+            Framing::Length(4)
+        );
+        // And a real list still is.
+        assert_eq!(
+            response_framing(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n"),
+            Framing::UntilClose
+        );
     }
 
     #[test]
