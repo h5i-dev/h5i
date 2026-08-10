@@ -1700,17 +1700,32 @@ It does claim that the number is honest. Nothing was counted that was not run,
 scored are named rather than blamed on the engine, and every subtest counted here
 was already passing before the harness stopped killing it.
 
-### 12.9 The gate
+### 12.9 The gate, and why it is not in CI
 
-`wpt/gate.sh` runs five directories — dom, css/cssom, html/dom, domparsing,
-encoding — against a committed floor in `wpt/baseline.json`, and CI fails on a
-drop. A subset, because all of WPT is a 2 GiB checkout and a gate nobody can
-afford to run is not a gate; these five are the ones this engine's own work
-moves.
+`wpt/gate.sh` runs five directories against a committed floor in
+`wpt/baseline.json`. It is a **local** instrument, run before a change that
+touches the engine's DOM or CSS surface, not a CI job — and the first attempt to
+make it one is worth recording, because it failed for a reason that is not about
+runtime.
 
-It gates the **pass count**, not a percentage: the denominator moves when
-upstream adds tests or when the harness reaches further, and a percentage that
-falls because the denominator grew is not a regression.
+A pass count is only a floor if the corpus is fixed. WPT is not: the CI runner
+sparse-checked-out its own revision and scored `encoding` out of 142,445
+subtests where this machine scored it out of 229,349. Both numbers were right
+about different corpora. Comparing a count against a moving upstream measures
+upstream, and would have failed builds that changed nothing.
 
-The floor exists because this branch gave back 3,142 subtests in `html` once
-already, to a settle-loop rewrite, and nothing caught it but a manual diff.
+Wall-clock made it worse rather than caused it: several of those directories
+only score what they score because large files finish inside a timeout, so a
+slower runner loses subtests without anything regressing.
+
+So CI keeps the *behaviours* instead, hermetically. `src/script/tests.rs` has a
+"what WPT found" block — the lifecycle firing, named globals, typed reflection,
+per-tag properties, computed style declaring itself and recomputing on demand,
+stylesheet rules that write back, `TextDecoder` validating its label, unhandled
+rejections reported, and the two crashes a page could use to kill the engine.
+Those are fixed things, they run in a second, and they fail only when the engine
+changes.
+
+The floor still exists for the case it was built for: this branch gave back
+3,142 subtests in `html` to a settle-loop rewrite, and nothing caught it but a
+manual diff. `wpt/gate.sh` is what to run before believing a refactor was free.

@@ -17,6 +17,21 @@ fn page_and_script(html: &str) -> (crate::engine::Page, Script) {
     (page, script)
 }
 
+/// A page taken all the way through loading, which is what `page_and_script`
+/// deliberately is not: it builds a bare realm, so anything installed *by*
+/// `run_scripts` — the document lifecycle, named access — is not there.
+fn run_page(html: &str) -> (crate::engine::Page, Arc<Broker>) {
+    let broker = Arc::new(
+        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+    );
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let base = url::Url::parse("https://app.example/").unwrap();
+    let mut page = factory.from_html(html, &base);
+    page.run_scripts(broker.clone()).expect("scripts run");
+    (page, broker)
+}
+
 #[test]
 fn script_reads_the_same_tree_the_snapshot_does() {
     let (_page, mut script) = page_and_script(
@@ -179,6 +194,290 @@ fn a_timer_landing_next_to_the_budget_does_not_abort_the_engine() {
     let settled = script.settle();
     assert!(settled.cut_off, "the 20s timer is past the budget: {settled:?}");
     assert!(settled.timers_run >= 1, "the near-budget timer still ran: {settled:?}");
+}
+
+// ── what WPT found ─────────────────────────────────────────────────────────
+//
+// These lock in behaviours the Web Platform Tests caught and this branch fixed.
+// They live here rather than in a CI job that clones WPT, and the reason is not
+// only that the clone is slow: a pass count measured against an *unpinned*
+// upstream corpus is not a fixed thing to compare against. The first CI run
+// proved it — the runner scored `encoding` out of 142,445 subtests where this
+// machine scored it out of 229,349, because the two had different revisions of
+// WPT. The number moved without the engine moving.
+//
+// So the suite keeps the *behaviours*, hermetically, and `wpt/` stays a local
+// instrument for finding new ones. See ROADMAP_BROWSER §12.9.
+
+#[test]
+fn the_document_lifecycle_fires() {
+    // Neither event was ever fired, and `readyState` was the constant
+    // "complete" — which is why four corpora missed it. The common idiom reads
+    // `readyState === "loading"` and otherwise initialises immediately, so
+    // every page took the branch that works and nothing looked wrong.
+    //
+    // Driven through `run_scripts` rather than a bare realm, because the
+    // lifecycle is part of loading a document, not of having one.
+    let (page, _broker) = run_page(
+        "<html><body><div id='out'></div><script>\
+         const seen = [];\
+         document.addEventListener('DOMContentLoaded', () => seen.push('dcl'));\
+         addEventListener('load', () => { seen.push('load'); \
+           document.getElementById('out').textContent = seen.join(',') + '|' + document.readyState; });\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("dcl,load|complete"),
+        "both events fired, in order, with readyState settled:\n{rendered}"
+    );
+}
+
+#[test]
+fn an_element_id_becomes_a_global_without_shadowing_one() {
+    // "target is not defined" was the single largest cause of files that could
+    // report nothing at all: a ReferenceError on line one ends a file before it
+    // can say anything. Installed before the first script runs, so it goes
+    // through `run_scripts` here.
+    let (page, _broker) = run_page(
+        "<html><body><div id='target'>T</div><div id='document'>D</div>\
+         <div id='out'></div><script>\
+         document.getElementById('out').textContent = \
+           target.textContent + '|' + String(document.nodeType);\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("T|9"),
+        "the id is reachable, and an element with id='document' did not take \
+         `document` from the page:\n{rendered}"
+    );
+}
+
+#[test]
+fn reflection_carries_the_type_the_spec_gives_it() {
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+
+    // Enumerated: anything that is not a keyword reads back as the empty
+    // string. Passing the attribute through is what made this look implemented.
+    script.eval("globalThis.d = document.createElement('div');").expect("runs");
+    script.eval("d.setAttribute('dir', '5%')").expect("runs");
+    assert_eq!(script.eval_value("d.dir").unwrap(), "");
+    script.eval("d.setAttribute('dir', 'RTL')").expect("runs");
+    assert_eq!(script.eval_value("d.dir").unwrap(), "rtl");
+
+    // The empty string is a real keyword for contenteditable, and the most
+    // common way anyone writes it.
+    script.eval("d.setAttribute('contenteditable', '')").expect("runs");
+    assert_eq!(script.eval_value("d.contentEditable").unwrap(), "true");
+
+    // Unsigned reflections cannot hold a negative, and the property and the
+    // attribute must not disagree about the same element.
+    script.eval("globalThis.td = document.createElement('td'); td.colSpan = -3;").expect("runs");
+    assert_eq!(script.eval_value("String(td.colSpan)").unwrap(), "1");
+    assert_eq!(script.eval_value("td.getAttribute('colspan')").unwrap(), "1");
+
+    // ARIA is enumerated too, with three states: keyword, invalid, absent.
+    script.eval("d.setAttribute('aria-checked', 'MIXED')").expect("runs");
+    assert_eq!(script.eval_value("d.ariaChecked").unwrap(), "mixed");
+    script.eval("d.setAttribute('aria-checked', 'bogus')").expect("runs");
+    assert_eq!(script.eval_value("d.ariaChecked").unwrap(), "");
+    assert_eq!(
+        script.eval_value("String(document.createElement('div').ariaSort)").unwrap(),
+        "null"
+    );
+}
+
+#[test]
+fn a_property_belongs_to_the_elements_that_have_it() {
+    // `"checked" in div` and `div.type === "text"` were both true, which is the
+    // `missingApi` lie at property scale: feature detection asks before it uses.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    assert_eq!(
+        script.eval_value("String('href' in document.createElement('div'))").unwrap(),
+        "false"
+    );
+    assert_eq!(
+        script.eval_value("String('checked' in document.createElement('div'))").unwrap(),
+        "false"
+    );
+    assert_eq!(
+        script.eval_value("String(document.createElement('div').type)").unwrap(),
+        "undefined"
+    );
+    // The one element whose missing `type` is not the empty string.
+    assert_eq!(script.eval_value("document.createElement('input').type").unwrap(), "text");
+    assert_eq!(
+        script.eval_value("String(document.createElement('a') instanceof HTMLAnchorElement)").unwrap(),
+        "true"
+    );
+}
+
+#[test]
+fn computed_style_declares_its_properties_and_recomputes_on_demand() {
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+
+    // `in` asks `has`, and the proxy only trapped `get`, so every property
+    // reported absent. WPT's `test_computed_value` asserts this on its first
+    // line, so thousands of subtests failed before comparing a value.
+    assert_eq!(
+        script.eval_value("String('color' in getComputedStyle(document.body))").unwrap(),
+        "true"
+    );
+
+    // A page that builds its DOM in script read "" for everything, because
+    // Stylo had never seen the new nodes.
+    script
+        .eval(
+            "globalThis.made = document.createElement('div'); \
+             made.style.position = 'relative'; made.style.top = '7px'; \
+             made.style.setProperty('--theme', 'teal'); \
+             document.body.appendChild(made);",
+        )
+        .expect("runs");
+    assert_eq!(script.eval_value("getComputedStyle(made).top").unwrap(), "7px");
+    assert_eq!(
+        script.eval_value("getComputedStyle(made).getPropertyValue('--theme')").unwrap(),
+        "teal"
+    );
+
+    // `display` came from the box tree rather than the cascade, so every inline
+    // element reported `block`.
+    script
+        .eval("document.body.appendChild(document.createElement('span'));")
+        .expect("runs");
+    assert_eq!(
+        script.eval_value("getComputedStyle(document.querySelector('span')).display").unwrap(),
+        "inline"
+    );
+}
+
+#[test]
+fn a_stylesheet_can_be_read_and_edited_through_its_element() {
+    // `cssRules` built a fresh object per access, so a mutation reported
+    // success and changed nothing.
+    let (_page, mut script) = page_and_script(
+        "<html><head><style id='s'>.a { color: red }</style></head><body></body></html>",
+    );
+    script.eval("globalThis.sheet = document.getElementById('s').sheet;").expect("runs");
+
+    assert_eq!(script.eval_value("String(sheet.cssRules.length)").unwrap(), "1");
+    assert_eq!(script.eval_value("sheet.cssRules[0].selectorText").unwrap(), ".a");
+    assert_eq!(
+        script.eval_value("String(sheet.cssRules[0] === sheet.cssRules[0])").unwrap(),
+        "true",
+        "a page that keeps a rule and mutates it later must hold something real"
+    );
+    assert_eq!(script.eval_value("String(document.styleSheets.length)").unwrap(), "1");
+
+    script.eval("sheet.cssRules[0].style.setProperty('color', 'blue')").expect("runs");
+    assert_eq!(
+        script.eval_value("sheet.cssRules[0].style.getPropertyValue('color')").unwrap(),
+        "blue",
+        "the write reached the sheet rather than a throwaway"
+    );
+}
+
+#[test]
+fn a_text_decoder_validates_its_label_and_decodes_as_that_label() {
+    // Every label was accepted and every one answered "utf-8", so a page
+    // checking whether an encoding was supported was told yes, and Shift-JIS
+    // decoded as UTF-8 — mojibake with no error.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    assert_eq!(script.eval_value("new TextDecoder('shift_jis').encoding").unwrap(), "shift_jis");
+    assert_eq!(script.eval_value("new TextDecoder('latin2').encoding").unwrap(), "iso-8859-2");
+    assert_eq!(
+        script
+            .eval_value("(() => { try { new TextDecoder('no-such-encoding'); return 'accepted'; } \
+                         catch (e) { return e.name; } })()")
+            .unwrap(),
+        "RangeError"
+    );
+}
+
+#[test]
+fn a_rejection_nobody_handled_is_reported() {
+    // Asynchronous code dying silently is the §8.3 failure arriving through the
+    // one channel the engine was not watching: a half-built page with no
+    // explanation at all.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script.eval("Promise.reject(new Error('nobody is listening'));").expect("runs");
+    script.settle();
+    assert!(
+        script.console().iter().any(|line| {
+            line.text.contains("a promise rejected and nothing handled it")
+                && line.text.contains("nobody is listening")
+        }),
+        "{:?}",
+        script.console()
+    );
+}
+
+#[test]
+fn a_page_cannot_kill_the_engine_with_a_bad_url_or_a_stray_reference() {
+    // Both of these aborted the process, taking the page, the snapshot and the
+    // receipts with it. 81 of 140 crashes in one sweep were the first.
+    let (_page, mut script) = page_and_script("<html><body><div id='d'></div></body></html>");
+
+    script
+        .eval("document.createElement('img').setAttribute('src', 'http://{{host}}:NaN/x')")
+        .expect("a URL blitz cannot resolve is refused, not fatal");
+
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { try { \
+                   document.body.insertBefore(document.createElement('p'), \
+                     document.createElement('span')); \
+                   return 'inserted'; } catch (e) { return e.name; } })()"
+            )
+            .unwrap(),
+        "NotFoundError",
+        "a reference node with no parent is a DOM error, not a dead process"
+    );
+}
+
+#[test]
+fn rendered_text_and_child_checks_answer_what_a_browser_would() {
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='b'><p>one</p><span>a</span><span>b</span>\
+         <div style='display:none'>HIDDEN</div></div></body></html>",
+    );
+    // `innerText` is the rendered text: hidden content is out, blocks break,
+    // and adjacent inlines run together.
+    assert_eq!(
+        script.eval_value("document.getElementById('b').innerText").unwrap(),
+        "one\nab"
+    );
+    assert_eq!(
+        script.eval_value("document.getElementById('b').textContent").unwrap(),
+        "oneabHIDDEN",
+        "textContent still reports everything, which is the difference"
+    );
+    // Asked for 3,944 times by WPT and absent; one line.
+    assert_eq!(
+        script.eval_value("String(document.getElementById('b').hasChildNodes())").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script.eval_value("String(document.createTextNode('x').hasChildNodes())").unwrap(),
+        "false"
+    );
+}
+
+#[test]
+fn css_supports_answers_from_the_engine_that_would_have_to_do_it() {
+    // A list of our own would be a second opinion and would drift from Stylo.
+    // It matters more than most answers: pages call this to take a *different
+    // code path*, so a wrong answer does not degrade the page, it misroutes it.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    assert_eq!(script.eval_value("String(CSS.supports('display', 'grid'))").unwrap(), "true");
+    assert_eq!(script.eval_value("String(CSS.supports('display', 'zzz'))").unwrap(), "false");
+    assert_eq!(script.eval_value("String(CSS.supports('no-such-prop', '1px'))").unwrap(), "false");
+    assert_eq!(script.eval_value("String(CSS.supports('(display: flex)'))").unwrap(), "true");
+    // The spec's escape, which a naive regex gets wrong in a way that silently
+    // produces a selector matching nothing.
+    assert_eq!(script.eval_value("CSS.escape('1abc')").unwrap(), "\\31 abc");
 }
 
 #[test]
