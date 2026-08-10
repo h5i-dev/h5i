@@ -1824,6 +1824,7 @@ repeated once per codepoint across the CJK range, for five encodings.
 | --- | --- |
 | Headline total | 333,690 |
 | **Excluding the encoding directory** | **107,904** |
+| Excluding just the CJK block | 116,428 |
 | From the top twenty files alone | 235,977 |
 
 Files that pass *completely*: **1,882** of the 20,506 with any scored subtest.
@@ -1834,13 +1835,36 @@ together, and §12.6's rule applies unchanged: implementing more, measuring more
 and counting more honestly are three different things, and only the first is
 engineering.
 
-**The Kitesurf comparison is unsafe in both directions and should not be made
-yet.** WPT expands to roughly 200,000 *tests* (file x variant x scope) and
-roughly two million *subtests*. Cloudflare's announcement says "215,000+ tests
-passing", which reads as the test-level count — and if it is, the comparable
-figure here is 1,882 fully-passing files, not 333,690, and this engine is far
-behind rather than ahead. Until their metric is established, quoting one number
-against the other is the kind of claim that gets checked and does not hold.
+**The Kitesurf comparison, worked through, says this engine is behind.** Their
+announcement claims "215,000+ tests passing". Read as subtests — which is what
+it must be, since WPT expands to only about 200,000 tests at file x variant x
+scope and no young engine passes all of them — one arithmetic fact settles the
+shape of the comparison:
+
+> The CJK `encode-href` block alone is **217,263 subtests**. That is larger than
+> Kitesurf's entire stated total.
+
+So Kitesurf cannot be passing that block; it would exceed their whole score by
+itself. Their 215,000 is therefore spread across the rest of the platform, while
+**65% of this engine's 333,690 is that single block**. The like-for-like figure
+is the one with it removed:
+
+| | subtests |
+| --- | --- |
+| Kitesurf, stated | 215,000 |
+| **This engine, excluding the CJK block** | **116,428** |
+| This engine, headline | 333,690 |
+
+**About half their breadth, not one and a half times it.** Anyone quoting
+333,690 against 215,000 would be making a claim that reverses under ten minutes
+of arithmetic, and the reversal is not close.
+
+Two caveats keep even that comparison honest. Their harness is not this one —
+this one cannot reach workers, `.py` handlers or TLS, so it scores 584,707
+subtests where a full wptserve run reaches roughly two million. And a corpus
+neither engine runs is not evidence about either. The defensible claim is the
+narrow one: **on the platform outside legacy CJK URL encoding, this engine
+passes fewer subtests than Kitesurf does.**
 
 ### 13.4 What this is worth, plainly
 
