@@ -484,17 +484,20 @@ and may decline, and the control cannot depend on it. On the way back, the
 response's own `Connection` header is replaced with `close` — otherwise a
 keep-alive answer would tell the visitor's browser to reuse a connection that
 will never answer again — and the response is framed by its `Content-Length` so
-the connection ends when the response does.
+the connection ends when the response does. A response that says two
+contradictory things about its length has both of them taken off, and is framed
+by the connection closing instead; a response the box starts and never finishes
+becomes a `502`, because relaying an unfinished head verbatim would let the box
+choose when to be sanitised.
 
-One consequence worth knowing: a chunked request body is parsed, not just
-copied — forwarding one request means knowing where it ends, and a chunk stream
-only says so in its own framing. It is forwarded verbatim, chunk headers and
-all, so the box sees the request it would have seen anyway. And an upgrade is
-the exception — it does become a
-two-way pipe — but only after the box has actually answered `101`, and only when
-the request asked for it properly with both an `Upgrade` header and a
-`Connection: upgrade`. A request that merely attached an `Upgrade:` header gets
-no exception.
+Two consequences worth knowing. A chunked request body is parsed rather than
+just copied — forwarding one request means knowing where it ends, and a chunk
+stream only says so in its own framing — though it is forwarded verbatim, chunk
+headers and all, so the box sees the request it would have seen anyway. And an
+upgrade is the exception to the one-request rule: it does become a two-way pipe,
+but only after the box has actually answered `101`, and only when the request
+asked for it properly with both an `Upgrade` header and a `Connection: upgrade`.
+A request that merely attached an `Upgrade:` header gets no exception.
 
 The cost is that every request is its own connection. For a dev server that
 serves each module separately, a first page load is a few hundred of them, each
