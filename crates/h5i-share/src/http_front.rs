@@ -456,7 +456,14 @@ where
         }
 
         // The data, plus the CRLF that closes it.
-        let mut left = size + 2;
+        //
+        // `checked_add` because `size` came off the wire as hex and `u64::MAX`
+        // is a perfectly well-formed chunk header: `size + 2` would panic in a
+        // debug build and wrap to one in a release one, which would forward two
+        // bytes and then read the rest of the peer's body as chunk headers.
+        let Some(mut left) = size.checked_add(2) else {
+            return Err(std::io::Error::other("chunk size out of range"));
+        };
         while left > 0 {
             if buf.is_empty() {
                 fill(r, &mut buf).await?;
@@ -602,33 +609,39 @@ where
     }
 
     let (out, body_len) = {
+        let framing = response_framing(&head);
+        let rewritten = close_the_connection(&head);
+        // The head is sanitised on its own terms, and the body length is a
+        // separate question. Deciding both at once put "no body" and "framing
+        // we refuse to trust" through the same branch, which is how an
+        // ambiguous *page* ended up delivered with no content at all.
+        let out = match framing {
+            // Not passed on. Handing the visitor two `Content-Length` headers
+            // is a response-smuggling shape the request side refuses outright,
+            // and a client that reads it either errors or picks one — which is
+            // the disagreement all over again, one hop further out. Stripped
+            // even when the answer carries no body: a `304` is the commonest
+            // response a dev server produces, and "this branch has no body so
+            // the headers cannot hurt" is how an invariant ends up holding on
+            // one path and not the other.
+            Framing::Ambiguous => strip_lengths(rewritten),
+            _ => rewritten,
+        };
         // A `HEAD`, a `204` or a `304` declares a length and sends nothing.
         // Waiting for that body would hold the connection until the idle
         // timeout, and a `304` is what a dev server answers for every asset the
         // browser already has — so this is the common case, not the exotic one.
-        let framing = match (bodyless, response_framing(&head)) {
-            // A `HEAD`, a `204` or a `304` declares a length and sends nothing.
-            // The framing question is still asked, so an ambiguous head is
-            // still sanitised on the way out.
-            (true, Framing::Ambiguous) => Framing::Ambiguous,
-            (true, _) => Framing::Length(0),
-            (false, f) => f,
+        let body_len = if bodyless {
+            Some(0)
+        } else {
+            match framing {
+                Framing::Length(n) => Some(n),
+                // Nothing to frame on, so the connection closing is the
+                // framing — which is exactly what the stripped head now says.
+                Framing::UntilClose | Framing::Ambiguous => None,
+            }
         };
-        let rewritten = close_the_connection(&head);
-        match framing {
-            Framing::Length(n) => (rewritten, Some(n)),
-            Framing::UntilClose => (rewritten, None),
-            // Not passed on. Handing the visitor two `Content-Length` headers
-            // is a response-smuggling shape the request side refuses outright,
-            // and a client that reads it either errors or picks one — which is
-            // the disagreement all over again, one hop further out.
-            //
-            // Applied even when the answer carries no body: a `304` is the
-            // commonest response a dev server produces, and "this branch has no
-            // body so the headers cannot hurt" is how an invariant ends up
-            // holding on one path and not the other.
-            Framing::Ambiguous => (strip_lengths(rewritten), Some(0)),
-        }
+        (out, body_len)
     };
     if !out.is_empty() {
         peer_w.write_all(&out).await?;
@@ -917,6 +930,18 @@ mod response_tests {
                 "accepted {body:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_chunk_size_at_the_edge_of_the_type_is_refused() {
+        // `u64::MAX` is a well-formed chunk header, and `size + 2` would panic
+        // in a debug build and wrap to one in a release build — forwarding two
+        // bytes and then reading the peer's body as chunk headers.
+        let body = b"ffffffffffffffff\r\n";
+        let mut peer = &body[..];
+        let mut out: Vec<u8> = Vec::new();
+        let counted = std::sync::atomic::AtomicU64::new(0);
+        assert!(forward_chunked(&mut peer, &mut out, &[], &counted).await.is_err());
     }
 
     #[test]

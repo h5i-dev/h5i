@@ -783,6 +783,50 @@ mod tests {
         serving.abort();
     }
 
+    /// A dev server that answers with a framing this proxy refuses to trust.
+    fn ambiguous_server() -> u16 {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                let mut buf = [0u8; 4096];
+                let _ = c.read(&mut buf);
+                let _ = c.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Length: 9\r\n\r\nthe body",
+                );
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_page_with_an_ambiguous_length_still_arrives() {
+        // Refusing to trust the framing must not mean refusing to deliver the
+        // page: the lengths come off the head and the connection closing is
+        // what frames it instead.
+        let port = ambiguous_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let got = request(
+            addr,
+            &format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n"),
+        )
+        .await;
+        assert!(got.contains("200 OK"), "{got}");
+        assert!(!got.to_lowercase().contains("content-length"), "{got}");
+        assert!(got.ends_with("the body"), "the page was not delivered: {got}");
+
+        serving.abort();
+    }
+
     #[tokio::test]
     async fn a_declared_body_reaches_the_box_whole() {
         // The other half of the one-request rule: stopping at the declared
