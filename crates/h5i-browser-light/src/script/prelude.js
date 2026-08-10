@@ -501,7 +501,16 @@
       const parent = this.parentNode;
       return parent && parent.nodeType === 1 ? parent : null;
     }
-    get childNodes() { return api.children(this._id).map(wrap); }
+    get childNodes() {
+      // A `<template>`'s children belong to its `content` fragment, not to the
+      // element: `tp.childNodes.length` is 0 in a browser however much markup
+      // it holds. This engine keeps one node for both, so the element hides
+      // them and `TemplateContent` shows them — which is the division the spec
+      // describes anyway. Without it a walker that recurses into a template
+      // reads markup the page has not rendered and may never render.
+      if (this.tagName === "TEMPLATE") return [];
+      return api.children(this._id).map(wrap);
+    }
     /// The single most-asked-for thing this engine did not have.
     ///
     /// WPT called it 3,944 times across the corpus, more than twice anything
@@ -1415,6 +1424,11 @@
   class TemplateContent extends Element {
     get nodeType() { return 11; }
     get nodeName() { return "#document-fragment"; }
+    // The one place a template's children *are* visible. `Element` hides them
+    // for the element itself, per the rule below, and this is the fragment
+    // they officially belong to.
+    get childNodes() { return api.children(this._id).map(wrap); }
+    get children() { return collection(this.childNodes.filter((n) => n.nodeType === 1), "HTMLCollection"); }
   }
 
   // `el.onclick = fn` is the other way to bind a handler, and plenty of
@@ -2030,12 +2044,16 @@
       },
     });
 
+    // `checked` is state, not the attribute. The attribute is the *default*,
+    // which is why it is reflected separately as `defaultChecked` — writing to
+    // it here made `getAttribute("checked")` change under a page that never
+    // touched the markup, and made a box the user unticked look ticked still.
     on(["input"], "checked", {
-      get() { return api.getAttr(this._id, "checked") !== null; },
-      set(on_) {
-        if (on_) api.setAttr(this._id, "checked", "");
-        else api.removeAttr(this._id, "checked");
+      get() {
+        if (this._checked !== undefined) return this._checked;
+        return api.getAttr(this._id, "checked") !== null;
       },
+      set(on_) { this._checked = !!on_; },
     });
     on(["option"], "selected", {
       get() { return api.getAttr(this._id, "selected") !== null; },
@@ -2091,6 +2109,105 @@
     // The sheet an element owns. Only `<style>` and `<link>` have one, and a
     // `<link>` that is not a stylesheet has none — `img.sheet` being undefined
     // is the point of putting it here rather than on Element.
+    // Forms and tables, which an agent reads more than almost anything else.
+    //
+    // `form.elements`, `table.rows`, `tr.cells` and `td.cellIndex` were all
+    // absent, so a page that walks its own form or table — and a great deal of
+    // page script does — got `undefined` and stopped.
+    on(["form"], "elements", {
+      get() {
+        return collection(
+          this.querySelectorAll("input, select, textarea, button, fieldset, output")
+            .filter((el) => (api.getAttr(el._id, "type") || "").toLowerCase() !== "image"),
+          "HTMLFormControlsCollection",
+        );
+      },
+    });
+    on(["form"], "length", { get() { return this.elements.length; } });
+    // A form's default method is `get`, not the empty string: code branches on
+    // it, and "" is not one of the branches.
+    on(["form"], "method", {
+      get() {
+        const raw = (api.getAttr(this._id, "method") || "").toLowerCase();
+        return raw === "post" || raw === "dialog" ? raw : "get";
+      },
+      set(value) { this.setAttribute("method", String(value)); },
+    });
+
+    // The form a control belongs to: its `form` attribute if it names one,
+    // otherwise the form it sits inside.
+    on(["input", "select", "textarea", "button", "fieldset", "output", "label"], "form", {
+      get() {
+        const named = api.getAttr(this._id, "form");
+        if (named) return wrap(api.query("#" + cssEscapeIdent(named), 0));
+        for (let n = this.parentNode; n; n = n.parentNode) {
+          if (n.nodeType === 1 && n.tagName === "FORM") return n;
+        }
+        return null;
+      },
+    });
+
+    // `<option>.text` is its text with whitespace collapsed, which is what a
+    // `<select>` actually shows.
+    on(["option"], "text", {
+      get() { return (this.textContent || "").replace(/\s+/g, " ").trim(); },
+      set(value) { this.textContent = String(value); },
+    });
+    on(["option"], "index", {
+      get() {
+        const owner = this.parentNode;
+        if (!owner) return 0;
+        return owner.querySelectorAll("option").findIndex((o) => o._id === this._id);
+      },
+    });
+    on(["select"], "selectedIndex", {
+      get() {
+        const options = this.querySelectorAll("option");
+        const at = options.findIndex((o) => o.selected);
+        // A `<select>` with nothing marked selected shows its first option.
+        return at >= 0 ? at : (options.length ? 0 : -1);
+      },
+      set(index) {
+        const options = this.querySelectorAll("option");
+        options.forEach((o, i) => { o.selected = i === Number(index); });
+      },
+    });
+    on(["select"], "options", {
+      get() { return collection(this.querySelectorAll("option"), "HTMLOptionsCollection"); },
+    });
+
+    // Tables. `rows` spans the sections in document order, which is what the
+    // spec says and what a reader expects.
+    on(["table"], "rows", {
+      get() { return collection(this.querySelectorAll("tr"), "HTMLCollection"); },
+    });
+    on(["table"], "tBodies", {
+      get() { return collection(this.querySelectorAll("tbody"), "HTMLCollection"); },
+    });
+    on(["table"], "tHead", { get() { return this.querySelector("thead"); } });
+    on(["table"], "tFoot", { get() { return this.querySelector("tfoot"); } });
+    on(["table"], "caption", { get() { return this.querySelector("caption"); } });
+    on(["tr"], "cells", {
+      get() { return collection(this.querySelectorAll("td, th"), "HTMLCollection"); },
+    });
+    on(["tr"], "rowIndex", {
+      get() {
+        for (let n = this.parentNode; n; n = n.parentNode) {
+          if (n.nodeType === 1 && n.tagName === "TABLE") {
+            return n.querySelectorAll("tr").findIndex((r) => r._id === this._id);
+          }
+        }
+        return -1;
+      },
+    });
+    on(["td"], "cellIndex", {
+      get() {
+        const row = this.parentNode;
+        if (!row || row.tagName !== "TR") return -1;
+        return row.querySelectorAll("td, th").findIndex((c) => c._id === this._id);
+      },
+    });
+
     on(["style", "link"], "sheet", {
       get() {
         if (this.tagName === "LINK") {
