@@ -1959,13 +1959,17 @@ dialer's helper lives *inside* the box's network namespace and keeps it alive
 after everything else in it has gone — so a box restarted afterwards gets a new
 namespace the share can never reach. The share now notices and ends.
 
+**Hot reload, run for real on 2026-08-10, over both transports.** A dev server
+in a box answering a `Sec-WebSocket-Key` handshake with a genuine `101`, driven
+from a client that speaks the frame format: `echo:reload-please` came back
+through a Cloudflare quick tunnel, and again over a direct P2P path. Both
+receipts record it as two connections, which is what a page plus a socket is.
+
 **Still not demonstrated.** The two h5i processes were on one machine: a real
 direct QUIC path through the host's network stack, but not two machines on two
-networks. `--direct-only` has never been exercised against a hole punch that
-actually fails, only against one that succeeds. HMR over a share is covered by
-tests (a `101` from the box, frames both ways after it) and has never been run
-against a real dev server's hot reload. Those three are what remains of the exit
-criteria.
+networks. And `--direct-only` has never been exercised against a hole punch that
+actually fails, only against ones that succeed. Those two are what remains of
+the exit criteria.
 
 ## 9. Limits we state up front
 
