@@ -144,6 +144,56 @@ const LOOP_ITERATION_LIMIT: u64 = 5_000_000;
 /// guard there. Together they cover the two shapes that actually occur.
 const JOB_QUEUE_BUDGET: Duration = Duration::from_secs(15);
 
+/// Host hooks, for the one thing the default implementation drops on the floor.
+///
+/// A promise that rejects with nothing attached to it is how asynchronous code
+/// dies, and it was completely silent here: a page could reject three times and
+/// the console said nothing, so a half-built page came with no explanation at
+/// all. That is the failure §8.3 exists to prevent, arriving through the one
+/// channel the engine was not watching.
+///
+/// Only reported when the rejection goes *unhandled*. A rejection that is caught
+/// later is not an error, and `Reject` fires before anyone has had the chance to
+/// attach a handler, so reporting there would blame every page that uses
+/// `.catch`.
+#[derive(Debug)]
+struct Hooks;
+
+impl boa_engine::context::HostHooks for Hooks {
+    fn promise_rejection_tracker(
+        &self,
+        promise: &boa_engine::object::JsObject<boa_engine::builtins::promise::Promise>,
+        operation: boa_engine::builtins::promise::OperationType,
+        context: &mut Context,
+    ) {
+        if !matches!(
+            operation,
+            boa_engine::builtins::promise::OperationType::Reject
+        ) {
+            return;
+        }
+        let Some(host) = context.get_data::<HostHandle>().cloned() else {
+            return;
+        };
+        // Through `JsPromise`, because `Promise::state` is crate-private: the
+        // public wrapper is the supported way to read a settled value.
+        let state = boa_engine::object::builtins::JsPromise::from(promise.clone()).state();
+        let reason = match state {
+            boa_engine::builtins::promise::PromiseState::Rejected(value) => {
+                value.display().to_string()
+            }
+            _ => "no reason given".to_string(),
+        };
+        host::push_console(
+            &mut host.console.borrow_mut(),
+            ConsoleLine::engine(
+                "error",
+                format!("a promise rejected and nothing handled it: {reason}"),
+            ),
+        );
+    }
+}
+
 /// What a settle actually did, so a caller never has to guess.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settled {
@@ -221,6 +271,7 @@ impl Script {
         let mut context = Context::builder()
             .job_executor(executor)
             .module_loader(loader)
+            .host_hooks(std::rc::Rc::new(Hooks))
             .build()
             .map_err(|e| format!("could not build the script realm: {e}"))?;
         // Boa's default recursion ceiling is low enough that a real production
@@ -409,26 +460,31 @@ impl Script {
             timers_run += ran;
 
             if ran == 0 {
-                if self.pending_timers() == 0 {
-                    // Nothing queued and nothing due — but a page waiting on the
-                    // network is not idle, and calling it settled would report
-                    // an empty page as finished. Wait in *real* time, since a
-                    // round trip does not care about our virtual clock.
-                    if outstanding > 0 {
-                        if network_started.elapsed().as_millis() as u64 >= NETWORK_BUDGET_MS {
-                            self.abandon_fetches();
-                            self.run_queued_jobs();
-                            self.collect_module_failures();
-                            return Settled {
-                                elapsed_ms: clock,
-                                timers_run,
-                                cut_off: true,
-                                pending_timers: self.pending_timers(),
-                            };
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(NETWORK_POLL_MS));
-                        continue;
+                // A page waiting on the network is not idle, and this is checked
+                // before the clock moves rather than only when no timer is
+                // armed. Advancing virtual time while a request is in the air
+                // fires the very timeouts pages arm *against* the network —
+                // testharness arms one on every file, so every test that
+                // fetched timed itself out the instant its request was sent.
+                // Wait in *real* time, since a round trip does not care about
+                // our virtual clock.
+                if outstanding > 0 {
+                    if network_started.elapsed().as_millis() as u64 >= NETWORK_BUDGET_MS {
+                        self.abandon_fetches();
+                        self.run_queued_jobs();
+                        self.collect_module_failures();
+                        return Settled {
+                            elapsed_ms: clock,
+                            timers_run,
+                            cut_off: true,
+                            pending_timers: self.pending_timers(),
+                        };
                     }
+                    std::thread::sleep(std::time::Duration::from_millis(NETWORK_POLL_MS));
+                    continue;
+                }
+
+                if self.pending_timers() == 0 {
 
                     // A reply that arrived in *this* pass resolved a promise,
                     // and the continuation it queued has not run yet. Returning

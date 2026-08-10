@@ -84,7 +84,7 @@ def find_tests(root: Path, dirs, limit=None):
     counting them as engine failures would inflate the unmeasured bucket with
     files that were never ours to pass. They are counted and named instead.
     """
-    tests, generated, unscoreable = [], 0, 0
+    tests, generated, unscoreable, needs_server = [], 0, 0, 0
     roots = [root / d for d in dirs] if dirs else [root]
     for base in roots:
         if not base.exists():
@@ -126,10 +126,21 @@ def find_tests(root: Path, dirs, limit=None):
             if "testharness.js" not in body:
                 unscoreable += 1
                 continue
+            # The multi-origin security suites — referrer-policy, mixed-content,
+            # upgrade-insecure-requests and their kin — are built on
+            # `common/security-features`, which needs wptserve's template
+            # substitution *and* its Python subresource handlers *and* several
+            # distinct domains. A static single-origin server has none of the
+            # three, so these cannot report no matter how good the engine is,
+            # and 1,008 of them were sitting in the unmeasured bucket looking
+            # like engine failures. Named, not silently dropped.
+            if "common/security-features" in body:
+                needs_server += 1
+                continue
             tests.append(str(rel))
     if limit:
         tests = tests[:limit]
-    return tests, generated, unscoreable
+    return tests, generated, unscoreable + needs_server
 
 
 def capped(command, megabytes):

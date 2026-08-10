@@ -161,6 +161,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        # `resources/WebIDLParser.js` is a build artifact, not a checked-in
+        # file: `webidl2/build.sh` copies the bundle there. A checkout that
+        # never ran it 404s, and the 211 `idlharness` endpoints across WPT then
+        # hang on a script that will never arrive and report a timeout that says
+        # nothing about this engine. Served from the bundle that is present,
+        # which is exactly what the build would have produced.
+        if path == "/resources/WebIDLParser.js":
+            bundle = os.path.join(WPT_ROOT, "resources", "webidl2", "lib", "webidl2.js")
+            if os.path.isfile(bundle):
+                with open(bundle, "rb") as handle:
+                    body = handle.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/javascript")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
         if path == "/resources/testharnessreport.js":
             body = REPORTER.encode()
             self.send_response(200)
