@@ -1467,7 +1467,7 @@ raster path (`blitz-paint`, vello_cpu) already produces everything it needs.
 
 ---
 
-## 12. Running WPT, 2026-08-09
+## 12. Running WPT, 2026-08-09 to 08-10
 
 §11.5.2 argued that seventy corpus pages cannot answer "what fraction of the
 platform is implemented", and put conformance ahead of the capabilities it
@@ -1550,9 +1550,10 @@ denominator is never mistaken for "all of WPT".
 
 ### 12.4 The baseline, and what it asked for
 
-Full on-disk sweep: **33,754 subtests passing of 212,028 scored**, 25,393 files,
-of which 16,857 reported and 8,536 did not. 36,450 further files were skipped as
-unscoreable and 3,833 as generated.
+First full on-disk sweep: **33,754 subtests passing of 212,028 scored**, 25,393
+files, of which 16,857 reported and 8,536 did not. 36,450 further files were
+skipped as unscoreable and 3,833 as generated. §12.8 records where that number
+went and, more usefully, how much of the gap was measurement rather than engine.
 
 The most valuable output is not the score, it is the demand list — every API the
 tests asked for and this engine does not have, counted. The top of it:
@@ -1611,15 +1612,17 @@ Three things move this score and only one of them is engineering:
    blurred the two would be worth nothing.
 3. **Counting more honestly**, which moves it *down* as often as up.
 
-So the targets are worth restating in those terms. **10,000 is passed**, and
-mostly by (2). **50,000** is reachable by (1): the demand list above is
-mechanical work — CSSOM `sheet` and `styleSheets`, the remaining computed-style
-resolutions, the offset metrics — and 8,536 files still report nothing at all,
-each worth many subtests. **100,000** is not reachable on this path. It needs
-the generated endpoints, which means serving what wptserve serves, and it needs
-whole subsystems this engine does not have and mostly should not: canvas,
-service workers, XSLT. The honest ceiling for the current design should be
-measured before it is promised.
+So the targets are worth restating in those terms, and the restatement below is
+the *original* one, kept because it was wrong in an instructive way:
+
+> **10,000 is passed**, and mostly by (2). **50,000** is reachable by (1) — the
+> demand list is mechanical work, and 8,536 files still report nothing at all.
+> **100,000** is not reachable on this path. It needs the generated endpoints,
+> which means serving what wptserve serves, and whole subsystems this engine
+> does not have and mostly should not: canvas, service workers, XSLT.
+
+All three targets were passed, and the last one was passed without any of the
+subsystems that paragraph said it required. §12.8 is why.
 
 ### 12.7 What is next
 
@@ -1630,3 +1633,84 @@ measured before it is promised.
    layout-dependent resolutions Stylo alone cannot know.
 4. **A CI gate on regression**, not on an absolute number: the baseline is
    committed, and a change that drops it should have to say why.
+
+### 12.8 Where the number actually was, 2026-08-10
+
+**117,331 subtests passing of 585,474 scored**, 26,052 files, 25,252 of which
+report. That is up from 33,754, and it is worth being exact about how much of
+that is the engine getting better and how much is this file learning to read.
+
+Three changes account for most of it, and only one is an engine change.
+
+**The engine was being killed while testharness drew a table.**
+`html/dom/reflection-tabular.html` took 40.6 seconds and scored **zero**, because
+the harness's process timeout fired first. Those forty seconds were not tests:
+testharness renders one DOM row per subtest into `#log` when it finishes, and
+that file has forty thousand of them. The tests themselves are about half a
+second of DOM work.
+
+`setup({ output: false })` — a documented harness setting, and what the official
+WPT runner uses — turns the rendering off. Results already came back through the
+completion callback, so the table was pure overhead.
+
+    reflection-tabular   40.6s → 1.98s
+    html/dom, whole dir  minutes → 26s
+    html/dom passing     6,234 → 43,429
+
+The timeout had been raised to 120 seconds an hour earlier, on the reading that
+this engine needed more wall clock than a JIT to run the same test. That reading
+was true and irrelevant: a generous timeout was paying a harness cost rather than
+removing it. **The first measurement said "this engine is too slow for these
+tests"; the second said "these tests spend their time drawing a table nobody
+reads".** Only one of those is about the engine, and tens of thousands of
+subtests were written off on the strength of the wrong one.
+
+**A computed style did not declare its properties.** `"color" in
+getComputedStyle(el)` was false for every property — the object is a proxy with
+only a `get` trap, and `in` asks `has`. WPT's `test_computed_value` asserts
+exactly that on its first line and is *the* helper for CSS parsing tests, so
+thousands of subtests failed before comparing a value. css-color went 1,213 →
+4,509 without one line of colour code changing: Stylo already supported
+`color-mix()`, `oklch()`, relative colours and `color()`, and this engine was
+already serialising them correctly. The tests could not get far enough to look.
+
+**Style was never recomputed on demand** (§12.5's list), which is what the
+CSSOM tests needed and what any page that builds its DOM in script needs.
+
+The pattern across all three, and across §8's history: **a large failure cluster
+usually has one cheap structural cause, not N expensive ones.** Three for three
+here. An hour of reading actual failure messages has repeatedly been worth more
+than a week of implementing what the failure count seemed to ask for.
+
+#### What this does and does not claim
+
+It does not claim the engine is fast. A 40-second file becoming a 2-second file
+is the harness no longer being measured; the engine is still an interpreter and
+still around 1.3x Chromium's wall time on real pages (§8.17). Conformance
+measured with a fair harness and speed on real pages are separate claims and
+should stay separate.
+
+It does not claim parity with a browser. 453,864 subtests still fail, and the
+largest blocks are named in §12.5: legacy CJK encoding, the combinatorial half
+of `execCommand`, and the multi-origin security suites that need wptserve's
+Python handlers.
+
+It does claim that the number is honest. Nothing was counted that was not run,
+`NOTRUN` and `TIMEOUT` are reported separately from `FAIL`, files that cannot be
+scored are named rather than blamed on the engine, and every subtest counted here
+was already passing before the harness stopped killing it.
+
+### 12.9 The gate
+
+`wpt/gate.sh` runs five directories — dom, css/cssom, html/dom, domparsing,
+encoding — against a committed floor in `wpt/baseline.json`, and CI fails on a
+drop. A subset, because all of WPT is a 2 GiB checkout and a gate nobody can
+afford to run is not a gate; these five are the ones this engine's own work
+moves.
+
+It gates the **pass count**, not a percentage: the denominator moves when
+upstream adds tests or when the harness reaches further, and a percentage that
+falls because the denominator grew is not a regression.
+
+The floor exists because this branch gave back 3,142 subtests in `html` once
+already, to a settle-loop rewrite, and nothing caught it but a manual diff.
