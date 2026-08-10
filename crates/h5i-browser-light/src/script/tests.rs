@@ -595,6 +595,61 @@ fn the_form_and_table_surface_answers() {
 }
 
 #[test]
+fn a_closed_disclosure_and_a_dropdown_read_as_a_person_sees_them() {
+    // Both were carrying text a reader cannot see, which is the §8.21 failure:
+    // a closed `<details>` hides its body behind a disclosure nobody opened,
+    // and a `<select>` shows one option rather than all of them run together.
+    let (page, _broker) = run_page(
+        "<html><body>\
+         <select><option>opt a</option><option selected>opt b</option></select>\
+         <details><summary>Summary line</summary>Details body</details>\
+         <details open><summary>Open one</summary>Shown body</details>\
+         </body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(rendered.contains("opt b"), "the dropdown says what it is set to:\n{rendered}");
+    assert!(
+        !rendered.contains("opt a"),
+        "and not what it is not set to:\n{rendered}"
+    );
+    assert!(rendered.contains("Summary line"), "the summary is shown:\n{rendered}");
+    assert!(
+        !rendered.contains("Details body"),
+        "the body behind a closed disclosure is not:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("Shown body"),
+        "but an open one is:\n{rendered}"
+    );
+}
+
+#[test]
+fn focus_moves_and_the_document_knows_it() {
+    // `focus()` was empty, so `document.activeElement` never moved: a page that
+    // focused a field and then asked which field was focused got the wrong
+    // answer, and a form advancing focus as it validates got no signal at all.
+    let (_page, mut script) = page_and_script(
+        "<html><body><input id='a'><input id='b'></body></html>",
+    );
+    script
+        .eval("globalThis.seen = [];                document.getElementById('b').addEventListener('focusin', () => seen.push('in'));                document.getElementById('a').addEventListener('blur', () => seen.push('out'));")
+        .expect("runs");
+    script.eval("document.getElementById('a').focus();").expect("runs");
+    assert_eq!(script.eval_value("document.activeElement.id").unwrap(), "a");
+    script.eval("document.getElementById('b').focus();").expect("runs");
+    assert_eq!(script.eval_value("document.activeElement.id").unwrap(), "b");
+    assert_eq!(
+        script.eval_value("seen.join(',')").unwrap(),
+        "out,in",
+        "the old element blurs before the new one focuses"
+    );
+    // Nothing focused reports the body, not null — code branching on it expects
+    // an element.
+    script.eval("document.getElementById('b').blur();").expect("runs");
+    assert_eq!(script.eval_value("document.activeElement.tagName").unwrap(), "BODY");
+}
+
+#[test]
 fn a_hash_route_navigates_and_says_so() {
     // Assigning to a getter-only property is a silent no-op, so a hash router
     // never navigated: no error, no route change, no explanation.

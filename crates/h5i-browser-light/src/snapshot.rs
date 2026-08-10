@@ -485,6 +485,28 @@ impl Walker<'_> {
             return;
         }
 
+        // A closed `<details>` shows its `<summary>` and nothing else. The body
+        // is behind a disclosure the reader has not opened, so carrying it is
+        // the §8.21 failure exactly: text a human would have to act to see,
+        // handed over as though it were on the page. Blitz does not apply the
+        // UA rule that hides it, so it is applied here.
+        //
+        // The summary still speaks, because that is the part that *is* shown —
+        // and it is what an agent would click to open the rest.
+        if tag == "details" && attr_of(node, "open").is_none() {
+            for child in node.children.clone() {
+                let is_summary = self
+                    .doc
+                    .get_node(child)
+                    .map(|kid| kid.data.is_element_with_tag_name(&local_name!("summary")))
+                    .unwrap_or(false);
+                if is_summary {
+                    self.walk(child, depth, in_prose);
+                }
+            }
+            return;
+        }
+
         // Content the page does not display is not content this reading should
         // carry. Two reasons, and the second is the serious one:
         //
@@ -728,6 +750,33 @@ fn attr_of<'a>(node: &'a Node, name: &str) -> Option<&'a str> {
 /// address are exactly the ones that have none: an image's name is its `alt`,
 /// and an empty input's is its placeholder or label. Falling back to "" would
 /// render a snapshot of anonymous `textbox` lines nobody can tell apart.
+/// The text of the option a `<select>` is set to.
+///
+/// The first option with `selected`, or failing that the first option at all,
+/// which is what a browser displays for a select where nothing is marked.
+fn selected_option(node: &Node) -> Option<String> {
+    let doc = node.tree();
+    let mut first = None;
+    let mut stack: Vec<usize> = node.children.clone();
+    stack.reverse();
+    while let Some(id) = stack.pop() {
+        let Some(child) = doc.get(id) else { continue };
+        if child.data.is_element_with_tag_name(&local_name!("option")) {
+            let text = collapse(&child.text_content());
+            if attr_of(child, "selected").is_some() {
+                return Some(text);
+            }
+            if first.is_none() && !text.is_empty() {
+                first = Some(text);
+            }
+        }
+        let mut kids = child.children.clone();
+        kids.reverse();
+        stack.extend(kids);
+    }
+    first
+}
+
 fn accessible_name(tag: &str, node: &Node) -> String {
     let from_attr = |names: &[&str]| {
         names
@@ -739,6 +788,16 @@ fn accessible_name(tag: &str, node: &Node) -> String {
 
     match tag {
         "img" => from_attr(&["alt", "title"]).unwrap_or_default(),
+        // A closed `<select>` shows one option: the selected one. Reading its
+        // whole subtree ran every option together — `opt aopt b` — which is
+        // both unreadable and untrue about what the control is set to. An agent
+        // asking "what is this dropdown on?" needs the answer, not the menu.
+        "select" => {
+            let chosen = selected_option(node);
+            chosen
+                .or_else(|| from_attr(&["aria-label", "title", "name"]))
+                .unwrap_or_default()
+        }
         "input" | "textarea" => {
             // What the field *holds* comes first, and it is read from the
             // editor rather than the `value` attribute: typing updates the

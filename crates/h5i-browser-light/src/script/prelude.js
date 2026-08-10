@@ -20,6 +20,13 @@
   /// a `const` still in its temporal dead zone.
   const TAG_CLASSES = new Map();
 
+  /// Which node has focus, or null for none.
+  ///
+  /// Held here rather than on the tree because focus is a property of the
+  /// *document's* view of itself, not of a node, and two nodes must not be able
+  /// to believe they both have it.
+  let focusedId = null;
+
   /// An error with the line it came from, for the callbacks that swallow one.
   ///
   /// Every `catch` that reports and carries on — a listener, a timer, an
@@ -1311,8 +1318,30 @@
       }
       dispatch(this, new MouseEvent("click", { bubbles: true }));
     }
-    focus() {}
-    blur() {}
+    /// Move focus here, and fire what a browser fires.
+    ///
+    /// Both were empty, so `document.activeElement` never moved: a page that
+    /// focused a field and then checked which field was focused got the wrong
+    /// answer, and a form that advances focus as it validates got no signal at
+    /// all. `focusin`/`focusout` bubble and `focus`/`blur` do not, which is the
+    /// difference delegation depends on.
+    focus() {
+      if (focusedId === this._id) return;
+      const previous = focusedId === null ? null : wrap(focusedId);
+      focusedId = this._id;
+      if (previous) {
+        previous.dispatchEvent(new Event("blur", { bubbles: false }));
+        previous.dispatchEvent(new Event("focusout", { bubbles: true }));
+      }
+      this.dispatchEvent(new Event("focus", { bubbles: false }));
+      this.dispatchEvent(new Event("focusin", { bubbles: true }));
+    }
+    blur() {
+      if (focusedId !== this._id) return;
+      focusedId = null;
+      this.dispatchEvent(new Event("blur", { bubbles: false }));
+      this.dispatchEvent(new Event("focusout", { bubbles: true }));
+    }
 
     // Answered from the layout the engine already computed. Returning zeros —
     // which is what this did before — sends a positioning library into a loop
@@ -3747,7 +3776,16 @@
     // "modern browser" branch, which is the correct one for this engine.
     get all() { return collection(api.queryAll("*", 0).map(wrap), "HTMLCollection"); },
 
-    get activeElement() { return wrap(api.body()); },
+    /// What has focus. The body when nothing does, as in a browser — never
+    /// null, which is what code branching on it expects.
+    get activeElement() {
+      if (focusedId !== null) {
+        const focused = wrap(focusedId);
+        if (focused && focused.isConnected) return focused;
+        focusedId = null;
+      }
+      return wrap(api.body());
+    },
     get hidden() { return false; },
     get visibilityState() { return "visible"; },
   };
