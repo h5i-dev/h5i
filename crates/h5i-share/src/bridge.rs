@@ -60,6 +60,10 @@ pub struct PeerRecord {
     pub grant: String,
     pub label: Option<String>,
     pub path: Path,
+    /// Has a path actually been seen carrying this peer? Until one has, `path`
+    /// is a placeholder and the first observation replaces it outright rather
+    /// than being folded in.
+    pub path_observed: bool,
     pub opened: DateTime<Utc>,
     pub closed: Option<DateTime<Utc>>,
     /// TCP connections into the box carried for this peer.
@@ -306,6 +310,7 @@ impl Bridge {
             grant: grant.id.clone(),
             label: grant.label.clone(),
             path,
+            path_observed: false,
             opened: Utc::now(),
             closed: None,
             connections: 0,
@@ -322,9 +327,19 @@ impl Bridge {
     pub fn peer_path(&self, id: PeerId, path: Path) {
         if let Ok(mut t) = self.tally.lock() {
             if let Some(p) = t.peers.get_mut(id.0) {
-                // Only ever toward the weaker claim within a session: a
-                // connection that spent any time on a relay is a connection
-                // that used one, and rounding that off would be flattering.
+                if !p.path_observed {
+                    // The first real observation. Until now `path` was whatever
+                    // the caller guessed at a moment when the transport had not
+                    // selected one — and guessing "direct" and then only ever
+                    // downgrading meant a peer whose path was simply not yet
+                    // known was recorded as direct for good.
+                    p.path = path;
+                    p.path_observed = true;
+                    return;
+                }
+                // After that, only toward the weaker claim: a connection that
+                // spent any time on a relay is a connection that used one, and
+                // rounding that off would be flattering.
                 if p.path == Path::Direct && path == Path::Relayed {
                     p.path = Path::Relayed;
                 }
@@ -389,7 +404,12 @@ impl Bridge {
         // a response with no declared length waits up to five minutes for the
         // box to go quiet; without this signal, a plain Ctrl-C would time out
         // waiting for it and write a receipt missing everything it carried.
-        let _ = self.shutdown.send(true);
+        // `send_replace`, not `send`: tokio's `send` returns an error *without
+        // storing the value* when no receiver is currently subscribed, and a
+        // connection between accepting and its `select!` holds none. That made
+        // the flag stay false for the rest of the process — intermittently, and
+        // exactly on the path this exists for.
+        let _ = self.shutdown.send_replace(true);
         let all = u32::try_from(MAX_CONNECTIONS).unwrap_or(u32::MAX);
         let _ = tokio::time::timeout(within, self.capacity.acquire_many(all)).await;
     }
@@ -652,6 +672,20 @@ pub fn render_status(s: &ShareSession, now: i64) -> String {
 mod tests {
     use super::*;
 
+    /// A bridge over a temp directory, for the accounting tests. Uses the
+    /// no-namespace dialer: nothing here opens a connection.
+    fn test_bridge(dir: &std::path::Path) -> Bridge {
+        Bridge::new(
+            dir.to_path_buf(),
+            "env/test/demo".into(),
+            "digest".into(),
+            "demo".into(),
+            Transport::P2p,
+            "local".into(),
+            crate::dialer::Dialer::spawn_local(1).expect("dialer"),
+        )
+    }
+
     fn at(s: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(s).expect("timestamp").into()
     }
@@ -662,6 +696,7 @@ mod tests {
             grant: "a1b2c3d4".into(),
             label: Some("alex".into()),
             path,
+            path_observed: true,
             opened: at("2026-08-10T10:00:00Z"),
             closed: Some(at("2026-08-10T10:05:00Z")),
             connections: 12,
@@ -814,6 +849,27 @@ mod tests {
         assert!(out.contains("bbbbbbbb  expired"), "{out}");
         assert!(out.contains("cccccccc  revoked"), "{out}");
         assert!(out.contains("alex"));
+    }
+
+    #[test]
+    fn a_path_nobody_has_seen_yet_is_replaced_by_the_first_one_that_is() {
+        // The guess made at join time used to be permanent in the optimistic
+        // direction: `peer_path` only ever downgraded, so a peer whose path had
+        // simply not been selected yet was recorded as direct for good.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let b = test_bridge(dir.path());
+        let g = AuthorizedGrant {
+            id: "a1b2c3d4".into(),
+            label: None,
+            expires_at: 4_000_000_000,
+        };
+        let id = b.peer_joined("kbcd…".into(), &g, Path::Direct);
+        b.peer_path(id, Path::Relayed);
+        assert_eq!(b.tally.lock().unwrap().peers[0].path, Path::Relayed);
+
+        // And once observed, only the weaker claim sticks.
+        b.peer_path(id, Path::Direct);
+        assert_eq!(b.tally.lock().unwrap().peers[0].path, Path::Relayed);
     }
 
     #[test]

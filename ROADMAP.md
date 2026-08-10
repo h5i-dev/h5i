@@ -1941,15 +1941,31 @@ connection (the receipt says so), `Connection: close` in every answer, and a
 `HEAD` returning in five milliseconds where the version before it would have
 waited three hundred seconds for a body that a `HEAD` never has.
 
-**Still not demonstrated, stated plainly so the rest is not read as more than
-it is.** The two processes were on one machine: a real direct QUIC path through
-the host's network stack, but not two machines on two networks. `--direct-only`
-has never been exercised against a hole punch that actually fails, only against
-one that succeeds. No `cloudflared` runs on this host, so the tunnel transport
-has never carried a request over the internet. HMR over a share is untested.
-Those four are what remains of the exit criteria. `cloudflared` is not installed
-on this host and could not be, which is why the tunnel's coverage stops at its
-own front door.
+**The tunnel, run for real on 2026-08-10.** `cloudflared` was installed and a
+quick tunnel carried live traffic over the internet: the invite link bounced
+into a `Secure` cookie, `GET`, `HEAD` and a 300 KB `POST` all came back from the
+box, an anonymous request and one with a wrong token both got `401`, and the
+receipt named the transport, the grant, six connections, 678 KB in and 676 KB
+out, one refusal, and the "not end-to-end encrypted" note.
+
+Two things the live run found that no test would have. A `POST` answered `501`
+and the first diagnosis — that `cloudflared` chunks every body and the proxy
+refused chunked — was **wrong**: the `501` came from the box's own
+`python -m http.server`, which has no `do_POST`. (Chunked request bodies are
+forwarded now rather than refused, which is a real improvement and was reachable
+from a direct client; it was not what that `501` was.) And killing the box's
+session left the share answering `502` forever with nothing said, because the
+dialer's helper lives *inside* the box's network namespace and keeps it alive
+after everything else in it has gone — so a box restarted afterwards gets a new
+namespace the share can never reach. The share now notices and ends.
+
+**Still not demonstrated.** The two h5i processes were on one machine: a real
+direct QUIC path through the host's network stack, but not two machines on two
+networks. `--direct-only` has never been exercised against a hole punch that
+actually fails, only against one that succeeds. HMR over a share is covered by
+tests (a `101` from the box, frames both ways after it) and has never been run
+against a real dev server's hot reload. Those three are what remains of the exit
+criteria.
 
 ## 9. Limits we state up front
 

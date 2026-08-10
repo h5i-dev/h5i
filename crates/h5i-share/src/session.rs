@@ -336,6 +336,32 @@ pub fn claim(env_dir: &Path, s: &ShareSession) -> Result<Option<u32>, H5iError> 
     Ok(cleared)
 }
 
+/// End a share, under a single lock hold.
+///
+/// Returns whether anything was actually serving. One lock for the whole
+/// decision on purpose: revoking under the lock, releasing it, and *then*
+/// removing the file leaves a window in which a concurrently starting share
+/// legitimately takes the stale record over — and the removal then deletes the
+/// new share's grant table, after its ticket has been printed to somebody.
+pub fn stop(env_dir: &Path) -> Result<bool, H5iError> {
+    let _lock = Lock::acquire(env_dir)?;
+    let Some(mut s) = read(env_dir) else {
+        return Err(H5iError::Metadata(
+            "this box is not being shared — there is nothing to stop".into(),
+        ));
+    };
+    if !is_live(&s) {
+        let p = session_path(env_dir);
+        std::fs::remove_file(&p).map_err(|e| H5iError::with_path(e, &p))?;
+        return Ok(false);
+    }
+    for g in &mut s.grants {
+        g.revoked = true;
+    }
+    write(env_dir, &s)?;
+    Ok(true)
+}
+
 /// Read, change, write, under the lock. The only way grants should be edited.
 pub fn update<T>(
     env_dir: &Path,

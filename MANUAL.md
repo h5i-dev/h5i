@@ -486,9 +486,11 @@ keep-alive answer would tell the visitor's browser to reuse a connection that
 will never answer again — and the response is framed by its `Content-Length` so
 the connection ends when the response does.
 
-Two consequences worth knowing. A request body has to have a `Content-Length`;
-a chunked one is refused with a `501`, because forwarding one request means
-knowing where it ends. And an upgrade is the exception — it does become a
+One consequence worth knowing: a chunked request body is parsed, not just
+copied — forwarding one request means knowing where it ends, and a chunk stream
+only says so in its own framing. It is forwarded verbatim, chunk headers and
+all, so the box sees the request it would have seen anyway. And an upgrade is
+the exception — it does become a
 two-way pipe — but only after the box has actually answered `101`, and only when
 the request asked for it properly with both an `Upgrade` header and a
 `Connection: upgrade`. A request that merely attached an `Upgrade:` header gets

@@ -296,18 +296,26 @@ async fn handle(
     // Resolved once, here, so the decision and the accounting agree about which
     // grant let this connection in.
     let mut grant = None;
+    // Whether a credential was presented at all. `authorize` records its own
+    // refusals, so counting every `401` here logged a revoked ticket twice —
+    // once truthfully and once as "unknown" — in the one number the receipt
+    // sells as ingress evidence.
+    let mut presented = false;
     let next = http_front::decide(
         &head,
         // The bare name: a quick tunnel's host is its own site (trycloudflare
         // is on the Public Suffix List), so there is no other origin to
         // collide with.
         crate::gate::COOKIE,
-        |token| match bridge.authorize(token) {
-            Ok(g) => {
-                grant = Some(g);
-                true
+        |token| {
+            presented = true;
+            match bridge.authorize(token) {
+                Ok(g) => {
+                    grant = Some(g);
+                    true
+                }
+                Err(_) => false,
             }
-            Err(_) => false,
         },
         // The visitor's origin is https, because Cloudflare terminates it.
         true,
@@ -318,7 +326,7 @@ async fn handle(
             // A `401` here is somebody knocking with nothing, which `authorize`
             // never sees and so never counted. On a public tunnel URL that is
             // the commonest thing that happens to a share.
-            if grant.is_none() && body.starts_with("HTTP/1.1 401") {
+            if !presented && body.starts_with("HTTP/1.1 401") {
                 bridge.record_refused();
             }
             http_front::respond(&mut sock, &body).await;
@@ -743,7 +751,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_body_the_proxy_cannot_measure_is_refused_rather_than_streamed() {
+    async fn a_chunked_body_reaches_the_box_and_stops_at_its_end() {
+        // Every POST through a real quick tunnel arrives chunked: `cloudflared`
+        // bridges HTTP/2 to the box's HTTP/1.1 and has no length to carry over.
+        // This used to answer `501`, which meant no form on a shared app worked.
         let port = fake_dev_server();
         let dir = tempfile::tempdir().expect("tempdir");
         let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
@@ -756,13 +767,18 @@ mod tests {
         let got = request(
             addr,
             &format!(
-                "POST /upload HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
-                 Transfer-Encoding: chunked\r\n\r\n"
+                "POST /form HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
+                 Transfer-Encoding: chunked\r\n\r\n\
+                 9\r\nname=alex\r\n0\r\n\r\n\
+                 GET /SMUGGLED HTTP/1.1\r\nHost: t\r\n\r\n"
             ),
         )
         .await;
-        assert!(got.starts_with("HTTP/1.1 501 "), "{got}");
-        assert!(!got.contains("SAW<"), "a chunked body reached the box");
+        assert!(got.contains("name=alex"), "the body did not arrive: {got}");
+        assert!(
+            !got.contains("SMUGGLED"),
+            "a request pipelined after the terminating chunk was forwarded: {got}"
+        );
 
         serving.abort();
     }

@@ -27,6 +27,12 @@ use crate::session::{self, ShareSession, Transport};
 /// How often the share checks whether it has been stopped from elsewhere.
 const STOP_POLL: Duration = Duration::from_secs(1);
 
+/// How often the share checks that the box still has a session.
+///
+/// Slower than the revoke poll: a box going away is not a security event, and
+/// the check walks a directory.
+const BOX_POLL: Duration = Duration::from_secs(3);
+
 /// How long to wait, after the transport is closed, for the connections it was
 /// carrying to finish recording what they moved.
 const QUIESCE: Duration = Duration::from_secs(5);
@@ -171,6 +177,10 @@ async fn serve_async(
             eprintln!("share: {reason}");
             Ok(())
         }
+        reason = box_went_away(req.env_dir.clone()) => {
+            eprintln!("share: {reason}");
+            Ok(())
+        }
     };
 
     // Shut the transport down *first*, then wait for the connections it was
@@ -257,6 +267,25 @@ async fn stopped_elsewhere(bridge: Arc<Bridge>) -> String {
         tokio::time::sleep(STOP_POLL).await;
         if bridge.is_spent() {
             return "this share was stopped or has expired".to_string();
+        }
+    }
+}
+
+/// Resolves when the box stops having a session of its own.
+///
+/// This is not tidiness. The dialer's helper lives *inside* the box's network
+/// namespace, so it keeps that namespace alive after every other process in it
+/// has gone — and loopback inside it still exists, so connections are refused
+/// rather than failing in a way anybody would notice. Left alone, a share whose
+/// box died answers `502` forever, and a box restarted afterwards gets a *new*
+/// namespace that this share will never reach. So the share ends, and says why.
+async fn box_went_away(env_dir: PathBuf) -> String {
+    loop {
+        tokio::time::sleep(BOX_POLL).await;
+        if h5i_core::env::live_sessions(&env_dir).is_empty() {
+            return "the box is no longer running, so there is nothing left to share \
+                    (start a session and share again)"
+                .to_string();
         }
     }
 }
@@ -484,19 +513,12 @@ pub enum Stopped {
 }
 
 pub fn stop(env_dir: &std::path::Path) -> Result<Stopped, H5iError> {
-    let outcome = session::update(env_dir, |s| {
-        if !session::is_live(s) {
-            return Ok(Stopped::Stale);
-        }
-        for g in &mut s.grants {
-            g.revoked = true;
-        }
-        Ok(Stopped::Serving)
-    })?;
-    if outcome == Stopped::Stale {
-        session::clear(env_dir);
-    }
-    Ok(outcome)
+    // One lock hold for the whole decision — see `session::stop`.
+    Ok(if session::stop(env_dir)? {
+        Stopped::Serving
+    } else {
+        Stopped::Stale
+    })
 }
 
 #[cfg(test)]

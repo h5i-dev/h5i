@@ -236,15 +236,15 @@ async fn serve_connection(
                     return;
                 }
 
+                if let (Some(id), Some(p)) = (seen, observed_path(&conn)) {
+                    bridge.peer_path(id, p);
+                }
                 match observed_path(&conn) {
                     // Only a *selected relay path* is evidence of relaying.
                     // "Nothing selected" happens for an instant after a NAT
                     // rebinding, and treating it as a relay closed healthy
                     // connections and libelled honest ones in the receipt.
                     Some(Path::Relayed) => {
-                        if let Some(id) = seen {
-                            bridge.peer_path(id, Path::Relayed);
-                        }
                         if direct_only {
                             conn.close(
                                 3u32.into(),

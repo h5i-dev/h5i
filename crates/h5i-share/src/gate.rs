@@ -65,6 +65,8 @@ pub struct Request {
     pub content_length: Option<u64>,
     /// The body's length is not something this proxy can know in advance.
     pub chunked: bool,
+    /// The client said `Expect: 100-continue` and is waiting for permission.
+    pub expects_continue: bool,
 }
 
 /// Why a request was refused.
@@ -74,8 +76,6 @@ pub enum Refusal {
     NotAuthorized,
     /// The request was not something we are willing to parse.
     Malformed,
-    /// Well-formed, but framed in a way this proxy will not forward.
-    UnsupportedFraming,
 }
 
 impl Refusal {
@@ -83,7 +83,6 @@ impl Refusal {
         match self {
             Refusal::NotAuthorized => (401, "Unauthorized"),
             Refusal::Malformed => (400, "Bad Request"),
-            Refusal::UnsupportedFraming => (501, "Not Implemented"),
         }
     }
 
@@ -99,10 +98,6 @@ impl Refusal {
                 "This h5i share needs a valid invite link. Ask whoever shared it for a new one."
             }
             Refusal::Malformed => "That is not a request this share can serve.",
-            Refusal::UnsupportedFraming => {
-                "This share forwards one request per connection, so it needs a request whose \
-                 length it can know in advance. Chunked request bodies are not forwarded."
-            }
         }
     }
 }
@@ -346,6 +341,10 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
         None => None,
     };
 
+    let expects_continue = headers_named(&headers, "expect")
+        .iter()
+        .any(|v| lists_token(v, "100-continue"));
+
     Some(Request {
         method,
         target,
@@ -354,6 +353,7 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
         token,
         upgrade,
         content_length,
+        expects_continue,
         // Carried as its own flag rather than encoded in the length. As a
         // sentinel value it collided with a real `Content-Length` of
         // `u64::MAX`, and it was skipped entirely when the request also asked
@@ -428,6 +428,11 @@ pub fn rewrite_for_upstream(head: &str, req: &Request, cookie: &str) -> String {
             if !kept.is_empty() {
                 out.push_str(&format!("Cookie: {kept}\r\n"));
             }
+            continue;
+        }
+        if k.trim().eq_ignore_ascii_case("expect") && req.expects_continue {
+            // Answered by the proxy already; leaving it would make the box send
+            // a second, useless `100` behind the body it was gating.
             continue;
         }
         if k.trim().eq_ignore_ascii_case("connection") && !req.upgrade {
@@ -747,6 +752,19 @@ mod tests {
             assert!(parse_default(&raw).is_none(), "accepted a name padded with {pad:?}");
         }
         assert!(parse_default(&head("POST / HTTP/1.1", &["Content-Length: 5"])).is_some());
+    }
+
+    #[test]
+    fn an_expect_header_is_noticed_and_not_passed_on() {
+        let raw = head(
+            "POST / HTTP/1.1",
+            &["Expect: 100-continue", "Content-Length: 5", "Cookie: h5i_share=abc"],
+        );
+        let r = parse_default(&raw).expect("parse");
+        assert!(r.expects_continue);
+        let up = rewrite_for_upstream(&raw, &r, COOKIE);
+        assert!(!up.to_lowercase().contains("expect:"), "{up}");
+        assert!(up.contains("Content-Length: 5"), "{up}");
     }
 
     #[test]

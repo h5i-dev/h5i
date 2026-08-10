@@ -46,6 +46,11 @@ const RESPONSE_IDLE: Duration = Duration::from_secs(300);
 /// How long a peer may pause part-way through a body it declared.
 const BODY_IDLE: Duration = Duration::from_secs(30);
 
+/// The longest a chunk-size line or a single trailer may be.
+const MAX_CHUNK_LINE: usize = 1024;
+/// The longest a whole trailer section may be.
+const MAX_TRAILERS: usize = 8 * 1024;
+
 /// The longest an unframed response may stay open, whatever either end does.
 ///
 /// A server-sent-events stream is the legitimate case and an hour is generous
@@ -146,14 +151,6 @@ pub fn decide(
             secure,
         ));
     }
-    if req.chunked {
-        // Well-formed, and refused: forwarding exactly one request means
-        // knowing where it ends, and a chunked body would have to be parsed to
-        // find out. Browsers use `Content-Length` for forms and ordinary
-        // requests, so this costs almost nothing and removes a parser from the
-        // path an unauthenticated peer's bytes take.
-        return Next::Respond(gate::refusal_response(gate::Refusal::UnsupportedFraming));
-    }
     Next::Proxy {
         head: gate::rewrite_for_upstream(head, &req, cookie),
         req,
@@ -227,38 +224,79 @@ where
 
     let (mut peer_r, mut peer_w) = client.into_split();
 
+    // A client that said `Expect: 100-continue` is waiting for permission it
+    // will never get otherwise: this proxy forwards the whole body before it
+    // reads anything from the box, so the box's own `100` cannot arrive until
+    // after the body it was gating. curl gives up after a second and sends
+    // anyway; a client that waits without a timeout used to stall until the
+    // body deadline and then get no answer at all. So the proxy answers, and
+    // the header is not passed on — the box would otherwise send a second,
+    // useless `100` behind the body.
+    if req.expects_continue {
+        peer_w.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").await?;
+        to_peer.fetch_add(25, Ordering::Relaxed);
+    }
+
     up_w.write_all(head.as_bytes()).await?;
     to_box.fetch_add(head.len() as u64, Ordering::Relaxed);
 
     // The declared body, and only the declared body. Anything past it on this
     // connection is a pipelined second request, and dropping it on the floor is
     // the point rather than an oversight.
-    let want = req.content_length.unwrap_or(0);
-    let from_rest = (rest.len() as u64).min(want) as usize;
-    if from_rest > 0 {
-        up_w.write_all(&rest[..from_rest]).await?;
-        to_box.fetch_add(from_rest as u64, Ordering::Relaxed);
-    }
-    let mut remaining = want - from_rest as u64;
-    let mut buf = vec![0u8; 32 * 1024];
-    while remaining > 0 {
-        let take = (remaining as usize).min(buf.len());
-        // Deadlined per read. Declaring a megabyte, sending one byte and going
-        // quiet used to hold a connection into the box, and one of the share's
-        // slots, for as long as the peer felt like it.
-        let n = match tokio::time::timeout(BODY_IDLE, peer_r.read(&mut buf[..take])).await {
-            Ok(r) => r?,
-            Err(_) => return Ok(()),
-        };
-        if n == 0 {
-            // The client promised a body and then hung up. Waiting for a
-            // response now means waiting for a box that is itself waiting for
-            // the rest of a request nobody is going to send.
+    let from_rest;
+    if req.chunked {
+        // Parsed rather than refused, and the refusal was not a small cost: a
+        // browser sends `Content-Length` for a form, but `cloudflared` bridges
+        // HTTP/2 to the box's HTTP/1.1 and has no length to carry over, so it
+        // chunks *every* request with a body. Refusing chunked meant every
+        // POST through a tunnel share answered `501`, which is most of what
+        // "let somebody try the web app" means.
+        //
+        // Forwarded verbatim, chunk framing and all — the box speaks HTTP and
+        // this proxy does not need to change the encoding, only to know where
+        // the request ends.
+        if forward_chunked(&mut peer_r, &mut up_w, rest_from_client, to_box)
+            .await
+            .is_err()
+        {
+            // Answered rather than dropped. A body whose framing does not parse
+            // is the peer's mistake or somebody's probe, and a closed socket
+            // with no reply is the least informative thing to hand either.
+            let _ = peer_w
+                .write_all(gate::refusal_response(gate::Refusal::Malformed).as_bytes())
+                .await;
+            let _ = peer_w.shutdown().await;
             return Ok(());
         }
-        up_w.write_all(&buf[..n]).await?;
-        to_box.fetch_add(n as u64, Ordering::Relaxed);
-        remaining -= n as u64;
+        from_rest = rest_from_client.len();
+    } else {
+        let want = req.content_length.unwrap_or(0);
+        from_rest = (rest.len() as u64).min(want) as usize;
+        if from_rest > 0 {
+            up_w.write_all(&rest[..from_rest]).await?;
+            to_box.fetch_add(from_rest as u64, Ordering::Relaxed);
+        }
+        let mut remaining = want - from_rest as u64;
+        let mut buf = vec![0u8; 32 * 1024];
+        while remaining > 0 {
+            let take = (remaining as usize).min(buf.len());
+            // Deadlined per read. Declaring a megabyte, sending one byte and
+            // going quiet used to hold a connection into the box, and one of
+            // the share's slots, for as long as the peer felt like it.
+            let n = match tokio::time::timeout(BODY_IDLE, peer_r.read(&mut buf[..take])).await {
+                Ok(r) => r?,
+                Err(_) => return Ok(()),
+            };
+            if n == 0 {
+                // The client promised a body and then hung up. Waiting for a
+                // response now means waiting for a box that is itself waiting
+                // for the rest of a request nobody is going to send.
+                return Ok(());
+            }
+            up_w.write_all(&buf[..n]).await?;
+            to_box.fetch_add(n as u64, Ordering::Relaxed);
+            remaining -= n as u64;
+        }
     }
 
     let mut up_r = up_r;
@@ -282,8 +320,13 @@ where
         if !(complete && is_informational(&head)) {
             break (head, complete);
         }
-        peer_w.write_all(&head).await?;
-        to_peer.fetch_add(head.len() as u64, Ordering::Relaxed);
+        // Relayed as it came *except* for the share-cookie filter: an interim
+        // head must keep its `Connection` (the answer has not started) but it
+        // is still a place the box could set a cookie it has no business
+        // setting.
+        let cleaned = strip_share_cookies(&head);
+        peer_w.write_all(&cleaned).await?;
+        to_peer.fetch_add(cleaned.len() as u64, Ordering::Relaxed);
         // Bounded. A box streaming interim heads forever is not a thing a real
         // server does, and it is a thing agent-written code can do by accident.
         interim += 1;
@@ -360,6 +403,117 @@ fn has_no_body(method: &str, head: &[u8]) -> bool {
     matches!(status_code(head), Some(204) | Some(304))
 }
 
+/// Forward a chunked request body, verbatim, and stop at its end.
+///
+/// The point is not to understand the body — it is passed through byte for
+/// byte — but to know where it stops, so that what follows on the connection is
+/// the pipelined request this proxy exists to drop rather than something it
+/// forwards by accident.
+///
+/// Everything is bounded before it is believed: the size line, the trailer
+/// section, and the whole body's wall clock. A chunk *size* is not bounded,
+/// because a legitimate upload is as big as it is, and the peer sending it is
+/// one the grant table already admitted.
+async fn forward_chunked<R, W>(
+    r: &mut R,
+    w: &mut W,
+    initial: &[u8],
+    to_box: &std::sync::atomic::AtomicU64,
+) -> std::io::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin + Send,
+    W: tokio::io::AsyncWrite + Unpin + Send,
+{
+    use std::sync::atomic::Ordering;
+    let mut buf = initial.to_vec();
+    let deadline = tokio::time::Instant::now() + UNFRAMED_LIFETIME;
+    let mut trailer_bytes = 0usize;
+
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(std::io::Error::other("chunked body took too long"));
+        }
+        let line = read_crlf_line(r, &mut buf, MAX_CHUNK_LINE).await?;
+        let size = chunk_size(&line)
+            .ok_or_else(|| std::io::Error::other("not a chunk size"))?;
+        w.write_all(&line).await?;
+        to_box.fetch_add(line.len() as u64, Ordering::Relaxed);
+
+        if size == 0 {
+            // The terminating chunk, then any trailers, then a blank line.
+            loop {
+                let t = read_crlf_line(r, &mut buf, MAX_CHUNK_LINE).await?;
+                w.write_all(&t).await?;
+                to_box.fetch_add(t.len() as u64, Ordering::Relaxed);
+                if t.as_slice() == b"\r\n" {
+                    return Ok(());
+                }
+                trailer_bytes += t.len();
+                if trailer_bytes > MAX_TRAILERS {
+                    return Err(std::io::Error::other("trailers too long"));
+                }
+            }
+        }
+
+        // The data, plus the CRLF that closes it.
+        let mut left = size + 2;
+        while left > 0 {
+            if buf.is_empty() {
+                fill(r, &mut buf).await?;
+            }
+            let take = (left as usize).min(buf.len());
+            w.write_all(&buf[..take]).await?;
+            to_box.fetch_add(take as u64, Ordering::Relaxed);
+            buf.drain(..take);
+            left -= take as u64;
+        }
+    }
+}
+
+/// One CRLF-terminated line, from the buffer and then from the reader.
+async fn read_crlf_line<R: tokio::io::AsyncRead + Unpin>(
+    r: &mut R,
+    buf: &mut Vec<u8>,
+    cap: usize,
+) -> std::io::Result<Vec<u8>> {
+    loop {
+        if let Some(i) = buf.windows(2).position(|w| w == b"\r\n") {
+            let line = buf.drain(..i + 2).collect();
+            return Ok(line);
+        }
+        if buf.len() > cap {
+            return Err(std::io::Error::other("line too long"));
+        }
+        fill(r, buf).await?;
+    }
+}
+
+async fn fill<R: tokio::io::AsyncRead + Unpin>(
+    r: &mut R,
+    buf: &mut Vec<u8>,
+) -> std::io::Result<()> {
+    let mut chunk = [0u8; 8192];
+    let n = tokio::time::timeout(BODY_IDLE, r.read(&mut chunk))
+        .await
+        .map_err(|_| std::io::Error::other("the peer stopped mid-body"))??;
+    if n == 0 {
+        return Err(std::io::Error::other("the peer hung up mid-body"));
+    }
+    buf.extend_from_slice(&chunk[..n]);
+    Ok(())
+}
+
+/// The size from a chunk header line, ignoring any extension after `;`.
+fn chunk_size(line: &[u8]) -> Option<u64> {
+    let line = line.strip_suffix(b"\r\n")?;
+    let hex = line.split(|&b| b == b';').next()?;
+    let hex = std::str::from_utf8(hex).ok()?.trim();
+    if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u64::from_str_radix(hex, 16).ok()
+}
+
 /// Read the box's response head.
 ///
 /// Byte-oriented, unlike the request reader, and that is not fussiness: a
@@ -432,15 +586,33 @@ where
 {
     use std::sync::atomic::Ordering;
 
-    let (out, body_len) = if complete {
+    if !complete {
+        // A head the box never finished is not a response, and relaying the
+        // bytes verbatim — which is what this did, to avoid "silently deleting
+        // a response" — hands the visitor a head that skipped every rewrite:
+        // no forced `close`, no share-cookie filter, no length sanitising. The
+        // box chooses when to stop talking, so that was the whole sanitiser
+        // behind a door the box holds. A refusal the visitor can read is the
+        // better half of the trade.
+        let _ = peer_w
+            .write_all(unfinished_response().as_bytes())
+            .await;
+        let _ = peer_w.shutdown().await;
+        return Ok(());
+    }
+
+    let (out, body_len) = {
         // A `HEAD`, a `204` or a `304` declares a length and sends nothing.
         // Waiting for that body would hold the connection until the idle
         // timeout, and a `304` is what a dev server answers for every asset the
         // browser already has — so this is the common case, not the exotic one.
-        let framing = if bodyless {
-            Framing::Length(0)
-        } else {
-            response_framing(&head)
+        let framing = match (bodyless, response_framing(&head)) {
+            // A `HEAD`, a `204` or a `304` declares a length and sends nothing.
+            // The framing question is still asked, so an ambiguous head is
+            // still sanitised on the way out.
+            (true, Framing::Ambiguous) => Framing::Ambiguous,
+            (true, _) => Framing::Length(0),
+            (false, f) => f,
         };
         let rewritten = close_the_connection(&head);
         match framing {
@@ -450,11 +622,13 @@ where
             // is a response-smuggling shape the request side refuses outright,
             // and a client that reads it either errors or picks one — which is
             // the disagreement all over again, one hop further out.
-            Framing::Ambiguous => (strip_lengths(rewritten), None),
+            //
+            // Applied even when the answer carries no body: a `304` is the
+            // commonest response a dev server produces, and "this branch has no
+            // body so the headers cannot hurt" is how an invariant ends up
+            // holding on one path and not the other.
+            Framing::Ambiguous => (strip_lengths(rewritten), Some(0)),
         }
-    } else {
-        // Nothing was parsed, so nothing is rewritten. Send it on as it came.
-        (head, None)
     };
     if !out.is_empty() {
         peer_w.write_all(&out).await?;
@@ -485,7 +659,11 @@ where
     // per-peer limit.
     let hard_deadline = tokio::time::Instant::now() + UNFRAMED_LIFETIME;
     loop {
-        if body_len.is_none() && tokio::time::Instant::now() >= hard_deadline {
+        // Applied whether or not the response declared a length. A box
+        // answering `Content-Length: 1000000000` and sending one byte every
+        // four minutes resets the idle timer forever, and "framed responses end
+        // when their body does" is a promise agent-written code never made.
+        if tokio::time::Instant::now() >= hard_deadline {
             break;
         }
         tokio::select! {
@@ -546,18 +724,8 @@ fn close_the_connection(head: &[u8]) -> Vec<u8> {
         if name == "connection" || name == "keep-alive" {
             continue;
         }
-        // The box must not set the visitor's share cookie. It cannot guess a
-        // token, so the worst it could do is clear one — but cookies ignore the
-        // port, so on the joining side one box could log a visitor out of a
-        // *different* share. Nothing legitimate sets a cookie by this name.
-        if name == "set-cookie" {
-            let value = line.splitn(2, |&b| b == b':').nth(1).unwrap_or(b"");
-            if String::from_utf8_lossy(value)
-                .trim_start()
-                .starts_with(crate::gate::COOKIE)
-            {
-                continue;
-            }
+        if sets_a_share_cookie(line) {
+            continue;
         }
         out.extend_from_slice(line);
         out.extend_from_slice(b"\r\n");
@@ -601,7 +769,12 @@ fn response_framing(head: &[u8]) -> Framing {
         let name = String::from_utf8_lossy(&line[..colon]).trim().to_ascii_lowercase();
         let value = String::from_utf8_lossy(&line[colon + 1..]).trim().to_string();
         match name.as_str() {
-            "transfer-encoding" => chunked = true,
+            // Only `chunked` frames a body. `identity` is legal, deprecated,
+            // and means "no encoding" — grading it as chunked stripped a
+            // perfectly good `Content-Length`.
+            "transfer-encoding" if value.to_ascii_lowercase().contains("chunked") => {
+                chunked = true;
+            }
             "content-length" => {
                 lengths += 1;
                 if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
@@ -625,6 +798,60 @@ fn response_framing(head: &[u8]) -> Framing {
         (0, _) => Framing::UntilClose,
         _ => Framing::Ambiguous,
     }
+}
+
+/// What a visitor gets when the box starts a response and never finishes it.
+const UNFINISHED_BODY: &str =
+    "The app in this box began a reply and did not finish it. Whoever shared it needs to look.";
+
+/// Built from the body, because a hand-counted length is a truncated page.
+fn unfinished_response() -> String {
+    format!(
+        "HTTP/1.1 502 Bad Gateway\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\
+         Content-Length: {}\r\n\
+         Cache-Control: no-store\r\n\
+         Connection: close\r\n\r\n{UNFINISHED_BODY}",
+        UNFINISHED_BODY.len()
+    )
+}
+
+/// Drop every `Set-Cookie` that sets a share cookie, and nothing else.
+fn strip_share_cookies(head: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(head.len());
+    for line in head.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            continue;
+        }
+        if sets_a_share_cookie(line) {
+            continue;
+        }
+        out.extend_from_slice(line);
+        out.extend_from_slice(b"\r\n");
+    }
+    out.extend_from_slice(b"\r\n");
+    out
+}
+
+/// Is this header line a `Set-Cookie` for one of ours?
+///
+/// The box cannot guess a token, so the worst it could do is clear one — but
+/// cookies ignore the port, so on the joining side one box could log a visitor
+/// out of a *different* share. Nothing legitimate sets a cookie by this name.
+fn sets_a_share_cookie(line: &[u8]) -> bool {
+    let Some(colon) = line.iter().position(|&b| b == b':') else {
+        return false;
+    };
+    if !String::from_utf8_lossy(&line[..colon])
+        .trim()
+        .eq_ignore_ascii_case("set-cookie")
+    {
+        return false;
+    }
+    String::from_utf8_lossy(&line[colon + 1..])
+        .trim_start()
+        .starts_with(crate::gate::COOKIE)
 }
 
 /// Drop every `Content-Length` from a head whose framing we refused to trust.
@@ -654,6 +881,56 @@ mod response_tests {
         tokio::time::Instant::now() + Duration::from_secs(5)
     }
 
+    #[tokio::test]
+    async fn a_chunked_body_is_forwarded_and_stops_where_it_ends() {
+        // `cloudflared` bridges HTTP/2 to the box's HTTP/1.1 and has no length
+        // to carry over, so it chunks every request with a body. Refusing
+        // chunked meant every POST through a tunnel share answered `501`.
+        let body = b"5\r\nhello\r\n3\r\n123\r\n0\r\n\r\nGET /SMUGGLED HTTP/1.1\r\n\r\n";
+        let mut peer = &body[..];
+        let mut out: Vec<u8> = Vec::new();
+        let counted = std::sync::atomic::AtomicU64::new(0);
+        forward_chunked(&mut peer, &mut out, &[], &counted)
+            .await
+            .expect("a well-formed chunked body");
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(text.contains("hello"), "{text}");
+        assert!(text.contains("123"), "{text}");
+        assert!(text.ends_with("0\r\n\r\n"), "{text}");
+        // And it stopped: what followed the terminating chunk is a pipelined
+        // request, which is the thing this proxy exists to not forward.
+        assert!(!text.contains("SMUGGLED"), "a pipelined request was forwarded: {text}");
+    }
+
+    #[tokio::test]
+    async fn chunk_framing_that_is_not_framing_is_refused() {
+        for body in [
+            &b"zz\r\nhello\r\n"[..],
+            &b"5\r\nhel"[..],                    // hung up mid-chunk
+            &b"0\r\n"[..],                       // no closing blank line
+        ] {
+            let mut peer = body;
+            let mut out: Vec<u8> = Vec::new();
+            let counted = std::sync::atomic::AtomicU64::new(0);
+            assert!(
+                forward_chunked(&mut peer, &mut out, &[], &counted).await.is_err(),
+                "accepted {body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_chunk_size_is_read_the_way_the_spec_writes_one() {
+        assert_eq!(chunk_size(b"5\r\n"), Some(5));
+        assert_eq!(chunk_size(b"1f\r\n"), Some(31));
+        assert_eq!(chunk_size(b"0\r\n"), Some(0));
+        // Extensions after `;` are ignored, not refused.
+        assert_eq!(chunk_size(b"a;name=value\r\n"), Some(10));
+        assert_eq!(chunk_size(b"\r\n"), None);
+        assert_eq!(chunk_size(b"-5\r\n"), None);
+        assert_eq!(chunk_size(b"5"), None);
+    }
+
     #[test]
     fn a_bodyless_answer_is_not_waited_on() {
         // A `304` is what a dev server answers for every asset the browser
@@ -665,6 +942,50 @@ mod response_tests {
         assert!(has_no_body("HEAD", b"HTTP/1.1 200 OK\r\nContent-Length: 9000\r\n\r\n"));
         assert!(has_no_body("head", b"HTTP/1.1 200 OK\r\n\r\n"));
         assert!(!has_no_body("GET", b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n"));
+    }
+
+    #[test]
+    fn a_head_the_box_never_finished_is_not_relayed_raw() {
+        // Relaying an unfinished head verbatim put the whole sanitiser behind a
+        // door the box holds: stop talking mid-head and `Connection`, the
+        // share-cookie filter and the length checks are all skipped.
+        let r = unfinished_response();
+        let (head, body) = r.split_once("\r\n\r\n").expect("a head and a body");
+        assert!(head.starts_with("HTTP/1.1 502 "), "{r}");
+        assert!(head.contains(&format!("Content-Length: {}", body.len())), "{r}");
+        assert!(head.contains("Connection: close"), "{r}");
+    }
+
+    #[test]
+    fn an_interim_head_cannot_set_a_share_cookie_either() {
+        let head = b"HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\
+                     Set-Cookie: h5i_share_43821=x; Max-Age=0\r\n\r\n";
+        let text = String::from_utf8(strip_share_cookies(head)).expect("utf8");
+        assert!(!text.contains("h5i_share"), "{text}");
+        assert!(text.contains("Link: </a.css>"), "{text}");
+        // And it keeps its `Connection`: the answer has not started yet.
+        assert!(!text.contains("Connection: close"), "{text}");
+    }
+
+    #[test]
+    fn a_bodyless_answer_with_ambiguous_lengths_is_still_sanitised() {
+        // A `304` is the commonest response a dev server makes, and "this
+        // branch has no body so the headers cannot hurt" is how an invariant
+        // ends up holding on one path and not the other.
+        let head = b"HTTP/1.1 304 Not Modified\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n";
+        assert_eq!(response_framing(head), Framing::Ambiguous);
+        let text = String::from_utf8(strip_lengths(close_the_connection(head))).expect("utf8");
+        assert!(!text.to_lowercase().contains("content-length"), "{text}");
+    }
+
+    #[test]
+    fn identity_transfer_encoding_is_not_chunked() {
+        assert_eq!(
+            response_framing(
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nContent-Length: 4\r\n\r\n"
+            ),
+            Framing::Length(4)
+        );
     }
 
     #[test]
