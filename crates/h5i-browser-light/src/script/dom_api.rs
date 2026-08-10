@@ -88,6 +88,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("rect", 1, rect),
         ("computedStyle", 2, computed_style),
         ("supportsCss", 2, supports_css),
+        ("validSelector", 1, valid_selector),
         ("documentEncoding", 0, document_encoding),
         ("isCssProperty", 1, is_css_property),
         ("innerText", 1, inner_text),
@@ -1589,6 +1590,21 @@ fn document_encoding(_this: &JsValue, _args: &[JsValue], context: &mut Context) 
     let host = host(context)?;
     let name = host.encoding.borrow().name().to_string();
     Ok(js_string!(name).into())
+}
+
+/// Whether a selector parses, so the prelude can throw where a browser throws.
+///
+/// `querySelector("!!!")` is a `SyntaxError` in every browser, and this engine
+/// answered `null` — indistinguishable from "there is no such element". A page
+/// with a typo in a selector was told its element does not exist, which is the
+/// plausible wrong answer this engine keeps removing: it sends the caller down
+/// the not-found branch instead of showing them their mistake.
+fn valid_selector(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let selector = arg_string(args, 0, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+    let valid = doc.try_parse_selector_list(&selector).is_ok();
+    Ok(JsValue::from(valid))
 }
 
 /// Whether this is a CSS property at all, which is what `in` on a computed

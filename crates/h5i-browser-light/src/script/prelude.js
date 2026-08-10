@@ -510,6 +510,64 @@
     /// does — which is the argument for running a conformance suite in one
     /// sentence.
     hasChildNodes() { return api.children(this._id).length > 0; }
+
+    /// Same type, same name, same attributes, same children — not the same node.
+    isEqualNode(other) {
+      if (!other) return false;
+      if (this.nodeType !== other.nodeType) return false;
+      if (this.nodeType === 3 || this.nodeType === 8) return this.data === other.data;
+      if (this.tagName !== other.tagName) return false;
+      const mine = api.attrNames(this._id) || [];
+      const theirs = api.attrNames(other._id) || [];
+      if (mine.length !== theirs.length) return false;
+      for (const name of mine) {
+        if (api.getAttr(this._id, name) !== api.getAttr(other._id, name)) return false;
+      }
+      const a = this.childNodes, b = other.childNodes;
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) if (!a[i].isEqualNode(b[i])) return false;
+      return true;
+    }
+    isSameNode(other) { return !!other && other._id === this._id; }
+
+    /// Merge adjacent text nodes and drop empty ones.
+    normalize() {
+      const kids = this.childNodes;
+      let previous = null;
+      for (const kid of kids) {
+        if (kid.nodeType === 3) {
+          if (kid.data === "") { kid.remove(); continue; }
+          if (previous) { previous.data += kid.data; kid.remove(); continue; }
+          previous = kid;
+        } else {
+          previous = null;
+          if (kid.nodeType === 1) kid.normalize();
+        }
+      }
+    }
+
+    /// Where `other` sits relative to this node, as the spec's bit field.
+    compareDocumentPosition(other) {
+      if (!other) return 1;
+      if (other._id === this._id) return 0;
+      const DISCONNECTED = 1, PRECEDING = 2, FOLLOWING = 4, CONTAINS = 8, CONTAINED = 16;
+      const ancestors = (node) => { const out = []; for (let n = node; n; n = n.parentNode) out.push(n); return out; };
+      const mine = ancestors(this), theirs = ancestors(other);
+      if (theirs.some((n) => n._id === this._id)) return FOLLOWING | CONTAINED;
+      if (mine.some((n) => n._id === other._id)) return PRECEDING | CONTAINS;
+      // Nearest common ancestor, then compare the branches under it.
+      const common = mine.find((a) => theirs.some((b) => b._id === a._id));
+      if (!common) return DISCONNECTED | PRECEDING;
+      const branchOf = (chain) => chain[chain.findIndex((n) => n._id === common._id) - 1];
+      const a = branchOf(mine), b = branchOf(theirs);
+      const kids = common.childNodes;
+      let seenA = -1, seenB = -1;
+      for (let i = 0; i < kids.length; i++) {
+        if (a && kids[i]._id === a._id) seenA = i;
+        if (b && kids[i]._id === b._id) seenB = i;
+      }
+      return seenA < seenB ? FOLLOWING : PRECEDING;
+    }
     get firstChild() { return this.childNodes[0] || null; }
     get lastChild() { const c = this.childNodes; return c[c.length - 1] || null; }
 
@@ -529,7 +587,9 @@
 
     get textContent() { return api.getText(this._id); }
     set textContent(value) {
-      api.setText(this._id, String(value));
+      // Nullable by spec: `el.textContent = null` empties the element rather
+      // than writing the four characters "null".
+      api.setText(this._id, value === null || value === undefined ? "" : String(value));
       if (observers.length === 0) return;
       record({
         type: "characterData", target: this, addedNodes: [], removedNodes: [],
@@ -697,7 +757,16 @@
     addEventListener(type, handler, options) {
       if (!handler) return;
       const capture = options === true || (options && options.capture) || false;
-      listeners.push({ id: this._id, type: String(type), handler, capture });
+      const once = !!(options && options.once);
+      // The same handler registered twice for the same type and phase is one
+      // listener, as in a browser. Without this a page that re-runs its own
+      // setup accumulates duplicates and every event fires N times.
+      const already = listeners.some(
+        (l) => l.id === this._id && l.type === String(type)
+          && l.handler === handler && l.capture === capture,
+      );
+      if (already) return;
+      listeners.push({ id: this._id, type: String(type), handler, capture, once });
     }
     removeEventListener(type, handler) {
       for (let i = listeners.length - 1; i >= 0; i--) {
@@ -1146,12 +1215,12 @@
       });
     }
 
-    querySelector(sel) { return wrap(api.query(String(sel), this._id)); }
-    querySelectorAll(sel) { return collection(api.queryAll(String(sel), this._id).map(wrap)); }
+    querySelector(sel) { return wrap(api.query(checkSelector(sel), this._id)); }
+    querySelectorAll(sel) { return collection(api.queryAll(checkSelector(sel), this._id).map(wrap)); }
     getElementsByTagName(tag) { return collection(api.queryAll(String(tag), this._id).map(wrap), "HTMLCollection"); }
     getElementsByClassName(cls) { return collection(api.queryAll("." + String(cls), this._id).map(wrap), "HTMLCollection"); }
 
-    matches(sel) { return api.matchesSelector(this._id, String(sel)); }
+    matches(sel) { return api.matchesSelector(this._id, checkSelector(sel)); }
     closest(sel) {
       for (let n = this; n; n = n.parentNode) {
         if (n.nodeType === 1 && n.matches(sel)) return n;
@@ -1480,7 +1549,29 @@
   // at the engine.
   reflect(Element.prototype, "hidden", "hidden", "bool");
   reflect(Element.prototype, "autofocus", "autofocus", "bool");
-  reflect(Element.prototype, "tabIndex", "tabindex", "long", { default: -1 });
+  // `tabIndex` has no single default: an element the user can reach with the
+  // keyboard reports 0, everything else -1. Answering -1 for a link or a button
+  // tells a page nothing is focusable, which is the opposite of true.
+  const FOCUSABLE_BY_DEFAULT = new Set([
+    "A", "AREA", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "IFRAME", "OBJECT",
+    "SUMMARY", "AUDIO", "VIDEO",
+  ]);
+  Object.defineProperty(Element.prototype, "tabIndex", {
+    configurable: true,
+    get() {
+      const raw = api.getAttr(this._id, "tabindex");
+      if (raw !== null) {
+        const match = /^[ \t\n\f\r]*([+-]?[0-9]+)/.exec(raw);
+        if (match) return Number(match[1]);
+      }
+      if (!FOCUSABLE_BY_DEFAULT.has(this.tagName)) return -1;
+      // A link is only focusable if it actually links somewhere.
+      if ((this.tagName === "A" || this.tagName === "AREA")
+        && api.getAttr(this._id, "href") === null) return -1;
+      return 0;
+    },
+    set(value) { this.setAttribute("tabindex", String(Math.trunc(Number(value)) || 0)); },
+  });
   reflect(Element.prototype, "accessKey", "accesskey");
   reflect(Element.prototype, "slot", "slot");
   reflect(Element.prototype, "nonce", "nonce");
@@ -2017,6 +2108,19 @@
     }
   }
 
+  /// Refuse a selector a browser would refuse, rather than answering "nothing".
+  ///
+  /// `querySelector("!!!")` throws `SyntaxError` in a browser and returned
+  /// `null` here — the same answer as "no such element", so a page with a typo
+  /// took its not-found branch and never learned why.
+  function checkSelector(selector) {
+    const text = String(selector);
+    if (!api.validSelector(text)) {
+      throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
+    }
+    return text;
+  }
+
   function camelToDash(name) {
     return name.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
   }
@@ -2047,7 +2151,10 @@
       return out;
     }
     _write(map) {
-      this._source.set([...map.entries()].map(([k, v]) => `${k}: ${v}`).join("; "));
+      // Trailing semicolon, as a browser serialises it: `color: red;`. Pages do
+      // compare `getAttribute("style")` against a literal.
+      const text = [...map.entries()].map(([k, v]) => `${k}: ${v};`).join(" ");
+      this._source.set(text);
     }
     get length() { return this._read().size; }
     item(index) { return [...this._read().keys()][index] ?? ""; }
@@ -2079,10 +2186,10 @@
   function inlineStyleSource(node) {
     return {
       get: () => api.getAttr(node._id, "style") || "",
-      set: (text) => {
-        if (text) api.setAttr(node._id, "style", text);
-        else api.removeAttr(node._id, "style");
-      },
+      // Always written, never removed: emptying a style declaration leaves an
+      // empty `style` attribute in a browser, and `getAttribute("style")`
+      // answers "" rather than null.
+      set: (text) => api.setAttr(node._id, "style", text),
     };
   }
 
@@ -2188,6 +2295,14 @@
       event.currentTarget = node;
       for (const l of listeners.slice()) {
         if (l.id !== node._id || l.type !== event.type || l.capture !== capture) continue;
+        // Removed *before* the call, not after: a handler that throws, or that
+        // dispatches the same event again, must still not run twice. `once`
+        // was being ignored entirely, so a page relying on it double-handled
+        // and nothing said so.
+        if (l.once) {
+          const at = listeners.indexOf(l);
+          if (at >= 0) listeners.splice(at, 1);
+        }
         try {
           if (typeof l.handler === "function") l.handler.call(node, event);
           else if (l.handler && typeof l.handler.handleEvent === "function") {
@@ -3351,8 +3466,8 @@
     getElementsByName(name) {
       return api.queryAll(`[name="${String(name).replace(/"/g, '\\"')}"]`, 0).map(wrap);
     },
-    querySelector(sel) { return wrap(api.query(String(sel), 0)); },
-    querySelectorAll(sel) { return collection(api.queryAll(String(sel), 0).map(wrap)); },
+    querySelector(sel) { return wrap(api.query(checkSelector(sel), 0)); },
+    querySelectorAll(sel) { return collection(api.queryAll(checkSelector(sel), 0).map(wrap)); },
     getElementById(id) { return wrap(api.query("#" + String(id), 0)); },
     getElementsByTagName(tag) { return collection(api.queryAll(String(tag), 0).map(wrap), "HTMLCollection"); },
     getElementsByClassName(cls) { return collection(api.queryAll("." + String(cls), 0).map(wrap), "HTMLCollection"); },
