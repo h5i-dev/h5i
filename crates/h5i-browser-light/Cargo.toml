@@ -69,6 +69,10 @@ selectors = "0.39"
 # `ParserInput` to Stylo's parser and two different cssparser versions would be
 # two different types. Stylo re-exports `Parser` but not `ParserInput`.
 cssparser = "0.37"
+# The encoding labels and decoders the platform defines. Already in the tree via
+# blitz; direct here because `TextDecoder` has to answer "is this a real label"
+# and decode as that label, and a hand-written UTF-8 loop can do neither.
+encoding_rs = "0.8"
 
 # The atomic boa's job-cancellation token is built from. Named here only so the
 # token can be held in a struct field; it must be the same type boa hands back.

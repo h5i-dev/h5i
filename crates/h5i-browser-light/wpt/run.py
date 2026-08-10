@@ -151,6 +151,25 @@ def capped(command, megabytes):
     return ["/bin/sh", "-c", f'ulimit -v {megabytes * 1024}; exec "$0" "$@"', *command]
 
 
+def panic_reason(stderr: bytes, returncode: int) -> str:
+    """The line that says what went wrong, not the line that says how to find out.
+
+    Taking the *last* line of stderr recorded "note: run with `RUST_BACKTRACE=1`"
+    for 139 of 140 crashes — the one line guaranteed to be useless. A Rust panic
+    puts the location on the `panicked at` line and the message on the next, so
+    both are kept, and a non-panic exit says what it actually was.
+    """
+    lines = stderr.decode("utf8", "replace").strip().splitlines()
+    for index, line in enumerate(lines):
+        if "panicked at" in line:
+            message = lines[index + 1].strip() if index + 1 < len(lines) else ""
+            return f"{line.strip()} :: {message}"[:400]
+    for line in lines:
+        if line.strip() and not line.startswith("note:"):
+            return line.strip()[:400]
+    return f"exit {returncode}"
+
+
 def run_one(args):
     """Run one test file. Returns a dict that always names its own outcome."""
     rel, port, timeout, mem_mb = args
@@ -169,10 +188,9 @@ def run_one(args):
 
     elapsed = time.monotonic() - started
     if proc.returncode != 0 and not proc.stdout:
-        tail = proc.stderr.decode("utf8", "replace").strip().splitlines()
         return {
             "test": rel, "outcome": "engine_crash", "elapsed": elapsed,
-            "detail": tail[-1] if tail else f"exit {proc.returncode}",
+            "detail": panic_reason(proc.stderr, proc.returncode),
         }
 
     try:

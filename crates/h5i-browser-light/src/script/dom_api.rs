@@ -89,6 +89,8 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("computedStyle", 2, computed_style),
         ("supportsCss", 2, supports_css),
         ("innerText", 1, inner_text),
+        ("encodingFor", 1, encoding_for),
+        ("decodeBytes", 3, decode_bytes),
         ("parseUrl", 2, parse_url),
         ("viewport", 0, viewport),
         ("readCookies", 0, read_cookies),
@@ -562,15 +564,47 @@ fn set_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     let name = arg_string(args, 1, context)?.to_lowercase();
     let value = arg_string(args, 2, context)?;
     let host = host(context)?;
-    {
+    let panicked = {
         let mut doc = host.dom.borrow_mut();
         let qual = blitz_dom::QualName::new(
             None,
             blitz_dom::ns!(),
             blitz_dom::LocalName::from(name.as_str()),
         );
-        let mut mutator = doc.mutate();
-        mutator.set_attribute(id, qual, &value);
+        // Guarded, because setting an attribute can start an image load and
+        // blitz `expect`s the URL to resolve. A page that writes
+        // `img.src = "http://{{host}}:NaN/x"` — an unsubstituted template, a
+        // typo, anything malformed — aborted the whole process, taking the
+        // page, the snapshot and the receipts with it. 81 of the 140 crashes in
+        // the last sweep were this one line.
+        //
+        // The attribute may be left unset when this fires, which is a worse
+        // answer than a browser gives and a much better one than no process.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut mutator = doc.mutate();
+            mutator.set_attribute(id, qual, &value);
+        }))
+        .err()
+        .map(|payload| {
+            payload
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "the layout engine panicked".to_string())
+        })
+    };
+    if let Some(detail) = panicked {
+        let first_line = detail.lines().next().unwrap_or("").to_string();
+        super::host::push_console(
+            &mut host.console.borrow_mut(),
+            ConsoleLine::engine(
+                "error",
+                format!("setting `{name}` was refused by the layout engine: {first_line}"),
+            ),
+        );
+        host.unsupported
+            .borrow_mut()
+            .record(&format!("setAttribute({name}) with a value blitz cannot resolve"));
     }
     host.mark_dirty();
     Ok(JsValue::undefined())
@@ -1462,6 +1496,63 @@ fn collect_rendered_text(doc: &blitz_dom::BaseDocument, id: usize, out: &mut Str
             }
             _ => {}
         }
+    }
+}
+
+/// The canonical name for an encoding label, or null if it is not one.
+///
+/// `TextDecoder` used to accept every label and answer "utf-8" to all of them,
+/// so `new TextDecoder("not-a-real-encoding")` succeeded and `shift_jis`
+/// silently decoded as UTF-8. Both are wrong answers rather than missing ones:
+/// a page checking whether an encoding is supported was told yes, and a page
+/// decoding Shift-JIS got mojibake with no error.
+///
+/// `encoding_rs` owns the label table the standard defines, so this is a lookup
+/// rather than a list of our own that would drift from it.
+fn encoding_for(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let label = arg_string(args, 0, context)?;
+    Ok(match encoding_rs::Encoding::for_label(label.trim().as_bytes()) {
+        Some(encoding) => js_string!(encoding.name().to_ascii_lowercase()).into(),
+        None => JsValue::null(),
+    })
+}
+
+/// Decode bytes as the named encoding.
+///
+/// `fatal` is the decoder's own option: a page that asked for fatal decoding
+/// wants an error rather than replacement characters, and answering with U+FFFD
+/// either way would hide malformed input from the caller who explicitly asked
+/// to be told about it.
+fn decode_bytes(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let label = arg_string(args, 0, context)?;
+    let fatal = args.get_or_undefined(2).to_boolean();
+    let Some(encoding) = encoding_rs::Encoding::for_label(label.trim().as_bytes()) else {
+        return Err(boa_engine::JsNativeError::range()
+            .with_message(format!("{label} is not a known encoding"))
+            .into());
+    };
+
+    let array = boa_engine::object::builtins::JsArray::from_object(
+        args.get_or_undefined(1).as_object().ok_or_else(|| {
+            boa_engine::JsNativeError::typ().with_message("decode expects an array of bytes")
+        })?,
+    )?;
+    let length = array.length(context)? as usize;
+    let mut bytes = Vec::with_capacity(length);
+    for index in 0..length {
+        bytes.push(array.get(index as u64, context)?.to_number(context)? as u8);
+    }
+
+    if fatal {
+        match encoding.decode_without_bom_handling_and_without_replacement(&bytes) {
+            Some(text) => Ok(js_string!(text.as_ref()).into()),
+            None => Err(boa_engine::JsNativeError::typ()
+                .with_message("the bytes are not valid in this encoding")
+                .into()),
+        }
+    } else {
+        let (text, _) = encoding.decode_without_bom_handling(&bytes);
+        Ok(js_string!(text.as_ref()).into())
     }
 }
 

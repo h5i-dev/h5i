@@ -3919,37 +3919,36 @@
   }
 
   class TextDecoder {
-    constructor(label) { this._label = String(label || "utf-8").toLowerCase(); }
-    get encoding() { return "utf-8"; }
+    /// Validates its label, and decodes as *that* label.
+    ///
+    /// Both used to be wrong rather than missing: every label was accepted and
+    /// every one answered "utf-8", so a page asking whether an encoding was
+    /// supported was told yes and a page decoding Shift-JIS got mojibake with
+    /// no error. The label table and the decoders are `encoding_rs`'s, which is
+    /// the same table the standard defines rather than a list of our own that
+    /// would drift from it.
+    constructor(label, options) {
+      const wanted = label === undefined ? "utf-8" : String(label);
+      const canonical = api.encodingFor(wanted);
+      if (canonical === null || canonical === undefined) {
+        throw new RangeError(`${wanted} is not a known encoding`);
+      }
+      // `replacement` exists only to be refused, and decoding as it is not a
+      // thing a caller can ask for.
+      this._encoding = canonical;
+      this._fatal = !!(options && options.fatal);
+      this._ignoreBOM = !!(options && options.ignoreBOM);
+    }
+    get encoding() { return this._encoding; }
+    get fatal() { return this._fatal; }
+    get ignoreBOM() { return this._ignoreBOM; }
     decode(input) {
       if (input === undefined || input === null) return "";
       // Anything byte-shaped: a typed array, an ArrayBuffer, or a plain array.
       const bytes = input instanceof Uint8Array
         ? input
         : new Uint8Array(input.buffer ? input.buffer : input);
-      let out = "";
-      for (let i = 0; i < bytes.length; ) {
-        const byte = bytes[i];
-        let code;
-        let width;
-        if (byte < 0x80) { code = byte; width = 1; }
-        else if ((byte & 0xe0) === 0xc0) { code = byte & 31; width = 2; }
-        else if ((byte & 0xf0) === 0xe0) { code = byte & 15; width = 3; }
-        else if ((byte & 0xf8) === 0xf0) { code = byte & 7; width = 4; }
-        else { out += "�"; i += 1; continue; }
-
-        if (i + width > bytes.length) { out += "�"; break; }
-        for (let k = 1; k < width; k++) {
-          const cont = bytes[i + k];
-          if ((cont & 0xc0) !== 0x80) { code = -1; break; }
-          code = (code << 6) | (cont & 63);
-        }
-        // A truncated or overlong sequence becomes the replacement character,
-        // which is what a decoder is specified to do rather than throwing.
-        out += code < 0 ? "�" : String.fromCodePoint(code);
-        i += width;
-      }
-      return out;
+      return api.decodeBytes(this._encoding, Array.from(bytes), this._fatal);
     }
   }
 

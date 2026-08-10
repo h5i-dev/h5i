@@ -1391,6 +1391,7 @@ dependencies = [
  "boa_gc",
  "clap",
  "cssparser",
+ "encoding_rs",
  "getrandom 0.2.17",
  "h5i-error",
  "httpdate",
