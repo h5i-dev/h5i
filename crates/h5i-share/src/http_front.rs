@@ -46,6 +46,10 @@ const RESPONSE_IDLE: Duration = Duration::from_secs(300);
 /// How long a peer may pause part-way through a body it declared.
 const BODY_IDLE: Duration = Duration::from_secs(30);
 
+/// How many `1xx` heads may precede the real response. A server sends at most
+/// one or two; this is a backstop, not a budget.
+const MAX_INTERIM_RESPONSES: usize = 8;
+
 /// What to do with a connection once its head has been read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Next {
@@ -185,10 +189,12 @@ impl Counters {
 /// hold an ungated pipe on which a second request — from anyone whose bytes
 /// reach this connection — would reach the box without passing the gate.
 ///
-/// So the client's side is read for exactly the bytes this request declared and
-/// not one more. Whatever the box does with `Connection: close` is then its own
-/// business: nothing further can arrive from the client, because nothing
-/// further is read.
+/// So the client's side is **forwarded** for exactly the bytes this request
+/// declared and not one more. It is still read after that, and everything it
+/// says is thrown away — that is how a client hanging up is noticed, and
+/// discarding is as strong a guarantee as not reading, because what matters is
+/// that nothing the client sends after its first request reaches the box.
+/// Whatever the box does with `Connection: close` is then its own business.
 ///
 /// The exception is a real upgrade, and it is checked rather than believed: the
 /// box has to answer `101` before the connection becomes a two-way pipe. A
@@ -254,6 +260,7 @@ where
     // would be telling the client the connection is over before the answer has
     // started — and then the real head is read behind it.
     let mut rest = Vec::new();
+    let mut interim = 0;
     let (head, complete) = loop {
         let (head, complete) = read_response(&mut up_r, &mut rest).await;
         if !(complete && is_informational(&head)) {
@@ -261,6 +268,12 @@ where
         }
         peer_w.write_all(&head).await?;
         to_peer.fetch_add(head.len() as u64, Ordering::Relaxed);
+        // Bounded. A box streaming interim heads forever is not a thing a real
+        // server does, and it is a thing agent-written code can do by accident.
+        interim += 1;
+        if interim > MAX_INTERIM_RESPONSES {
+            return Ok(());
+        }
     };
 
     if req.upgrade {

@@ -1934,13 +1934,21 @@ second `h5i` process, and fetched with `curl`:
   both refusals were answered by the joiner's own proxy and never crossed —
   which is the gate working, visible in the evidence.
 
+**Re-run on 2026-08-10 after the third round of fixes**, because that round
+rewrote the response path: seven sequential requests each on their own
+connection (the receipt says so), `Connection: close` in every answer, and a
+`HEAD` returning in five milliseconds where the version before it would have
+waited three hundred seconds for a body that a `HEAD` never has.
+
 **Still not demonstrated, stated plainly so the rest is not read as more than
 it is.** The two processes were on one machine: a real direct QUIC path through
 the host's network stack, but not two machines on two networks. `--direct-only`
 has never been exercised against a hole punch that actually fails, only against
 one that succeeds. No `cloudflared` runs on this host, so the tunnel transport
 has never carried a request over the internet. HMR over a share is untested.
-Those four are what remains of the exit criteria.
+Those four are what remains of the exit criteria. `cloudflared` is not installed
+on this host and could not be, which is why the tunnel's coverage stops at its
+own front door.
 
 ## 9. Limits we state up front
 

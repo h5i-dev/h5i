@@ -562,7 +562,7 @@ h5i box share &lt;name&gt; --tunnel         # any browser, no h5i on their side
 
 h5i box share status &lt;name&gt;
 h5i box share ls
-h5i box share grant &lt;name&gt; [--label sam]     # a second ticket for a second person
+h5i box share grant &lt;name&gt; [--label sam]     # a second ticket (--tunnel only, see below)
 h5i box share revoke &lt;name&gt; &lt;grant&gt;
 h5i box share stop &lt;name&gt;
 </code></pre>
@@ -590,28 +590,30 @@ egress, because both share the host's network.</p>
 side. h5i keeps only the secret's SHA-256, so <strong>a ticket is printed once and
 cannot be reprinted</strong> — mint another with <code>share grant</code>.</p>
 <p>One ticket admits one peer, which is what makes <code>share revoke &lt;name&gt; &lt;grant&gt;</code>
-per person rather than all or nothing. <code>share grant</code> mints a second one — but
-only for a <code>--tunnel</code> share today. A peer-to-peer ticket needs the running
+per person rather than all or nothing. <code>share grant</code> mints a second one, but
+only for a <code>--tunnel</code> share today: a peer-to-peer ticket needs the running
 endpoint's addressing and only the serving process has it, so <code>grant</code> refuses on
-a P2P share and says to start a second one instead. Authorization is re-read from disk on
-every connection, so a revoke from another terminal takes effect on the next
-one, and a watchdog drops the connections already open within about a second.
-The watchdog asks about <em>that peer's own grant</em>, so revoking one person cuts
-their live connections while everyone else's keep working.
-<code>share stop</code> revokes everything; the serving process then writes its receipt
-and exits on its own, which is why it is not a <code>kill</code>.</p>
+a P2P share and says to start a second one instead.</p>
+<p>Authorization is re-read from disk on every connection, so a revoke from another
+terminal takes effect on the next one; connections already open are dropped
+within about a second, by a watchdog that asks about <em>that peer's own grant</em> —
+so revoking one person cuts their live connections while everyone else's keep
+working. <code>share stop</code> revokes everything; the serving process then writes its
+receipt and exits on its own, which is why it is not a <code>kill</code>.</p>
 <p>The longest a share may last is 24 hours, and the default is one.</p>
 <h4 id="the-two-transports">The two transports</h4>
 <p><strong>Peer to peer (the default).</strong> QUIC between the two h5i processes, end-to-end
 encrypted, hole-punched to a direct path when the networks allow it. When they
 do not, a relay carries it: the relay moves sealed packets and sees both
 addresses, the timing and the volume, never the content. <code>--direct-only</code> refuses
-that fallback — if no direct path can be established, the share fails and says
-so, <strong>before any application byte crosses</strong>, and it keeps checking: a direct
-path that dies mid-session closes the connection rather than sliding onto a
-relay. A flag that merely preferred a
-direct path would be worse than none, because it would let you believe nothing
-was in the middle when something was.</p>
+that fallback. If no direct path can be established the share fails and says so,
+<strong>before any application byte crosses</strong> — and it keeps checking afterwards,
+because a hole-punched path can die and the transport will slide onto a relay.
+Be precise about the second half: that check runs once a second, so a path that
+fails mid-session can carry up to about a second of traffic over a relay before
+the connection is closed. Setup is a guarantee; staying direct is a short leash.
+A flag that merely preferred a direct path would be worse than none, because it
+would let you believe nothing was in the middle when something was.</p>
 <p><strong>Quick tunnel (<code>--tunnel</code>).</strong> A browser cannot speak QUIC to an endpoint id, so
 peer to peer needs h5i on both ends. When the person you want clicking the
 prototype is a designer or a customer, <code>--tunnel</code> shells out to <code>cloudflared</code>

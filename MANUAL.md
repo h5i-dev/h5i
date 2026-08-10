@@ -360,7 +360,7 @@ h5i box share <name> --tunnel         # any browser, no h5i on their side
 
 h5i box share status <name>
 h5i box share ls
-h5i box share grant <name> [--label sam]     # a second ticket for a second person
+h5i box share grant <name> [--label sam]     # a second ticket (--tunnel only, see below)
 h5i box share revoke <name> <grant>
 h5i box share stop <name>
 ```
@@ -396,16 +396,17 @@ side. h5i keeps only the secret's SHA-256, so **a ticket is printed once and
 cannot be reprinted** — mint another with `share grant`.
 
 One ticket admits one peer, which is what makes `share revoke <name> <grant>`
-per person rather than all or nothing. `share grant` mints a second one — but
-only for a `--tunnel` share today. A peer-to-peer ticket needs the running
+per person rather than all or nothing. `share grant` mints a second one, but
+only for a `--tunnel` share today: a peer-to-peer ticket needs the running
 endpoint's addressing and only the serving process has it, so `grant` refuses on
-a P2P share and says to start a second one instead. Authorization is re-read from disk on
-every connection, so a revoke from another terminal takes effect on the next
-one, and a watchdog drops the connections already open within about a second.
-The watchdog asks about *that peer's own grant*, so revoking one person cuts
-their live connections while everyone else's keep working.
-`share stop` revokes everything; the serving process then writes its receipt
-and exits on its own, which is why it is not a `kill`.
+a P2P share and says to start a second one instead.
+
+Authorization is re-read from disk on every connection, so a revoke from another
+terminal takes effect on the next one; connections already open are dropped
+within about a second, by a watchdog that asks about *that peer's own grant* —
+so revoking one person cuts their live connections while everyone else's keep
+working. `share stop` revokes everything; the serving process then writes its
+receipt and exits on its own, which is why it is not a `kill`.
 
 The longest a share may last is 24 hours, and the default is one.
 
@@ -415,12 +416,14 @@ The longest a share may last is 24 hours, and the default is one.
 encrypted, hole-punched to a direct path when the networks allow it. When they
 do not, a relay carries it: the relay moves sealed packets and sees both
 addresses, the timing and the volume, never the content. `--direct-only` refuses
-that fallback — if no direct path can be established, the share fails and says
-so, **before any application byte crosses**, and it keeps checking: a direct
-path that dies mid-session closes the connection rather than sliding onto a
-relay. A flag that merely preferred a
-direct path would be worse than none, because it would let you believe nothing
-was in the middle when something was.
+that fallback. If no direct path can be established the share fails and says so,
+**before any application byte crosses** — and it keeps checking afterwards,
+because a hole-punched path can die and the transport will slide onto a relay.
+Be precise about the second half: that check runs once a second, so a path that
+fails mid-session can carry up to about a second of traffic over a relay before
+the connection is closed. Setup is a guarantee; staying direct is a short leash.
+A flag that merely preferred a direct path would be worse than none, because it
+would let you believe nothing was in the middle when something was.
 
 **Quick tunnel (`--tunnel`).** A browser cannot speak QUIC to an endpoint id, so
 peer to peer needs h5i on both ends. When the person you want clicking the
