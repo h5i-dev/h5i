@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 
 GATE_DIRS=(dom css/cssom html/dom domparsing encoding)
 JOBS="${JOBS:-4}"
-TIMEOUT="${TIMEOUT:-20}"
+TIMEOUT="${TIMEOUT:-30}"
 OUT="${OUT:-wpt/gate-results}"
 
 if [ ! -x "../../target/release/h5i-browser-light" ]; then

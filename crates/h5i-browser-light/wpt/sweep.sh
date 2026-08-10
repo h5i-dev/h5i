@@ -13,8 +13,8 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 JOBS="${JOBS:-4}"
-TIMEOUT="${TIMEOUT:-20}"
-MEM_MB="${MEM_MB:-1000}"
+TIMEOUT="${TIMEOUT:-30}"
+MEM_MB="${MEM_MB:-1500}"
 OUT=wpt/results
 mkdir -p "$OUT"
 

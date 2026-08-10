@@ -263,6 +263,12 @@ def main():
     parser.add_argument("--dirs", nargs="*", default=["dom"])
     parser.add_argument("--all", action="store_true", help="every directory")
     parser.add_argument("--jobs", type=int, default=8)
+    # A margin over the slowest legitimate file, not a workaround for slowness.
+    # This was briefly raised to 120 because `html/dom`'s reflection files took
+    # forty seconds — which turned out to be testharness rendering one DOM row
+    # per subtest, not the engine. With that output turned off (see serve.py)
+    # the same directory finishes in 26 seconds total, so the generous timeout
+    # was treating a harness cost as an engine cost.
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--out", default=None)

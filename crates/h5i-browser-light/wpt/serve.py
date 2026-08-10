@@ -31,6 +31,19 @@ MARKER = "H5I-WPT-RESULT-6a7f2c1b"
 
 REPORTER = (
     """
+// Do not build the results table.
+//
+// testharness renders one DOM row per subtest into `#log` when it finishes, and
+// a file like `html/dom/reflection-tabular.html` has forty thousand of them.
+// That rendering — not the tests — was most of the forty seconds those files
+// took, and it is pure overhead here because the results come back through the
+// completion callback below rather than by being read off the page.
+//
+// This is what the official WPT runner does too: `output: false` is a
+// documented harness setting, not a trick. It changes how results are
+// *reported*, never which tests run or what they conclude.
+setup({ output: false });
+
 add_completion_callback(function (tests, status) {
   var out = {
     status: status.status,
