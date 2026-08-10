@@ -541,6 +541,14 @@ peers    1
 refused  2 attempt(s): 1 unknown ticket, 0 expired, 1 revoked
 ```
 
+Read the numbers for what they are. "Connections" counts connections *into the
+box*, not requests to the share: a visitor who followed the invite link and read
+nothing is a peer with zero. Lines appear for what a share left out — attempts
+refused, connections turned away at the capacity ceiling, peers past the 256 the
+receipt lists individually, and authorized peers who found nothing listening —
+because a cap that stops counting silently makes a busy share read as a quiet
+one.
+
 A box that was opened to someone and an identical box that was not are different
 artifacts, and an export should not be silent about which one it came from. A
 tunnel session carries the "not end-to-end encrypted" note in the same block.
