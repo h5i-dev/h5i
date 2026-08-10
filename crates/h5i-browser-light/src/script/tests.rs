@@ -481,6 +481,188 @@ fn css_supports_answers_from_the_engine_that_would_have_to_do_it() {
 }
 
 #[test]
+fn a_documents_encoding_reaches_both_its_text_and_its_urls() {
+    // Two things follow from a document's encoding and they must not disagree:
+    // how the bytes become text, and how a URL's query becomes bytes again.
+    let broker = Arc::new(
+        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+    );
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let options = PageOptions { script: true, ..PageOptions::default() };
+    let factory = PageFactory::new(broker, fonts.sources.clone(), options);
+    let base = url::Url::parse("https://app.example/").unwrap();
+
+    // "日本" in euc-jp, which is mojibake if read as UTF-8. The script writes
+    // its answers into the page, so this reads them the way an agent would.
+    let mut bytes =
+        b"<!doctype html><meta charset=\"euc-jp\"><title>t</title><p id=t>".to_vec();
+    bytes.extend_from_slice(&[0xc6, 0xfc, 0xcb, 0xdc]);
+    bytes.extend_from_slice(
+        b"</p><p id=out></p><script>\
+          const a = document.createElement('a'); \
+          a.href = 'https://example.com/?' + String.fromCodePoint(0x4E02); \
+          const b = document.createElement('a'); \
+          b.href = 'https://example.com/?' + String.fromCodePoint(0x65E5); \
+          document.getElementById('out').textContent = \
+            a.search + ' ' + b.search + ' ' + document.characterSet; \
+          </script>",
+    );
+
+    let page = factory.from_bytes(&bytes, None, &base);
+    assert_eq!(page.encoding(), "EUC-JP", "the document said so in its markup");
+
+    let rendered = page.snapshot().render();
+    assert!(rendered.contains("日本"), "its text decoded as itself:\n{rendered}");
+    // A code point euc-jp cannot represent becomes an HTML numeric character
+    // reference with its own punctuation already percent-encoded. This engine
+    // used to answer `?%E4%B8%82` — the right escape of the wrong bytes.
+    assert!(
+        rendered.contains("?%26%2319970%3B"),
+        "an unmappable code point is a numeric reference:\n{rendered}"
+    );
+    // One the encoding *can* represent is simply its bytes.
+    assert!(rendered.contains("?%C6%FC"), "a mappable one is its bytes:\n{rendered}");
+    assert!(rendered.contains("EUC-JP"), "and the document says so:\n{rendered}");
+}
+
+#[test]
+fn a_utf8_document_is_untouched_by_any_of_that() {
+    // The fast path, which is nearly every page on the web.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script
+        .eval(
+            "globalThis.a = document.createElement('a');              a.href = 'https://example.com/?' + String.fromCodePoint(0x4E02);",
+        )
+        .expect("runs");
+    assert_eq!(script.eval_value("a.search").unwrap(), "?%E4%B8%82");
+    assert_eq!(script.eval_value("document.characterSet").unwrap(), "UTF-8");
+}
+
+#[test]
+fn a_measured_answer_reflects_what_script_just_built() {
+    // Build an element, give it a size, attach it, ask how big it is. Every
+    // geometry reader answered a confident `0` before, because layout had not
+    // run since the tree changed — not "unknown", but a wrong number about an
+    // element that plainly has a size.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script
+        .eval(
+            "globalThis.made = document.createElement('div');              made.style.width = '50px'; made.style.height = '20px';              document.body.appendChild(made);",
+        )
+        .expect("runs");
+    assert_eq!(script.eval_value("made.getBoundingClientRect().width").unwrap(), "50");
+    assert_eq!(script.eval_value("made.getBoundingClientRect().height").unwrap(), "20");
+    assert_eq!(script.eval_value("made.offsetWidth").unwrap(), "50");
+}
+
+#[test]
+fn a_form_control_reports_what_it_holds() {
+    // A textarea's value is its text content, and a control the page built
+    // itself has no editor to store one in. Both read back empty before, so a
+    // filled form looked blank.
+    let (_page, mut script) = page_and_script(
+        "<html><body><textarea id='t'>written in</textarea></body></html>",
+    );
+    assert_eq!(
+        script.eval_value("document.getElementById('t').value").unwrap(),
+        "written in"
+    );
+    script
+        .eval("globalThis.made = document.createElement('input'); made.value = 'typed';")
+        .expect("runs");
+    assert_eq!(script.eval_value("made.value").unwrap(), "typed");
+
+}
+
+#[test]
+fn the_form_and_table_surface_answers() {
+    // What an agent reads through. Every one of these was `undefined`, so a
+    // page walking its own form or table stopped at the first access.
+    let (_page, mut script) = page_and_script(
+        "<html><body><form method='post'><input name='a'><input name='b'></form>\
+         <table><tr><td></td><td id='c'></td></tr></table></body></html>",
+    );
+    assert_eq!(script.eval_value("document.querySelector('form').elements.length").unwrap(), "2");
+    assert_eq!(script.eval_value("document.querySelector('form').method").unwrap(), "post");
+    assert_eq!(script.eval_value("document.querySelector('table').rows.length").unwrap(), "1");
+    assert_eq!(script.eval_value("document.querySelector('tr').cells.length").unwrap(), "2");
+    assert_eq!(script.eval_value("document.getElementById('c').cellIndex").unwrap(), "1");
+    // A control's form, found by ancestry.
+    assert_eq!(
+        script.eval_value("String(document.querySelector('input').form === document.querySelector('form'))").unwrap(),
+        "true"
+    );
+}
+
+#[test]
+fn a_closed_disclosure_and_a_dropdown_read_as_a_person_sees_them() {
+    // Both were carrying text a reader cannot see, which is the §8.21 failure:
+    // a closed `<details>` hides its body behind a disclosure nobody opened,
+    // and a `<select>` shows one option rather than all of them run together.
+    let (page, _broker) = run_page(
+        "<html><body>\
+         <select><option>opt a</option><option selected>opt b</option></select>\
+         <details><summary>Summary line</summary>Details body</details>\
+         <details open><summary>Open one</summary>Shown body</details>\
+         </body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(rendered.contains("opt b"), "the dropdown says what it is set to:\n{rendered}");
+    assert!(
+        !rendered.contains("opt a"),
+        "and not what it is not set to:\n{rendered}"
+    );
+    assert!(rendered.contains("Summary line"), "the summary is shown:\n{rendered}");
+    assert!(
+        !rendered.contains("Details body"),
+        "the body behind a closed disclosure is not:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("Shown body"),
+        "but an open one is:\n{rendered}"
+    );
+}
+
+#[test]
+fn focus_moves_and_the_document_knows_it() {
+    // `focus()` was empty, so `document.activeElement` never moved: a page that
+    // focused a field and then asked which field was focused got the wrong
+    // answer, and a form advancing focus as it validates got no signal at all.
+    let (_page, mut script) = page_and_script(
+        "<html><body><input id='a'><input id='b'></body></html>",
+    );
+    script
+        .eval("globalThis.seen = [];                document.getElementById('b').addEventListener('focusin', () => seen.push('in'));                document.getElementById('a').addEventListener('blur', () => seen.push('out'));")
+        .expect("runs");
+    script.eval("document.getElementById('a').focus();").expect("runs");
+    assert_eq!(script.eval_value("document.activeElement.id").unwrap(), "a");
+    script.eval("document.getElementById('b').focus();").expect("runs");
+    assert_eq!(script.eval_value("document.activeElement.id").unwrap(), "b");
+    assert_eq!(
+        script.eval_value("seen.join(',')").unwrap(),
+        "out,in",
+        "the old element blurs before the new one focuses"
+    );
+    // Nothing focused reports the body, not null — code branching on it expects
+    // an element.
+    script.eval("document.getElementById('b').blur();").expect("runs");
+    assert_eq!(script.eval_value("document.activeElement.tagName").unwrap(), "BODY");
+}
+
+#[test]
+fn a_hash_route_navigates_and_says_so() {
+    // Assigning to a getter-only property is a silent no-op, so a hash router
+    // never navigated: no error, no route change, no explanation.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script
+        .eval("globalThis.seen = []; addEventListener('hashchange', (e) => seen.push(e.newURL));")
+        .expect("runs");
+    script.eval("location.hash = 'route';").expect("runs");
+    assert_eq!(script.eval_value("location.hash").unwrap(), "#route");
+    assert_eq!(script.eval_value("String(seen.length)").unwrap(), "1");
+}
+
+#[test]
 fn a_selection_can_be_made_and_acted_on() {
     // What an agent driving a rich-text editor actually does: select a span of
     // text, then change it. Both halves are checked, because a `Selection` that

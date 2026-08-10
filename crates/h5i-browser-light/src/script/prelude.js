@@ -20,6 +20,13 @@
   /// a `const` still in its temporal dead zone.
   const TAG_CLASSES = new Map();
 
+  /// Which node has focus, or null for none.
+  ///
+  /// Held here rather than on the tree because focus is a property of the
+  /// *document's* view of itself, not of a node, and two nodes must not be able
+  /// to believe they both have it.
+  let focusedId = null;
+
   /// An error with the line it came from, for the callbacks that swallow one.
   ///
   /// Every `catch` that reports and carries on — a listener, a timer, an
@@ -501,7 +508,16 @@
       const parent = this.parentNode;
       return parent && parent.nodeType === 1 ? parent : null;
     }
-    get childNodes() { return api.children(this._id).map(wrap); }
+    get childNodes() {
+      // A `<template>`'s children belong to its `content` fragment, not to the
+      // element: `tp.childNodes.length` is 0 in a browser however much markup
+      // it holds. This engine keeps one node for both, so the element hides
+      // them and `TemplateContent` shows them — which is the division the spec
+      // describes anyway. Without it a walker that recurses into a template
+      // reads markup the page has not rendered and may never render.
+      if (this.tagName === "TEMPLATE") return [];
+      return api.children(this._id).map(wrap);
+    }
     /// The single most-asked-for thing this engine did not have.
     ///
     /// WPT called it 3,944 times across the corpus, more than twice anything
@@ -510,6 +526,64 @@
     /// does — which is the argument for running a conformance suite in one
     /// sentence.
     hasChildNodes() { return api.children(this._id).length > 0; }
+
+    /// Same type, same name, same attributes, same children — not the same node.
+    isEqualNode(other) {
+      if (!other) return false;
+      if (this.nodeType !== other.nodeType) return false;
+      if (this.nodeType === 3 || this.nodeType === 8) return this.data === other.data;
+      if (this.tagName !== other.tagName) return false;
+      const mine = api.attrNames(this._id) || [];
+      const theirs = api.attrNames(other._id) || [];
+      if (mine.length !== theirs.length) return false;
+      for (const name of mine) {
+        if (api.getAttr(this._id, name) !== api.getAttr(other._id, name)) return false;
+      }
+      const a = this.childNodes, b = other.childNodes;
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) if (!a[i].isEqualNode(b[i])) return false;
+      return true;
+    }
+    isSameNode(other) { return !!other && other._id === this._id; }
+
+    /// Merge adjacent text nodes and drop empty ones.
+    normalize() {
+      const kids = this.childNodes;
+      let previous = null;
+      for (const kid of kids) {
+        if (kid.nodeType === 3) {
+          if (kid.data === "") { kid.remove(); continue; }
+          if (previous) { previous.data += kid.data; kid.remove(); continue; }
+          previous = kid;
+        } else {
+          previous = null;
+          if (kid.nodeType === 1) kid.normalize();
+        }
+      }
+    }
+
+    /// Where `other` sits relative to this node, as the spec's bit field.
+    compareDocumentPosition(other) {
+      if (!other) return 1;
+      if (other._id === this._id) return 0;
+      const DISCONNECTED = 1, PRECEDING = 2, FOLLOWING = 4, CONTAINS = 8, CONTAINED = 16;
+      const ancestors = (node) => { const out = []; for (let n = node; n; n = n.parentNode) out.push(n); return out; };
+      const mine = ancestors(this), theirs = ancestors(other);
+      if (theirs.some((n) => n._id === this._id)) return FOLLOWING | CONTAINED;
+      if (mine.some((n) => n._id === other._id)) return PRECEDING | CONTAINS;
+      // Nearest common ancestor, then compare the branches under it.
+      const common = mine.find((a) => theirs.some((b) => b._id === a._id));
+      if (!common) return DISCONNECTED | PRECEDING;
+      const branchOf = (chain) => chain[chain.findIndex((n) => n._id === common._id) - 1];
+      const a = branchOf(mine), b = branchOf(theirs);
+      const kids = common.childNodes;
+      let seenA = -1, seenB = -1;
+      for (let i = 0; i < kids.length; i++) {
+        if (a && kids[i]._id === a._id) seenA = i;
+        if (b && kids[i]._id === b._id) seenB = i;
+      }
+      return seenA < seenB ? FOLLOWING : PRECEDING;
+    }
     get firstChild() { return this.childNodes[0] || null; }
     get lastChild() { const c = this.childNodes; return c[c.length - 1] || null; }
 
@@ -529,7 +603,9 @@
 
     get textContent() { return api.getText(this._id); }
     set textContent(value) {
-      api.setText(this._id, String(value));
+      // Nullable by spec: `el.textContent = null` empties the element rather
+      // than writing the four characters "null".
+      api.setText(this._id, value === null || value === undefined ? "" : String(value));
       if (observers.length === 0) return;
       record({
         type: "characterData", target: this, addedNodes: [], removedNodes: [],
@@ -697,7 +773,16 @@
     addEventListener(type, handler, options) {
       if (!handler) return;
       const capture = options === true || (options && options.capture) || false;
-      listeners.push({ id: this._id, type: String(type), handler, capture });
+      const once = !!(options && options.once);
+      // The same handler registered twice for the same type and phase is one
+      // listener, as in a browser. Without this a page that re-runs its own
+      // setup accumulates duplicates and every event fires N times.
+      const already = listeners.some(
+        (l) => l.id === this._id && l.type === String(type)
+          && l.handler === handler && l.capture === capture,
+      );
+      if (already) return;
+      listeners.push({ id: this._id, type: String(type), handler, capture, once });
     }
     removeEventListener(type, handler) {
       for (let i = listeners.length - 1; i >= 0; i--) {
@@ -1146,12 +1231,12 @@
       });
     }
 
-    querySelector(sel) { return wrap(api.query(String(sel), this._id)); }
-    querySelectorAll(sel) { return collection(api.queryAll(String(sel), this._id).map(wrap)); }
+    querySelector(sel) { return wrap(api.query(checkSelector(sel), this._id)); }
+    querySelectorAll(sel) { return collection(api.queryAll(checkSelector(sel), this._id).map(wrap)); }
     getElementsByTagName(tag) { return collection(api.queryAll(String(tag), this._id).map(wrap), "HTMLCollection"); }
     getElementsByClassName(cls) { return collection(api.queryAll("." + String(cls), this._id).map(wrap), "HTMLCollection"); }
 
-    matches(sel) { return api.matchesSelector(this._id, String(sel)); }
+    matches(sel) { return api.matchesSelector(this._id, checkSelector(sel)); }
     closest(sel) {
       for (let n = this; n; n = n.parentNode) {
         if (n.nodeType === 1 && n.matches(sel)) return n;
@@ -1233,8 +1318,30 @@
       }
       dispatch(this, new MouseEvent("click", { bubbles: true }));
     }
-    focus() {}
-    blur() {}
+    /// Move focus here, and fire what a browser fires.
+    ///
+    /// Both were empty, so `document.activeElement` never moved: a page that
+    /// focused a field and then checked which field was focused got the wrong
+    /// answer, and a form that advances focus as it validates got no signal at
+    /// all. `focusin`/`focusout` bubble and `focus`/`blur` do not, which is the
+    /// difference delegation depends on.
+    focus() {
+      if (focusedId === this._id) return;
+      const previous = focusedId === null ? null : wrap(focusedId);
+      focusedId = this._id;
+      if (previous) {
+        previous.dispatchEvent(new Event("blur", { bubbles: false }));
+        previous.dispatchEvent(new Event("focusout", { bubbles: true }));
+      }
+      this.dispatchEvent(new Event("focus", { bubbles: false }));
+      this.dispatchEvent(new Event("focusin", { bubbles: true }));
+    }
+    blur() {
+      if (focusedId !== this._id) return;
+      focusedId = null;
+      this.dispatchEvent(new Event("blur", { bubbles: false }));
+      this.dispatchEvent(new Event("focusout", { bubbles: true }));
+    }
 
     // Answered from the layout the engine already computed. Returning zeros —
     // which is what this did before — sends a positioning library into a loop
@@ -1346,6 +1453,11 @@
   class TemplateContent extends Element {
     get nodeType() { return 11; }
     get nodeName() { return "#document-fragment"; }
+    // The one place a template's children *are* visible. `Element` hides them
+    // for the element itself, per the rule below, and this is the fragment
+    // they officially belong to.
+    get childNodes() { return api.children(this._id).map(wrap); }
+    get children() { return collection(this.childNodes.filter((n) => n.nodeType === 1), "HTMLCollection"); }
   }
 
   // `el.onclick = fn` is the other way to bind a handler, and plenty of
@@ -1480,7 +1592,29 @@
   // at the engine.
   reflect(Element.prototype, "hidden", "hidden", "bool");
   reflect(Element.prototype, "autofocus", "autofocus", "bool");
-  reflect(Element.prototype, "tabIndex", "tabindex", "long", { default: -1 });
+  // `tabIndex` has no single default: an element the user can reach with the
+  // keyboard reports 0, everything else -1. Answering -1 for a link or a button
+  // tells a page nothing is focusable, which is the opposite of true.
+  const FOCUSABLE_BY_DEFAULT = new Set([
+    "A", "AREA", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "IFRAME", "OBJECT",
+    "SUMMARY", "AUDIO", "VIDEO",
+  ]);
+  Object.defineProperty(Element.prototype, "tabIndex", {
+    configurable: true,
+    get() {
+      const raw = api.getAttr(this._id, "tabindex");
+      if (raw !== null) {
+        const match = /^[ \t\n\f\r]*([+-]?[0-9]+)/.exec(raw);
+        if (match) return Number(match[1]);
+      }
+      if (!FOCUSABLE_BY_DEFAULT.has(this.tagName)) return -1;
+      // A link is only focusable if it actually links somewhere.
+      if ((this.tagName === "A" || this.tagName === "AREA")
+        && api.getAttr(this._id, "href") === null) return -1;
+      return 0;
+    },
+    set(value) { this.setAttribute("tabindex", String(Math.trunc(Number(value)) || 0)); },
+  });
   reflect(Element.prototype, "accessKey", "accesskey");
   reflect(Element.prototype, "slot", "slot");
   reflect(Element.prototype, "nonce", "nonce");
@@ -1890,22 +2024,65 @@
           const v = api.getAttr(this._id, "value");
           return v === null ? "on" : v;
         }
-        return api.getValue(this._id);
+        // The editor is the truth when there is one and it holds something:
+        // typing updates it and leaves the `value` attribute at whatever the
+        // HTML said.
+        const edited = api.getValue(this._id);
+        if (edited && edited.trim()) return edited;
+
+        // A blank editor on a `<textarea>` is the case worth handling. A
+        // textarea's default value is its text content, and blitz lays one out
+        // with an editor holding a single space rather than that content — so a
+        // page whose comment box arrives filled in read back as blank, which is
+        // a filled form reported as empty. Whitespace-only counts as unseeded
+        // for that reason: the space is blitz's, not the page's.
+        //
+        // The limitation this leaves is small and stated: a textarea a user
+        // has explicitly *cleared* also has an empty editor, and reports its
+        // original text rather than "". Wrong in that one case, right in the
+        // far commoner one, and it fails toward showing content that exists
+        // rather than hiding it.
+        if (tag === "TEXTAREA" && this._value === undefined) {
+          const written = this.textContent;
+          if (written) return written;
+        }
+        if (edited !== null && edited !== undefined) return edited;
+        // There is no editor — a detached control, or a `<textarea>`, which
+        // blitz lays out as text rather than as an input. Falling back to the
+        // markup is what a browser reports, and answering "" instead made a
+        // filled-in comment box look empty to the agent reading it.
+        if (this._value !== undefined) return this._value;
+        if (tag === "TEXTAREA") return this.textContent;
+        return api.getAttr(this._id, "value") ?? "";
       },
       set(v) {
-        api.setValue(this._id, String(v));
-        // A page that sets `.value` from script does not get input/change: the
-        // spec fires those for *user* edits, and a framework that re-rendered
-        // on its own write would loop. `Page::type_into` is the user path.
+        const text = String(v);
+        // Remembered on this side when the write had nowhere to land, so a
+        // page that builds a control and fills it in can read back what it
+        // wrote. A page that sets `.value` from script does not get
+        // input/change: the spec fires those for *user* edits, and a framework
+        // that re-rendered on its own write would loop. `Page::type_into` is
+        // the user path.
+        const landed = api.setValue(this._id, text);
+        if (!landed) {
+          this._value = text;
+          if (this.tagName === "TEXTAREA") this.textContent = text;
+        } else {
+          delete this._value;
+        }
       },
     });
 
+    // `checked` is state, not the attribute. The attribute is the *default*,
+    // which is why it is reflected separately as `defaultChecked` — writing to
+    // it here made `getAttribute("checked")` change under a page that never
+    // touched the markup, and made a box the user unticked look ticked still.
     on(["input"], "checked", {
-      get() { return api.getAttr(this._id, "checked") !== null; },
-      set(on_) {
-        if (on_) api.setAttr(this._id, "checked", "");
-        else api.removeAttr(this._id, "checked");
+      get() {
+        if (this._checked !== undefined) return this._checked;
+        return api.getAttr(this._id, "checked") !== null;
       },
+      set(on_) { this._checked = !!on_; },
     });
     on(["option"], "selected", {
       get() { return api.getAttr(this._id, "selected") !== null; },
@@ -1961,6 +2138,105 @@
     // The sheet an element owns. Only `<style>` and `<link>` have one, and a
     // `<link>` that is not a stylesheet has none — `img.sheet` being undefined
     // is the point of putting it here rather than on Element.
+    // Forms and tables, which an agent reads more than almost anything else.
+    //
+    // `form.elements`, `table.rows`, `tr.cells` and `td.cellIndex` were all
+    // absent, so a page that walks its own form or table — and a great deal of
+    // page script does — got `undefined` and stopped.
+    on(["form"], "elements", {
+      get() {
+        return collection(
+          this.querySelectorAll("input, select, textarea, button, fieldset, output")
+            .filter((el) => (api.getAttr(el._id, "type") || "").toLowerCase() !== "image"),
+          "HTMLFormControlsCollection",
+        );
+      },
+    });
+    on(["form"], "length", { get() { return this.elements.length; } });
+    // A form's default method is `get`, not the empty string: code branches on
+    // it, and "" is not one of the branches.
+    on(["form"], "method", {
+      get() {
+        const raw = (api.getAttr(this._id, "method") || "").toLowerCase();
+        return raw === "post" || raw === "dialog" ? raw : "get";
+      },
+      set(value) { this.setAttribute("method", String(value)); },
+    });
+
+    // The form a control belongs to: its `form` attribute if it names one,
+    // otherwise the form it sits inside.
+    on(["input", "select", "textarea", "button", "fieldset", "output", "label"], "form", {
+      get() {
+        const named = api.getAttr(this._id, "form");
+        if (named) return wrap(api.query("#" + cssEscapeIdent(named), 0));
+        for (let n = this.parentNode; n; n = n.parentNode) {
+          if (n.nodeType === 1 && n.tagName === "FORM") return n;
+        }
+        return null;
+      },
+    });
+
+    // `<option>.text` is its text with whitespace collapsed, which is what a
+    // `<select>` actually shows.
+    on(["option"], "text", {
+      get() { return (this.textContent || "").replace(/\s+/g, " ").trim(); },
+      set(value) { this.textContent = String(value); },
+    });
+    on(["option"], "index", {
+      get() {
+        const owner = this.parentNode;
+        if (!owner) return 0;
+        return owner.querySelectorAll("option").findIndex((o) => o._id === this._id);
+      },
+    });
+    on(["select"], "selectedIndex", {
+      get() {
+        const options = this.querySelectorAll("option");
+        const at = options.findIndex((o) => o.selected);
+        // A `<select>` with nothing marked selected shows its first option.
+        return at >= 0 ? at : (options.length ? 0 : -1);
+      },
+      set(index) {
+        const options = this.querySelectorAll("option");
+        options.forEach((o, i) => { o.selected = i === Number(index); });
+      },
+    });
+    on(["select"], "options", {
+      get() { return collection(this.querySelectorAll("option"), "HTMLOptionsCollection"); },
+    });
+
+    // Tables. `rows` spans the sections in document order, which is what the
+    // spec says and what a reader expects.
+    on(["table"], "rows", {
+      get() { return collection(this.querySelectorAll("tr"), "HTMLCollection"); },
+    });
+    on(["table"], "tBodies", {
+      get() { return collection(this.querySelectorAll("tbody"), "HTMLCollection"); },
+    });
+    on(["table"], "tHead", { get() { return this.querySelector("thead"); } });
+    on(["table"], "tFoot", { get() { return this.querySelector("tfoot"); } });
+    on(["table"], "caption", { get() { return this.querySelector("caption"); } });
+    on(["tr"], "cells", {
+      get() { return collection(this.querySelectorAll("td, th"), "HTMLCollection"); },
+    });
+    on(["tr"], "rowIndex", {
+      get() {
+        for (let n = this.parentNode; n; n = n.parentNode) {
+          if (n.nodeType === 1 && n.tagName === "TABLE") {
+            return n.querySelectorAll("tr").findIndex((r) => r._id === this._id);
+          }
+        }
+        return -1;
+      },
+    });
+    on(["td"], "cellIndex", {
+      get() {
+        const row = this.parentNode;
+        if (!row || row.tagName !== "TR") return -1;
+        return row.querySelectorAll("td, th").findIndex((c) => c._id === this._id);
+      },
+    });
+
     on(["style", "link"], "sheet", {
       get() {
         if (this.tagName === "LINK") {
@@ -2017,6 +2293,19 @@
     }
   }
 
+  /// Refuse a selector a browser would refuse, rather than answering "nothing".
+  ///
+  /// `querySelector("!!!")` throws `SyntaxError` in a browser and returned
+  /// `null` here — the same answer as "no such element", so a page with a typo
+  /// took its not-found branch and never learned why.
+  function checkSelector(selector) {
+    const text = String(selector);
+    if (!api.validSelector(text)) {
+      throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
+    }
+    return text;
+  }
+
   function camelToDash(name) {
     return name.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
   }
@@ -2047,7 +2336,10 @@
       return out;
     }
     _write(map) {
-      this._source.set([...map.entries()].map(([k, v]) => `${k}: ${v}`).join("; "));
+      // Trailing semicolon, as a browser serialises it: `color: red;`. Pages do
+      // compare `getAttribute("style")` against a literal.
+      const text = [...map.entries()].map(([k, v]) => `${k}: ${v};`).join(" ");
+      this._source.set(text);
     }
     get length() { return this._read().size; }
     item(index) { return [...this._read().keys()][index] ?? ""; }
@@ -2079,10 +2371,10 @@
   function inlineStyleSource(node) {
     return {
       get: () => api.getAttr(node._id, "style") || "",
-      set: (text) => {
-        if (text) api.setAttr(node._id, "style", text);
-        else api.removeAttr(node._id, "style");
-      },
+      // Always written, never removed: emptying a style declaration leaves an
+      // empty `style` attribute in a browser, and `getAttribute("style")`
+      // answers "" rather than null.
+      set: (text) => api.setAttr(node._id, "style", text),
     };
   }
 
@@ -2188,6 +2480,14 @@
       event.currentTarget = node;
       for (const l of listeners.slice()) {
         if (l.id !== node._id || l.type !== event.type || l.capture !== capture) continue;
+        // Removed *before* the call, not after: a handler that throws, or that
+        // dispatches the same event again, must still not run twice. `once`
+        // was being ignored entirely, so a page relying on it double-handled
+        // and nothing said so.
+        if (l.once) {
+          const at = listeners.indexOf(l);
+          if (at >= 0) listeners.splice(at, 1);
+        }
         try {
           if (typeof l.handler === "function") l.handler.call(node, event);
           else if (l.handler && typeof l.handler.handleEvent === "function") {
@@ -3351,8 +3651,8 @@
     getElementsByName(name) {
       return api.queryAll(`[name="${String(name).replace(/"/g, '\\"')}"]`, 0).map(wrap);
     },
-    querySelector(sel) { return wrap(api.query(String(sel), 0)); },
-    querySelectorAll(sel) { return collection(api.queryAll(String(sel), 0).map(wrap)); },
+    querySelector(sel) { return wrap(api.query(checkSelector(sel), 0)); },
+    querySelectorAll(sel) { return collection(api.queryAll(checkSelector(sel), 0).map(wrap)); },
     getElementById(id) { return wrap(api.query("#" + String(id), 0)); },
     getElementsByTagName(tag) { return collection(api.queryAll(String(tag), 0).map(wrap), "HTMLCollection"); },
     getElementsByClassName(cls) { return collection(api.queryAll("." + String(cls), 0).map(wrap), "HTMLCollection"); },
@@ -3391,6 +3691,12 @@
     },
     // This engine parses HTML and nothing else, so there is one honest answer.
     contentType: "text/html",
+    /// What this document was decoded as. All three names are the same value
+    /// and all three are in use: `characterSet` is current, `charset` is the
+    /// legacy alias, and `inputEncoding` is the one the DOM spec kept.
+    get characterSet() { return api.documentEncoding(); },
+    get charset() { return api.documentEncoding(); },
+    get inputEncoding() { return api.documentEncoding(); },
     // Adopting a sheet applies it. Assignment replaces the set, as in a browser.
     /// What scrolls when the document scrolls. In standards mode that is
     /// `<html>`, and code reads it to avoid the quirks-mode `<body>` split.
@@ -3470,7 +3776,16 @@
     // "modern browser" branch, which is the correct one for this engine.
     get all() { return collection(api.queryAll("*", 0).map(wrap), "HTMLCollection"); },
 
-    get activeElement() { return wrap(api.body()); },
+    /// What has focus. The body when nothing does, as in a browser — never
+    /// null, which is what code branching on it expects.
+    get activeElement() {
+      if (focusedId !== null) {
+        const focused = wrap(focusedId);
+        if (focused && focused.isConnected) return focused;
+        focusedId = null;
+      }
+      return wrap(api.body());
+    },
     get hidden() { return false; },
     get visibilityState() { return "visible"; },
   };
@@ -3771,6 +4086,29 @@
     get pathname() { return locationParts().pathname ?? ""; },
     get search() { return locationParts().search ?? ""; },
     get hash() { return locationParts().hash ?? ""; },
+    /// Hash routing, which a great many single-page applications are built on.
+    ///
+    /// Assigning to a getter-only property is a silent no-op outside strict
+    /// mode, so `location.hash = "/x"` did nothing at all and a hash router
+    /// simply never navigated — no error, no route change, no explanation.
+    ///
+    /// A same-document fragment change moves the address, pushes a history
+    /// entry and fires `hashchange`. It deliberately does *not* reload: that is
+    /// what makes it a fragment change rather than a navigation, and it is the
+    /// whole reason routers use it.
+    set hash(value) {
+      const wanted = String(value);
+      const fragment = wanted.startsWith("#") ? wanted : "#" + wanted;
+      const before = currentAddress;
+      const parts = api.parseUrl(fragment, currentAddress);
+      const next = parts ? parts.href : currentAddress;
+      if (next === before) return;
+      history.pushState(history.state, "", next);
+      const event = new Event("hashchange", { bubbles: false });
+      event.oldURL = before;
+      event.newURL = next;
+      dispatch(wrap(api.root()), event);
+    },
     get origin() { return locationParts().origin ?? ""; },
     toString() { return currentAddress; },
     assign(u) { api.unsupported("location.assign"); void u; },

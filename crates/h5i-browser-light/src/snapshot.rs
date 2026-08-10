@@ -485,6 +485,28 @@ impl Walker<'_> {
             return;
         }
 
+        // A closed `<details>` shows its `<summary>` and nothing else. The body
+        // is behind a disclosure the reader has not opened, so carrying it is
+        // the §8.21 failure exactly: text a human would have to act to see,
+        // handed over as though it were on the page. Blitz does not apply the
+        // UA rule that hides it, so it is applied here.
+        //
+        // The summary still speaks, because that is the part that *is* shown —
+        // and it is what an agent would click to open the rest.
+        if tag == "details" && attr_of(node, "open").is_none() {
+            for child in node.children.clone() {
+                let is_summary = self
+                    .doc
+                    .get_node(child)
+                    .map(|kid| kid.data.is_element_with_tag_name(&local_name!("summary")))
+                    .unwrap_or(false);
+                if is_summary {
+                    self.walk(child, depth, in_prose);
+                }
+            }
+            return;
+        }
+
         // Content the page does not display is not content this reading should
         // carry. Two reasons, and the second is the serious one:
         //
@@ -525,6 +547,29 @@ impl Walker<'_> {
                 is_leaf,
             }) => {
                 let name = accessible_name(&tag, node);
+
+                // For `<pre>`, the same text again but split on its own line
+                // breaks. Computed here, where the raw text is still in reach.
+                let preformatted_lines: Vec<String> = if tag == "pre" {
+                    let raw = node.text_content();
+                    let pieces: Vec<String> = raw
+                        .lines()
+                        // Leading indentation is meaning in code, so it is kept
+                        // rather than collapsed away; only the trailing edge and
+                        // interior runs are tidied.
+                        .map(collapse_keeping_indent)
+                        .collect();
+                    // Blank lines at the ends are an artefact of how the markup
+                    // was written, not of what it says.
+                    let start = pieces.iter().position(|line| !line.trim().is_empty());
+                    let stop = pieces.iter().rposition(|line| !line.trim().is_empty());
+                    match (start, stop) {
+                        (Some(start), Some(stop)) if stop > start => pieces[start..=stop].to_vec(),
+                        _ => Vec::new(),
+                    }
+                } else {
+                    Vec::new()
+                };
                 // Collapsed like every other page-derived value, and for a
                 // sharper reason than tidiness: an attribute value may contain
                 // a literal newline, so an uncollapsed `href` is the one field
@@ -556,13 +601,40 @@ impl Walker<'_> {
                         None
                     };
 
-                    self.push(Line {
-                        depth,
-                        role: role.to_string(),
-                        text: name,
-                        reference,
-                        href,
-                    });
+                    // A `<pre>` keeps its line breaks, as one outline line per
+                    // source line.
+                    //
+                    // Collapsing it into a single line is what the rest of the
+                    // outline does and is right for prose, where a newline in
+                    // the markup is not a newline on screen. In preformatted
+                    // text it is: every code block in every documentation page
+                    // was arriving as one run-on line, which is a poor reading
+                    // of the thing agents read most.
+                    //
+                    // Split rather than un-collapsed, because the fence in
+                    // `render` rests on **no page-derived value spanning a
+                    // line**. Each piece is collapsed on its own and gets its
+                    // own indent and `- `, so the invariant holds unchanged and
+                    // the structure survives.
+                    if role == "code" && !preformatted_lines.is_empty() {
+                        for piece in &preformatted_lines {
+                            self.push(Line {
+                                depth,
+                                role: role.to_string(),
+                                text: piece.clone(),
+                                reference: reference.clone(),
+                                href: href.clone(),
+                            });
+                        }
+                    } else {
+                        self.push(Line {
+                            depth,
+                            role: role.to_string(),
+                            text: name,
+                            reference,
+                            href,
+                        });
+                    }
                     depth + 1
                 } else {
                     depth
@@ -678,6 +750,33 @@ fn attr_of<'a>(node: &'a Node, name: &str) -> Option<&'a str> {
 /// address are exactly the ones that have none: an image's name is its `alt`,
 /// and an empty input's is its placeholder or label. Falling back to "" would
 /// render a snapshot of anonymous `textbox` lines nobody can tell apart.
+/// The text of the option a `<select>` is set to.
+///
+/// The first option with `selected`, or failing that the first option at all,
+/// which is what a browser displays for a select where nothing is marked.
+fn selected_option(node: &Node) -> Option<String> {
+    let doc = node.tree();
+    let mut first = None;
+    let mut stack: Vec<usize> = node.children.clone();
+    stack.reverse();
+    while let Some(id) = stack.pop() {
+        let Some(child) = doc.get(id) else { continue };
+        if child.data.is_element_with_tag_name(&local_name!("option")) {
+            let text = collapse(&child.text_content());
+            if attr_of(child, "selected").is_some() {
+                return Some(text);
+            }
+            if first.is_none() && !text.is_empty() {
+                first = Some(text);
+            }
+        }
+        let mut kids = child.children.clone();
+        kids.reverse();
+        stack.extend(kids);
+    }
+    first
+}
+
 fn accessible_name(tag: &str, node: &Node) -> String {
     let from_attr = |names: &[&str]| {
         names
@@ -689,6 +788,16 @@ fn accessible_name(tag: &str, node: &Node) -> String {
 
     match tag {
         "img" => from_attr(&["alt", "title"]).unwrap_or_default(),
+        // A closed `<select>` shows one option: the selected one. Reading its
+        // whole subtree ran every option together — `opt aopt b` — which is
+        // both unreadable and untrue about what the control is set to. An agent
+        // asking "what is this dropdown on?" needs the answer, not the menu.
+        "select" => {
+            let chosen = selected_option(node);
+            chosen
+                .or_else(|| from_attr(&["aria-label", "title", "name"]))
+                .unwrap_or_default()
+        }
         "input" | "textarea" => {
             // What the field *holds* comes first, and it is read from the
             // editor rather than the `value` attribute: typing updates the
@@ -712,6 +821,24 @@ fn accessible_name(tag: &str, node: &Node) -> String {
                 text
             }
         }
+    }
+}
+
+/// Collapse a single line's interior whitespace but keep what it starts with.
+///
+/// Indentation is meaning in preformatted text — it is how a code block shows
+/// nesting — so the leading run is preserved while interior runs and the
+/// trailing edge are tidied. Tabs become spaces so a line's width does not
+/// depend on how the reader's terminal is configured.
+fn collapse_keeping_indent(line: &str) -> String {
+    let body = line.trim_start();
+    let indent_width = line.len() - body.len();
+    let indent = line[..indent_width].replace('\t', "    ");
+    let collapsed = collapse(body);
+    if collapsed.is_empty() {
+        String::new()
+    } else {
+        format!("{indent}{collapsed}")
     }
 }
 

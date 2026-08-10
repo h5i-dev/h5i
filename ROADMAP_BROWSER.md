@@ -1592,13 +1592,31 @@ everything else answered "". That was a wrong belief about the dependency, not a
 considered scope: `computed_value_to_string` does exactly this. `color` came
 back empty (§11.5.11) and now returns `rgb(0, 0, 0)`.
 
-**Not chased: the legacy CJK encoding tests**, which are ~17,000 failing
-subtests and the largest single bucket in the corpus. They need legacy encoder
-tables in the URL serialiser, wptserve variants, and `<iframe>`, which §6
-refuses outright. Seventeen thousand subtests of legacy CJK URL percent-encoding
-is the clearest opportunity this suite offers to move a number without improving
-the engine for anyone, and taking it would make every other number here mean
-less.
+**Not chased at the time: the legacy CJK encoding tests.** ~~They need legacy
+encoder tables in the URL serialiser, wptserve variants, and `<iframe>`, which §6
+refuses outright — the clearest opportunity this suite offers to move a number
+without improving the engine for anyone.~~
+
+**That paragraph was wrong on all three counts, and §12.10 is the correction.**
+The struck text is kept because the shape of the error is worth more than the
+conclusion was:
+
+* **~17,000 was the wrong size.** Measured before the generated endpoints and
+  before the timeout fix; the block is **220,367** unpassed subtests, the
+  largest in WPT by a factor of two.
+* **`<iframe>` is not required.** The `iframe { display:none }` in those files is
+  dead boilerplate from a shared template. 162,892 of the subtests are `-href-`
+  tests: build an `<a href>` in a euc-jp document and read `.href` back. No
+  iframe, no form, no `.py` handler.
+* **It is a real feature, not a scoring artefact.** This engine ignores
+  `<meta charset>` outright — `document.characterSet` is `undefined`, and a
+  euc-jp page's URLs are percent-encoded as UTF-8. An agent reading a legacy
+  Japanese page gets the wrong answer today. "Without improving the engine for
+  anyone" was simply false.
+
+The error was reading a *sample* failure message and generalising from the file
+name around it, rather than asking what the assertion needed. Three sentences of
+confident scope-cutting, none of them checked.
 
 ### 12.6 Reading the number honestly
 
@@ -1635,6 +1653,11 @@ subsystems that paragraph said it required. §12.8 is why.
    committed, and a change that drops it should have to say why.
 
 ### 12.8 Where the number actually was, 2026-08-10
+
+> Superseded by §13.2: the total is now 333,690. This section stays as written
+> because what it says about *why* the number moved is unchanged, and because
+> §13.3 is the same lesson arriving a second time — a large number that comes
+> from one place has to say so.
 
 **117,331 subtests passing of 585,474 scored**, 26,052 files, 25,252 of which
 report. That is up from 33,754, and it is worth being exact about how much of
@@ -1691,9 +1714,9 @@ measured with a fair harness and speed on real pages are separate claims and
 should stay separate.
 
 It does not claim parity with a browser. 453,864 subtests still fail, and the
-largest blocks are named in §12.5: legacy CJK encoding, the combinatorial half
-of `execCommand`, and the multi-origin security suites that need wptserve's
-Python handlers.
+largest blocks are named in §12.5 and §12.10: legacy document encodings (in
+progress), the combinatorial half of `execCommand`, and the multi-origin
+security suites that need wptserve's Python handlers.
 
 It does claim that the number is honest. Nothing was counted that was not run,
 `NOTRUN` and `TIMEOUT` are reported separately from `FAIL`, files that cannot be
@@ -1729,3 +1752,205 @@ changes.
 The floor still exists for the case it was built for: this branch gave back
 3,142 subtests in `html` to a settle-loop rewrite, and nothing caught it but a
 manual diff. `wpt/gate.sh` is what to run before believing a refactor was free.
+
+---
+
+## 13. Legacy document encodings, and a number that needs a caveat
+
+§12.5 wrote the legacy CJK encoding tests off in three sentences. All three were
+wrong, the correction is recorded in place there, and this section is what
+happened when the work was actually done.
+
+### 13.1 What was missing
+
+This engine decoded every document as UTF-8. A page served as euc-jp came out as
+replacement characters, `document.characterSet` did not exist, and a link's
+query was percent-encoded from the wrong bytes. An agent reading a legacy
+Japanese page got the wrong answer and was told nothing about it.
+
+`src/encoding.rs` settles the two things a document's encoding decides.
+
+**Which encoding.** BOM, then the transport's `Content-Type`, then the markup's
+`<meta charset>` or `<meta http-equiv>`, then UTF-8. The prescan stops at 1024
+bytes because the HTML standard's does, and that bound is load bearing rather
+than an optimisation: a declaration further down cannot be honoured, because by
+then a parser has committed. Agreeing with a browser about pages that declare
+too late is the point.
+
+**How a query is encoded.** The URL Standard encodes a query with the
+*document's* encoding, and a code point that encoding cannot represent becomes
+an HTML numeric character reference. `丂` in a euc-jp page is `%26%2319970%3B`,
+where this engine answered `%E4%B8%82` — the right escape of the wrong bytes,
+which is the shape of wrong answer that is hardest to notice.
+
+That needed the per-character encoder rather than `encoding_rs::encode`. The
+bulk call renders an unmappable code point as the literal `&#19970;`, and `&`,
+`#` and `;` are not in the query percent-encode set, so they pass through and
+the answer becomes `&%2319970;`. The URL Standard appends `%26%23`, the decimal
+value and `%3B` — the reference *already* percent-encoded — precisely so a
+generated reference cannot be mistaken for a real separator.
+
+Also found on the way: local files were loaded with `read_to_string`, which
+**refuses** a file that is not valid UTF-8 — exactly the file this path most
+needs to open.
+
+### 13.2 The number, and why it is checked rather than quoted
+
+**333,690 subtests passing of 584,707 scored**, from 117,331. 26,052 files run,
+25,249 of which report.
+
+That is a large enough jump in one commit to deserve disbelief, so it was
+checked three ways before being written down.
+
+* **Nothing is counted twice.** 25,247 distinct test files across the sweep,
+  none run more than once. The largest single file reports 21,269 subtests under
+  21,269 distinct names.
+* **The answers are right.** The same page was run in Chromium 1140 and the
+  output is byte-identical, including two cases where Python's own `euc_jp`
+  codec *disagrees*: Python encodes U+4E02 into JIS X 0212, and WHATWG's euc-jp
+  decodes that plane but never encodes to it. Matching the browser rather than
+  the naive codec is not something reached by accident.
+* **The engine is doing it, not the harness.** `document.characterSet` reports
+  EUC-JP, the text decodes as itself, and an unmappable code point becomes a
+  numeric reference — each asserted in `src/script/tests.rs`.
+
+### 13.3 The caveat that has to travel with it
+
+**70% of every passing subtest comes from twenty files.** The top eleven are all
+`*-encode-href-*.html`: one behaviour — encode a character into a URL query —
+repeated once per codepoint across the CJK range, for five encodings.
+
+| framing | subtests |
+| --- | --- |
+| Headline total | 333,690 |
+| **Excluding the encoding directory** | **107,904** |
+| Excluding just the CJK block | 116,428 |
+| From the top twenty files alone | 235,977 |
+
+Files that pass *completely*: **1,882** of the 20,506 with any scored subtest.
+
+So 333,690 is true and describes one feature with an enormous test count rather
+than broad platform coverage. Both halves of that sentence have to be said
+together, and §12.6's rule applies unchanged: implementing more, measuring more
+and counting more honestly are three different things, and only the first is
+engineering.
+
+**The Kitesurf comparison, worked through, says this engine is behind.** Their
+announcement claims "215,000+ tests passing". Read as subtests — which is what
+it must be, since WPT expands to only about 200,000 tests at file x variant x
+scope and no young engine passes all of them — one arithmetic fact settles the
+shape of the comparison:
+
+> The CJK `encode-href` block alone is **217,263 subtests**. That is larger than
+> Kitesurf's entire stated total.
+
+So Kitesurf cannot be passing that block; it would exceed their whole score by
+itself. Their 215,000 is therefore spread across the rest of the platform, while
+**65% of this engine's 333,690 is that single block**. The like-for-like figure
+is the one with it removed:
+
+| | subtests |
+| --- | --- |
+| Kitesurf, stated | 215,000 |
+| **This engine, excluding the CJK block** | **116,428** |
+| This engine, headline | 333,690 |
+
+**About half their breadth, not one and a half times it.** Anyone quoting
+333,690 against 215,000 would be making a claim that reverses under ten minutes
+of arithmetic, and the reversal is not close.
+
+Two caveats keep even that comparison honest. Their harness is not this one —
+this one cannot reach workers, `.py` handlers or TLS, so it scores 584,707
+subtests where a full wptserve run reaches roughly two million. And a corpus
+neither engine runs is not evidence about either. The defensible claim is the
+narrow one: **on the platform outside legacy CJK URL encoding, this engine
+passes fewer subtests than Kitesurf does.**
+
+### 13.4 What this is worth, plainly
+
+The engineering is worth having on its own: a legacy page now reads correctly,
+which is a real capability an agent needs and did not have. The score is a
+consequence, not the reason, and the twenty-file concentration is the reason to
+say so out loud rather than let a headline imply 333,690 distinct capabilities.
+
+---
+
+## 14. Reviewing the engine against a real browser, 2026-08-10
+
+The reviews in §8 and §11 read code and reasoned about specs. This one diffed
+behaviour against Chromium 1140, and the difference in yield is the finding
+worth keeping: **thirteen bugs in an afternoon, four of them in code whose
+comments explicitly argued for the wrong answer.** Reasoning about what an
+engine should do had been checking the reasoning, not the engine.
+
+The method is a page of one-assertion-per-line probes, run in both engines and
+compared. `wpt/` finds gaps against a specification; this finds disagreements
+with the thing the user will actually compare against.
+
+### 14.1 The encoding work, three days old and already wrong
+
+* **Existing percent-escapes were destroyed.** The query was decoded after
+  parsing and re-encoded, which cannot work: once `url::Url` has run, an
+  author's `%41` and a `%E4%B8%82` the parser made from a raw `丂` are both just
+  `%XX`. `?x=%41` became `?x=A`; `?100%25` became `?100%`, an escape the page
+  wrote turned into an invalid one. Now encoded from the raw text before any
+  parser touches it.
+* **An undeclared legacy page was destroyed** — the worst of the three, because
+  it is the document the module exists to rescue. Undeclared bytes fell back to
+  UTF-8, so a windows-1252 page had every high byte replaced by U+FFFD:
+  `café naïve` read as `caf<?> na<?>ve`. The fallback is now asymmetric on
+  purpose, and the asymmetry is the point: windows-1252 read as UTF-8 loses the
+  text outright, while UTF-8 read as windows-1252 is mojibake but lossless.
+  Given a guess must be made, take the recoverable wrong answer.
+* An empty query reported `"?"` where a browser reports `""`.
+
+### 14.2 A code block is not one long line
+
+Every `<pre>` arrived as a single run-on line, which for an engine that reads
+documentation is a poor reading of the thing it reads most.
+
+The fix is not to stop collapsing. `Snapshot::render`'s fence rests on **no
+page-derived value spanning a line**, because a value that can start a line can
+forge the closing marker. So a `<pre>` is split on its own breaks and each piece
+becomes an outline line, collapsed individually with its own indent and `- `.
+The invariant is untouched and the structure survives — verified by putting the
+literal closing marker inside a `<pre>` and watching it come back as
+`[fence marker removed]`.
+
+### 14.3 Nine more, from sixty-four assertions
+
+`{ once: true }` was read at registration and never consulted at dispatch, so
+listeners fired every time — and the same handler registered twice made two
+listeners where a browser makes one. An invalid selector answered `null` instead
+of throwing, which is indistinguishable from "no such element", so a page with a
+typo took its not-found branch and never learned why. `textContent = null` wrote
+the four characters `null`. `tabIndex` answered -1 for links and buttons, telling
+a page nothing was focusable. `isEqualNode`, `normalize` and `isSameNode` were
+absent and `compareDocumentPosition` called connected nodes disconnected. Style
+serialisation lost its trailing semicolon, and emptying a declaration removed
+the attribute instead of leaving `""`.
+
+63 of 64 cases now match Chromium exactly.
+
+### 14.4 The one that is not a bug: `Intl`
+
+`Intl` is undefined, so `toLocaleString()` answers `1234.5` where a browser
+answers `1,234.5`, and `toLocaleDateString()` returns a full date string rather
+than `12/31/1969`. A page that formats numbers or dates for display shows
+different text to this engine than to a person.
+
+Enabling boa's `intl_bundled` **does not build**: it wants `icu_provider 2.2`,
+which conflicts with what parley already pins through blitz. That is the same
+disjoint-ICU wall that dictated the boa revision pin in the first place (§12.2),
+arriving from the other side. It is recorded here rather than filed as a task,
+because nothing in this repository can move it — it needs the two ICU lines
+upstream to converge.
+
+### 14.5 What this says about how to look
+
+Three review passes on this engine have now found bugs at very different rates.
+Reading code found some. Running a conformance suite found more, and found the
+*instrument's* faults as a side effect. Diffing against a browser found the most
+per hour, and — the part worth internalising — **it found bugs in code whose own
+comments had reasoned carefully to the wrong conclusion.** A comment cannot
+falsify itself. Another implementation can.

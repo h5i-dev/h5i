@@ -88,6 +88,8 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("rect", 1, rect),
         ("computedStyle", 2, computed_style),
         ("supportsCss", 2, supports_css),
+        ("validSelector", 1, valid_selector),
+        ("documentEncoding", 0, document_encoding),
         ("isCssProperty", 1, is_css_property),
         ("innerText", 1, inner_text),
         ("encodingFor", 1, encoding_for),
@@ -308,9 +310,16 @@ fn get_value(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         .and_then(|n| n.element_data())
         .and_then(|el| el.text_input_data())
         .map(|input| input.editor.text().to_string());
+    // `null`, not `""`, when there is no editor at all.
+    //
+    // Blitz builds editor state only for a control it has laid out, so a
+    // detached `<input>` — and a `<textarea>`, whose value is its text content
+    // — have none. Answering `""` for both cases made "this field is empty"
+    // and "I cannot see this field" the same answer, and the prelude could not
+    // tell which it had. It now falls back to the markup for the second.
     Ok(match text {
         Some(text) => js_string!(text).into(),
-        None => js_string!("").into(),
+        None => JsValue::null(),
     })
 }
 
@@ -374,6 +383,7 @@ fn create_comment(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
 fn scroll_metrics(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
+    settle_layout(&host);
     let doc = host.dom.borrow();
 
     let Some(node) = doc.get_node(id) else {
@@ -472,11 +482,11 @@ fn append(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<
     let parent_id = arg_id(args, 0, context)?;
     let child_id = arg_id(args, 1, context)?;
     let host = host(context)?;
-    {
+    guard_mutation(&host, "appending a node", || {
         let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
         mutator.append_children(parent_id, &[child_id]);
-    }
+    });
     host.mark_dirty();
     Ok(JsValue::undefined())
 }
@@ -486,7 +496,9 @@ fn insert_before(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     let new_id = arg_id(args, 1, context)?;
     let host = host(context)?;
     {
-        let mut doc = host.dom.borrow_mut();
+        // A read is all the parent check needs; the mutation takes its own
+        // borrow inside the guard below.
+        let doc = host.dom.borrow();
         // blitz inserts relative to the anchor's parent and unwraps it, so an
         // anchor with no parent aborts the process. Checked here rather than
         // only in the prelude because a panic is not a DOM error: it takes the
@@ -500,9 +512,12 @@ fn insert_before(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
                 )
                 .into());
         }
+    }
+    guard_mutation(&host, "inserting a node", || {
+        let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
         mutator.insert_nodes_before(anchor, &[new_id]);
-    }
+    });
     host.mark_dirty();
     Ok(JsValue::undefined())
 }
@@ -510,11 +525,11 @@ fn insert_before(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
 fn remove_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
-    {
+    guard_mutation(&host, "removing a node", || {
         let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
         mutator.remove_node(id);
-    }
+    });
     host.mark_dirty();
     Ok(JsValue::undefined())
 }
@@ -532,7 +547,7 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
         return Ok(JsValue::undefined());
     }
 
-    {
+    guard_mutation(&host, "setting text", || {
         let mut doc = host.dom.borrow_mut();
         // Writing to a *text* node replaces its own text. Writing to an element
         // replaces its subtree. They were both taking the element path, so a
@@ -555,7 +570,7 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
             let text_id = mutator.create_text_node(&text);
             mutator.append_children(id, &[text_id]);
         }
-    }
+    });
     host.mark_dirty();
     Ok(JsValue::undefined())
 }
@@ -565,48 +580,16 @@ fn set_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     let name = arg_string(args, 1, context)?.to_lowercase();
     let value = arg_string(args, 2, context)?;
     let host = host(context)?;
-    let panicked = {
+    guard_mutation(&host, &format!("setting `{name}`"), || {
         let mut doc = host.dom.borrow_mut();
         let qual = blitz_dom::QualName::new(
             None,
             blitz_dom::ns!(),
             blitz_dom::LocalName::from(name.as_str()),
         );
-        // Guarded, because setting an attribute can start an image load and
-        // blitz `expect`s the URL to resolve. A page that writes
-        // `img.src = "http://{{host}}:NaN/x"` — an unsubstituted template, a
-        // typo, anything malformed — aborted the whole process, taking the
-        // page, the snapshot and the receipts with it. 81 of the 140 crashes in
-        // the last sweep were this one line.
-        //
-        // The attribute may be left unset when this fires, which is a worse
-        // answer than a browser gives and a much better one than no process.
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut mutator = doc.mutate();
-            mutator.set_attribute(id, qual, &value);
-        }))
-        .err()
-        .map(|payload| {
-            payload
-                .downcast_ref::<&str>()
-                .map(|text| (*text).to_string())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "the layout engine panicked".to_string())
-        })
-    };
-    if let Some(detail) = panicked {
-        let first_line = detail.lines().next().unwrap_or("").to_string();
-        super::host::push_console(
-            &mut host.console.borrow_mut(),
-            ConsoleLine::engine(
-                "error",
-                format!("setting `{name}` was refused by the layout engine: {first_line}"),
-            ),
-        );
-        host.unsupported
-            .borrow_mut()
-            .record(&format!("setAttribute({name}) with a value blitz cannot resolve"));
-    }
+        let mut mutator = doc.mutate();
+        mutator.set_attribute(id, qual, &value);
+    });
     host.mark_dirty();
     Ok(JsValue::undefined())
 }
@@ -633,11 +616,11 @@ fn set_inner_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     let id = arg_id(args, 0, context)?;
     let html = arg_string(args, 1, context)?;
     let host = host(context)?;
-    {
+    guard_mutation(&host, "setting innerHTML", || {
         let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
         mutator.set_inner_html(id, &html);
-    }
+    });
     host.mark_dirty();
     Ok(JsValue::undefined())
 }
@@ -646,15 +629,27 @@ fn set_value(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     let id = arg_id(args, 0, context)?;
     let value = arg_string(args, 1, context)?;
     let host = host(context)?;
-    {
+    let reached_editor = {
         let mut doc = host.dom.borrow_mut();
-        doc.with_text_input(id, |mut driver| {
-            driver.select_all();
-            driver.insert_or_replace_selection(&value);
-        });
-    }
+        let has_editor = doc
+            .get_node(id)
+            .and_then(|n| n.element_data())
+            .and_then(|el| el.text_input_data())
+            .is_some();
+        if has_editor {
+            doc.with_text_input(id, |mut driver| {
+                driver.select_all();
+                driver.insert_or_replace_selection(&value);
+            });
+        }
+        has_editor
+    };
     host.mark_dirty();
-    Ok(JsValue::undefined())
+    // Whether the write landed, so the prelude knows if it has to remember the
+    // value itself. A detached control has no editor to write into, and
+    // silently dropping the assignment meant `el.value = "y"` read back as ""
+    // — a page that filled in a form it had just built saw none of it.
+    Ok(JsValue::from(reached_editor))
 }
 
 // ── reporting ──────────────────────────────────────────────────────────────
@@ -709,6 +704,7 @@ fn element_from_point(_this: &JsValue, args: &[JsValue], context: &mut Context) 
         .unwrap_or(&JsValue::undefined())
         .to_number(context)? as f32;
     let host = host(context)?;
+    settle_layout(&host);
     let doc = host.dom.borrow();
 
     let scroll = doc.viewport_scroll();
@@ -1231,6 +1227,7 @@ fn outer_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
 fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
+    settle_layout(&host);
     let mut doc = host.dom.borrow_mut();
 
     if doc.get_node(id).is_none() {
@@ -1261,6 +1258,7 @@ fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
 fn rect(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
+    settle_layout(&host);
     let doc = host.dom.borrow();
 
     let Some(node) = doc.get_node(id) else {
@@ -1327,10 +1325,7 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     // `styles_stale` rather than `dirty`, because the settle loop consumes
     // `dirty` to decide whether to lay out and clearing it here would skip a
     // layout pass someone else was waiting for.
-    if *host.styles_stale.borrow() {
-        *host.styles_stale.borrow_mut() = false;
-        host.dom.borrow_mut().resolve(0.0);
-    }
+    settle_layout(&host);
 
     let doc = host.dom.borrow();
 
@@ -1557,6 +1552,104 @@ fn decode_bytes(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     }
 }
 
+/// Re-encode the query part of a URL *as written*, in the document's encoding.
+///
+/// Operates on the text a page handed over, before any parser has touched it,
+/// so an escape the author wrote is left exactly as they wrote it and only
+/// literal characters are converted. The query runs from the first `?` to the
+/// `#` that ends it, or to the end.
+fn rewrite_query(href: &str, encoding: &'static encoding_rs::Encoding) -> String {
+    let Some(start) = href.find('?') else {
+        return href.to_string();
+    };
+    let rest = &href[start + 1..];
+    let end = rest.find('#').unwrap_or(rest.len());
+    let query = &rest[..end];
+    if query.is_ascii() {
+        // Nothing here needs a decision, and this is the common case even in a
+        // legacy document.
+        return href.to_string();
+    }
+    format!(
+        "{}?{}{}",
+        &href[..start],
+        crate::encoding::encode_query(query, encoding),
+        &rest[end..]
+    )
+}
+
+/// What the document is written in, as the canonical label.
+fn document_encoding(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let host = host(context)?;
+    let name = host.encoding.borrow().name().to_string();
+    Ok(js_string!(name).into())
+}
+
+/// Run a tree mutation, and report rather than abort if the layer beneath
+/// panics.
+///
+/// blitz `expect`s an `<img src>` to resolve while flushing the parser's eager
+/// operations, and that flush runs inside *every* structural mutation — so
+/// attaching a subtree containing one unresolvable image killed the process,
+/// taking the page, the snapshot and the receipts with it.
+///
+/// This has now been found three times in three primitives: `set_attribute`,
+/// the initial parse, and `append`. Each was fixed where it was found, which is
+/// precisely why there was a third. This is the class fix — every mutation goes
+/// through here, so the next entry point to reach that `expect` is already
+/// covered.
+fn guard_mutation(host: &HostHandle, what: &str, body: impl FnOnce()) {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+    if let Err(payload) = outcome {
+        let detail = payload
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "the layout engine panicked".to_string());
+        let first = detail.lines().next().unwrap_or("").to_string();
+        super::host::push_console(
+            &mut host.console.borrow_mut(),
+            ConsoleLine::engine("error", format!("{what} was refused by the layout engine: {first}")),
+        );
+        host.unsupported
+            .borrow_mut()
+            .record(&format!("{what} on content the layout engine cannot resolve"));
+    }
+}
+
+/// Bring style and layout up to date, if script has changed the tree since they
+/// last ran.
+///
+/// Anything that answers a *measured* question has to call this first. A
+/// browser resolves on demand, and pages depend on it: build an element, give
+/// it a size, append it, ask how big it is. Without this the answer is zero —
+/// not "unknown", but a confident `0x0` for an element that plainly has a size,
+/// which is the shape of wrong answer this engine keeps finding in itself.
+///
+/// `resolve` never calls back into script, so taking the mutable borrow here is
+/// safe for the same reason every other mutation is.
+fn settle_layout(host: &HostHandle) {
+    if *host.styles_stale.borrow() {
+        *host.styles_stale.borrow_mut() = false;
+        host.dom.borrow_mut().resolve(0.0);
+    }
+}
+
+/// Whether a selector parses, so the prelude can throw where a browser throws.
+///
+/// `querySelector("!!!")` is a `SyntaxError` in every browser, and this engine
+/// answered `null` — indistinguishable from "there is no such element". A page
+/// with a typo in a selector was told its element does not exist, which is the
+/// plausible wrong answer this engine keeps removing: it sends the caller down
+/// the not-found branch instead of showing them their mistake.
+fn valid_selector(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let selector = arg_string(args, 0, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+    let valid = doc.try_parse_selector_list(&selector).is_ok();
+    Ok(JsValue::from(valid))
+}
+
 /// Whether this is a CSS property at all, which is what `in` on a computed
 /// style is asking.
 ///
@@ -1627,6 +1720,28 @@ fn supports_css(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
 fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let href = arg_string(args, 0, context)?;
     let base = arg_string(args, 1, context).unwrap_or_default();
+    let encoding = host(context)
+        .map(|host| *host.encoding.borrow())
+        .unwrap_or(encoding_rs::UTF_8);
+
+    // A query belongs to the document, not to UTF-8 — and it has to be encoded
+    // *before* parsing rather than after.
+    //
+    // The first version of this decoded the parsed query and re-encoded it,
+    // which cannot work: once `url::Url` has run, an author's own `%41` and a
+    // `%E4%B8%82` the parser produced from a raw `丂` are both just `%XX` and
+    // nothing can tell them apart. So `?x=%41` came back as `?x=A` and
+    // `?100%25` as `?100%` — an escape the page wrote, destroyed, and in the
+    // second case turned into an invalid one. Found by diffing against Chromium.
+    //
+    // Encoding the raw text first has neither problem: ASCII passes through
+    // untouched, `%` included, and only the characters the document's encoding
+    // has to make a decision about are changed.
+    let href = if encoding == encoding_rs::UTF_8 {
+        href
+    } else {
+        rewrite_query(&href, encoding)
+    };
 
     let parsed = if base.is_empty() {
         url::Url::parse(&href)
@@ -1649,7 +1764,12 @@ fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         ("hostname", url.host_str().unwrap_or_default().to_string()),
         ("port", url.port().map(|p| p.to_string()).unwrap_or_default()),
         ("pathname", url.path().to_string()),
-        ("search", url.query().map(|q| format!("?{q}")).unwrap_or_default()),
+        // Empty is not the same as absent to a URL, but it is to `search`:
+        // `https://e.com/?` reports "" in a browser, not "?".
+        ("search", match url.query() {
+            Some(q) if !q.is_empty() => format!("?{q}"),
+            _ => String::new(),
+        }),
         ("hash", url.fragment().map(|f| format!("#{f}")).unwrap_or_default()),
     ];
     for (name, value) in fields {
