@@ -1959,6 +1959,14 @@ dialer's helper lives *inside* the box's network namespace and keeps it alive
 after everything else in it has gone — so a box restarted afterwards gets a new
 namespace the share can never reach. The share now notices and ends.
 
+**The whole response matrix, run over both transports on 2026-08-10.** A dev
+server in a box answering a page, a `304`, a `HEAD`, a chunked response, a form
+`POST`, a chunked `POST` and an `Expect: 100-continue` upload — every shape the
+framing code had to be rewritten twice to get right — with an anonymous request
+refused alongside them. All of it in single-digit milliseconds on the P2P path.
+The two receipts record seven and six connections, which is one per request,
+which is the one-request rule visible in the evidence.
+
 **Hot reload, run for real on 2026-08-10, over both transports.** A dev server
 in a box answering a `Sec-WebSocket-Key` handshake with a genuine `101`, driven
 from a client that speaks the frame format: `echo:reload-please` came back
