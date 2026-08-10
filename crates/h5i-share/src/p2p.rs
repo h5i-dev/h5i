@@ -347,6 +347,22 @@ async fn serve_stream(
         }
     };
 
+    // Registered before anything is dialled, so an authorized peer always
+    // appears in the receipt — even if the box turns out to have nothing
+    // listening. Doing it after the dial left a share whose dev server was
+    // down reading as one nobody ever tried to use, which is the tunnel front's
+    // behaviour inverted for no reason.
+    let id = {
+        let mut slot = peer_id.lock().expect("peer id");
+        *slot.get_or_insert_with(|| bridge.peer_joined(short(who), &grant, path))
+    };
+    // Recorded only when something actually observed it. Feeding the join-time
+    // value back through `peer_path` marked a guess as an observation, which is
+    // the thing that flag exists to prevent.
+    if let Some(p) = path {
+        bridge.peer_path(id, p);
+    }
+
     // Authorized, but the share may already be carrying all it will. Checked
     // before the dialer rather than after, so a flood costs a permit lookup
     // rather than a connection into the box.
@@ -386,16 +402,6 @@ async fn serve_stream(
     upstream.set_nonblocking(true)?;
     let upstream = tokio::net::TcpStream::from_std(upstream)?;
 
-    let id = {
-        let mut slot = peer_id.lock().expect("peer id");
-        *slot.get_or_insert_with(|| bridge.peer_joined(short(who), &grant, path))
-    };
-    // Recorded only when something actually observed it. Feeding the join-time
-    // value back through `peer_path` marked a guess as an observation, which is
-    // the thing that flag exists to prevent.
-    if let Some(p) = path {
-        bridge.peer_path(id, p);
-    }
     bridge.peer_connection(id);
 
     send.write_all(&[wire::REPLY_OK])
