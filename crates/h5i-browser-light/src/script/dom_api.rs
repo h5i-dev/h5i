@@ -482,11 +482,11 @@ fn append(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<
     let parent_id = arg_id(args, 0, context)?;
     let child_id = arg_id(args, 1, context)?;
     let host = host(context)?;
-    {
+    guard_mutation(&host, "appending a node", || {
         let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
         mutator.append_children(parent_id, &[child_id]);
-    }
+    });
     host.mark_dirty();
     Ok(JsValue::undefined())
 }
@@ -496,7 +496,9 @@ fn insert_before(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     let new_id = arg_id(args, 1, context)?;
     let host = host(context)?;
     {
-        let mut doc = host.dom.borrow_mut();
+        // A read is all the parent check needs; the mutation takes its own
+        // borrow inside the guard below.
+        let doc = host.dom.borrow();
         // blitz inserts relative to the anchor's parent and unwraps it, so an
         // anchor with no parent aborts the process. Checked here rather than
         // only in the prelude because a panic is not a DOM error: it takes the
@@ -510,9 +512,12 @@ fn insert_before(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
                 )
                 .into());
         }
+    }
+    guard_mutation(&host, "inserting a node", || {
+        let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
         mutator.insert_nodes_before(anchor, &[new_id]);
-    }
+    });
     host.mark_dirty();
     Ok(JsValue::undefined())
 }
@@ -520,11 +525,11 @@ fn insert_before(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
 fn remove_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
-    {
+    guard_mutation(&host, "removing a node", || {
         let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
         mutator.remove_node(id);
-    }
+    });
     host.mark_dirty();
     Ok(JsValue::undefined())
 }
@@ -542,7 +547,7 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
         return Ok(JsValue::undefined());
     }
 
-    {
+    guard_mutation(&host, "setting text", || {
         let mut doc = host.dom.borrow_mut();
         // Writing to a *text* node replaces its own text. Writing to an element
         // replaces its subtree. They were both taking the element path, so a
@@ -565,7 +570,7 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
             let text_id = mutator.create_text_node(&text);
             mutator.append_children(id, &[text_id]);
         }
-    }
+    });
     host.mark_dirty();
     Ok(JsValue::undefined())
 }
@@ -575,48 +580,16 @@ fn set_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     let name = arg_string(args, 1, context)?.to_lowercase();
     let value = arg_string(args, 2, context)?;
     let host = host(context)?;
-    let panicked = {
+    guard_mutation(&host, &format!("setting `{name}`"), || {
         let mut doc = host.dom.borrow_mut();
         let qual = blitz_dom::QualName::new(
             None,
             blitz_dom::ns!(),
             blitz_dom::LocalName::from(name.as_str()),
         );
-        // Guarded, because setting an attribute can start an image load and
-        // blitz `expect`s the URL to resolve. A page that writes
-        // `img.src = "http://{{host}}:NaN/x"` — an unsubstituted template, a
-        // typo, anything malformed — aborted the whole process, taking the
-        // page, the snapshot and the receipts with it. 81 of the 140 crashes in
-        // the last sweep were this one line.
-        //
-        // The attribute may be left unset when this fires, which is a worse
-        // answer than a browser gives and a much better one than no process.
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut mutator = doc.mutate();
-            mutator.set_attribute(id, qual, &value);
-        }))
-        .err()
-        .map(|payload| {
-            payload
-                .downcast_ref::<&str>()
-                .map(|text| (*text).to_string())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "the layout engine panicked".to_string())
-        })
-    };
-    if let Some(detail) = panicked {
-        let first_line = detail.lines().next().unwrap_or("").to_string();
-        super::host::push_console(
-            &mut host.console.borrow_mut(),
-            ConsoleLine::engine(
-                "error",
-                format!("setting `{name}` was refused by the layout engine: {first_line}"),
-            ),
-        );
-        host.unsupported
-            .borrow_mut()
-            .record(&format!("setAttribute({name}) with a value blitz cannot resolve"));
-    }
+        let mut mutator = doc.mutate();
+        mutator.set_attribute(id, qual, &value);
+    });
     host.mark_dirty();
     Ok(JsValue::undefined())
 }
@@ -643,11 +616,11 @@ fn set_inner_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     let id = arg_id(args, 0, context)?;
     let html = arg_string(args, 1, context)?;
     let host = host(context)?;
-    {
+    guard_mutation(&host, "setting innerHTML", || {
         let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
         mutator.set_inner_html(id, &html);
-    }
+    });
     host.mark_dirty();
     Ok(JsValue::undefined())
 }
@@ -1610,6 +1583,38 @@ fn document_encoding(_this: &JsValue, _args: &[JsValue], context: &mut Context) 
     let host = host(context)?;
     let name = host.encoding.borrow().name().to_string();
     Ok(js_string!(name).into())
+}
+
+/// Run a tree mutation, and report rather than abort if the layer beneath
+/// panics.
+///
+/// blitz `expect`s an `<img src>` to resolve while flushing the parser's eager
+/// operations, and that flush runs inside *every* structural mutation — so
+/// attaching a subtree containing one unresolvable image killed the process,
+/// taking the page, the snapshot and the receipts with it.
+///
+/// This has now been found three times in three primitives: `set_attribute`,
+/// the initial parse, and `append`. Each was fixed where it was found, which is
+/// precisely why there was a third. This is the class fix — every mutation goes
+/// through here, so the next entry point to reach that `expect` is already
+/// covered.
+fn guard_mutation(host: &HostHandle, what: &str, body: impl FnOnce()) {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+    if let Err(payload) = outcome {
+        let detail = payload
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "the layout engine panicked".to_string());
+        let first = detail.lines().next().unwrap_or("").to_string();
+        super::host::push_console(
+            &mut host.console.borrow_mut(),
+            ConsoleLine::engine("error", format!("{what} was refused by the layout engine: {first}")),
+        );
+        host.unsupported
+            .borrow_mut()
+            .record(&format!("{what} on content the layout engine cannot resolve"));
+    }
 }
 
 /// Bring style and layout up to date, if script has changed the tree since they

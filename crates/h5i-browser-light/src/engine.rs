@@ -70,7 +70,7 @@ pub struct Submission {
 /// same thread and is picked up immediately afterwards. The `Mutex` is here to
 /// satisfy the trait's `Send + Sync` bound rather than to guard a race — the
 /// page has exactly one owner (see `stream`'s module docs).
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct CapturedNavigation {
     slot: Arc<std::sync::Mutex<Option<Submission>>>,
 }
@@ -313,6 +313,38 @@ impl Page {
         page
     }
 
+    /// Parse markup into a document. Separated so it can be attempted twice.
+    fn parse(
+        html: &str,
+        base_url: &Url,
+        broker: Arc<Broker>,
+        fonts: &FontSetup,
+        viewport: Viewport,
+        captured: CapturedNavigation,
+    ) -> BaseDocument {
+        HtmlDocument::from_html(
+            html,
+            DocumentConfig {
+                viewport: Some(viewport),
+                base_url: Some(base_url.to_string()),
+                net_provider: Some(Arc::new(BrokerNet::new(broker))),
+                font_ctx: Some(fonts.context.clone()),
+                // Without this Blitz uses `DummyHtmlParserProvider` and
+                // `set_inner_html` silently does nothing: the old children are
+                // dropped and no new ones are parsed, so `el.innerHTML = x`
+                // empties the element. Supplying the real parser is what makes
+                // innerHTML, insertAdjacentHTML and template content work.
+                html_parser_provider: Some(Arc::new(blitz_html::HtmlProvider)),
+                // Forms dispatch through this. Without it Blitz's default
+                // provider does nothing at all, and a submit would look like a
+                // page that simply ignored the button.
+                navigation_provider: Some(Arc::new(captured)),
+                ..Default::default()
+            },
+        )
+        .into_inner()
+    }
+
     pub fn from_html(
         html: &str,
         base_url: &Url,
@@ -330,38 +362,65 @@ impl Page {
         let captured = CapturedNavigation::default();
         let pending_navigation = captured.slot.clone();
 
-        let mut doc: BaseDocument = HtmlDocument::from_html(
-            html,
-            DocumentConfig {
-                viewport: Some(viewport),
-                base_url: Some(base_url.to_string()),
-                net_provider: Some(Arc::new(BrokerNet::new(broker))),
-                font_ctx: Some(fonts.context),
-                // Without this Blitz uses `DummyHtmlParserProvider` and
-                // `set_inner_html` silently does nothing: the old children are
-                // dropped and no new ones are parsed, so `el.innerHTML = x`
-                // empties the element. Supplying the real parser is what makes
-                // innerHTML, insertAdjacentHTML and template content work.
-                html_parser_provider: Some(Arc::new(blitz_html::HtmlProvider)),
-                // Forms dispatch through this. Without it Blitz's default
-                // provider does nothing at all, and a submit would look like a
-                // page that simply ignored the button.
-                navigation_provider: Some(Arc::new(captured)),
-                ..Default::default()
+        // Parsing can abort the process, so it is guarded and retried.
+        //
+        // blitz resolves an `<img src>` while flushing the parser's eager
+        // operations and `expect`s it to succeed, so a page carrying a URL it
+        // cannot resolve took the whole engine down *before there was a
+        // document at all* — no page, no snapshot, no receipts, and a crash
+        // where a browser would show the text beside a broken image.
+        //
+        // `set_attribute` was hardened against the same `expect` earlier; this
+        // is the other path to it, and the first fix should have covered both.
+        // The retry strips image sources rather than giving up, because an
+        // agent came here for the words: a page with unloadable images is still
+        // a page, and losing the pictures beats losing everything.
+        let attempt = |markup: &str| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                Self::parse(
+                    markup,
+                    base_url,
+                    broker.clone(),
+                    &fonts,
+                    viewport.clone(),
+                    captured.clone(),
+                )
+            }))
+        };
+        let (mut doc, unloadable_images) = match attempt(html) {
+            Ok(doc) => (doc, false),
+            Err(_) => match attempt(&strip_image_sources(html)) {
+                Ok(doc) => (doc, true),
+                // Nothing left to try. An empty document that says so beats a
+                // process that is not there to say anything.
+                Err(_) => (
+                    attempt("<html><body></body></html>")
+                        .unwrap_or_else(|_| unreachable!("empty markup always parses")),
+                    true,
+                ),
             },
-        )
-        .into_inner();
+        };
 
         // Twice, deliberately. The broker is synchronous, so subresources have
         // already completed by the time parsing returns, but their results
         // arrive as messages that `resolve` drains at its *start*. The first
         // pass applies the stylesheets; the second lays out with them.
         // A panic in either pass is caught and becomes a note on the reading.
-        let layout_failure = guard_layout(|| {
+        let mut layout_failure = guard_layout(|| {
             doc.resolve(0.0);
             doc.resolve(0.0);
         })
         .err();
+
+        // Say what was lost. A page rebuilt without its images is a different
+        // page from the one the server sent, and a reading that does not
+        // mention it is a reading that quietly changed the subject.
+        if unloadable_images && layout_failure.is_none() {
+            layout_failure = Some(
+                "this page's images could not be loaded, so it was read without them"
+                    .to_string(),
+            );
+        }
 
         Self {
             // Assumed until `from_bytes` says otherwise: a string handed
@@ -1230,6 +1289,37 @@ fn guard_layout(body: impl FnOnce()) -> Result<(), String> {
             .unwrap_or_else(|| "the layout engine panicked".to_string());
         detail
     })
+}
+
+/// Remove `src` from every `<img>`, for a second attempt at markup that killed
+/// the parser.
+///
+/// Deliberately blunt: this runs only after a panic has already proved the
+/// markup is not survivable as written, and picking out *which* URL blitz
+/// choked on would mean re-implementing its resolver to find out.
+fn strip_image_sources(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let lowered = html.to_ascii_lowercase();
+    let mut at = 0;
+    while let Some(found) = lowered[at..].find("<img") {
+        let start = at + found;
+        let end = lowered[start..].find('>').map(|e| start + e + 1).unwrap_or(html.len());
+        out.push_str(&html[at..start]);
+        // Keep the tag and everything except its source attributes, so `alt`
+        // survives — which is the part an agent was going to read anyway.
+        for piece in html[start..end].split_ascii_whitespace() {
+            let name = piece.split('=').next().unwrap_or("").to_ascii_lowercase();
+            if matches!(name.as_str(), "src" | "srcset" | "data-src") {
+                continue;
+            }
+            out.push_str(piece);
+            out.push(' ');
+        }
+        out.push('>');
+        at = end;
+    }
+    out.push_str(&html[at..]);
+    out
 }
 
 /// The `Content-Type` a response declared, if it declared one.
