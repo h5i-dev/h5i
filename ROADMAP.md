@@ -1975,6 +1975,17 @@ from a client that speaks the frame format: `echo:reload-please` came back
 through a Cloudflare quick tunnel, and again over a direct P2P path. Both
 receipts record it as two connections, which is what a page plus a socket is.
 
+**Two peers and a per-person revoke, run for real on 2026-08-10.** A tunnel
+share with two grants: both admitted, `share revoke` on one, and the other kept
+working — `200` and `401` from the same URL a second apart. The receipt lists
+them separately by grant and label, with the revoked one's traffic still counted
+and the refusal recorded as revoked rather than unknown. That is the property
+the whole grant model exists for and it had never been exercised outside a test.
+
+Also verified live, and worth recording because it was a defect this branch
+introduced and fixed: two `h5i join` sessions on one machine, a browser holding
+both of their cookies, and the box seeing neither — only the app's own `sid=9`.
+
 **Still not demonstrated.** The two h5i processes were on one machine: a real
 direct QUIC path through the host's network stack, but not two machines on two
 networks. And `--direct-only` has never been exercised against a hole punch that
