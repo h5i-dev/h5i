@@ -1872,3 +1872,85 @@ The engineering is worth having on its own: a legacy page now reads correctly,
 which is a real capability an agent needs and did not have. The score is a
 consequence, not the reason, and the twenty-file concentration is the reason to
 say so out loud rather than let a headline imply 333,690 distinct capabilities.
+
+---
+
+## 14. Reviewing the engine against a real browser, 2026-08-10
+
+The reviews in §8 and §11 read code and reasoned about specs. This one diffed
+behaviour against Chromium 1140, and the difference in yield is the finding
+worth keeping: **thirteen bugs in an afternoon, four of them in code whose
+comments explicitly argued for the wrong answer.** Reasoning about what an
+engine should do had been checking the reasoning, not the engine.
+
+The method is a page of one-assertion-per-line probes, run in both engines and
+compared. `wpt/` finds gaps against a specification; this finds disagreements
+with the thing the user will actually compare against.
+
+### 14.1 The encoding work, three days old and already wrong
+
+* **Existing percent-escapes were destroyed.** The query was decoded after
+  parsing and re-encoded, which cannot work: once `url::Url` has run, an
+  author's `%41` and a `%E4%B8%82` the parser made from a raw `丂` are both just
+  `%XX`. `?x=%41` became `?x=A`; `?100%25` became `?100%`, an escape the page
+  wrote turned into an invalid one. Now encoded from the raw text before any
+  parser touches it.
+* **An undeclared legacy page was destroyed** — the worst of the three, because
+  it is the document the module exists to rescue. Undeclared bytes fell back to
+  UTF-8, so a windows-1252 page had every high byte replaced by U+FFFD:
+  `café naïve` read as `caf<?> na<?>ve`. The fallback is now asymmetric on
+  purpose, and the asymmetry is the point: windows-1252 read as UTF-8 loses the
+  text outright, while UTF-8 read as windows-1252 is mojibake but lossless.
+  Given a guess must be made, take the recoverable wrong answer.
+* An empty query reported `"?"` where a browser reports `""`.
+
+### 14.2 A code block is not one long line
+
+Every `<pre>` arrived as a single run-on line, which for an engine that reads
+documentation is a poor reading of the thing it reads most.
+
+The fix is not to stop collapsing. `Snapshot::render`'s fence rests on **no
+page-derived value spanning a line**, because a value that can start a line can
+forge the closing marker. So a `<pre>` is split on its own breaks and each piece
+becomes an outline line, collapsed individually with its own indent and `- `.
+The invariant is untouched and the structure survives — verified by putting the
+literal closing marker inside a `<pre>` and watching it come back as
+`[fence marker removed]`.
+
+### 14.3 Nine more, from sixty-four assertions
+
+`{ once: true }` was read at registration and never consulted at dispatch, so
+listeners fired every time — and the same handler registered twice made two
+listeners where a browser makes one. An invalid selector answered `null` instead
+of throwing, which is indistinguishable from "no such element", so a page with a
+typo took its not-found branch and never learned why. `textContent = null` wrote
+the four characters `null`. `tabIndex` answered -1 for links and buttons, telling
+a page nothing was focusable. `isEqualNode`, `normalize` and `isSameNode` were
+absent and `compareDocumentPosition` called connected nodes disconnected. Style
+serialisation lost its trailing semicolon, and emptying a declaration removed
+the attribute instead of leaving `""`.
+
+63 of 64 cases now match Chromium exactly.
+
+### 14.4 The one that is not a bug: `Intl`
+
+`Intl` is undefined, so `toLocaleString()` answers `1234.5` where a browser
+answers `1,234.5`, and `toLocaleDateString()` returns a full date string rather
+than `12/31/1969`. A page that formats numbers or dates for display shows
+different text to this engine than to a person.
+
+Enabling boa's `intl_bundled` **does not build**: it wants `icu_provider 2.2`,
+which conflicts with what parley already pins through blitz. That is the same
+disjoint-ICU wall that dictated the boa revision pin in the first place (§12.2),
+arriving from the other side. It is recorded here rather than filed as a task,
+because nothing in this repository can move it — it needs the two ICU lines
+upstream to converge.
+
+### 14.5 What this says about how to look
+
+Three review passes on this engine have now found bugs at very different rates.
+Reading code found some. Running a conformance suite found more, and found the
+*instrument's* faults as a side effect. Diffing against a browser found the most
+per hour, and — the part worth internalising — **it found bugs in code whose own
+comments had reasoned carefully to the wrong conclusion.** A comment cannot
+falsify itself. Another implementation can.
