@@ -154,6 +154,26 @@ pub async fn write_timed<W: tokio::io::AsyncWrite + Unpin>(
     }
 }
 
+/// Write to the box, turning a stall into an error that names the right side.
+///
+/// A stalled write is `TimedOut` whichever direction it went, and the two
+/// directions deserve opposite answers: a peer that stopped reading gets
+/// nothing more, a *box* that stopped reading is a `502` — the peer did
+/// nothing wrong and telling them their upload was too slow sends them to fix
+/// something that is not broken.
+async fn write_to_box<W: tokio::io::AsyncWrite + Unpin>(
+    w: &mut W,
+    buf: &[u8],
+) -> std::io::Result<()> {
+    write_timed(w, buf).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::TimedOut {
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the box stopped reading")
+        } else {
+            e
+        }
+    })
+}
+
 /// Index just past the blank line that ends an HTTP head.
 fn find_head_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4)
@@ -281,7 +301,7 @@ where
         to_peer.fetch_add(25, Ordering::Relaxed);
     }
 
-    write_timed(&mut up_w, head.as_bytes()).await?;
+    write_to_box(&mut up_w, head.as_bytes()).await?;
     to_box.fetch_add(head.len() as u64, Ordering::Relaxed);
 
     // The declared body, and only the declared body. Anything past it on this
@@ -306,10 +326,10 @@ where
             // chunks every body it forwards — the slow one is the common case,
             // so telling a visitor on hotel wifi that their request is not one
             // this share can serve is the message they would actually get.
-            let reply = if e.kind() == std::io::ErrorKind::TimedOut {
-                timed_out_response()
-            } else {
-                gate::refusal_response(gate::Refusal::Malformed)
+            let reply = match e.kind() {
+                std::io::ErrorKind::TimedOut => timed_out_response(),
+                std::io::ErrorKind::BrokenPipe => unreachable_box_response(),
+                _ => gate::refusal_response(gate::Refusal::Malformed),
             };
             if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
                 to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
@@ -328,7 +348,7 @@ where
         let body_deadline = tokio::time::Instant::now() + BODY_LIFETIME;
         from_rest = (rest.len() as u64).min(want) as usize;
         if from_rest > 0 {
-            write_timed(&mut up_w, &rest[..from_rest]).await?;
+            write_to_box(&mut up_w, &rest[..from_rest]).await?;
             to_box.fetch_add(from_rest as u64, Ordering::Relaxed);
         }
         let mut remaining = want - from_rest as u64;
@@ -370,7 +390,17 @@ where
                 // for the rest of a request nobody is going to send.
                 return Ok(());
             }
-            write_timed(&mut up_w, &buf[..n]).await?;
+            if let Err(e) = write_to_box(&mut up_w, &buf[..n]).await {
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    let reply = unreachable_box_response();
+                    if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
+                        to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
+                    }
+                    let _ = peer_w.shutdown().await;
+                    return Ok(());
+                }
+                return Err(e);
+            }
             to_box.fetch_add(n as u64, Ordering::Relaxed);
             remaining -= n as u64;
         }
@@ -437,7 +467,7 @@ where
             // opening frames silently dropped.
             if from_rest < rest_from_client.len() {
                 let tail = &rest_from_client[from_rest..];
-                write_timed(&mut up_w, tail).await?;
+                write_to_box(&mut up_w, tail).await?;
                 to_box.fetch_add(tail.len() as u64, Ordering::Relaxed);
             }
             crate::pump::duplex(peer_r, peer_w, up_r, up_w, to_box, to_peer).await;
@@ -522,7 +552,7 @@ where
         let line = read_crlf_line(r, &mut buf, MAX_CHUNK_LINE).await?;
         let size = chunk_size(&line)
             .ok_or_else(|| std::io::Error::other("not a chunk size"))?;
-        write_timed(w, &line).await?;
+        write_to_box(w, &line).await?;
         to_box.fetch_add(line.len() as u64, Ordering::Relaxed);
 
         if size == 0 {
@@ -532,7 +562,7 @@ where
                 if !is_trailer(&t) {
                     return Err(std::io::Error::other("not a trailer"));
                 }
-                write_timed(w, &t).await?;
+                write_to_box(w, &t).await?;
                 to_box.fetch_add(t.len() as u64, Ordering::Relaxed);
                 if t.as_slice() == b"\r\n" {
                     return Ok(());
@@ -558,7 +588,7 @@ where
                 fill(r, &mut buf).await?;
             }
             let take = (left as usize).min(buf.len());
-            write_timed(w, &buf[..take]).await?;
+            write_to_box(w, &buf[..take]).await?;
             to_box.fetch_add(take as u64, Ordering::Relaxed);
             buf.drain(..take);
             left -= take as u64;
@@ -957,6 +987,21 @@ fn response_framing(head: &[u8]) -> Framing {
 const UNFINISHED_BODY: &str =
     "The app in this box began a reply and did not finish it. Whoever shared it needs to look.";
 
+/// What a peer gets when the box stopped reading its request.
+const UNREACHABLE_BOX_BODY: &str =
+    "The app in this box stopped reading. Whoever shared it needs to look.";
+
+fn unreachable_box_response() -> String {
+    format!(
+        "HTTP/1.1 502 Bad Gateway\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\
+         Content-Length: {}\r\n\
+         Cache-Control: no-store\r\n\
+         Connection: close\r\n\r\n{UNREACHABLE_BOX_BODY}",
+        UNREACHABLE_BOX_BODY.len()
+    )
+}
+
 /// What a peer gets when it declared a body and took too long to send it.
 const TIMED_OUT_BODY: &str = "That request took too long to arrive. Try it again.";
 
@@ -1229,8 +1274,22 @@ mod response_tests {
     }
 
     #[test]
+    fn a_stalled_write_names_the_side_that_stalled() {
+        // Both directions stall as `TimedOut`, and they deserve opposite
+        // answers: a peer that stopped reading gets nothing more, a *box* that
+        // stopped reading is a `502`. Telling a visitor their upload was too
+        // slow when the dev server stopped draining its socket sends them to
+        // fix something that is not broken.
+        let peer = timed_out_response();
+        let boxed = unreachable_box_response();
+        assert!(peer.starts_with("HTTP/1.1 408 "), "{peer}");
+        assert!(boxed.starts_with("HTTP/1.1 502 "), "{boxed}");
+        assert!(boxed.contains("stopped reading"), "{boxed}");
+    }
+
+    #[test]
     fn every_built_in_answer_declares_the_length_it_has() {
-        for r in [unfinished_response(), timed_out_response()] {
+        for r in [unfinished_response(), timed_out_response(), unreachable_box_response()] {
             let (head, body) = r.split_once("\r\n\r\n").expect("a head and a body");
             assert!(head.contains(&format!("Content-Length: {}", body.len())), "{r}");
             assert!(head.contains("Connection: close"), "{r}");
