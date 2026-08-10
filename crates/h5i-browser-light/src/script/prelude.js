@@ -3391,6 +3391,12 @@
     },
     // This engine parses HTML and nothing else, so there is one honest answer.
     contentType: "text/html",
+    /// What this document was decoded as. All three names are the same value
+    /// and all three are in use: `characterSet` is current, `charset` is the
+    /// legacy alias, and `inputEncoding` is the one the DOM spec kept.
+    get characterSet() { return api.documentEncoding(); },
+    get charset() { return api.documentEncoding(); },
+    get inputEncoding() { return api.documentEncoding(); },
     // Adopting a sheet applies it. Assignment replaces the set, as in a browser.
     /// What scrolls when the document scrolls. In standards mode that is
     /// `<html>`, and code reads it to avoid the quirks-mode `<body>` split.

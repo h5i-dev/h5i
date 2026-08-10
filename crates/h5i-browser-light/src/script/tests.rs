@@ -481,6 +481,64 @@ fn css_supports_answers_from_the_engine_that_would_have_to_do_it() {
 }
 
 #[test]
+fn a_documents_encoding_reaches_both_its_text_and_its_urls() {
+    // Two things follow from a document's encoding and they must not disagree:
+    // how the bytes become text, and how a URL's query becomes bytes again.
+    let broker = Arc::new(
+        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+    );
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let options = PageOptions { script: true, ..PageOptions::default() };
+    let factory = PageFactory::new(broker, fonts.sources.clone(), options);
+    let base = url::Url::parse("https://app.example/").unwrap();
+
+    // "日本" in euc-jp, which is mojibake if read as UTF-8. The script writes
+    // its answers into the page, so this reads them the way an agent would.
+    let mut bytes =
+        b"<!doctype html><meta charset=\"euc-jp\"><title>t</title><p id=t>".to_vec();
+    bytes.extend_from_slice(&[0xc6, 0xfc, 0xcb, 0xdc]);
+    bytes.extend_from_slice(
+        b"</p><p id=out></p><script>\
+          const a = document.createElement('a'); \
+          a.href = 'https://example.com/?' + String.fromCodePoint(0x4E02); \
+          const b = document.createElement('a'); \
+          b.href = 'https://example.com/?' + String.fromCodePoint(0x65E5); \
+          document.getElementById('out').textContent = \
+            a.search + ' ' + b.search + ' ' + document.characterSet; \
+          </script>",
+    );
+
+    let page = factory.from_bytes(&bytes, None, &base);
+    assert_eq!(page.encoding(), "EUC-JP", "the document said so in its markup");
+
+    let rendered = page.snapshot().render();
+    assert!(rendered.contains("日本"), "its text decoded as itself:\n{rendered}");
+    // A code point euc-jp cannot represent becomes an HTML numeric character
+    // reference with its own punctuation already percent-encoded. This engine
+    // used to answer `?%E4%B8%82` — the right escape of the wrong bytes.
+    assert!(
+        rendered.contains("?%26%2319970%3B"),
+        "an unmappable code point is a numeric reference:\n{rendered}"
+    );
+    // One the encoding *can* represent is simply its bytes.
+    assert!(rendered.contains("?%C6%FC"), "a mappable one is its bytes:\n{rendered}");
+    assert!(rendered.contains("EUC-JP"), "and the document says so:\n{rendered}");
+}
+
+#[test]
+fn a_utf8_document_is_untouched_by_any_of_that() {
+    // The fast path, which is nearly every page on the web.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script
+        .eval(
+            "globalThis.a = document.createElement('a');              a.href = 'https://example.com/?' + String.fromCodePoint(0x4E02);",
+        )
+        .expect("runs");
+    assert_eq!(script.eval_value("a.search").unwrap(), "?%E4%B8%82");
+    assert_eq!(script.eval_value("document.characterSet").unwrap(), "UTF-8");
+}
+
+#[test]
 fn a_selection_can_be_made_and_acted_on() {
     // What an agent driving a rich-text editor actually does: select a span of
     // text, then change it. Both halves are checked, because a `Selection` that

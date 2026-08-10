@@ -1592,13 +1592,31 @@ everything else answered "". That was a wrong belief about the dependency, not a
 considered scope: `computed_value_to_string` does exactly this. `color` came
 back empty (§11.5.11) and now returns `rgb(0, 0, 0)`.
 
-**Not chased: the legacy CJK encoding tests**, which are ~17,000 failing
-subtests and the largest single bucket in the corpus. They need legacy encoder
-tables in the URL serialiser, wptserve variants, and `<iframe>`, which §6
-refuses outright. Seventeen thousand subtests of legacy CJK URL percent-encoding
-is the clearest opportunity this suite offers to move a number without improving
-the engine for anyone, and taking it would make every other number here mean
-less.
+**Not chased at the time: the legacy CJK encoding tests.** ~~They need legacy
+encoder tables in the URL serialiser, wptserve variants, and `<iframe>`, which §6
+refuses outright — the clearest opportunity this suite offers to move a number
+without improving the engine for anyone.~~
+
+**That paragraph was wrong on all three counts, and §12.10 is the correction.**
+The struck text is kept because the shape of the error is worth more than the
+conclusion was:
+
+* **~17,000 was the wrong size.** Measured before the generated endpoints and
+  before the timeout fix; the block is **220,367** unpassed subtests, the
+  largest in WPT by a factor of two.
+* **`<iframe>` is not required.** The `iframe { display:none }` in those files is
+  dead boilerplate from a shared template. 162,892 of the subtests are `-href-`
+  tests: build an `<a href>` in a euc-jp document and read `.href` back. No
+  iframe, no form, no `.py` handler.
+* **It is a real feature, not a scoring artefact.** This engine ignores
+  `<meta charset>` outright — `document.characterSet` is `undefined`, and a
+  euc-jp page's URLs are percent-encoded as UTF-8. An agent reading a legacy
+  Japanese page gets the wrong answer today. "Without improving the engine for
+  anyone" was simply false.
+
+The error was reading a *sample* failure message and generalising from the file
+name around it, rather than asking what the assertion needed. Three sentences of
+confident scope-cutting, none of them checked.
 
 ### 12.6 Reading the number honestly
 
@@ -1691,9 +1709,9 @@ measured with a fair harness and speed on real pages are separate claims and
 should stay separate.
 
 It does not claim parity with a browser. 453,864 subtests still fail, and the
-largest blocks are named in §12.5: legacy CJK encoding, the combinatorial half
-of `execCommand`, and the multi-origin security suites that need wptserve's
-Python handlers.
+largest blocks are named in §12.5 and §12.10: legacy document encodings (in
+progress), the combinatorial half of `execCommand`, and the multi-origin
+security suites that need wptserve's Python handlers.
 
 It does claim that the number is honest. Nothing was counted that was not run,
 `NOTRUN` and `TIMEOUT` are reported separately from `FAIL`, files that cannot be

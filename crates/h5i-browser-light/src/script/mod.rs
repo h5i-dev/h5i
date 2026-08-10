@@ -666,6 +666,16 @@ impl Script {
         }
     }
 
+    /// Tell the realm what the document is written in.
+    ///
+    /// A setter rather than a constructor argument because a realm is built
+    /// from a tree and a base URL, and the encoding belongs to the *response*
+    /// those came from — several callers have a tree without ever having had
+    /// bytes.
+    pub fn set_encoding(&mut self, encoding: &'static encoding_rs::Encoding) {
+        *self.host.encoding.borrow_mut() = encoding;
+    }
+
     /// Fire an event at a node, the way a real click would.
     pub fn dispatch(&mut self, node_id: usize, event_type: &str) -> Result<(), String> {
         // Constructed by kind rather than always as a bare `Event`, because a

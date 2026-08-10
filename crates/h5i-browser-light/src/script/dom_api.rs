@@ -88,6 +88,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("rect", 1, rect),
         ("computedStyle", 2, computed_style),
         ("supportsCss", 2, supports_css),
+        ("documentEncoding", 0, document_encoding),
         ("isCssProperty", 1, is_css_property),
         ("innerText", 1, inner_text),
         ("encodingFor", 1, encoding_for),
@@ -1557,6 +1558,36 @@ fn decode_bytes(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     }
 }
 
+/// Undo percent-encoding, so a query can be re-encoded in another encoding.
+///
+/// `url::Url` percent-encodes as UTF-8 during parsing, so the text a page wrote
+/// has to be recovered before it can be encoded as the document actually is.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).ok();
+            if let Some(value) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(value);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// What the document is written in, as the canonical label.
+fn document_encoding(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let host = host(context)?;
+    let name = host.encoding.borrow().name().to_string();
+    Ok(js_string!(name).into())
+}
+
 /// Whether this is a CSS property at all, which is what `in` on a computed
 /// style is asking.
 ///
@@ -1627,6 +1658,9 @@ fn supports_css(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
 fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let href = arg_string(args, 0, context)?;
     let base = arg_string(args, 1, context).unwrap_or_default();
+    let encoding = host(context)
+        .map(|host| *host.encoding.borrow())
+        .unwrap_or(encoding_rs::UTF_8);
 
     let parsed = if base.is_empty() {
         url::Url::parse(&href)
@@ -1638,9 +1672,45 @@ fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         return Ok(JsValue::null());
     };
 
+    // A query belongs to the document, not to UTF-8.
+    //
+    // The URL Standard encodes a query with the *document's* encoding, and a
+    // code point that encoding cannot represent becomes an HTML numeric
+    // character reference. So in a euc-jp page `?丂` is `?%26%2319970%3B`,
+    // where this engine used to answer `?%E4%B8%82` — the right escape of the
+    // wrong bytes, which is the shape of wrong answer that is hardest to
+    // notice.
+    //
+    // `url::Url` has already percent-encoded the query as UTF-8 by the time it
+    // is parsed, so the original text is recovered first. Everything about this
+    // is a no-op for a UTF-8 document, which is nearly every page.
+    let query = url.query().map(|raw| {
+        if encoding == encoding_rs::UTF_8 {
+            raw.to_string()
+        } else {
+            let decoded = percent_decode(raw);
+            crate::encoding::encode_query(&decoded, encoding)
+        }
+    });
+
     let out = boa_engine::object::ObjectInitializer::new(context).build();
     let fields: [(&str, String); 8] = [
-        ("href", url.to_string()),
+        ("href", match &query {
+            Some(rewritten) if Some(rewritten.as_str()) != url.query() => {
+                let mut copy = url.clone();
+                copy.set_query(Some(rewritten));
+                // `set_query` re-escapes what it is given, so the percent signs
+                // this engine just wrote would become `%25`. The already-encoded
+                // form is spliced in instead.
+                let text = copy.to_string();
+                match (text.find('?'), url.fragment()) {
+                    (Some(at), Some(fragment)) => format!("{}?{rewritten}#{fragment}", &text[..at]),
+                    (Some(at), None) => format!("{}?{rewritten}", &text[..at]),
+                    (None, _) => text,
+                }
+            }
+            _ => url.to_string(),
+        }),
         ("protocol", format!("{}:", url.scheme())),
         ("host", url.host_str().map(|h| match url.port() {
             Some(port) => format!("{h}:{port}"),
@@ -1649,7 +1719,7 @@ fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         ("hostname", url.host_str().unwrap_or_default().to_string()),
         ("port", url.port().map(|p| p.to_string()).unwrap_or_default()),
         ("pathname", url.path().to_string()),
-        ("search", url.query().map(|q| format!("?{q}")).unwrap_or_default()),
+        ("search", query.as_deref().map(|q| format!("?{q}")).unwrap_or_default()),
         ("hash", url.fragment().map(|f| format!("#{f}")).unwrap_or_default()),
     ];
     for (name, value) in fields {

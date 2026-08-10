@@ -129,6 +129,12 @@ pub type Dom = Rc<RefCell<BaseDocument>>;
 pub struct Page {
     doc: Dom,
     url: Url,
+    /// What this document is written in.
+    ///
+    /// Carried on the page rather than worked out where it is needed, because
+    /// two very different things depend on it — decoding the bytes, and
+    /// encoding a URL's query — and they must not be able to disagree.
+    encoding: &'static encoding_rs::Encoding,
     options: PageOptions,
     /// Where [`CapturedNavigation`] leaves whatever the last form asked for.
     pending_navigation: Arc<std::sync::Mutex<Option<Submission>>>,
@@ -179,10 +185,14 @@ impl Page {
                 return Err(H5iError::Metadata(format!("could not open {target}: {error}")));
             }
 
-            // Lossy on purpose: a page with one bad byte should render, and the
-            // alternative is refusing a document over an encoding detail nobody
-            // asked us to police.
-            let html = String::from_utf8_lossy(&outcome.body).into_owned();
+            // Decoded as the document says it is written, not as UTF-8. A
+            // `euc-jp` page read as UTF-8 is mojibake, and every answer that
+            // follows — the outline, the snapshot, a link's query — is then
+            // wrong with nothing to say so. Still lossy within that encoding: a
+            // page with one bad byte should render.
+            let content_type = declared_content_type(&outcome);
+            let encoding = crate::encoding::sniff(&outcome.body, content_type.as_deref());
+            let html = crate::encoding::decode(&outcome.body, encoding);
             let final_url = outcome.final_url.clone();
             let status = outcome.status.unwrap_or(0);
 
@@ -199,6 +209,7 @@ impl Page {
             }
 
             let mut page = Self::from_html(&html, &final_url, broker, fonts, options);
+            page.encoding = encoding;
 
             // An HTTP error still has a body, and rendering it silently is how
             // an agent ends up reading a 404 page as though it were the page it
@@ -280,6 +291,28 @@ impl Page {
     ///
     /// Subresources still go through the broker, so a local file cannot pull
     /// a remote tracker without a policy decision and a receipt line.
+    /// Build a page from the bytes a server sent, rather than from a string
+    /// somebody already decoded.
+    ///
+    /// The distinction matters because *how* those bytes become a string is a
+    /// property of the document: a `euc-jp` page decoded as UTF-8 is mojibake,
+    /// and every downstream answer — the outline, the snapshot, a link's query
+    /// — is then wrong in a way nothing reports.
+    pub fn from_bytes(
+        bytes: &[u8],
+        content_type: Option<&str>,
+        base_url: &Url,
+        broker: Arc<Broker>,
+        fonts: FontSetup,
+        options: PageOptions,
+    ) -> Self {
+        let encoding = crate::encoding::sniff(bytes, content_type);
+        let html = crate::encoding::decode(bytes, encoding);
+        let mut page = Self::from_html(&html, base_url, broker, fonts, options);
+        page.encoding = encoding;
+        page
+    }
+
     pub fn from_html(
         html: &str,
         base_url: &Url,
@@ -331,6 +364,9 @@ impl Page {
         .err();
 
         Self {
+            // Assumed until `from_bytes` says otherwise: a string handed
+            // straight to `from_html` has already been decoded by someone.
+            encoding: encoding_rs::UTF_8,
             doc: Rc::new(RefCell::new(doc)),
             url: base_url.clone(),
             options,
@@ -451,6 +487,7 @@ impl Page {
 
         let mut script = crate::script::Script::new(self.dom(), broker.clone(), &self.url)
             .map_err(H5iError::Metadata)?;
+        script.set_encoding(self.encoding);
 
         // `<div id="x">` makes `x` a global, which is legacy and is also how a
         // great deal of test and older page script finds its subject. Installed
@@ -618,6 +655,11 @@ impl Page {
         self.script = Some(script);
         self.ran_scripts = true;
         Ok(())
+    }
+
+    /// What this document is written in, as the canonical label.
+    pub fn encoding(&self) -> &'static str {
+        self.encoding.name()
     }
 
     /// Fire a real event at a node and let the page respond.
@@ -1075,9 +1117,12 @@ impl PageFactory {
                 submission.url
             )));
         }
-        let html = String::from_utf8_lossy(&outcome.body).into_owned();
-        Ok(Page::from_html(
-            &html,
+        // A form's response is a document like any other, so it gets the same
+        // encoding treatment: a legacy site that answers a POST in shift_jis
+        // must not come back as replacement characters.
+        Ok(Page::from_bytes(
+            &outcome.body,
+            declared_content_type(&outcome).as_deref(),
             &outcome.final_url,
             self.broker.clone(),
             self.fonts(),
@@ -1123,6 +1168,25 @@ impl PageFactory {
     /// script that failed to *run* is reported through the page's console
     /// rather than here: one broken script does not make a page unreadable, and
     /// the agent needs the half that worked.
+    /// The same as [`PageFactory::from_html`], but from bytes whose encoding is
+    /// not yet known — so the document gets to say what it is written in.
+    pub fn from_bytes(&self, bytes: &[u8], content_type: Option<&str>, base_url: &Url) -> Page {
+        let mut page = Page::from_bytes(
+            bytes,
+            content_type,
+            base_url,
+            self.broker.clone(),
+            self.fonts(),
+            self.options.clone(),
+        );
+        if self.options.script {
+            if let Err(error) = page.run_scripts(self.broker.clone()) {
+                eprintln!("h5i-browser-light: the script realm failed to start: {error}");
+            }
+        }
+        page
+    }
+
     pub fn from_html(&self, html: &str, base_url: &Url) -> Page {
         let mut page = Page::from_html(
             html,
@@ -1166,6 +1230,15 @@ fn guard_layout(body: impl FnOnce()) -> Result<(), String> {
             .unwrap_or_else(|| "the layout engine panicked".to_string());
         detail
     })
+}
+
+/// The `Content-Type` a response declared, if it declared one.
+fn declared_content_type(outcome: &crate::net::FetchOutcome) -> Option<String> {
+    outcome
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        .map(|(_, value)| value.clone())
 }
 
 /// How many `<meta refresh>` hops to follow before giving up.

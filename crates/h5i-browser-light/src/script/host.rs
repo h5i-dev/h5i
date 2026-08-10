@@ -114,6 +114,13 @@ pub struct Host {
 
     /// Set whenever script changed the tree, so the engine knows to re-resolve
     /// style and layout once rather than after every mutation.
+    /// What the document is written in.
+    ///
+    /// Here as well as on the `Page` because the URL query encoder needs it and
+    /// lives on this side. Set once, when the realm is built for a page that
+    /// knows its own encoding; UTF-8 until then, which is what a string handed
+    /// straight to the parser already is.
+    pub encoding: RefCell<&'static encoding_rs::Encoding>,
     pub dirty: RefCell<bool>,
     /// Whether the cascade has been recomputed since the tree last changed.
     ///
@@ -218,6 +225,7 @@ impl Host {
             dom,
             broker,
             base,
+            encoding: RefCell::new(encoding_rs::UTF_8),
             dirty: RefCell::new(false),
             styles_stale: RefCell::new(false),
             console: RefCell::new(Vec::new()),

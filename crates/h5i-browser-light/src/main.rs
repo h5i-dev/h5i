@@ -405,8 +405,12 @@ fn load(
     let page = match parse_target(target)? {
         Target::Remote(url) => factory.open(&url)?,
         Target::Local(path) => {
-            let html = std::fs::read_to_string(&path).map_err(|e| H5iError::with_path(e, &path))?;
-            factory.from_html(&html, &local_base(&path)?)
+            // Bytes rather than `read_to_string`, so a local file gets the same
+            // encoding treatment a fetched one does. `read_to_string` also
+            // *refuses* a file that is not valid UTF-8, which is exactly the
+            // file this path most needs to be able to open.
+            let bytes = std::fs::read(&path).map_err(|e| H5iError::with_path(e, &path))?;
+            factory.from_bytes(&bytes, None, &local_base(&path)?)
         }
     };
 
