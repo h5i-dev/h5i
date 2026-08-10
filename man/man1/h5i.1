@@ -25,6 +25,9 @@ Open the box console in a browser: one read\-only screen over the whole fleet \(
 h5i\-browser(1)
 The browser control lock: who is driving the browser in a box
 .TP
+h5i\-join(1)
+Open a box someone else is sharing, from a ticket they sent you
+.TP
 h5i\-skill(1)
 Write or print the agent skill this binary carries
 .TP
@@ -280,6 +283,125 @@ Frame\-rate ceiling asked of the box, for `\-\-term`
 .TP
 \fB\-\-assume\-graphics\fR
 Skip the graphics probe and render anyway, for `\-\-term`. Frames are then sent uncompressed (about six times the bytes), because the probe is also what asks whether this terminal accepts deflated ones
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX SHARE"
+Let one other person try this box's web app, from their own machine
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshare\fR [\fB\-\-port\fR] [\fB\-\-expire\fR] [\fB\-\-label\fR] [\fB\-\-tunnel\fR] [\fB\-\-direct\-only\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fINAME\fR] [\fIsubcommands\fR]
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 3000]
+The port inside the box. `h5i box ports <name>` lists what is listening
+.TP
+\fB\-\-expire\fR \fI<EXPIRE>\fR [default: 60m]
+How long the ticket lasts (`30m`, `2h`, `90s`)
+.TP
+\fB\-\-label\fR \fI<LABEL>\fR
+A name for the peer you are sending this to, for `status` and the receipt
+.TP
+\fB\-\-tunnel\fR
+Publish through a Cloudflare quick tunnel instead of peer to peer, so the other side needs no h5i \(em just a browser.
+
+The trade is real and is recorded in the receipt: Cloudflare terminates TLS, so this path is not end\-to\-end encrypted.
+.TP
+\fB\-\-direct\-only\fR
+Refuse to move any application byte over a relay. If a direct peer\-to\-peer path cannot be established, the share fails instead
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fINAME\fR]
+The box whose dev server you want someone else to try
+.SH "H5I BOX SHARE STATUS"
+Show a share: its endpoint, its grants, and how long each has left
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstatus\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the share record as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX SHARE LIST"
+List the boxes on this clone that are being shared right now
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BOX SHARE GRANT"
+Mint another ticket for a running share, so a second person can join
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBgrant\fR [\fB\-\-label\fR] [\fB\-\-expire\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-label\fR \fI<LABEL>\fR
+A name for this peer, to make `status` and the receipt readable
+.TP
+\fB\-\-expire\fR \fI<EXPIRE>\fR [default: 60m]
+How long this ticket lasts (`30m`, `2h`, `90s`)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX SHARE REVOKE"
+Revoke one peer's ticket. The share keeps serving everyone else, and any connection that peer already has is dropped within a second
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrevoke\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> <\fIGRANT\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.TP
+<\fIGRANT\fR>
+
+.SH "H5I BOX SHARE STOP"
+Stop a share running in another terminal
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstop\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
@@ -796,6 +918,24 @@ Print help
 .TP
 <\fINAME\fR>
 
+.SH "H5I JOIN"
+Open a box someone else is sharing, from a ticket they sent you
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBjoin\fR [\fB\-\-port\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITICKET\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 0]
+Local port to serve it on. 0 picks a free one and prints it
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fITICKET\fR>
+The `h5i1_...` ticket you were sent
 .SH "H5I SKILL"
 Write or print the agent skill this binary carries
 .ie \n(.g .ds Aq \(aq

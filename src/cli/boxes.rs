@@ -202,6 +202,19 @@ pub enum BoxCommands {
         assume_graphics: bool,
     },
 
+    /// Let one other person try this box's web app, from their own machine.
+    ///
+    /// The box's port is never published. h5i enters the box's network
+    /// namespace, dials the dev server from inside, and carries the traffic
+    /// either peer to peer (they run `h5i join`, end-to-end encrypted) or
+    /// through a Cloudflare quick tunnel (`--tunnel`: any browser, no h5i, but
+    /// Cloudflare terminates TLS). Either way the invite is a capability with an
+    /// expiry that you can revoke, and the session lands in the box's receipt.
+    ///
+    /// `h5i box share <name>` starts one; the verbs manage it. Runs until Ctrl-C.
+    #[cfg(feature = "share")]
+    Share(crate::cli::share::ShareArgs),
+
     /// Check one environment's enforcement readiness and structural health
     /// (can it actually enforce its isolation claim here? are its refs intact?)
     Doctor {
@@ -1320,6 +1333,9 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         forward.serve()?;
                     }
                 }
+
+                #[cfg(feature = "share")]
+                BoxCommands::Share(args) => crate::cli::share::run(args)?,
 
                 BoxCommands::Doctor { name, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;

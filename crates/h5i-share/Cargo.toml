@@ -1,0 +1,48 @@
+[package]
+name = "h5i-share"
+version = "0.1.0"
+edition = "2021"
+description = "h5i share: the bridge that lets one other person try a box's web app, over P2P or a quick tunnel."
+
+[features]
+# The peer-to-peer transport. On by default, because it is the one that keeps
+# the traffic end-to-end encrypted and needs no third party in the data path.
+# `--no-default-features` drops iroh (QUIC, TLS, hole punching, the relay
+# client) and leaves the tunnel transport, which is plain HTTP over loopback
+# plus a `cloudflared` subprocess.
+default = ["p2p"]
+p2p = ["dep:iroh", "dep:n0-future"]
+
+[dependencies]
+h5i-core = { path = "../h5i-core", default-features = false }
+h5i-error = { path = "../h5i-error" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+sha2 = "0.10"
+libc = "0.2.186"
+
+# Async only because the transports are. The bridge's own logic — the gate, the
+# grant table, the receipt — is sync and testable without a runtime; `tokio`
+# appears at the edges where a QUIC stream or a TCP listener does.
+tokio = { version = "1.0", features = [
+    "rt-multi-thread",
+    "net",
+    "io-util",
+    "macros",
+    "process",
+    "signal",
+    "sync",
+    "time",
+] }
+
+# `tls-ring` rather than the default set: it is the one crypto provider we
+# actually need, and it keeps aws-lc-rs (a C build) off the dependency tree.
+iroh = { version = "1.0.3", default-features = false, features = [
+    "tls-ring",
+], optional = true }
+n0-future = { version = "0.3", optional = true }
+
+[dev-dependencies]
+tempfile = "3.8"

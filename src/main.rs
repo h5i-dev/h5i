@@ -63,6 +63,24 @@ enum Commands {
         action: cli::browser::BrowserCommands,
     },
 
+    /// Open a box someone else is sharing, from a ticket they sent you.
+    ///
+    /// Connects peer to peer, end-to-end encrypted, and serves their dev server
+    /// on this machine's loopback. The local URL carries its own token, minted
+    /// here — the ticket's secret is never handed to a browser.
+    ///
+    /// What you are opening is somebody else's agent's code. Treat it like any
+    /// link a colleague sends you.
+    #[cfg(feature = "share")]
+    Join {
+        /// The `h5i1_…` ticket you were sent.
+        #[arg(value_name = "TICKET")]
+        ticket: String,
+        /// Local port to serve it on. 0 picks a free one and prints it.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+    },
+
     /// Write or print the agent skill this binary carries.
     Skill {
         #[command(subcommand)]
@@ -225,6 +243,8 @@ fn main() -> anyhow::Result<()> {
         #[cfg(feature = "web")]
         Commands::Ui { port, open } => cli::ui::run(port, open)?,
         Commands::Browser { action } => cli::browser::run(action)?,
+        #[cfg(feature = "share")]
+        Commands::Join { ticket, port } => cli::share::join(&ticket, port)?,
         Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,
         Commands::Man => cli::man::run()?,

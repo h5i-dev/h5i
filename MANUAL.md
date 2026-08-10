@@ -103,6 +103,7 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 | [`h5i ui`](#h5i-ui) | The box console: one read-only screen over the whole fleet. |
 | [`h5i browser`](#h5i-browser) | The control lock: who is driving a box's browser. |
 | [`h5i skill`](#h5i-skill) | Write or print the agent skill this binary carries. |
+| [`h5i join`](#h5i-box-share) | Open a box someone else is sharing, from their ticket. |
 | `h5i completion` / `h5i man` | Shell completions and the man page. |
 
 `h5i dev *` and `h5i env *` both remain as hidden aliases for `h5i box *`
@@ -345,6 +346,154 @@ Two limits worth knowing. A terminal reports key presses and not releases, so
 h5i sends a press and a release together: typing works exactly, and holding a
 key down does not. Clicks are placed at the resolution of a terminal cell, which
 is fine for a form and coarse for a dense canvas.
+
+### h5i box share
+
+Let one other person try the web app in a box, from their own machine, while it
+is still running inside the boundary. This is the one path in h5i that lets
+something *in*, so it is worth reading before you use it.
+
+```bash
+h5i box share <name> [--port 3000] [--expire 60m] [--label alex]
+h5i box share <name> --direct-only    # fail rather than relay a single byte
+h5i box share <name> --tunnel         # any browser, no h5i on their side
+
+h5i box share status <name>
+h5i box share ls
+h5i box share grant <name> [--label sam]     # a second ticket for a second person
+h5i box share revoke <name> <grant>
+h5i box share stop <name>
+```
+
+The other side runs:
+
+```bash
+h5i join h5i1_eyJ2IjoxLCJib3hf…
+```
+
+**The box's port is never published.** h5i enters the box's network namespace by
+pid — the same way `h5i box view` does — dials `127.0.0.1:<port>` from inside,
+and passes the socket back out. Nothing binds an external address on this
+machine, and the box gains no reachability it did not have. That entry happens
+**once**, at startup: a small helper process lives in the box's namespaces for
+the life of the share and answers "connect me", pinned to the one port you named.
+Nothing on the wire, from a peer or from the shared page, can move where it
+connects.
+
+**A share needs a box with a namespace of its own.** At the `supervised` and
+`container` tiers, with a session running, "the box's port 3000" is a real,
+distinct thing. At the `workspace` tier it is not — there is no network
+confinement, so it is the same port as this machine's, and sharing it would
+publish whatever happened to be listening. `h5i box share` refuses rather than
+guessing.
+
+#### The ticket is the whole access model
+
+A ticket names one box, one port, one grant and an expiry, and carries a
+256-bit secret. Holding it is the authorization; there is no account on either
+side. h5i keeps only the secret's SHA-256, so **a ticket is printed once and
+cannot be reprinted** — mint another with `share grant`.
+
+One ticket admits one peer, which is what makes `share revoke <name> <grant>`
+per person rather than all or nothing. Authorization is re-read from disk on
+every connection, so a revoke from another terminal takes effect on the next
+one, and a watchdog drops the connections already open within about a second.
+`share stop` revokes everything; the serving process then writes its receipt
+and exits on its own, which is why it is not a `kill`.
+
+The longest a share may last is 24 hours, and the default is one.
+
+#### The two transports
+
+**Peer to peer (the default).** QUIC between the two h5i processes, end-to-end
+encrypted, hole-punched to a direct path when the networks allow it. When they
+do not, a relay carries it: the relay moves sealed packets and sees both
+addresses, the timing and the volume, never the content. `--direct-only` refuses
+that fallback — if no direct path can be established, the share fails and says
+so, **before any application byte crosses**. A flag that merely preferred a
+direct path would be worse than none, because it would let you believe nothing
+was in the middle when something was.
+
+**Quick tunnel (`--tunnel`).** A browser cannot speak QUIC to an endpoint id, so
+peer to peer needs h5i on both ends. When the person you want clicking the
+prototype is a designer or a customer, `--tunnel` shells out to `cloudflared`
+and hands back a plain link. The costs, plainly:
+
+- **Cloudflare terminates TLS, so this path is not end to end.** Cloudflare can
+  read the traffic. That fact is written into the box's receipt, not only here.
+- `cloudflared` is a binary we neither ship nor pin. If it is missing, h5i says
+  so and names the alternative.
+- Cloudflare quick tunnels are not a production service: they cap concurrency
+  and do not carry server-sent events.
+
+What does not change is everything under the transport. The link carries a
+token, the token is checked against the same grant table on every connection,
+revocation still works mid-session, and the credential is stripped before
+anything reaches the box. The capability degrades from "hold the secret" to
+"hold the link"; it does not degrade to nothing.
+
+#### What the shared app can and cannot see
+
+The token travels in the URL on the first request only. h5i answers that request
+with a redirect that moves it into an `HttpOnly` cookie and sends the browser to
+the same page without it — so it stays out of the address bar, out of `Referer`
+on every outbound link, and out of the app's own logs. On the way to the box,
+both the cookie and the query parameter are removed. The app being shared never
+sees the credential that admitted its visitor.
+
+The app's own cookies and query parameters are passed through untouched. So are
+WebSockets: hot reload works, because a share of a dev server that never
+reloaded would not be a share of a dev server.
+
+One connection carries exactly one request, and that is an authorization
+control rather than a performance choice. A connection is checked when its
+first request arrives, which is only the same as checking every request if it
+cannot carry a second — and by default it can. `cloudflared` keeps a pool of
+connections to the origin and reuses them for whatever request comes next, from
+whatever visitor; browsers pool per origin the same way, which puts the
+identical problem on the joiner's proxy. So h5i forces the connection closed
+after each response. An upgrade is the exception, and safely so: an upgraded
+connection stops being an HTTP connection and never goes back into a pool.
+
+#### What the person joining is taking on
+
+The app is agent-written code, and joining runs it in their browser. That is the
+point of sharing a port rather than a picture of one, and it is also the
+exposure — the same one as clicking any link a colleague sends.
+
+One asymmetry is worth knowing, because it runs the other way from what you
+would guess. In peer-to-peer mode the app is served from the joiner's own
+loopback, and browsers exempt loopback origins from their private-network
+protections, so a hostile page has an easier reach at that machine's local
+services than the same page on a public origin would. Tunnel mode, ironically,
+keeps those protections, because the origin is public.
+
+The joiner's local proxy is gated for the same reason the viewer forward is: a
+port on loopback is reachable by every process on that machine and every page in
+that browser. Its URL carries a token minted **on the joining side**, which is
+not the ticket secret — nothing that authorizes the share is ever handed to a
+browser.
+
+#### What lands in the receipt
+
+Every other receipt lane observes what left a box. This one records what came
+in, and it is host observed in the strongest sense available: h5i owns both ends
+of the bridge, the box supplies none of it and cannot suppress it.
+
+```
+share session, 612s (p2p transport)
+opened   2026-08-10T10:00:00+00:00
+closed   2026-08-10T10:10:12+00:00
+shared   port 3000 inside the box, never published on the host
+endpoint kbcd7fq2m4x…
+peers    1
+  kbcd7fq2m4x… via direct — grant a1b2c3d4 (alex), 300s, 12 connections, 900 in / 5000 out
+refused  2 attempt(s): 1 unknown ticket, 0 expired, 1 revoked
+```
+
+A box that was opened to someone and an identical box that was not are different
+artifacts, and an export should not be silent about which one it came from. A
+tunnel session carries the "not end-to-end encrypted" note in the same block.
 
 ### Inspecting what happened
 
