@@ -752,6 +752,47 @@ mod tests {
     }
 
     #[test]
+    fn a_receipt_with_everything_in_it_still_reads_as_sentences() {
+        // The receipt is this feature's evidence artifact and the counters were
+        // added one round at a time. This is the only place they are all seen
+        // together, which is where a line that reads as noise would show up.
+        let mut s = summary(
+            vec![peer("kbcd…", Path::Direct), peer("a browser", Path::Relayed)],
+            vec![
+                DeniedAttempt { at: at("2026-08-10T10:01:00Z"), reason: Denied::Unknown },
+                DeniedAttempt { at: at("2026-08-10T10:02:00Z"), reason: Denied::Revoked },
+            ],
+        );
+        s.transport = Transport::Tunnel;
+        s.peers_overflow = 3;
+        s.denied_overflow = 12;
+        s.over_capacity = 5;
+        s.unreachable = 2;
+        let body = render_receipt(&s);
+
+        // Past the label column, which is aligned on purpose, a run of spaces
+        // means a string continuation was broken — which has happened twice.
+        for line in body.lines() {
+            let text = line.get(10..).unwrap_or("");
+            assert!(!text.contains("  "), "a run of spaces in: {line:?}");
+            assert!(line.len() < 200, "a line nobody will read: {line:?}");
+        }
+        for expected in [
+            "share session, 600s (tunnel transport)",
+            "not end-to-end encrypted",
+            "peers    2",
+            "and 3 more peer(s)",
+            "relay    1 peer(s) used a relay",
+            "capacity 5 connection(s) refused",
+            "unreached 2 connection(s) were authorized",
+            "refused  2 attempt(s)",
+            "and 12 more not recorded individually",
+        ] {
+            assert!(body.contains(expected), "missing {expected:?} in:\n{body}");
+        }
+    }
+
+    #[test]
     fn a_peer_who_arrived_and_read_nothing_is_a_peer_with_no_connections() {
         // Following the invite link is a fact worth recording, and it is a
         // different fact from reaching the dev server. The receipt says the
