@@ -849,6 +849,38 @@ mod tests {
     }
 
     #[test]
+    fn a_peer_past_the_record_cap_changes_nothing_rather_than_the_last_one() {
+        // The overflow handle used to be the *last* record's, so peer 257's
+        // bytes, connections and path landed on peer 256 — including giving it
+        // a path nothing had observed.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let b = test_bridge(dir.path());
+        let g = AuthorizedGrant {
+            id: "a1b2c3d4".into(),
+            label: None,
+            expires_at: 4_000_000_000,
+        };
+        let mut overflow = None;
+        for i in 0..MAX_PEER_RECORDS + 8 {
+            overflow = Some(b.peer_joined(format!("peer{i}"), &g, None));
+        }
+        assert_eq!(b.peer_count(), MAX_PEER_RECORDS);
+        let last_before = b.tally.lock().unwrap().peers[MAX_PEER_RECORDS - 1].clone();
+
+        let id = overflow.expect("a handle");
+        b.peer_connection(id);
+        b.peer_bytes(id, 1000, 2000);
+        b.peer_path(id, Path::Relayed);
+        b.peer_left(id);
+
+        let after = b.tally.lock().unwrap().peers[MAX_PEER_RECORDS - 1].clone();
+        assert_eq!(after.connections, last_before.connections);
+        assert_eq!(after.bytes_to_peer, last_before.bytes_to_peer);
+        assert_eq!(after.path, last_before.path);
+        assert!(after.closed.is_none());
+    }
+
+    #[test]
     fn a_path_nobody_has_seen_yet_is_replaced_by_the_first_one_that_is() {
         // The guess made at join time used to be permanent in the optimistic
         // direction: `peer_path` only ever downgraded, so a peer whose path had

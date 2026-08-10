@@ -991,6 +991,50 @@ mod response_tests {
     }
 
     #[test]
+    fn a_websocket_handshake_survives_the_cookie_filter_byte_for_byte() {
+        // The `101` head goes through the filter like every other response
+        // head, and a client checks `Sec-WebSocket-Accept` against a hash it
+        // computed itself — so rebuilding this head has to come out identical
+        // when there is nothing to strip.
+        let head = b"HTTP/1.1 101 Switching Protocols\r\n\
+                     Upgrade: websocket\r\n\
+                     Connection: Upgrade\r\n\
+                     Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\
+                     Sec-WebSocket-Protocol: vite-hmr\r\n\
+                     Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n\r\n";
+        assert_eq!(strip_share_cookies(head), head.to_vec());
+    }
+
+    #[tokio::test]
+    async fn a_real_trailer_is_forwarded_and_still_ends_the_body() {
+        // Trailers are rare and legal, and refusing them would break anything
+        // that puts a checksum after the body.
+        let body = b"5\r\nhello\r\n0\r\nX-Checksum: abc\r\n\r\nGET /SMUGGLED HTTP/1.1\r\n\r\n";
+        let mut peer = &body[..];
+        let mut out: Vec<u8> = Vec::new();
+        let counted = std::sync::atomic::AtomicU64::new(0);
+        forward_chunked(&mut peer, &mut out, &[], &counted)
+            .await
+            .expect("a chunked body with a real trailer");
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(text.contains("X-Checksum: abc"), "{text}");
+        assert!(!text.contains("SMUGGLED"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_quoted_chunk_extension_is_not_mistaken_for_junk() {
+        // `5;sig="a b;c"` is legal, and the space and the semicolon inside the
+        // quotes are exactly what a stricter size parser would trip over.
+        let body = b"5;sig=\"a b;c\"\r\nhello\r\n0\r\n\r\n";
+        let mut peer = &body[..];
+        let mut out: Vec<u8> = Vec::new();
+        let counted = std::sync::atomic::AtomicU64::new(0);
+        forward_chunked(&mut peer, &mut out, &[], &counted)
+            .await
+            .expect("a quoted chunk extension");
+    }
+
+    #[test]
     fn a_trailer_is_held_to_the_same_rules() {
         assert!(is_trailer(b"\r\n"));
         assert!(is_trailer(b"X-Checksum: abc\r\n"));
