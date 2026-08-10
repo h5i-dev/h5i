@@ -539,6 +539,75 @@ fn a_utf8_document_is_untouched_by_any_of_that() {
 }
 
 #[test]
+fn a_measured_answer_reflects_what_script_just_built() {
+    // Build an element, give it a size, attach it, ask how big it is. Every
+    // geometry reader answered a confident `0` before, because layout had not
+    // run since the tree changed — not "unknown", but a wrong number about an
+    // element that plainly has a size.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script
+        .eval(
+            "globalThis.made = document.createElement('div');              made.style.width = '50px'; made.style.height = '20px';              document.body.appendChild(made);",
+        )
+        .expect("runs");
+    assert_eq!(script.eval_value("made.getBoundingClientRect().width").unwrap(), "50");
+    assert_eq!(script.eval_value("made.getBoundingClientRect().height").unwrap(), "20");
+    assert_eq!(script.eval_value("made.offsetWidth").unwrap(), "50");
+}
+
+#[test]
+fn a_form_control_reports_what_it_holds() {
+    // A textarea's value is its text content, and a control the page built
+    // itself has no editor to store one in. Both read back empty before, so a
+    // filled form looked blank.
+    let (_page, mut script) = page_and_script(
+        "<html><body><textarea id='t'>written in</textarea></body></html>",
+    );
+    assert_eq!(
+        script.eval_value("document.getElementById('t').value").unwrap(),
+        "written in"
+    );
+    script
+        .eval("globalThis.made = document.createElement('input'); made.value = 'typed';")
+        .expect("runs");
+    assert_eq!(script.eval_value("made.value").unwrap(), "typed");
+
+}
+
+#[test]
+fn the_form_and_table_surface_answers() {
+    // What an agent reads through. Every one of these was `undefined`, so a
+    // page walking its own form or table stopped at the first access.
+    let (_page, mut script) = page_and_script(
+        "<html><body><form method='post'><input name='a'><input name='b'></form>\
+         <table><tr><td></td><td id='c'></td></tr></table></body></html>",
+    );
+    assert_eq!(script.eval_value("document.querySelector('form').elements.length").unwrap(), "2");
+    assert_eq!(script.eval_value("document.querySelector('form').method").unwrap(), "post");
+    assert_eq!(script.eval_value("document.querySelector('table').rows.length").unwrap(), "1");
+    assert_eq!(script.eval_value("document.querySelector('tr').cells.length").unwrap(), "2");
+    assert_eq!(script.eval_value("document.getElementById('c').cellIndex").unwrap(), "1");
+    // A control's form, found by ancestry.
+    assert_eq!(
+        script.eval_value("String(document.querySelector('input').form === document.querySelector('form'))").unwrap(),
+        "true"
+    );
+}
+
+#[test]
+fn a_hash_route_navigates_and_says_so() {
+    // Assigning to a getter-only property is a silent no-op, so a hash router
+    // never navigated: no error, no route change, no explanation.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script
+        .eval("globalThis.seen = []; addEventListener('hashchange', (e) => seen.push(e.newURL));")
+        .expect("runs");
+    script.eval("location.hash = 'route';").expect("runs");
+    assert_eq!(script.eval_value("location.hash").unwrap(), "#route");
+    assert_eq!(script.eval_value("String(seen.length)").unwrap(), "1");
+}
+
+#[test]
 fn a_selection_can_be_made_and_acted_on() {
     // What an agent driving a rich-text editor actually does: select a span of
     // text, then change it. Both halves are checked, because a `Selection` that

@@ -383,6 +383,7 @@ fn create_comment(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
 fn scroll_metrics(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
+    settle_layout(&host);
     let doc = host.dom.borrow();
 
     let Some(node) = doc.get_node(id) else {
@@ -730,6 +731,7 @@ fn element_from_point(_this: &JsValue, args: &[JsValue], context: &mut Context) 
         .unwrap_or(&JsValue::undefined())
         .to_number(context)? as f32;
     let host = host(context)?;
+    settle_layout(&host);
     let doc = host.dom.borrow();
 
     let scroll = doc.viewport_scroll();
@@ -1252,6 +1254,7 @@ fn outer_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
 fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
+    settle_layout(&host);
     let mut doc = host.dom.borrow_mut();
 
     if doc.get_node(id).is_none() {
@@ -1282,6 +1285,7 @@ fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
 fn rect(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
+    settle_layout(&host);
     let doc = host.dom.borrow();
 
     let Some(node) = doc.get_node(id) else {
@@ -1348,10 +1352,7 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     // `styles_stale` rather than `dirty`, because the settle loop consumes
     // `dirty` to decide whether to lay out and clearing it here would skip a
     // layout pass someone else was waiting for.
-    if *host.styles_stale.borrow() {
-        *host.styles_stale.borrow_mut() = false;
-        host.dom.borrow_mut().resolve(0.0);
-    }
+    settle_layout(&host);
 
     let doc = host.dom.borrow();
 
@@ -1609,6 +1610,24 @@ fn document_encoding(_this: &JsValue, _args: &[JsValue], context: &mut Context) 
     let host = host(context)?;
     let name = host.encoding.borrow().name().to_string();
     Ok(js_string!(name).into())
+}
+
+/// Bring style and layout up to date, if script has changed the tree since they
+/// last ran.
+///
+/// Anything that answers a *measured* question has to call this first. A
+/// browser resolves on demand, and pages depend on it: build an element, give
+/// it a size, append it, ask how big it is. Without this the answer is zero —
+/// not "unknown", but a confident `0x0` for an element that plainly has a size,
+/// which is the shape of wrong answer this engine keeps finding in itself.
+///
+/// `resolve` never calls back into script, so taking the mutable borrow here is
+/// safe for the same reason every other mutation is.
+fn settle_layout(host: &HostHandle) {
+    if *host.styles_stale.borrow() {
+        *host.styles_stale.borrow_mut() = false;
+        host.dom.borrow_mut().resolve(0.0);
+    }
 }
 
 /// Whether a selector parses, so the prelude can throw where a browser throws.

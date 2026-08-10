@@ -4048,6 +4048,29 @@
     get pathname() { return locationParts().pathname ?? ""; },
     get search() { return locationParts().search ?? ""; },
     get hash() { return locationParts().hash ?? ""; },
+    /// Hash routing, which a great many single-page applications are built on.
+    ///
+    /// Assigning to a getter-only property is a silent no-op outside strict
+    /// mode, so `location.hash = "/x"` did nothing at all and a hash router
+    /// simply never navigated — no error, no route change, no explanation.
+    ///
+    /// A same-document fragment change moves the address, pushes a history
+    /// entry and fires `hashchange`. It deliberately does *not* reload: that is
+    /// what makes it a fragment change rather than a navigation, and it is the
+    /// whole reason routers use it.
+    set hash(value) {
+      const wanted = String(value);
+      const fragment = wanted.startsWith("#") ? wanted : "#" + wanted;
+      const before = currentAddress;
+      const parts = api.parseUrl(fragment, currentAddress);
+      const next = parts ? parts.href : currentAddress;
+      if (next === before) return;
+      history.pushState(history.state, "", next);
+      const event = new Event("hashchange", { bubbles: false });
+      event.oldURL = before;
+      event.newURL = next;
+      dispatch(wrap(api.root()), event);
+    },
     get origin() { return locationParts().origin ?? ""; },
     toString() { return currentAddress; },
     assign(u) { api.unsupported("location.assign"); void u; },
