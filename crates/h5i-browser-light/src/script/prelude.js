@@ -14,6 +14,23 @@
 
   const api = globalThis.__h5i;
 
+  /// Tag name to the interface that tag gets, filled in once the
+  /// interfaces below exist. A Map declared here rather than beside them
+  /// because `constructElement` is defined above and would otherwise read
+  /// a `const` still in its temporal dead zone.
+  const TAG_CLASSES = new Map();
+
+  /// An error with the line it came from, for the callbacks that swallow one.
+  ///
+  /// Every `catch` that reports and carries on — a listener, a timer, an
+  /// observer — is by definition detached from the code that scheduled it, so
+  /// the message is all the reader gets and a message without a location sends
+  /// them looking through the whole page. These are exactly the errors that can
+  /// least afford to be anonymous, and they were the ones reporting the least.
+  function withStack(error) {
+    return String(error) + (error && error.stack ? "\n" + error.stack : "");
+  }
+
   // ── nodes ────────────────────────────────────────────────────────────────
 
   const wrappers = new Map(); // id -> Node, so identity holds across lookups
@@ -118,8 +135,9 @@
   let upgrading = null;
 
   function constructElement(id) {
-    const definition = definitions.get(api.tagName(id).toLowerCase());
-    if (!definition) return new Element(id);
+    const tag = api.tagName(id).toLowerCase();
+    const definition = definitions.get(tag);
+    if (!definition) return new (TAG_CLASSES.get(tag) ?? Element)(id);
 
     const previousUpgrade = upgrading;
     upgrading = id;
@@ -169,7 +187,7 @@
     try {
       if (typeof node.connectedCallback === "function") node.connectedCallback();
     } catch (error) {
-      console.error(`custom element connectedCallback threw: ${error}`);
+      console.error(`custom element connectedCallback threw: ${withStack(error)}`);
     }
   }
 
@@ -179,7 +197,7 @@
     try {
       if (typeof node.disconnectedCallback === "function") node.disconnectedCallback();
     } catch (error) {
-      console.error(`custom element disconnectedCallback threw: ${error}`);
+      console.error(`custom element disconnectedCallback threw: ${withStack(error)}`);
     }
   }
 
@@ -192,7 +210,7 @@
         node.attributeChangedCallback(name, oldValue, newValue);
       }
     } catch (error) {
-      console.error(`custom element attributeChangedCallback threw: ${error}`);
+      console.error(`custom element attributeChangedCallback threw: ${withStack(error)}`);
     }
   }
 
@@ -416,7 +434,7 @@
           if (typeof handler === "function") handler.call(this, event);
           else handler.handleEvent(event);
         } catch (error) {
-          console.error(`a ${event.type} listener threw: ${error}`);
+          console.error(`a ${event.type} listener threw: ${withStack(error)}`);
         }
         if (registered.options && registered.options.once) this.__listeners.delete(handler);
       }
@@ -484,6 +502,14 @@
       return parent && parent.nodeType === 1 ? parent : null;
     }
     get childNodes() { return api.children(this._id).map(wrap); }
+    /// The single most-asked-for thing this engine did not have.
+    ///
+    /// WPT called it 3,944 times across the corpus, more than twice anything
+    /// else on the list, and it is one line. It went missing because nothing in
+    /// four hand-picked corpora used it and everything in the DOM test suite
+    /// does — which is the argument for running a conformance suite in one
+    /// sentence.
+    hasChildNodes() { return api.children(this._id).length > 0; }
     get firstChild() { return this.childNodes[0] || null; }
     get lastChild() { const c = this.childNodes; return c[c.length - 1] || null; }
 
@@ -512,6 +538,20 @@
       childListRecord(this, [], []);
     }
 
+    /// The text as *rendered*, which is what separates it from `textContent`.
+    ///
+    /// Two differences, and both are the reason pages reach for this one:
+    /// content in a `display: none` subtree is not in it, and block boundaries
+    /// become line breaks. A page that reads `innerText` to find out what the
+    /// user can see gets a different and better answer than `textContent`,
+    /// which would hand back the contents of every hidden menu on the page.
+    ///
+    /// Walked natively. As a JavaScript walk this cost 142ms on a 6,000-node
+    /// page against `textContent`'s 6ms, because every level built an array of
+    /// wrapped nodes and every read paid a proxy trap.
+    get innerText() { return api.innerText(this._id); }
+    set innerText(value) { this.textContent = String(value); }
+
     appendChild(child) {
       // Inserting a fragment inserts its children and leaves the fragment
       // behind, which is the whole reason a fragment exists.
@@ -531,6 +571,16 @@
     }
     insertBefore(child, anchor) {
       if (!anchor) return this.appendChild(child);
+      // The spec's pre-insert step, and not a formality: without it the anchor
+      // reaches blitz, which inserts relative to the anchor's parent and
+      // unwraps it. A caller that passes a node from somewhere else is asking
+      // for a NotFoundError and was getting a dead process.
+      if (anchor.parentNode !== this) {
+        throw new DOMException(
+          "insertBefore: the reference node is not a child of this node",
+          "NotFoundError",
+        );
+      }
       if (child && child.nodeType === 11) {
         for (const kid of child.childNodes) api.insertBefore(anchor._id, kid._id);
         if (child._children) child._children.length = 0;
@@ -840,49 +890,6 @@
       this.setAttribute("href", url.href);
     }
 
-    get value() {
-      const tag = this.tagName;
-      if (tag === "SELECT") {
-        const chosen = this.querySelectorAll("option").find((o) => o.selected);
-        return chosen ? chosen.value : "";
-      }
-      if (tag === "OPTION") {
-        const explicit = api.getAttr(this._id, "value");
-        return explicit === null ? this.textContent : explicit;
-      }
-      const kind = (api.getAttr(this._id, "type") || "").toLowerCase();
-      if (kind === "checkbox" || kind === "radio") {
-        const v = api.getAttr(this._id, "value");
-        return v === null ? "on" : v;
-      }
-      return api.getValue(this._id);
-    }
-    set value(v) {
-      api.setValue(this._id, String(v));
-      // A page that sets `.value` from script does not get input/change: the
-      // spec fires those for *user* edits, and a framework that re-rendered on
-      // its own write would loop. `Page::type_into` is the user path.
-    }
-
-    get checked() { return api.getAttr(this._id, "checked") !== null; }
-    set checked(on) {
-      if (on) api.setAttr(this._id, "checked", "");
-      else api.removeAttr(this._id, "checked");
-    }
-    get selected() { return api.getAttr(this._id, "selected") !== null; }
-    set selected(on) {
-      if (on) api.setAttr(this._id, "selected", "");
-      else api.removeAttr(this._id, "selected");
-    }
-    // `href` and `src` are *resolved*, which is the difference between the
-    // property and `getAttribute`. A page comparing `link.href` to
-    // `location.href`, or reading `script.src` to find its own origin, gets the
-    // absolute URL a browser would give it rather than the raw `../x` in the
-    // markup.
-    get href() { return this._resolved("href"); }
-    set href(v) { this.setAttribute("href", v); }
-    get src() { return this._resolved("src"); }
-    set src(v) { this.setAttribute("src", v); }
     _resolved(name) {
       const raw = api.getAttr(this._id, name);
       if (raw === null) return "";
@@ -990,6 +997,13 @@
     // Lowercase, always: this engine parses HTML, where the local name is
     // case-insensitive and canonically lower, while `tagName` is upper.
     get localName() { return this.tagName.toLowerCase(); }
+    /// Always null, and that is the answer rather than a gap: this engine
+    /// parses HTML and nothing else (`document.contentType` says so), and every
+    /// element in an HTML document is in the HTML namespace with no prefix.
+    /// It was being *reported* as missing, which is the reverse of the mistake
+    /// the reporting proxy exists to catch — naming as absent something no
+    /// browser would answer differently.
+    get prefix() { return null; }
 
     get contentEditable() {
       const raw = api.getAttr(this._id, "contenteditable");
@@ -1009,8 +1023,6 @@
     set lang(v) { this.setAttribute("lang", v); }
     get title() { return api.getAttr(this._id, "title") || ""; }
     set title(v) { this.setAttribute("title", v); }
-    get alt() { return api.getAttr(this._id, "alt") || ""; }
-    set alt(v) { this.setAttribute("alt", v); }
 
     // Bring the element into view for a screenshot or a live viewer. The
     // outline an agent reads covers the whole document either way, so this
@@ -1074,21 +1086,28 @@
       return anchor ? this.insertBefore(option, anchor) : this.appendChild(option);
     }
 
-    get disabled() { return api.getAttr(this._id, "disabled") !== null; }
-    set disabled(on) {
-      if (on) this.setAttribute("disabled", "");
-      else this.removeAttribute("disabled");
-    }
-    get name() { return api.getAttr(this._id, "name") || ""; }
-    set name(v) { this.setAttribute("name", v); }
-    get type() { return (api.getAttr(this._id, "type") || "text").toLowerCase(); }
-    set type(v) { this.setAttribute("type", v); }
     get options() { return this.querySelectorAll("option"); }
 
     // Real serialisation. Returning textContent here silently stripped every
     // tag, so `el.innerHTML = el.innerHTML` destroyed the subtree.
     get innerHTML() { return api.innerHtml(this._id); }
     set innerHTML(html) { api.setInnerHtml(this._id, String(html)); }
+
+    /// `innerHTML`, plus the one thing `innerHTML` is specified *not* to do:
+    /// turn `<template shadowrootmode>` into a real shadow root.
+    ///
+    /// That difference is the entire reason the method exists, and it is how a
+    /// server-rendered component ships its shadow DOM as markup — so an engine
+    /// that aliased this to `innerHTML` would leave every declarative component
+    /// as an inert `<template>` that renders nothing.
+    ///
+    /// "Unsafe" is the spec's word for "does not sanitise", which is the same
+    /// contract `innerHTML` already has here. It is not a new hazard: page
+    /// markup reaching an agent is fenced as untrusted either way.
+    setHTMLUnsafe(html) {
+      api.setInnerHtml(this._id, String(html));
+      adoptDeclarativeShadowRoots(this);
+    }
     get outerHTML() { return api.outerHtml(this._id); }
     set outerHTML(html) {
       // Replacing an element with its own markup, which is how a component
@@ -1106,7 +1125,7 @@
     // name by design — it is already a proxy over the dashed surface — so there
     // is no such thing as a name it is missing, and wrapping one proxy in
     // another defeats the `in` check the reporting one relies on.
-    get style() { return new StyleDeclaration(this); }
+    get style() { return new StyleDeclaration(inlineStyleSource(this)); }
     set style(text) { this.setAttribute("style", String(text)); }
 
     get dataset() {
@@ -1140,25 +1159,54 @@
       return null;
     }
 
-    insertAdjacentHTML(position, html) {
+    /// The placement rule the three `insertAdjacent*` methods share.
+    ///
+    /// They differ only in what they are handed — parsed markup, a text node,
+    /// an element — so the four positions are worked out once here. Returns
+    /// whether anything was inserted: `beforebegin` and `afterend` on a node
+    /// with no parent are a no-op by spec rather than an error, and
+    /// `insertAdjacentElement` has to return null for exactly that case.
+    _insertAdjacent(position, nodes) {
       const where = String(position).toLowerCase();
+      if (where === "beforeend") {
+        for (const node of nodes) this.appendChild(node);
+        return true;
+      }
+      if (where === "afterbegin") {
+        const first = this.firstChild;
+        for (const node of nodes) first ? this.insertBefore(node, first) : this.appendChild(node);
+        return true;
+      }
+      if (where === "beforebegin" || where === "afterend") {
+        const parent = this.parentNode;
+        if (!parent) return false;
+        if (where === "beforebegin") {
+          for (const node of nodes) parent.insertBefore(node, this);
+          return true;
+        }
+        const next = this.nextSibling;
+        for (const node of nodes) next ? parent.insertBefore(node, next) : parent.appendChild(node);
+        return true;
+      }
+      // A DOMException rather than the TypeError this used to throw: the spec
+      // names this one, and a caller catching by type should find what the spec
+      // told it to expect.
+      throw new DOMException(
+        "not one of beforebegin, afterbegin, beforeend, afterend: " + position,
+        "SyntaxError",
+      );
+    }
+    insertAdjacentHTML(position, html) {
       const host = document.createElement("div");
       api.setInnerHtml(host._id, String(html));
-      const kids = host.childNodes;
-      if (where === "beforeend") { for (const k of kids) this.appendChild(k); }
-      else if (where === "afterbegin") {
-        const first = this.firstChild;
-        for (const k of kids) first ? this.insertBefore(k, first) : this.appendChild(k);
-      } else if (where === "beforebegin") {
-        for (const k of kids) this.parentNode.insertBefore(k, this);
-      } else if (where === "afterend") {
-        const parent = this.parentNode;
-        const next = this.nextSibling;
-        for (const k of kids) next ? parent.insertBefore(k, next) : parent.appendChild(k);
-      } else {
-        throw new TypeError("bad insertAdjacentHTML position: " + position);
-      }
+      this._insertAdjacent(position, [...host.childNodes]);
       host.remove();
+    }
+    insertAdjacentText(position, text) {
+      this._insertAdjacent(position, [document.createTextNode(String(text))]);
+    }
+    insertAdjacentElement(position, element) {
+      return this._insertAdjacent(position, [element]) ? element : null;
     }
 
     click() {
@@ -1203,6 +1251,22 @@
     getClientRects() { return [this.getBoundingClientRect()]; }
     get offsetWidth() { return this.getBoundingClientRect().width; }
     get offsetHeight() { return this.getBoundingClientRect().height; }
+    /// Position relative to `offsetParent`, which for this engine is the page.
+    ///
+    /// A full implementation walks up for the nearest positioned ancestor and
+    /// subtracts its border box. That is a real difference on a positioned
+    /// subtree, and it is written down here rather than left to be discovered:
+    /// what these return is the offset from the document, which is what
+    /// `offsetParent` being the body means.
+    get offsetTop() { return this.getBoundingClientRect().top; }
+    get offsetLeft() { return this.getBoundingClientRect().left; }
+    get offsetParent() {
+      // Null for an element that is not rendered, which is the one case code
+      // actually branches on.
+      const display = api.computedStyle(this._id, "display") || "";
+      if (display === "none" || !this.isConnected) return null;
+      return wrap(api.query("body", 0));
+    }
     // Not the bounding rect: for `documentElement` and `body` this is the
     // *viewport*, not the element's own height, and the bottom-of-page check
     // every page writes compares the two.
@@ -1244,6 +1308,11 @@
       this._project();
     }
     get innerHTML() { return api.innerHtml(this._id); }
+    setHTMLUnsafe(html) {
+      api.setInnerHtml(this._id, String(html));
+      adoptDeclarativeShadowRoots(this);
+      this._project();
+    }
     appendChild(child) {
       const out = Element.prototype.appendChild.call(this, child);
       this._project();
@@ -1312,20 +1381,596 @@
     });
   }
 
-  // Boolean and numeric reflections, which convert rather than pass through.
-  Object.defineProperty(Element.prototype, "hidden", {
-    configurable: true,
-    get() { return api.getAttr(this._id, "hidden") !== null; },
-    set(on) { if (on) this.setAttribute("hidden", ""); else this.removeAttribute("hidden"); },
+  /// Reflect an IDL property onto a content attribute, with the *type* the
+  /// spec gives it.
+  ///
+  /// The type is not decoration, and this mechanism exists because passing the
+  /// string through looked like it worked. `dir` is an enumerated attribute:
+  /// its IDL getter answers `""` for anything that is not one of its keywords,
+  /// so `el.setAttribute("dir", "5%")` reads back as `""` in a browser and read
+  /// back as `"5%"` here. WPT sets every reflected attribute to sixty-odd
+  /// hostile values and checks exactly that, which is how an engine can score
+  /// zero on an attribute it believed it supported.
+  ///
+  /// One definition per shape rather than a hand-written getter and setter per
+  /// attribute, because there are a great many of them and the interesting part
+  /// is the conversion, not the plumbing.
+  function reflect(proto, idl, content, type = "string", options = {}) {
+    const parseInteger = (raw) => {
+      // The spec's rules for parsing integers, which are not `Number()`:
+      // leading whitespace is skipped, trailing garbage ends the number, and
+      // anything else is a failure rather than a NaN to paper over.
+      const match = /^[ \t\n\f\r]*([+-]?[0-9]+)/.exec(raw ?? "");
+      if (!match) return null;
+      const value = Number(match[1]);
+      return Number.isSafeInteger(value) ? value : null;
+    };
+    const get = {
+      string() { return api.getAttr(this._id, content) ?? ""; },
+      // Nullable, unlike a plain DOMString: the ARIA properties report `null`
+      // for an attribute that is absent rather than an empty string, and a test
+      // that distinguishes the two is testing something real.
+      nullable() { return api.getAttr(this._id, content); },
+      bool() { return api.getAttr(this._id, content) !== null; },
+      long() {
+        const value = parseInteger(api.getAttr(this._id, content));
+        return value === null ? (options.default ?? 0) : value;
+      },
+      ulong() {
+        const value = parseInteger(api.getAttr(this._id, content));
+        if (value === null || value < 0) return options.default ?? 0;
+        return value;
+      },
+      enumerated() {
+        const raw = api.getAttr(this._id, content);
+        // `in` rather than `??`, because `null` is a real missing-value default
+        // — `crossOrigin` reports null for an absent attribute — and `??` would
+        // quietly turn that into "".
+        if (raw === null) return "missing" in options ? options.missing : "";
+        const lower = String(raw).toLowerCase();
+        // Aliases first: a keyword can have more than one spelling that maps to
+        // the same state, and the empty string is the one that matters —
+        // `<div contenteditable>` is the "true" state, so an implementation
+        // that only matched the literal keywords reported "inherit" for the
+        // most common way anyone writes it.
+        if (options.aliases && lower in options.aliases) return options.aliases[lower];
+        const found = options.keywords.find((word) => word.toLowerCase() === lower);
+        if (found !== undefined) return found;
+        return "invalid" in options ? options.invalid : "";
+      },
+      url() {
+        const raw = api.getAttr(this._id, content);
+        if (raw === null) return "";
+        // `currentAddress`, matching `_resolved` above: only Document carries a
+        // `baseURI`, and resolving against `undefined` would hand back the raw
+        // attribute for every relative URL while looking like it resolved.
+        const parts = api.parseUrl(String(raw), currentAddress);
+        // An unparseable URL reflects as the literal attribute, which is what a
+        // browser does and is more useful than an empty string when debugging.
+        return parts ? parts.href : String(raw);
+      },
+    }[type];
+    const set = type === "bool"
+      ? function (on) {
+        if (on) this.setAttribute(content, "");
+        else this.removeAttribute(content);
+      }
+      : type === "long" || type === "ulong"
+        ? function (value) {
+          const number = Number(value);
+          let written = Number.isFinite(number) ? Math.trunc(number) : 0;
+          // An unsigned reflection cannot hold a negative, and writing one
+          // anyway left `td.colSpan = -3` reading back as 1 while
+          // `getAttribute("colspan")` said "-3" — the property and the
+          // attribute disagreeing about the same element.
+          if (type === "ulong" && written < 0) written = options.default ?? 0;
+          this.setAttribute(content, String(written));
+        }
+        : function (value) {
+          // `null` on a nullable reflection removes the attribute; everywhere
+          // else it stringifies, so `el.dir = null` really does write "null".
+          if (value === null && type === "nullable") this.removeAttribute(content);
+          else this.setAttribute(content, String(value));
+        };
+    Object.defineProperty(proto, idl, { configurable: true, get, set });
+  }
+
+  // The attributes every HTML element carries. `hidden` and `tabIndex` were
+  // the only two of these that existed, hand-written, before WPT was pointed
+  // at the engine.
+  reflect(Element.prototype, "hidden", "hidden", "bool");
+  reflect(Element.prototype, "autofocus", "autofocus", "bool");
+  reflect(Element.prototype, "tabIndex", "tabindex", "long", { default: -1 });
+  reflect(Element.prototype, "accessKey", "accesskey");
+  reflect(Element.prototype, "slot", "slot");
+  reflect(Element.prototype, "nonce", "nonce");
+  reflect(Element.prototype, "dir", "dir", "enumerated", { keywords: ["ltr", "rtl", "auto"] });
+  reflect(Element.prototype, "contentEditable", "contenteditable", "enumerated", {
+    keywords: ["true", "false", "plaintext-only"],
+    aliases: { "": "true" },
+    missing: "inherit",
+    invalid: "inherit",
   });
-  Object.defineProperty(Element.prototype, "tabIndex", {
-    configurable: true,
-    get() {
-      const raw = api.getAttr(this._id, "tabindex");
-      return raw === null ? -1 : Number(raw) || 0;
-    },
-    set(value) { this.setAttribute("tabindex", String(Number(value) || 0)); },
+  reflect(Element.prototype, "autocapitalize", "autocapitalize", "enumerated", {
+    keywords: ["none", "off", "on", "sentences", "words", "characters"],
   });
+  reflect(Element.prototype, "inputMode", "inputmode", "enumerated", {
+    keywords: ["none", "text", "tel", "url", "email", "numeric", "decimal", "search"],
+  });
+  reflect(Element.prototype, "enterKeyHint", "enterkeyhint", "enumerated", {
+    keywords: ["enter", "done", "go", "next", "previous", "search", "send"],
+  });
+  reflect(Element.prototype, "popover", "popover", "enumerated", {
+    keywords: ["auto", "manual"], invalid: "manual",
+  });
+
+  // ARIA, which reflects mechanically: every one of these is `aria-` followed
+  // by the rest of the name lowercased, with no word separator —
+  // `ariaHasPopup` is `aria-haspopup`, not `aria-has-popup`. Written as a list
+  // rather than as forty pairs because the mapping has no exceptions.
+  for (const name of [
+    "ariaAtomic", "ariaAutoComplete", "ariaBrailleLabel", "ariaBrailleRoleDescription",
+    "ariaBusy", "ariaChecked", "ariaColCount", "ariaColIndex", "ariaColIndexText",
+    "ariaColSpan", "ariaCurrent", "ariaDescription", "ariaDisabled", "ariaExpanded",
+    "ariaHasPopup", "ariaHidden", "ariaInvalid", "ariaKeyShortcuts", "ariaLabel",
+    "ariaLevel", "ariaLive", "ariaModal", "ariaMultiLine", "ariaMultiSelectable",
+    "ariaOrientation", "ariaPlaceholder", "ariaPosInSet", "ariaPressed", "ariaReadOnly",
+    "ariaRelevant", "ariaRequired", "ariaRoleDescription", "ariaRowCount", "ariaRowIndex",
+    "ariaRowIndexText", "ariaRowSpan", "ariaSelected", "ariaSetSize", "ariaSort",
+    "ariaValueMax", "ariaValueMin", "ariaValueNow", "ariaValueText",
+  ]) {
+    reflect(Element.prototype, name, "aria-" + name.slice(4).toLowerCase(), "nullable");
+  }
+  reflect(Element.prototype, "role", "role", "nullable");
+
+  // The ARIA properties that are *enumerated* rather than free strings. Their
+  // getters answer a canonical keyword and reject anything else, exactly as
+  // `dir` does — declaring them as plain strings passed every hostile value
+  // straight back and cost roughly six hundred subtests in one file.
+  //
+  // `missing: null` on purpose: an absent ARIA attribute reflects as null, and
+  // an invalid one as the empty string. Three states, not two.
+  for (const [name, keywords] of [
+    ["ariaAutoComplete", ["inline", "list", "both", "none"]],
+    ["ariaChecked", ["true", "false", "mixed", "undefined"]],
+    ["ariaCurrent", ["page", "step", "location", "date", "time", "true", "false"]],
+    ["ariaDisabled", ["true", "false"]],
+    ["ariaExpanded", ["true", "false", "undefined"]],
+    ["ariaHasPopup", ["false", "true", "menu", "listbox", "tree", "grid", "dialog"]],
+    ["ariaHidden", ["true", "false", "undefined"]],
+    ["ariaInvalid", ["grammar", "false", "spelling", "true"]],
+    ["ariaLive", ["assertive", "off", "polite"]],
+    ["ariaModal", ["true", "false"]],
+    ["ariaMultiLine", ["true", "false"]],
+    ["ariaMultiSelectable", ["true", "false"]],
+    ["ariaOrientation", ["horizontal", "vertical", "undefined"]],
+    ["ariaPressed", ["true", "false", "mixed", "undefined"]],
+    ["ariaReadOnly", ["true", "false"]],
+    ["ariaRequired", ["true", "false"]],
+    ["ariaSelected", ["true", "false", "undefined"]],
+    ["ariaSort", ["ascending", "descending", "none", "other"]],
+    ["ariaAtomic", ["true", "false"]],
+    ["ariaBusy", ["true", "false"]],
+  ]) {
+    reflect(Element.prototype, name, "aria-" + name.slice(4).toLowerCase(),
+      "enumerated", { keywords, missing: null, invalid: "" });
+  }
+
+  // ── per-tag interfaces ───────────────────────────────────────────────────
+  //
+  // A browser has HTMLAnchorElement, HTMLTableCellElement and eighty more, and
+  // the split is not cosmetic. `colSpan` belongs to <td> and <th>; `span` to
+  // <col> and <colgroup>; `scrollAmount` to <marquee> and nothing else. Hanging
+  // all of them on one Element would make `"colSpan" in div` true, which is the
+  // same lie the removed `missingApi` stubs told: feature detection asks before
+  // it uses, and gets sent down a branch a real browser never takes.
+  //
+  // Each entry is [idl, content, type, options] and reads as the spec's
+  // reflection table does. Names Element already defines — href, src, name,
+  // type, disabled, value, checked, selected — are deliberately absent: those
+  // carry behaviour beyond reflection, and `defaultChecked`, `defaultSelected`
+  // and `defaultValue` are the spec's names for the reflecting half.
+  const REFLECTIONS = {
+    html: ["HTMLHtmlElement", [["version", "version"]]],
+    head: ["HTMLHeadElement", []],
+    title: ["HTMLTitleElement", []],
+    base: ["HTMLBaseElement", [["target", "target"]]],
+    link: ["HTMLLinkElement", [
+      ["rel", "rel"], ["media", "media"], ["hreflang", "hreflang"],
+      ["integrity", "integrity"], ["imageSrcset", "imagesrcset"],
+      ["imageSizes", "imagesizes"], ["charset", "charset"], ["rev", "rev"],
+      ["target", "target"],
+      ["as", "as", "enumerated", { keywords: [
+        "fetch", "audio", "audioworklet", "document", "embed", "font", "frame",
+        "iframe", "image", "json", "manifest", "object", "paintworklet",
+        "report", "script", "serviceworker", "sharedworker", "style", "track",
+        "video", "webidentity", "worker", "xslt"] }],
+      ["crossOrigin", "crossorigin", "enumerated", {
+        keywords: ["anonymous", "use-credentials"],
+        missing: null, invalid: "anonymous" }],
+      ["referrerPolicy", "referrerpolicy", "enumerated", { keywords: [
+        "", "no-referrer", "no-referrer-when-downgrade", "same-origin",
+        "origin", "strict-origin", "origin-when-cross-origin",
+        "strict-origin-when-cross-origin", "unsafe-url"] }],
+    ]],
+    meta: ["HTMLMetaElement", [
+      ["httpEquiv", "http-equiv"], ["media", "media"], ["scheme", "scheme"],
+    ]],
+    style: ["HTMLStyleElement", [["media", "media"]]],
+    body: ["HTMLBodyElement", [
+      ["link", "link"], ["vLink", "vlink"], ["aLink", "alink"],
+      ["bgColor", "bgcolor"], ["background", "background"], ["text", "text"],
+    ]],
+    a: ["HTMLAnchorElement", [
+      ["target", "target"], ["download", "download"], ["ping", "ping"],
+      ["rel", "rel"], ["hreflang", "hreflang"], ["charset", "charset"],
+      ["rev", "rev"], ["shape", "shape"], ["coords", "coords"],
+      ["referrerPolicy", "referrerpolicy", "enumerated", { keywords: [
+        "", "no-referrer", "no-referrer-when-downgrade", "same-origin",
+        "origin", "strict-origin", "origin-when-cross-origin",
+        "strict-origin-when-cross-origin", "unsafe-url"] }],
+    ]],
+    area: ["HTMLAreaElement", [
+      ["coords", "coords"], ["download", "download"], ["ping", "ping"],
+      ["rel", "rel"], ["shape", "shape"], ["target", "target"],
+      ["noHref", "nohref", "bool"],
+    ]],
+    img: ["HTMLImageElement", [
+      ["srcset", "srcset"], ["sizes", "sizes"], ["useMap", "usemap"],
+      ["isMap", "ismap", "bool"], ["align", "align"], ["border", "border"],
+      ["lowsrc", "lowsrc", "url"], ["longDesc", "longdesc", "url"],
+      ["width", "width", "ulong"], ["height", "height", "ulong"],
+      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+      ["decoding", "decoding"], ["loading", "loading"],
+    ]],
+    embed: ["HTMLEmbedElement", [
+      ["width", "width"], ["height", "height"], ["align", "align"],
+    ]],
+    object: ["HTMLObjectElement", [
+      ["data", "data", "url"], ["useMap", "usemap"], ["align", "align"],
+      ["archive", "archive"], ["code", "code"], ["declare", "declare", "bool"],
+      ["standby", "standby"], ["codeBase", "codebase", "url"],
+      ["codeType", "codetype"], ["border", "border"],
+      ["width", "width"], ["height", "height"],
+      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+    ]],
+    param: ["HTMLParamElement", [["valueType", "valuetype"]]],
+    video: ["HTMLVideoElement", [
+      ["poster", "poster", "url"], ["preload", "preload"],
+      ["autoplay", "autoplay", "bool"], ["loop", "loop", "bool"],
+      ["controls", "controls", "bool"], ["defaultMuted", "muted", "bool"],
+      ["playsInline", "playsinline", "bool"],
+      ["width", "width", "ulong"], ["height", "height", "ulong"],
+    ]],
+    audio: ["HTMLAudioElement", [
+      ["preload", "preload"], ["autoplay", "autoplay", "bool"],
+      ["loop", "loop", "bool"], ["controls", "controls", "bool"],
+      ["defaultMuted", "muted", "bool"],
+    ]],
+    source: ["HTMLSourceElement", [
+      ["srcset", "srcset"], ["sizes", "sizes"], ["media", "media"],
+      ["width", "width", "ulong"], ["height", "height", "ulong"],
+    ]],
+    track: ["HTMLTrackElement", [
+      ["srclang", "srclang"], ["label", "label"], ["default", "default", "bool"],
+      ["kind", "kind", "enumerated", {
+        keywords: ["subtitles", "captions", "descriptions", "chapters", "metadata"],
+        missing: "subtitles", invalid: "metadata" }],
+    ]],
+    map: ["HTMLMapElement", []],
+    form: ["HTMLFormElement", [
+      ["acceptCharset", "accept-charset"], ["action", "action", "url"],
+      ["autocomplete", "autocomplete"], ["enctype", "enctype"],
+      ["encoding", "enctype"], ["method", "method"],
+      ["noValidate", "novalidate", "bool"], ["target", "target"], ["rel", "rel"],
+    ]],
+    label: ["HTMLLabelElement", [["htmlFor", "for"]]],
+    input: ["HTMLInputElement", [
+      ["accept", "accept"], ["autocomplete", "autocomplete"],
+      ["defaultChecked", "checked", "bool"], ["dirName", "dirname"],
+      ["formAction", "formaction", "url"], ["formEnctype", "formenctype"],
+      ["formMethod", "formmethod"], ["formTarget", "formtarget"],
+      ["formNoValidate", "formnovalidate", "bool"],
+      ["max", "max"], ["min", "min"], ["pattern", "pattern"],
+      ["placeholder", "placeholder"], ["step", "step"], ["useMap", "usemap"],
+      ["align", "align"], ["defaultValue", "value"],
+      ["multiple", "multiple", "bool"], ["required", "required", "bool"],
+      ["readOnly", "readonly", "bool"],
+      ["maxLength", "maxlength", "long", { default: -1 }],
+      ["minLength", "minlength", "long", { default: -1 }],
+      ["size", "size", "ulong", { default: 20 }],
+      ["width", "width", "ulong"], ["height", "height", "ulong"],
+    ]],
+    button: ["HTMLButtonElement", [
+      ["formAction", "formaction", "url"], ["formEnctype", "formenctype"],
+      ["formMethod", "formmethod"], ["formTarget", "formtarget"],
+      ["formNoValidate", "formnovalidate", "bool"],
+    ]],
+    select: ["HTMLSelectElement", [
+      ["autocomplete", "autocomplete"], ["multiple", "multiple", "bool"],
+      ["required", "required", "bool"], ["size", "size", "ulong"],
+    ]],
+    optgroup: ["HTMLOptGroupElement", [["label", "label"]]],
+    option: ["HTMLOptionElement", [
+      ["label", "label"], ["defaultSelected", "selected", "bool"],
+    ]],
+    textarea: ["HTMLTextAreaElement", [
+      ["autocomplete", "autocomplete"], ["dirName", "dirname"],
+      ["placeholder", "placeholder"], ["wrap", "wrap"],
+      ["required", "required", "bool"], ["readOnly", "readonly", "bool"],
+      ["maxLength", "maxlength", "long", { default: -1 }],
+      ["minLength", "minlength", "long", { default: -1 }],
+      ["cols", "cols", "ulong", { default: 20 }],
+      ["rows", "rows", "ulong", { default: 2 }],
+    ]],
+    output: ["HTMLOutputElement", [["htmlFor", "for"]]],
+    fieldset: ["HTMLFieldSetElement", []],
+    legend: ["HTMLLegendElement", [["align", "align"]]],
+    table: ["HTMLTableElement", [
+      ["align", "align"], ["border", "border"], ["frame", "frame"],
+      ["rules", "rules"], ["summary", "summary"], ["width", "width"],
+      ["bgColor", "bgcolor"], ["cellPadding", "cellpadding"],
+      ["cellSpacing", "cellspacing"],
+    ]],
+    caption: ["HTMLTableCaptionElement", [["align", "align"]]],
+    col: ["HTMLTableColElement", [
+      ["span", "span", "ulong", { default: 1 }], ["align", "align"],
+      ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
+      ["width", "width"],
+    ]],
+    tr: ["HTMLTableRowElement", [
+      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      ["vAlign", "valign"], ["bgColor", "bgcolor"],
+    ]],
+    td: ["HTMLTableCellElement", [
+      ["colSpan", "colspan", "ulong", { default: 1 }],
+      ["rowSpan", "rowspan", "ulong", { default: 1 }],
+      ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
+      ["align", "align"], ["axis", "axis"], ["height", "height"],
+      ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
+      ["noWrap", "nowrap", "bool"], ["vAlign", "valign"], ["bgColor", "bgcolor"],
+    ]],
+    ol: ["HTMLOListElement", [
+      ["reversed", "reversed", "bool"], ["compact", "compact", "bool"],
+      ["start", "start", "long", { default: 1 }],
+    ]],
+    ul: ["HTMLUListElement", [["compact", "compact", "bool"]]],
+    li: ["HTMLLIElement", [["value", "value", "long"]]],
+    dl: ["HTMLDListElement", [["compact", "compact", "bool"]]],
+    blockquote: ["HTMLQuoteElement", [["cite", "cite", "url"]]],
+    ins: ["HTMLModElement", [["cite", "cite", "url"], ["dateTime", "datetime"]]],
+    script: ["HTMLScriptElement", [
+      ["noModule", "nomodule", "bool"], ["async", "async", "bool"],
+      ["defer", "defer", "bool"], ["integrity", "integrity"],
+      ["charset", "charset"], ["event", "event"], ["htmlFor", "for"],
+    ]],
+    marquee: ["HTMLMarqueeElement", [
+      ["behavior", "behavior"], ["bgColor", "bgcolor"],
+      ["direction", "direction"], ["height", "height"], ["width", "width"],
+      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+      ["trueSpeed", "truespeed", "bool"],
+      ["scrollAmount", "scrollamount", "ulong", { default: 6 }],
+      ["scrollDelay", "scrolldelay", "ulong", { default: 85 }],
+      ["loop", "loop", "long", { default: -1 }],
+    ]],
+    applet: ["HTMLAppletElement", [
+      ["align", "align"], ["archive", "archive"], ["code", "code"],
+      ["codeBase", "codebase", "url"], ["height", "height"],
+      ["object", "object"], ["width", "width"],
+      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+    ]],
+    frame: ["HTMLFrameElement", [
+      ["scrolling", "scrolling"], ["frameBorder", "frameborder"],
+      ["longDesc", "longdesc", "url"], ["noResize", "noresize", "bool"],
+      ["marginHeight", "marginheight"], ["marginWidth", "marginwidth"],
+    ]],
+    frameset: ["HTMLFrameSetElement", [["cols", "cols"], ["rows", "rows"]]],
+    font: ["HTMLFontElement", [
+      ["color", "color"], ["face", "face"], ["size", "size"],
+    ]],
+    dir: ["HTMLDirectoryElement", [["compact", "compact", "bool"]]],
+    hr: ["HTMLHRElement", [
+      ["align", "align"], ["color", "color"], ["size", "size"],
+      ["width", "width"], ["noShade", "noshade", "bool"],
+    ]],
+    pre: ["HTMLPreElement", [["width", "width", "long"]]],
+    details: ["HTMLDetailsElement", [["open", "open", "bool"]]],
+    dialog: ["HTMLDialogElement", [["open", "open", "bool"]]],
+    slot: ["HTMLSlotElement", []],
+    canvas: ["HTMLCanvasElement", [
+      ["width", "width", "ulong", { default: 300 }],
+      ["height", "height", "ulong", { default: 150 }],
+    ]],
+    time: ["HTMLTimeElement", [["dateTime", "datetime"]]],
+    data: ["HTMLDataElement", []],
+    div: ["HTMLDivElement", [["align", "align"]]],
+    h1: ["HTMLHeadingElement", [["align", "align"]]],
+    tbody: ["HTMLTableSectionElement", [
+      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      ["vAlign", "valign"],
+    ]],
+    p: ["HTMLParagraphElement", [["align", "align"]]],
+    span: ["HTMLSpanElement", []],
+    br: ["HTMLBRElement", [["clear", "clear"]]],
+    menu: ["HTMLMenuElement", [["compact", "compact", "bool"]]],
+  };
+
+  // Tags that share one interface with another tag, rather than repeating it.
+  //
+  // Only where the spec genuinely gives two tags one interface. <h1> is a
+  // heading and <tbody> is a table section, so both got their own above rather
+  // than being pointed at <p> and <tr>: `h1 instanceof HTMLParagraphElement`
+  // would be false in every browser and true here, which is the kind of
+  // almost-right this engine keeps having to remove.
+  const SHARED = {
+    colgroup: "col", th: "td", q: "blockquote", del: "ins",
+    thead: "tbody", tfoot: "tbody",
+    h2: "h1", h3: "h1", h4: "h1", h5: "h1", h6: "h1",
+  };
+
+  {
+    const interfaces = {};
+    for (const [tag, [name, attributes]] of Object.entries(REFLECTIONS)) {
+      const Interface = { [name]: class extends Element {} }[name];
+      for (const [idl, content, type, options] of attributes) {
+        reflect(Interface.prototype, idl, content, type ?? "string", options ?? {});
+      }
+      interfaces[name] = Interface;
+      TAG_CLASSES.set(tag, Interface);
+    }
+    // <th> is a table cell and <del> is a mod: same interface, both tags.
+    for (const [tag, like] of Object.entries(SHARED)) {
+      if (TAG_CLASSES.has(like)) TAG_CLASSES.set(tag, TAG_CLASSES.get(like));
+    }
+    // `instanceof HTMLAnchorElement` is something pages genuinely write, and
+    // an engine with the interfaces but no names for them fails it anyway.
+    Object.assign(globalThis, interfaces);
+  }
+
+  // ── the properties that are not plain reflections ────────────────────────
+  //
+  // These nine sat on Element until WPT probed them, which meant
+  // `"checked" in document.createElement("div")` was true and
+  // `document.createElement("div").type` was `"text"`. That is the
+  // `missingApi` lie at property scale: feature detection asks before it uses,
+  // and every one of these is something code branches on.
+  //
+  // Each is installed on exactly the interfaces the spec gives it. The ones
+  // that *are* plain reflections are listed here too, so the whole set of
+  // "which tags have this" is in one place rather than split between two
+  // mechanisms.
+  {
+    const on = (tags, name, descriptor) => {
+      for (const tag of tags) {
+        const Interface = TAG_CLASSES.get(tag);
+        if (!Interface) continue;
+        Object.defineProperty(Interface.prototype, name, {
+          configurable: true, ...descriptor,
+        });
+      }
+    };
+    const reflectOn = (tags, idl, content, type, options) => {
+      for (const tag of tags) {
+        const Interface = TAG_CLASSES.get(tag);
+        if (Interface) reflect(Interface.prototype, idl, content, type ?? "string", options ?? {});
+      }
+    };
+
+    // `href` and `src` are *resolved*, which is the difference between the
+    // property and `getAttribute`. A page comparing `link.href` to
+    // `location.href`, or reading `script.src` to find its own origin, gets the
+    // absolute URL a browser would give it rather than the raw `../x` in the
+    // markup.
+    on(["a", "area", "link", "base"], "href", {
+      get() { return this._resolved("href"); },
+      set(v) { this.setAttribute("href", v); },
+    });
+    on(["img", "script", "embed", "source", "track", "audio", "video", "input"], "src", {
+      get() { return this._resolved("src"); },
+      set(v) { this.setAttribute("src", v); },
+    });
+
+    // The current value of a form control, which is not the `value` attribute:
+    // a typed-in `<input>` and a `<select>` both answer from state, and
+    // `<option>` falls back to its own text. `defaultValue` is the spec's name
+    // for the attribute half and is reflected in the table above.
+    on(["input", "option", "select", "textarea"], "value", {
+      get() {
+        const tag = this.tagName;
+        if (tag === "SELECT") {
+          const chosen = this.querySelectorAll("option").find((o) => o.selected);
+          return chosen ? chosen.value : "";
+        }
+        if (tag === "OPTION") {
+          const explicit = api.getAttr(this._id, "value");
+          return explicit === null ? this.textContent : explicit;
+        }
+        const kind = (api.getAttr(this._id, "type") || "").toLowerCase();
+        if (kind === "checkbox" || kind === "radio") {
+          const v = api.getAttr(this._id, "value");
+          return v === null ? "on" : v;
+        }
+        return api.getValue(this._id);
+      },
+      set(v) {
+        api.setValue(this._id, String(v));
+        // A page that sets `.value` from script does not get input/change: the
+        // spec fires those for *user* edits, and a framework that re-rendered
+        // on its own write would loop. `Page::type_into` is the user path.
+      },
+    });
+
+    on(["input"], "checked", {
+      get() { return api.getAttr(this._id, "checked") !== null; },
+      set(on_) {
+        if (on_) api.setAttr(this._id, "checked", "");
+        else api.removeAttr(this._id, "checked");
+      },
+    });
+    on(["option"], "selected", {
+      get() { return api.getAttr(this._id, "selected") !== null; },
+      set(on_) {
+        if (on_) api.setAttr(this._id, "selected", "");
+        else api.removeAttr(this._id, "selected");
+      },
+    });
+
+    // `<input>` is the one element whose missing `type` is not the empty
+    // string: an input with no type attribute is a text input, and code reads
+    // `input.type` to decide how to treat it.
+    on(["input"], "type", {
+      get() { return (api.getAttr(this._id, "type") || "text").toLowerCase(); },
+      set(v) { this.setAttribute("type", v); },
+    });
+    reflectOn(["a", "link", "script", "style", "embed", "object", "source",
+               "param", "ol", "ul", "li", "button"], "type", "type");
+
+    reflectOn(["img", "area", "input", "applet"], "alt", "alt");
+    reflectOn(["input", "button", "select", "optgroup", "option", "textarea",
+               "fieldset", "link", "style"], "disabled", "disabled", "bool");
+    reflectOn(["form", "input", "select", "textarea", "button", "output",
+               "fieldset", "object", "param", "map", "meta", "a", "img",
+               "embed", "frame", "applet", "slot"], "name", "name");
+    reflectOn(["button", "param", "data"], "value", "value");
+
+    // Canvas asks for a drawing context and is told, honestly, that there
+    // is not one.
+    //
+    // `null` is not a stub and not the `missingApi` lie: it is what a browser
+    // returns for a context type it cannot provide, and the spec says so. The
+    // difference matters. With the method *absent*, a page calling
+    // `canvas.getContext("2d")` dies on "not a function" and its fallback
+    // branch never runs. With it present and answering null, the page learns
+    // canvas is unavailable and takes the branch it wrote for exactly this.
+    //
+    // What would be a lie is a context object that accepts `fillRect` and
+    // draws nothing — the page would believe it had painted. That is why there
+    // is no such object here, and why implementing 2D properly is a subsystem
+    // decision (§11.5.8) rather than something to fake on the way past.
+    //
+    // The ask is still recorded, so canvas keeps its place on the demand list
+    // instead of disappearing the moment it stopped throwing.
+    on(["canvas"], "getContext", {
+      value: function (kind) {
+        api.unsupported(`canvas.getContext(${String(kind)})`);
+        return null;
+      },
+      writable: true,
+    });
+
+    // The sheet an element owns. Only `<style>` and `<link>` have one, and a
+    // `<link>` that is not a stylesheet has none — `img.sheet` being undefined
+    // is the point of putting it here rather than on Element.
+    on(["style", "link"], "sheet", {
+      get() {
+        if (this.tagName === "LINK") {
+          const rel = (api.getAttr(this._id, "rel") || "").toLowerCase();
+          if (!rel.split(/\s+/).includes("stylesheet")) return null;
+        }
+        return CSSStyleSheet.forElement(this);
+      },
+    });
+  }
 
   const HANDLER_EVENTS = [
     "click", "dblclick", "mousedown", "mouseup", "mouseover", "mouseout", "mousemove",
@@ -1349,6 +1994,29 @@
     });
   }
 
+  /// Turn every `<template shadowrootmode>` inside `within` into a shadow root.
+  ///
+  /// Order matters and is the fiddly part: `attachShadow` takes the host's
+  /// light children out of the way first, so the template has to be removed
+  /// *before* the root is attached, or the template itself would be filed as
+  /// light content of the component it was supposed to become.
+  function adoptDeclarativeShadowRoots(within) {
+    const templates = api
+      .queryAll("template[shadowrootmode]", within._id)
+      .map(wrap)
+      .filter(Boolean);
+    for (const template of templates) {
+      const host = template.parentNode;
+      if (!host || host._shadow || host.nodeType !== 1) continue;
+      const mode = (api.getAttr(template._id, "shadowrootmode") || "open").toLowerCase();
+      const content = [...template.childNodes];
+      for (const node of content) detachFromParent(node);
+      template.remove();
+      const root = host.attachShadow({ mode: mode === "closed" ? "closed" : "open" });
+      for (const node of content) root.appendChild(node);
+    }
+  }
+
   function camelToDash(name) {
     return name.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
   }
@@ -1358,10 +2026,16 @@
   // later `getAttribute("style")` returns. One source of truth, same rule the
   // DOM follows.
   class StyleDeclaration {
-    constructor(node) { this._node = node; }
+    /// `source` is a get/set pair for the declaration *text*.
+    ///
+    /// An element's inline style reads and writes its `style` attribute; a rule
+    /// inside a stylesheet reads and writes its own body. One parser and one
+    /// serialiser for both, rather than a second copy that could disagree with
+    /// this one about what `color:red;;` means.
+    constructor(source) { this._source = source; }
 
     _read() {
-      const raw = api.getAttr(this._node._id, "style") || "";
+      const raw = this._source.get();
       const out = new Map();
       for (const part of raw.split(";")) {
         const at = part.indexOf(":");
@@ -1373,10 +2047,10 @@
       return out;
     }
     _write(map) {
-      const text = [...map.entries()].map(([k, v]) => `${k}: ${v}`).join("; ");
-      if (text) api.setAttr(this._node._id, "style", text);
-      else api.removeAttr(this._node._id, "style");
+      this._source.set([...map.entries()].map(([k, v]) => `${k}: ${v}`).join("; "));
     }
+    get length() { return this._read().size; }
+    item(index) { return [...this._read().keys()][index] ?? ""; }
 
     getPropertyValue(name) { return this._read().get(String(name).toLowerCase()) || ""; }
     setProperty(name, value) {
@@ -1395,8 +2069,21 @@
       this._write(map);
       return had;
     }
-    get cssText() { return api.getAttr(this._node._id, "style") || ""; }
-    set cssText(text) { api.setAttr(this._node._id, "style", String(text)); }
+    get cssText() { return this._source.get(); }
+    set cssText(text) { this._source.set(String(text)); }
+  }
+
+  /// The backing an element's inline style uses: its own `style` attribute, so
+  /// what script sets is what the cascade sees and what `getAttribute("style")`
+  /// returns.
+  function inlineStyleSource(node) {
+    return {
+      get: () => api.getAttr(node._id, "style") || "",
+      set: (text) => {
+        if (text) api.setAttr(node._id, "style", text);
+        else api.removeAttr(node._id, "style");
+      },
+    };
   }
 
   // `el.style.backgroundColor = 'red'` has to reach `background-color`, so the
@@ -1416,8 +2103,8 @@
     },
   };
   const RawStyleDeclaration = StyleDeclaration;
-  StyleDeclaration = function (node) {
-    return new Proxy(new RawStyleDeclaration(node), styleHandler);
+  StyleDeclaration = function (source) {
+    return new Proxy(new RawStyleDeclaration(source), styleHandler);
   };
 
   // ── events ───────────────────────────────────────────────────────────────
@@ -1507,7 +2194,7 @@
             l.handler.handleEvent(event);
           }
         } catch (error) {
-          console.error("listener for " + event.type + " threw: " + error);
+          console.error("listener for " + event.type + " threw: " + withStack(error));
         }
       }
     };
@@ -1876,7 +2563,7 @@
     try {
       observer._callback(entries, observer);
     } catch (error) {
-      console.error("observer callback threw: " + error);
+      console.error("observer callback threw: " + withStack(error));
     }
   }
 
@@ -1962,7 +2649,7 @@
       try {
         observer._callback(records, observer);
       } catch (error) {
-        console.error("MutationObserver callback threw: " + error);
+        console.error("MutationObserver callback threw: " + withStack(error));
       }
     }
   }
@@ -2105,29 +2792,198 @@
   /// how it measures text. The rest of the interface is a selection model this
   /// engine has no use for, and anything reached for beyond what is here
   /// reports itself rather than silently doing nothing.
+  /// Where a node sits among its siblings.
+  function nodeIndex(node) {
+    const parent = node && node.parentNode;
+    if (!parent) return 0;
+    const kids = parent.childNodes;
+    for (let i = 0; i < kids.length; i++) if (kids[i]._id === node._id) return i;
+    return 0;
+  }
+
+  function sameNode(a, b) {
+    return !!a && !!b && a._id !== undefined && a._id === b._id;
+  }
+
+  /// Every node at or under `node`, in document order.
+  function flattenTree(node, out = []) {
+    if (!node) return out;
+    out.push(node);
+    if (node.nodeType === 1 || node.nodeType === 9 || node.nodeType === 11) {
+      for (const kid of node.childNodes) flattenTree(kid, out);
+    }
+    return out;
+  }
+
+  /// A range over the document, with the offsets a real one has.
+  ///
+  /// The version this replaces stored two containers, ignored every offset it
+  /// was given, and answered `toString()` with the start container's entire
+  /// `textContent`. That is fine until something depends on it — and Selection
+  /// and `execCommand` depend on nothing else, because a selection *is* a pair
+  /// of boundary points.
+  ///
+  /// Boundary points are compared by flattening the common ancestor in document
+  /// order rather than by a general position comparison. That is enough for what
+  /// runs through here and it is honest about its shape: ranges whose ends sit
+  /// in unrelated trees are not ordered by this, and nothing asks them to be.
   class Range {
     constructor() {
-      this.startContainer = null;
-      this.endContainer = null;
-      this.collapsed = true;
+      this.startContainer = document;
+      this.startOffset = 0;
+      this.endContainer = document;
+      this.endOffset = 0;
     }
-    selectNode(node) { this.selectNodeContents(node); }
+    get collapsed() {
+      return sameNode(this.startContainer, this.endContainer)
+        ? this.startOffset === this.endOffset
+        : this.startContainer === this.endContainer && this.startOffset === this.endOffset;
+    }
+    setStart(node, offset) { this.startContainer = node; this.startOffset = Number(offset) || 0; }
+    setEnd(node, offset) { this.endContainer = node; this.endOffset = Number(offset) || 0; }
+    setStartBefore(node) { this.setStart(node.parentNode, nodeIndex(node)); }
+    setStartAfter(node) { this.setStart(node.parentNode, nodeIndex(node) + 1); }
+    setEndBefore(node) { this.setEnd(node.parentNode, nodeIndex(node)); }
+    setEndAfter(node) { this.setEnd(node.parentNode, nodeIndex(node) + 1); }
+    selectNode(node) { this.setStartBefore(node); this.setEndAfter(node); }
     selectNodeContents(node) {
-      this.startContainer = node;
-      this.endContainer = node;
-      this.collapsed = false;
+      this.setStart(node, 0);
+      this.setEnd(node, node.nodeType === 3 ? node.data.length : node.childNodes.length);
     }
-    setStart(node, _offset) { this.startContainer = node; this.collapsed = false; }
-    setEnd(node, _offset) { this.endContainer = node; this.collapsed = false; }
     collapse(toStart) {
-      this.collapsed = true;
-      if (toStart) this.endContainer = this.startContainer;
-      else this.startContainer = this.endContainer;
+      if (toStart) { this.endContainer = this.startContainer; this.endOffset = this.startOffset; }
+      else { this.startContainer = this.endContainer; this.startOffset = this.endOffset; }
     }
-    get commonAncestorContainer() { return this.startContainer; }
+    cloneRange() {
+      const copy = new Range();
+      copy.startContainer = this.startContainer; copy.startOffset = this.startOffset;
+      copy.endContainer = this.endContainer; copy.endOffset = this.endOffset;
+      return copy;
+    }
+    detach() {}
+
+    get commonAncestorContainer() {
+      const ancestors = [];
+      for (let n = this.startContainer; n; n = n.parentNode) ancestors.push(n);
+      for (let n = this.endContainer; n; n = n.parentNode) {
+        if (ancestors.some((a) => sameNode(a, n) || a === n)) return n;
+      }
+      return document;
+    }
+
+    /// The nodes this range covers, with any partial text pieces resolved.
+    ///
+    /// Returns entries of `{ node, text, whole }`: `whole` marks a node that is
+    /// entirely inside the range and can simply be removed, which is what makes
+    /// `deleteContents` and `toString` share one traversal instead of
+    /// disagreeing about what "inside" means.
+    _pieces() {
+      const flat = flattenTree(this.commonAncestorContainer);
+      const at = (node) => flat.findIndex((n) => sameNode(n, node) || n === node);
+
+      // A boundary point is either *inside* a text node, or *between* two
+      // children of an element. Resolving both to a position in the flattened
+      // list is the whole trick: without it, `selectNodeContents(p)` — whose
+      // boundaries are both the element `p` — covered no text node at all and
+      // the selection read as empty.
+      const resolve = (container, offset) => {
+        if (container.nodeType === 3) return { index: at(container), textOffset: offset };
+        const here = at(container);
+        if (here < 0) return { index: -1, textOffset: null };
+        const kids = container.childNodes;
+        if (offset < kids.length) return { index: at(kids[offset]), textOffset: null };
+        // Past the last child: the position just after this whole subtree.
+        return { index: here + flattenTree(container).length, textOffset: null };
+      };
+
+      const from = resolve(this.startContainer, this.startOffset);
+      const to = resolve(this.endContainer, this.endOffset);
+      if (from.index < 0 || to.index < 0) return [];
+
+      // An element end boundary sits *before* the node at its index; a text one
+      // sits inside it.
+      const last = to.textOffset === null ? to.index - 1 : to.index;
+      const out = [];
+      for (let i = from.index; i <= last; i++) {
+        const node = flat[i];
+        if (!node || node.nodeType !== 3) continue;
+        const begin = i === from.index && from.textOffset !== null ? from.textOffset : 0;
+        const finish = i === to.index && to.textOffset !== null ? to.textOffset : node.data.length;
+        if (finish <= begin) continue;
+        out.push({
+          node,
+          text: node.data.slice(begin, finish),
+          begin,
+          finish,
+          whole: begin === 0 && finish >= node.data.length,
+        });
+      }
+      return out;
+    }
+
+    toString() { return this._pieces().map((piece) => piece.text).join(""); }
+
+    deleteContents() {
+      // Reversed, so removing a node cannot shift the offsets of the pieces not
+      // yet handled. Sliced by offset rather than by matching the text, because
+      // `split(text).join("")` deleted every *other* occurrence of the same
+      // string in the same node too.
+      for (const piece of this._pieces().reverse()) {
+        if (piece.whole) piece.node.remove();
+        else piece.node.data = piece.node.data.slice(0, piece.begin) + piece.node.data.slice(piece.finish);
+      }
+      this.collapse(true);
+    }
+
+    /// Put a node at the start boundary.
+    insertNode(node) {
+      const container = this.startContainer;
+      if (container.nodeType === 3) {
+        // Split the text so the node lands exactly where the boundary is,
+        // rather than before or after the whole run.
+        const after = container.splitText
+          ? container.splitText(this.startOffset)
+          : null;
+        const parent = container.parentNode;
+        if (!parent) return node;
+        if (after) parent.insertBefore(node, after);
+        else parent.appendChild(node);
+        return node;
+      }
+      const kids = container.childNodes;
+      if (this.startOffset < kids.length) container.insertBefore(node, kids[this.startOffset]);
+      else container.appendChild(node);
+      return node;
+    }
+
+    surroundContents(wrapper) {
+      const text = this.toString();
+      this.deleteContents();
+      wrapper.textContent = text;
+      this.insertNode(wrapper);
+      return wrapper;
+    }
+
+    extractContents() {
+      const fragment = new DocumentFragment();
+      const text = this.toString();
+      this.deleteContents();
+      if (text) fragment.appendChild(document.createTextNode(text));
+      return fragment;
+    }
+    cloneContents() {
+      const fragment = new DocumentFragment();
+      const text = this.toString();
+      if (text) fragment.appendChild(document.createTextNode(text));
+      return fragment;
+    }
+
     getBoundingClientRect() {
-      return this.startContainer && this.startContainer.getBoundingClientRect
-        ? this.startContainer.getBoundingClientRect()
+      const anchor = this.startContainer && this.startContainer.nodeType === 3
+        ? this.startContainer.parentNode
+        : this.startContainer;
+      return anchor && anchor.getBoundingClientRect
+        ? anchor.getBoundingClientRect()
         : { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
     }
     getClientRects() { return [this.getBoundingClientRect()]; }
@@ -2138,20 +2994,174 @@
       for (const kid of host.childNodes) fragment.appendChild(kid);
       return fragment;
     }
-    deleteContents() {
-      if (this.startContainer) for (const kid of this.startContainer.childNodes) kid.remove();
+  }
+
+  /// The document's selection: one range, which is all a browser gives you.
+  ///
+  /// Agents need this to act on text — "select this paragraph, replace it" is
+  /// the shape of a great deal of real work — and `execCommand` below is
+  /// defined entirely in terms of it.
+  ///
+  /// Multiple ranges are not supported and say so by reporting `rangeCount`
+  /// honestly: only Gecko ever implemented them, and code that asks for range
+  /// two is code written against a browser this is not.
+  class Selection {
+    constructor() { this._range = null; this._direction = "forward"; }
+
+    get rangeCount() { return this._range ? 1 : 0; }
+    get isCollapsed() { return !this._range || this._range.collapsed; }
+    get type() {
+      if (!this._range) return "None";
+      return this._range.collapsed ? "Caret" : "Range";
     }
-    cloneRange() {
-      const copy = new Range();
-      copy.startContainer = this.startContainer;
-      copy.endContainer = this.endContainer;
-      copy.collapsed = this.collapsed;
-      return copy;
+    get anchorNode() { return this._range ? this._range.startContainer : null; }
+    get anchorOffset() { return this._range ? this._range.startOffset : 0; }
+    get focusNode() { return this._range ? this._range.endContainer : null; }
+    get focusOffset() { return this._range ? this._range.endOffset : 0; }
+
+    getRangeAt(index) {
+      if (Number(index) !== 0 || !this._range) {
+        throw new DOMException(`there is no range ${index}`, "IndexSizeError");
+      }
+      return this._range;
     }
-    detach() {}
-    toString() {
-      return this.startContainer ? this.startContainer.textContent : "";
+    addRange(range) { if (!this._range) this._range = range; }
+    removeRange(range) { if (this._range === range) this._range = null; }
+    removeAllRanges() { this._range = null; }
+    empty() { this.removeAllRanges(); }
+
+    collapse(node, offset) {
+      if (node === null || node === undefined) return this.removeAllRanges();
+      const range = new Range();
+      range.setStart(node, offset || 0);
+      range.collapse(true);
+      this._range = range;
     }
+    setPosition(node, offset) { this.collapse(node, offset); }
+    collapseToStart() {
+      if (!this._range) throw new DOMException("nothing is selected", "InvalidStateError");
+      this._range.collapse(true);
+    }
+    collapseToEnd() {
+      if (!this._range) throw new DOMException("nothing is selected", "InvalidStateError");
+      this._range.collapse(false);
+    }
+    extend(node, offset) {
+      if (!this._range) throw new DOMException("nothing is selected", "InvalidStateError");
+      this._range.setEnd(node, offset || 0);
+    }
+    setBaseAndExtent(anchor, anchorOffset, focus, focusOffset) {
+      const range = new Range();
+      range.setStart(anchor, anchorOffset);
+      range.setEnd(focus, focusOffset);
+      this._range = range;
+    }
+    selectAllChildren(node) {
+      const range = new Range();
+      range.selectNodeContents(node);
+      this._range = range;
+    }
+    deleteFromDocument() { if (this._range) this._range.deleteContents(); }
+    containsNode(node, partly) {
+      if (!this._range || !node) return false;
+      const covered = flattenTree(this._range.commonAncestorContainer);
+      const inside = covered.some((n) => sameNode(n, node));
+      if (!inside) return false;
+      if (partly) return true;
+      const text = this._range.toString();
+      return text.includes(node.textContent || "");
+    }
+    toString() { return this._range ? this._range.toString() : ""; }
+  }
+
+  const selection = new Selection();
+  function getSelection() { return observed(selection, "Selection"); }
+
+  /// `document.execCommand`, for the commands this engine can actually carry out.
+  ///
+  /// Deprecated, never converged across browsers, and still the only way a page
+  /// edits a `contenteditable` region — which is what an agent driving a rich
+  /// text editor has to go through. So: a small set, done properly, and
+  /// everything else answers **false** from both `execCommand` and
+  /// `queryCommandSupported` rather than returning true and doing nothing. A
+  /// command that reports success without acting is the failure this engine
+  /// keeps removing.
+  const COMMANDS = {
+    bold: (sel) => wrapSelection(sel, "b"),
+    italic: (sel) => wrapSelection(sel, "i"),
+    underline: (sel) => wrapSelection(sel, "u"),
+    strikethrough: (sel) => wrapSelection(sel, "s"),
+    subscript: (sel) => wrapSelection(sel, "sub"),
+    superscript: (sel) => wrapSelection(sel, "sup"),
+
+    inserttext: (sel, value) => replaceSelection(sel, document.createTextNode(String(value ?? ""))),
+    inserthtml: (sel, value) => {
+      const host = document.createElement("div");
+      host.innerHTML = String(value ?? "");
+      const fragment = new DocumentFragment();
+      for (const kid of [...host.childNodes]) fragment.appendChild(kid);
+      return replaceSelection(sel, fragment);
+    },
+    insertlinebreak: (sel) => replaceSelection(sel, document.createElement("br")),
+    insertparagraph: (sel) => replaceSelection(sel, document.createElement("p")),
+
+    delete: (sel) => { if (!sel.rangeCount) return false; sel.getRangeAt(0).deleteContents(); return true; },
+    forwarddelete: (sel) => COMMANDS.delete(sel),
+
+    selectall: (sel) => {
+      const body = wrap(api.body());
+      if (!body) return false;
+      sel.selectAllChildren(body);
+      return true;
+    },
+
+    createlink: (sel, value) => {
+      if (!sel.rangeCount || sel.isCollapsed) return false;
+      const link = document.createElement("a");
+      link.setAttribute("href", String(value ?? ""));
+      return wrapSelectionWith(sel, link);
+    },
+    unlink: (sel) => {
+      if (!sel.rangeCount) return false;
+      const range = sel.getRangeAt(0);
+      let found = false;
+      for (let n = range.startContainer; n; n = n.parentNode) {
+        if (n.nodeType === 1 && n.tagName === "A") {
+          const text = document.createTextNode(n.textContent);
+          n.parentNode.insertBefore(text, n);
+          n.remove();
+          found = true;
+          break;
+        }
+      }
+      return found;
+    },
+
+    formatblock: (sel, value) => {
+      const tag = String(value ?? "").replace(/[<>]/g, "").toLowerCase();
+      if (!tag) return false;
+      return wrapSelectionWith(sel, document.createElement(tag));
+    },
+  };
+
+  function replaceSelection(sel, node) {
+    if (!sel.rangeCount) return false;
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(node);
+    return true;
+  }
+
+  function wrapSelectionWith(sel, wrapper) {
+    if (!sel.rangeCount) return false;
+    const range = sel.getRangeAt(0);
+    if (range.collapsed) return true;
+    range.surroundContents(wrapper);
+    return true;
+  }
+
+  function wrapSelection(sel, tag) {
+    return wrapSelectionWith(sel, document.createElement(tag));
   }
 
   /// `new DOMParser().parseFromString(html, "text/html")`.
@@ -2255,6 +3265,45 @@
     close() {},
 
     createRange() { return observed(new Range(), "Range"); },
+    getSelection() { return getSelection(); },
+
+    /// The commands this engine carries out, and no others.
+    ///
+    /// `queryCommandSupported` answers from the same table `execCommand` acts
+    /// on, so the two can never disagree — a page that asks first and acts
+    /// second gets one consistent story.
+    execCommand(name, _showUI, value) {
+      const key = String(name ?? "").toLowerCase();
+      const command = COMMANDS[key];
+      if (!command) {
+        api.unsupported(`document.execCommand(${key})`);
+        return false;
+      }
+      try {
+        return !!command(selection, value);
+      } catch (error) {
+        console.error(`execCommand(${key}) threw: ${withStack(error)}`);
+        return false;
+      }
+    },
+    queryCommandSupported(name) {
+      return Object.prototype.hasOwnProperty.call(COMMANDS, String(name ?? "").toLowerCase());
+    },
+    queryCommandEnabled(name) {
+      return this.queryCommandSupported(name) && selection.rangeCount > 0;
+    },
+    /// Always false, and honest about why: this engine keeps no record of the
+    /// formatting around the caret, so "is the selection bold" is a question it
+    /// cannot answer. Returning a guess would be worse than returning false —
+    /// an editor toolbar would light up at random.
+    queryCommandState(name) {
+      api.unsupported(`document.queryCommandState(${String(name ?? "")})`);
+      return false;
+    },
+    queryCommandValue(name) {
+      api.unsupported(`document.queryCommandValue(${String(name ?? "")})`);
+      return "";
+    },
     // The pre-constructor way of making an event, still emitted by older
     // libraries and by anything compiled for old targets. The event is inert
     // until `initEvent` names it, which is exactly how the legacy API works.
@@ -2321,7 +3370,7 @@
     // reads it.
     get cookie() { return api.readCookies(); },
     set cookie(value) { api.writeCookie(String(value)); },
-    get readyState() { return "complete"; },
+    get readyState() { return documentReadyState; },
 
     // A document is node type 9 and its child is the root element. Scripts that
     // walk upward from a node and stop at the document depend on both.
@@ -2343,6 +3392,11 @@
     // This engine parses HTML and nothing else, so there is one honest answer.
     contentType: "text/html",
     // Adopting a sheet applies it. Assignment replaces the set, as in a browser.
+    /// What scrolls when the document scrolls. In standards mode that is
+    /// `<html>`, and code reads it to avoid the quirks-mode `<body>` split.
+    get scrollingElement() { return wrap(api.root()); },
+    /// Every `<style>` and `<link rel=stylesheet>` the document has, as sheets.
+    get styleSheets() { return styleSheetList(); },
     get adoptedStyleSheets() { return adoptedSheets.slice(); },
     set adoptedStyleSheets(sheets) {
       adoptedSheets = Array.from(sheets || []);
@@ -2571,7 +3625,7 @@
       if (timer.every === null) timers.delete(id);
       else timer.due = clock + timer.every;
       try { timer.fn(...timer.args); } catch (error) {
-        console.error("timer threw: " + error);
+        console.error("timer threw: " + withStack(error));
       }
       ran++;
     }
@@ -2590,6 +3644,21 @@
     return pending;
   };
 
+  /// When the earliest waiting timer is due, or -1 if none is.
+  ///
+  /// The settle loop uses this to jump the virtual clock to the next thing that
+  /// will actually happen, rather than stepping toward it 16ms at a time. A
+  /// page that sets one ten-second timeout should cost one step, not six
+  /// hundred and twenty-five, and stepping was not merely slow: it meant a
+  /// timer due at the settle budget was never reached at all.
+  globalThis.__h5iNextTimerDue = function () {
+    let soonest = -1;
+    for (const timer of timers.values()) {
+      if (soonest < 0 || timer.due < soonest) soonest = timer.due;
+    }
+    return soonest;
+  };
+
   defineLive({
     innerWidth: () => api.viewport().width,
     innerHeight: () => api.viewport().height,
@@ -2605,6 +3674,76 @@
   // it. Exposed rather than reimplemented on the Rust side so a synthetic
   // click takes exactly the path a page's own `.click()` takes.
   globalThis.__h5iWrapById = wrap;
+
+  /// How far through loading the document says it is.
+  ///
+  /// This was the constant `"complete"` until WPT was pointed at the engine.
+  /// A constant is the answer that makes the *common* idiom work — the one that
+  /// reads `readyState === "loading"` and otherwise initialises immediately —
+  /// so every page in §8's four corpora took the immediate branch and nothing
+  /// looked wrong. What it hid is that the other branch never arrived, because
+  /// no lifecycle event was ever fired at all (§11.5.2).
+  let documentReadyState = "loading";
+
+  /// Fire the document lifecycle: DOMContentLoaded, then load.
+  ///
+  /// Called once by the host after every script in the document has been
+  /// evaluated, and before settling, so the callbacks these wake are settled
+  /// along with everything else they start.
+  ///
+  /// Both are dispatched at the root element because that is where this engine
+  /// puts `window` and `document` listeners alike, so a page that waits on
+  /// either sees them. `load` deliberately does not bubble, matching a browser:
+  /// a page that listens for `load` on a container to catch its images must not
+  /// be told the document is one.
+  /// Expose elements with an `id` as globals, the way a browser does.
+  ///
+  /// `<div id="target">` makes `window.target` that element. It is a legacy
+  /// corner of the platform and it is *everywhere* in test suites and in older
+  /// page script: "target is not defined" was the single largest cause of files
+  /// this engine could not report on at all — 267 in `css` alone, plus `main`,
+  /// `container`, `host` and a long tail. A ReferenceError on the first line
+  /// stops a file before it can say anything, which is why one missing legacy
+  /// behaviour cost more than most missing APIs.
+  ///
+  /// Getters rather than values, so the global follows the element if the page
+  /// replaces it, and never a name `globalThis` already has: an element with
+  /// `id="document"` must not be able to take `document` away from the page.
+  globalThis.__h5iInstallNamedAccess = function () {
+    for (const id of api.queryAll("[id]", 0)) {
+      const name = api.getAttr(id, "id");
+      if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) continue;
+      if (name in globalThis) continue;
+      Object.defineProperty(globalThis, name, {
+        configurable: true,
+        enumerable: false,
+        get() { return wrap(api.query("#" + cssEscapeIdent(name), 0)); },
+      });
+    }
+  };
+
+  /// Enough escaping to put an id back into a selector safely.
+  function cssEscapeIdent(name) {
+    return name.replace(/[^\w-]/g, (ch) => "\\" + ch);
+  }
+
+  globalThis.__h5iFireLifecycle = function () {
+    const root = wrap(api.root());
+    const at = (event) => { if (root) root.dispatchEvent(event); };
+
+    // Again here: a script that ran during parsing may have added elements
+    // with ids, and the handlers about to run will reach for them by name.
+    globalThis.__h5iInstallNamedAccess();
+
+    documentReadyState = "interactive";
+    at(new Event("readystatechange"));
+    at(new Event("DOMContentLoaded", { bubbles: true }));
+
+    documentReadyState = "complete";
+    at(new Event("readystatechange"));
+    at(new Event("load"));
+    at(new Event("pageshow"));
+  };
 
   // ── the rest of the window ───────────────────────────────────────────────
 
@@ -2826,12 +3965,216 @@
   // individually, and answering an empty list for a sheet that plainly has rules
   // would be the confident wrong answer it keeps having to refuse — so it goes
   // unanswered, and reports itself.
+  /// Split a stylesheet into its top-level rules.
+  ///
+  /// Brace matching that knows about strings and comments, which is all
+  /// `cssRules` needs: where each rule starts and ends. **It is not a CSS
+  /// parser and does not pretend to be one** — the cascade is Stylo's, this
+  /// only reports the text back in the shape the CSSOM asks for. A declaration
+  /// this splitter mis-slices would still be applied correctly to the page,
+  /// because the page's styles never come through here.
+  function splitRules(css) {
+    const found = [];
+    let depth = 0, start = 0, index = 0, quote = null;
+    while (index < css.length) {
+      const ch = css[index];
+      if (quote) {
+        if (ch === "\\") index++;
+        else if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === "/" && css[index + 1] === "*") {
+        const end = css.indexOf("*/", index + 2);
+        index = end < 0 ? css.length : end + 1;
+      } else if (ch === "{") {
+        depth++;
+      } else if (ch === "}") {
+        if (--depth <= 0) {
+          found.push(css.slice(start, index + 1));
+          start = index + 1;
+          depth = 0;
+        }
+      } else if (depth === 0 && ch === ";") {
+        // `@import`, `@charset` and friends: a rule with no block at all.
+        found.push(css.slice(start, index + 1));
+        start = index + 1;
+      }
+      index++;
+    }
+    if (start < css.length) found.push(css.slice(start));
+    return found.map((text) => text.trim()).filter(Boolean);
+  }
+
+  /// Split one rule into its prelude and its body, or null if it has no body.
+  function ruleParts(text) {
+    let quote = null;
+    for (let index = 0; index < text.length; index++) {
+      const ch = text[index];
+      if (quote) {
+        if (ch === "\\") index++;
+        else if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === "{") {
+        const close = text.lastIndexOf("}");
+        return { prelude: text.slice(0, index).trim(), body: text.slice(index + 1, close) };
+      }
+    }
+    return null;
+  }
+
+  const RULE_TYPES = {
+    style: 1, import: 3, media: 4, "font-face": 5, page: 6, keyframes: 7,
+    namespace: 10, supports: 12, "counter-style": 11, "font-feature-values": 14,
+    layer: 0, container: 0, property: 0, scope: 0, starting: 0,
+  };
+
+  class CSSRule {
+    constructor(text, sheet) { this._text = text; this._sheet = sheet; }
+    get cssText() { return this._text; }
+    /// Push this rule's new text back into the stylesheet it belongs to.
+    ///
+    /// Without this a mutation was a silent no-op: `cssRules` built a fresh
+    /// object per access, so `sheet.cssRules[0].style.color = "blue"` wrote to
+    /// a throwaway and the sheet still said red — success reported, nothing
+    /// changed. CSS-in-JS libraries mutate rules, so this was the worst kind of
+    /// wrong: quiet.
+    _changed() { if (this._sheet) this._sheet._rewriteFromRules(); }
+    get parentStyleSheet() { return this._sheet ?? null; }
+    get parentRule() { return null; }
+    get type() {
+      const parts = ruleParts(this._text) ?? { prelude: this._text };
+      if (!parts.prelude.startsWith("@")) return RULE_TYPES.style;
+      const name = parts.prelude.slice(1).split(/[\s({]/)[0].toLowerCase();
+      return RULE_TYPES[name] ?? 0;
+    }
+  }
+
+  class CSSStyleRule extends CSSRule {
+    get selectorText() { return (ruleParts(this._text)?.prelude ?? "").trim(); }
+    set selectorText(value) {
+      const parts = ruleParts(this._text);
+      if (!parts) return;
+      this._text = `${String(value)} {${parts.body}}`;
+      this._changed();
+    }
+    get style() {
+      const rule = this;
+      return new StyleDeclaration({
+        get: () => (ruleParts(rule._text)?.body ?? "").trim(),
+        set: (text) => {
+          const parts = ruleParts(rule._text);
+          if (!parts) return;
+          rule._text = `${parts.prelude} { ${text} }`;
+          rule._changed();
+        },
+      });
+    }
+  }
+
+  /// `@media`, `@supports` and the other rules that contain rules.
+  class CSSGroupingRule extends CSSRule {
+    get conditionText() { return (ruleParts(this._text)?.prelude ?? "").replace(/^@\w+\s*/, "").trim(); }
+    get cssRules() {
+      return splitRules(ruleParts(this._text)?.body ?? "").map((text) => makeRule(text, this._sheet));
+    }
+  }
+
+  function makeRule(text, sheet) {
+    const parts = ruleParts(text);
+    if (!parts) return new CSSRule(text, sheet);
+    if (!parts.prelude.startsWith("@")) return new CSSStyleRule(text, sheet);
+    const name = parts.prelude.slice(1).split(/[\s({]/)[0].toLowerCase();
+    if (name === "media" || name === "supports" || name === "container"
+      || name === "layer" || name === "scope") {
+      return new CSSGroupingRule(text, sheet);
+    }
+    return new CSSRule(text, sheet);
+  }
+
+  /// A stylesheet, either constructed by script or belonging to an element.
+  ///
+  /// Both directions matter and they are not the same object. A constructed
+  /// sheet (`new CSSStyleSheet()`, for `adoptedStyleSheets`) *writes* a
+  /// `<style>` element into the document. An element's own sheet — `<style>` or
+  /// `<link rel=stylesheet>` — *reads* what is already there. Until WPT asked,
+  /// only the first existed, so `document.styleSheets` and `el.sheet` were the
+  /// two most-wanted CSSOM gaps on the list at 3,779 calls between them.
   class CSSStyleSheet {
-    constructor() {
+    constructor(options) {
       this._text = "";
       this._element = null;
-      this.disabled = false;
+      this._owned = false;
+      this.disabled = !!(options && options.disabled);
+      if (options && options.media) this._media = String(options.media);
     }
+
+    /// The sheet an element owns, cached on the element so two reads of
+    /// `el.sheet` are the same object, as they are in a browser.
+    static forElement(element) {
+      if (element._sheet) return element._sheet;
+      const sheet = new CSSStyleSheet();
+      sheet._element = element;
+      sheet._owned = true;
+      element._sheet = sheet;
+      return sheet;
+    }
+
+    get ownerNode() { return this._element; }
+    get ownerRule() { return null; }
+    get parentStyleSheet() { return null; }
+    get type() { return "text/css"; }
+    get title() {
+      const raw = this._element ? api.getAttr(this._element._id, "title") : null;
+      return raw || null;
+    }
+    get media() {
+      if (this._media !== undefined) return this._media;
+      return (this._element && api.getAttr(this._element._id, "media")) || "";
+    }
+    /// Null for a `<style>` and for a constructed sheet, as in a browser: only
+    /// a sheet that came from a URL has one.
+    get href() {
+      if (!this._element || this._element.tagName !== "LINK") return null;
+      return this._element.href || null;
+    }
+
+    _css() {
+      if (!this._owned) return this._text;
+      // A `<link>`'s bytes were fetched and parsed natively and never reach
+      // script, so its rules are not readable here. Empty rather than wrong,
+      // and the same answer a browser gives for a cross-origin sheet.
+      if (this._element.tagName === "LINK") return "";
+      return this._element.textContent || "";
+    }
+
+    /// The rules, cached against the text they were parsed from.
+    ///
+    /// Two reasons, and neither is only speed. A browser's `cssRules` hands
+    /// back the same object every time, so a page that keeps a rule and mutates
+    /// it later must keep hold of something real; and re-splitting on every
+    /// index made a loop over the rules quadratic in the size of the sheet.
+    get cssRules() {
+      const css = this._css();
+      if (this._rulesFor !== css) {
+        this._rulesFor = css;
+        this._rules = splitRules(css).map((text) => makeRule(text, this));
+      }
+      return this._rules;
+    }
+    get rules() { return this.cssRules; }
+
+    /// Re-serialise the cached rules after one of them changed.
+    ///
+    /// `_rulesFor` is set to the text we just wrote, so the next read finds the
+    /// cache warm and the caller keeps the rule object it is holding.
+    _rewriteFromRules() {
+      if (!this._rules) return;
+      const text = this._rules.map((rule) => rule.cssText).join("\n");
+      this._rulesFor = text;
+      this._replaceAll(text);
+    }
+
     replaceSync(text) {
       this._text = String(text);
       this._apply();
@@ -2840,10 +4183,39 @@
       this.replaceSync(text);
       return Promise.resolve(this);
     }
-    insertRule(rule, _index) {
-      this._text += String(rule);
+    insertRule(rule, index) {
+      const rules = splitRules(this._css());
+      const at = index === undefined ? 0 : Math.min(Number(index) || 0, rules.length);
+      rules.splice(at, 0, String(rule));
+      this._replaceAll(rules.join("\n"));
+      return at;
+    }
+    deleteRule(index) {
+      const rules = splitRules(this._css());
+      const at = Number(index) || 0;
+      if (at < 0 || at >= rules.length) {
+        throw new DOMException(`there is no rule ${at} to delete`, "IndexSizeError");
+      }
+      rules.splice(at, 1);
+      this._replaceAll(rules.join("\n"));
+    }
+    _replaceAll(text) {
+      if (this._owned) {
+        // A `<link>`'s bytes were fetched and parsed natively and never reach
+        // script, so there is nothing here to edit. Refused loudly rather than
+        // quietly: `insertRule` used to answer 0 and change nothing, which is a
+        // page believing it had installed a style.
+        if (this._element.tagName === "LINK") {
+          throw new DOMException(
+            "this stylesheet came from a <link> and its rules are not editable here",
+            "NoModificationAllowedError",
+          );
+        }
+        this._element.textContent = text;
+        return;
+      }
+      this._text = text;
       this._apply();
-      return 0;
     }
     _apply() {
       if (!this._element) {
@@ -2854,6 +4226,25 @@
       }
       this._element.textContent = this._text;
     }
+  }
+
+  /// Every sheet the document owns, in document order.
+  ///
+  /// Indexed as well as iterable, because `document.styleSheets[0]` is how
+  /// almost every caller reaches for it.
+  function styleSheetList() {
+    const sheets = api
+      .queryAll("style, link[rel~=stylesheet i]", 0)
+      .map(wrap)
+      .filter(Boolean)
+      .map((element) => CSSStyleSheet.forElement(element));
+    const list = {
+      get length() { return sheets.length; },
+      item: (index) => sheets[index] ?? null,
+      [Symbol.iterator]: () => sheets[Symbol.iterator](),
+    };
+    sheets.forEach((sheet, index) => { list[index] = sheet; });
+    return list;
   }
 
   // ── text encoding, randomness, cloning, and the old request object ───────
@@ -2890,37 +4281,36 @@
   }
 
   class TextDecoder {
-    constructor(label) { this._label = String(label || "utf-8").toLowerCase(); }
-    get encoding() { return "utf-8"; }
+    /// Validates its label, and decodes as *that* label.
+    ///
+    /// Both used to be wrong rather than missing: every label was accepted and
+    /// every one answered "utf-8", so a page asking whether an encoding was
+    /// supported was told yes and a page decoding Shift-JIS got mojibake with
+    /// no error. The label table and the decoders are `encoding_rs`'s, which is
+    /// the same table the standard defines rather than a list of our own that
+    /// would drift from it.
+    constructor(label, options) {
+      const wanted = label === undefined ? "utf-8" : String(label);
+      const canonical = api.encodingFor(wanted);
+      if (canonical === null || canonical === undefined) {
+        throw new RangeError(`${wanted} is not a known encoding`);
+      }
+      // `replacement` exists only to be refused, and decoding as it is not a
+      // thing a caller can ask for.
+      this._encoding = canonical;
+      this._fatal = !!(options && options.fatal);
+      this._ignoreBOM = !!(options && options.ignoreBOM);
+    }
+    get encoding() { return this._encoding; }
+    get fatal() { return this._fatal; }
+    get ignoreBOM() { return this._ignoreBOM; }
     decode(input) {
       if (input === undefined || input === null) return "";
       // Anything byte-shaped: a typed array, an ArrayBuffer, or a plain array.
       const bytes = input instanceof Uint8Array
         ? input
         : new Uint8Array(input.buffer ? input.buffer : input);
-      let out = "";
-      for (let i = 0; i < bytes.length; ) {
-        const byte = bytes[i];
-        let code;
-        let width;
-        if (byte < 0x80) { code = byte; width = 1; }
-        else if ((byte & 0xe0) === 0xc0) { code = byte & 31; width = 2; }
-        else if ((byte & 0xf0) === 0xe0) { code = byte & 15; width = 3; }
-        else if ((byte & 0xf8) === 0xf0) { code = byte & 7; width = 4; }
-        else { out += "�"; i += 1; continue; }
-
-        if (i + width > bytes.length) { out += "�"; break; }
-        for (let k = 1; k < width; k++) {
-          const cont = bytes[i + k];
-          if ((cont & 0xc0) !== 0x80) { code = -1; break; }
-          code = (code << 6) | (cont & 63);
-        }
-        // A truncated or overlong sequence becomes the replacement character,
-        // which is what a decoder is specified to do rather than throwing.
-        out += code < 0 ? "�" : String.fromCodePoint(code);
-        i += width;
-      }
-      return out;
+      return api.decodeBytes(this._encoding, Array.from(bytes), this._fatal);
     }
   }
 
@@ -3060,9 +4450,80 @@
     }
   }
 
+  /// The `CSS` namespace: `CSS.escape` and `CSS.supports`.
+  ///
+  /// `supports` is answered by actually handing the declaration to Stylo rather
+  /// than by consulting a list, because a list is a second opinion about what
+  /// this engine supports and the two would drift the moment Stylo moved. It
+  /// also matters more than most answers: pages call `CSS.supports` in order to
+  /// take a *different code path*, so a wrong answer does not degrade the page,
+  /// it misroutes it.
+  const CSS = observed({
+    escape(value) {
+      // The spec's algorithm, which is not `encodeURIComponent` and not a
+      // regex over "special characters": the rules for a leading digit, a
+      // leading hyphen-digit, and NULL are each different, and a selector
+      // built from a wrong escape silently matches nothing.
+      const text = String(value);
+      let out = "";
+      for (let index = 0; index < text.length; index++) {
+        const code = text.charCodeAt(index);
+        const ch = text[index];
+        if (code === 0) { out += "\uFFFD"; continue; }
+        if ((code >= 0x1 && code <= 0x1f) || code === 0x7f
+          || (index === 0 && code >= 0x30 && code <= 0x39)
+          || (index === 1 && code >= 0x30 && code <= 0x39 && text.charCodeAt(0) === 0x2d)) {
+          out += "\\" + code.toString(16) + " ";
+          continue;
+        }
+        if (index === 0 && code === 0x2d && text.length === 1) { out += "\\" + ch; continue; }
+        if (code >= 0x80 || code === 0x2d || code === 0x5f
+          || (code >= 0x30 && code <= 0x39) || (code >= 0x41 && code <= 0x5a)
+          || (code >= 0x61 && code <= 0x7a)) {
+          out += ch;
+          continue;
+        }
+        out += "\\" + ch;
+      }
+      return out;
+    },
+    supports(propertyOrCondition, value) {
+      if (value !== undefined) {
+        return api.supportsCss(String(propertyOrCondition), String(value));
+      }
+      // The one-argument form takes a condition, `(display: grid)`. Only the
+      // plain parenthesised declaration is answered; `and`/`or`/`not` are a
+      // grammar rather than a declaration and are named rather than guessed.
+      const text = String(propertyOrCondition).trim();
+      const match = /^\(\s*([-\w]+)\s*:\s*([^]*?)\s*\)$/.exec(text);
+      if (!match) {
+        api.unsupported(`CSS.supports(${text.slice(0, 40)})`);
+        return false;
+      }
+      return api.supportsCss(match[1], match[2]);
+    },
+  }, "CSS");
+
   Object.assign(globalThis, {
+    CSS,
     addEventListener, removeEventListener, dispatchEvent,
     window,
+    // The browsing context's view of itself. These are not stubs: §6 refuses
+    // iframes and popups, so this document is always a top-level context with
+    // no children, and every value below is what a real browser reports for
+    // one. `self` in particular gates a great deal of library code — the whole
+    // of testharness.js walks `w != w.parent` from `self` before it can run a
+    // single assertion, so its absence read as "the engine cannot run WPT"
+    // rather than as one missing binding.
+    getSelection,
+    Selection,
+    self: window,
+    parent: window,
+    top: window,
+    frames: window,
+    length: 0,
+    frameElement: null,
+    opener: null,
     document,
     console,
     // Same reporting rule as `document`: a method missing from one of these was
@@ -3188,6 +4649,21 @@
           get(target, key) {
             if (typeof key !== "string" || key in target) return Reflect.get(target, key);
             return read(camelToDash(key));
+          },
+          // `"color" in getComputedStyle(el)` asks `has`, not `get`, and
+          // without this trap it fell through to the bare backing object and
+          // answered **false for every property**. A computed style declares
+          // every property the engine knows, so that is what it now reports.
+          //
+          // WPT's `test_computed_value` asserts this on its first line and it
+          // is the standard helper for CSS parsing tests, so thousands of
+          // subtests failed before comparing a single value — all of
+          // `css-color` among them, where Stylo already supported every
+          // feature under test.
+          has(target, key) {
+            if (typeof key !== "string") return Reflect.has(target, key);
+            if (key in target) return true;
+            return api.isCssProperty(camelToDash(key));
           },
         }
       );

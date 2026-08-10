@@ -452,6 +452,15 @@ impl Page {
         let mut script = crate::script::Script::new(self.dom(), broker.clone(), &self.url)
             .map_err(H5iError::Metadata)?;
 
+        // `<div id="x">` makes `x` a global, which is legacy and is also how a
+        // great deal of test and older page script finds its subject. Installed
+        // before the first script rather than after, because the first script is
+        // usually the one that reaches for it, and a ReferenceError on line one
+        // ends a file before it can report anything at all.
+        if let Err(error) = script.eval("__h5iInstallNamedAccess()") {
+            script.note_error(&format!("named access could not be installed: {error}"));
+        }
+
         // Classic scripts first, in document order, then modules in document
         // order. That is the deferred semantics `type="module"` carries: a
         // module never runs before a classic script that follows it in the
@@ -571,6 +580,21 @@ impl Page {
             if let Err(error) = script.eval_module(&code, &path) {
                 script.note_error(&error);
             }
+        }
+
+        // The document is now as loaded as it is going to get, so say so.
+        // Before settling, because these callbacks start timers and fetches of
+        // their own and those are part of loading the page rather than of
+        // whatever the agent does next.
+        //
+        // This is one call and it unblocked an entire test suite: testharness.js
+        // gates every result it will ever report on a single `load` listener
+        // (`on_event(window, 'load', ...)`), with no `readyState` fallback, so
+        // an engine that never fires it scores nothing while looking merely
+        // slow. Real pages hid this because `readyState` answered "complete"
+        // and their fallback path ran.
+        if let Err(error) = script.eval("__h5iFireLifecycle()") {
+            script.note_error(&format!("the load lifecycle could not be fired: {error}"));
         }
 
         let settled = script.settle();

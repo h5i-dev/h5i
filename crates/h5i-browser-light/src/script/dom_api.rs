@@ -87,6 +87,11 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("outerHtml", 1, outer_html),
         ("rect", 1, rect),
         ("computedStyle", 2, computed_style),
+        ("supportsCss", 2, supports_css),
+        ("isCssProperty", 1, is_css_property),
+        ("innerText", 1, inner_text),
+        ("encodingFor", 1, encoding_for),
+        ("decodeBytes", 3, decode_bytes),
         ("parseUrl", 2, parse_url),
         ("viewport", 0, viewport),
         ("readCookies", 0, read_cookies),
@@ -482,6 +487,19 @@ fn insert_before(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     let host = host(context)?;
     {
         let mut doc = host.dom.borrow_mut();
+        // blitz inserts relative to the anchor's parent and unwraps it, so an
+        // anchor with no parent aborts the process. Checked here rather than
+        // only in the prelude because a panic is not a DOM error: it takes the
+        // page, the snapshot and the receipts with it, and WPT reaches this
+        // path on purpose (`ChildNode-after`, `-before`, `-replaceWith`).
+        if doc.get_node(anchor).map(|node| node.parent.is_none()).unwrap_or(true) {
+            return Err(boa_engine::JsNativeError::error()
+                .with_message(
+                    "insertBefore: the reference node has no parent, so there is \
+                     nowhere to insert before it",
+                )
+                .into());
+        }
         let mut mutator = doc.mutate();
         mutator.insert_nodes_before(anchor, &[new_id]);
     }
@@ -547,15 +565,47 @@ fn set_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     let name = arg_string(args, 1, context)?.to_lowercase();
     let value = arg_string(args, 2, context)?;
     let host = host(context)?;
-    {
+    let panicked = {
         let mut doc = host.dom.borrow_mut();
         let qual = blitz_dom::QualName::new(
             None,
             blitz_dom::ns!(),
             blitz_dom::LocalName::from(name.as_str()),
         );
-        let mut mutator = doc.mutate();
-        mutator.set_attribute(id, qual, &value);
+        // Guarded, because setting an attribute can start an image load and
+        // blitz `expect`s the URL to resolve. A page that writes
+        // `img.src = "http://{{host}}:NaN/x"` — an unsubstituted template, a
+        // typo, anything malformed — aborted the whole process, taking the
+        // page, the snapshot and the receipts with it. 81 of the 140 crashes in
+        // the last sweep were this one line.
+        //
+        // The attribute may be left unset when this fires, which is a worse
+        // answer than a browser gives and a much better one than no process.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut mutator = doc.mutate();
+            mutator.set_attribute(id, qual, &value);
+        }))
+        .err()
+        .map(|payload| {
+            payload
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "the layout engine panicked".to_string())
+        })
+    };
+    if let Some(detail) = panicked {
+        let first_line = detail.lines().next().unwrap_or("").to_string();
+        super::host::push_console(
+            &mut host.console.borrow_mut(),
+            ConsoleLine::engine(
+                "error",
+                format!("setting `{name}` was refused by the layout engine: {first_line}"),
+            ),
+        );
+        host.unsupported
+            .borrow_mut()
+            .record(&format!("setAttribute({name}) with a value blitz cannot resolve"));
     }
     host.mark_dirty();
     Ok(JsValue::undefined())
@@ -1241,19 +1291,47 @@ fn rect(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
     Ok(array.into())
 }
 
-/// A curated set of computed values, read from the styles Stylo resolved.
+/// Every computed value Stylo can resolve, which is nearly all of CSS.
 ///
-/// Curated rather than complete because Stylo's per-property accessors are
-/// generated at build time and there is no stable generic "give me property X
-/// as a string" on `ComputedValues` to bind against. So this answers the
-/// properties pages actually branch on — visibility checks and box metrics —
-/// and anything else records itself as unsupported rather than returning a
-/// plausible lie. A wrong `display` is worse than a missing one: it sends a
-/// framework down a branch the real browser would never take.
+/// The note that stood here said Stylo's accessors are generated at build time
+/// and there is "no stable generic 'give me property X as a string' on
+/// `ComputedValues` to bind against", so six properties were hand-listed and
+/// every other question answered "". That was wrong, and WPT is what proved it:
+/// `ComputedValues::computed_value_to_string` takes a `PropertyDeclarationId`
+/// and does exactly that, and `PropertyId::parse_enabled_for_all_content` turns
+/// a property name into one without needing a parser context to be built first.
+///
+/// §11.5.11 recorded `getComputedStyle` as implemented far enough to look
+/// implemented — `color` came back empty. This is the fix, and the shape of the
+/// mistake is worth keeping: the curated list was not a considered scope, it
+/// was a wrong belief about the dependency, and it survived four corpora
+/// because a page that reads `color` and gets "" mostly carries on.
+///
+/// What is still not answered names itself: shorthands, custom properties, and
+/// the layout-dependent resolutions (`top` on a positioned box resolves to a
+/// used pixel value in a browser, and Stylo alone cannot know it).
 fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let property = arg_string(args, 1, context)?.to_lowercase();
     let host = host(context)?;
+
+    // Recompute the cascade first if the tree moved since it last ran.
+    //
+    // A browser resolves style on demand, and pages depend on it: the CSSOM
+    // tests build their whole subject in script — `createElement`, `appendChild`,
+    // then `getComputedStyle` — and every one of them read "" here, because
+    // Stylo had never seen the new nodes. `resolve` is safe to call from a
+    // primitive for the same reason every other mutation is: it never calls back
+    // into script, so nothing can re-enter while it runs.
+    //
+    // `styles_stale` rather than `dirty`, because the settle loop consumes
+    // `dirty` to decide whether to lay out and clearing it here would skip a
+    // layout pass someone else was waiting for.
+    if *host.styles_stale.borrow() {
+        *host.styles_stale.borrow_mut() = false;
+        host.dom.borrow_mut().resolve(0.0);
+    }
+
     let doc = host.dom.borrow();
 
     let Some(node) = doc.get_node(id) else {
@@ -1281,22 +1359,263 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     };
 
     use style_traits::ToCss as _;
-    let answer = match property.as_str() {
-        // `to_css_string`, not `{:?}`: Stylo's `Display` is a bitfield whose
-        // Debug form is `display(514)`, and handing an agent that instead of
-        // `block` is precisely the plausible lie this engine refuses.
-        "display" => node.display_constructed_as.to_css_string(),
-        "visibility" => styles.clone_visibility().to_css_string(),
-        "position" => styles.clone_position().to_css_string(),
-        "opacity" => styles.clone_opacity().to_string(),
-        other => {
+    // `display` used to be answered from `node.display_constructed_as`, which
+    // is what the *box tree* built, not what the cascade computed. Those are
+    // different questions and the difference is not subtle: every inline
+    // element reported `block`, because that is the box blitz constructs for a
+    // run of inline content. `getComputedStyle` is defined to return the
+    // computed value, so it now goes through the same longhand path as
+    // everything else and a `<span>` says `inline`.
+    //
+    // `snapshot.rs` was already reading `clone_display()` for its hidden-content
+    // filter, so the engine held two answers to one question and only the
+    // snapshot's was right. Found by review, after `innerText` used this to
+    // decide where the line breaks go and put one between two spans.
+
+    use style::properties::{PropertyDeclarationId, PropertyId};
+    let answer = match PropertyId::parse_enabled_for_all_content(&property) {
+        // A shorthand resolves to `None` here and so names itself: its computed
+        // value is its longhands re-serialised, and getting that subtly wrong is
+        // worse than not answering, because a caller comparing two `border`
+        // strings would be told two different borders match.
+        Ok(PropertyId::NonCustom(id)) => id
+            .as_longhand()
+            .map(|longhand| styles.computed_value_to_string(PropertyDeclarationId::Longhand(longhand))),
+        // `--custom-property`, which is how real pages theme themselves, so
+        // this was a live gap rather than an obscure one.
+        //
+        // Looked up by walking `property_at`, which is the public way in: the
+        // keyed `get` wants a `PropertyDescriptors` for the registration, and
+        // an unregistered custom property — which is nearly all of them — has
+        // none. An unset one answers "" rather than naming itself, because ""
+        // is what a browser says and the property is not *missing*, it is
+        // simply not set.
+        Ok(PropertyId::Custom(name)) => {
+            let customs = styles.custom_properties();
+            let mut answer = String::new();
+            let mut index = 0usize;
+            while let Some((key, value)) = customs.property_at(index) {
+                if *key == name {
+                    answer = value.as_ref().map(|v| v.to_css_string()).unwrap_or_default();
+                    break;
+                }
+                index += 1;
+            }
+            Some(answer)
+        }
+        Err(()) => None,
+    };
+
+    Ok(match answer {
+        Some(value) => js_string!(value).into(),
+        None => {
             host.unsupported
                 .borrow_mut()
-                .record(&format!("getComputedStyle({other})"));
-            String::new()
+                .record(&format!("getComputedStyle({property})"));
+            js_string!("").into()
         }
+    })
+}
+
+/// The text as rendered: `innerText`, walked natively.
+///
+/// This was a JavaScript walk over `childNodes` and it cost 142ms on a
+/// 6,000-node page against `textContent`'s 6ms. The style lookup was not the
+/// expensive part — measured, after a fast path for `display` failed to move
+/// the number — it was the walk itself: every level materialises an array of
+/// wrapped nodes, and every property read pays a proxy trap. Native, the same
+/// answer needs one call and no wrappers at all.
+///
+/// Still an approximation of a spec written over layout boxes, and the same one
+/// the JavaScript version made: `display: none` subtrees are excluded, `<br>` is
+/// a break, non-inline boxes break on each side, and runs of breaks collapse.
+/// It can differ from a browser on deliberately awkward whitespace.
+fn inner_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+    let mut out = String::new();
+    collect_rendered_text(&doc, id, &mut out);
+
+    // Collapse the runs of breaks nested blocks produce, then trim: a browser
+    // reports no leading or trailing blank line.
+    let mut text = String::with_capacity(out.len());
+    let mut pending_break = false;
+    for ch in out.chars() {
+        if ch == '\n' {
+            pending_break = true;
+            continue;
+        }
+        if pending_break {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            pending_break = false;
+        }
+        text.push(ch);
+    }
+    Ok(js_string!(text.trim()).into())
+}
+
+fn collect_rendered_text(doc: &blitz_dom::BaseDocument, id: usize, out: &mut String) {
+    let Some(node) = doc.get_node(id) else { return };
+    for child in node.children.iter() {
+        let Some(kid) = doc.get_node(*child) else { continue };
+        match &kid.data {
+            blitz_dom::NodeData::Text(text) => out.push_str(&text.content),
+            blitz_dom::NodeData::Element(el) | blitz_dom::NodeData::AnonymousBlock(el) => {
+                let name = el.name.local.as_ref();
+                if matches!(name, "script" | "style" | "template" | "head" | "title") {
+                    continue;
+                }
+                if name == "br" {
+                    out.push('\n');
+                    continue;
+                }
+                // Not rendered, not read. The same rule the snapshot applies,
+                // and the reason `innerText` is worth having over `textContent`
+                // at all: a hidden menu is not text the user can see.
+                let display = match kid.primary_styles() {
+                    None => {
+                        continue;
+                    }
+                    Some(styles) => styles.clone_display(),
+                };
+                if display.is_none() {
+                    continue;
+                }
+                use style_traits::ToCss as _;
+                let rendered = display.to_css_string();
+                let inline = rendered.starts_with("inline") || rendered == "contents";
+                if !inline {
+                    out.push('\n');
+                }
+                collect_rendered_text(doc, *child, out);
+                if !inline {
+                    out.push('\n');
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The canonical name for an encoding label, or null if it is not one.
+///
+/// `TextDecoder` used to accept every label and answer "utf-8" to all of them,
+/// so `new TextDecoder("not-a-real-encoding")` succeeded and `shift_jis`
+/// silently decoded as UTF-8. Both are wrong answers rather than missing ones:
+/// a page checking whether an encoding is supported was told yes, and a page
+/// decoding Shift-JIS got mojibake with no error.
+///
+/// `encoding_rs` owns the label table the standard defines, so this is a lookup
+/// rather than a list of our own that would drift from it.
+fn encoding_for(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let label = arg_string(args, 0, context)?;
+    Ok(match encoding_rs::Encoding::for_label(label.trim().as_bytes()) {
+        Some(encoding) => js_string!(encoding.name().to_ascii_lowercase()).into(),
+        None => JsValue::null(),
+    })
+}
+
+/// Decode bytes as the named encoding.
+///
+/// `fatal` is the decoder's own option: a page that asked for fatal decoding
+/// wants an error rather than replacement characters, and answering with U+FFFD
+/// either way would hide malformed input from the caller who explicitly asked
+/// to be told about it.
+fn decode_bytes(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let label = arg_string(args, 0, context)?;
+    let fatal = args.get_or_undefined(2).to_boolean();
+    let Some(encoding) = encoding_rs::Encoding::for_label(label.trim().as_bytes()) else {
+        return Err(boa_engine::JsNativeError::range()
+            .with_message(format!("{label} is not a known encoding"))
+            .into());
     };
-    Ok(js_string!(answer).into())
+
+    let array = boa_engine::object::builtins::JsArray::from_object(
+        args.get_or_undefined(1).as_object().ok_or_else(|| {
+            boa_engine::JsNativeError::typ().with_message("decode expects an array of bytes")
+        })?,
+    )?;
+    let length = array.length(context)? as usize;
+    let mut bytes = Vec::with_capacity(length);
+    for index in 0..length {
+        bytes.push(array.get(index as u64, context)?.to_number(context)? as u8);
+    }
+
+    if fatal {
+        match encoding.decode_without_bom_handling_and_without_replacement(&bytes) {
+            Some(text) => Ok(js_string!(text.as_ref()).into()),
+            None => Err(boa_engine::JsNativeError::typ()
+                .with_message("the bytes are not valid in this encoding")
+                .into()),
+        }
+    } else {
+        let (text, _) = encoding.decode_without_bom_handling(&bytes);
+        Ok(js_string!(text.as_ref()).into())
+    }
+}
+
+/// Whether this is a CSS property at all, which is what `in` on a computed
+/// style is asking.
+///
+/// `"color" in getComputedStyle(el)` was **false** for every property, because
+/// the computed-style object is a proxy with only a `get` trap and `in` uses
+/// `has`. WPT's `test_computed_value` asserts exactly that on its first line,
+/// and it is the standard helper for CSS parsing tests, so thousands of
+/// subtests failed before they ever compared a value — including all of
+/// `css-color`, where Stylo supported every feature under test.
+fn is_css_property(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let name = arg_string(args, 0, context)?;
+    let known = style::properties::PropertyId::parse_enabled_for_all_content(&name).is_ok();
+    Ok(JsValue::from(known))
+}
+
+/// Whether Stylo can parse this declaration, which is what `CSS.supports` asks.
+///
+/// Answered by actually parsing it rather than by consulting a list. A list
+/// would be a second opinion about what this engine supports, and the two would
+/// drift the moment Stylo moved — and `CSS.supports` is a question pages ask
+/// precisely so they can take a *different code path*, so a wrong answer here
+/// does not degrade, it misroutes.
+fn supports_css(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let property = arg_string(args, 0, context)?;
+    let value = arg_string(args, 1, context)?;
+
+    use style::properties::{PropertyDeclaration, PropertyId, SourcePropertyDeclaration};
+    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+
+    let Ok(base) = ::url::Url::parse("about:blank") else {
+        return Ok(JsValue::from(false));
+    };
+    let url_data = UrlExtraData(style::servo_arc::Arc::new(base));
+    let parser_context = style::parser::ParserContext::new(
+        Origin::Author,
+        &url_data,
+        Some(CssRuleType::Style),
+        style_traits::ParsingMode::DEFAULT,
+        style::context::QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+        Default::default(),
+    );
+
+    let Ok(property_id) = PropertyId::parse(&property, &parser_context) else {
+        return Ok(JsValue::from(false));
+    };
+    let mut declaration = SourcePropertyDeclaration::default();
+    let mut input = cssparser::ParserInput::new(&value);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let supported = PropertyDeclaration::parse_into(
+        &mut declaration,
+        property_id,
+        &parser_context,
+        &mut parser,
+    )
+    .is_ok();
+    Ok(JsValue::from(supported))
 }
 
 /// Parse a URL against an optional base, using the same parser the broker uses.
