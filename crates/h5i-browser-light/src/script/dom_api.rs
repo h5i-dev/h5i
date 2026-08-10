@@ -310,9 +310,16 @@ fn get_value(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         .and_then(|n| n.element_data())
         .and_then(|el| el.text_input_data())
         .map(|input| input.editor.text().to_string());
+    // `null`, not `""`, when there is no editor at all.
+    //
+    // Blitz builds editor state only for a control it has laid out, so a
+    // detached `<input>` — and a `<textarea>`, whose value is its text content
+    // — have none. Answering `""` for both cases made "this field is empty"
+    // and "I cannot see this field" the same answer, and the prelude could not
+    // tell which it had. It now falls back to the markup for the second.
     Ok(match text {
         Some(text) => js_string!(text).into(),
-        None => js_string!("").into(),
+        None => JsValue::null(),
     })
 }
 
@@ -648,15 +655,27 @@ fn set_value(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     let id = arg_id(args, 0, context)?;
     let value = arg_string(args, 1, context)?;
     let host = host(context)?;
-    {
+    let reached_editor = {
         let mut doc = host.dom.borrow_mut();
-        doc.with_text_input(id, |mut driver| {
-            driver.select_all();
-            driver.insert_or_replace_selection(&value);
-        });
-    }
+        let has_editor = doc
+            .get_node(id)
+            .and_then(|n| n.element_data())
+            .and_then(|el| el.text_input_data())
+            .is_some();
+        if has_editor {
+            doc.with_text_input(id, |mut driver| {
+                driver.select_all();
+                driver.insert_or_replace_selection(&value);
+            });
+        }
+        has_editor
+    };
     host.mark_dirty();
-    Ok(JsValue::undefined())
+    // Whether the write landed, so the prelude knows if it has to remember the
+    // value itself. A detached control has no editor to write into, and
+    // silently dropping the assignment meant `el.value = "y"` read back as ""
+    // — a page that filled in a form it had just built saw none of it.
+    Ok(JsValue::from(reached_editor))
 }
 
 // ── reporting ──────────────────────────────────────────────────────────────

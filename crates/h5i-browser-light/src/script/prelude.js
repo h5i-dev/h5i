@@ -1981,13 +1981,52 @@
           const v = api.getAttr(this._id, "value");
           return v === null ? "on" : v;
         }
-        return api.getValue(this._id);
+        // The editor is the truth when there is one and it holds something:
+        // typing updates it and leaves the `value` attribute at whatever the
+        // HTML said.
+        const edited = api.getValue(this._id);
+        if (edited && edited.trim()) return edited;
+
+        // A blank editor on a `<textarea>` is the case worth handling. A
+        // textarea's default value is its text content, and blitz lays one out
+        // with an editor holding a single space rather than that content — so a
+        // page whose comment box arrives filled in read back as blank, which is
+        // a filled form reported as empty. Whitespace-only counts as unseeded
+        // for that reason: the space is blitz's, not the page's.
+        //
+        // The limitation this leaves is small and stated: a textarea a user
+        // has explicitly *cleared* also has an empty editor, and reports its
+        // original text rather than "". Wrong in that one case, right in the
+        // far commoner one, and it fails toward showing content that exists
+        // rather than hiding it.
+        if (tag === "TEXTAREA" && this._value === undefined) {
+          const written = this.textContent;
+          if (written) return written;
+        }
+        if (edited !== null && edited !== undefined) return edited;
+        // There is no editor — a detached control, or a `<textarea>`, which
+        // blitz lays out as text rather than as an input. Falling back to the
+        // markup is what a browser reports, and answering "" instead made a
+        // filled-in comment box look empty to the agent reading it.
+        if (this._value !== undefined) return this._value;
+        if (tag === "TEXTAREA") return this.textContent;
+        return api.getAttr(this._id, "value") ?? "";
       },
       set(v) {
-        api.setValue(this._id, String(v));
-        // A page that sets `.value` from script does not get input/change: the
-        // spec fires those for *user* edits, and a framework that re-rendered
-        // on its own write would loop. `Page::type_into` is the user path.
+        const text = String(v);
+        // Remembered on this side when the write had nowhere to land, so a
+        // page that builds a control and fills it in can read back what it
+        // wrote. A page that sets `.value` from script does not get
+        // input/change: the spec fires those for *user* edits, and a framework
+        // that re-rendered on its own write would loop. `Page::type_into` is
+        // the user path.
+        const landed = api.setValue(this._id, text);
+        if (!landed) {
+          this._value = text;
+          if (this.tagName === "TEXTAREA") this.textContent = text;
+        } else {
+          delete this._value;
+        }
       },
     });
 
