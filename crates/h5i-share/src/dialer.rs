@@ -50,7 +50,14 @@ enum Inner {
     #[cfg(target_os = "linux")]
     Helper {
         /// Serialized: one request and one reply at a time on a shared socket.
-        sock: Mutex<std::os::fd::OwnedFd>,
+        ///
+        /// The `bool` is "this channel is still in step". A request whose reply
+        /// never arrived leaves that reply — and the descriptor attached to it —
+        /// queued on the socket, and the *next* caller's `recvmsg` would pick it
+        /// up and be handed somebody else's connection. The mutex prevents two
+        /// callers overlapping; it cannot prevent them getting out of step. So
+        /// a failed exchange retires the channel instead.
+        sock: Mutex<(std::os::fd::OwnedFd, bool)>,
         child: libc::pid_t,
     },
     /// macOS: the box binds the host's loopback, so there is nothing to enter.
@@ -196,7 +203,7 @@ impl Dialer {
         }
         Ok(Dialer {
             inner: Inner::Helper {
-                sock: Mutex::new(sock),
+                sock: Mutex::new((sock, true)),
                 child,
             },
             port,
@@ -205,7 +212,7 @@ impl Dialer {
 
     fn request(
         &self,
-        sock: &Mutex<std::os::fd::OwnedFd>,
+        sock: &Mutex<(std::os::fd::OwnedFd, bool)>,
         child: libc::pid_t,
     ) -> Result<TcpStream, H5iError> {
         use std::os::fd::{AsRawFd, FromRawFd};
@@ -213,29 +220,66 @@ impl Dialer {
         // One request in flight at a time. The reply carries an fd in its
         // ancillary data, and two overlapping `recvmsg` calls on one socket
         // would hand a caller the other's socket.
-        let guard = sock
+        let mut guard = sock
             .lock()
-            .map_err(|_| H5iError::Metadata("the box dialer is poisoned".into()))?;
-        let fd = guard.as_raw_fd();
+            // A poisoned lock means a previous caller panicked mid-exchange, so
+            // the channel is in an unknown state for the same reason a short
+            // read leaves it in one. Take the guard and retire it, rather than
+            // refusing forever with a message nobody can act on.
+            .unwrap_or_else(|p| p.into_inner());
+        let (ref owned, ref mut in_step) = *guard;
+        if !*in_step {
+            return Err(H5iError::Metadata(format!(
+                "the box dialer (pid {child}) lost track of a reply and was retired, so this \
+                 share can no longer reach the box. Restart the share."
+            )));
+        }
+        let fd = owned.as_raw_fd();
         let req = [REQUEST];
         if unsafe { libc::send(fd, req.as_ptr() as *const libc::c_void, 1, libc::MSG_NOSIGNAL) } != 1
         {
+            *in_step = false;
             return Err(H5iError::Metadata(format!(
                 "the box dialer (pid {child}) is gone; the share cannot reach the box any more"
             )));
         }
         let (status, got) = recv_status(fd);
+        // A descriptor arriving with anything but a clean OK is one nobody is
+        // going to use. Closing it here is the difference between a failed
+        // connection and a leaked one.
+        let close_stray = |got: Option<i32>| {
+            if let Some(raw) = got {
+                unsafe { libc::close(raw) };
+            }
+        };
         match (status, got) {
             (Some(STATUS_OK), Some(raw)) => Ok(unsafe { TcpStream::from_raw_fd(raw) }),
-            (Some(STATUS_CONNECT_FAILED), _) => Err(H5iError::Metadata(format!(
-                "nothing is listening on 127.0.0.1:{} inside the box. Start the dev server in \
-                 the box, or share the port it is actually on (`h5i box ports <name>`).",
-                self.port
-            ))),
-            _ => Err(H5iError::Metadata(format!(
-                "the box dialer (pid {child}) stopped answering; the share cannot reach the box \
-                 any more"
-            ))),
+            (Some(STATUS_CONNECT_FAILED), got) => {
+                close_stray(got);
+                Err(H5iError::Metadata(format!(
+                    "nothing is listening on 127.0.0.1:{} inside the box. Start the dev server in \
+                     the box, or share the port it is actually on (`h5i box ports <name>`).",
+                    self.port
+                )))
+            }
+            (Some(_), got) => {
+                close_stray(got);
+                Err(H5iError::Metadata(format!(
+                    "the box dialer (pid {child}) answered something unexpected; the share \
+                     cannot reach the box any more"
+                )))
+            }
+            // No reply at all. The helper may yet send one, and it would land in
+            // the *next* caller's `recvmsg` — so the channel is out of step and
+            // must not serve anyone again.
+            (None, got) => {
+                close_stray(got);
+                *in_step = false;
+                Err(H5iError::Metadata(format!(
+                    "the box dialer (pid {child}) stopped answering; the share cannot reach the \
+                     box any more"
+                )))
+            }
         }
     }
 }
@@ -417,9 +461,16 @@ impl Drop for Dialer {
         // Closing our end is the shutdown signal: the helper's `recv` returns
         // zero and it exits. Then reap it, so a long-lived `h5i` that shares
         // several boxes in turn does not accumulate zombies.
-        if let Ok(guard) = sock.lock() {
+        //
+        // The shutdown must happen even if the mutex is poisoned. The `waitpid`
+        // below is unconditional, and the descriptor that would tell the helper
+        // to stop lives *inside* the mutex — so skipping the shutdown on a
+        // poisoned lock means waiting forever for a process that was never told
+        // to exit.
+        {
             use std::os::fd::AsRawFd;
-            unsafe { libc::shutdown(guard.as_raw_fd(), libc::SHUT_RDWR) };
+            let guard = sock.lock().unwrap_or_else(|p| p.into_inner());
+            unsafe { libc::shutdown(guard.0.as_raw_fd(), libc::SHUT_RDWR) };
         }
         let mut status = 0;
         unsafe { libc::waitpid(*child, &mut status, 0) };

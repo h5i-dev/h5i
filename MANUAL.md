@@ -380,12 +380,13 @@ the life of the share and answers "connect me", pinned to the one port you named
 Nothing on the wire, from a peer or from the shared page, can move where it
 connects.
 
-**A share needs a box with a namespace of its own.** At the `supervised` and
-`container` tiers, with a session running, "the box's port 3000" is a real,
-distinct thing. At the `workspace` tier it is not — there is no network
-confinement, so it is the same port as this machine's, and sharing it would
-publish whatever happened to be listening. `h5i box share` refuses rather than
-guessing.
+**A share needs a box with a network of its own.** Only then is "the box's port
+3000" a distinct thing from this machine's port 3000; otherwise sharing it would
+publish whatever happened to be listening on the host, so `h5i box share`
+refuses rather than guessing. A box has one when it is running and either at the
+`supervised` or `container` tier, or at `process` with a profile that denies
+egress. It does not at `workspace`, or at `process` with a profile that grants
+egress, because both share the host's network.
 
 #### The ticket is the whole access model
 
@@ -401,6 +402,8 @@ endpoint's addressing and only the serving process has it, so `grant` refuses on
 a P2P share and says to start a second one instead. Authorization is re-read from disk on
 every connection, so a revoke from another terminal takes effect on the next
 one, and a watchdog drops the connections already open within about a second.
+The watchdog asks about *that peer's own grant*, so revoking one person cuts
+their live connections while everyone else's keep working.
 `share stop` revokes everything; the serving process then writes its receipt
 and exits on its own, which is why it is not a `kill`.
 
@@ -413,7 +416,9 @@ encrypted, hole-punched to a direct path when the networks allow it. When they
 do not, a relay carries it: the relay moves sealed packets and sees both
 addresses, the timing and the volume, never the content. `--direct-only` refuses
 that fallback — if no direct path can be established, the share fails and says
-so, **before any application byte crosses**. A flag that merely preferred a
+so, **before any application byte crosses**, and it keeps checking: a direct
+path that dies mid-session closes the connection rather than sliding onto a
+relay. A flag that merely preferred a
 direct path would be worse than none, because it would let you believe nothing
 was in the middle when something was.
 
@@ -461,9 +466,18 @@ first request arrives, which is only the same as checking every request if it
 cannot carry a second — and by default it can. `cloudflared` keeps a pool of
 connections to the origin and reuses them for whatever request comes next, from
 whatever visitor; browsers pool per origin the same way, which puts the
-identical problem on the joiner's proxy. So h5i forces the connection closed
-after each response. An upgrade is the exception, and safely so: an upgraded
-connection stops being an HTTP connection and never goes back into a pool.
+identical problem on the joiner's proxy.
+
+So h5i reads the request's head, then exactly as many body bytes as it declared,
+and then stops reading that connection. `Connection: close` goes to the box as
+well, but that is a courtesy: the box runs agent-written code and may decline,
+and the control cannot depend on it. Two consequences worth knowing. A request
+body has to have a `Content-Length`; a chunked one is refused with a `501`,
+because forwarding one request means knowing where it ends. And an upgrade is
+the exception — it does become a two-way pipe — but only after the box has
+actually answered `101`, and only when the request asked for it properly with
+both an `Upgrade` header and a `Connection: upgrade`. A request that merely
+attached an `Upgrade:` header gets no exception.
 
 #### What the person joining is taking on
 

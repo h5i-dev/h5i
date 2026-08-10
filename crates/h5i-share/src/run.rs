@@ -60,7 +60,21 @@ pub struct Started {
 
 /// Start sharing, and serve until stopped.
 pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iError> {
-    refuse_if_already_shared(&req.env_dir)?;
+    // An early, friendly refusal so `share` fails before forking a helper and
+    // dialling a network. It is **not** the check that matters — `session::claim`
+    // re-does it under the lock, because between here and there is a window two
+    // starts could both walk through.
+    if let Some(existing) = session::read(&req.env_dir) {
+        if session::is_live(&existing) {
+            return Err(H5iError::Metadata(format!(
+                "this box is already being shared by pid {} over {}. Stop it first \
+                 (`h5i box share stop <name>`), or add a peer to the share you have \
+                 (`h5i box share grant <name>`).",
+                existing.pid,
+                existing.transport.as_str()
+            )));
+        }
+    }
 
     // Before the runtime. See the module note; this is the whole reason this
     // function is not simply `async`.
@@ -111,7 +125,21 @@ async fn serve_async(
         chrono::Utc::now(),
     );
     sess.grants.push(grant);
-    session::write(&req.env_dir, &sess)?;
+    // Check and write in one locked step. A transport that is already running
+    // but a claim that fails means we tear the transport down again, which is
+    // the right order: better a wasted endpoint than two bridges sharing one
+    // grant table on two different ports, where a ticket for one authorizes the
+    // other.
+    match session::claim(&req.env_dir, &sess) {
+        Ok(Some(stale)) => eprintln!(
+            "share: cleared a leftover share record from pid {stale} (that process is gone)"
+        ),
+        Ok(None) => {}
+        Err(e) => {
+            started.shutdown().await;
+            return Err(e);
+        }
+    }
 
     let bridge = Arc::new(Bridge::new(
         req.env_dir.clone(),
@@ -134,19 +162,51 @@ async fn serve_async(
 
     let outcome = tokio::select! {
         r = started.serve(bridge.clone(), req.direct_only) => r,
-        _ = tokio::signal::ctrl_c() => Ok(()),
+        _ = interrupted() => Ok(()),
         reason = stopped_elsewhere(bridge.clone()) => {
             eprintln!("share: {reason}");
             Ok(())
         }
     };
 
+    // Shut the transport down *first*, so the connections still in flight end
+    // and record what they moved. Writing the receipt while peers are mid-copy
+    // would leave their bytes and their closing times out of it — which is the
+    // half of a share a reviewer most wants.
+    started.shutdown().await;
     // Every path out writes the receipt and takes the session file with it, so
     // `share ls` describes what is running rather than what once ran.
     bridge.write_receipt();
     session::clear(&req.env_dir);
-    started.shutdown().await;
     outcome
+}
+
+/// Resolves when the operator asks this process to stop.
+///
+/// `SIGTERM` as well as Ctrl-C, because closing the terminal, a `kill`, or a
+/// process supervisor tidying up are all ordinary ways a foreground command
+/// ends — and handling only the interrupt means the ingress receipt is lost in
+/// exactly those cases, which are the ones nobody planned for.
+async fn interrupted() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 /// Resolves when the grant table stops admitting anyone — `share stop` from
@@ -295,35 +355,6 @@ impl Setup {
     }
 }
 
-/// Refuse to start a second share of the same box.
-///
-/// Two shares would be two grant tables in one file, and the second would
-/// overwrite the first — which is to say the first share's tickets would stop
-/// working with no explanation to anyone holding one.
-fn refuse_if_already_shared(env_dir: &std::path::Path) -> Result<(), H5iError> {
-    let Some(existing) = session::read(env_dir) else {
-        return Ok(());
-    };
-    if session::is_live(&existing) {
-        return Err(H5iError::Metadata(format!(
-            "this box is already being shared by pid {} over {}. Stop it first \
-             (`h5i box share stop <name>`), or add a peer to the share you have \
-             (`h5i box share grant <name>`).",
-            existing.pid,
-            existing.transport.as_str()
-        )));
-    }
-    // The process is gone, so the file is a leftover from a crash. Say so and
-    // take it, rather than leaving someone stuck behind a share that does not
-    // exist.
-    eprintln!(
-        "share: clearing a leftover share record from pid {} (that process is gone)",
-        existing.pid
-    );
-    session::clear(env_dir);
-    Ok(())
-}
-
 // ─── the other verbs ────────────────────────────────────────────────────────
 
 /// Mint another ticket for a share that is already running.
@@ -417,24 +448,33 @@ mod tests {
             chrono::Utc::now(),
         );
         session::write(dir.path(), &s).expect("write");
-        let err = refuse_if_already_shared(dir.path()).expect_err("already shared");
+        let err = session::claim(dir.path(), &s).expect_err("already shared");
         assert!(format!("{err}").contains("already being shared"));
     }
 
     #[test]
-    fn a_share_record_left_by_a_crash_is_cleared_rather_than_obeyed() {
+    fn a_share_record_left_by_a_crash_is_taken_over_rather_than_obeyed() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let mut s = ShareSession::new(
+        let mut dead = ShareSession::new(
             "env/a/demo",
             3000,
             Transport::P2p,
             "abc",
             chrono::Utc::now(),
         );
-        s.pid = 0;
-        session::write(dir.path(), &s).expect("write");
-        refuse_if_already_shared(dir.path()).expect("a dead share must not block a new one");
-        assert!(session::read(dir.path()).is_none());
+        dead.pid = 0;
+        session::write(dir.path(), &dead).expect("write");
+
+        let fresh = ShareSession::new(
+            "env/a/demo",
+            4000,
+            Transport::Tunnel,
+            "https://x.trycloudflare.com",
+            chrono::Utc::now(),
+        );
+        let cleared = session::claim(dir.path(), &fresh).expect("a dead share must not block one");
+        assert_eq!(cleared, Some(0), "the operator should be told what was cleared");
+        assert_eq!(session::read(dir.path()).expect("read").port, 4000);
     }
 
     #[test]

@@ -709,11 +709,15 @@ Four decisions made during the build that the proposal above did not contain:
   allocation-free (stack-built `/proc/<pid>/ns/…`, `SocketAddr` rather than
   `(&str, u16)`), so a caller who ignores the ordering rule gets a helper that
   cannot deadlock rather than one that does so occasionally.
-- **A box with no network namespace is refused, not shared.** At the `workspace`
-  tier "the box's port 3000" and "this machine's port 3000" are the same port,
-  and sharing it would publish whatever happened to be listening. `h5i box
-  share` says so and names the tiers that work. This is the one refusal in the
-  feature that exists purely because the alternative is a silent wrong answer.
+- **A box with no network of its own is refused, not shared.** Without one,
+  "the box's port 3000" and "this machine's port 3000" are the same port, and
+  sharing it would publish whatever happened to be listening. This is the one
+  refusal in the feature that exists purely because the alternative is a silent
+  wrong answer. The condition checked is "is there a process of this box in a
+  network namespace of its own", not a list of tiers — a `process`-tier box gets
+  one when its profile denies egress and shares the host's when it does not, so
+  a tier list would be advice that is wrong half the time. The message names
+  which of the two things is missing: no session, or no network.
 - **Authorization is per connection, read from disk, and revocation has a
   watchdog.** `share revoke` runs in a different process, so a cached grant table
   would be a revoke that appeared to work. On the P2P path it is per *stream*,
@@ -732,11 +736,33 @@ Four decisions made during the build that the proposal above did not contain:
   one. It can: `cloudflared` pools connections to the origin and reuses them for
   the next request from *any* visitor, and browsers pool per origin the same
   way, so an unauthorized request could ride in on a connection someone else's
-  credential opened. `Connection: close` is forced on every proxied request
-  except an upgrade, where `Connection` is the negotiation and an upgraded
-  connection never returns to a pool. Found by review after the tests were
-  green, which is the honest provenance: nothing in the suite would have caught
-  it, because nothing in the suite pools connections.
+  credential opened.
+
+  The first version of this sent `Connection: close` upstream and called it
+  enforcement. It was not — the box runs agent-written code, and a dev server
+  that answers keep-alive leaves the front holding an ungated pipe. The second
+  review caught exactly that, so the front now reads the head plus the declared
+  body and then **stops reading the client**, which needs nothing from the box.
+  Two things fall out and both are the right trade: a chunked request body is
+  refused with a `501`, because forwarding one request means knowing where it
+  ends; and an upgrade earns its two-way pipe only after the box answers `101`,
+  with the request required to carry both `Upgrade` and `Connection: upgrade` —
+  a lone `Upgrade:` header is something any client can attach to a request that
+  will never upgrade, and it was an opt-out from the whole rule.
+
+  Both rounds are worth recording together: nothing in the suite would have
+  caught either, because nothing in the suite pools connections. The test that
+  pins it now runs against a dev server written specifically to ignore
+  `Connection: close`.
+- **Revocation is per grant all the way down.** The watchdogs first asked
+  whether the *share* was spent, which is true only when no grant admits
+  anybody — so revoking one peer while another was still connected left the
+  revoked peer's open streams running, and the CLI printed "any connection that
+  peer had is dropped within a second" while that was false. Each connection now
+  watches the grant that admitted it. Same class of thing as `--direct-only`,
+  which was checked once at setup and never again: a direct path can die and
+  iroh will fall back to a relay, so a promise checked once is a preference.
+  Both are polled for the life of the connection now.
 - **Streams are served concurrently, and that was a real bug first.** The first
   cut awaited each stream to completion before accepting the next, which
   serialises every share behind whichever connection is longest-lived — for a

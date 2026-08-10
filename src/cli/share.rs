@@ -106,7 +106,14 @@ fn parse_expire(s: &str) -> anyhow::Result<Duration> {
     // A day is already a long time to leave a door into a running box open, and
     // the ticket can always be re-minted. Refusing here is cheaper than
     // explaining a share somebody forgot about a week ago.
-    let d = Duration::from_secs(n * unit);
+    //
+    // Checked rather than wrapping: `--expire 99999999999999999999h` would
+    // otherwise panic in a debug build and, in a release one, wrap into a value
+    // small enough to pass the ceiling below.
+    let d = n
+        .checked_mul(unit)
+        .map(Duration::from_secs)
+        .ok_or_else(|| anyhow::anyhow!("`{s}` is not a length of time — the longest is 24h"))?;
     if d > Duration::from_secs(24 * 3600) {
         anyhow::bail!("the longest a share may last is 24h — mint a fresh ticket instead");
     }
@@ -219,19 +226,27 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
     // port 3000" are the same port, and a share would publish whatever happened
     // to be listening on the host — which is the one outcome nobody would
     // forgive. So this refuses rather than guessing.
+    //
+    // The condition is deliberately "does this box have a netns of its own",
+    // not a list of tiers. A `process`-tier box gets one when its profile
+    // denies egress and shares the host's when it does not, so naming tiers
+    // here would be advice that is wrong half the time.
     let Some(box_pid) = h5i_core::view::box_pid(&dir) else {
+        let running = !h5i_core::env::live_sessions(&dir).is_empty();
         anyhow::bail!(
-            "`{name}` has no network namespace h5i can enter, so it cannot tell the box's port \
-             {} from any other port on this machine — and sharing the wrong one would publish \
-             something you did not choose.\n   \
-             The box is at the `{}` tier{}. Share from a box at `supervised` or `container`, \
-             with a session running (`h5i box shell {name}`).",
+            "h5i cannot find a process of `{name}` in a network namespace of its own, so it \
+             cannot tell the box's port {} from any other port on this machine — and sharing \
+             the wrong one would publish something you did not choose.\n   {}",
             args.port,
-            m.isolation_claim,
-            if m.isolation_claim == "workspace" {
-                ", which does not confine the network"
+            if running {
+                format!(
+                    "The box is running, but at the `{}` tier with this profile it shares the \
+                     host's network. A box only gets a network of its own at `supervised` or \
+                     `container`, or at `process` with a profile that denies egress.",
+                    m.isolation_claim
+                )
             } else {
-                " and has no running session"
+                format!("Start a session first: `h5i box shell {name}`.")
             }
         );
     };
@@ -353,6 +368,9 @@ mod tests {
         // more likely to be a mistake than an intention.
         assert!(parse_expire("0m").is_err());
         assert!(parse_expire("48h").is_err());
+        // Arithmetic that would have wrapped, or panicked in a debug build.
+        assert!(parse_expire("99999999999999999999h").is_err());
+        assert!(parse_expire(&format!("{}h", u64::MAX)).is_err());
         assert!(parse_expire("").is_err());
         assert!(parse_expire("soon").is_err());
         assert!(parse_expire("-5m").is_err());

@@ -577,12 +577,13 @@ machine, and the box gains no reachability it did not have. That entry happens
 the life of the share and answers "connect me", pinned to the one port you named.
 Nothing on the wire, from a peer or from the shared page, can move where it
 connects.</p>
-<p><strong>A share needs a box with a namespace of its own.</strong> At the <code>supervised</code> and
-<code>container</code> tiers, with a session running, "the box's port 3000" is a real,
-distinct thing. At the <code>workspace</code> tier it is not — there is no network
-confinement, so it is the same port as this machine's, and sharing it would
-publish whatever happened to be listening. <code>h5i box share</code> refuses rather than
-guessing.</p>
+<p><strong>A share needs a box with a network of its own.</strong> Only then is "the box's port
+3000" a distinct thing from this machine's port 3000; otherwise sharing it would
+publish whatever happened to be listening on the host, so <code>h5i box share</code>
+refuses rather than guessing. A box has one when it is running and either at the
+<code>supervised</code> or <code>container</code> tier, or at <code>process</code> with a profile that denies
+egress. It does not at <code>workspace</code>, or at <code>process</code> with a profile that grants
+egress, because both share the host's network.</p>
 <h4 id="the-ticket-is-the-whole-access-model">The ticket is the whole access model</h4>
 <p>A ticket names one box, one port, one grant and an expiry, and carries a
 256-bit secret. Holding it is the authorization; there is no account on either
@@ -595,6 +596,8 @@ endpoint's addressing and only the serving process has it, so <code>grant</code>
 a P2P share and says to start a second one instead. Authorization is re-read from disk on
 every connection, so a revoke from another terminal takes effect on the next
 one, and a watchdog drops the connections already open within about a second.
+The watchdog asks about <em>that peer's own grant</em>, so revoking one person cuts
+their live connections while everyone else's keep working.
 <code>share stop</code> revokes everything; the serving process then writes its receipt
 and exits on its own, which is why it is not a <code>kill</code>.</p>
 <p>The longest a share may last is 24 hours, and the default is one.</p>
@@ -604,7 +607,9 @@ encrypted, hole-punched to a direct path when the networks allow it. When they
 do not, a relay carries it: the relay moves sealed packets and sees both
 addresses, the timing and the volume, never the content. <code>--direct-only</code> refuses
 that fallback — if no direct path can be established, the share fails and says
-so, <strong>before any application byte crosses</strong>. A flag that merely preferred a
+so, <strong>before any application byte crosses</strong>, and it keeps checking: a direct
+path that dies mid-session closes the connection rather than sliding onto a
+relay. A flag that merely preferred a
 direct path would be worse than none, because it would let you believe nothing
 was in the middle when something was.</p>
 <p><strong>Quick tunnel (<code>--tunnel</code>).</strong> A browser cannot speak QUIC to an endpoint id, so
@@ -646,9 +651,17 @@ first request arrives, which is only the same as checking every request if it
 cannot carry a second — and by default it can. <code>cloudflared</code> keeps a pool of
 connections to the origin and reuses them for whatever request comes next, from
 whatever visitor; browsers pool per origin the same way, which puts the
-identical problem on the joiner's proxy. So h5i forces the connection closed
-after each response. An upgrade is the exception, and safely so: an upgraded
-connection stops being an HTTP connection and never goes back into a pool.</p>
+identical problem on the joiner's proxy.</p>
+<p>So h5i reads the request's head, then exactly as many body bytes as it declared,
+and then stops reading that connection. <code>Connection: close</code> goes to the box as
+well, but that is a courtesy: the box runs agent-written code and may decline,
+and the control cannot depend on it. Two consequences worth knowing. A request
+body has to have a <code>Content-Length</code>; a chunked one is refused with a <code>501</code>,
+because forwarding one request means knowing where it ends. And an upgrade is
+the exception — it does become a two-way pipe — but only after the box has
+actually answered <code>101</code>, and only when the request asked for it properly with
+both an <code>Upgrade</code> header and a <code>Connection: upgrade</code>. A request that merely
+attached an <code>Upgrade:</code> header gets no exception.</p>
 <h4 id="what-the-person-joining-is-taking-on">What the person joining is taking on</h4>
 <p>The app is agent-written code, and joining runs it in their browser. That is the
 point of sharing a port rather than a picture of one, and it is also the

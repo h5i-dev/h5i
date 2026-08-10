@@ -25,8 +25,6 @@
 //! in MANUAL.md and printed at join time rather than buried: it is the
 //! joiner's risk, and they are the one person who did not choose to take it.
 
-use std::sync::atomic::AtomicU64;
-
 use h5i_error::H5iError;
 
 use crate::bridge::Path;
@@ -89,16 +87,33 @@ pub async fn run(
 
     let secret = std::sync::Arc::new(ticket.secret.clone());
     let local_token = std::sync::Arc::new(local_token);
+    // Named after the port this proxy bound, so two `h5i join` sessions on one
+    // machine do not overwrite each other's cookie on `127.0.0.1`.
+    let cookie = std::sync::Arc::new(crate::gate::cookie_for_port(local.port()));
     let conn = std::sync::Arc::new(conn);
 
     loop {
         tokio::select! {
             accepted = listener.accept() => {
-                let Ok((sock, _)) = accepted else { continue };
-                let (secret, local_token, conn) =
-                    (secret.clone(), local_token.clone(), conn.clone());
+                // Not a bare `continue`: tokio only clears readiness on
+                // `WouldBlock`, so a persistent error (`EMFILE`) would return
+                // instantly every time and spin a core forever.
+                let sock = match accepted {
+                    Ok((sock, _)) => sock,
+                    Err(e) => {
+                        eprintln!("join: could not accept a connection: {e}");
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
+                let (secret, local_token, conn, cookie) = (
+                    secret.clone(),
+                    local_token.clone(),
+                    conn.clone(),
+                    cookie.clone(),
+                );
                 tokio::spawn(async move {
-                    if let Err(e) = handle(sock, &conn, &secret, &local_token).await {
+                    if let Err(e) = handle(sock, &conn, &secret, &local_token, &cookie).await {
                         eprintln!("join: {e}");
                     }
                 });
@@ -120,42 +135,76 @@ async fn handle(
     conn: &iroh::endpoint::Connection,
     secret: &str,
     local_token: &str,
+    cookie: &str,
 ) -> Result<(), H5iError> {
     let Some((head, rest)) = http_front::read_head(&mut sock).await else {
         return Ok(());
     };
     let next = http_front::decide(
         &head,
+        cookie,
         |t| crate::session::secret_matches(t, local_token),
         // Loopback is http, and a `Secure` cookie there is one some browsers
         // decline to store.
         false,
     );
-    let head = match next {
+    let (head, req) = match next {
         Next::Respond(body) => {
             http_front::respond(&mut sock, &body).await;
             return Ok(());
         }
-        Next::Proxy { head, .. } => head,
+        Next::Proxy { head, req } => (head, req),
     };
 
     // Only now does anything cross the network. Everything above runs for a
     // request that may have come from any page this browser has open.
-    let (mut send, recv) = crate::p2p::open_stream(conn, secret).await?;
-    send.write_all(head.as_bytes())
-        .await
-        .map_err(|e| H5iError::Metadata(format!("could not send the request: {e}")))?;
-    if !rest.is_empty() {
-        send.write_all(&rest)
-            .await
-            .map_err(|e| H5iError::Metadata(format!("could not send the request body: {e}")))?;
-    }
+    //
+    // A failure here is answered with an HTTP response rather than by dropping
+    // the connection. A browser shown a closed socket says "the connection was
+    // reset", which tells the person nothing about a share that is busy or a
+    // ticket that was revoked — and they are the one who has to decide whether
+    // to wait or to ask for a new invite.
+    let (send, recv) = match crate::p2p::open_stream(conn, secret).await {
+        Ok(pair) => pair,
+        Err(e) => {
+            http_front::respond(&mut sock, &upstream_failure(&e)).await;
+            return Ok(());
+        }
+    };
 
-    let (peer_r, peer_w) = sock.into_split();
-    let up = AtomicU64::new(0);
-    let down = AtomicU64::new(0);
-    crate::pump::duplex(peer_r, peer_w, recv, send, &up, &down).await;
+    // The same one-request-per-connection rule as the sharer's front, and for
+    // the same reason: this proxy is on somebody's loopback, where every page
+    // in their browser can reach it.
+    let counts = http_front::Counters::default();
+    let forwarded = http_front::Forwarded {
+        head: &head,
+        rest: &rest,
+        req: &req,
+    };
+    let _ = http_front::proxy_one(sock, recv, send, forwarded, &counts).await;
     Ok(())
+}
+
+/// Turn a failure to reach the sharer into something a browser renders.
+///
+/// `503` for busy, because reloading is the right move; `502` for everything
+/// else, because the problem is between here and the box rather than with the
+/// request. Never `401`: the joiner's own token was fine, and telling them
+/// otherwise sends them hunting for the wrong thing.
+fn upstream_failure(e: &crate::p2p::OpenError) -> String {
+    let (code, reason) = match e {
+        crate::p2p::OpenError::Busy => (503, "Service Unavailable"),
+        _ => (502, "Bad Gateway"),
+    };
+    let body = e.to_string();
+    format!(
+        "HTTP/1.1 {code} {reason}\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\
+         Content-Length: {}\r\n\
+         Cache-Control: no-store\r\n\
+         Connection: close\r\n\r\n{body}",
+        body.len()
+    )
 }
 
 #[cfg(test)]
@@ -171,6 +220,26 @@ mod tests {
             expires_at,
             secret: "ab".repeat(crate::ticket::SECRET_BYTES),
             addr: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn a_busy_share_and_a_bad_ticket_do_not_look_the_same_to_the_browser() {
+        // The distinction the person on this end has to act on: wait, or go and
+        // ask for a new invite.
+        let busy = upstream_failure(&crate::p2p::OpenError::Busy);
+        assert!(busy.starts_with("HTTP/1.1 503 "), "{busy}");
+        assert!(busy.contains("wait a moment"), "{busy}");
+
+        let refused = upstream_failure(&crate::p2p::OpenError::Refused);
+        assert!(refused.starts_with("HTTP/1.1 502 "), "{refused}");
+        assert!(refused.contains("ask for"), "{refused}");
+
+        // Neither is a 401: this proxy's own token was fine.
+        assert!(!busy.contains("401") && !refused.contains("401"));
+        for r in [busy, refused] {
+            let (head, body) = r.split_once("\r\n\r\n").expect("a head and a body");
+            assert!(head.contains(&format!("Content-Length: {}", body.len())));
         }
     }
 

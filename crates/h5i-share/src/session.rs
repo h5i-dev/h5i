@@ -307,6 +307,35 @@ pub fn write(env_dir: &Path, s: &ShareSession) -> Result<(), H5iError> {
     Ok(())
 }
 
+/// Claim this box for a new share, under the lock.
+///
+/// The check and the write have to be one step. Done apart — look for a live
+/// share, then write ours — two `h5i box share` starts can both pass the check
+/// and the second overwrites the first's grant table, which means the first
+/// share's tickets stop working with no explanation to whoever is holding one.
+///
+/// A record whose process is gone is a leftover from a crash and is taken over
+/// rather than obeyed; the caller is told, because silently clearing somebody's
+/// share record is not something to do without saying so.
+pub fn claim(env_dir: &Path, s: &ShareSession) -> Result<Option<u32>, H5iError> {
+    let _lock = Lock::acquire(env_dir)?;
+    let mut cleared = None;
+    if let Some(existing) = read(env_dir) {
+        if is_live(&existing) {
+            return Err(H5iError::Metadata(format!(
+                "this box is already being shared by pid {} over {}. Stop it first \
+                 (`h5i box share stop <name>`), or add a peer to the share you have \
+                 (`h5i box share grant <name>`).",
+                existing.pid,
+                existing.transport.as_str()
+            )));
+        }
+        cleared = Some(existing.pid);
+    }
+    write(env_dir, s)?;
+    Ok(cleared)
+}
+
 /// Read, change, write, under the lock. The only way grants should be edited.
 pub fn update<T>(
     env_dir: &Path,

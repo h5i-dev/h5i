@@ -35,6 +35,13 @@ use crate::wire;
 /// How often the watchdog asks whether the share still admits anyone.
 const REVOKE_POLL: Duration = Duration::from_secs(1);
 
+/// How long an unauthenticated peer may take to send its 69-byte greeting.
+const HELLO_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long to wait for a closing connection's pumps to report their byte
+/// counts before giving up on them.
+const STREAM_DRAIN: Duration = Duration::from_secs(5);
+
 /// How long `--direct-only` waits for hole punching before giving up.
 ///
 /// Direct paths are usually established within a second or two of the first
@@ -162,27 +169,54 @@ async fn serve_connection(
         return Ok(());
     }
 
-    // Revocation has to reach connections that are already open, or a share
-    // could be cut off and a WebSocket would carry on regardless.
+    // The first stream that authorizes registers the peer, and names the grant
+    // that let it in; every later stream on the same connection is counted
+    // against the same record.
+    let peer_id: Arc<std::sync::Mutex<Option<crate::bridge::PeerId>>> = Default::default();
+    let peer_grant: Arc<std::sync::Mutex<Option<String>>> = Default::default();
+
+    // Revocation and `--direct-only` both have to keep applying to a connection
+    // that is already open, or a WebSocket opened a minute ago carries on
+    // regardless of either.
     let watchdog = {
         let bridge = bridge.clone();
         let conn = conn.clone();
+        let peer_grant = peer_grant.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(REVOKE_POLL).await;
-                if bridge.is_spent() {
+                // Asked about *this peer's* grant once one is known. Asking
+                // whether the whole share is spent would leave a revoked peer
+                // connected for as long as anybody else's grant was still good,
+                // which is not what "revoke one peer" means.
+                let cut = match peer_grant.lock().expect("grant").clone() {
+                    Some(id) => !bridge.grant_is_live(&id),
+                    None => bridge.is_spent(),
+                };
+                if cut {
                     conn.close(2u32.into(), b"h5i: this share has been revoked or has expired");
+                    return;
+                }
+                // A direct path can die and iroh will fall back to a relay.
+                // `--direct-only` promises no application byte crosses one, and
+                // a promise checked only at setup is a preference.
+                if direct_only && observed_path(&conn) != Path::Direct {
+                    conn.close(
+                        3u32.into(),
+                        b"h5i: --direct-only, and the direct path was lost",
+                    );
                     return;
                 }
             }
         })
     };
-
-    // The first stream that authorizes registers the peer; every later stream
-    // on the same connection is counted against it.
-    let peer_id: Arc<std::sync::Mutex<Option<crate::bridge::PeerId>>> = Default::default();
     let mut streams = tokio::task::JoinSet::new();
     loop {
+        // Reap what has finished. A `JoinSet` only releases a task's allocation
+        // and its result when it is joined, so a peer opening and closing
+        // streams in a loop would grow this without limit for as long as the
+        // connection lasted.
+        while streams.try_join_next().is_some() {}
         let Ok((send, recv)) = conn.accept_bi().await else {
             break;
         };
@@ -195,15 +229,30 @@ async fn serve_connection(
         let who = who.clone();
         let peer_id = peer_id.clone();
         let path = observed_path(&conn);
+        let peer_grant = peer_grant.clone();
         streams.spawn(async move {
-            if let Err(e) = serve_stream(&bridge, send, recv, &who, path, &peer_id).await {
+            if let Err(e) =
+                serve_stream(&bridge, send, recv, &who, path, &peer_id, &peer_grant).await
+            {
                 eprintln!("share: {e}");
             }
         });
     }
 
     watchdog.abort();
-    streams.abort_all();
+    // Drained rather than aborted. Each stream records its byte counts when its
+    // pump returns, and aborting drops that future mid-copy — so a share cut
+    // off by a revoke would report zero bytes for exactly the long-lived
+    // connection a reviewer most wants to see. The connection is already
+    // closed, so the pumps are ending anyway; this waits briefly for them to
+    // say what they moved, then stops waiting.
+    let drained = tokio::time::timeout(STREAM_DRAIN, async {
+        while streams.join_next().await.is_some() {}
+    })
+    .await;
+    if drained.is_err() {
+        streams.abort_all();
+    }
     let id = *peer_id.lock().expect("peer id");
     if let Some(id) = id {
         bridge.peer_left(id);
@@ -218,9 +267,15 @@ async fn serve_stream(
     who: &str,
     path: Path,
     peer_id: &std::sync::Mutex<Option<crate::bridge::PeerId>>,
+    peer_grant: &std::sync::Mutex<Option<String>>,
 ) -> Result<(), H5iError> {
     let mut hello = [0u8; wire::HELLO_LEN];
-    if recv.read_exact(&mut hello).await.is_err() {
+    // Deadlined, because this is the one read an unauthenticated peer gets to
+    // make us wait on. Sixty-eight of sixty-nine bytes and then silence would
+    // otherwise hold a task for as long as the connection lasted. The HTTP
+    // fronts have had this since they were written; this one did not.
+    let greeted = tokio::time::timeout(HELLO_TIMEOUT, recv.read_exact(&mut hello)).await;
+    if !matches!(greeted, Ok(Ok(()))) {
         return Ok(());
     }
     let Some(secret) = wire::decode_hello(&hello) else {
@@ -266,6 +321,10 @@ async fn serve_stream(
         let mut slot = peer_id.lock().expect("peer id");
         *slot.get_or_insert_with(|| bridge.peer_joined(short(who), &grant, path))
     };
+    // Tell the watchdog which grant to watch. Set on every stream rather than
+    // only the first, so a peer that presents a different ticket later is
+    // watched under the one it is actually using.
+    *peer_grant.lock().expect("grant") = Some(grant.id.clone());
     bridge.peer_path(id, path);
     bridge.peer_connection(id);
 
@@ -317,6 +376,45 @@ pub async fn dial(
         })
 }
 
+/// Why a joiner could not get a stream.
+///
+/// Typed rather than a formatted string, because the joiner's proxy has to turn
+/// this into an HTTP status for a browser, and deciding that by matching on
+/// prose is how a "busy, try again" ends up rendering as "your invite is bad".
+#[derive(Debug)]
+pub enum OpenError {
+    /// The share is at its connection ceiling. The ticket is fine.
+    Busy,
+    /// The ticket was not accepted: unknown, expired or revoked.
+    Refused,
+    /// Something below the handshake went wrong.
+    Transport(String),
+}
+
+impl std::fmt::Display for OpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OpenError::Busy => write!(
+                f,
+                "the share is already carrying as many connections as it will. Nothing is wrong \
+                 with your ticket — wait a moment and reload."
+            ),
+            OpenError::Refused => write!(
+                f,
+                "the sharer refused this ticket. It may have expired, or been revoked — ask for \
+                 a new one."
+            ),
+            OpenError::Transport(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl From<OpenError> for H5iError {
+    fn from(e: OpenError) -> H5iError {
+        H5iError::Metadata(e.to_string())
+    }
+}
+
 /// Open one authorized stream: the joiner's half of the handshake.
 ///
 /// Returns the two halves of a stream that is already through the gate, so the
@@ -324,35 +422,25 @@ pub async fn dial(
 pub async fn open_stream(
     conn: &Connection,
     secret: &str,
-) -> Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream), H5iError> {
+) -> Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream), OpenError> {
     let hello = wire::encode_hello(secret)
-        .ok_or_else(|| H5iError::Metadata("this ticket's secret is malformed".into()))?;
+        .ok_or_else(|| OpenError::Transport("this ticket's secret is malformed".into()))?;
     let (mut send, mut recv) = conn
         .open_bi()
         .await
-        .map_err(|e| H5iError::Metadata(format!("the sharer closed the connection: {e}")))?;
+        .map_err(|e| OpenError::Transport(format!("the sharer closed the connection: {e}")))?;
     send.write_all(&hello)
         .await
-        .map_err(|e| H5iError::Metadata(format!("could not greet the sharer: {e}")))?;
+        .map_err(|e| OpenError::Transport(format!("could not greet the sharer: {e}")))?;
     let mut reply = [0u8; 1];
-    recv.read_exact(&mut reply).await.map_err(|e| {
-        H5iError::Metadata(format!("the sharer did not answer the handshake: {e}"))
-    })?;
-    if reply[0] == wire::REPLY_BUSY {
-        return Err(H5iError::Metadata(
-            "the share is already carrying as many connections as it will. Nothing is wrong with \
-             your ticket — wait a moment and reload."
-                .into(),
-        ));
+    recv.read_exact(&mut reply)
+        .await
+        .map_err(|e| OpenError::Transport(format!("the sharer did not answer the handshake: {e}")))?;
+    match reply[0] {
+        wire::REPLY_OK => Ok((send, recv)),
+        wire::REPLY_BUSY => Err(OpenError::Busy),
+        _ => Err(OpenError::Refused),
     }
-    if reply[0] != wire::REPLY_OK {
-        return Err(H5iError::Metadata(
-            "the sharer refused this ticket. It may have expired, or been revoked — ask for a \
-             new one."
-                .into(),
-        ));
-    }
-    Ok((send, recv))
 }
 
 /// Report how a joined connection is actually carried, for the joiner's own

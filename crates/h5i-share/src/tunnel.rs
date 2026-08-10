@@ -28,7 +28,6 @@
 //! the secret" to "hold the link"; it does not degrade to nothing.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -40,8 +39,10 @@ use crate::http_front::{self, Next};
 
 /// How long to wait for `cloudflared` to publish a URL before giving up.
 const URL_TIMEOUT: Duration = Duration::from_secs(45);
-/// How often the watchdog asks whether the share still admits anyone.
+/// How often a connection asks whether its grant still admits anyone.
 const REVOKE_POLL: Duration = Duration::from_secs(1);
+/// How long to pause after an `accept` error before trying again.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 /// A running `cloudflared`, killed when this is dropped.
 #[derive(Debug)]
@@ -138,7 +139,16 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
     .await;
 
     match found {
-        Ok(Some(url)) => Ok(Tunnel { child, url }),
+        Ok(Some(url)) => {
+            // Keep reading. Dropping the pipe here closes its read end, and the
+            // next time `cloudflared` fills the kernel buffer and writes it
+            // takes an EPIPE — which Go turns into a fatal signal on fd 2. A
+            // tunnel that dies mid-share for that reason would report nothing
+            // at all, so the lines are consumed and discarded for as long as it
+            // runs.
+            tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+            Ok(Tunnel { child, url })
+        }
         Ok(None) => {
             let _ = child.kill().await;
             Err(H5iError::Metadata(
@@ -193,36 +203,42 @@ pub async fn serve(bridge: Arc<Bridge>, listener: tokio::net::TcpListener) -> Re
     // finest honest granularity, and the receipt says so rather than implying
     // a precision the transport does not have.
     let peers: Arc<Mutex<HashMap<String, crate::bridge::PeerId>>> = Default::default();
-    let cancel = tokio::sync::broadcast::Sender::new(16);
-
-    {
-        // Revocation has to reach connections that are already open. A share
-        // that could be revoked but kept serving the visitor already on it
-        // would be a revoke that only worked on people who were not there.
-        let bridge = bridge.clone();
-        let cancel = cancel.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(REVOKE_POLL).await;
-                if bridge.is_spent() {
-                    let _ = cancel.send(());
-                }
-            }
-        });
-    }
 
     loop {
-        let Ok((sock, _)) = listener.accept().await else {
-            continue;
+        let sock = match listener.accept().await {
+            Ok((sock, _)) => sock,
+            // Not `continue`: tokio only clears a listener's readiness on
+            // `WouldBlock`, so a persistent error — `EMFILE` is the one that
+            // actually happens — returns immediately every time and turns this
+            // into a busy loop that never recovers. Pausing gives descriptors a
+            // chance to come back and keeps the share responsive if they do.
+            Err(e) => {
+                eprintln!("share: could not accept a connection: {e}");
+                tokio::time::sleep(ACCEPT_BACKOFF).await;
+                continue;
+            }
         };
         let bridge = bridge.clone();
         let peers = peers.clone();
-        let cancel = cancel.subscribe();
         tokio::spawn(async move {
-            if let Err(e) = handle(bridge, peers, sock, cancel).await {
+            if let Err(e) = handle(bridge, peers, sock).await {
                 eprintln!("share: {e}");
             }
         });
+    }
+}
+
+/// Resolves when this connection's own grant stops admitting anyone.
+///
+/// Per grant rather than per share: revoking one peer has to cut that peer off
+/// even while somebody else's ticket is still good, and a check on "is the
+/// whole share spent" would not.
+async fn revoked(bridge: Arc<Bridge>, grant_id: String) {
+    loop {
+        tokio::time::sleep(REVOKE_POLL).await;
+        if !bridge.grant_is_live(&grant_id) {
+            return;
+        }
     }
 }
 
@@ -230,7 +246,6 @@ async fn handle(
     bridge: Arc<Bridge>,
     peers: Arc<Mutex<HashMap<String, crate::bridge::PeerId>>>,
     mut sock: tokio::net::TcpStream,
-    mut cancel: tokio::sync::broadcast::Receiver<()>,
 ) -> Result<(), H5iError> {
     let Some((head, rest)) = http_front::read_head(&mut sock).await else {
         return Ok(());
@@ -241,6 +256,10 @@ async fn handle(
     let mut grant = None;
     let next = http_front::decide(
         &head,
+        // The bare name: a quick tunnel's host is its own site (trycloudflare
+        // is on the Public Suffix List), so there is no other origin to
+        // collide with.
+        crate::gate::COOKIE,
         |token| match bridge.authorize(token) {
             Ok(g) => {
                 grant = Some(g);
@@ -252,12 +271,12 @@ async fn handle(
         true,
     );
 
-    let (head, _upgrade) = match next {
+    let (head, req) = match next {
         Next::Respond(body) => {
             http_front::respond(&mut sock, &body).await;
             return Ok(());
         }
-        Next::Proxy { head, upgrade } => (head, upgrade),
+        Next::Proxy { head, req } => (head, req),
     };
     let Some(grant) = grant else {
         return Ok(());
@@ -295,29 +314,21 @@ async fn handle(
     };
     bridge.peer_connection(id);
 
-    let (peer_r, peer_w) = sock.into_split();
-    let (up_r, mut up_w) = upstream.into_split();
-    {
-        use tokio::io::AsyncWriteExt as _;
-        up_w.write_all(head.as_bytes()).await?;
-        // Whatever arrived in the same packet as the head — a form body, most
-        // often. Dropping it would break every POST on the shared app.
-        if !rest.is_empty() {
-            up_w.write_all(&rest).await?;
-        }
-    }
-
-    let from_peer = AtomicU64::new(head.len() as u64 + rest.len() as u64);
-    let to_peer = AtomicU64::new(0);
+    let (up_r, up_w) = upstream.into_split();
+    let counts = http_front::Counters::default();
+    let forwarded = http_front::Forwarded {
+        head: &head,
+        rest: &rest,
+        req: &req,
+    };
     tokio::select! {
-        _ = crate::pump::duplex(peer_r, peer_w, up_r, up_w, &from_peer, &to_peer) => {}
-        _ = cancel.recv() => {}
+        _ = http_front::proxy_one(sock, up_r, up_w, forwarded, &counts) => {}
+        _ = revoked(bridge.clone(), grant.id.clone()) => {}
     }
-    bridge.peer_bytes(
-        id,
-        to_peer.load(Ordering::Relaxed),
-        from_peer.load(Ordering::Relaxed),
-    );
+    // Outside the select, so a connection cut short by a revoke still reports
+    // what it had already moved.
+    let (to_box, to_peer) = counts.read();
+    bridge.peer_bytes(id, to_peer, to_box);
     Ok(())
 }
 
@@ -397,11 +408,22 @@ mod tests {
         std::thread::spawn(move || {
             for conn in l.incoming() {
                 let Ok(mut c) = conn else { continue };
+                // Read until the peer pauses, not once. A request's head and its
+                // body are separate writes and TCP is free to deliver them
+                // separately, so a single `read` sees the head alone often
+                // enough to make a body assertion flaky under load.
+                let _ = c.set_read_timeout(Some(Duration::from_millis(250)));
+                let mut got = Vec::new();
                 let mut buf = [0u8; 4096];
-                let n = c.read(&mut buf).unwrap_or(0);
-                let head = String::from_utf8_lossy(&buf[..n]).to_string();
-                // Echo the head back in the body, so a test can assert on what
-                // the box actually received.
+                while let Ok(n) = c.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    got.extend_from_slice(&buf[..n]);
+                }
+                let head = String::from_utf8_lossy(&got).to_string();
+                // Echo the request back in the body, so a test can assert on
+                // what the box actually received.
                 let body = format!("SAW<{head}>");
                 let _ = c.write_all(
                     format!(
@@ -499,6 +521,124 @@ mod tests {
         assert!(!served.contains(&secret), "the credential reached the box: {served}");
         assert!(served.contains("Cookie: sid=9"), "the app's own cookie was dropped: {served}");
         assert!(served.contains("Connection: close"), "{served}");
+
+        serving.abort();
+    }
+
+    /// A dev server that does **not** honour `Connection: close`: it answers
+    /// keep-alive and stays open. Records every request head it sees.
+    fn stubborn_keepalive_server() -> (u16, Arc<Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let seen: Arc<Mutex<Vec<String>>> = Default::default();
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        let out = seen.clone();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                let seen = out.clone();
+                std::thread::spawn(move || loop {
+                    let mut buf = [0u8; 4096];
+                    let n = match c.read(&mut buf) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => n,
+                    };
+                    seen.lock()
+                        .unwrap()
+                        .push(String::from_utf8_lossy(&buf[..n]).to_string());
+                    let _ = c.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nhi",
+                    );
+                });
+            }
+        });
+        (port, seen)
+    }
+
+    #[tokio::test]
+    async fn a_second_request_cannot_ride_in_on_an_authorized_connection() {
+        // The control this feature rests on, tested against the case that
+        // breaks the polite version of it: a dev server that ignores
+        // `Connection: close`. The box runs agent-written code, so asking it to
+        // hang up is a request, not a guarantee — the proxy has to stop reading
+        // the client itself.
+        let (port, seen) = stubborn_keepalive_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        // Both requests in one write, as a connection-pool reuse or a
+        // pipelining client would deliver them. The second carries no
+        // credential at all.
+        let pipelined = format!(
+            "GET /first HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n\
+             GET /smuggled HTTP/1.1\r\nHost: t\r\n\r\n"
+        );
+        let got = request(addr, &pipelined).await;
+        assert!(got.contains("hi"), "the first request should be served: {got}");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let seen = seen.lock().unwrap().join("");
+        assert!(seen.contains("/first"), "the first request never arrived: {seen}");
+        assert!(
+            !seen.contains("/smuggled"),
+            "an ungated second request reached the box: {seen}"
+        );
+
+        serving.abort();
+    }
+
+    #[tokio::test]
+    async fn a_body_the_proxy_cannot_measure_is_refused_rather_than_streamed() {
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let got = request(
+            addr,
+            &format!(
+                "POST /upload HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
+                 Transfer-Encoding: chunked\r\n\r\n"
+            ),
+        )
+        .await;
+        assert!(got.starts_with("HTTP/1.1 501 "), "{got}");
+        assert!(!got.contains("SAW<"), "a chunked body reached the box");
+
+        serving.abort();
+    }
+
+    #[tokio::test]
+    async fn a_declared_body_reaches_the_box_whole() {
+        // The other half of the one-request rule: stopping at the declared
+        // length must not truncate a real form post.
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let got = request(
+            addr,
+            &format!(
+                "POST /form HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
+                 Content-Length: 9\r\n\r\nname=alex"
+            ),
+        )
+        .await;
+        assert!(got.contains("name=alex"), "the body was truncated: {got}");
 
         serving.abort();
     }

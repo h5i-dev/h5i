@@ -99,6 +99,13 @@ struct Tally {
 /// share is for one person. Reaching it is a signal, and it is recorded.
 const MAX_CONNECTIONS: usize = 64;
 
+/// How many distinct peers the receipt will describe individually.
+///
+/// A share is for one person, so reaching this means something odd is
+/// happening; the ceiling exists so that "something odd" cannot also mean
+/// unbounded host memory and an unreadable receipt.
+const MAX_PEER_RECORDS: usize = 256;
+
 /// A handle to one peer's entry in the tally.
 #[derive(Debug, Clone, Copy)]
 pub struct PeerId(usize);
@@ -197,6 +204,26 @@ impl Bridge {
         }
     }
 
+    /// Is this particular grant still able to admit anyone?
+    ///
+    /// The connection watchdogs ask about *their own* grant rather than about
+    /// the share as a whole. Asking about the share only closes connections
+    /// when every grant is spent, which means revoking one peer while another
+    /// is still admitted would leave the revoked peer's open connections —
+    /// their hot-reload socket, their event stream — running. Revocation is
+    /// advertised as per person; this is what makes it so.
+    pub fn grant_is_live(&self, grant_id: &str) -> bool {
+        let now = Utc::now().timestamp();
+        match session::read(&self.env_dir) {
+            Some(s) => s
+                .grants
+                .iter()
+                .any(|g| g.id == grant_id && !g.revoked && g.expires_at > now),
+            // The file is gone, so nothing authorizes anything. Fail closed.
+            None => false,
+        }
+    }
+
     /// True once no grant can admit anyone: everything revoked, or everything
     /// expired. The transports poll this so a share that has been cut off drops
     /// the connections it is already carrying, instead of serving them until
@@ -231,6 +258,12 @@ impl Bridge {
 
     /// Note that a peer has arrived. Returns the handle its traffic is counted
     /// against.
+    ///
+    /// Bounded, like the denial list and for the same reason: one entry carries
+    /// a `String` and becomes a line in the receipt, and a peer cycling
+    /// connections would grow both without limit. Past the cap the connection
+    /// is still served — it is authorized, after all — its traffic is just
+    /// folded into the last record rather than given one of its own.
     pub fn peer_joined(
         &self,
         peer: String,
@@ -238,6 +271,9 @@ impl Bridge {
         path: Path,
     ) -> PeerId {
         let mut t = self.tally.lock().expect("tally");
+        if t.peers.len() >= MAX_PEER_RECORDS {
+            return PeerId(t.peers.len() - 1);
+        }
         t.peers.push(PeerRecord {
             peer,
             grant: grant.id.clone(),
@@ -444,7 +480,8 @@ pub fn render_receipt(s: &Summary) -> String {
         // turned away for load, not for credentials, and the two mean opposite
         // things about what happened here.
         out.push_str(&format!(
-            "capacity {} connection(s) refused because the share was already carrying its limit              of {MAX_CONNECTIONS}\n",
+            "capacity {} connection(s) refused because the share was already carrying its \
+             limit of {MAX_CONNECTIONS}\n",
             s.over_capacity
         ));
     }
@@ -588,6 +625,17 @@ mod tests {
         assert!(body.contains("refused  3 attempt(s)"));
         assert!(body.contains("2 unknown ticket"));
         assert!(body.contains("1 revoked"));
+    }
+
+    #[test]
+    fn the_capacity_line_reads_as_a_sentence() {
+        // It was written with a broken string continuation once, and a receipt
+        // with a run of spaces through it is a receipt somebody stops trusting.
+        let mut s = summary(vec![], vec![]);
+        s.over_capacity = 1;
+        let body = render_receipt(&s);
+        assert!(!body.contains("  of "), "{body}");
+        assert!(body.contains("already carrying its limit of 64"), "{body}");
     }
 
     #[test]

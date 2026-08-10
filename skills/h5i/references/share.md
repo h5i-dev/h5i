@@ -52,10 +52,11 @@ asking them to reload, and the count lands in the receipt.
 
 ## What it needs, and what it refuses
 
-- The box must be **running** (a live `h5i box shell` or `h5i box run`) and at
-  the `supervised` or `container` tier. At `workspace` there is no network
-  namespace, so "the box's port 3000" is the host's port 3000, and `share`
-  refuses rather than publishing whatever is listening.
+- The box must be **running** (a live `h5i box shell` or `h5i box run`) and have
+  a network of its own — `supervised` or `container`, or `process` with a
+  profile that denies egress. Otherwise "the box's port 3000" is the host's port
+  3000, and `share` refuses rather than publishing whatever is listening. The
+  error says which of the two is missing.
 - Something should be listening on the port. `h5i box ports <name>` says what
   is. Sharing a port with nothing behind it warns rather than fails, because a
   dev server that is about to start is a reasonable thing to share.
