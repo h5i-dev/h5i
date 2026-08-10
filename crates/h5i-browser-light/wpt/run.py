@@ -96,7 +96,23 @@ def find_tests(root: Path, dirs, limit=None):
             if parts & SKIP_DIRS or any(p.startswith(".") for p in rel.parts):
                 continue
             name = path.name
-            if name.endswith((".any.js", ".window.js", ".worker.js", ".sharedworker.js")):
+            # `x.any.js` and `x.window.js` have no HTML on disk: wptserve builds
+            # a page around them. `serve.py` builds the *window* page, so those
+            # two are tests here and are named by the endpoint the server will
+            # answer. The worker variants stay out — this engine has no Workers,
+            # and a page pretending to be a worker scope would produce failures
+            # that blame the engine for the harness's fiction.
+            if name.endswith((".any.js", ".window.js")):
+                try:
+                    source = path.read_text(encoding="utf8", errors="replace")
+                except OSError:
+                    continue
+                if not serve.runs_in_window(source):
+                    generated += 1
+                    continue
+                tests.append(str(rel)[: -len(".js")] + ".html")
+                continue
+            if name.endswith((".worker.js", ".sharedworker.js", ".serviceworker.js")):
                 generated += 1
                 continue
             if not name.endswith((".html", ".xht", ".xhtml")):
