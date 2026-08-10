@@ -245,10 +245,26 @@ where
         remaining -= n as u64;
     }
 
+    let mut up_r = up_r;
+
+    // An informational response is a head that is not *the* response: `100
+    // Continue` when the client said `Expect: 100-continue` (curl does, for a
+    // body over a kilobyte), `103 Early Hints` from a server that sends them.
+    // Each is relayed exactly as it came — rewriting `Connection` on a `100`
+    // would be telling the client the connection is over before the answer has
+    // started — and then the real head is read behind it.
+    let mut rest = Vec::new();
+    let (head, complete) = loop {
+        let (head, complete) = read_response(&mut up_r, &mut rest).await;
+        if !(complete && is_informational(&head)) {
+            break (head, complete);
+        }
+        peer_w.write_all(&head).await?;
+        to_peer.fetch_add(head.len() as u64, Ordering::Relaxed);
+    };
+
     if req.upgrade {
         // Believe the box, not the client. Only a `101` earns a two-way pipe.
-        let mut up_r = up_r;
-        let (head, rest, complete) = read_response(&mut up_r).await;
         if head.is_empty() && !complete {
             return Ok(());
         }
@@ -263,13 +279,36 @@ where
             crate::pump::duplex(peer_r, peer_w, up_r, up_w, to_box, to_peer).await;
             return Ok(());
         }
-        // Not an upgrade after all: finish it like any other single request.
-        return relay_response(peer_r, peer_w, up_r, head, rest, complete, to_peer).await;
     }
 
-    let mut up_r = up_r;
-    let (head, rest, complete) = read_response(&mut up_r).await;
-    relay_response(peer_r, peer_w, up_r, head, rest, complete, to_peer).await
+    let bodyless = has_no_body(&req.method, &head);
+    relay_response(peer_r, peer_w, up_r, head, rest, complete, bodyless, to_peer).await
+}
+
+/// A `1xx` head: an interim answer, with the real one still to come.
+fn is_informational(head: &[u8]) -> bool {
+    status_code(head).is_some_and(|c| (100..200).contains(&c)) && !head.starts_with(b"HTTP/1.1 101")
+}
+
+/// The status code from a response head.
+fn status_code(head: &[u8]) -> Option<u16> {
+    let line = head.split(|&b| b == b'\r').next()?;
+    let code = line.split(|&b| b == b' ').nth(1)?;
+    std::str::from_utf8(code).ok()?.parse().ok()
+}
+
+/// Does this response carry a body at all?
+///
+/// Three cases where a `Content-Length` is present and describes a body that is
+/// never sent, and waiting for it would hang the connection until an idle
+/// timeout: the answer to a `HEAD`, a `204 No Content`, and a `304 Not
+/// Modified`. The last is not exotic — it is what a dev server answers for
+/// every asset a browser already has.
+fn has_no_body(method: &str, head: &[u8]) -> bool {
+    if method.eq_ignore_ascii_case("HEAD") {
+        return true;
+    }
+    matches!(status_code(head), Some(204) | Some(304))
 }
 
 /// Read the box's response head.
@@ -284,26 +323,32 @@ where
 /// the caller relays the bytes verbatim rather than discarding them, because a
 /// truncated response is something a person can debug and a silently empty one
 /// is not.
-async fn read_response<R: tokio::io::AsyncRead + Unpin>(r: &mut R) -> (Vec<u8>, Vec<u8>, bool) {
-    let mut buf = Vec::with_capacity(2048);
+async fn read_response<R: tokio::io::AsyncRead + Unpin>(
+    r: &mut R,
+    pending: &mut Vec<u8>,
+) -> (Vec<u8>, bool) {
+    // `pending` carries whatever the last read went past. An interim `100
+    // Continue` and the real response often arrive in one packet, and without
+    // a carry-over the second head would be read as the first one's body.
+    let mut buf = std::mem::take(pending);
     let mut chunk = [0u8; 4096];
     let deadline = tokio::time::Instant::now() + RESPONSE_HEAD_TIMEOUT;
     loop {
-        let n = match tokio::time::timeout_at(deadline, r.read(&mut chunk)).await {
-            Ok(Ok(n)) => n,
-            _ => return (buf, Vec::new(), false),
-        };
-        if n == 0 {
-            return (buf, Vec::new(), false);
-        }
-        buf.extend_from_slice(&chunk[..n]);
         if let Some(end) = find_head_end(&buf) {
-            let rest = buf.split_off(end);
-            return (buf, rest, true);
+            *pending = buf.split_off(end);
+            return (buf, true);
         }
         if buf.len() > MAX_RESPONSE_HEAD {
-            return (buf, Vec::new(), false);
+            return (buf, false);
         }
+        let n = match tokio::time::timeout_at(deadline, r.read(&mut chunk)).await {
+            Ok(Ok(n)) => n,
+            _ => return (buf, false),
+        };
+        if n == 0 {
+            return (buf, false);
+        }
+        buf.extend_from_slice(&chunk[..n]);
     }
 }
 
@@ -328,6 +373,7 @@ async fn relay_response<PR, PW, UR>(
     head: Vec<u8>,
     rest: Vec<u8>,
     complete: bool,
+    bodyless: bool,
     to_peer: &std::sync::atomic::AtomicU64,
 ) -> std::io::Result<()>
 where
@@ -338,7 +384,15 @@ where
     use std::sync::atomic::Ordering;
 
     let (out, body_len) = if complete {
-        let len = response_content_length(&head);
+        // A `HEAD`, a `204` or a `304` declares a length and sends nothing.
+        // Waiting for that body would hold the connection until the idle
+        // timeout, and a `304` is what a dev server answers for every asset the
+        // browser already has — so this is the common case, not the exotic one.
+        let len = if bodyless {
+            Some(0)
+        } else {
+            response_content_length(&head)
+        };
         (close_the_connection(&head), len)
     } else {
         // Nothing was parsed, so nothing is rewritten. Send it on as it came.
@@ -456,6 +510,105 @@ fn response_content_length(head: &[u8]) -> Option<u64> {
         found = v.parse::<u64>().ok();
     }
     found
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+
+    #[test]
+    fn a_bodyless_answer_is_not_waited_on() {
+        // A `304` is what a dev server answers for every asset the browser
+        // already has, and it declares a length it never sends. Waiting for
+        // that body holds the connection until the idle timeout — on the
+        // commonest response there is.
+        assert!(has_no_body("GET", b"HTTP/1.1 304 Not Modified\r\nContent-Length: 42\r\n\r\n"));
+        assert!(has_no_body("GET", b"HTTP/1.1 204 No Content\r\n\r\n"));
+        assert!(has_no_body("HEAD", b"HTTP/1.1 200 OK\r\nContent-Length: 9000\r\n\r\n"));
+        assert!(has_no_body("head", b"HTTP/1.1 200 OK\r\n\r\n"));
+        assert!(!has_no_body("GET", b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n"));
+    }
+
+    #[test]
+    fn an_interim_answer_is_told_apart_from_the_real_one() {
+        assert!(is_informational(b"HTTP/1.1 100 Continue\r\n\r\n"));
+        assert!(is_informational(b"HTTP/1.1 103 Early Hints\r\nLink: </a.css>\r\n\r\n"));
+        // A `101` is an upgrade, which is a different thing entirely.
+        assert!(!is_informational(b"HTTP/1.1 101 Switching Protocols\r\n\r\n"));
+        assert!(!is_informational(b"HTTP/1.1 200 OK\r\n\r\n"));
+        assert!(!is_informational(b"garbage"));
+    }
+
+    #[test]
+    fn the_connection_headers_are_replaced_and_nothing_else_is() {
+        let head = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\
+                     Keep-Alive: timeout=60\r\nX-Connection-Id: abc\r\n\r\n";
+        let out = close_the_connection(head);
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(text.contains("Connection: close"), "{text}");
+        assert!(!text.contains("keep-alive"), "{text}");
+        assert!(!text.contains("timeout=60"), "{text}");
+        // A header that merely has "connection" in its *name* is not ours.
+        assert!(text.contains("X-Connection-Id: abc"), "{text}");
+        assert!(text.contains("Content-Length: 2"), "{text}");
+        assert!(text.starts_with("HTTP/1.1 200 OK\r\n"), "{text}");
+        assert!(text.ends_with("\r\n\r\n"), "{text}");
+    }
+
+    #[test]
+    fn a_length_is_read_only_when_it_is_unambiguous() {
+        assert_eq!(
+            response_content_length(b"HTTP/1.1 200 OK\r\nContent-Length: 17\r\n\r\n"),
+            Some(17)
+        );
+        // Two lengths, or one that is not a number, means framing this proxy
+        // will not guess at — relay until the box closes instead.
+        assert_eq!(
+            response_content_length(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n"
+            ),
+            None
+        );
+        assert_eq!(
+            response_content_length(b"HTTP/1.1 200 OK\r\nContent-Length: +5\r\n\r\n"),
+            None
+        );
+        assert_eq!(
+            response_content_length(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn an_interim_head_arriving_with_the_real_one_is_not_read_as_its_body() {
+        // `100 Continue` and the answer behind it usually share a packet. Without
+        // a carry-over buffer the second head is read as the first one's body,
+        // and the client is handed a `100` with the real response glued to it.
+        let raw: Vec<u8> =
+            b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi".to_vec();
+        let mut r = &raw[..];
+        let mut rest = Vec::new();
+        let (first, complete) = read_response(&mut r, &mut rest).await;
+        assert!(complete && is_informational(&first));
+        let (second, complete) = read_response(&mut r, &mut rest).await;
+        assert!(complete);
+        assert!(second.starts_with(b"HTTP/1.1 200 OK"));
+        assert_eq!(rest, b"hi");
+    }
+
+    #[tokio::test]
+    async fn a_response_head_that_is_not_utf8_is_relayed_rather_than_deleted() {
+        // A `filename=` in a legacy encoding is ordinary, and a reader that
+        // gave up on it used to discard a response the box had already made.
+        let raw: Vec<u8> = b"HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"caf\xe9.txt\"\r\nContent-Length: 2\r\n\r\nhi".to_vec();
+        let mut r = &raw[..];
+        let mut rest = Vec::new();
+        let (head, complete) = read_response(&mut r, &mut rest).await;
+        assert!(complete);
+        assert_eq!(rest, b"hi");
+        assert!(head.windows(3).any(|w| w == b"caf"));
+        assert_eq!(response_content_length(&head), Some(2));
+    }
 }
 
 /// Write a response and close politely.
