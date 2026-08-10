@@ -668,7 +668,7 @@ where
             // response a dev server produces, and "this branch has no body so
             // the headers cannot hurt" is how an invariant ends up holding on
             // one path and not the other.
-            Framing::Ambiguous => strip_lengths(rewritten),
+            Framing::Ambiguous => strip_lengths(&rewritten),
             _ => rewritten,
         };
         // A `HEAD`, a `204` or a `304` declares a length and sends nothing.
@@ -761,34 +761,22 @@ where
 }
 
 /// The response head with its connection-lifetime headers replaced by one that
-/// says the connection ends here.
+/// says the connection ends here, and any share cookie the box tried to set
+/// taken out.
 fn close_the_connection(head: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(head.len() + 20);
-    let mut first = true;
-    for line in head.split(|&b| b == b'\n') {
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
-        if line.is_empty() {
-            continue;
-        }
-        if first {
-            first = false;
-            out.extend_from_slice(line);
-            out.extend_from_slice(b"\r\n");
-            continue;
-        }
-        let name = line.split(|&b| b == b':').next().unwrap_or(b"");
-        let name = String::from_utf8_lossy(name).trim().to_ascii_lowercase();
-        if name == "connection" || name == "keep-alive" {
-            continue;
-        }
-        if sets_a_share_cookie(line) {
-            continue;
-        }
-        out.extend_from_slice(line);
-        out.extend_from_slice(b"\r\n");
-    }
-    out.extend_from_slice(b"Connection: close\r\n\r\n");
-    out
+    rebuild_head(
+        head,
+        |line| {
+            let name = header_name(line);
+            name == "connection" || name == "keep-alive" || sets_a_share_cookie(line)
+        },
+        b"Connection: close\r\n",
+    )
+}
+
+/// Drop every `Content-Length` from a head whose framing we refused to trust.
+fn strip_lengths(head: &[u8]) -> Vec<u8> {
+    rebuild_head(head, |line| header_name(line) == "content-length", b"")
 }
 
 /// How a response's body is framed, as far as this proxy will commit to it.
@@ -880,22 +868,44 @@ fn unfinished_response() -> String {
     )
 }
 
-/// Drop every `Set-Cookie` that sets a share cookie, and nothing else.
-fn strip_share_cookies(head: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(head.len());
+/// Rebuild a response head, dropping the lines a filter rejects and appending
+/// whatever the caller wants at the end.
+///
+/// One loop, because there were three near-identical ones — the `Connection`
+/// rewrite, the length strip and the cookie filter — and three copies of a
+/// parser is a divergence waiting for the round that finds it. Each caller
+/// differs only in what it drops and what it adds.
+///
+/// The status line survives every filter by construction: the predicates all
+/// key on a header name, and a status line has no colon.
+fn rebuild_head(head: &[u8], drop_line: impl Fn(&[u8]) -> bool, extra: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(head.len() + extra.len());
     for line in head.split(|&b| b == b'\n') {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
-        if line.is_empty() {
-            continue;
-        }
-        if sets_a_share_cookie(line) {
+        if line.is_empty() || drop_line(line) {
             continue;
         }
         out.extend_from_slice(line);
         out.extend_from_slice(b"\r\n");
     }
+    out.extend_from_slice(extra);
     out.extend_from_slice(b"\r\n");
     out
+}
+
+/// A header line's name, lowercased. Empty for a line with no colon.
+fn header_name(line: &[u8]) -> String {
+    match line.iter().position(|&b| b == b':') {
+        Some(colon) => String::from_utf8_lossy(&line[..colon])
+            .trim()
+            .to_ascii_lowercase(),
+        None => String::new(),
+    }
+}
+
+/// Drop every `Set-Cookie` that sets a share cookie, and nothing else.
+fn strip_share_cookies(head: &[u8]) -> Vec<u8> {
+    rebuild_head(head, sets_a_share_cookie, b"")
 }
 
 /// Is this header line a `Set-Cookie` for one of ours?
@@ -904,37 +914,15 @@ fn strip_share_cookies(head: &[u8]) -> Vec<u8> {
 /// cookies ignore the port, so on the joining side one box could log a visitor
 /// out of a *different* share. Nothing legitimate sets a cookie by this name.
 fn sets_a_share_cookie(line: &[u8]) -> bool {
+    if header_name(line) != "set-cookie" {
+        return false;
+    }
     let Some(colon) = line.iter().position(|&b| b == b':') else {
         return false;
     };
-    if !String::from_utf8_lossy(&line[..colon])
-        .trim()
-        .eq_ignore_ascii_case("set-cookie")
-    {
-        return false;
-    }
     String::from_utf8_lossy(&line[colon + 1..])
         .trim_start()
         .starts_with(crate::gate::COOKIE)
-}
-
-/// Drop every `Content-Length` from a head whose framing we refused to trust.
-fn strip_lengths(head: Vec<u8>) -> Vec<u8> {
-    let mut out = Vec::with_capacity(head.len());
-    for line in head.split(|&b| b == b'\n') {
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
-        if line.is_empty() {
-            continue;
-        }
-        let name = line.split(|&b| b == b':').next().unwrap_or(b"");
-        if String::from_utf8_lossy(name).trim().eq_ignore_ascii_case("content-length") {
-            continue;
-        }
-        out.extend_from_slice(line);
-        out.extend_from_slice(b"\r\n");
-    }
-    out.extend_from_slice(b"\r\n");
-    out
 }
 
 #[cfg(test)]
@@ -1084,7 +1072,7 @@ mod response_tests {
         // ends up holding on one path and not the other.
         let head = b"HTTP/1.1 304 Not Modified\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n";
         assert_eq!(response_framing(head), Framing::Ambiguous);
-        let text = String::from_utf8(strip_lengths(close_the_connection(head))).expect("utf8");
+        let text = String::from_utf8(strip_lengths(&close_the_connection(head))).expect("utf8");
         assert!(!text.to_lowercase().contains("content-length"), "{text}");
     }
 
@@ -1179,7 +1167,7 @@ mod response_tests {
         // request side refuses outright. Relaying it to the browser is the same
         // disagreement, one hop further out.
         let head = b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\nX-A: b\r\n\r\n";
-        let out = strip_lengths(close_the_connection(head));
+        let out = strip_lengths(&close_the_connection(head));
         let text = String::from_utf8(out).expect("utf8");
         assert!(!text.to_lowercase().contains("content-length"), "{text}");
         assert!(text.contains("X-A: b"), "{text}");
