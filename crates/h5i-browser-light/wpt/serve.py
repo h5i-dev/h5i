@@ -19,6 +19,7 @@ import re
 import socketserver
 import sys
 import threading
+import uuid as uuid_module
 
 WPT_ROOT = os.environ.get("WPT_ROOT", os.path.expanduser("~/Dev/wpt"))
 
@@ -48,6 +49,105 @@ add_completion_callback(function (tests, status) {
 """
     % MARKER
 )
+
+
+# ── wptserve substitution ───────────────────────────────────────────────────
+#
+# wptserve rewrites `{{...}}` placeholders in any file whose name contains
+# `.sub.`, and in anything served through `?pipe=sub`. 2,424 files use it, and
+# without it their URLs come out as literal `http://{{domains[www1]}}:NaN/...` —
+# which is how a page ends up asking blitz to load an image from a host that
+# cannot be parsed.
+#
+# **The domains get distinct loopback addresses on purpose.** 127.0.0.0/8 is all
+# loopback, so 127.0.0.2 is reachable without configuration and is a *different
+# origin* from 127.0.0.1 — same-origin policy keys on host, not on whether the
+# host is local. Collapsing every domain to one address would have made every
+# cross-origin test silently same-origin, which is a worse answer than failing:
+# the test would pass while testing nothing.
+#
+# What is still missing is named honestly rather than faked: there is no TLS, so
+# `{{ports[https][0]}}` resolves to the HTTP port and a test that checks
+# `location.protocol` will fail; and the `.py` handlers are not executed.
+DOMAINS = {
+    "": "127.0.0.1",
+    "www": "127.0.0.2",
+    "www1": "127.0.0.3",
+    "www2": "127.0.0.4",
+    "xn--n8j6ds53lwwkrqhv28a": "127.0.0.5",
+    "xn--lve-6lad": "127.0.0.6",
+}
+# The "alt" domain set, which tests use when they need an origin that is
+# definitely not this one.
+ALT_DOMAINS = {key: f"127.0.1.{index + 1}" for index, key in enumerate(DOMAINS)}
+
+SUBSTITUTION = re.compile(r"\{\{([^}]+)\}\}")
+
+
+def guess_type(path):
+    """Content type from the extension, ignoring the `.sub.` infix."""
+    if path.endswith((".html", ".htm", ".xhtml", ".xht")):
+        return "text/html; charset=utf-8"
+    if path.endswith(".js"):
+        return "text/javascript; charset=utf-8"
+    if path.endswith(".css"):
+        return "text/css; charset=utf-8"
+    if path.endswith(".json"):
+        return "application/json"
+    return "text/plain; charset=utf-8"
+
+
+def substitute(text, port, query=""):
+    """Apply wptserve's `{{...}}` substitutions."""
+    from urllib.parse import parse_qs
+
+    params = parse_qs(query)
+
+    def replace(match):
+        token = match.group(1).strip()
+        if token in ("uuid()", "uuid"):
+            return str(uuid_module.uuid4())
+        if token == "host":
+            return DOMAINS[""]
+        indexed = re.match(r"([a-z_]+)\[([^\]]*)\](?:\[([^\]]*)\])?", token)
+        if indexed:
+            name, first, second = indexed.group(1), indexed.group(2), indexed.group(3)
+            if name == "domains":
+                return DOMAINS.get(first, DOMAINS[""])
+            if name == "hosts":
+                table = ALT_DOMAINS if first == "alt" else DOMAINS
+                return table.get(second or "", table[""])
+            if name == "ports":
+                # One server, one port. Tests that need a *second* port to make a
+                # second origin get a different loopback address instead.
+                return str(port)
+            if name == "location":
+                return {
+                    "host": f"{DOMAINS['']}:{port}", "hostname": DOMAINS[""],
+                    "port": str(port), "scheme": "http", "protocol": "http:",
+                }.get(first, "")
+            if name == "GET":
+                values = params.get(first)
+                return values[0] if values else ""
+        # Anything unrecognised is left as it stands rather than blanked: a
+        # visible `{{whatever}}` in the output says which substitution is
+        # missing, where an empty string would just be a broken URL.
+        return match.group(0)
+
+    return SUBSTITUTION.sub(replace, text)
+
+
+def parse_pipes(query):
+    """The `?pipe=` directives this server understands."""
+    from urllib.parse import parse_qs
+
+    directives = []
+    for chunk in parse_qs(query).get("pipe", []):
+        for piece in chunk.split("|"):
+            call = re.match(r"([a-z_]+)(?:\((.*)\))?$", piece.strip())
+            if call:
+                directives.append((call.group(1), call.group(2) or ""))
+    return directives
 
 
 # ── generated endpoints ─────────────────────────────────────────────────────
@@ -149,6 +249,47 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0].split("#")[0]
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        pipes = parse_pipes(query)
+
+        # A file whose name carries `.sub.`, or anything asked for through
+        # `?pipe=sub`, is served with its placeholders resolved. `header()` and
+        # `status()` are the other two directives that appear often enough to
+        # matter; `trickle` and `gzip` are about *how* bytes arrive rather than
+        # what they are, and are ignored rather than approximated.
+        wants_sub = ".sub." in path or any(name == "sub" for name, _ in pipes)
+        if wants_sub or pipes:
+            on_disk = os.path.join(WPT_ROOT, path.lstrip("/"))
+            if os.path.isfile(on_disk):
+                try:
+                    with open(on_disk, encoding="utf8", errors="replace") as handle:
+                        text = handle.read()
+                except OSError:
+                    text = None
+                if text is not None:
+                    if wants_sub:
+                        text = substitute(text, self.server.server_address[1], query)
+                    body = text.encode()
+                    status = 200
+                    extra = []
+                    for name, argument in pipes:
+                        if name == "status":
+                            try:
+                                status = int(argument.strip())
+                            except ValueError:
+                                pass
+                        elif name == "header":
+                            parts = argument.split(",", 1)
+                            if len(parts) == 2:
+                                extra.append((parts[0].strip(), parts[1].strip()))
+                    self.send_response(status)
+                    self.send_header("Content-Type", guess_type(path))
+                    self.send_header("Content-Length", str(len(body)))
+                    for name, value in extra:
+                        self.send_header(name, value)
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
 
         built = generated_source(WPT_ROOT, path)
         if built is not None:
@@ -199,8 +340,13 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 def start(port=0):
-    """Start the server on a background thread. Returns the bound port."""
-    httpd = Server(("127.0.0.1", port), Handler)
+    """Start the server on a background thread. Returns the bound port.
+
+    Bound to every address rather than to 127.0.0.1 alone, because the
+    substitution above hands out 127.0.0.2 and friends as distinct origins and
+    they have to actually answer.
+    """
+    httpd = Server(("0.0.0.0", port), Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     return httpd, httpd.server_address[1]
@@ -209,7 +355,8 @@ def start(port=0):
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     httpd, port = start(port)
-    print(f"serving {WPT_ROOT} on http://127.0.0.1:{port}", flush=True)
+    print(f"serving {WPT_ROOT} on http://127.0.0.1:{port} "
+          f"(and 127.0.0.2-6 as separate origins)", flush=True)
     try:
         threading.Event().wait()
     except KeyboardInterrupt:

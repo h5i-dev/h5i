@@ -128,12 +128,14 @@ def find_tests(root: Path, dirs, limit=None):
                 continue
             # The multi-origin security suites — referrer-policy, mixed-content,
             # upgrade-insecure-requests and their kin — are built on
-            # `common/security-features`, which needs wptserve's template
-            # substitution *and* its Python subresource handlers *and* several
-            # distinct domains. A static single-origin server has none of the
-            # three, so these cannot report no matter how good the engine is,
-            # and 1,008 of them were sitting in the unmeasured bucket looking
-            # like engine failures. Named, not silently dropped.
+            # `common/security-features`. Two of the three things they need now
+            # exist: `serve.py` does wptserve's `{{...}}` substitution, and the
+            # domains resolve to distinct loopback addresses, so the origins are
+            # genuinely different. The third does not: their subresources are
+            # `.py` handlers, and running those means a wptserve shim (request,
+            # response and stash objects) that this harness has not got. Until
+            # it does, these cannot report no matter how good the engine is, so
+            # they are named rather than counted as engine failures.
             if "common/security-features" in body:
                 needs_server += 1
                 continue
