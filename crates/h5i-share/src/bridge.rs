@@ -623,8 +623,9 @@ pub fn render_receipt(s: &Summary) -> String {
         // turned away for load, not for credentials, and the two mean opposite
         // things about what happened here.
         out.push_str(&format!(
-            "capacity {} connection(s) refused for load — the share carries at most \
-             {MAX_CONNECTIONS} at once into the box, and fewer at its own front door\n",
+            "capacity {} connection(s) refused for load — at most {MAX_CONNECTIONS} reach \
+             the box at once, and the share's own front door holds a bounded number \
+             before that\n",
             s.over_capacity
         ));
     }
@@ -906,7 +907,7 @@ mod tests {
         let body = render_receipt(&s);
         assert!(!body.contains("  of "), "{body}");
         assert!(body.contains("refused for load"), "{body}");
-        assert!(body.contains("at most 64 at once into the box"), "{body}");
+        assert!(body.contains("at most 64 reach the box at once"), "{body}");
     }
 
     #[test]
