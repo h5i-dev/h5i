@@ -67,9 +67,10 @@ pub struct PeerRecord {
     pub path: Option<Path>,
     pub opened: DateTime<Utc>,
     pub closed: Option<DateTime<Utc>>,
-    /// TCP connections into the box carried for this peer. Not the number of
-    /// requests: a peer that followed the invite link and read nothing has a
-    /// record with none.
+    /// TCP connections into the box carried for this peer. One request each,
+    /// because one connection is all a request gets — so this is also the count
+    /// of requests that reached the box, and *not* the count of requests made:
+    /// a peer that followed the invite link and read nothing has none.
     pub connections: u64,
     pub bytes_to_peer: u64,
     pub bytes_from_peer: u64,
@@ -169,6 +170,19 @@ impl Bridge {
             tally: Mutex::new(Tally::default()),
             capacity: Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)),
             shutdown: tokio::sync::watch::Sender::new(false),
+        }
+    }
+
+    /// A connection turned away at the front door, before it was ever asked
+    /// for a credential.
+    ///
+    /// A different ceiling from [`Self::admit`]'s and an earlier one: that
+    /// bounds sockets into the box, this bounds connections this process will
+    /// hold at all. A share taken down by a flood of anonymous connections used
+    /// to write a receipt that said nobody came.
+    pub fn record_front_refusal(&self) {
+        if let Ok(mut t) = self.tally.lock() {
+            t.over_capacity += 1;
         }
     }
 
@@ -483,7 +497,10 @@ impl Bridge {
                     Transport::Tunnel => " --tunnel".into(),
                 },
                 self.dialer.port(),
-                t.peers.len()
+                // Plus the ones past the record cap. The body learned to say
+                // so a round ago; this line, which is what a receipt listing
+                // shows, did not.
+                t.peers.len() as u64 + t.peers_overflow
             )),
             wall_ms: u64::try_from(seconds * 1000).ok(),
             // A share ends when it is asked to. Left unset, the receipt viewer
@@ -606,8 +623,8 @@ pub fn render_receipt(s: &Summary) -> String {
         // turned away for load, not for credentials, and the two mean opposite
         // things about what happened here.
         out.push_str(&format!(
-            "capacity {} connection(s) refused because the share was already carrying its \
-             limit of {MAX_CONNECTIONS}\n",
+            "capacity {} connection(s) refused for load — the share carries at most \
+             {MAX_CONNECTIONS} at once into the box, and fewer at its own front door\n",
             s.over_capacity
         ));
     }
@@ -888,7 +905,8 @@ mod tests {
         s.over_capacity = 1;
         let body = render_receipt(&s);
         assert!(!body.contains("  of "), "{body}");
-        assert!(body.contains("already carrying its limit of 64"), "{body}");
+        assert!(body.contains("refused for load"), "{body}");
+        assert!(body.contains("at most 64 at once into the box"), "{body}");
     }
 
     #[test]

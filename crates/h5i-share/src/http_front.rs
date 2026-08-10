@@ -46,6 +46,21 @@ const RESPONSE_IDLE: Duration = Duration::from_secs(300);
 /// How long a peer may pause part-way through a body it declared.
 const BODY_IDLE: Duration = Duration::from_secs(30);
 
+/// How long a single write may make no progress before the connection is
+/// abandoned.
+///
+/// Every deadline in this file used to guard a *read*, which left the whole set
+/// of them unreachable: a visitor who stops reading — a paused download, a
+/// backgrounded tab, a deliberately zero receive window — parks `write_all`
+/// forever, and a loop parked in a write never reaches the loop-top check that
+/// was supposed to bound it. One such request holds a share slot and a socket
+/// into the box for the life of the ticket; sixty-four of them take the share
+/// down and make the receipt blame the honest visitors.
+///
+/// Generous, because a slow link is not a hostile one: TCP unblocks the moment
+/// the far side reads anything at all.
+const WRITE_STALL: Duration = Duration::from_secs(120);
+
 /// The longest a chunk-size line or a single trailer may be.
 const MAX_CHUNK_LINE: usize = 1024;
 /// The longest a whole trailer section may be.
@@ -54,8 +69,10 @@ const MAX_TRAILERS: usize = 8 * 1024;
 /// The longest an unframed response may stay open, whatever either end does.
 ///
 /// A server-sent-events stream is the legitimate case and an hour is generous
-/// for a share whose ticket lasts one by default. Framed responses are not
-/// subject to it: they end when their body does.
+/// for a share whose ticket lasts one by default. It applies to framed
+/// responses too — "they end when their body does" is a promise agent-written
+/// code never made, and a box dribbling a byte a minute would otherwise reset
+/// the idle timer for as long as it liked.
 const UNFRAMED_LIFETIME: Duration = Duration::from_secs(3600);
 
 /// The longest a request body may take to arrive, whatever the peer does.
@@ -117,6 +134,23 @@ pub async fn read_head<R: tokio::io::AsyncRead + Unpin>(
         if buf.len() > gate::MAX_HEAD {
             return None;
         }
+    }
+}
+
+/// Write, or give up if nothing moves for [`WRITE_STALL`].
+///
+/// The error is `TimedOut` so a caller can tell "this peer stopped listening"
+/// from "this peer sent nonsense", which are different answers to give.
+pub async fn write_timed<W: tokio::io::AsyncWrite + Unpin>(
+    w: &mut W,
+    buf: &[u8],
+) -> std::io::Result<()> {
+    match tokio::time::timeout(WRITE_STALL, w.write_all(buf)).await {
+        Ok(r) => r,
+        Err(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "the far side stopped reading",
+        )),
     }
 }
 
@@ -243,11 +277,11 @@ where
     // the header is not passed on — the box would otherwise send a second,
     // useless `100` behind the body.
     if req.expects_continue {
-        peer_w.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").await?;
+        write_timed(&mut peer_w, b"HTTP/1.1 100 Continue\r\n\r\n").await?;
         to_peer.fetch_add(25, Ordering::Relaxed);
     }
 
-    up_w.write_all(head.as_bytes()).await?;
+    write_timed(&mut up_w, head.as_bytes()).await?;
     to_box.fetch_add(head.len() as u64, Ordering::Relaxed);
 
     // The declared body, and only the declared body. Anything past it on this
@@ -265,15 +299,19 @@ where
         // Forwarded verbatim, chunk framing and all — the box speaks HTTP and
         // this proxy does not need to change the encoding, only to know where
         // the request ends.
-        if forward_chunked(&mut peer_r, &mut up_w, rest_from_client, to_box)
-            .await
-            .is_err()
-        {
-            // Answered rather than dropped. A body whose framing does not parse
-            // is the peer's mistake or somebody's probe, and a closed socket
-            // with no reply is the least informative thing to hand either.
-            let reply = gate::refusal_response(gate::Refusal::Malformed);
-            if peer_w.write_all(reply.as_bytes()).await.is_ok() {
+        if let Err(e) = forward_chunked(&mut peer_r, &mut up_w, rest_from_client, to_box).await {
+            // Answered rather than dropped, and answered with the right thing.
+            // "Your request is malformed" and "your upload was too slow" are
+            // different sentences, and on a tunnel share — where `cloudflared`
+            // chunks every body it forwards — the slow one is the common case,
+            // so telling a visitor on hotel wifi that their request is not one
+            // this share can serve is the message they would actually get.
+            let reply = if e.kind() == std::io::ErrorKind::TimedOut {
+                timed_out_response()
+            } else {
+                gate::refusal_response(gate::Refusal::Malformed)
+            };
+            if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
                 to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
             }
             let _ = peer_w.shutdown().await;
@@ -290,7 +328,7 @@ where
         let body_deadline = tokio::time::Instant::now() + BODY_LIFETIME;
         from_rest = (rest.len() as u64).min(want) as usize;
         if from_rest > 0 {
-            up_w.write_all(&rest[..from_rest]).await?;
+            write_timed(&mut up_w, &rest[..from_rest]).await?;
             to_box.fetch_add(from_rest as u64, Ordering::Relaxed);
         }
         let mut remaining = want - from_rest as u64;
@@ -302,7 +340,7 @@ where
                 // the least informative thing to hand somebody whose upload
                 // was too slow.
                 let reply = timed_out_response();
-                if peer_w.write_all(reply.as_bytes()).await.is_ok() {
+                if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
                     to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
                 }
                 let _ = peer_w.shutdown().await;
@@ -314,7 +352,17 @@ where
             // the share's slots, for as long as the peer felt like it.
             let n = match tokio::time::timeout(BODY_IDLE, peer_r.read(&mut buf[..take])).await {
                 Ok(r) => r?,
-                Err(_) => return Ok(()),
+                // The stall a real mobile client actually hits, and it used to
+                // be a bare connection reset. The once-an-hour cap above got an
+                // answer a round ago and this one did not.
+                Err(_) => {
+                    let reply = timed_out_response();
+                    if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
+                        to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
+                    }
+                    let _ = peer_w.shutdown().await;
+                    return Ok(());
+                }
             };
             if n == 0 {
                 // The client promised a body and then hung up. Waiting for a
@@ -322,7 +370,7 @@ where
                 // for the rest of a request nobody is going to send.
                 return Ok(());
             }
-            up_w.write_all(&buf[..n]).await?;
+            write_timed(&mut up_w, &buf[..n]).await?;
             to_box.fetch_add(n as u64, Ordering::Relaxed);
             remaining -= n as u64;
         }
@@ -354,7 +402,7 @@ where
         // is still a place the box could set a cookie it has no business
         // setting.
         let cleaned = strip_share_cookies(&head);
-        peer_w.write_all(&cleaned).await?;
+        write_timed(&mut peer_w, &cleaned).await?;
         to_peer.fetch_add(cleaned.len() as u64, Ordering::Relaxed);
         // Bounded. A box streaming interim heads forever is not a thing a real
         // server does, and it is a thing agent-written code can do by accident.
@@ -378,9 +426,9 @@ where
             // the filter first. `Connection` is left alone: an upgrade is where
             // that header means something.
             let cleaned = strip_share_cookies(&head);
-            peer_w.write_all(&cleaned).await?;
+            write_timed(&mut peer_w, &cleaned).await?;
             if !rest.is_empty() {
-                peer_w.write_all(&rest).await?;
+                write_timed(&mut peer_w, &rest).await?;
             }
             to_peer.fetch_add((cleaned.len() + rest.len()) as u64, Ordering::Relaxed);
             // Whatever the client sent in the same read as its handshake. An
@@ -389,7 +437,7 @@ where
             // opening frames silently dropped.
             if from_rest < rest_from_client.len() {
                 let tail = &rest_from_client[from_rest..];
-                up_w.write_all(tail).await?;
+                write_timed(&mut up_w, tail).await?;
                 to_box.fetch_add(tail.len() as u64, Ordering::Relaxed);
             }
             crate::pump::duplex(peer_r, peer_w, up_r, up_w, to_box, to_peer).await;
@@ -466,12 +514,15 @@ where
 
     loop {
         if tokio::time::Instant::now() >= deadline {
-            return Err(std::io::Error::other("chunked body took too long"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "chunked body took too long",
+            ));
         }
         let line = read_crlf_line(r, &mut buf, MAX_CHUNK_LINE).await?;
         let size = chunk_size(&line)
             .ok_or_else(|| std::io::Error::other("not a chunk size"))?;
-        w.write_all(&line).await?;
+        write_timed(w, &line).await?;
         to_box.fetch_add(line.len() as u64, Ordering::Relaxed);
 
         if size == 0 {
@@ -481,7 +532,7 @@ where
                 if !is_trailer(&t) {
                     return Err(std::io::Error::other("not a trailer"));
                 }
-                w.write_all(&t).await?;
+                write_timed(w, &t).await?;
                 to_box.fetch_add(t.len() as u64, Ordering::Relaxed);
                 if t.as_slice() == b"\r\n" {
                     return Ok(());
@@ -507,7 +558,7 @@ where
                 fill(r, &mut buf).await?;
             }
             let take = (left as usize).min(buf.len());
-            w.write_all(&buf[..take]).await?;
+            write_timed(w, &buf[..take]).await?;
             to_box.fetch_add(take as u64, Ordering::Relaxed);
             buf.drain(..take);
             left -= take as u64;
@@ -540,7 +591,9 @@ async fn fill<R: tokio::io::AsyncRead + Unpin>(
     let mut chunk = [0u8; 8192];
     let n = tokio::time::timeout(BODY_IDLE, r.read(&mut chunk))
         .await
-        .map_err(|_| std::io::Error::other("the peer stopped mid-body"))??;
+        .map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "the peer stopped mid-body")
+        })??;
     if n == 0 {
         return Err(std::io::Error::other("the peer hung up mid-body"));
     }
@@ -665,6 +718,20 @@ where
 {
     use std::sync::atomic::Ordering;
 
+    // The same line discipline the request head is held to. `gate` refuses a
+    // bare CR or LF there because normalising "leaves two parsers and hopes
+    // they agree"; the response side used to do exactly that, and a bare CR
+    // walked a `Connection: keep-alive` and a `Set-Cookie` past both filters —
+    // the box deciding whether the sanitiser applied to it.
+    if complete && !head_is_well_formed(&head) {
+        let reply = unfinished_response();
+        if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
+            to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
+        }
+        let _ = peer_w.shutdown().await;
+        return Ok(());
+    }
+
     if !complete {
         // A head the box never finished is not a response, and relaying the
         // bytes verbatim — which is what this did, to avoid "silently deleting
@@ -674,7 +741,7 @@ where
         // behind a door the box holds. A refusal the visitor can read is the
         // better half of the trade.
         let reply = unfinished_response();
-        if peer_w.write_all(reply.as_bytes()).await.is_ok() {
+        if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
             to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
         }
         let _ = peer_w.shutdown().await;
@@ -722,7 +789,7 @@ where
         (out, body_len)
     };
     if !out.is_empty() {
-        peer_w.write_all(&out).await?;
+        write_timed(&mut peer_w, &out).await?;
         to_peer.fetch_add(out.len() as u64, Ordering::Relaxed);
     }
     let mut sent_body = 0u64;
@@ -731,7 +798,7 @@ where
             Some(n) => rest.len().min((n - sent_body) as usize),
             None => rest.len(),
         };
-        peer_w.write_all(&rest[..take]).await?;
+        write_timed(&mut peer_w, &rest[..take]).await?;
         to_peer.fetch_add(take as u64, Ordering::Relaxed);
         sent_body += take as u64;
     }
@@ -767,7 +834,7 @@ where
                     Some(total) => n.min((total - sent_body) as usize),
                     None => n,
                 };
-                if peer_w.write_all(&buf[..take]).await.is_err() {
+                if write_timed(&mut peer_w, &buf[..take]).await.is_err() {
                     break;
                 }
                 to_peer.fetch_add(take as u64, Ordering::Relaxed);
@@ -914,6 +981,31 @@ fn unfinished_response() -> String {
          Connection: close\r\n\r\n{UNFINISHED_BODY}",
         UNFINISHED_BODY.len()
     )
+}
+
+/// Is every line ending in this head a CRLF, and is every header line a header
+/// rather than a continuation of one?
+///
+/// Both rules are the request side's, for the request side's reason: a line
+/// this proxy reads as one thing and the visitor's browser reads as two is a
+/// header walking past the filters. Obs-fold is the second door — `header_name`
+/// trims, so a folded continuation matches a filter and gets dropped, or
+/// survives a dropped line and reattaches itself to the header above.
+fn head_is_well_formed(head: &[u8]) -> bool {
+    for (i, &c) in head.iter().enumerate() {
+        if c == b'\n' && (i == 0 || head[i - 1] != b'\r') {
+            return false;
+        }
+        if c == b'\r' && head.get(i + 1) != Some(&b'\n') {
+            return false;
+        }
+    }
+    // Skip the status line; a continuation cannot be the first thing.
+    head.split(|&b| b == b'\n')
+        .skip(1)
+        .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
+        .filter(|l| !l.is_empty())
+        .all(|l| !l.starts_with(b" ") && !l.starts_with(b"\t"))
 }
 
 /// Rebuild a response head, dropping the lines a filter rejects and appending
@@ -1144,6 +1236,29 @@ mod response_tests {
             assert!(head.contains("Connection: close"), "{r}");
         }
         assert!(timed_out_response().starts_with("HTTP/1.1 408 "));
+    }
+
+    #[test]
+    fn a_response_head_gets_the_line_discipline_the_request_head_gets() {
+        // A bare CR walked a `Connection: keep-alive` and a `Set-Cookie` past
+        // both response filters, because `rebuild_head` splits on LF and
+        // `header_name` reads whatever that produced. The request side refuses
+        // this outright and says why; the response side used to normalise and
+        // hope.
+        assert!(head_is_well_formed(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nX-A: b\r\n\r\n"
+        ));
+        for bad in [
+            &b"HTTP/1.1 200 OK\r\nX-Pad: a\rConnection: keep-alive\r\n\r\n"[..],
+            &b"HTTP/1.1 200 OK\nX-A: b\r\n\r\n"[..],
+            // Obs-fold: `header_name` trims, so a continuation either matches a
+            // filter and vanishes, or survives a dropped line and reattaches
+            // itself to the header above it.
+            &b"HTTP/1.1 200 OK\r\nX-Pad: a\r\n Connection: keep-alive\r\n\r\n"[..],
+            &b"HTTP/1.1 200 OK\r\nConnection:\r\n\tkeep-alive\r\n\r\n"[..],
+        ] {
+            assert!(!head_is_well_formed(bad), "accepted {:?}", String::from_utf8_lossy(bad));
+        }
     }
 
     #[test]

@@ -155,7 +155,10 @@ pub async fn serve(
     while let Some(incoming) = endpoint.accept().await {
         let Ok(slot) = slots.clone().try_acquire_owned() else {
             // Refused at the transport, without a task. There is nothing to say
-            // to a peer that has not identified itself.
+            // to a peer that has not identified itself — but it is recorded,
+            // because a share taken down at its own front door should not read
+            // as a share nobody used.
+            bridge.record_front_refusal();
             continue;
         };
         let bridge = bridge.clone();

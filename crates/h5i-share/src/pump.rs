@@ -37,7 +37,11 @@ where
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
-        if w.write_all(&buf[..n]).await.is_err() {
+        // Deadlined, like every other write in the crate. A peer that stops
+        // reading an upgraded connection — a backgrounded tab holding a
+        // hot-reload socket — would otherwise park this copy forever, holding
+        // one of the share's slots for the life of the ticket.
+        if crate::http_front::write_timed(&mut w, &buf[..n]).await.is_err() {
             break;
         }
         // After the write, so the number describes bytes that were delivered

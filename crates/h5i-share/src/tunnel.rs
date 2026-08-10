@@ -256,7 +256,9 @@ pub async fn serve(bridge: Arc<Bridge>, listener: tokio::net::TcpListener) -> Re
         let Ok(slot) = slots.clone().try_acquire_owned() else {
             // Refused without a task and without a reply. Whoever is flooding
             // this is not owed an explanation, and the visitor with a valid
-            // link is owed the slots.
+            // link is owed the slots. Recorded, though: a share taken down at
+            // its own front door used to write a receipt saying nobody came.
+            bridge.record_front_refusal();
             continue;
         };
         let bridge = bridge.clone();
