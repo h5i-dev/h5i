@@ -1654,6 +1654,11 @@ subsystems that paragraph said it required. §12.8 is why.
 
 ### 12.8 Where the number actually was, 2026-08-10
 
+> Superseded by §13.2: the total is now 333,690. This section stays as written
+> because what it says about *why* the number moved is unchanged, and because
+> §13.3 is the same lesson arriving a second time — a large number that comes
+> from one place has to say so.
+
 **117,331 subtests passing of 585,474 scored**, 26,052 files, 25,252 of which
 report. That is up from 33,754, and it is worth being exact about how much of
 that is the engine getting better and how much is this file learning to read.
@@ -1747,3 +1752,99 @@ changes.
 The floor still exists for the case it was built for: this branch gave back
 3,142 subtests in `html` to a settle-loop rewrite, and nothing caught it but a
 manual diff. `wpt/gate.sh` is what to run before believing a refactor was free.
+
+---
+
+## 13. Legacy document encodings, and a number that needs a caveat
+
+§12.5 wrote the legacy CJK encoding tests off in three sentences. All three were
+wrong, the correction is recorded in place there, and this section is what
+happened when the work was actually done.
+
+### 13.1 What was missing
+
+This engine decoded every document as UTF-8. A page served as euc-jp came out as
+replacement characters, `document.characterSet` did not exist, and a link's
+query was percent-encoded from the wrong bytes. An agent reading a legacy
+Japanese page got the wrong answer and was told nothing about it.
+
+`src/encoding.rs` settles the two things a document's encoding decides.
+
+**Which encoding.** BOM, then the transport's `Content-Type`, then the markup's
+`<meta charset>` or `<meta http-equiv>`, then UTF-8. The prescan stops at 1024
+bytes because the HTML standard's does, and that bound is load bearing rather
+than an optimisation: a declaration further down cannot be honoured, because by
+then a parser has committed. Agreeing with a browser about pages that declare
+too late is the point.
+
+**How a query is encoded.** The URL Standard encodes a query with the
+*document's* encoding, and a code point that encoding cannot represent becomes
+an HTML numeric character reference. `丂` in a euc-jp page is `%26%2319970%3B`,
+where this engine answered `%E4%B8%82` — the right escape of the wrong bytes,
+which is the shape of wrong answer that is hardest to notice.
+
+That needed the per-character encoder rather than `encoding_rs::encode`. The
+bulk call renders an unmappable code point as the literal `&#19970;`, and `&`,
+`#` and `;` are not in the query percent-encode set, so they pass through and
+the answer becomes `&%2319970;`. The URL Standard appends `%26%23`, the decimal
+value and `%3B` — the reference *already* percent-encoded — precisely so a
+generated reference cannot be mistaken for a real separator.
+
+Also found on the way: local files were loaded with `read_to_string`, which
+**refuses** a file that is not valid UTF-8 — exactly the file this path most
+needs to open.
+
+### 13.2 The number, and why it is checked rather than quoted
+
+**333,690 subtests passing of 584,707 scored**, from 117,331. 26,052 files run,
+25,249 of which report.
+
+That is a large enough jump in one commit to deserve disbelief, so it was
+checked three ways before being written down.
+
+* **Nothing is counted twice.** 25,247 distinct test files across the sweep,
+  none run more than once. The largest single file reports 21,269 subtests under
+  21,269 distinct names.
+* **The answers are right.** The same page was run in Chromium 1140 and the
+  output is byte-identical, including two cases where Python's own `euc_jp`
+  codec *disagrees*: Python encodes U+4E02 into JIS X 0212, and WHATWG's euc-jp
+  decodes that plane but never encodes to it. Matching the browser rather than
+  the naive codec is not something reached by accident.
+* **The engine is doing it, not the harness.** `document.characterSet` reports
+  EUC-JP, the text decodes as itself, and an unmappable code point becomes a
+  numeric reference — each asserted in `src/script/tests.rs`.
+
+### 13.3 The caveat that has to travel with it
+
+**70% of every passing subtest comes from twenty files.** The top eleven are all
+`*-encode-href-*.html`: one behaviour — encode a character into a URL query —
+repeated once per codepoint across the CJK range, for five encodings.
+
+| framing | subtests |
+| --- | --- |
+| Headline total | 333,690 |
+| **Excluding the encoding directory** | **107,904** |
+| From the top twenty files alone | 235,977 |
+
+Files that pass *completely*: **1,882** of the 20,506 with any scored subtest.
+
+So 333,690 is true and describes one feature with an enormous test count rather
+than broad platform coverage. Both halves of that sentence have to be said
+together, and §12.6's rule applies unchanged: implementing more, measuring more
+and counting more honestly are three different things, and only the first is
+engineering.
+
+**The Kitesurf comparison is unsafe in both directions and should not be made
+yet.** WPT expands to roughly 200,000 *tests* (file x variant x scope) and
+roughly two million *subtests*. Cloudflare's announcement says "215,000+ tests
+passing", which reads as the test-level count — and if it is, the comparable
+figure here is 1,882 fully-passing files, not 333,690, and this engine is far
+behind rather than ahead. Until their metric is established, quoting one number
+against the other is the kind of claim that gets checked and does not hold.
+
+### 13.4 What this is worth, plainly
+
+The engineering is worth having on its own: a legacy page now reads correctly,
+which is a real capability an agent needs and did not have. The score is a
+consequence, not the reason, and the twenty-file concentration is the reason to
+say so out loud rather than let a headline imply 333,690 distinct capabilities.
