@@ -19,7 +19,7 @@
 //! are different artifacts, and an export should not be silent about which one
 //! it came from.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
 use h5i_error::H5iError;
@@ -80,7 +80,24 @@ pub struct DeniedAttempt {
 struct Tally {
     peers: Vec<PeerRecord>,
     denied: Vec<DeniedAttempt>,
+    /// Connections turned away because the share was already carrying its
+    /// limit. Counted rather than listed: the interesting number is whether it
+    /// happened at all.
+    over_capacity: u64,
 }
+
+/// How many connections into the box a share will carry at once.
+///
+/// A share is a door on the open internet in tunnel mode, and an iroh endpoint
+/// anyone may dial in P2P mode. Without a ceiling, a peer holding a valid link —
+/// or a page on the shared app opening sockets in a loop — turns into unbounded
+/// tasks on the host and unbounded sockets into the box, which is a denial of
+/// service against the box the share was meant to show off.
+///
+/// Sixty-four is chosen to be uninteresting: a browser opens about six
+/// connections per origin, so this is roughly ten simultaneous viewers, and a
+/// share is for one person. Reaching it is a signal, and it is recorded.
+const MAX_CONNECTIONS: usize = 64;
 
 /// A handle to one peer's entry in the tally.
 #[derive(Debug, Clone, Copy)]
@@ -97,6 +114,8 @@ pub struct Bridge {
     dialer: Dialer,
     started: DateTime<Utc>,
     tally: Mutex<Tally>,
+    /// One permit per live connection into the box, held for its lifetime.
+    capacity: Arc<tokio::sync::Semaphore>,
 }
 
 impl Bridge {
@@ -119,6 +138,26 @@ impl Bridge {
             dialer,
             started: Utc::now(),
             tally: Mutex::new(Tally::default()),
+            capacity: Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)),
+        }
+    }
+
+    /// Take a slot for one connection into the box, or `None` if the share is
+    /// already carrying its limit.
+    ///
+    /// Refuses rather than queues on purpose. A queue would turn a flood into
+    /// latency for the person who is legitimately using the share, and hide the
+    /// fact that anything unusual happened; a refusal is immediate, visible in
+    /// the receipt, and leaves the connections already in flight alone.
+    pub fn admit(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        match self.capacity.clone().try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => {
+                if let Ok(mut t) = self.tally.lock() {
+                    t.over_capacity += 1;
+                }
+                None
+            }
         }
     }
 
@@ -282,6 +321,7 @@ impl Bridge {
                 ended,
                 peers: t.peers.clone(),
                 denied: t.denied.clone(),
+                over_capacity: t.over_capacity,
             },
         );
         let input = h5i_core::receipt::RecordInput {
@@ -327,6 +367,8 @@ pub struct Summary {
     pub ended: DateTime<Utc>,
     pub peers: Vec<PeerRecord>,
     pub denied: Vec<DeniedAttempt>,
+    /// Connections refused because the share was already at its limit.
+    pub over_capacity: u64,
 }
 
 fn plural(n: u64, one: &str, many: &str) -> String {
@@ -395,6 +437,16 @@ pub fn render_receipt(s: &Summary) -> String {
                  read them.\n"
             ));
         }
+    }
+
+    if s.over_capacity > 0 {
+        // Worth its own line rather than folding into "refused": these were
+        // turned away for load, not for credentials, and the two mean opposite
+        // things about what happened here.
+        out.push_str(&format!(
+            "capacity {} connection(s) refused because the share was already carrying its limit              of {MAX_CONNECTIONS}\n",
+            s.over_capacity
+        ));
     }
 
     if !s.denied.is_empty() {
@@ -489,6 +541,7 @@ mod tests {
             ended: at("2026-08-10T10:10:00Z"),
             peers,
             denied,
+            over_capacity: 0,
         }
     }
 
@@ -535,6 +588,15 @@ mod tests {
         assert!(body.contains("refused  3 attempt(s)"));
         assert!(body.contains("2 unknown ticket"));
         assert!(body.contains("1 revoked"));
+    }
+
+    #[test]
+    fn hitting_the_ceiling_is_recorded_as_load_not_as_a_bad_ticket() {
+        let mut s = summary(vec![], vec![]);
+        s.over_capacity = 7;
+        let body = render_receipt(&s);
+        assert!(body.contains("capacity 7 connection(s) refused"), "{body}");
+        assert!(!body.contains("refused  "), "load must not read as a credential failure");
     }
 
     #[test]

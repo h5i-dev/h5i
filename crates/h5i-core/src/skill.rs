@@ -42,6 +42,10 @@ pub const PAGES: &[Page] = &[
         text: include_str!("../../../skills/h5i/references/export.md"),
     },
     Page {
+        path: "references/share.md",
+        text: include_str!("../../../skills/h5i/references/share.md"),
+    },
+    Page {
         path: "references/troubleshooting.md",
         text: include_str!("../../../skills/h5i/references/troubleshooting.md"),
     },

@@ -237,6 +237,15 @@ async fn serve_stream(
         }
     };
 
+    // Authorized, but the share may already be carrying all it will. Checked
+    // before the dialer rather than after, so a flood costs a permit lookup
+    // rather than a connection into the box.
+    let Some(_slot) = bridge.admit() else {
+        let _ = send.write_all(&[wire::REPLY_BUSY]).await;
+        let _ = send.finish();
+        return Ok(());
+    };
+
     // Only now is there a socket into the box. Everything above this line runs
     // for an unauthenticated peer; nothing above it touches the box.
     //
@@ -329,6 +338,13 @@ pub async fn open_stream(
     recv.read_exact(&mut reply).await.map_err(|e| {
         H5iError::Metadata(format!("the sharer did not answer the handshake: {e}"))
     })?;
+    if reply[0] == wire::REPLY_BUSY {
+        return Err(H5iError::Metadata(
+            "the share is already carrying as many connections as it will. Nothing is wrong with \
+             your ticket — wait a moment and reload."
+                .into(),
+        ));
+    }
     if reply[0] != wire::REPLY_OK {
         return Err(H5iError::Metadata(
             "the sharer refused this ticket. It may have expired, or been revoked — ask for a \

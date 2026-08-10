@@ -126,7 +126,7 @@ async fn handle(
     };
     let next = http_front::decide(
         &head,
-        |t| crate::session::hash_secret(t) == crate::session::hash_secret(local_token),
+        |t| crate::session::secret_matches(t, local_token),
         // Loopback is http, and a `Secure` cookie there is one some browsers
         // decline to store.
         false,

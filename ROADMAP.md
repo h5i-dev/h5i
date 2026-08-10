@@ -720,6 +720,12 @@ Four decisions made during the build that the proposal above did not contain:
   which means one TCP connection into the box: a revoke stops the next one. For
   the connections already open, a one-second watchdog closes them. Without that
   second half, revoking would work on everyone except the person actually there.
+- **A share carries at most 64 connections into the box.** Refused rather than
+  queued, because a queue turns a flood into latency for the person who is
+  legitimately using the share and hides that anything happened; and answered
+  with a `503`, not a `401`, because "your link is bad" is the wrong thing to
+  tell someone whose link is fine. The count goes in the receipt on its own
+  line, so load and credential failures never read as each other.
 - **One connection carries one request, because connection pools are shared.**
   Both HTTP fronts gate a connection when its first request arrives, which is
   equivalent to gating every request only if a connection cannot carry a second

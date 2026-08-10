@@ -207,6 +207,10 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
     let Some(name) = args.name.clone() else {
         anyhow::bail!("which box? `h5i box share <name>` — `h5i box ls` lists them");
     };
+    // Before the lookup: a mistyped duration is a mistyped duration whether or
+    // not the box exists, and hearing about the box first sends people looking
+    // in the wrong place.
+    let expire = parse_expire(&args.expire)?;
     let m = h5i_core::env::find(h5i_root, &name)?;
     let dir = h5i_core::env::env_dir(h5i_root, &m.agent, &m.slug);
 
@@ -237,7 +241,6 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
     } else {
         Transport::P2p
     };
-    let expire = parse_expire(&args.expire)?;
 
     h5i_share::run::serve(
         h5i_share::run::Request {

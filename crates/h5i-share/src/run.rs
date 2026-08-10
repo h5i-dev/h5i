@@ -347,13 +347,11 @@ pub fn grant(
                     .into(),
             ));
         }
-        s.grants.push(g);
-        Ok(s.clone())
-    })?;
-
-    let invite = match sess.transport {
-        Transport::Tunnel => crate::tunnel::invite_url(&sess.endpoint, &secret),
-        Transport::P2p => {
+        // Every reason to refuse is checked *before* the grant goes in the
+        // table. A grant written and then refused is a grant whose secret was
+        // printed nowhere: unusable by anyone, and still counted as live, so
+        // the share it belongs to could never expire on its own.
+        if s.transport == Transport::P2p {
             // The addressing a ticket needs is the running endpoint's, and the
             // session file records only its id. Re-deriving it here would be a
             // second source of truth for something that must match exactly, so
@@ -365,8 +363,10 @@ pub fn grant(
                     .into(),
             ));
         }
-    };
-    Ok((id, invite))
+        s.grants.push(g);
+        Ok(s.clone())
+    })?;
+    Ok((id, crate::tunnel::invite_url(&sess.endpoint, &secret)))
 }
 
 /// Revoke one grant. The share keeps serving everyone else.
@@ -495,6 +495,31 @@ mod tests {
         session::write(dir.path(), &s).expect("write");
         let err = revoke(dir.path(), "nosuch01").expect_err("unknown grant");
         assert!(format!("{err}").contains("nosuch01"));
+    }
+
+    #[test]
+    fn a_refused_grant_leaves_no_trace_in_the_table() {
+        // The bug this pins: minting first and refusing afterwards wrote a
+        // grant whose secret was printed nowhere. Nobody could use it, and it
+        // still counted as live — so the share could never expire on its own.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut s = ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::P2p,
+            "abc",
+            chrono::Utc::now(),
+        );
+        let (expiring, _) = session::mint_grant(None, 1_000).unwrap();
+        s.grants = vec![expiring];
+        session::write(dir.path(), &s).expect("write");
+
+        let err = grant(dir.path(), None, Duration::from_secs(600)).expect_err("p2p refuses");
+        assert!(format!("{err}").contains("peer-to-peer"));
+
+        let after = session::read(dir.path()).expect("read");
+        assert_eq!(after.grants.len(), 1, "a refused grant was written anyway");
+        assert!(after.is_spent(2_000), "a phantom grant kept the share alive");
     }
 
     #[test]

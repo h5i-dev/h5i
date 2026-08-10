@@ -589,7 +589,10 @@ guessing.</p>
 side. h5i keeps only the secret's SHA-256, so <strong>a ticket is printed once and
 cannot be reprinted</strong> — mint another with <code>share grant</code>.</p>
 <p>One ticket admits one peer, which is what makes <code>share revoke &lt;name&gt; &lt;grant&gt;</code>
-per person rather than all or nothing. Authorization is re-read from disk on
+per person rather than all or nothing. <code>share grant</code> mints a second one — but
+only for a <code>--tunnel</code> share today. A peer-to-peer ticket needs the running
+endpoint's addressing and only the serving process has it, so <code>grant</code> refuses on
+a P2P share and says to start a second one instead. Authorization is re-read from disk on
 every connection, so a revoke from another terminal takes effect on the next
 one, and a watchdog drops the connections already open within about a second.
 <code>share stop</code> revokes everything; the serving process then writes its receipt
@@ -631,6 +634,12 @@ sees the credential that admitted its visitor.</p>
 <p>The app's own cookies and query parameters are passed through untouched. So are
 WebSockets: hot reload works, because a share of a dev server that never
 reloaded would not be a share of a dev server.</p>
+<p>A share carries at most 64 connections into the box at once. Past that, a
+visitor gets a <code>503</code> telling them to reload rather than a <code>401</code> telling them
+their link is bad, and the count of refusals lands in the receipt. The ceiling
+exists because a share is a door on the open internet in tunnel mode and an
+endpoint anyone may dial in P2P mode: without it, one peer — or one page opening
+sockets in a loop — becomes unbounded connections into the box.</p>
 <p>One connection carries exactly one request, and that is an authorization
 control rather than a performance choice. A connection is checked when its
 first request arrives, which is only the same as checking every request if it

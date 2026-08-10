@@ -158,6 +158,25 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
     }
 }
 
+/// What a visitor gets when the share is at capacity. Deliberately not a `401`:
+/// their link is fine, and telling them otherwise sends them back to ask for a
+/// new one that would work no better.
+const BUSY_BODY: &str = "This share is busy right now. Wait a moment and reload the page.";
+
+/// Built rather than written out, because a hand-counted `Content-Length` is a
+/// truncated page waiting for somebody to edit the sentence.
+fn busy_response() -> String {
+    format!(
+        "HTTP/1.1 503 Service Unavailable\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\
+         Retry-After: 2\r\n\
+         Content-Length: {}\r\n\
+         Cache-Control: no-store\r\n\
+         Connection: close\r\n\r\n{BUSY_BODY}",
+        BUSY_BODY.len()
+    )
+}
+
 /// The visitor-facing link: the origin plus the token that authorizes one grant.
 pub fn invite_url(origin: &str, secret: &str) -> String {
     format!("{origin}/?{}={secret}", crate::gate::QUERY_PARAM)
@@ -241,6 +260,14 @@ async fn handle(
         Next::Proxy { head, upgrade } => (head, upgrade),
     };
     let Some(grant) = grant else {
+        return Ok(());
+    };
+
+    // Authorized, but the share may already be carrying all it will. A refusal
+    // here is a `503` with a `Retry-After`, because unlike a bad token this one
+    // is worth trying again.
+    let Some(_slot) = bridge.admit() else {
+        http_front::respond(&mut sock, &busy_response()).await;
         return Ok(());
     };
 
@@ -350,6 +377,173 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("cloudflared"), "{msg}");
         assert!(msg.contains("h5i join"), "{msg}");
+    }
+
+    // ─── the loopback side, end to end ──────────────────────────────────────
+    //
+    // `cloudflared` is a plain reverse proxy into this listener, so everything
+    // between it and the dev server can be tested by connecting to the listener
+    // directly. That covers the gate, the grant table, the dialer and the byte
+    // pump — every part of the tunnel path except Cloudflare itself.
+
+    use crate::session::{self, ShareSession};
+
+    /// A stand-in for the dev server in a box. Answers one canned response per
+    /// connection. Never joined — see the note in `p2p`'s equivalent.
+    fn fake_dev_server() -> u16 {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                let mut buf = [0u8; 4096];
+                let n = c.read(&mut buf).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                // Echo the head back in the body, so a test can assert on what
+                // the box actually received.
+                let body = format!("SAW<{head}>");
+                let _ = c.write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        port
+    }
+
+    async fn tunnel_bridge(
+        dir: &std::path::Path,
+        port: u16,
+    ) -> (Arc<Bridge>, String, tokio::net::TcpListener) {
+        let mut sess = ShareSession::new(
+            "env/test/demo",
+            port,
+            crate::session::Transport::Tunnel,
+            "https://test.trycloudflare.com",
+            chrono::Utc::now(),
+        );
+        let (grant, secret) = session::mint_grant(None, 4_000_000_000).unwrap();
+        sess.grants.push(grant);
+        session::write(dir, &sess).expect("write session");
+        let dialer = crate::dialer::Dialer::spawn_local(port).expect("dialer");
+        let bridge = Arc::new(Bridge::new(
+            dir.to_path_buf(),
+            "env/test/demo".into(),
+            "digest".into(),
+            "demo".into(),
+            crate::session::Transport::Tunnel,
+            "https://test.trycloudflare.com".into(),
+            dialer,
+        ));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind");
+        (bridge, secret, listener)
+    }
+
+    /// One request, one connection, exactly as `cloudflared` would send it.
+    async fn request(addr: std::net::SocketAddr, head: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut c = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        c.write_all(head.as_bytes()).await.expect("write");
+        let mut out = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(5), c.read_to_end(&mut out)).await;
+        String::from_utf8_lossy(&out).to_string()
+    }
+
+    #[tokio::test]
+    async fn the_link_admits_a_browser_and_nothing_else_does() {
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        // No credential at all: refused without touching the box.
+        let anon = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
+        assert!(anon.starts_with("HTTP/1.1 401 "), "{anon}");
+        assert!(!anon.contains("SAW<"), "an anonymous request reached the box");
+
+        // Following the invite link: bounced, with the token moved to a cookie.
+        let first = request(
+            addr,
+            "GET /dash HTTP/1.1\r\nHost: t\r\nCookie: x=1\r\n\r\n",
+        )
+        .await;
+        assert!(first.starts_with("HTTP/1.1 401 "), "{first}");
+        let invited = request(
+            addr,
+            &format!("GET /dash?h5i={secret} HTTP/1.1\r\nHost: t\r\n\r\n"),
+        )
+        .await;
+        assert!(invited.contains("302"), "{invited}");
+        assert!(invited.contains("Location: /dash"), "{invited}");
+        assert!(invited.contains("Set-Cookie: h5i_share="), "{invited}");
+        assert!(!invited.contains("SAW<"), "the invite request reached the box");
+
+        // With the cookie, it reaches the dev server — and the dev server never
+        // sees the credential that admitted the visitor.
+        let served = request(
+            addr,
+            &format!("GET /dash HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}; sid=9\r\n\r\n"),
+        )
+        .await;
+        assert!(served.contains("SAW<"), "{served}");
+        assert!(!served.contains(&secret), "the credential reached the box: {served}");
+        assert!(served.contains("Cookie: sid=9"), "the app's own cookie was dropped: {served}");
+        assert!(served.contains("Connection: close"), "{served}");
+
+        serving.abort();
+    }
+
+    #[tokio::test]
+    async fn a_stopped_share_stops_admitting_the_link() {
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let ok = request(
+            addr,
+            &format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n"),
+        )
+        .await;
+        assert!(ok.contains("SAW<"), "{ok}");
+
+        // `h5i box share stop`, from another process.
+        crate::run::stop(dir.path()).expect("stop");
+
+        let after = request(
+            addr,
+            &format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n"),
+        )
+        .await;
+        assert!(after.starts_with("HTTP/1.1 401 "), "{after}");
+        assert!(!after.contains("SAW<"), "a stopped share still reached the box");
+
+        serving.abort();
+    }
+
+    #[test]
+    fn the_busy_page_declares_the_length_it_actually_has() {
+        // Hand-counted lengths are how a body gets truncated the first time
+        // somebody rewords the sentence.
+        let r = busy_response();
+        let (head, body) = r.split_once("\r\n\r\n").expect("a head and a body");
+        assert!(head.contains(&format!("Content-Length: {}", body.len())), "{r}");
+        assert!(head.starts_with("HTTP/1.1 503 "));
+        assert!(head.contains("Retry-After:"));
     }
 
     fn which_cloudflared() -> bool {

@@ -117,6 +117,15 @@ pub fn hash_secret(secret: &str) -> String {
     format!("{:x}", h.finalize())
 }
 
+/// Does a presented secret match an expected one?
+///
+/// Exposed so the joiner's proxy compares its local token the same way the
+/// grant table compares a ticket. Two credential comparisons written two
+/// different ways is how one of them ends up being the sloppy one.
+pub fn secret_matches(presented: &str, expected: &str) -> bool {
+    digest_matches(&hash_secret(presented), &hash_secret(expected))
+}
+
 /// Constant-time comparison of two hex digests.
 ///
 /// They are digests of a high-entropy secret, so a timing oracle here is a
@@ -360,6 +369,14 @@ mod tests {
         assert_eq!(s.authorize(&secret, 0).expect("admitted").id, g.id);
         assert_ne!(s.authorize(&other_secret, 0).expect("admitted").id, g.id);
         assert_eq!(s.authorize("not a secret", 0).unwrap_err(), Denied::Unknown);
+    }
+
+    #[test]
+    fn a_secret_matches_only_itself() {
+        assert!(secret_matches("abc123", "abc123"));
+        assert!(!secret_matches("abc123", "abc124"));
+        assert!(!secret_matches("", "abc123"));
+        assert!(!secret_matches("abc123", ""));
     }
 
     #[test]

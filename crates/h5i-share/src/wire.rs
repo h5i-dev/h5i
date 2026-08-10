@@ -36,6 +36,12 @@ pub const REPLY_OK: u8 = 0;
 /// One value for every refusal. The peer learns that it was not let in and
 /// nothing about why — unknown, expired and revoked are the sharer's business.
 pub const REPLY_DENIED: u8 = 1;
+/// The ticket was fine; the share is already carrying as many connections as it
+/// will. Separate from [`REPLY_DENIED`] because the two call for opposite
+/// reactions — try again, versus ask for a new ticket — and telling a peer to
+/// go and get a fresh ticket when the real answer is "wait a moment" is the
+/// kind of error message that wastes two people's afternoon.
+pub const REPLY_BUSY: u8 = 2;
 
 /// Build the greeting a joiner sends.
 pub fn encode_hello(secret: &str) -> Option<[u8; HELLO_LEN]> {
