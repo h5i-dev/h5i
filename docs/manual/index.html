@@ -653,15 +653,23 @@ connections to the origin and reuses them for whatever request comes next, from
 whatever visitor; browsers pool per origin the same way, which puts the
 identical problem on the joiner's proxy.</p>
 <p>So h5i reads the request's head, then exactly as many body bytes as it declared,
-and then stops reading that connection. <code>Connection: close</code> goes to the box as
-well, but that is a courtesy: the box runs agent-written code and may decline,
-and the control cannot depend on it. Two consequences worth knowing. A request
-body has to have a <code>Content-Length</code>; a chunked one is refused with a <code>501</code>,
-because forwarding one request means knowing where it ends. And an upgrade is
-the exception — it does become a two-way pipe — but only after the box has
-actually answered <code>101</code>, and only when the request asked for it properly with
-both an <code>Upgrade</code> header and a <code>Connection: upgrade</code>. A request that merely
-attached an <code>Upgrade:</code> header gets no exception.</p>
+and then stops forwarding anything else on that connection. <code>Connection: close</code>
+goes to the box as well, but that is a courtesy: the box runs agent-written code
+and may decline, and the control cannot depend on it. On the way back, the
+response's own <code>Connection</code> header is replaced with <code>close</code> — otherwise a
+keep-alive answer would tell the visitor's browser to reuse a connection that
+will never answer again — and the response is framed by its <code>Content-Length</code> so
+the connection ends when the response does.</p>
+<p>Two consequences worth knowing. A request body has to have a <code>Content-Length</code>;
+a chunked one is refused with a <code>501</code>, because forwarding one request means
+knowing where it ends. And an upgrade is the exception — it does become a
+two-way pipe — but only after the box has actually answered <code>101</code>, and only when
+the request asked for it properly with both an <code>Upgrade</code> header and a
+<code>Connection: upgrade</code>. A request that merely attached an <code>Upgrade:</code> header gets
+no exception.</p>
+<p>The cost is that every request is its own connection. For a dev server that
+serves each module separately, a first page load is a few hundred of them, each
+with its own dial into the box. It works and it is not free.</p>
 <h4 id="what-the-person-joining-is-taking-on">What the person joining is taking on</h4>
 <p>The app is agent-written code, and joining runs it in their browser. That is the
 point of sharing a port rather than a picture of one, and it is also the

@@ -354,7 +354,13 @@ pub fn update<T>(
 
 /// Forget the session. Called when the sharer exits, so `share ls` describes
 /// what is running rather than what once ran.
+///
+/// Under the lock like every other mutation. Without it, a `revoke` that had
+/// already read the table can write it back *after* this deletes it, and the
+/// share record outlives the process that owned it — a confusing `share ls`
+/// rather than a security failure, but the fix is one line.
 pub fn clear(env_dir: &Path) {
+    let _lock = Lock::acquire(env_dir);
     let _ = std::fs::remove_file(session_path(env_dir));
 }
 

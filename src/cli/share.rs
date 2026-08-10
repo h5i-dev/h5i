@@ -326,17 +326,20 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
         println!();
         println!("   {}", joined.url);
         println!();
-        println!(
-            "   path      {} — {}",
-            joined.path.as_str(),
-            match joined.path {
-                h5i_share::bridge::Path::Direct =>
-                    "straight to the other machine, end-to-end encrypted",
-                h5i_share::bridge::Path::Relayed =>
-                    "through a relay, still end-to-end encrypted (it cannot read the traffic)",
-                h5i_share::bridge::Path::Tunnel => "through a tunnel",
-            }
-        );
+        // `None` is not "relayed": a connection has no selected path for a
+        // moment after it is established, and saying "relayed" there would be
+        // telling someone a third party is on the wire when none is.
+        match joined.path {
+            Some(h5i_share::bridge::Path::Direct) => println!(
+                "   path      direct — straight to the other machine, end-to-end encrypted"
+            ),
+            Some(h5i_share::bridge::Path::Relayed) => println!(
+                "   path      relayed — through a relay, still end-to-end encrypted (it cannot \
+                 read the traffic)"
+            ),
+            Some(h5i_share::bridge::Path::Tunnel) => println!("   path      through a tunnel"),
+            None => println!("   path      settling — end-to-end encrypted either way"),
+        }
         // Said plainly, because the person joining is the one taking this risk
         // and they are not the one who chose to.
         println!(

@@ -26,6 +26,26 @@ use crate::gate;
 /// task until it gave up on its own.
 const HEAD_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// How long the *box* may take to finish its response head. Longer than the
+/// client's, and a different question: a dev server cold-optimising its
+/// dependencies on the first request is slow for a reason, and cutting it off
+/// would look to the visitor like the share was broken.
+const RESPONSE_HEAD_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// A response head past this is relayed as-is rather than parsed. Generous —
+/// a real one is a few kilobytes — and its only job is to stop an unbounded
+/// buffer.
+const MAX_RESPONSE_HEAD: usize = 256 * 1024;
+
+/// How long a response with no declared length may go silent before the
+/// connection is closed. Long enough for a server-sent-events stream that
+/// sends a heartbeat; short enough that a forgotten connection does not hold a
+/// share slot for the life of the grant.
+const RESPONSE_IDLE: Duration = Duration::from_secs(300);
+
+/// How long a peer may pause part-way through a body it declared.
+const BODY_IDLE: Duration = Duration::from_secs(30);
+
 /// What to do with a connection once its head has been read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Next {
@@ -115,7 +135,7 @@ pub fn decide(
             secure,
         ));
     }
-    if gate::is_chunked(&req) {
+    if req.chunked {
         // Well-formed, and refused: forwarding exactly one request means
         // knowing where it ends, and a chunked body would have to be parsed to
         // find out. Browsers use `Content-Length` for forms and ordinary
@@ -207,7 +227,13 @@ where
     let mut buf = vec![0u8; 32 * 1024];
     while remaining > 0 {
         let take = (remaining as usize).min(buf.len());
-        let n = peer_r.read(&mut buf[..take]).await?;
+        // Deadlined per read. Declaring a megabyte, sending one byte and going
+        // quiet used to hold a connection into the box, and one of the share's
+        // slots, for as long as the peer felt like it.
+        let n = match tokio::time::timeout(BODY_IDLE, peer_r.read(&mut buf[..take])).await {
+            Ok(r) => r?,
+            Err(_) => return Ok(()),
+        };
         if n == 0 {
             // The client promised a body and then hung up. Waiting for a
             // response now means waiting for a box that is itself waiting for
@@ -222,44 +248,86 @@ where
     if req.upgrade {
         // Believe the box, not the client. Only a `101` earns a two-way pipe.
         let mut up_r = up_r;
-        if let Some((resp, extra)) = read_head(&mut up_r).await {
-            let switched = resp.starts_with("HTTP/1.1 101") || resp.starts_with("HTTP/1.0 101");
-            peer_w.write_all(resp.as_bytes()).await?;
-            if !extra.is_empty() {
-                peer_w.write_all(&extra).await?;
+        let (head, rest, complete) = read_response(&mut up_r).await;
+        if head.is_empty() && !complete {
+            return Ok(());
+        }
+        let switched = complete
+            && (head.starts_with(b"HTTP/1.1 101") || head.starts_with(b"HTTP/1.0 101"));
+        if switched {
+            peer_w.write_all(&head).await?;
+            if !rest.is_empty() {
+                peer_w.write_all(&rest).await?;
             }
-            to_peer.fetch_add((resp.len() + extra.len()) as u64, Ordering::Relaxed);
-            if switched {
-                crate::pump::duplex(peer_r, peer_w, up_r, up_w, to_box, to_peer).await;
-                return Ok(());
-            }
+            to_peer.fetch_add((head.len() + rest.len()) as u64, Ordering::Relaxed);
+            crate::pump::duplex(peer_r, peer_w, up_r, up_w, to_box, to_peer).await;
+            return Ok(());
         }
         // Not an upgrade after all: finish it like any other single request.
-        return one_way(peer_r, peer_w, up_r, to_peer).await;
+        return relay_response(peer_r, peer_w, up_r, head, rest, complete, to_peer).await;
     }
 
-    one_way(peer_r, peer_w, up_r, to_peer).await
+    let mut up_r = up_r;
+    let (head, rest, complete) = read_response(&mut up_r).await;
+    relay_response(peer_r, peer_w, up_r, head, rest, complete, to_peer).await
 }
 
-/// Copy the response back and close, **forwarding** nothing further from the
-/// client.
+/// Read the box's response head.
 ///
-/// The client's side is still read, and everything it says is thrown away. Two
-/// reasons, and the first is why this is not simply "stop reading":
+/// Byte-oriented, unlike the request reader, and that is not fussiness: a
+/// response head is allowed to carry bytes that are not UTF-8 (a `filename=`
+/// in a legacy encoding is the ordinary case), and a reader that gave up on
+/// those would delete a response the box had already produced.
 ///
-/// * It is how a client hanging up is noticed. We asked the box to close after
-///   one response, but the box runs agent-written code and may not; if nobody
-///   were watching the client, a connection where both ends went quiet would
-///   sit here holding one of the share's connection slots until the grant
-///   expired.
-/// * Discarding is as strong a guarantee as not reading. What matters is that
-///   no byte the client sends after its first request reaches the box, and a
-///   byte read into a buffer that is immediately overwritten has not reached
-///   anything.
-async fn one_way<PR, PW, UR>(
+/// Returns what was read either way. `complete` says whether the blank line
+/// arrived; when it did not — a head past the cap, a box that stopped talking —
+/// the caller relays the bytes verbatim rather than discarding them, because a
+/// truncated response is something a person can debug and a silently empty one
+/// is not.
+async fn read_response<R: tokio::io::AsyncRead + Unpin>(r: &mut R) -> (Vec<u8>, Vec<u8>, bool) {
+    let mut buf = Vec::with_capacity(2048);
+    let mut chunk = [0u8; 4096];
+    let deadline = tokio::time::Instant::now() + RESPONSE_HEAD_TIMEOUT;
+    loop {
+        let n = match tokio::time::timeout_at(deadline, r.read(&mut chunk)).await {
+            Ok(Ok(n)) => n,
+            _ => return (buf, Vec::new(), false),
+        };
+        if n == 0 {
+            return (buf, Vec::new(), false);
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(end) = find_head_end(&buf) {
+            let rest = buf.split_off(end);
+            return (buf, rest, true);
+        }
+        if buf.len() > MAX_RESPONSE_HEAD {
+            return (buf, Vec::new(), false);
+        }
+    }
+}
+
+/// Relay one response and close.
+///
+/// The head is rewritten to say `Connection: close`, and that is a correctness
+/// fix rather than tidiness. The proxy stops reading the client after one
+/// request; a response that told the client "keep this connection, send me
+/// another" produced exactly that — a connection the client believed reusable
+/// and that answered nothing, which on the tunnel path is an intermittent hang
+/// and a `502` for every POST the client will not retry.
+///
+/// The body is framed by `Content-Length` when there is one, so the connection
+/// ends when the response does rather than waiting on a box that may never hang
+/// up. Without one it is relayed until the box closes or goes quiet for a long
+/// time, which is the best that can be done without parsing chunked encoding.
+#[allow(clippy::too_many_arguments)]
+async fn relay_response<PR, PW, UR>(
     mut peer_r: PR,
     mut peer_w: PW,
     mut up_r: UR,
+    head: Vec<u8>,
+    rest: Vec<u8>,
+    complete: bool,
     to_peer: &std::sync::atomic::AtomicU64,
 ) -> std::io::Result<()>
 where
@@ -268,24 +336,64 @@ where
     UR: tokio::io::AsyncRead + Unpin + Send,
 {
     use std::sync::atomic::Ordering;
+
+    let (out, body_len) = if complete {
+        let len = response_content_length(&head);
+        (close_the_connection(&head), len)
+    } else {
+        // Nothing was parsed, so nothing is rewritten. Send it on as it came.
+        (head, None)
+    };
+    if !out.is_empty() {
+        peer_w.write_all(&out).await?;
+        to_peer.fetch_add(out.len() as u64, Ordering::Relaxed);
+    }
+    let mut sent_body = 0u64;
+    if !rest.is_empty() {
+        let take = match body_len {
+            Some(n) => rest.len().min((n - sent_body) as usize),
+            None => rest.len(),
+        };
+        peer_w.write_all(&rest[..take]).await?;
+        to_peer.fetch_add(take as u64, Ordering::Relaxed);
+        sent_body += take as u64;
+    }
+
+    if body_len == Some(sent_body) {
+        let _ = peer_w.shutdown().await;
+        return Ok(());
+    }
+
     let mut buf = vec![0u8; 32 * 1024];
     let mut discard = vec![0u8; 8 * 1024];
     loop {
         tokio::select! {
-            from_box = up_r.read(&mut buf) => {
+            from_box = tokio::time::timeout(RESPONSE_IDLE, up_r.read(&mut buf)) => {
                 let n = match from_box {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => n,
+                    Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
+                    Ok(Ok(n)) => n,
                 };
-                if peer_w.write_all(&buf[..n]).await.is_err() {
+                let take = match body_len {
+                    Some(total) => n.min((total - sent_body) as usize),
+                    None => n,
+                };
+                if peer_w.write_all(&buf[..take]).await.is_err() {
                     break;
                 }
-                to_peer.fetch_add(n as u64, Ordering::Relaxed);
+                to_peer.fetch_add(take as u64, Ordering::Relaxed);
+                sent_body += take as u64;
+                if body_len == Some(sent_body) {
+                    break;
+                }
             }
+            // The client's side is still read, and everything it says is
+            // dropped. Two reasons, and the first is why this is not simply
+            // "stop reading": it is how a client hanging up is noticed, and
+            // without it a connection where both ends went quiet would hold one
+            // of the share's slots until the grant expired. Discarding is as
+            // strong a guarantee as not reading — what matters is that no byte
+            // the client sends after its first request reaches the box.
             from_peer = peer_r.read(&mut discard) => {
-                // Zero is the client hanging up, which ends the connection.
-                // Anything else is a pipelined request or a stray body, read
-                // and dropped: it must not reach the box, and it does not.
                 if matches!(from_peer, Ok(0) | Err(_)) {
                     break;
                 }
@@ -294,6 +402,60 @@ where
     }
     let _ = peer_w.shutdown().await;
     Ok(())
+}
+
+/// The response head with its connection-lifetime headers replaced by one that
+/// says the connection ends here.
+fn close_the_connection(head: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(head.len() + 20);
+    let mut first = true;
+    for line in head.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            continue;
+        }
+        if first {
+            first = false;
+            out.extend_from_slice(line);
+            out.extend_from_slice(b"\r\n");
+            continue;
+        }
+        let name = line.split(|&b| b == b':').next().unwrap_or(b"");
+        let name = String::from_utf8_lossy(name).trim().to_ascii_lowercase();
+        if name == "connection" || name == "keep-alive" {
+            continue;
+        }
+        out.extend_from_slice(line);
+        out.extend_from_slice(b"\r\n");
+    }
+    out.extend_from_slice(b"Connection: close\r\n\r\n");
+    out
+}
+
+/// `Content-Length` from a response head, when it declares exactly one.
+fn response_content_length(head: &[u8]) -> Option<u64> {
+    let mut found = None;
+    for line in head.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let Some(colon) = line.iter().position(|&b| b == b':') else {
+            continue;
+        };
+        let name = String::from_utf8_lossy(&line[..colon]).trim().to_ascii_lowercase();
+        if name != "content-length" {
+            continue;
+        }
+        if found.is_some() {
+            // Two lengths is a response we will not frame; fall back to
+            // relaying until the box closes.
+            return None;
+        }
+        let v = String::from_utf8_lossy(&line[colon + 1..]).trim().to_string();
+        if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        found = v.parse::<u64>().ok();
+    }
+    found
 }
 
 /// Write a response and close politely.

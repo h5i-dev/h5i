@@ -38,6 +38,20 @@ const REVOKE_POLL: Duration = Duration::from_secs(1);
 /// How long an unauthenticated peer may take to send its 69-byte greeting.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// How many QUIC connections this process will carry at once.
+///
+/// Deliberately larger than the box's connection ceiling: several of these are
+/// ordinary (a browser, a second tab), and one connection carries many streams.
+/// It is a backstop against an endpoint anyone can dial, not a usage limit.
+const MAX_LIVE_CONNECTIONS: usize = 256;
+
+/// How long a connection may sit with no stream ever authorized.
+///
+/// iroh keeps a connection alive from this side, so a peer that completes the
+/// handshake and then says nothing never idles out on its own. Nothing has been
+/// authorized, so nothing is lost by hanging up.
+const UNAUTHENTICATED_GRACE: Duration = Duration::from_secs(30);
+
 /// How long to wait for a closing connection's pumps to report their byte
 /// counts before giving up on them.
 const STREAM_DRAIN: Duration = Duration::from_secs(5);
@@ -90,23 +104,26 @@ fn parse_addr(value: &serde_json::Value) -> Result<EndpointAddr, H5iError> {
 }
 
 /// Which path the bytes are taking right now, as the transport reports it.
-fn observed_path(conn: &Connection) -> Path {
-    let paths = conn.paths();
-    // The selected path is the one carrying application data. If nothing is
-    // selected yet, err toward the weaker claim rather than the flattering one.
-    for p in paths.iter() {
+///
+/// `None` is a real answer and not a synonym for "relayed": a connection has no
+/// selected path for a moment after a NAT rebinding or a local address change,
+/// and treating that instant as a relay was both closing healthy `--direct-only`
+/// connections and stamping a false relay on the receipt. A receipt is
+/// evidence, and a wrong relay claim is as wrong as a wrong direct one.
+fn observed_path(conn: &Connection) -> Option<Path> {
+    for p in conn.paths().iter() {
         if p.is_selected() {
-            return if p.is_relay() { Path::Relayed } else { Path::Direct };
+            return Some(if p.is_relay() { Path::Relayed } else { Path::Direct });
         }
     }
-    Path::Relayed
+    None
 }
 
 /// Block until a direct path is carrying this connection, or give up.
 async fn wait_for_direct(conn: &Connection) -> bool {
     let deadline = tokio::time::Instant::now() + DIRECT_WAIT;
     loop {
-        if observed_path(conn) == Path::Direct {
+        if observed_path(conn) == Some(Path::Direct) {
             return true;
         }
         if tokio::time::Instant::now() >= deadline {
@@ -128,9 +145,22 @@ pub async fn serve(
     endpoint: Endpoint,
     direct_only: bool,
 ) -> Result<(), H5iError> {
+    // A ceiling on connections the *host* carries, which is a different number
+    // from the sockets into the box. `Bridge::admit` bounds the latter and is
+    // taken after authorization; a peer that completes a QUIC handshake and
+    // presents no ticket costs a task and a watchdog and passes that check
+    // never. Without this, an endpoint anyone can dial is an endpoint anyone
+    // can grow this process with.
+    let slots = Arc::new(tokio::sync::Semaphore::new(MAX_LIVE_CONNECTIONS));
     while let Some(incoming) = endpoint.accept().await {
+        let Ok(slot) = slots.clone().try_acquire_owned() else {
+            // Refused at the transport, without a task. There is nothing to say
+            // to a peer that has not identified itself.
+            continue;
+        };
         let bridge = bridge.clone();
         tokio::spawn(async move {
+            let _slot = slot;
             let conn = match incoming.await {
                 Ok(c) => c,
                 // A half-open connection from a scanner is ordinary noise on a
@@ -169,43 +199,61 @@ async fn serve_connection(
         return Ok(());
     }
 
-    // The first stream that authorizes registers the peer, and names the grant
-    // that let it in; every later stream on the same connection is counted
-    // against the same record.
+    // The first stream that authorizes registers the peer; every later stream
+    // on the same connection is counted against the same record.
     let peer_id: Arc<std::sync::Mutex<Option<crate::bridge::PeerId>>> = Default::default();
-    let peer_grant: Arc<std::sync::Mutex<Option<String>>> = Default::default();
 
-    // Revocation and `--direct-only` both have to keep applying to a connection
-    // that is already open, or a WebSocket opened a minute ago carries on
-    // regardless of either.
+    // Two jobs this connection's watchdog keeps doing for its whole life, and
+    // one it used to do that has moved.
+    //
+    // **Moved:** revocation. It is decided per *stream* now (`serve_stream`),
+    // because a stream knows the grant that admitted it and a connection does
+    // not — a connection carrying two grants could only ever watch one of them,
+    // and would enforce a revoke of the wrong one.
+    //
+    // **Kept:** `--direct-only`, because a direct path can die and iroh will
+    // fall back to a relay, so a promise checked only at setup is a preference.
+    // And keeping the receipt's record of the path honest, because a long-lived
+    // stream sampled once at its start would be recorded as direct for a
+    // session that spent most of itself on a relay.
     let watchdog = {
         let bridge = bridge.clone();
         let conn = conn.clone();
-        let peer_grant = peer_grant.clone();
+        let peer_id = peer_id.clone();
         tokio::spawn(async move {
+            let deadline = tokio::time::Instant::now() + UNAUTHENTICATED_GRACE;
             loop {
                 tokio::time::sleep(REVOKE_POLL).await;
-                // Asked about *this peer's* grant once one is known. Asking
-                // whether the whole share is spent would leave a revoked peer
-                // connected for as long as anybody else's grant was still good,
-                // which is not what "revoke one peer" means.
-                let cut = match peer_grant.lock().expect("grant").clone() {
-                    Some(id) => !bridge.grant_is_live(&id),
-                    None => bridge.is_spent(),
-                };
-                if cut {
-                    conn.close(2u32.into(), b"h5i: this share has been revoked or has expired");
+                let seen = *peer_id.lock().expect("peer id");
+
+                // A connection that completes the QUIC handshake and then never
+                // opens a stream costs a task and a poll per second for as long
+                // as it likes — and iroh's own keep-alive means it never idles
+                // out. Nothing has been authorized, so nothing is lost by
+                // hanging up on it.
+                if seen.is_none() && tokio::time::Instant::now() >= deadline {
+                    conn.close(4u32.into(), b"h5i: no ticket was presented");
                     return;
                 }
-                // A direct path can die and iroh will fall back to a relay.
-                // `--direct-only` promises no application byte crosses one, and
-                // a promise checked only at setup is a preference.
-                if direct_only && observed_path(&conn) != Path::Direct {
-                    conn.close(
-                        3u32.into(),
-                        b"h5i: --direct-only, and the direct path was lost",
-                    );
-                    return;
+
+                match observed_path(&conn) {
+                    // Only a *selected relay path* is evidence of relaying.
+                    // "Nothing selected" happens for an instant after a NAT
+                    // rebinding, and treating it as a relay closed healthy
+                    // connections and libelled honest ones in the receipt.
+                    Some(Path::Relayed) => {
+                        if let Some(id) = seen {
+                            bridge.peer_path(id, Path::Relayed);
+                        }
+                        if direct_only {
+                            conn.close(
+                                3u32.into(),
+                                b"h5i: --direct-only, and the direct path was lost",
+                            );
+                            return;
+                        }
+                    }
+                    Some(Path::Direct) | Some(Path::Tunnel) | None => {}
                 }
             }
         })
@@ -214,8 +262,11 @@ async fn serve_connection(
     loop {
         // Reap what has finished. A `JoinSet` only releases a task's allocation
         // and its result when it is joined, so a peer opening and closing
-        // streams in a loop would grow this without limit for as long as the
-        // connection lasted.
+        // streams in a loop would grow this without bound. Reaping here is
+        // accept-driven, so a connection that opens streams and then goes quiet
+        // holds its finished slots until it ends — bounded by QUIC's own
+        // concurrent-stream limit, which is the case this does not need to
+        // cover.
         while streams.try_join_next().is_some() {}
         let Ok((send, recv)) = conn.accept_bi().await else {
             break;
@@ -228,11 +279,11 @@ async fn serve_connection(
         let bridge = bridge.clone();
         let who = who.clone();
         let peer_id = peer_id.clone();
-        let path = observed_path(&conn);
-        let peer_grant = peer_grant.clone();
+        let path = observed_path(&conn).unwrap_or(Path::Direct);
+        let conn_for_stream = conn.clone();
         streams.spawn(async move {
             if let Err(e) =
-                serve_stream(&bridge, send, recv, &who, path, &peer_id, &peer_grant).await
+                serve_stream(&bridge, send, recv, &who, path, &peer_id, &conn_for_stream).await
             {
                 eprintln!("share: {e}");
             }
@@ -267,7 +318,7 @@ async fn serve_stream(
     who: &str,
     path: Path,
     peer_id: &std::sync::Mutex<Option<crate::bridge::PeerId>>,
-    peer_grant: &std::sync::Mutex<Option<String>>,
+    conn: &Connection,
 ) -> Result<(), H5iError> {
     let mut hello = [0u8; wire::HELLO_LEN];
     // Deadlined, because this is the one read an unauthenticated peer gets to
@@ -309,10 +360,24 @@ async fn serve_stream(
     // loopback, but a runtime worker parked on a syscall is a worker not
     // serving the other connections of the same page.
     let upstream = {
-        let bridge = bridge.clone();
-        tokio::task::spawn_blocking(move || bridge.open_upstream())
+        let bridge2 = bridge.clone();
+        let opened = tokio::task::spawn_blocking(move || bridge2.open_upstream())
             .await
-            .map_err(|e| H5iError::Metadata(format!("the box dialer panicked: {e}")))??
+            .map_err(|e| H5iError::Metadata(format!("the box dialer panicked: {e}")))?;
+        match opened {
+            Ok(s) => s,
+            Err(e) => {
+                // A good ticket that found nothing listening. Told to the peer
+                // as its own answer — "ask for a new ticket" would send them
+                // chasing something that is not the problem — and recorded,
+                // because otherwise a share where the dev server was down reads
+                // as one nobody ever tried to use.
+                bridge.record_unreachable();
+                let _ = send.write_all(&[wire::REPLY_UNREACHABLE]).await;
+                let _ = send.finish();
+                return Err(e);
+            }
+        }
     };
     upstream.set_nonblocking(true)?;
     let upstream = tokio::net::TcpStream::from_std(upstream)?;
@@ -321,10 +386,6 @@ async fn serve_stream(
         let mut slot = peer_id.lock().expect("peer id");
         *slot.get_or_insert_with(|| bridge.peer_joined(short(who), &grant, path))
     };
-    // Tell the watchdog which grant to watch. Set on every stream rather than
-    // only the first, so a peer that presents a different ticket later is
-    // watched under the one it is actually using.
-    *peer_grant.lock().expect("grant") = Some(grant.id.clone());
     bridge.peer_path(id, path);
     bridge.peer_connection(id);
 
@@ -333,12 +394,25 @@ async fn serve_stream(
         .map_err(|e| H5iError::Metadata(format!("could not answer a peer: {e}")))?;
 
     let (up_r, up_w) = upstream.into_split();
-    // Counted into atomics rather than taken from a return value: the watchdog
-    // closes this connection on a revoke, which drops the copy mid-flight, and
-    // the bytes it had already carried are the ones a reviewer wants.
+    // Counted into atomics rather than taken from a return value, because none
+    // of the three ways this ends returns one: a revoke, the connection
+    // closing, or the copy finishing.
     let from_peer = std::sync::atomic::AtomicU64::new(0);
     let to_peer = std::sync::atomic::AtomicU64::new(0);
-    crate::pump::duplex(recv, send, up_r, up_w, &from_peer, &to_peer).await;
+    tokio::select! {
+        _ = crate::pump::duplex(recv, send, up_r, up_w, &from_peer, &to_peer) => {}
+        // This stream's own grant, not the share's. A stream knows what
+        // admitted it; the connection it arrived on may be carrying more than
+        // one, and enforcing a revoke of the wrong one is worse than not
+        // enforcing it at all.
+        _ = revoked(bridge.clone(), grant.id.clone()) => {}
+        // The connection going away has to end this too. The pump's box-side
+        // read has nothing to interrupt it: `duplex` shuts the write half when
+        // the peer side ends, and a dev server that holds its socket open after
+        // seeing that would leave this parked forever — losing the counts for
+        // exactly the long-lived stream they exist for.
+        _ = conn.closed() => {}
+    }
     use std::sync::atomic::Ordering;
     bridge.peer_bytes(
         id,
@@ -346,6 +420,16 @@ async fn serve_stream(
         from_peer.load(Ordering::Relaxed),
     );
     Ok(())
+}
+
+/// Resolves when this stream's own grant stops admitting anyone.
+async fn revoked(bridge: Arc<Bridge>, grant_id: String) {
+    loop {
+        tokio::time::sleep(REVOKE_POLL).await;
+        if !bridge.grant_is_live(&grant_id) {
+            return;
+        }
+    }
 }
 
 /// Endpoint ids are 52 characters of base32 and nobody reads them whole. The
@@ -387,6 +471,8 @@ pub enum OpenError {
     Busy,
     /// The ticket was not accepted: unknown, expired or revoked.
     Refused,
+    /// The ticket was fine; the box had nothing listening on the shared port.
+    Unreachable,
     /// Something below the handshake went wrong.
     Transport(String),
 }
@@ -403,6 +489,11 @@ impl std::fmt::Display for OpenError {
                 f,
                 "the sharer refused this ticket. It may have expired, or been revoked — ask for \
                  a new one."
+            ),
+            OpenError::Unreachable => write!(
+                f,
+                "the share is up, but nothing is listening on the port inside the box. Your \
+                 ticket is fine — whoever shared it needs to start their dev server."
             ),
             OpenError::Transport(e) => write!(f, "{e}"),
         }
@@ -439,6 +530,7 @@ pub async fn open_stream(
     match reply[0] {
         wire::REPLY_OK => Ok((send, recv)),
         wire::REPLY_BUSY => Err(OpenError::Busy),
+        wire::REPLY_UNREACHABLE => Err(OpenError::Unreachable),
         _ => Err(OpenError::Refused),
     }
 }
@@ -446,7 +538,7 @@ pub async fn open_stream(
 /// Report how a joined connection is actually carried, for the joiner's own
 /// terminal. The sharer records the same observation in the receipt; this is so
 /// the person clicking around knows whether a relay is in the path.
-pub fn path_of(conn: &Connection) -> Path {
+pub fn path_of(conn: &Connection) -> Option<Path> {
     observed_path(conn)
 }
 

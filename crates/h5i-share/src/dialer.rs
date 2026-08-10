@@ -37,6 +37,13 @@ const STATUS_SETNS: u8 = 3;
 #[cfg(target_os = "linux")]
 const REQUEST: u8 = 0x01;
 
+/// How long the helper will wait for the box's dev server to accept.
+///
+/// Loopback inside the box, so a working server answers in microseconds and a
+/// dead port refuses immediately. This bounds the one case in between: a server
+/// that is up but not accepting.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// A live route into one port of one box.
 #[derive(Debug)]
 pub struct Dialer {
@@ -368,7 +375,14 @@ fn helper_main(box_pid: Option<u32>, port: u16, sock: i32) -> i32 {
         if n != 1 {
             return 0;
         }
-        match TcpStream::connect(dest) {
+        // Deadlined, and this is not a nicety. The parent holds a mutex across
+        // this exchange and waits for the reply, so an unbounded connect
+        // serialises every other connection of the share behind it — and the
+        // shutdown path waits for the helper, so it would hang there too. A dev
+        // server whose accept queue is full makes the kernel drop the SYN, and
+        // the default retry schedule is around two minutes. A box runs
+        // agent-written code; a wedged single-threaded dev server is ordinary.
+        match TcpStream::connect_timeout(&dest, CONNECT_TIMEOUT) {
             Ok(stream) => {
                 use std::os::fd::AsRawFd;
                 send_status(sock, STATUS_OK, Some(stream.as_raw_fd()));
@@ -472,8 +486,21 @@ impl Drop for Dialer {
             let guard = sock.lock().unwrap_or_else(|p| p.into_inner());
             unsafe { libc::shutdown(guard.0.as_raw_fd(), libc::SHUT_RDWR) };
         }
+        // Polled rather than blocking. The helper only reads the socket
+        // *between* connects, so if it is inside one it cannot notice the
+        // shutdown until that connect finishes — and this runs on the way out
+        // of `h5i box share`, where a hang is the operator's whole experience
+        // of the command. `CONNECT_TIMEOUT` bounds how long that can be, but a
+        // shutdown that waits ten seconds is still a shutdown nobody wants, so
+        // this gives up and leaves the child to `init`.
         let mut status = 0;
-        unsafe { libc::waitpid(*child, &mut status, 0) };
+        for _ in 0..100 {
+            let rc = unsafe { libc::waitpid(*child, &mut status, libc::WNOHANG) };
+            if rc != 0 {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
 }
 

@@ -63,6 +63,8 @@ pub struct Request {
     pub upgrade: bool,
     /// How long this request's body is. `None` means there is none.
     pub content_length: Option<u64>,
+    /// The body's length is not something this proxy can know in advance.
+    pub chunked: bool,
 }
 
 /// Why a request was refused.
@@ -160,7 +162,18 @@ fn strip_param(target: &str) -> (String, Option<String>) {
 }
 
 /// Pull our cookie out of a `Cookie` header, and return the header as it should
-/// go upstream — which is to say, without it.
+/// go upstream — which is to say, without **any** h5i share cookie.
+///
+/// Reading our own by exact name and dropping every cookie whose name starts
+/// with [`COOKIE`] are two different rules on purpose, and the difference is a
+/// credential leak.
+///
+/// Cookies ignore the port, so a browser sends every `127.0.0.1` cookie to
+/// every `127.0.0.1` listener. Two `h5i join` sessions on one machine — the
+/// case per-port naming was introduced for — therefore put *both* share
+/// credentials in every request to either. Stripping only the exact name would
+/// leave one share handing the other's credential to the agent-written code it
+/// is showing somebody, which is the one thing this module exists to prevent.
 fn split_cookie(value: &str, name: &str) -> (Option<String>, String) {
     let mut ours = None;
     let kept: Vec<&str> = value
@@ -168,11 +181,14 @@ fn split_cookie(value: &str, name: &str) -> (Option<String>, String) {
         .filter(|c| {
             let c = c.trim();
             match c.split_once('=') {
-                Some((k, v)) if k.trim() == name => {
-                    ours = Some(v.trim().to_string());
-                    false
+                Some((k, v)) => {
+                    let k = k.trim();
+                    if k == name {
+                        ours = Some(v.trim().to_string());
+                    }
+                    !k.starts_with(COOKIE)
                 }
-                _ => !c.is_empty(),
+                None => !c.is_empty(),
             }
         })
         .map(|c| c.trim())
@@ -198,6 +214,33 @@ fn lists_token(value: &str, token: &str) -> bool {
     value
         .split(',')
         .any(|t| t.trim().eq_ignore_ascii_case(token))
+}
+
+/// Refuse a head whose headers are shaped in a way two parsers could read
+/// differently.
+///
+/// Same reasoning as the CRLF check below and the same failure if it is
+/// skipped: the gate decides where a request ends and the box decides
+/// separately, and any construction they can disagree about is a construction
+/// that walks a second request past the gate.
+///
+/// * **Obs-fold** (a header line starting with a space or tab) is a
+///   continuation of the previous header to a server that implements RFC 7230's
+///   obsolete line folding, and a header of its own to a parser splitting on
+///   CRLF. `X-Pad: a\r\n Content-Length: 35` is no body to one and a 35-byte
+///   body to the other.
+/// * **A space before the colon** (`Content-Length : 35`) must be rejected by a
+///   conforming server, and is a valid header to anything that trims the name.
+fn headers_are_unambiguous(headers: &[&str]) -> bool {
+    headers.iter().all(|l| {
+        if l.starts_with(' ') || l.starts_with('\t') {
+            return false;
+        }
+        match l.split_once(':') {
+            Some((k, _)) => !k.ends_with(' ') && !k.ends_with('\t') && !k.is_empty(),
+            None => false,
+        }
+    })
 }
 
 /// Refuse a head whose line endings are not consistently CRLF.
@@ -228,6 +271,9 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
         return None;
     }
     let (request_line, headers) = lines(head)?;
+    if !headers_are_unambiguous(&headers) {
+        return None;
+    }
     let mut parts = request_line.split_whitespace();
     let method = parts.next()?.to_string();
     let target = parts.next()?.to_string();
@@ -237,10 +283,13 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
     }
     let (clean_target, query_token) = strip_param(&target);
     let cookie_token = header(&headers, "cookie").and_then(|c| split_cookie(c, cookie).0);
+    // The query only wins when it carries something usable. `/?h5i` and `/?h5i=`
+    // used to shadow a perfectly good cookie and produce a `401` on a page the
+    // visitor was entitled to — and an app with its own parameter called `h5i`
+    // does exactly that.
+    let query_token = query_token.filter(|t| plausible(t));
     let from_query = query_token.is_some();
-    let token = query_token
-        .or(cookie_token)
-        .filter(|t| plausible(t));
+    let token = query_token.or(cookie_token).filter(|t| plausible(t));
 
     // Both halves required. `upgrade` is the flag that lets a connection out of
     // the one-request rule, and a lone `Upgrade:` header is something any
@@ -260,23 +309,19 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
         return None;
     }
     let content_length = match lengths.first() {
-        Some(v) => Some(v.trim().parse::<u64>().ok()?),
+        Some(v) => {
+            let v = v.trim();
+            // ASCII digits and nothing else. Rust's `u64::from_str` accepts a
+            // leading `+`, no HTTP server does, and a value one side reads as a
+            // length and the other reads as absent is the same disagreement the
+            // checks above exist to refuse.
+            if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            Some(v.parse::<u64>().ok()?)
+        }
         None => None,
     };
-    // Signalled separately from `None`: a chunked body is well-formed and this
-    // proxy simply will not forward it, which is a different answer than "that
-    // is not a request".
-    if chunked && !upgrade {
-        return Some(Request {
-            method,
-            target,
-            clean_target,
-            from_query,
-            token,
-            upgrade,
-            content_length: Some(u64::MAX),
-        });
-    }
 
     Some(Request {
         method,
@@ -286,12 +331,13 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
         token,
         upgrade,
         content_length,
+        // Carried as its own flag rather than encoded in the length. As a
+        // sentinel value it collided with a real `Content-Length` of
+        // `u64::MAX`, and it was skipped entirely when the request also asked
+        // to upgrade — which made "chunked bodies are refused" false for a
+        // request that simply attached an `Upgrade` header.
+        chunked,
     })
-}
-
-/// A chunked request body, flagged by [`parse`] as a length it cannot know.
-pub fn is_chunked(req: &Request) -> bool {
-    req.content_length == Some(u64::MAX)
 }
 
 /// Is this somewhere on *this* origin?
@@ -526,10 +572,10 @@ mod tests {
     #[test]
     fn a_body_this_proxy_cannot_measure_is_flagged_rather_than_forwarded() {
         let r = parse_default(&head("POST / HTTP/1.1", &["Transfer-Encoding: chunked"])).expect("parse");
-        assert!(is_chunked(&r));
+        assert!(r.chunked);
         let plain = parse_default(&head("POST / HTTP/1.1", &["Content-Length: 12"])).expect("parse");
         assert_eq!(plain.content_length, Some(12));
-        assert!(!is_chunked(&plain));
+        assert!(!plain.chunked);
     }
 
     #[test]
@@ -643,6 +689,79 @@ mod tests {
     }
 
     #[test]
+    fn one_shares_credential_is_never_handed_to_another_shares_box() {
+        // The leak per-port naming introduced. Cookies ignore the port, so a
+        // browser sends every 127.0.0.1 cookie to every 127.0.0.1 listener —
+        // and stripping only this front's name left the *other* share's
+        // credential in the head going to agent-written code.
+        let a = cookie_for_port(43821);
+        let b = cookie_for_port(43822);
+        let raw = head(
+            "GET / HTTP/1.1",
+            &[&format!("Cookie: {a}=mine1111; {b}=theirs2222; sid=9")],
+        );
+        let r = parse(&raw, &a).expect("parse");
+        assert_eq!(r.token.as_deref(), Some("mine1111"));
+        let up = rewrite_for_upstream(&raw, &r, &a);
+        assert!(!up.contains("mine1111"), "{up}");
+        assert!(!up.contains("theirs2222"), "another share's credential leaked: {up}");
+        // The app's own cookies still survive, which is the whole reason this
+        // is a filter rather than a `Cookie` header that gets dropped.
+        assert!(up.contains("sid=9"), "{up}");
+    }
+
+    #[test]
+    fn headers_two_parsers_would_fold_differently_are_refused() {
+        // Obs-fold: `X-Pad: a` continued onto the next line is one header to a
+        // server that implements folding and two to anything splitting on CRLF
+        // — no body to one, a 35-byte body to the other.
+        assert!(parse_default("GET / HTTP/1.1\r\nX-Pad: a\r\n Content-Length: 35\r\n\r\n").is_none());
+        assert!(parse_default("GET / HTTP/1.1\r\nX-Pad: a\r\n\tContent-Length: 35\r\n\r\n").is_none());
+        // A space before the colon: a conforming server must reject it, and
+        // anything that trims the name reads it as a real header.
+        assert!(parse_default(&head("POST / HTTP/1.1", &["Content-Length : 35"])).is_none());
+        // A `+` is a length to Rust's parser and to nothing else.
+        assert!(parse_default(&head("POST / HTTP/1.1", &["Content-Length: +35"])).is_none());
+        assert!(parse_default(&head("POST / HTTP/1.1", &["Content-Length: 35 "])).is_some());
+    }
+
+    #[test]
+    fn a_chunked_body_is_refused_even_when_the_request_asks_to_upgrade() {
+        // Attaching `Upgrade` used to skip the chunked check entirely, so the
+        // box got a head saying `Transfer-Encoding: chunked` and then waited
+        // for chunks that would never arrive — holding a slot for free.
+        let r = parse_default(&head(
+            "POST / HTTP/1.1",
+            &["Transfer-Encoding: chunked", "Upgrade: websocket", "Connection: Upgrade"],
+        ))
+        .expect("parse");
+        assert!(r.chunked);
+        // And a real length of u64::MAX is a length, not a sentinel.
+        let big = parse_default(&head(
+            "POST / HTTP/1.1",
+            &["Content-Length: 18446744073709551615"],
+        ))
+        .expect("parse");
+        assert!(!big.chunked);
+        assert_eq!(big.content_length, Some(u64::MAX));
+    }
+
+    #[test]
+    fn an_unusable_query_parameter_does_not_shadow_a_good_cookie() {
+        // `/?h5i` and `/?h5i=` used to produce a 401 on a page the visitor was
+        // entitled to — and an app with its own `h5i` parameter did it too.
+        for target in ["/?h5i", "/?h5i=", "/?h5i=not%20a%20token"] {
+            let raw = head(
+                &format!("GET {target} HTTP/1.1"),
+                &["Cookie: h5i_share=goodtoken"],
+            );
+            let r = parse_default(&raw).expect("parse");
+            assert_eq!(r.token.as_deref(), Some("goodtoken"), "target {target}");
+            assert!(!r.from_query, "target {target}");
+        }
+    }
+
+    #[test]
     fn a_loopback_proxy_names_its_cookie_after_its_port() {
         // Cookies ignore the port, so two `h5i join` sessions on one machine
         // would set the same cookie on 127.0.0.1 and log each other out.
@@ -656,7 +775,7 @@ mod tests {
         let r = parse(&raw, &a).expect("parse");
         let up = rewrite_for_upstream(&raw, &r, &a);
         assert!(!up.contains("mine"), "{up}");
-        assert!(up.contains("theirs"), "{up}");
+        assert!(!up.contains("theirs"), "{up}");
     }
 
     #[test]

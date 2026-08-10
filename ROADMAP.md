@@ -750,10 +750,28 @@ Four decisions made during the build that the proposal above did not contain:
   a lone `Upgrade:` header is something any client can attach to a request that
   will never upgrade, and it was an opt-out from the whole rule.
 
-  Both rounds are worth recording together: nothing in the suite would have
-  caught either, because nothing in the suite pools connections. The test that
-  pins it now runs against a dev server written specifically to ignore
+  A third round found the other half: the *response* was relayed untouched, so a
+  box answering keep-alive told the visitor's browser to reuse a connection this
+  proxy would never read again — an intermittent hang, and a `502` for every
+  POST a client will not retry. The response head is rewritten to `close` now
+  and framed by its `Content-Length`. Security intact throughout; liveness had
+  been traded away silently.
+
+  All three rounds are worth recording together: nothing in the suite would have
+  caught any of them, because nothing in the suite pools connections. The tests
+  that pin them run against a dev server written specifically to ignore
   `Connection: close`.
+
+- **Per-port cookies fixed one leak and opened another.** Naming the joiner's
+  cookie after its port stopped two `h5i join` sessions logging each other out.
+  It also meant a *second* share's credential was, from any given front's point
+  of view, just another cookie — and cookies ignore the port, so the browser
+  sent both to both, and each front dutifully forwarded the other's to
+  agent-written code. Reading our own cookie by exact name and dropping every
+  cookie whose name starts with the share prefix are two different rules, and
+  the difference was the one property the gate exists for. The test that had
+  been written for the first fix asserted the leak as correct behaviour, which
+  is the more useful lesson: a test can pin a bug as a feature.
 - **Revocation is per grant all the way down.** The watchdogs first asked
   whether the *share* was spent, which is true only when no grant admits
   anybody — so revoking one peer while another was still connected left the

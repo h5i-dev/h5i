@@ -469,15 +469,25 @@ whatever visitor; browsers pool per origin the same way, which puts the
 identical problem on the joiner's proxy.
 
 So h5i reads the request's head, then exactly as many body bytes as it declared,
-and then stops reading that connection. `Connection: close` goes to the box as
-well, but that is a courtesy: the box runs agent-written code and may decline,
-and the control cannot depend on it. Two consequences worth knowing. A request
-body has to have a `Content-Length`; a chunked one is refused with a `501`,
-because forwarding one request means knowing where it ends. And an upgrade is
-the exception — it does become a two-way pipe — but only after the box has
-actually answered `101`, and only when the request asked for it properly with
-both an `Upgrade` header and a `Connection: upgrade`. A request that merely
-attached an `Upgrade:` header gets no exception.
+and then stops forwarding anything else on that connection. `Connection: close`
+goes to the box as well, but that is a courtesy: the box runs agent-written code
+and may decline, and the control cannot depend on it. On the way back, the
+response's own `Connection` header is replaced with `close` — otherwise a
+keep-alive answer would tell the visitor's browser to reuse a connection that
+will never answer again — and the response is framed by its `Content-Length` so
+the connection ends when the response does.
+
+Two consequences worth knowing. A request body has to have a `Content-Length`;
+a chunked one is refused with a `501`, because forwarding one request means
+knowing where it ends. And an upgrade is the exception — it does become a
+two-way pipe — but only after the box has actually answered `101`, and only when
+the request asked for it properly with both an `Upgrade` header and a
+`Connection: upgrade`. A request that merely attached an `Upgrade:` header gets
+no exception.
+
+The cost is that every request is its own connection. For a dev server that
+serves each module separately, a first page load is a few hundred of them, each
+with its own dial into the box. It works and it is not free.
 
 #### What the person joining is taking on
 

@@ -42,6 +42,11 @@ pub const REPLY_DENIED: u8 = 1;
 /// go and get a fresh ticket when the real answer is "wait a moment" is the
 /// kind of error message that wastes two people's afternoon.
 pub const REPLY_BUSY: u8 = 2;
+/// The ticket was fine and the box had nothing listening on the shared port.
+/// Distinct again for the same reason: "the dev server is not up" is the
+/// sharer's problem to fix, and a peer told "your ticket was refused" will go
+/// and ask for a new one that works no better.
+pub const REPLY_UNREACHABLE: u8 = 3;
 
 /// Build the greeting a joiner sends.
 pub fn encode_hello(secret: &str) -> Option<[u8; HELLO_LEN]> {

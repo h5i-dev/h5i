@@ -35,8 +35,10 @@ use crate::ticket::Ticket;
 pub struct Joined {
     /// The URL to open, token included.
     pub url: String,
-    /// How the connection is carried, as observed at join time.
-    pub path: Path,
+    /// How the connection is carried, as observed at join time. `None` while
+    /// the transport has not settled on a path yet, which is a real answer and
+    /// not a synonym for "relayed".
+    pub path: Option<Path>,
     /// The box on the far end, as the ticket names it.
     pub box_id: String,
 }
@@ -90,6 +92,9 @@ pub async fn run(
     // Named after the port this proxy bound, so two `h5i join` sessions on one
     // machine do not overwrite each other's cookie on `127.0.0.1`.
     let cookie = std::sync::Arc::new(crate::gate::cookie_for_port(local.port()));
+    // Bounded like the sharer's front, and for a smaller but real reason: this
+    // listener is reachable by every process on this machine.
+    let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(256));
     let conn = std::sync::Arc::new(conn);
 
     loop {
@@ -106,6 +111,9 @@ pub async fn run(
                         continue;
                     }
                 };
+                let Ok(slot) = slots.clone().try_acquire_owned() else {
+                    continue;
+                };
                 let (secret, local_token, conn, cookie) = (
                     secret.clone(),
                     local_token.clone(),
@@ -113,6 +121,7 @@ pub async fn run(
                     cookie.clone(),
                 );
                 tokio::spawn(async move {
+                    let _slot = slot;
                     if let Err(e) = handle(sock, &conn, &secret, &local_token, &cookie).await {
                         eprintln!("join: {e}");
                     }

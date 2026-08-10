@@ -80,10 +80,18 @@ pub struct DeniedAttempt {
 struct Tally {
     peers: Vec<PeerRecord>,
     denied: Vec<DeniedAttempt>,
+    /// Attempts past what the list will hold. Counted so the receipt can say
+    /// "1024 recorded, plus this many more" rather than reporting a share
+    /// knocked on fifty thousand times as having been knocked on 1024 times.
+    denied_overflow: u64,
     /// Connections turned away because the share was already carrying its
     /// limit. Counted rather than listed: the interesting number is whether it
     /// happened at all.
     over_capacity: u64,
+    /// Peers who presented a good ticket and found nothing listening inside the
+    /// box. Without this a share where the dev server was down reads as one
+    /// nobody ever tried to use.
+    unreachable: u64,
 }
 
 /// How many connections into the box a share will carry at once.
@@ -190,7 +198,13 @@ impl Bridge {
     /// nothing next to opening a TCP connection into a namespace.
     pub fn authorize(&self, secret: &str) -> Result<AuthorizedGrant, Denied> {
         let now = Utc::now().timestamp();
-        let s = session::read(&self.env_dir).ok_or(Denied::Unknown)?;
+        let Some(s) = session::read(&self.env_dir) else {
+            // The grant table is gone or unreadable, so nothing authorizes
+            // anything. Recorded like any other refusal: it is the one denial
+            // class that used to leave the receipt silent.
+            self.record_denied(Denied::Unknown);
+            return Err(Denied::Unknown);
+        };
         match s.authorize(secret, now) {
             Ok(g) => Ok(AuthorizedGrant {
                 id: g.id.clone(),
@@ -252,6 +266,8 @@ impl Bridge {
                     at: Utc::now(),
                     reason,
                 });
+            } else {
+                t.denied_overflow += 1;
             }
         }
     }
@@ -331,6 +347,29 @@ impl Bridge {
     }
 
     /// How many peers have connected, for the terminal line the sharer watches.
+    /// A peer got through the gate and the box had nothing listening.
+    pub fn record_unreachable(&self) {
+        if let Ok(mut t) = self.tally.lock() {
+            t.unreachable += 1;
+        }
+    }
+
+    /// Wait for every connection into the box to finish, or give up.
+    ///
+    /// Called between shutting the transport down and writing the receipt. The
+    /// connection tasks are spawned and detached — closing the endpoint tells
+    /// them to stop but does not wait for them — so without this the receipt is
+    /// written while peers are still mid-copy, and their bytes and closing
+    /// times are simply missing from it.
+    ///
+    /// Uses the capacity permits as the count of live connections, which they
+    /// already are: each is released after its connection has recorded what it
+    /// moved.
+    pub async fn quiesce(&self, within: std::time::Duration) {
+        let all = u32::try_from(MAX_CONNECTIONS).unwrap_or(u32::MAX);
+        let _ = tokio::time::timeout(within, self.capacity.acquire_many(all)).await;
+    }
+
     pub fn peer_count(&self) -> usize {
         self.tally.lock().map(|t| t.peers.len()).unwrap_or(0)
     }
@@ -357,7 +396,9 @@ impl Bridge {
                 ended,
                 peers: t.peers.clone(),
                 denied: t.denied.clone(),
+                denied_overflow: t.denied_overflow,
                 over_capacity: t.over_capacity,
+                unreachable: t.unreachable,
             },
         );
         let input = h5i_core::receipt::RecordInput {
@@ -407,8 +448,12 @@ pub struct Summary {
     pub ended: DateTime<Utc>,
     pub peers: Vec<PeerRecord>,
     pub denied: Vec<DeniedAttempt>,
+    /// Refusals past what the list holds.
+    pub denied_overflow: u64,
     /// Connections refused because the share was already at its limit.
     pub over_capacity: u64,
+    /// Authorized peers who found nothing listening inside the box.
+    pub unreachable: u64,
 }
 
 fn plural(n: u64, one: &str, many: &str) -> String {
@@ -490,14 +535,29 @@ pub fn render_receipt(s: &Summary) -> String {
         ));
     }
 
+    if s.unreachable > 0 {
+        // A peer with a good ticket that found nothing listening is a fact
+        // about the box, not about the peer, and it is the difference between
+        // "nobody came" and "somebody came and got an error".
+        out.push_str(&format!(
+            "unreached {} connection(s) were authorized but found nothing listening on port {}\n",
+            s.unreachable, s.port
+        ));
+    }
+
     if !s.denied.is_empty() {
         let unknown = s.denied.iter().filter(|d| d.reason == Denied::Unknown).count();
         let expired = s.denied.iter().filter(|d| d.reason == Denied::Expired).count();
         let revoked = s.denied.iter().filter(|d| d.reason == Denied::Revoked).count();
         out.push_str(&format!(
             "refused  {} attempt(s): {unknown} unknown ticket, {expired} expired, {revoked} \
-             revoked\n",
-            s.denied.len()
+             revoked{}\n",
+            s.denied.len(),
+            if s.denied_overflow > 0 {
+                format!(", and {} more not recorded individually", s.denied_overflow)
+            } else {
+                String::new()
+            }
         ));
     }
     out
@@ -582,7 +642,9 @@ mod tests {
             ended: at("2026-08-10T10:10:00Z"),
             peers,
             denied,
+            denied_overflow: 0,
             over_capacity: 0,
+            unreachable: 0,
         }
     }
 
@@ -629,6 +691,35 @@ mod tests {
         assert!(body.contains("refused  3 attempt(s)"));
         assert!(body.contains("2 unknown ticket"));
         assert!(body.contains("1 revoked"));
+    }
+
+    #[test]
+    fn a_share_knocked_on_more_than_the_list_holds_says_so() {
+        // The cap used to claim in a comment that the overflow "still shows up
+        // in the summary". It did not: 50,000 attempts reported as 1024.
+        let mut s = summary(
+            vec![],
+            (0..3)
+                .map(|_| DeniedAttempt {
+                    at: at("2026-08-10T10:01:00Z"),
+                    reason: Denied::Unknown,
+                })
+                .collect(),
+        );
+        s.denied_overflow = 48_976;
+        let body = render_receipt(&s);
+        assert!(body.contains("48976 more not recorded"), "{body}");
+    }
+
+    #[test]
+    fn a_good_ticket_that_found_nothing_listening_is_not_silence() {
+        // Otherwise a share where the dev server was down renders as one
+        // nobody ever tried to use.
+        let mut s = summary(vec![], vec![]);
+        s.unreachable = 4;
+        let body = render_receipt(&s);
+        assert!(body.contains("4 connection(s) were authorized"), "{body}");
+        assert!(body.contains("nothing listening on port 3000"), "{body}");
     }
 
     #[test]

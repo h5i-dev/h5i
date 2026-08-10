@@ -44,6 +44,9 @@ const REVOKE_POLL: Duration = Duration::from_secs(1);
 /// How long to pause after an `accept` error before trying again.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
+/// How many connections this front will hold at once, authorized or not.
+const MAX_PENDING: usize = 256;
+
 /// A running `cloudflared`, killed when this is dropped.
 #[derive(Debug)]
 pub struct Tunnel {
@@ -174,18 +177,31 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
 const BUSY_BODY: &str = "This share is busy right now. Wait a moment and reload the page.";
 
 /// Built rather than written out, because a hand-counted `Content-Length` is a
-/// truncated page waiting for somebody to edit the sentence.
-fn busy_response() -> String {
+/// truncated page waiting for somebody to edit the sentence. Written out once
+/// anyway, and wrong by two bytes within the hour — hence one builder for both.
+fn plain_response(status: &str, extra: &str, body: &str) -> String {
     format!(
-        "HTTP/1.1 503 Service Unavailable\r\n\
+        "HTTP/1.1 {status}\r\n\
          Content-Type: text/plain; charset=utf-8\r\n\
-         Retry-After: 2\r\n\
+         {extra}\
          Content-Length: {}\r\n\
          Cache-Control: no-store\r\n\
-         Connection: close\r\n\r\n{BUSY_BODY}",
-        BUSY_BODY.len()
+         Connection: close\r\n\r\n{body}",
+        body.len()
     )
 }
+
+fn busy_response() -> String {
+    plain_response("503 Service Unavailable", "Retry-After: 2\r\n", BUSY_BODY)
+}
+
+fn unreachable_response() -> String {
+    plain_response("502 Bad Gateway", "", UNREACHABLE_BODY)
+}
+
+/// What a visitor gets when the share is up and the box is not.
+const UNREACHABLE_BODY: &str =
+    "This share is up, but nothing is answering inside it. Whoever shared it needs to look.";
 
 /// The visitor-facing link: the origin plus the token that authorizes one grant.
 pub fn invite_url(origin: &str, secret: &str) -> String {
@@ -204,6 +220,12 @@ pub async fn serve(bridge: Arc<Bridge>, listener: tokio::net::TcpListener) -> Re
     // a precision the transport does not have.
     let peers: Arc<Mutex<HashMap<String, crate::bridge::PeerId>>> = Default::default();
 
+    // A ceiling on connections this front will hold, which is a different
+    // number from `Bridge::admit`'s: that one is taken *after* authorization
+    // and bounds sockets into the box. Everything before it — the head read,
+    // its buffers, the task — is available to anyone who can reach the tunnel
+    // URL, which is public by construction.
+    let slots = Arc::new(tokio::sync::Semaphore::new(MAX_PENDING));
     loop {
         let sock = match listener.accept().await {
             Ok((sock, _)) => sock,
@@ -218,9 +240,16 @@ pub async fn serve(bridge: Arc<Bridge>, listener: tokio::net::TcpListener) -> Re
                 continue;
             }
         };
+        let Ok(slot) = slots.clone().try_acquire_owned() else {
+            // Refused without a task and without a reply. Whoever is flooding
+            // this is not owed an explanation, and the visitor with a valid
+            // link is owed the slots.
+            continue;
+        };
         let bridge = bridge.clone();
         let peers = peers.clone();
         tokio::spawn(async move {
+            let _slot = slot;
             if let Err(e) = handle(bridge, peers, sock).await {
                 eprintln!("share: {e}");
             }
@@ -294,10 +323,23 @@ async fn handle(
     // helper to hand back a connected socket. A runtime worker parked on that
     // syscall is a worker not serving the other requests of the same page.
     let upstream = {
-        let bridge = bridge.clone();
-        tokio::task::spawn_blocking(move || bridge.open_upstream())
+        let bridge2 = bridge.clone();
+        let opened = tokio::task::spawn_blocking(move || bridge2.open_upstream())
             .await
-            .map_err(|e| H5iError::Metadata(format!("the box dialer panicked: {e}")))??
+            .map_err(|e| H5iError::Metadata(format!("the box dialer panicked: {e}")))?;
+        match opened {
+            Ok(s) => s,
+            Err(e) => {
+                // Answered rather than dropped. A closed socket renders in a
+                // browser as "the connection was reset", which tells the
+                // visitor nothing about a dev server that is simply not up —
+                // and the joiner's proxy has answered this case since it was
+                // written.
+                bridge.record_unreachable();
+                http_front::respond(&mut sock, &unreachable_response()).await;
+                return Err(e);
+            }
+        }
     };
     upstream.set_nonblocking(true)?;
     let upstream = tokio::net::TcpStream::from_std(upstream)?;
@@ -650,6 +692,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_keep_alive_answer_from_the_box_is_not_relayed_as_one() {
+        // The liveness bug this closes: the proxy stops reading the client
+        // after one request, so a response telling the client "keep this
+        // connection and send me another" produced a connection the client
+        // believed reusable and that answered nothing — an intermittent hang,
+        // and a 502 for every POST a client will not retry.
+        let (port, _seen) = stubborn_keepalive_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let got = request(
+            addr,
+            &format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n"),
+        )
+        .await;
+        assert!(got.contains("200 OK"), "{got}");
+        assert!(got.contains("Connection: close"), "{got}");
+        assert!(!got.to_lowercase().contains("keep-alive"), "{got}");
+        // Framed by its `Content-Length`, so the connection ends when the
+        // response does rather than waiting on a box that never hangs up.
+        assert!(got.ends_with("hi"), "{got}");
+
+        serving.abort();
+    }
+
+    #[tokio::test]
     async fn a_body_the_proxy_cannot_measure_is_refused_rather_than_streamed() {
         let port = fake_dev_server();
         let dir = tempfile::tempdir().expect("tempdir");
@@ -700,6 +773,131 @@ mod tests {
         serving.abort();
     }
 
+    /// A dev server that answers an upgrade request however the test says, then
+    /// echoes whatever follows. Stands in for a hot-reload socket.
+    fn upgrading_server(status: &'static str) -> u16 {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let _ = c.read(&mut buf);
+                    let _ = c.write_all(status.as_bytes());
+                    // Then behave like a frame-oriented protocol: echo.
+                    loop {
+                        match c.read(&mut buf) {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => {
+                                if c.write_all(&buf[..n]).is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    /// Send a request and keep the socket, so a test can talk after the head.
+    async fn open_request(
+        addr: std::net::SocketAddr,
+        head: &str,
+    ) -> (tokio::net::TcpStream, String) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut c = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        c.write_all(head.as_bytes()).await.expect("write");
+        let mut buf = [0u8; 256];
+        let n = tokio::time::timeout(Duration::from_secs(5), c.read(&mut buf))
+            .await
+            .map(|r| r.unwrap_or(0))
+            .unwrap_or(0);
+        (c, String::from_utf8_lossy(&buf[..n]).to_string())
+    }
+
+    #[tokio::test]
+    async fn hot_reload_gets_its_two_way_pipe_once_the_box_says_101() {
+        // A share of a dev server that never hot-reloads is not a share of a
+        // dev server, so the upgrade path has to actually work.
+        let port = upgrading_server(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\
+             Connection: Upgrade\r\n\r\n",
+        );
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let (mut c, resp) = open_request(
+            addr,
+            &format!(
+                "GET /hmr HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
+                 Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+            ),
+        )
+        .await;
+        assert!(resp.contains("101"), "{resp}");
+
+        // Frames both ways, after the head. This is the thing a one-request
+        // rule would have broken if the exception were not carved out.
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        c.write_all(b"frame-one").await.expect("write");
+        let mut back = [0u8; 9];
+        tokio::time::timeout(Duration::from_secs(5), c.read_exact(&mut back))
+            .await
+            .expect("no echo came back")
+            .expect("read");
+        assert_eq!(&back, b"frame-one");
+
+        serving.abort();
+    }
+
+    #[tokio::test]
+    async fn asking_to_upgrade_and_being_refused_does_not_buy_a_two_way_pipe() {
+        // The opt-out this closes: a client attaches `Upgrade:` to an ordinary
+        // request, the box answers 200 because it has no idea what `h2c` is,
+        // and the connection would otherwise have become a raw pipe on which a
+        // second, ungated request could ride in.
+        let port = upgrading_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nhi",
+        );
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let (mut c, resp) = open_request(
+            addr,
+            &format!(
+                "GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
+                 Upgrade: h2c\r\nConnection: keep-alive, Upgrade\r\n\r\n"
+            ),
+        )
+        .await;
+        assert!(resp.contains("200"), "{resp}");
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        c.write_all(b"smuggled").await.expect("write");
+        let mut back = [0u8; 8];
+        let echoed = tokio::time::timeout(Duration::from_secs(2), c.read_exact(&mut back)).await;
+        assert!(
+            echoed.is_err() || echoed.unwrap().is_err(),
+            "bytes sent after a refused upgrade reached the box"
+        );
+
+        serving.abort();
+    }
+
     #[tokio::test]
     async fn a_stopped_share_stops_admitting_the_link() {
         let port = fake_dev_server();
@@ -733,14 +931,18 @@ mod tests {
     }
 
     #[test]
-    fn the_busy_page_declares_the_length_it_actually_has() {
+    fn every_built_in_page_declares_the_length_it_actually_has() {
         // Hand-counted lengths are how a body gets truncated the first time
-        // somebody rewords the sentence.
-        let r = busy_response();
-        let (head, body) = r.split_once("\r\n\r\n").expect("a head and a body");
-        assert!(head.contains(&format!("Content-Length: {}", body.len())), "{r}");
-        assert!(head.starts_with("HTTP/1.1 503 "));
-        assert!(head.contains("Retry-After:"));
+        // somebody rewords the sentence. Both of these were written out by
+        // hand once and one of them was wrong.
+        for r in [busy_response(), unreachable_response()] {
+            let (head, body) = r.split_once("\r\n\r\n").expect("a head and a body");
+            assert!(head.contains(&format!("Content-Length: {}", body.len())), "{r}");
+            assert!(head.contains("Connection: close"), "{r}");
+        }
+        assert!(busy_response().starts_with("HTTP/1.1 503 "));
+        assert!(busy_response().contains("Retry-After:"));
+        assert!(unreachable_response().starts_with("HTTP/1.1 502 "));
     }
 
     fn which_cloudflared() -> bool {

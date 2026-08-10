@@ -27,6 +27,10 @@ use crate::session::{self, ShareSession, Transport};
 /// How often the share checks whether it has been stopped from elsewhere.
 const STOP_POLL: Duration = Duration::from_secs(1);
 
+/// How long to wait, after the transport is closed, for the connections it was
+/// carrying to finish recording what they moved.
+const QUIESCE: Duration = Duration::from_secs(5);
+
 /// What `h5i box share` was asked for.
 pub struct Request {
     pub env_dir: PathBuf,
@@ -169,11 +173,14 @@ async fn serve_async(
         }
     };
 
-    // Shut the transport down *first*, so the connections still in flight end
-    // and record what they moved. Writing the receipt while peers are mid-copy
-    // would leave their bytes and their closing times out of it — which is the
-    // half of a share a reviewer most wants.
+    // Shut the transport down *first*, then wait for the connections it was
+    // carrying to actually finish. Closing the endpoint tells them to stop; it
+    // does not join them, and they are detached tasks. Writing the receipt
+    // straight afterwards is a race that a fast network usually wins and a slow
+    // one usually loses, and what it loses is the bytes and closing times of
+    // every peer still mid-copy — the half of a share a reviewer most wants.
     started.shutdown().await;
+    bridge.quiesce(QUIESCE).await;
     // Every path out writes the receipt and takes the session file with it, so
     // `share ls` describes what is running rather than what once ran.
     bridge.write_receipt();
@@ -195,6 +202,7 @@ async fn interrupted() {
             Ok(s) => s,
             Err(_) => {
                 let _ = tokio::signal::ctrl_c().await;
+                arm_second_signal();
                 return;
             }
         };
@@ -202,11 +210,44 @@ async fn interrupted() {
             _ = tokio::signal::ctrl_c() => {}
             _ = term.recv() => {}
         }
+        arm_second_signal();
     }
     #[cfg(not(unix))]
     {
         let _ = tokio::signal::ctrl_c().await;
     }
+}
+
+/// Make a second interrupt end the process, rather than doing nothing.
+///
+/// Handling a signal means the default disposition is gone for the rest of this
+/// process's life, so after the first Ctrl-C a second one — and a plain
+/// `kill` — would be swallowed. The orderly shutdown that follows is bounded
+/// (the endpoint's close, the drain, the quiesce) but it is not instant, and an
+/// operator pressing Ctrl-C twice is asking for it to stop now. They lose the
+/// receipt, which is the trade they just made.
+#[cfg(unix)]
+fn arm_second_signal() {
+    tokio::spawn(async {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = signal(SignalKind::terminate()).ok();
+        let again = async {
+            match term.as_mut() {
+                Some(t) => {
+                    tokio::select! {
+                        _ = tokio::signal::ctrl_c() => {}
+                        _ = t.recv() => {}
+                    }
+                }
+                None => {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
+            }
+        };
+        again.await;
+        eprintln!("share: interrupted again — exiting without writing the receipt");
+        std::process::exit(130);
+    });
 }
 
 /// Resolves when the grant table stops admitting anyone — `share stop` from
