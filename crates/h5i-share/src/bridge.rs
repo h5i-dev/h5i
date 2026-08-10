@@ -377,6 +377,10 @@ impl Bridge {
                 t.peers.len()
             )),
             wall_ms: u64::try_from(seconds * 1000).ok(),
+            // A share ends when it is asked to. Left unset, the receipt viewer
+            // renders "signal" for it, which reads in an export as though the
+            // session had been killed.
+            exit_code: Some(0),
             ..Default::default()
         };
         if let Err(e) = h5i_core::receipt::append(&self.env_dir, input, body.as_bytes()) {

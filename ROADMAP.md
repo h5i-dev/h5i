@@ -1888,24 +1888,41 @@ gate, and the ingress receipt lane. Then iroh and `h5i join`. Then the quick
 tunnel on the same bridge. Viewer sharing was explicitly not in this milestone
 and is not built.
 
-**What is demonstrated, and by what.** The whole P2P chain — QUIC handshake,
-the greeting, the grant table, the dialer's fd handoff, the byte pump — runs
-end to end in-process against a real endpoint pair and a real listener, with a
-wrong ticket refused on the same connection and a revoke written by another
-process stopping the next one. The dialer's fork, socketpair and `SCM_RIGHTS`
-are exercised by every run; the `setns` pair is the one line covered only by a
-live box. The gate's promise that the share credential never reaches the box is
-pinned by a test that reads the rewritten head.
+**What is demonstrated, and by what.** The suite covers the whole P2P chain
+end to end in-process — QUIC handshake, greeting, grant table, the dialer's fd
+handoff, the byte pump — with a wrong ticket refused on the same connection and
+a revoke written by another process stopping the next one. The tunnel front is
+driven exactly as `cloudflared` drives it, including against a dev server
+written to ignore `Connection: close`, which is what pins the one-request rule.
+The gate's promise that the share credential never reaches the box is pinned by
+reading the rewritten head.
 
-**What is not demonstrated, stated plainly so it is not read as finished.**
-Nothing here has been run between two machines. `--direct-only` has never been
-exercised against a hole punch that actually fails, only against a path that
-actually succeeds. No `cloudflared` runs on this host, so the tunnel transport
-is covered at its edges — URL extraction, the missing-binary message, the gate,
-the receipt note — and has never carried a request. HMR over a share is
-untested. The receipt renderer is tested; a receipt produced by a real session
-has not been read by a person. Those five are the exit criteria, and they are
-open.
+**Run for real on 2026-08-10, and this is the part that was open.** A live
+`supervised` box with a dev server inside it, shared over iroh, joined from a
+second `h5i` process, and fetched with `curl`:
+
+- the invite bounced to a cookie (`h5i_share_40959`, port-scoped as designed)
+  and the box's HTML came back through the joiner's loopback proxy;
+- the path was **direct** — hole punching, not a relay — with the endpoint's
+  real addresses in the ticket;
+- a request with no cookie and one with a wrong cookie both got `401`, and
+  neither reached the box;
+- `h5i box share revoke` from a third process cut the peer off; the joiner
+  printed the sharer's own close reason rather than a transport error;
+- the export's receipt named the peer, the grant and its label, the window, the
+  connection count, the byte counts and the path:
+  `08e03775419e… via direct — grant 38bd63e2 (reviewer), 14s, 1 connection,
+  97 in / 412 out`. The connection count is *one*, because the redirect and
+  both refusals were answered by the joiner's own proxy and never crossed —
+  which is the gate working, visible in the evidence.
+
+**Still not demonstrated, stated plainly so the rest is not read as more than
+it is.** The two processes were on one machine: a real direct QUIC path through
+the host's network stack, but not two machines on two networks. `--direct-only`
+has never been exercised against a hole punch that actually fails, only against
+one that succeeds. No `cloudflared` runs on this host, so the tunnel transport
+has never carried a request over the internet. HMR over a share is untested.
+Those four are what remains of the exit criteria.
 
 ## 9. Limits we state up front
 
