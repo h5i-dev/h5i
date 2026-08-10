@@ -35,8 +35,9 @@ const PRESCAN_LIMIT: usize = 1024;
 /// A BOM wins outright — it is unambiguous and overrides everything, including
 /// a `<meta>` that disagrees with it. Then the transport's `Content-Type`,
 /// because the server is better informed than the markup. Then the markup's own
-/// declaration. Then UTF-8, which is what the modern web is and what an
-/// undeclared document is most likely to be.
+/// declaration. Then, for an undeclared document, UTF-8 if the bytes are valid
+/// UTF-8 and windows-1252 if they are not — see the body for why that asymmetry
+/// is the right way round.
 pub fn sniff(bytes: &[u8], content_type: Option<&str>) -> &'static Encoding {
     if let Some((encoding, _)) = Encoding::for_bom(bytes) {
         return encoding;
@@ -51,7 +52,32 @@ pub fn sniff(bytes: &[u8], content_type: Option<&str>) -> &'static Encoding {
     if let Some(encoding) = prescan(bytes) {
         return encoding;
     }
-    encoding_rs::UTF_8
+
+    // Nothing declared. Browsers do two things here and this engine used to do
+    // only the first, which destroyed exactly the documents this module exists
+    // to rescue.
+    //
+    // Valid UTF-8 is taken as UTF-8 — the detection every browser performs, and
+    // right for almost every undeclared page written this century.
+    //
+    // Anything else falls back to windows-1252 rather than to UTF-8, and the
+    // reason is asymmetry of damage. A windows-1252 page read as UTF-8 has
+    // every high byte replaced by U+FFFD and **the text is gone**: `café naïve`
+    // became `caf<?> na<?>ve`, where Chromium reads it correctly. A UTF-8 page
+    // read as windows-1252 is mojibake but lossless — every byte maps to some
+    // character, and nothing is destroyed. Given a guess has to be made, the
+    // recoverable wrong answer is the better one, and it is also what a browser
+    // would show the person the agent is reporting to.
+    // Detection only fires on bytes that *demonstrate* UTF-8. A document of
+    // pure ASCII is valid UTF-8 and equally valid windows-1252 and decodes
+    // identically either way, so nothing observable turns on it except the
+    // label — and a browser reports the fallback there. Claiming UTF-8 for
+    // ASCII would differ from Chromium for no benefit.
+    let has_multibyte = bytes.iter().any(|byte| *byte >= 0x80);
+    if has_multibyte && std::str::from_utf8(bytes).is_ok() {
+        return encoding_rs::UTF_8;
+    }
+    encoding_rs::WINDOWS_1252
 }
 
 /// The `charset=` parameter of a `Content-Type`, if it has one.
@@ -240,8 +266,20 @@ mod tests {
             sniff(b"\xef\xbb\xbf<meta charset=\"euc-jp\">", Some("text/html; charset=shift_jis")),
             encoding_rs::UTF_8
         );
-        // Undeclared is UTF-8, which is what the modern web is.
-        assert_eq!(sniff(b"<html><body>hi", None), encoding_rs::UTF_8);
+        // Undeclared bytes that demonstrate UTF-8 are taken as UTF-8, which is
+        // the detection a browser performs.
+        assert_eq!(sniff("<html><body>café 日本".as_bytes(), None), encoding_rs::UTF_8);
+        // Undeclared and *not* valid UTF-8 is windows-1252, not UTF-8. Reading
+        // those bytes as UTF-8 replaces every one of them with U+FFFD and the
+        // text is gone; read as windows-1252 it is at worst mojibake, and it is
+        // what a browser shows.
+        assert_eq!(
+            sniff(b"<html><body>caf\xe9 na\xefve", None),
+            encoding_rs::WINDOWS_1252
+        );
+        // Pure ASCII decodes the same either way, so the label follows the
+        // browser rather than the detector.
+        assert_eq!(sniff(b"<html><body>hi", None), encoding_rs::WINDOWS_1252);
     }
 
     #[test]
@@ -250,7 +288,9 @@ mod tests {
         // with the browser is the point.
         let mut late = vec![b' '; PRESCAN_LIMIT + 64];
         late.extend_from_slice(b"<meta charset=\"euc-jp\">");
-        assert_eq!(sniff(&late, None), encoding_rs::UTF_8);
+        // Falls back rather than honouring it — and the fallback for ASCII is
+        // windows-1252, the same answer a browser gives.
+        assert_eq!(sniff(&late, None), encoding_rs::WINDOWS_1252);
     }
 
     #[test]

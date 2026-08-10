@@ -1558,27 +1558,30 @@ fn decode_bytes(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     }
 }
 
-/// Undo percent-encoding, so a query can be re-encoded in another encoding.
+/// Re-encode the query part of a URL *as written*, in the document's encoding.
 ///
-/// `url::Url` percent-encodes as UTF-8 during parsing, so the text a page wrote
-/// has to be recovered before it can be encoded as the document actually is.
-fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).ok();
-            if let Some(value) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
-                out.push(value);
-                index += 3;
-                continue;
-            }
-        }
-        out.push(bytes[index]);
-        index += 1;
+/// Operates on the text a page handed over, before any parser has touched it,
+/// so an escape the author wrote is left exactly as they wrote it and only
+/// literal characters are converted. The query runs from the first `?` to the
+/// `#` that ends it, or to the end.
+fn rewrite_query(href: &str, encoding: &'static encoding_rs::Encoding) -> String {
+    let Some(start) = href.find('?') else {
+        return href.to_string();
+    };
+    let rest = &href[start + 1..];
+    let end = rest.find('#').unwrap_or(rest.len());
+    let query = &rest[..end];
+    if query.is_ascii() {
+        // Nothing here needs a decision, and this is the common case even in a
+        // legacy document.
+        return href.to_string();
     }
-    String::from_utf8_lossy(&out).into_owned()
+    format!(
+        "{}?{}{}",
+        &href[..start],
+        crate::encoding::encode_query(query, encoding),
+        &rest[end..]
+    )
 }
 
 /// What the document is written in, as the canonical label.
@@ -1662,6 +1665,25 @@ fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         .map(|host| *host.encoding.borrow())
         .unwrap_or(encoding_rs::UTF_8);
 
+    // A query belongs to the document, not to UTF-8 — and it has to be encoded
+    // *before* parsing rather than after.
+    //
+    // The first version of this decoded the parsed query and re-encoded it,
+    // which cannot work: once `url::Url` has run, an author's own `%41` and a
+    // `%E4%B8%82` the parser produced from a raw `丂` are both just `%XX` and
+    // nothing can tell them apart. So `?x=%41` came back as `?x=A` and
+    // `?100%25` as `?100%` — an escape the page wrote, destroyed, and in the
+    // second case turned into an invalid one. Found by diffing against Chromium.
+    //
+    // Encoding the raw text first has neither problem: ASCII passes through
+    // untouched, `%` included, and only the characters the document's encoding
+    // has to make a decision about are changed.
+    let href = if encoding == encoding_rs::UTF_8 {
+        href
+    } else {
+        rewrite_query(&href, encoding)
+    };
+
     let parsed = if base.is_empty() {
         url::Url::parse(&href)
     } else {
@@ -1672,45 +1694,9 @@ fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         return Ok(JsValue::null());
     };
 
-    // A query belongs to the document, not to UTF-8.
-    //
-    // The URL Standard encodes a query with the *document's* encoding, and a
-    // code point that encoding cannot represent becomes an HTML numeric
-    // character reference. So in a euc-jp page `?丂` is `?%26%2319970%3B`,
-    // where this engine used to answer `?%E4%B8%82` — the right escape of the
-    // wrong bytes, which is the shape of wrong answer that is hardest to
-    // notice.
-    //
-    // `url::Url` has already percent-encoded the query as UTF-8 by the time it
-    // is parsed, so the original text is recovered first. Everything about this
-    // is a no-op for a UTF-8 document, which is nearly every page.
-    let query = url.query().map(|raw| {
-        if encoding == encoding_rs::UTF_8 {
-            raw.to_string()
-        } else {
-            let decoded = percent_decode(raw);
-            crate::encoding::encode_query(&decoded, encoding)
-        }
-    });
-
     let out = boa_engine::object::ObjectInitializer::new(context).build();
     let fields: [(&str, String); 8] = [
-        ("href", match &query {
-            Some(rewritten) if Some(rewritten.as_str()) != url.query() => {
-                let mut copy = url.clone();
-                copy.set_query(Some(rewritten));
-                // `set_query` re-escapes what it is given, so the percent signs
-                // this engine just wrote would become `%25`. The already-encoded
-                // form is spliced in instead.
-                let text = copy.to_string();
-                match (text.find('?'), url.fragment()) {
-                    (Some(at), Some(fragment)) => format!("{}?{rewritten}#{fragment}", &text[..at]),
-                    (Some(at), None) => format!("{}?{rewritten}", &text[..at]),
-                    (None, _) => text,
-                }
-            }
-            _ => url.to_string(),
-        }),
+        ("href", url.to_string()),
         ("protocol", format!("{}:", url.scheme())),
         ("host", url.host_str().map(|h| match url.port() {
             Some(port) => format!("{h}:{port}"),
@@ -1719,7 +1705,12 @@ fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         ("hostname", url.host_str().unwrap_or_default().to_string()),
         ("port", url.port().map(|p| p.to_string()).unwrap_or_default()),
         ("pathname", url.path().to_string()),
-        ("search", query.as_deref().map(|q| format!("?{q}")).unwrap_or_default()),
+        // Empty is not the same as absent to a URL, but it is to `search`:
+        // `https://e.com/?` reports "" in a browser, not "?".
+        ("search", match url.query() {
+            Some(q) if !q.is_empty() => format!("?{q}"),
+            _ => String::new(),
+        }),
         ("hash", url.fragment().map(|f| format!("#{f}")).unwrap_or_default()),
     ];
     for (name, value) in fields {
