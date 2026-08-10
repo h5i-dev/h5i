@@ -525,6 +525,29 @@ impl Walker<'_> {
                 is_leaf,
             }) => {
                 let name = accessible_name(&tag, node);
+
+                // For `<pre>`, the same text again but split on its own line
+                // breaks. Computed here, where the raw text is still in reach.
+                let preformatted_lines: Vec<String> = if tag == "pre" {
+                    let raw = node.text_content();
+                    let pieces: Vec<String> = raw
+                        .lines()
+                        // Leading indentation is meaning in code, so it is kept
+                        // rather than collapsed away; only the trailing edge and
+                        // interior runs are tidied.
+                        .map(collapse_keeping_indent)
+                        .collect();
+                    // Blank lines at the ends are an artefact of how the markup
+                    // was written, not of what it says.
+                    let start = pieces.iter().position(|line| !line.trim().is_empty());
+                    let stop = pieces.iter().rposition(|line| !line.trim().is_empty());
+                    match (start, stop) {
+                        (Some(start), Some(stop)) if stop > start => pieces[start..=stop].to_vec(),
+                        _ => Vec::new(),
+                    }
+                } else {
+                    Vec::new()
+                };
                 // Collapsed like every other page-derived value, and for a
                 // sharper reason than tidiness: an attribute value may contain
                 // a literal newline, so an uncollapsed `href` is the one field
@@ -556,13 +579,40 @@ impl Walker<'_> {
                         None
                     };
 
-                    self.push(Line {
-                        depth,
-                        role: role.to_string(),
-                        text: name,
-                        reference,
-                        href,
-                    });
+                    // A `<pre>` keeps its line breaks, as one outline line per
+                    // source line.
+                    //
+                    // Collapsing it into a single line is what the rest of the
+                    // outline does and is right for prose, where a newline in
+                    // the markup is not a newline on screen. In preformatted
+                    // text it is: every code block in every documentation page
+                    // was arriving as one run-on line, which is a poor reading
+                    // of the thing agents read most.
+                    //
+                    // Split rather than un-collapsed, because the fence in
+                    // `render` rests on **no page-derived value spanning a
+                    // line**. Each piece is collapsed on its own and gets its
+                    // own indent and `- `, so the invariant holds unchanged and
+                    // the structure survives.
+                    if role == "code" && !preformatted_lines.is_empty() {
+                        for piece in &preformatted_lines {
+                            self.push(Line {
+                                depth,
+                                role: role.to_string(),
+                                text: piece.clone(),
+                                reference: reference.clone(),
+                                href: href.clone(),
+                            });
+                        }
+                    } else {
+                        self.push(Line {
+                            depth,
+                            role: role.to_string(),
+                            text: name,
+                            reference,
+                            href,
+                        });
+                    }
                     depth + 1
                 } else {
                     depth
@@ -712,6 +762,24 @@ fn accessible_name(tag: &str, node: &Node) -> String {
                 text
             }
         }
+    }
+}
+
+/// Collapse a single line's interior whitespace but keep what it starts with.
+///
+/// Indentation is meaning in preformatted text — it is how a code block shows
+/// nesting — so the leading run is preserved while interior runs and the
+/// trailing edge are tidied. Tabs become spaces so a line's width does not
+/// depend on how the reader's terminal is configured.
+fn collapse_keeping_indent(line: &str) -> String {
+    let body = line.trim_start();
+    let indent_width = line.len() - body.len();
+    let indent = line[..indent_width].replace('\t', "    ");
+    let collapsed = collapse(body);
+    if collapsed.is_empty() {
+        String::new()
+    } else {
+        format!("{indent}{collapsed}")
     }
 }
 
