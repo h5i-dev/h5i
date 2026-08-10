@@ -88,6 +88,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("rect", 1, rect),
         ("computedStyle", 2, computed_style),
         ("supportsCss", 2, supports_css),
+        ("isCssProperty", 1, is_css_property),
         ("innerText", 1, inner_text),
         ("encodingFor", 1, encoding_for),
         ("decodeBytes", 3, decode_bytes),
@@ -1554,6 +1555,21 @@ fn decode_bytes(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
         let (text, _) = encoding.decode_without_bom_handling(&bytes);
         Ok(js_string!(text.as_ref()).into())
     }
+}
+
+/// Whether this is a CSS property at all, which is what `in` on a computed
+/// style is asking.
+///
+/// `"color" in getComputedStyle(el)` was **false** for every property, because
+/// the computed-style object is a proxy with only a `get` trap and `in` uses
+/// `has`. WPT's `test_computed_value` asserts exactly that on its first line,
+/// and it is the standard helper for CSS parsing tests, so thousands of
+/// subtests failed before they ever compared a value — including all of
+/// `css-color`, where Stylo supported every feature under test.
+fn is_css_property(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let name = arg_string(args, 0, context)?;
+    let known = style::properties::PropertyId::parse_enabled_for_all_content(&name).is_ok();
+    Ok(JsValue::from(known))
 }
 
 /// Whether Stylo can parse this declaration, which is what `CSS.supports` asks.

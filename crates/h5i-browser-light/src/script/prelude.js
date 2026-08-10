@@ -4650,6 +4650,21 @@
             if (typeof key !== "string" || key in target) return Reflect.get(target, key);
             return read(camelToDash(key));
           },
+          // `"color" in getComputedStyle(el)` asks `has`, not `get`, and
+          // without this trap it fell through to the bare backing object and
+          // answered **false for every property**. A computed style declares
+          // every property the engine knows, so that is what it now reports.
+          //
+          // WPT's `test_computed_value` asserts this on its first line and it
+          // is the standard helper for CSS parsing tests, so thousands of
+          // subtests failed before comparing a single value — all of
+          // `css-color` among them, where Stylo already supported every
+          // feature under test.
+          has(target, key) {
+            if (typeof key !== "string") return Reflect.has(target, key);
+            if (key in target) return true;
+            return api.isCssProperty(camelToDash(key));
+          },
         }
       );
     },

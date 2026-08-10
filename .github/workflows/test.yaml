@@ -167,6 +167,59 @@ jobs:
   # Reproducibility: the man page is pinned by Cargo.lock (`--locked` build) +
   # toolchain; the HTML is pinned by `scripts/requirements.txt` (the `markdown`
   # version). Regenerate locally on Linux with the same pins and commit the diff.
+  # The light engine's conformance number, defended.
+  #
+  # ROADMAP_BROWSER §12 quotes a WPT pass count, and every point of it was paid
+  # for by a specific change. Any of them can be given back silently by an
+  # unrelated one — the settle-loop rewrite in this branch cost 3,142 subtests
+  # in `html` before anyone looked — so the count is committed as a floor and
+  # checked.
+  #
+  # A subset, not the suite: all of WPT is a 2 GiB checkout and forty minutes,
+  # and a gate nobody can afford to run is not a gate. These five directories
+  # are the ones this engine's own work moves, so a change that breaks the
+  # engine has to break one of them.
+  #
+  # Gated on the *pass count* rather than a percentage: the denominator moves
+  # when upstream adds tests or the harness reaches further, and a percentage
+  # that falls because the denominator grew is not a regression.
+  wpt:
+    name: WPT (no regression against the committed floor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # Sparse: the five gate directories plus the machinery every test loads.
+      # `interfaces/` is not a test directory but `idlharness` fetches its IDL,
+      # and without it 211 endpoints hang on a file that never arrives.
+      - name: Check out the Web Platform Tests (sparse)
+        uses: actions/checkout@v7
+        with:
+          repository: web-platform-tests/wpt
+          path: wpt-checkout
+          sparse-checkout: |
+            resources
+            common
+            interfaces
+            dom
+            css/cssom
+            html/dom
+            domparsing
+            encoding
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the engine
+        run: cargo build --locked --release -p h5i-browser-light
+
+      - name: Run the gate
+        env:
+          WPT_ROOT: ${{ github.workspace }}/wpt-checkout
+        run: crates/h5i-browser-light/wpt/gate.sh
+
   docs:
     name: docs fresh (man + html + install.sh)
     runs-on: ubuntu-latest
