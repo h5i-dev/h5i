@@ -394,6 +394,16 @@ async fn serve_stream(
         .map_err(|e| H5iError::Metadata(format!("could not answer a peer: {e}")))?;
 
     let (up_r, up_w) = upstream.into_split();
+    // A raw pipe, deliberately, and worth saying why when the tunnel front goes
+    // to such lengths not to be one. There the gate runs because a single TCP
+    // connection is shared by `cloudflared`'s pool across visitors, so "this
+    // connection was authorized" says nothing about the request now arriving on
+    // it. Here the unit of authorization *is* this stream: it carried its own
+    // ticket, one greeting, one grant. Everything on it comes from the peer
+    // that ticket admitted, and a peer with a ticket may make as many requests
+    // as it likes — that is what the ticket is. The HTTP framing that matters
+    // for this path happens on the joiner's side, before the stream is opened.
+    //
     // Counted into atomics rather than taken from a return value, because none
     // of the three ways this ends returns one: a revoke, the connection
     // closing, or the copy finishing.
