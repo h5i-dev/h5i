@@ -26,6 +26,8 @@ h5i gives you:
   - **Rootless containers** for portable, image-based environments
   - **MicroVM isolation** with a separate kernel when stronger boundaries matter
 - **Isolated browsers** that agents can securely control from inside the sandbox
+  - **Chromium** for broad compatibility with modern web applications
+  - **h5i-browser-light**, a pure-Rust, single-process engine using 7.4× less peak memory than Chromium
 - **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
 
 **Local-first. No hosted sandbox. No SaaS account required.**
