@@ -262,15 +262,22 @@ where
             // Answered rather than dropped. A body whose framing does not parse
             // is the peer's mistake or somebody's probe, and a closed socket
             // with no reply is the least informative thing to hand either.
-            let _ = peer_w
-                .write_all(gate::refusal_response(gate::Refusal::Malformed).as_bytes())
-                .await;
+            let reply = gate::refusal_response(gate::Refusal::Malformed);
+            if peer_w.write_all(reply.as_bytes()).await.is_ok() {
+                to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
+            }
             let _ = peer_w.shutdown().await;
             return Ok(());
         }
         from_rest = rest_from_client.len();
     } else {
         let want = req.content_length.unwrap_or(0);
+        // The same wall clock the chunked path has. `Content-Length` is
+        // deliberately accepted all the way to `u64::MAX`, so without one an
+        // authorized peer declaring a body it never finishes — one byte every
+        // twenty-nine seconds — holds a share slot and a socket into the box
+        // for the life of its ticket, which is up to a day.
+        let body_deadline = tokio::time::Instant::now() + UNFRAMED_LIFETIME;
         from_rest = (rest.len() as u64).min(want) as usize;
         if from_rest > 0 {
             up_w.write_all(&rest[..from_rest]).await?;
@@ -279,6 +286,9 @@ where
         let mut remaining = want - from_rest as u64;
         let mut buf = vec![0u8; 32 * 1024];
         while remaining > 0 {
+            if tokio::time::Instant::now() >= body_deadline {
+                return Ok(());
+            }
             let take = (remaining as usize).min(buf.len());
             // Deadlined per read. Declaring a megabyte, sending one byte and
             // going quiet used to hold a connection into the box, and one of
@@ -668,6 +678,11 @@ where
             // response a dev server produces, and "this branch has no body so
             // the headers cannot hurt" is how an invariant ends up holding on
             // one path and not the other.
+            //
+            // What the visitor is left with is one framing rather than two:
+            // the chunk stream if a `Transfer-Encoding` was the other half of
+            // the contradiction, and the connection closing if it was a second
+            // length.
             Framing::Ambiguous => strip_lengths(&rewritten),
             _ => rewritten,
         };
@@ -876,8 +891,10 @@ fn unfinished_response() -> String {
 /// parser is a divergence waiting for the round that finds it. Each caller
 /// differs only in what it drops and what it adds.
 ///
-/// The status line survives every filter by construction: the predicates all
-/// key on a header name, and a status line has no colon.
+/// The status line survives every filter, and it is worth being precise about
+/// why: not because it has no colon (`HTTP/1.1 500 Error: bad thing` does), but
+/// because no predicate here matches what `header_name` makes of one. A future
+/// filter has to keep that true rather than inherit it.
 fn rebuild_head(head: &[u8], drop_line: impl Fn(&[u8]) -> bool, extra: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(head.len() + extra.len());
     for line in head.split(|&b| b == b'\n') {

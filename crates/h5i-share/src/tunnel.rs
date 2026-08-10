@@ -270,6 +270,28 @@ pub async fn serve(bridge: Arc<Bridge>, listener: tokio::net::TcpListener) -> Re
     }
 }
 
+/// The record this grant's traffic is counted against, creating it if this is
+/// the first thing that grant has done.
+///
+/// One entry per grant, because a tunnel genuinely cannot tell two browsers
+/// apart — the peers it sees are Cloudflare's.
+fn register(
+    bridge: &Arc<Bridge>,
+    peers: &Arc<Mutex<HashMap<String, crate::bridge::PeerId>>>,
+    grant: &crate::bridge::AuthorizedGrant,
+) -> crate::bridge::PeerId {
+    let mut map = peers.lock().expect("peer map");
+    *map.entry(grant.id.clone()).or_insert_with(|| {
+        bridge.peer_joined(
+            "a browser (the tunnel cannot tell two apart)".into(),
+            grant,
+            // Observed, and there is nothing else it could be: this transport
+            // has exactly one path.
+            Some(Path::Tunnel),
+        )
+    })
+}
+
 /// Resolves when this connection's own grant stops admitting anyone.
 ///
 /// Per grant rather than per share: revoking one peer has to cut that peer off
@@ -329,6 +351,15 @@ async fn handle(
             if !presented && body.starts_with("HTTP/1.1 401") {
                 bridge.record_refused();
             }
+            // A redirect is not a refusal: it is a visitor following the invite
+            // link, authorized, on the first request every visitor makes. A
+            // peer who opened the link and then read nothing used to leave the
+            // receipt saying nobody came.
+            if let Some(g) = &grant {
+                let id = register(&bridge, &peers, g);
+                bridge.peer_connection(id);
+                bridge.peer_bytes(id, body.len() as u64, 0);
+            }
             http_front::respond(&mut sock, &body).await;
             return Ok(());
         }
@@ -341,8 +372,12 @@ async fn handle(
     // Authorized, but the share may already be carrying all it will. A refusal
     // here is a `503` with a `Retry-After`, because unlike a bad token this one
     // is worth trying again.
+    let id = register(&bridge, &peers, &grant);
+
     let Some(_slot) = bridge.admit() else {
-        http_front::respond(&mut sock, &busy_response()).await;
+        let body = busy_response();
+        bridge.peer_bytes(id, body.len() as u64, 0);
+        http_front::respond(&mut sock, &body).await;
         return Ok(());
     };
 
@@ -363,7 +398,9 @@ async fn handle(
                 // and the joiner's proxy has answered this case since it was
                 // written.
                 bridge.record_unreachable();
-                http_front::respond(&mut sock, &unreachable_response()).await;
+                let body = unreachable_response();
+                bridge.peer_bytes(id, body.len() as u64, 0);
+                http_front::respond(&mut sock, &body).await;
                 return Err(e);
             }
         }
@@ -371,18 +408,6 @@ async fn handle(
     upstream.set_nonblocking(true)?;
     let upstream = tokio::net::TcpStream::from_std(upstream)?;
 
-    let id = {
-        let mut map = peers.lock().expect("peer map");
-        *map.entry(grant.id.clone()).or_insert_with(|| {
-            bridge.peer_joined(
-                "a browser (the tunnel cannot tell two apart)".into(),
-                &grant,
-                // Observed, and there is nothing else it could be: this
-                // transport has exactly one path.
-                Some(Path::Tunnel),
-            )
-        })
-    };
     bridge.peer_connection(id);
 
     let (up_r, up_w) = upstream.into_split();

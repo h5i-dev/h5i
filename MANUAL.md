@@ -485,8 +485,10 @@ response's own `Connection` header is replaced with `close` — otherwise a
 keep-alive answer would tell the visitor's browser to reuse a connection that
 will never answer again — and the response is framed by its `Content-Length` so
 the connection ends when the response does. A response that says two
-contradictory things about its length has both of them taken off, and is framed
-by the connection closing instead; a response the box starts and never finishes
+contradictory things about its length has both of them taken off, so the visitor
+is left with one framing rather than two — the chunk stream if a
+`Transfer-Encoding` was the other half of the contradiction, the connection
+closing if it was a second length; a response the box starts and never finishes
 becomes a `502`, because relaying an unfinished head verbatim would let the box
 choose when to be sanitised.
 

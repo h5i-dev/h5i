@@ -93,6 +93,10 @@ struct Tally {
     /// limit. Counted rather than listed: the interesting number is whether it
     /// happened at all.
     over_capacity: u64,
+    /// Peers past what the record list holds. Counted, like the denial list's
+    /// overflow, because a receipt that stops at 256 and says nothing is a
+    /// receipt that reports a share nobody could read as a share nobody used.
+    peers_overflow: u64,
     /// Peers who presented a good ticket and found nothing listening inside the
     /// box. Without this a share where the dev server was down reads as one
     /// nobody ever tried to use.
@@ -286,9 +290,14 @@ impl Bridge {
     ///
     /// Bounded, like the denial list and for the same reason: one entry carries
     /// a `String` and becomes a line in the receipt, and a peer cycling
-    /// connections would grow both without limit. Past the cap the connection
-    /// is still served — it is authorized, after all — its traffic is just
-    /// folded into the last record rather than given one of its own.
+    /// connections would grow both without limit.
+    ///
+    /// Past the cap the connection is still served — it is authorized, after
+    /// all — and its handle names no record, so its traffic is counted nowhere.
+    /// That is deliberate and it is not free: the *number* of such peers is
+    /// counted here and reported, because folding them into the last record
+    /// corrupted that record, and dropping them silently made a busy share
+    /// look like a quiet one.
     pub fn peer_joined(
         &self,
         peer: String,
@@ -307,6 +316,7 @@ impl Bridge {
             // A handle that names nothing. Returning the *last* record folded
             // peer 257's bytes, connections and path observations into peer
             // 256 — including setting a path 256 had never had observed.
+            t.peers_overflow += 1;
             return PeerId(usize::MAX);
         }
         t.peers.push(PeerRecord {
@@ -450,6 +460,7 @@ impl Bridge {
                 started: self.started,
                 ended,
                 peers: t.peers.clone(),
+                peers_overflow: t.peers_overflow,
                 denied: t.denied.clone(),
                 denied_overflow: t.denied_overflow,
                 over_capacity: t.over_capacity,
@@ -502,6 +513,8 @@ pub struct Summary {
     pub started: DateTime<Utc>,
     pub ended: DateTime<Utc>,
     pub peers: Vec<PeerRecord>,
+    /// Peers past what the record list holds.
+    pub peers_overflow: u64,
     pub denied: Vec<DeniedAttempt>,
     /// Refusals past what the list holds.
     pub denied_overflow: u64,
@@ -568,6 +581,13 @@ pub fn render_receipt(s: &Summary) -> String {
                 plural(p.connections, "connection", "connections"),
                 p.bytes_from_peer,
                 p.bytes_to_peer,
+            ));
+        }
+        if s.peers_overflow > 0 {
+            out.push_str(&format!(
+                "  and {} more peer(s), past the {MAX_PEER_RECORDS} this receipt lists \
+                 individually — their traffic is not counted above\n",
+                s.peers_overflow
             ));
         }
         let relayed = s.peers.iter().filter(|p| p.path == Some(Path::Relayed)).count();
@@ -710,6 +730,7 @@ mod tests {
             started: at("2026-08-10T10:00:00Z"),
             ended: at("2026-08-10T10:10:00Z"),
             peers,
+            peers_overflow: 0,
             denied,
             denied_overflow: 0,
             over_capacity: 0,
@@ -760,6 +781,17 @@ mod tests {
         assert!(body.contains("refused  3 attempt(s)"));
         assert!(body.contains("2 unknown ticket"));
         assert!(body.contains("1 revoked"));
+    }
+
+    #[test]
+    fn more_peers_than_the_receipt_lists_is_said_rather_than_dropped() {
+        // The same failure the denial list already had a test for: a cap that
+        // stops counting makes a busy share read as a quiet one.
+        let mut s = summary(vec![peer("kbcd…", Path::Direct)], vec![]);
+        s.peers_overflow = 41;
+        let body = render_receipt(&s);
+        assert!(body.contains("and 41 more peer(s)"), "{body}");
+        assert!(body.contains("not counted above"), "{body}");
     }
 
     #[test]
