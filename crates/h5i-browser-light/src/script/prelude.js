@@ -2792,29 +2792,198 @@
   /// how it measures text. The rest of the interface is a selection model this
   /// engine has no use for, and anything reached for beyond what is here
   /// reports itself rather than silently doing nothing.
+  /// Where a node sits among its siblings.
+  function nodeIndex(node) {
+    const parent = node && node.parentNode;
+    if (!parent) return 0;
+    const kids = parent.childNodes;
+    for (let i = 0; i < kids.length; i++) if (kids[i]._id === node._id) return i;
+    return 0;
+  }
+
+  function sameNode(a, b) {
+    return !!a && !!b && a._id !== undefined && a._id === b._id;
+  }
+
+  /// Every node at or under `node`, in document order.
+  function flattenTree(node, out = []) {
+    if (!node) return out;
+    out.push(node);
+    if (node.nodeType === 1 || node.nodeType === 9 || node.nodeType === 11) {
+      for (const kid of node.childNodes) flattenTree(kid, out);
+    }
+    return out;
+  }
+
+  /// A range over the document, with the offsets a real one has.
+  ///
+  /// The version this replaces stored two containers, ignored every offset it
+  /// was given, and answered `toString()` with the start container's entire
+  /// `textContent`. That is fine until something depends on it — and Selection
+  /// and `execCommand` depend on nothing else, because a selection *is* a pair
+  /// of boundary points.
+  ///
+  /// Boundary points are compared by flattening the common ancestor in document
+  /// order rather than by a general position comparison. That is enough for what
+  /// runs through here and it is honest about its shape: ranges whose ends sit
+  /// in unrelated trees are not ordered by this, and nothing asks them to be.
   class Range {
     constructor() {
-      this.startContainer = null;
-      this.endContainer = null;
-      this.collapsed = true;
+      this.startContainer = document;
+      this.startOffset = 0;
+      this.endContainer = document;
+      this.endOffset = 0;
     }
-    selectNode(node) { this.selectNodeContents(node); }
+    get collapsed() {
+      return sameNode(this.startContainer, this.endContainer)
+        ? this.startOffset === this.endOffset
+        : this.startContainer === this.endContainer && this.startOffset === this.endOffset;
+    }
+    setStart(node, offset) { this.startContainer = node; this.startOffset = Number(offset) || 0; }
+    setEnd(node, offset) { this.endContainer = node; this.endOffset = Number(offset) || 0; }
+    setStartBefore(node) { this.setStart(node.parentNode, nodeIndex(node)); }
+    setStartAfter(node) { this.setStart(node.parentNode, nodeIndex(node) + 1); }
+    setEndBefore(node) { this.setEnd(node.parentNode, nodeIndex(node)); }
+    setEndAfter(node) { this.setEnd(node.parentNode, nodeIndex(node) + 1); }
+    selectNode(node) { this.setStartBefore(node); this.setEndAfter(node); }
     selectNodeContents(node) {
-      this.startContainer = node;
-      this.endContainer = node;
-      this.collapsed = false;
+      this.setStart(node, 0);
+      this.setEnd(node, node.nodeType === 3 ? node.data.length : node.childNodes.length);
     }
-    setStart(node, _offset) { this.startContainer = node; this.collapsed = false; }
-    setEnd(node, _offset) { this.endContainer = node; this.collapsed = false; }
     collapse(toStart) {
-      this.collapsed = true;
-      if (toStart) this.endContainer = this.startContainer;
-      else this.startContainer = this.endContainer;
+      if (toStart) { this.endContainer = this.startContainer; this.endOffset = this.startOffset; }
+      else { this.startContainer = this.endContainer; this.startOffset = this.endOffset; }
     }
-    get commonAncestorContainer() { return this.startContainer; }
+    cloneRange() {
+      const copy = new Range();
+      copy.startContainer = this.startContainer; copy.startOffset = this.startOffset;
+      copy.endContainer = this.endContainer; copy.endOffset = this.endOffset;
+      return copy;
+    }
+    detach() {}
+
+    get commonAncestorContainer() {
+      const ancestors = [];
+      for (let n = this.startContainer; n; n = n.parentNode) ancestors.push(n);
+      for (let n = this.endContainer; n; n = n.parentNode) {
+        if (ancestors.some((a) => sameNode(a, n) || a === n)) return n;
+      }
+      return document;
+    }
+
+    /// The nodes this range covers, with any partial text pieces resolved.
+    ///
+    /// Returns entries of `{ node, text, whole }`: `whole` marks a node that is
+    /// entirely inside the range and can simply be removed, which is what makes
+    /// `deleteContents` and `toString` share one traversal instead of
+    /// disagreeing about what "inside" means.
+    _pieces() {
+      const flat = flattenTree(this.commonAncestorContainer);
+      const at = (node) => flat.findIndex((n) => sameNode(n, node) || n === node);
+
+      // A boundary point is either *inside* a text node, or *between* two
+      // children of an element. Resolving both to a position in the flattened
+      // list is the whole trick: without it, `selectNodeContents(p)` — whose
+      // boundaries are both the element `p` — covered no text node at all and
+      // the selection read as empty.
+      const resolve = (container, offset) => {
+        if (container.nodeType === 3) return { index: at(container), textOffset: offset };
+        const here = at(container);
+        if (here < 0) return { index: -1, textOffset: null };
+        const kids = container.childNodes;
+        if (offset < kids.length) return { index: at(kids[offset]), textOffset: null };
+        // Past the last child: the position just after this whole subtree.
+        return { index: here + flattenTree(container).length, textOffset: null };
+      };
+
+      const from = resolve(this.startContainer, this.startOffset);
+      const to = resolve(this.endContainer, this.endOffset);
+      if (from.index < 0 || to.index < 0) return [];
+
+      // An element end boundary sits *before* the node at its index; a text one
+      // sits inside it.
+      const last = to.textOffset === null ? to.index - 1 : to.index;
+      const out = [];
+      for (let i = from.index; i <= last; i++) {
+        const node = flat[i];
+        if (!node || node.nodeType !== 3) continue;
+        const begin = i === from.index && from.textOffset !== null ? from.textOffset : 0;
+        const finish = i === to.index && to.textOffset !== null ? to.textOffset : node.data.length;
+        if (finish <= begin) continue;
+        out.push({
+          node,
+          text: node.data.slice(begin, finish),
+          begin,
+          finish,
+          whole: begin === 0 && finish >= node.data.length,
+        });
+      }
+      return out;
+    }
+
+    toString() { return this._pieces().map((piece) => piece.text).join(""); }
+
+    deleteContents() {
+      // Reversed, so removing a node cannot shift the offsets of the pieces not
+      // yet handled. Sliced by offset rather than by matching the text, because
+      // `split(text).join("")` deleted every *other* occurrence of the same
+      // string in the same node too.
+      for (const piece of this._pieces().reverse()) {
+        if (piece.whole) piece.node.remove();
+        else piece.node.data = piece.node.data.slice(0, piece.begin) + piece.node.data.slice(piece.finish);
+      }
+      this.collapse(true);
+    }
+
+    /// Put a node at the start boundary.
+    insertNode(node) {
+      const container = this.startContainer;
+      if (container.nodeType === 3) {
+        // Split the text so the node lands exactly where the boundary is,
+        // rather than before or after the whole run.
+        const after = container.splitText
+          ? container.splitText(this.startOffset)
+          : null;
+        const parent = container.parentNode;
+        if (!parent) return node;
+        if (after) parent.insertBefore(node, after);
+        else parent.appendChild(node);
+        return node;
+      }
+      const kids = container.childNodes;
+      if (this.startOffset < kids.length) container.insertBefore(node, kids[this.startOffset]);
+      else container.appendChild(node);
+      return node;
+    }
+
+    surroundContents(wrapper) {
+      const text = this.toString();
+      this.deleteContents();
+      wrapper.textContent = text;
+      this.insertNode(wrapper);
+      return wrapper;
+    }
+
+    extractContents() {
+      const fragment = new DocumentFragment();
+      const text = this.toString();
+      this.deleteContents();
+      if (text) fragment.appendChild(document.createTextNode(text));
+      return fragment;
+    }
+    cloneContents() {
+      const fragment = new DocumentFragment();
+      const text = this.toString();
+      if (text) fragment.appendChild(document.createTextNode(text));
+      return fragment;
+    }
+
     getBoundingClientRect() {
-      return this.startContainer && this.startContainer.getBoundingClientRect
-        ? this.startContainer.getBoundingClientRect()
+      const anchor = this.startContainer && this.startContainer.nodeType === 3
+        ? this.startContainer.parentNode
+        : this.startContainer;
+      return anchor && anchor.getBoundingClientRect
+        ? anchor.getBoundingClientRect()
         : { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
     }
     getClientRects() { return [this.getBoundingClientRect()]; }
@@ -2825,20 +2994,174 @@
       for (const kid of host.childNodes) fragment.appendChild(kid);
       return fragment;
     }
-    deleteContents() {
-      if (this.startContainer) for (const kid of this.startContainer.childNodes) kid.remove();
+  }
+
+  /// The document's selection: one range, which is all a browser gives you.
+  ///
+  /// Agents need this to act on text — "select this paragraph, replace it" is
+  /// the shape of a great deal of real work — and `execCommand` below is
+  /// defined entirely in terms of it.
+  ///
+  /// Multiple ranges are not supported and say so by reporting `rangeCount`
+  /// honestly: only Gecko ever implemented them, and code that asks for range
+  /// two is code written against a browser this is not.
+  class Selection {
+    constructor() { this._range = null; this._direction = "forward"; }
+
+    get rangeCount() { return this._range ? 1 : 0; }
+    get isCollapsed() { return !this._range || this._range.collapsed; }
+    get type() {
+      if (!this._range) return "None";
+      return this._range.collapsed ? "Caret" : "Range";
     }
-    cloneRange() {
-      const copy = new Range();
-      copy.startContainer = this.startContainer;
-      copy.endContainer = this.endContainer;
-      copy.collapsed = this.collapsed;
-      return copy;
+    get anchorNode() { return this._range ? this._range.startContainer : null; }
+    get anchorOffset() { return this._range ? this._range.startOffset : 0; }
+    get focusNode() { return this._range ? this._range.endContainer : null; }
+    get focusOffset() { return this._range ? this._range.endOffset : 0; }
+
+    getRangeAt(index) {
+      if (Number(index) !== 0 || !this._range) {
+        throw new DOMException(`there is no range ${index}`, "IndexSizeError");
+      }
+      return this._range;
     }
-    detach() {}
-    toString() {
-      return this.startContainer ? this.startContainer.textContent : "";
+    addRange(range) { if (!this._range) this._range = range; }
+    removeRange(range) { if (this._range === range) this._range = null; }
+    removeAllRanges() { this._range = null; }
+    empty() { this.removeAllRanges(); }
+
+    collapse(node, offset) {
+      if (node === null || node === undefined) return this.removeAllRanges();
+      const range = new Range();
+      range.setStart(node, offset || 0);
+      range.collapse(true);
+      this._range = range;
     }
+    setPosition(node, offset) { this.collapse(node, offset); }
+    collapseToStart() {
+      if (!this._range) throw new DOMException("nothing is selected", "InvalidStateError");
+      this._range.collapse(true);
+    }
+    collapseToEnd() {
+      if (!this._range) throw new DOMException("nothing is selected", "InvalidStateError");
+      this._range.collapse(false);
+    }
+    extend(node, offset) {
+      if (!this._range) throw new DOMException("nothing is selected", "InvalidStateError");
+      this._range.setEnd(node, offset || 0);
+    }
+    setBaseAndExtent(anchor, anchorOffset, focus, focusOffset) {
+      const range = new Range();
+      range.setStart(anchor, anchorOffset);
+      range.setEnd(focus, focusOffset);
+      this._range = range;
+    }
+    selectAllChildren(node) {
+      const range = new Range();
+      range.selectNodeContents(node);
+      this._range = range;
+    }
+    deleteFromDocument() { if (this._range) this._range.deleteContents(); }
+    containsNode(node, partly) {
+      if (!this._range || !node) return false;
+      const covered = flattenTree(this._range.commonAncestorContainer);
+      const inside = covered.some((n) => sameNode(n, node));
+      if (!inside) return false;
+      if (partly) return true;
+      const text = this._range.toString();
+      return text.includes(node.textContent || "");
+    }
+    toString() { return this._range ? this._range.toString() : ""; }
+  }
+
+  const selection = new Selection();
+  function getSelection() { return observed(selection, "Selection"); }
+
+  /// `document.execCommand`, for the commands this engine can actually carry out.
+  ///
+  /// Deprecated, never converged across browsers, and still the only way a page
+  /// edits a `contenteditable` region — which is what an agent driving a rich
+  /// text editor has to go through. So: a small set, done properly, and
+  /// everything else answers **false** from both `execCommand` and
+  /// `queryCommandSupported` rather than returning true and doing nothing. A
+  /// command that reports success without acting is the failure this engine
+  /// keeps removing.
+  const COMMANDS = {
+    bold: (sel) => wrapSelection(sel, "b"),
+    italic: (sel) => wrapSelection(sel, "i"),
+    underline: (sel) => wrapSelection(sel, "u"),
+    strikethrough: (sel) => wrapSelection(sel, "s"),
+    subscript: (sel) => wrapSelection(sel, "sub"),
+    superscript: (sel) => wrapSelection(sel, "sup"),
+
+    inserttext: (sel, value) => replaceSelection(sel, document.createTextNode(String(value ?? ""))),
+    inserthtml: (sel, value) => {
+      const host = document.createElement("div");
+      host.innerHTML = String(value ?? "");
+      const fragment = new DocumentFragment();
+      for (const kid of [...host.childNodes]) fragment.appendChild(kid);
+      return replaceSelection(sel, fragment);
+    },
+    insertlinebreak: (sel) => replaceSelection(sel, document.createElement("br")),
+    insertparagraph: (sel) => replaceSelection(sel, document.createElement("p")),
+
+    delete: (sel) => { if (!sel.rangeCount) return false; sel.getRangeAt(0).deleteContents(); return true; },
+    forwarddelete: (sel) => COMMANDS.delete(sel),
+
+    selectall: (sel) => {
+      const body = wrap(api.body());
+      if (!body) return false;
+      sel.selectAllChildren(body);
+      return true;
+    },
+
+    createlink: (sel, value) => {
+      if (!sel.rangeCount || sel.isCollapsed) return false;
+      const link = document.createElement("a");
+      link.setAttribute("href", String(value ?? ""));
+      return wrapSelectionWith(sel, link);
+    },
+    unlink: (sel) => {
+      if (!sel.rangeCount) return false;
+      const range = sel.getRangeAt(0);
+      let found = false;
+      for (let n = range.startContainer; n; n = n.parentNode) {
+        if (n.nodeType === 1 && n.tagName === "A") {
+          const text = document.createTextNode(n.textContent);
+          n.parentNode.insertBefore(text, n);
+          n.remove();
+          found = true;
+          break;
+        }
+      }
+      return found;
+    },
+
+    formatblock: (sel, value) => {
+      const tag = String(value ?? "").replace(/[<>]/g, "").toLowerCase();
+      if (!tag) return false;
+      return wrapSelectionWith(sel, document.createElement(tag));
+    },
+  };
+
+  function replaceSelection(sel, node) {
+    if (!sel.rangeCount) return false;
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(node);
+    return true;
+  }
+
+  function wrapSelectionWith(sel, wrapper) {
+    if (!sel.rangeCount) return false;
+    const range = sel.getRangeAt(0);
+    if (range.collapsed) return true;
+    range.surroundContents(wrapper);
+    return true;
+  }
+
+  function wrapSelection(sel, tag) {
+    return wrapSelectionWith(sel, document.createElement(tag));
   }
 
   /// `new DOMParser().parseFromString(html, "text/html")`.
@@ -2942,6 +3265,45 @@
     close() {},
 
     createRange() { return observed(new Range(), "Range"); },
+    getSelection() { return getSelection(); },
+
+    /// The commands this engine carries out, and no others.
+    ///
+    /// `queryCommandSupported` answers from the same table `execCommand` acts
+    /// on, so the two can never disagree — a page that asks first and acts
+    /// second gets one consistent story.
+    execCommand(name, _showUI, value) {
+      const key = String(name ?? "").toLowerCase();
+      const command = COMMANDS[key];
+      if (!command) {
+        api.unsupported(`document.execCommand(${key})`);
+        return false;
+      }
+      try {
+        return !!command(selection, value);
+      } catch (error) {
+        console.error(`execCommand(${key}) threw: ${withStack(error)}`);
+        return false;
+      }
+    },
+    queryCommandSupported(name) {
+      return Object.prototype.hasOwnProperty.call(COMMANDS, String(name ?? "").toLowerCase());
+    },
+    queryCommandEnabled(name) {
+      return this.queryCommandSupported(name) && selection.rangeCount > 0;
+    },
+    /// Always false, and honest about why: this engine keeps no record of the
+    /// formatting around the caret, so "is the selection bold" is a question it
+    /// cannot answer. Returning a guess would be worse than returning false —
+    /// an editor toolbar would light up at random.
+    queryCommandState(name) {
+      api.unsupported(`document.queryCommandState(${String(name ?? "")})`);
+      return false;
+    },
+    queryCommandValue(name) {
+      api.unsupported(`document.queryCommandValue(${String(name ?? "")})`);
+      return "";
+    },
     // The pre-constructor way of making an event, still emitted by older
     // libraries and by anything compiled for old targets. The event is inert
     // until `initEvent` names it, which is exactly how the legacy API works.
@@ -4153,6 +4515,8 @@
     // of testharness.js walks `w != w.parent` from `self` before it can run a
     // single assertion, so its absence read as "the engine cannot run WPT"
     // rather than as one missing binding.
+    getSelection,
+    Selection,
     self: window,
     parent: window,
     top: window,

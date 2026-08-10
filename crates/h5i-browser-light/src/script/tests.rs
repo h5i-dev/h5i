@@ -182,6 +182,64 @@ fn a_timer_landing_next_to_the_budget_does_not_abort_the_engine() {
 }
 
 #[test]
+fn a_selection_can_be_made_and_acted_on() {
+    // What an agent driving a rich-text editor actually does: select a span of
+    // text, then change it. Both halves are checked, because a `Selection` that
+    // reads correctly and an `execCommand` that reports success without acting
+    // would pass separately and be useless together.
+    let (_page, mut script) = page_and_script(
+        "<html><body><div contenteditable><p id='p'>Hello brave world</p></div></body></html>",
+    );
+
+    script
+        .eval(
+            "const p = document.getElementById('p'), t = p.firstChild;              const r = document.createRange(); r.setStart(t, 6); r.setEnd(t, 11);              const s = getSelection(); s.removeAllRanges(); s.addRange(r);",
+        )
+        .expect("runs");
+
+    assert_eq!(script.eval_value("getSelection().toString()").unwrap(), "brave");
+    assert_eq!(script.eval_value("getSelection().type").unwrap(), "Range");
+    assert_eq!(script.eval_value("String(getSelection().isCollapsed)").unwrap(), "false");
+
+    assert_eq!(script.eval_value("String(document.execCommand('bold'))").unwrap(), "true");
+    assert_eq!(
+        script.eval_value("document.getElementById('p').innerHTML").unwrap(),
+        "Hello <b>brave</b> world",
+        "the selected run is what got wrapped, not the whole paragraph"
+    );
+
+    // Selecting an element's contents puts both boundary points on the
+    // *element*, which covered no text at all until boundary points were
+    // resolved into the flattened tree.
+    script
+        .eval(
+            "const q = document.createRange(); q.selectNodeContents(document.getElementById('p'));              const s2 = getSelection(); s2.removeAllRanges(); s2.addRange(q);",
+        )
+        .expect("runs");
+    assert_eq!(
+        script.eval_value("getSelection().toString()").unwrap(),
+        "Hello brave world"
+    );
+
+    // A command this engine cannot carry out says so, from both the doing and
+    // the asking, rather than reporting success and changing nothing.
+    assert_eq!(script.eval_value("String(document.execCommand('undo'))").unwrap(), "false");
+    assert_eq!(
+        script.eval_value("String(document.queryCommandSupported('undo'))").unwrap(),
+        "false"
+    );
+    assert_eq!(
+        script.eval_value("String(document.queryCommandSupported('bold'))").unwrap(),
+        "true"
+    );
+    assert!(
+        script.unsupported().iter().any(|(n, _)| n.contains("execCommand(undo)")),
+        "and names itself: {:?}",
+        script.unsupported()
+    );
+}
+
+#[test]
 fn promises_settle_before_the_page_is_called_settled() {
     let (_page, mut script) = page_and_script("<html><body></body></html>");
     script
