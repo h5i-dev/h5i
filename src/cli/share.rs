@@ -176,6 +176,7 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
             expire,
         }) => {
             let dir = box_dir(&h5i_root, &name)?;
+            not_shared(&dir, &name)?;
             let (id, invite) = h5i_share::run::grant(&dir, label, parse_expire(&expire)?)?;
             println!("{} minted grant {id} for {name}", SUCCESS);
             println!();
@@ -187,6 +188,7 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
 
         Some(ShareCommands::Revoke { name, grant }) => {
             let dir = box_dir(&h5i_root, &name)?;
+            not_shared(&dir, &name)?;
             h5i_share::run::revoke(&dir, &grant)?;
             println!("{} revoked grant {grant} on {name}", SUCCESS);
             println!("   Any connection that peer had is dropped within a second.");
@@ -234,6 +236,15 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
 
         None => start(&h5i_root, args),
     }
+}
+
+/// Refuse early, with the box's actual name in it. The library's own message
+/// has to say `<name>`, because it does not know one.
+fn not_shared(dir: &std::path::Path, name: &str) -> anyhow::Result<()> {
+    if h5i_share::session::read(dir).is_none() {
+        anyhow::bail!("`{name}` is not being shared. Start one with `h5i box share {name}`.");
+    }
+    Ok(())
 }
 
 fn box_dir(h5i_root: &std::path::Path, name: &str) -> anyhow::Result<std::path::PathBuf> {
