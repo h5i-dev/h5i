@@ -88,6 +88,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("rect", 1, rect),
         ("computedStyle", 2, computed_style),
         ("supportsCss", 2, supports_css),
+        ("innerText", 1, inner_text),
         ("parseUrl", 2, parse_url),
         ("viewport", 0, viewport),
         ("readCookies", 0, read_cookies),
@@ -1361,6 +1362,89 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
             js_string!("").into()
         }
     })
+}
+
+/// The text as rendered: `innerText`, walked natively.
+///
+/// This was a JavaScript walk over `childNodes` and it cost 142ms on a
+/// 6,000-node page against `textContent`'s 6ms. The style lookup was not the
+/// expensive part — measured, after a fast path for `display` failed to move
+/// the number — it was the walk itself: every level materialises an array of
+/// wrapped nodes, and every property read pays a proxy trap. Native, the same
+/// answer needs one call and no wrappers at all.
+///
+/// Still an approximation of a spec written over layout boxes, and the same one
+/// the JavaScript version made: `display: none` subtrees are excluded, `<br>` is
+/// a break, non-inline boxes break on each side, and runs of breaks collapse.
+/// It can differ from a browser on deliberately awkward whitespace.
+fn inner_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let doc = host.dom.borrow();
+    let mut out = String::new();
+    collect_rendered_text(&doc, id, &mut out);
+
+    // Collapse the runs of breaks nested blocks produce, then trim: a browser
+    // reports no leading or trailing blank line.
+    let mut text = String::with_capacity(out.len());
+    let mut pending_break = false;
+    for ch in out.chars() {
+        if ch == '\n' {
+            pending_break = true;
+            continue;
+        }
+        if pending_break {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            pending_break = false;
+        }
+        text.push(ch);
+    }
+    Ok(js_string!(text.trim()).into())
+}
+
+fn collect_rendered_text(doc: &blitz_dom::BaseDocument, id: usize, out: &mut String) {
+    let Some(node) = doc.get_node(id) else { return };
+    for child in node.children.iter() {
+        let Some(kid) = doc.get_node(*child) else { continue };
+        match &kid.data {
+            blitz_dom::NodeData::Text(text) => out.push_str(&text.content),
+            blitz_dom::NodeData::Element(el) | blitz_dom::NodeData::AnonymousBlock(el) => {
+                let name = el.name.local.as_ref();
+                if matches!(name, "script" | "style" | "template" | "head" | "title") {
+                    continue;
+                }
+                if name == "br" {
+                    out.push('\n');
+                    continue;
+                }
+                // Not rendered, not read. The same rule the snapshot applies,
+                // and the reason `innerText` is worth having over `textContent`
+                // at all: a hidden menu is not text the user can see.
+                let display = match kid.primary_styles() {
+                    None => {
+                        continue;
+                    }
+                    Some(styles) => styles.clone_display(),
+                };
+                if display.is_none() {
+                    continue;
+                }
+                use style_traits::ToCss as _;
+                let rendered = display.to_css_string();
+                let inline = rendered.starts_with("inline") || rendered == "contents";
+                if !inline {
+                    out.push('\n');
+                }
+                collect_rendered_text(doc, *child, out);
+                if !inline {
+                    out.push('\n');
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Whether Stylo can parse this declaration, which is what `CSS.supports` asks.

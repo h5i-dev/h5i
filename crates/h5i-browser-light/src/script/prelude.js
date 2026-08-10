@@ -546,36 +546,10 @@
     /// user can see gets a different and better answer than `textContent`,
     /// which would hand back the contents of every hidden menu on the page.
     ///
-    /// An approximation of the spec's algorithm rather than the whole of it:
-    /// the full version is defined in terms of layout boxes and collapses
-    /// runs of whitespace across them. This walks the tree instead, which
-    /// agrees with a browser on ordinary content and can differ on
-    /// deliberately awkward whitespace. `textContent` remains available for
-    /// anyone who wants the literal answer.
-    get innerText() {
-      const parts = [];
-      const walk = (node) => {
-        for (const child of node.childNodes) {
-          if (child.nodeType === 3) { parts.push(child.data); continue; }
-          if (child.nodeType !== 1) continue;
-          const tag = child.tagName;
-          if (tag === "SCRIPT" || tag === "STYLE" || tag === "TEMPLATE") continue;
-          if (tag === "BR") { parts.push("\n"); continue; }
-          const display = api.computedStyle(child._id, "display") || "";
-          if (display === "none") continue;
-          // `inline` and its relatives run together; everything else is a
-          // block and earns a break on each side.
-          const inline = display.startsWith("inline") || display === "contents";
-          if (!inline) parts.push("\n");
-          walk(child);
-          if (!inline) parts.push("\n");
-        }
-      };
-      walk(this);
-      // Collapse the runs of breaks the walk produced at nested block edges,
-      // then trim: a browser reports no leading or trailing blank line.
-      return parts.join("").replace(/[ \t]*\n[ \t]*(\n[ \t]*)*/g, "\n").trim();
-    }
+    /// Walked natively. As a JavaScript walk this cost 142ms on a 6,000-node
+    /// page against `textContent`'s 6ms, because every level built an array of
+    /// wrapped nodes and every read paid a proxy trap.
+    get innerText() { return api.innerText(this._id); }
     set innerText(value) { this.textContent = String(value); }
 
     appendChild(child) {
@@ -1484,7 +1458,13 @@
       : type === "long" || type === "ulong"
         ? function (value) {
           const number = Number(value);
-          this.setAttribute(content, String(Number.isFinite(number) ? Math.trunc(number) : 0));
+          let written = Number.isFinite(number) ? Math.trunc(number) : 0;
+          // An unsigned reflection cannot hold a negative, and writing one
+          // anyway left `td.colSpan = -3` reading back as 1 while
+          // `getAttribute("colspan")` said "-3" — the property and the
+          // attribute disagreeing about the same element.
+          if (type === "ulong" && written < 0) written = options.default ?? 0;
+          this.setAttribute(content, String(written));
         }
         : function (value) {
           // `null` on a nullable reflection removes the attribute; everywhere
@@ -3791,7 +3771,17 @@
     }
     _replaceAll(text) {
       if (this._owned) {
-        if (this._element.tagName !== "LINK") this._element.textContent = text;
+        // A `<link>`'s bytes were fetched and parsed natively and never reach
+        // script, so there is nothing here to edit. Refused loudly rather than
+        // quietly: `insertRule` used to answer 0 and change nothing, which is a
+        // page believing it had installed a style.
+        if (this._element.tagName === "LINK") {
+          throw new DOMException(
+            "this stylesheet came from a <link> and its rules are not editable here",
+            "NoModificationAllowedError",
+          );
+        }
+        this._element.textContent = text;
         return;
       }
       this._text = text;
