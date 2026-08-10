@@ -130,6 +130,11 @@ h5i ui                           # the whole fleet on one screen, read-only
   <img src="./docs/_static/sandbox-ui-demo.png" width="99%" />
 </p>
 
+<p align="center">
+  <img src="./docs/_static/sandboxed-browser-ui.png" width="99%" />
+</p>
+
+
 ---
 
 ## What confinement means here
