@@ -91,9 +91,9 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
     let warning = match dialer.connect() {
         Ok(_) => None,
         Err(_) => Some(format!(
-            "nothing is listening on port {} inside the box yet — peers will get an error until \
-             the dev server starts (`h5i box ports {}` shows what is up)",
-            req.port, req.box_name
+            "nothing is listening on port {} inside the box yet — peers will get an error \
+             until the dev server starts",
+            req.port
         )),
     };
 
@@ -378,11 +378,19 @@ impl Setup {
             Setup::P2p { endpoint, .. } => {
                 crate::p2p::serve(bridge, endpoint.clone(), direct_only).await
             }
-            Setup::Tunnel { listener, .. } => {
+            Setup::Tunnel { tunnel, listener } => {
                 let Some(listener) = listener.take() else {
                     return Ok(());
                 };
-                crate::tunnel::serve(bridge, listener).await
+                tokio::select! {
+                    r = crate::tunnel::serve(bridge, listener) => r,
+                    // The tunnel dying is the end of the share, and it has to
+                    // say so: the URL in the terminal stops working and nothing
+                    // else would ever mention it.
+                    reason = tunnel.died() => Err(H5iError::Metadata(format!(
+                        "{reason} — the public URL for this share is gone"
+                    ))),
+                }
             }
         }
     }
@@ -463,13 +471,32 @@ pub fn revoke(env_dir: &std::path::Path, grant_id: &str) -> Result<(), H5iError>
 /// safer shape: the serving process notices within a second, drops its live
 /// connections, writes its receipt and clears the session file on its own way
 /// out. Killing it would skip the receipt, which is the part that matters.
-pub fn stop(env_dir: &std::path::Path) -> Result<(), H5iError> {
-    session::update(env_dir, |s| {
+/// What `stop` found when it looked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stopped {
+    /// A live process was told to wind up; it writes its receipt and exits.
+    Serving,
+    /// The record was a leftover from a process that is gone, and was removed.
+    /// Without this there was no way out of that state at all: `status` told
+    /// people to run `stop`, and `stop` revoked grants in a file nobody was
+    /// reading and left it exactly where it was.
+    Stale,
+}
+
+pub fn stop(env_dir: &std::path::Path) -> Result<Stopped, H5iError> {
+    let outcome = session::update(env_dir, |s| {
+        if !session::is_live(s) {
+            return Ok(Stopped::Stale);
+        }
         for g in &mut s.grants {
             g.revoked = true;
         }
-        Ok(())
-    })
+        Ok(Stopped::Serving)
+    })?;
+    if outcome == Stopped::Stale {
+        session::clear(env_dir);
+    }
+    Ok(outcome)
 }
 
 #[cfg(test)]
@@ -533,7 +560,7 @@ mod tests {
         s.grants = vec![a, b];
         session::write(dir.path(), &s).expect("write");
 
-        stop(dir.path()).expect("stop");
+        assert_eq!(stop(dir.path()).expect("stop"), Stopped::Serving);
         let after = session::read(dir.path()).expect("read");
         assert!(after.is_spent(0), "a stopped share must admit nobody");
         assert!(after.authorize(&secret_a, 0).is_err());

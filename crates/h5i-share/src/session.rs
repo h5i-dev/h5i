@@ -182,6 +182,14 @@ impl ShareSession {
         Ok(g)
     }
 
+    /// How many grants can still admit somebody.
+    pub fn live_grants(&self, now: i64) -> usize {
+        self.grants
+            .iter()
+            .filter(|g| !g.revoked && g.expires_at > now)
+            .count()
+    }
+
     /// True once no grant could admit anyone. The bridge polls this so a
     /// revoked or wholly expired share drops its live connections instead of
     /// serving them until the peer gets bored.
@@ -192,14 +200,6 @@ impl ShareSession {
             .any(|g| !g.revoked && g.expires_at > now)
     }
 
-    /// The soonest moment this share stops admitting anyone, if it is bounded.
-    pub fn expires_at(&self) -> Option<i64> {
-        self.grants
-            .iter()
-            .filter(|g| !g.revoked)
-            .map(|g| g.expires_at)
-            .max()
-    }
 }
 
 /// Mint a grant, returning it and the secret that must be printed **now**.
@@ -360,6 +360,9 @@ pub fn update<T>(
 /// share record outlives the process that owned it — a confusing `share ls`
 /// rather than a security failure, but the fix is one line.
 pub fn clear(env_dir: &Path) {
+    // `let _ = …` would drop the guard at the end of *this statement*, which is
+    // to say before the removal it is guarding. It was written that way once,
+    // under a comment explaining the race it was closing.
     let _lock = Lock::acquire(env_dir);
     let _ = std::fs::remove_file(session_path(env_dir));
 }

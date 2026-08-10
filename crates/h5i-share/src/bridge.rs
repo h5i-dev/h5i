@@ -131,6 +131,9 @@ pub struct Bridge {
     tally: Mutex<Tally>,
     /// One permit per live connection into the box, held for its lifetime.
     capacity: Arc<tokio::sync::Semaphore>,
+    /// Flipped when the share is winding up, so connections end promptly
+    /// instead of being waited on.
+    shutdown: tokio::sync::watch::Sender<bool>,
 }
 
 impl Bridge {
@@ -154,6 +157,7 @@ impl Bridge {
             started: Utc::now(),
             tally: Mutex::new(Tally::default()),
             capacity: Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)),
+            shutdown: tokio::sync::watch::Sender::new(false),
         }
     }
 
@@ -286,9 +290,16 @@ impl Bridge {
         grant: &AuthorizedGrant,
         path: Path,
     ) -> PeerId {
-        let mut t = self.tally.lock().expect("tally");
+        // Fail soft like every other accessor here. This one used to `expect`,
+        // and it is called while the tunnel front holds its own peer map — so a
+        // poisoned tally would have poisoned that too, and taken every later
+        // connection with it.
+        let mut t = match self.tally.lock() {
+            Ok(t) => t,
+            Err(p) => p.into_inner(),
+        };
         if t.peers.len() >= MAX_PEER_RECORDS {
-            return PeerId(t.peers.len() - 1);
+            return PeerId(t.peers.len().saturating_sub(1));
         }
         t.peers.push(PeerRecord {
             peer,
@@ -346,7 +357,15 @@ impl Bridge {
         }
     }
 
-    /// How many peers have connected, for the terminal line the sharer watches.
+    /// Someone knocked with no credential at all.
+    ///
+    /// `authorize` only ever sees a token that was presented, so without this
+    /// the commonest probe of a public tunnel URL — a scanner fetching `/` —
+    /// left the receipt completely silent about having been probed.
+    pub fn record_refused(&self) {
+        self.record_denied(Denied::Unknown);
+    }
+
     /// A peer got through the gate and the box had nothing listening.
     pub fn record_unreachable(&self) {
         if let Ok(mut t) = self.tally.lock() {
@@ -366,10 +385,28 @@ impl Bridge {
     /// already are: each is released after its connection has recorded what it
     /// moved.
     pub async fn quiesce(&self, within: std::time::Duration) {
+        // Tell them to stop *before* waiting for them to. A connection carrying
+        // a response with no declared length waits up to five minutes for the
+        // box to go quiet; without this signal, a plain Ctrl-C would time out
+        // waiting for it and write a receipt missing everything it carried.
+        let _ = self.shutdown.send(true);
         let all = u32::try_from(MAX_CONNECTIONS).unwrap_or(u32::MAX);
         let _ = tokio::time::timeout(within, self.capacity.acquire_many(all)).await;
     }
 
+    /// Resolves when the share is winding up. Connections select on it so a
+    /// shutdown does not have to wait out their idle timeouts.
+    pub async fn shutting_down(&self) {
+        let mut rx = self.shutdown.subscribe();
+        while !*rx.borrow_and_update() {
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
+    /// How many peers have connected. Used by tests and by the sharer's
+    /// terminal line.
     pub fn peer_count(&self) -> usize {
         self.tally.lock().map(|t| t.peers.len()).unwrap_or(0)
     }

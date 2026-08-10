@@ -589,8 +589,10 @@ egress, because both share the host's network.</p>
 256-bit secret. Holding it is the authorization; there is no account on either
 side. h5i keeps only the secret's SHA-256, so <strong>a ticket is printed once and
 cannot be reprinted</strong> — mint another with <code>share grant</code>.</p>
-<p>One ticket admits one peer, which is what makes <code>share revoke &lt;name&gt; &lt;grant&gt;</code>
-per person rather than all or nothing. <code>share grant</code> mints a second one, but
+<p>A ticket is a capability, not a seat: nothing marks one as used or binds it to a
+person, so forwarding the text admits everyone it reaches, under the one grant.
+What one ticket per person buys is that <code>share revoke &lt;name&gt; &lt;grant&gt;</code> cuts off
+exactly the people you gave <em>that</em> ticket to, rather than everybody. <code>share grant</code> mints a second one, but
 only for a <code>--tunnel</code> share today: a peer-to-peer ticket needs the running
 endpoint's addressing and only the serving process has it, so <code>grant</code> refuses on
 a P2P share and says to start a second one instead.</p>
@@ -606,8 +608,10 @@ receipt and exits on its own, which is why it is not a <code>kill</code>.</p>
 encrypted, hole-punched to a direct path when the networks allow it. When they
 do not, a relay carries it: the relay moves sealed packets and sees both
 addresses, the timing and the volume, never the content. <code>--direct-only</code> refuses
-that fallback. If no direct path can be established the share fails and says so,
-<strong>before any application byte crosses</strong> — and it keeps checking afterwards,
+that fallback. A peer that cannot get a direct path is turned away — <strong>before
+any application byte crosses</strong> — and the share stays up for anyone who can,
+which is the useful behaviour when one peer is behind a hostile NAT and another
+is not. It keeps checking afterwards,
 because a hole-punched path can die and the transport will slide onto a relay.
 Be precise about the second half: that check runs once a second, so a path that
 fails mid-session can carry up to about a second of traffic over a relay before
@@ -638,9 +642,11 @@ the same page without it — so it stays out of the address bar, out of <code>Re
 on every outbound link, and out of the app's own logs. On the way to the box,
 both the cookie and the query parameter are removed. The app being shared never
 sees the credential that admitted its visitor.</p>
-<p>The app's own cookies and query parameters are passed through untouched. So are
-WebSockets: hot reload works, because a share of a dev server that never
-reloaded would not be a share of a dev server.</p>
+<p>The app's own cookies are passed through untouched, and so is its query string
+with two exceptions worth knowing: a parameter literally named <code>h5i</code> is taken as
+the share token and removed, and empty pairs are dropped (<code>?a=1&amp;&amp;b=2</code> arrives as
+<code>?a=1&amp;b=2</code>). WebSockets pass through as well: hot reload works, because a share
+of a dev server that never reloaded would not be a share of a dev server.</p>
 <p>A share carries at most 64 connections into the box at once. Past that, a
 visitor gets a <code>503</code> telling them to reload rather than a <code>401</code> telling them
 their link is bad, and the count of refusals lands in the receipt. The ceiling
@@ -695,7 +701,7 @@ of the bridge, the box supplies none of it and cannot suppress it.</p>
 opened   2026-08-10T10:00:00+00:00
 closed   2026-08-10T10:10:12+00:00
 shared   port 3000 inside the box, never published on the host
-endpoint kbcd7fq2m4x…
+endpoint kbcd7fq2m4xn8s6r3v9w1y5z7a2b4c6d8e0f2g4h6j8k0l2m4n
 peers    1
   kbcd7fq2m4x… via direct — grant a1b2c3d4 (alex), 300s, 12 connections, 900 in / 5000 out
 refused  2 attempt(s): 1 unknown ticket, 0 expired, 1 revoked

@@ -65,6 +65,19 @@ impl Tunnel {
     pub async fn stop(&mut self) {
         let _ = self.child.kill().await;
     }
+
+    /// Resolves when `cloudflared` exits.
+    ///
+    /// Nothing watched it before, so a tunnel that died mid-share left the
+    /// terminal showing a live share with a printed URL that answered nothing,
+    /// no message, and no exit. Quick tunnels are documented as unreliable;
+    /// this is the failure people will actually hit.
+    pub async fn died(&mut self) -> String {
+        match self.child.wait().await {
+            Ok(status) => format!("`cloudflared` exited ({status})"),
+            Err(e) => format!("`cloudflared` could not be waited on: {e}"),
+        }
+    }
 }
 
 /// Pull a quick-tunnel URL out of a line of `cloudflared` logging.
@@ -302,6 +315,12 @@ async fn handle(
 
     let (head, req) = match next {
         Next::Respond(body) => {
+            // A `401` here is somebody knocking with nothing, which `authorize`
+            // never sees and so never counted. On a public tunnel URL that is
+            // the commonest thing that happens to a share.
+            if grant.is_none() && body.starts_with("HTTP/1.1 401") {
+                bridge.record_refused();
+            }
             http_front::respond(&mut sock, &body).await;
             return Ok(());
         }
@@ -366,6 +385,7 @@ async fn handle(
     tokio::select! {
         _ = http_front::proxy_one(sock, up_r, up_w, forwarded, &counts) => {}
         _ = revoked(bridge.clone(), grant.id.clone()) => {}
+        _ = bridge.shutting_down() => {}
     }
     // Outside the select, so a connection cut short by a revoke still reports
     // what it had already moved.

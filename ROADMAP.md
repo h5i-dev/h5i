@@ -634,7 +634,8 @@ the bytes travel:
 traversal with public relays as fallback for the hard cases; the relay sees
 addresses and volume, never plaintext. The ticket carries the node addressing,
 so there is nothing to configure. `--direct-only` refuses to move application
-bytes over a relay: if hole punching fails, the share fails, and it says so.
+bytes over a relay: a peer that cannot get a direct path is turned away, and the
+share stays up for anyone who can.
 The other end runs `h5i join <ticket>`, which terminates the QUIC connection
 and serves the app on the joiner's loopback — and that listener repeats 5.9's
 lesson on someone else's machine: a bare local port is reachable by every page
@@ -691,7 +692,7 @@ h5i join <ticket> [--port N]                     # the other machine
 
 #### 5.11.1 What shipped, and what it cost to be honest about
 
-`crates/h5i-share/`, ~2.9k lines with 74 tests, behind a default-on `share`
+`crates/h5i-share/`, ~5.2k lines with 109 tests, behind a default-on `share`
 feature on the binary and a default-on `p2p` feature inside the crate (iroh 1.0,
 `tls-ring` only). A `--no-default-features` build has no `share` verb rather
 than a broken one, and `--no-default-features` on the crate alone keeps the

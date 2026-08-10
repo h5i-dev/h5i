@@ -60,7 +60,7 @@ pub struct ShareArgs {
     #[arg(value_name = "NAME")]
     pub name: Option<String>,
 
-    /// The port inside the box. `h5i box ports <name>` lists what is listening.
+    /// The port inside the box — whatever the dev server in there binds.
     #[arg(long, default_value_t = 3000)]
     pub port: u16,
 
@@ -190,14 +190,45 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
             h5i_share::run::revoke(&dir, &grant)?;
             println!("{} revoked grant {grant} on {name}", SUCCESS);
             println!("   Any connection that peer had is dropped within a second.");
+            // Revoking the last live grant ends the share, because a share that
+            // admits nobody is over. That is right and it is not obvious, and
+            // finding out by way of "this box is not being shared" when you go
+            // to mint a replacement is a bad way to learn it.
+            let now = chrono::Utc::now().timestamp();
+            if h5i_share::session::read(&dir)
+                .map(|s| s.live_grants(now) == 0)
+                .unwrap_or(true)
+            {
+                println!(
+                    "   {} that was the last grant, so the share itself is over. Start a new one \
+                     with `h5i box share {name}`.",
+                    WARN
+                );
+            }
             Ok(())
         }
 
         Some(ShareCommands::Stop { name }) => {
             let dir = box_dir(&h5i_root, &name)?;
-            h5i_share::run::stop(&dir)?;
-            println!("{} stopping the share on {name}", SUCCESS);
-            println!("   The serving process writes its receipt and exits within a second.");
+            if h5i_share::session::read(&dir).is_none() {
+                // Asking to stop something that is not running is not an error
+                // worth failing on, and `update`'s "run `h5i box share` first"
+                // is advice for a different verb entirely.
+                println!("{} `{name}` is not being shared — nothing to stop.", SUCCESS);
+                return Ok(());
+            }
+            match h5i_share::run::stop(&dir)? {
+                h5i_share::run::Stopped::Serving => {
+                    println!("{} stopping the share on {name}", SUCCESS);
+                    println!(
+                        "   The serving process writes its receipt and exits within a second."
+                    );
+                }
+                h5i_share::run::Stopped::Stale => {
+                    println!("{} cleared a leftover share record on {name}", SUCCESS);
+                    println!("   The process that owned it was already gone, so nothing was serving.");
+                }
+            }
             Ok(())
         }
 
@@ -275,20 +306,32 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `45s`, `4m`, `2h` — whichever unit does not read as zero.
+fn humanise(seconds: i64) -> String {
+    let s = seconds.max(0);
+    if s < 60 {
+        format!("{s}s")
+    } else if s < 3600 {
+        format!("{}m", s / 60)
+    } else {
+        format!("{}h{}m", s / 3600, (s % 3600) / 60)
+    }
+}
+
 fn announce(name: &str, args: &ShareArgs, s: &h5i_share::run::Started) {
-    let mins = (s.expires_at - chrono::Utc::now().timestamp()).max(0) / 60;
+    let left = humanise(s.expires_at - chrono::Utc::now().timestamp());
     println!("{} sharing port {} of {name}", SUCCESS, args.port);
     println!();
     println!("   {}", s.invite);
     println!();
     println!("   they      {}", s.how);
-    println!("   expires   in {mins}m (grant {})", s.grant_id);
+    println!("   expires   in {left} (grant {})", s.grant_id);
     match s.transport {
         Transport::P2p => {
             if args.direct_only {
                 println!(
-                    "   relay     refused — if no direct path can be made, the share fails \
-                     rather than relaying"
+                    "   relay     refused — a peer that cannot get a direct path is turned \
+                     away rather than relayed, and one that loses it is cut off"
                 );
             } else {
                 println!(
@@ -355,6 +398,17 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_short_share_does_not_announce_itself_as_already_over() {
+        // Integer minutes rendered `--expire 45` as "expires in 0m".
+        assert_eq!(humanise(45), "45s");
+        assert_eq!(humanise(59), "59s");
+        assert_eq!(humanise(60), "1m");
+        assert_eq!(humanise(3599), "59m");
+        assert_eq!(humanise(3600), "1h0m");
+        assert_eq!(humanise(-5), "0s");
+    }
 
     #[test]
     fn a_duration_is_read_the_way_people_write_one() {

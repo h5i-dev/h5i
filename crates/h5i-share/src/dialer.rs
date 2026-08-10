@@ -264,8 +264,8 @@ impl Dialer {
             (Some(STATUS_CONNECT_FAILED), got) => {
                 close_stray(got);
                 Err(H5iError::Metadata(format!(
-                    "nothing is listening on 127.0.0.1:{} inside the box. Start the dev server in \
-                     the box, or share the port it is actually on (`h5i box ports <name>`).",
+                    "nothing is listening on 127.0.0.1:{} inside the box. Start the dev server \
+                     in the box, or share the port it is actually on.",
                     self.port
                 )))
             }

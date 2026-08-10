@@ -395,8 +395,10 @@ A ticket names one box, one port, one grant and an expiry, and carries a
 side. h5i keeps only the secret's SHA-256, so **a ticket is printed once and
 cannot be reprinted** — mint another with `share grant`.
 
-One ticket admits one peer, which is what makes `share revoke <name> <grant>`
-per person rather than all or nothing. `share grant` mints a second one, but
+A ticket is a capability, not a seat: nothing marks one as used or binds it to a
+person, so forwarding the text admits everyone it reaches, under the one grant.
+What one ticket per person buys is that `share revoke <name> <grant>` cuts off
+exactly the people you gave *that* ticket to, rather than everybody. `share grant` mints a second one, but
 only for a `--tunnel` share today: a peer-to-peer ticket needs the running
 endpoint's addressing and only the serving process has it, so `grant` refuses on
 a P2P share and says to start a second one instead.
@@ -416,8 +418,10 @@ The longest a share may last is 24 hours, and the default is one.
 encrypted, hole-punched to a direct path when the networks allow it. When they
 do not, a relay carries it: the relay moves sealed packets and sees both
 addresses, the timing and the volume, never the content. `--direct-only` refuses
-that fallback. If no direct path can be established the share fails and says so,
-**before any application byte crosses** — and it keeps checking afterwards,
+that fallback. A peer that cannot get a direct path is turned away — **before
+any application byte crosses** — and the share stays up for anyone who can,
+which is the useful behaviour when one peer is behind a hostile NAT and another
+is not. It keeps checking afterwards,
 because a hole-punched path can die and the transport will slide onto a relay.
 Be precise about the second half: that check runs once a second, so a path that
 fails mid-session can carry up to about a second of traffic over a relay before
@@ -452,9 +456,11 @@ on every outbound link, and out of the app's own logs. On the way to the box,
 both the cookie and the query parameter are removed. The app being shared never
 sees the credential that admitted its visitor.
 
-The app's own cookies and query parameters are passed through untouched. So are
-WebSockets: hot reload works, because a share of a dev server that never
-reloaded would not be a share of a dev server.
+The app's own cookies are passed through untouched, and so is its query string
+with two exceptions worth knowing: a parameter literally named `h5i` is taken as
+the share token and removed, and empty pairs are dropped (`?a=1&&b=2` arrives as
+`?a=1&b=2`). WebSockets pass through as well: hot reload works, because a share
+of a dev server that never reloaded would not be a share of a dev server.
 
 A share carries at most 64 connections into the box at once. Past that, a
 visitor gets a `503` telling them to reload rather than a `401` telling them
@@ -522,7 +528,7 @@ share session, 612s (p2p transport)
 opened   2026-08-10T10:00:00+00:00
 closed   2026-08-10T10:10:12+00:00
 shared   port 3000 inside the box, never published on the host
-endpoint kbcd7fq2m4x…
+endpoint kbcd7fq2m4xn8s6r3v9w1y5z7a2b4c6d8e0f2g4h6j8k0l2m4n
 peers    1
   kbcd7fq2m4x… via direct — grant a1b2c3d4 (alex), 300s, 12 connections, 900 in / 5000 out
 refused  2 attempt(s): 1 unknown ticket, 0 expired, 1 revoked

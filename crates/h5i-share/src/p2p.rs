@@ -291,6 +291,14 @@ async fn serve_connection(
     }
 
     watchdog.abort();
+    // Recorded before the drain, not after. The peer has gone the moment
+    // `accept_bi` stops answering; noting it afterwards meant the shutdown path
+    // — the only path where it matters — almost always finished first and every
+    // peer's closing time came out as "still connected at the end".
+    let id = *peer_id.lock().expect("peer id");
+    if let Some(id) = id {
+        bridge.peer_left(id);
+    }
     // Drained rather than aborted. Each stream records its byte counts when its
     // pump returns, and aborting drops that future mid-copy — so a share cut
     // off by a revoke would report zero bytes for exactly the long-lived
@@ -303,10 +311,6 @@ async fn serve_connection(
     .await;
     if drained.is_err() {
         streams.abort_all();
-    }
-    let id = *peer_id.lock().expect("peer id");
-    if let Some(id) = id {
-        bridge.peer_left(id);
     }
     Ok(())
 }
@@ -422,6 +426,9 @@ async fn serve_stream(
         // seeing that would leave this parked forever — losing the counts for
         // exactly the long-lived stream they exist for.
         _ = conn.closed() => {}
+        // And the share winding up, so a shutdown does not wait out an idle
+        // timeout on a stream that is going to end anyway.
+        _ = bridge.shutting_down() => {}
     }
     use std::sync::atomic::Ordering;
     bridge.peer_bytes(

@@ -237,10 +237,28 @@ fn headers_are_unambiguous(headers: &[&str]) -> bool {
             return false;
         }
         match l.split_once(':') {
-            Some((k, _)) => !k.ends_with(' ') && !k.ends_with('\t') && !k.is_empty(),
+            Some((k, _)) => !k.is_empty() && k.bytes().all(is_tchar),
             None => false,
         }
     })
+}
+
+/// A character RFC 7230 allows in a header field name.
+///
+/// Checked as a whole rather than by trimming the two whitespace characters
+/// anyone thinks of. Rust's `str::trim` strips the entire Unicode whitespace
+/// class — vertical tab, form feed, NEL, non-breaking space, the en/em quads,
+/// ideographic space — so a name like `Content-Length\u{0c}` matched every
+/// lookup in this module while being a malformed line to the box. That is the
+/// same disagreement as a space before the colon, arriving by a door two
+/// characters wide.
+fn is_tchar(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+        || matches!(
+            b,
+            b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*'
+                | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+        )
 }
 
 /// Refuse a head whose line endings are not consistently CRLF.
@@ -282,7 +300,12 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
         return None;
     }
     let (clean_target, query_token) = strip_param(&target);
-    let cookie_token = header(&headers, "cookie").and_then(|c| split_cookie(c, cookie).0);
+    // Every `Cookie` header, not just the first. A client is allowed to send
+    // more than one, and reading only the first turned a legitimate visitor's
+    // request into a `401` while the rewrite below stripped all of them anyway.
+    let cookie_token = headers_named(&headers, "cookie")
+        .into_iter()
+        .find_map(|c| split_cookie(c, cookie).0);
     // The query only wins when it carries something usable. `/?h5i` and `/?h5i=`
     // used to shadow a perfectly good cookie and produce a `401` on a page the
     // visitor was entitled to — and an app with its own parameter called `h5i`
@@ -708,6 +731,30 @@ mod tests {
         // The app's own cookies still survive, which is the whole reason this
         // is a filter rather than a `Cookie` header that gets dropped.
         assert!(up.contains("sid=9"), "{up}");
+    }
+
+    #[test]
+    fn a_header_name_with_exotic_whitespace_in_it_is_refused() {
+        // `str::trim` strips the whole Unicode whitespace class, so
+        // `Content-Length\u{0c}` used to match every lookup here while being a
+        // malformed line to the box — which is a smuggled request, by a door
+        // two characters wide.
+        for pad in ["\u{0b}", "\u{0c}", "\u{85}", "\u{a0}", "\u{2000}", "\u{3000}"] {
+            let raw = head(
+                "POST / HTTP/1.1",
+                &[&format!("Content-Length{pad}: 5"), "Cookie: h5i_share=abc"],
+            );
+            assert!(parse_default(&raw).is_none(), "accepted a name padded with {pad:?}");
+        }
+        assert!(parse_default(&head("POST / HTTP/1.1", &["Content-Length: 5"])).is_some());
+    }
+
+    #[test]
+    fn a_token_in_a_second_cookie_header_is_still_found() {
+        let raw = head("GET / HTTP/1.1", &["Cookie: sid=9", "Cookie: h5i_share=abc123"]);
+        let r = parse_default(&raw).expect("parse");
+        assert_eq!(r.token.as_deref(), Some("abc123"));
+        assert!(!rewrite_for_upstream(&raw, &r, COOKIE).contains("abc123"));
     }
 
     #[test]

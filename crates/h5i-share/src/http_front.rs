@@ -46,6 +46,13 @@ const RESPONSE_IDLE: Duration = Duration::from_secs(300);
 /// How long a peer may pause part-way through a body it declared.
 const BODY_IDLE: Duration = Duration::from_secs(30);
 
+/// The longest an unframed response may stay open, whatever either end does.
+///
+/// A server-sent-events stream is the legitimate case and an hour is generous
+/// for a share whose ticket lasts one by default. Framed responses are not
+/// subject to it: they end when their body does.
+const UNFRAMED_LIFETIME: Duration = Duration::from_secs(3600);
+
 /// How many `1xx` heads may precede the real response. A server sends at most
 /// one or two; this is a backstop, not a budget.
 const MAX_INTERIM_RESPONSES: usize = 8;
@@ -213,6 +220,9 @@ where
 {
     use std::sync::atomic::Ordering;
     let Forwarded { head, rest, req } = request;
+    // Kept under its own name: `rest` is shadowed below by the response's
+    // trailing bytes, and the upgrade path needs the client's.
+    let rest_from_client = rest;
     let (to_box, to_peer) = (&counts.to_box, &counts.to_peer);
 
     let (mut peer_r, mut peer_w) = client.into_split();
@@ -261,8 +271,14 @@ where
     // started — and then the real head is read behind it.
     let mut rest = Vec::new();
     let mut interim = 0;
+    // One deadline for the whole head phase, not one per head. `read_response`
+    // computes its own from whenever it is called, so a box that dribbles a
+    // `103` just inside the timeout used to multiply the budget by the number
+    // of interim heads allowed — while holding one of the share's connection
+    // slots the entire time.
+    let head_deadline = tokio::time::Instant::now() + RESPONSE_HEAD_TIMEOUT;
     let (head, complete) = loop {
-        let (head, complete) = read_response(&mut up_r, &mut rest).await;
+        let (head, complete) = read_response(&mut up_r, &mut rest, head_deadline).await;
         if !(complete && is_informational(&head)) {
             break (head, complete);
         }
@@ -271,7 +287,8 @@ where
         // Bounded. A box streaming interim heads forever is not a thing a real
         // server does, and it is a thing agent-written code can do by accident.
         interim += 1;
-        if interim > MAX_INTERIM_RESPONSES {
+        if interim >= MAX_INTERIM_RESPONSES {
+            let _ = peer_w.shutdown().await;
             return Ok(());
         }
     };
@@ -281,14 +298,22 @@ where
         if head.is_empty() && !complete {
             return Ok(());
         }
-        let switched = complete
-            && (head.starts_with(b"HTTP/1.1 101") || head.starts_with(b"HTTP/1.0 101"));
+        let switched = complete && is_switching(&head);
         if switched {
             peer_w.write_all(&head).await?;
             if !rest.is_empty() {
                 peer_w.write_all(&rest).await?;
             }
             to_peer.fetch_add((head.len() + rest.len()) as u64, Ordering::Relaxed);
+            // Whatever the client sent in the same read as its handshake. An
+            // upgrade has no `Content-Length`, so the body loop above forwarded
+            // none of it, and a client that speaks first would have had its
+            // opening frames silently dropped.
+            if from_rest < rest_from_client.len() {
+                let tail = &rest_from_client[from_rest..];
+                up_w.write_all(tail).await?;
+                to_box.fetch_add(tail.len() as u64, Ordering::Relaxed);
+            }
             crate::pump::duplex(peer_r, peer_w, up_r, up_w, to_box, to_peer).await;
             return Ok(());
         }
@@ -298,9 +323,20 @@ where
     relay_response(peer_r, peer_w, up_r, head, rest, complete, bodyless, to_peer).await
 }
 
-/// A `1xx` head: an interim answer, with the real one still to come.
+/// A `101`: the box agreeing to change protocols.
+///
+/// One predicate, because there were two and they disagreed about `HTTP/1.0
+/// 101` — the upgrade check accepted it and the interim check called it an
+/// interim head, so a box answering that way had its response relayed as an
+/// interim and the proxy then waited two minutes for a "real" one.
+fn is_switching(head: &[u8]) -> bool {
+    status_code(head) == Some(101)
+}
+
+/// A `1xx` head that is *not* a `101`: an interim answer, with the real one
+/// still to come.
 fn is_informational(head: &[u8]) -> bool {
-    status_code(head).is_some_and(|c| (100..200).contains(&c)) && !head.starts_with(b"HTTP/1.1 101")
+    status_code(head).is_some_and(|c| (100..200).contains(&c)) && !is_switching(head)
 }
 
 /// The status code from a response head.
@@ -339,13 +375,13 @@ fn has_no_body(method: &str, head: &[u8]) -> bool {
 async fn read_response<R: tokio::io::AsyncRead + Unpin>(
     r: &mut R,
     pending: &mut Vec<u8>,
+    deadline: tokio::time::Instant,
 ) -> (Vec<u8>, bool) {
     // `pending` carries whatever the last read went past. An interim `100
     // Continue` and the real response often arrive in one packet, and without
     // a carry-over the second head would be read as the first one's body.
     let mut buf = std::mem::take(pending);
     let mut chunk = [0u8; 4096];
-    let deadline = tokio::time::Instant::now() + RESPONSE_HEAD_TIMEOUT;
     loop {
         if let Some(end) = find_head_end(&buf) {
             *pending = buf.split_off(end);
@@ -401,12 +437,21 @@ where
         // Waiting for that body would hold the connection until the idle
         // timeout, and a `304` is what a dev server answers for every asset the
         // browser already has — so this is the common case, not the exotic one.
-        let len = if bodyless {
-            Some(0)
+        let framing = if bodyless {
+            Framing::Length(0)
         } else {
-            response_content_length(&head)
+            response_framing(&head)
         };
-        (close_the_connection(&head), len)
+        let rewritten = close_the_connection(&head);
+        match framing {
+            Framing::Length(n) => (rewritten, Some(n)),
+            Framing::UntilClose => (rewritten, None),
+            // Not passed on. Handing the visitor two `Content-Length` headers
+            // is a response-smuggling shape the request side refuses outright,
+            // and a client that reads it either errors or picks one — which is
+            // the disagreement all over again, one hop further out.
+            Framing::Ambiguous => (strip_lengths(rewritten), None),
+        }
     } else {
         // Nothing was parsed, so nothing is rewritten. Send it on as it came.
         (head, None)
@@ -433,7 +478,16 @@ where
 
     let mut buf = vec![0u8; 32 * 1024];
     let mut discard = vec![0u8; 8 * 1024];
+    // An absolute cap as well as an idle one. The idle timeout is rebuilt every
+    // time round the loop, including when the *client* says something — so a
+    // peer dribbling a byte a minute could hold an unframed response open for
+    // as long as it liked, which is the ceiling this share has instead of a
+    // per-peer limit.
+    let hard_deadline = tokio::time::Instant::now() + UNFRAMED_LIFETIME;
     loop {
+        if body_len.is_none() && tokio::time::Instant::now() >= hard_deadline {
+            break;
+        }
         tokio::select! {
             from_box = tokio::time::timeout(RESPONSE_IDLE, up_r.read(&mut buf)) => {
                 let n = match from_box {
@@ -492,6 +546,19 @@ fn close_the_connection(head: &[u8]) -> Vec<u8> {
         if name == "connection" || name == "keep-alive" {
             continue;
         }
+        // The box must not set the visitor's share cookie. It cannot guess a
+        // token, so the worst it could do is clear one — but cookies ignore the
+        // port, so on the joining side one box could log a visitor out of a
+        // *different* share. Nothing legitimate sets a cookie by this name.
+        if name == "set-cookie" {
+            let value = line.splitn(2, |&b| b == b':').nth(1).unwrap_or(b"");
+            if String::from_utf8_lossy(value)
+                .trim_start()
+                .starts_with(crate::gate::COOKIE)
+            {
+                continue;
+            }
+        }
         out.extend_from_slice(line);
         out.extend_from_slice(b"\r\n");
     }
@@ -499,35 +566,93 @@ fn close_the_connection(head: &[u8]) -> Vec<u8> {
     out
 }
 
-/// `Content-Length` from a response head, when it declares exactly one.
-fn response_content_length(head: &[u8]) -> Option<u64> {
-    let mut found = None;
+/// How a response's body is framed, as far as this proxy will commit to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Framing {
+    /// Exactly this many bytes.
+    Length(u64),
+    /// Until the box closes. `Transfer-Encoding` says so, and this proxy does
+    /// not parse chunks — it relays them, and the forced `Connection: close`
+    /// is what ends the response.
+    UntilClose,
+    /// The head said two contradictory things. Nothing is framed **and** the
+    /// contradiction is not passed on: `strip_lengths` takes the lengths out on
+    /// the way to the client, so the response the visitor gets is framed by the
+    /// connection closing and by nothing else.
+    Ambiguous,
+}
+
+/// Read the response's framing out of its head.
+///
+/// `Transfer-Encoding` beats `Content-Length` for every HTTP client, so framing
+/// on the length when both are present sends the client a prefix of the *chunk
+/// framing* and closes — a truncated stream that reads as the app being broken.
+/// The request side has refused that combination since round three; the
+/// response side was still trusting it.
+fn response_framing(head: &[u8]) -> Framing {
+    let mut length = None;
+    let mut lengths = 0;
+    let mut chunked = false;
     for line in head.split(|&b| b == b'\n') {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         let Some(colon) = line.iter().position(|&b| b == b':') else {
             continue;
         };
         let name = String::from_utf8_lossy(&line[..colon]).trim().to_ascii_lowercase();
-        if name != "content-length" {
+        let value = String::from_utf8_lossy(&line[colon + 1..]).trim().to_string();
+        match name.as_str() {
+            "transfer-encoding" => chunked = true,
+            "content-length" => {
+                lengths += 1;
+                if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+                    lengths += 1; // unparseable counts as a disagreement
+                } else {
+                    length = value.parse::<u64>().ok();
+                }
+            }
+            _ => {}
+        }
+    }
+    if chunked {
+        return if lengths > 0 {
+            Framing::Ambiguous
+        } else {
+            Framing::UntilClose
+        };
+    }
+    match (lengths, length) {
+        (1, Some(n)) => Framing::Length(n),
+        (0, _) => Framing::UntilClose,
+        _ => Framing::Ambiguous,
+    }
+}
+
+/// Drop every `Content-Length` from a head whose framing we refused to trust.
+fn strip_lengths(head: Vec<u8>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(head.len());
+    for line in head.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
             continue;
         }
-        if found.is_some() {
-            // Two lengths is a response we will not frame; fall back to
-            // relaying until the box closes.
-            return None;
+        let name = line.split(|&b| b == b':').next().unwrap_or(b"");
+        if String::from_utf8_lossy(name).trim().eq_ignore_ascii_case("content-length") {
+            continue;
         }
-        let v = String::from_utf8_lossy(&line[colon + 1..]).trim().to_string();
-        if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
-            return None;
-        }
-        found = v.parse::<u64>().ok();
+        out.extend_from_slice(line);
+        out.extend_from_slice(b"\r\n");
     }
-    found
+    out.extend_from_slice(b"\r\n");
+    out
 }
 
 #[cfg(test)]
 mod response_tests {
     use super::*;
+
+    fn soon() -> tokio::time::Instant {
+        tokio::time::Instant::now() + Duration::from_secs(5)
+    }
 
     #[test]
     fn a_bodyless_answer_is_not_waited_on() {
@@ -571,25 +696,58 @@ mod response_tests {
     #[test]
     fn a_length_is_read_only_when_it_is_unambiguous() {
         assert_eq!(
-            response_content_length(b"HTTP/1.1 200 OK\r\nContent-Length: 17\r\n\r\n"),
-            Some(17)
+            response_framing(b"HTTP/1.1 200 OK\r\nContent-Length: 17\r\n\r\n"),
+            Framing::Length(17)
         );
-        // Two lengths, or one that is not a number, means framing this proxy
-        // will not guess at — relay until the box closes instead.
         assert_eq!(
-            response_content_length(
+            response_framing(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"),
+            Framing::UntilClose
+        );
+        assert_eq!(response_framing(b"HTTP/1.1 200 OK\r\n\r\n"), Framing::UntilClose);
+        // A length beside a `Transfer-Encoding` is the shape that truncated a
+        // chunked body to five bytes of its own framing: every client honours
+        // the encoding over the length, and this proxy honoured the length.
+        assert_eq!(
+            response_framing(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n"
+            ),
+            Framing::Ambiguous
+        );
+        assert_eq!(
+            response_framing(
                 b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n"
             ),
-            None
+            Framing::Ambiguous
         );
         assert_eq!(
-            response_content_length(b"HTTP/1.1 200 OK\r\nContent-Length: +5\r\n\r\n"),
-            None
+            response_framing(b"HTTP/1.1 200 OK\r\nContent-Length: +5\r\n\r\n"),
+            Framing::Ambiguous
         );
-        assert_eq!(
-            response_content_length(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"),
-            None
-        );
+    }
+
+    #[test]
+    fn an_ambiguous_length_is_not_passed_on_to_the_visitor() {
+        // Two `Content-Length` headers is a response-smuggling shape the
+        // request side refuses outright. Relaying it to the browser is the same
+        // disagreement, one hop further out.
+        let head = b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\nX-A: b\r\n\r\n";
+        let out = strip_lengths(close_the_connection(head));
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(!text.to_lowercase().contains("content-length"), "{text}");
+        assert!(text.contains("X-A: b"), "{text}");
+        assert!(text.contains("Connection: close"), "{text}");
+    }
+
+    #[test]
+    fn the_box_cannot_clobber_the_visitors_share_cookie() {
+        // It cannot guess a token, so the worst it could do is clear one — but
+        // cookies ignore the port, so on the joining side one box could log a
+        // visitor out of a different share.
+        let head = b"HTTP/1.1 200 OK\r\nSet-Cookie: h5i_share_1234=junk; Path=/\r\n\
+                     Set-Cookie: sid=9\r\n\r\n";
+        let text = String::from_utf8(close_the_connection(head)).expect("utf8");
+        assert!(!text.contains("h5i_share"), "{text}");
+        assert!(text.contains("Set-Cookie: sid=9"), "{text}");
     }
 
     #[tokio::test]
@@ -601,9 +759,9 @@ mod response_tests {
             b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi".to_vec();
         let mut r = &raw[..];
         let mut rest = Vec::new();
-        let (first, complete) = read_response(&mut r, &mut rest).await;
+        let (first, complete) = read_response(&mut r, &mut rest, soon()).await;
         assert!(complete && is_informational(&first));
-        let (second, complete) = read_response(&mut r, &mut rest).await;
+        let (second, complete) = read_response(&mut r, &mut rest, soon()).await;
         assert!(complete);
         assert!(second.starts_with(b"HTTP/1.1 200 OK"));
         assert_eq!(rest, b"hi");
@@ -616,11 +774,11 @@ mod response_tests {
         let raw: Vec<u8> = b"HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"caf\xe9.txt\"\r\nContent-Length: 2\r\n\r\nhi".to_vec();
         let mut r = &raw[..];
         let mut rest = Vec::new();
-        let (head, complete) = read_response(&mut r, &mut rest).await;
+        let (head, complete) = read_response(&mut r, &mut rest, soon()).await;
         assert!(complete);
         assert_eq!(rest, b"hi");
         assert!(head.windows(3).any(|w| w == b"caf"));
-        assert_eq!(response_content_length(&head), Some(2));
+        assert_eq!(response_framing(&head), Framing::Length(2));
     }
 }
 

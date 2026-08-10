@@ -1973,7 +1973,6 @@ dependencies = [
  "h5i-error",
  "iroh",
  "libc",
- "n0-future",
  "serde",
  "serde_json",
  "sha2 0.10.9",

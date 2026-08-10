@@ -32,6 +32,9 @@
 //!   making sure it never travels upstream.
 //! * [`bridge`] — authorization, accounting, and the ingress receipt.
 //! * [`p2p`] and [`tunnel`] — the two transports, over the same bridge.
+//! * [`pump`] — moving bytes, and counting them as they go.
+//! * [`run`] — starting, describing and ending a share, and the order those
+//!   have to happen in.
 //! * [`join`] — the other machine.
 //!
 //! # The properties worth holding onto
