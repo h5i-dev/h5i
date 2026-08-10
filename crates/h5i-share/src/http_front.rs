@@ -209,7 +209,10 @@ where
         let take = (remaining as usize).min(buf.len());
         let n = peer_r.read(&mut buf[..take]).await?;
         if n == 0 {
-            break;
+            // The client promised a body and then hung up. Waiting for a
+            // response now means waiting for a box that is itself waiting for
+            // the rest of a request nobody is going to send.
+            return Ok(());
         }
         up_w.write_all(&buf[..n]).await?;
         to_box.fetch_add(n as u64, Ordering::Relaxed);
@@ -232,33 +235,62 @@ where
             }
         }
         // Not an upgrade after all: finish it like any other single request.
-        return one_way(up_r, peer_w, to_peer).await;
+        return one_way(peer_r, peer_w, up_r, to_peer).await;
     }
 
-    one_way(up_r, peer_w, to_peer).await
+    one_way(peer_r, peer_w, up_r, to_peer).await
 }
 
-/// Copy the response back and close, reading nothing further from the client.
-async fn one_way<UR, PW>(
-    mut up_r: UR,
+/// Copy the response back and close, **forwarding** nothing further from the
+/// client.
+///
+/// The client's side is still read, and everything it says is thrown away. Two
+/// reasons, and the first is why this is not simply "stop reading":
+///
+/// * It is how a client hanging up is noticed. We asked the box to close after
+///   one response, but the box runs agent-written code and may not; if nobody
+///   were watching the client, a connection where both ends went quiet would
+///   sit here holding one of the share's connection slots until the grant
+///   expired.
+/// * Discarding is as strong a guarantee as not reading. What matters is that
+///   no byte the client sends after its first request reaches the box, and a
+///   byte read into a buffer that is immediately overwritten has not reached
+///   anything.
+async fn one_way<PR, PW, UR>(
+    mut peer_r: PR,
     mut peer_w: PW,
+    mut up_r: UR,
     to_peer: &std::sync::atomic::AtomicU64,
 ) -> std::io::Result<()>
 where
-    UR: tokio::io::AsyncRead + Unpin + Send,
+    PR: tokio::io::AsyncRead + Unpin + Send,
     PW: tokio::io::AsyncWrite + Unpin + Send,
+    UR: tokio::io::AsyncRead + Unpin + Send,
 {
     use std::sync::atomic::Ordering;
     let mut buf = vec![0u8; 32 * 1024];
+    let mut discard = vec![0u8; 8 * 1024];
     loop {
-        let n = match up_r.read(&mut buf).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => n,
-        };
-        if peer_w.write_all(&buf[..n]).await.is_err() {
-            break;
+        tokio::select! {
+            from_box = up_r.read(&mut buf) => {
+                let n = match from_box {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                if peer_w.write_all(&buf[..n]).await.is_err() {
+                    break;
+                }
+                to_peer.fetch_add(n as u64, Ordering::Relaxed);
+            }
+            from_peer = peer_r.read(&mut discard) => {
+                // Zero is the client hanging up, which ends the connection.
+                // Anything else is a pipelined request or a stray body, read
+                // and dropped: it must not reach the box, and it does not.
+                if matches!(from_peer, Ok(0) | Err(_)) {
+                    break;
+                }
+            }
         }
-        to_peer.fetch_add(n as u64, Ordering::Relaxed);
     }
     let _ = peer_w.shutdown().await;
     Ok(())

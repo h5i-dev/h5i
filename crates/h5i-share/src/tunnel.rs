@@ -593,6 +593,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_connection_both_ends_stop_using_does_not_hold_a_slot_forever() {
+        // The box may ignore `Connection: close`, so the proxy cannot wait for
+        // it to hang up. If nobody watched the client either, a quiet
+        // connection would hold one of the share's slots until the grant
+        // expired — up to a day.
+        let (port, _seen) = stubborn_keepalive_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut c = tokio::net::TcpStream::connect(addr).await.expect("connect");
+            c.write_all(
+                format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .expect("write");
+            let mut buf = [0u8; 128];
+            let _ = tokio::time::timeout(Duration::from_secs(2), c.read(&mut buf)).await;
+            // Walk away. The box's side is still open and still says
+            // keep-alive, so only the client going quiet can end this.
+            drop(c);
+        }
+
+        // The slot has to come back. All 64 of them, in fact — if the
+        // connection were still holding one, only 63 would be free.
+        //
+        // Polled rather than slept, with a budget far past what this ever
+        // needs: the release happens when a task the test does not own gets
+        // scheduled, and a fixed wait is a test that fails on a busy machine
+        // for a reason that has nothing to do with the code. It costs nothing
+        // when it passes, which is every time the release actually happens.
+        let mut free = 0;
+        for _ in 0..600 {
+            let mut held = Vec::new();
+            while let Some(p) = bridge.admit() {
+                held.push(p);
+            }
+            free = held.len();
+            if free == 64 {
+                break;
+            }
+            drop(held);
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(free, 64, "a finished connection is still holding a slot");
+
+        serving.abort();
+    }
+
+    #[tokio::test]
     async fn a_body_the_proxy_cannot_measure_is_refused_rather_than_streamed() {
         let port = fake_dev_server();
         let dir = tempfile::tempdir().expect("tempdir");
