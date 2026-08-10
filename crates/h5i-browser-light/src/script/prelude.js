@@ -1523,6 +1523,39 @@
   }
   reflect(Element.prototype, "role", "role", "nullable");
 
+  // The ARIA properties that are *enumerated* rather than free strings. Their
+  // getters answer a canonical keyword and reject anything else, exactly as
+  // `dir` does — declaring them as plain strings passed every hostile value
+  // straight back and cost roughly six hundred subtests in one file.
+  //
+  // `missing: null` on purpose: an absent ARIA attribute reflects as null, and
+  // an invalid one as the empty string. Three states, not two.
+  for (const [name, keywords] of [
+    ["ariaAutoComplete", ["inline", "list", "both", "none"]],
+    ["ariaChecked", ["true", "false", "mixed", "undefined"]],
+    ["ariaCurrent", ["page", "step", "location", "date", "time", "true", "false"]],
+    ["ariaDisabled", ["true", "false"]],
+    ["ariaExpanded", ["true", "false", "undefined"]],
+    ["ariaHasPopup", ["false", "true", "menu", "listbox", "tree", "grid", "dialog"]],
+    ["ariaHidden", ["true", "false", "undefined"]],
+    ["ariaInvalid", ["grammar", "false", "spelling", "true"]],
+    ["ariaLive", ["assertive", "off", "polite"]],
+    ["ariaModal", ["true", "false"]],
+    ["ariaMultiLine", ["true", "false"]],
+    ["ariaMultiSelectable", ["true", "false"]],
+    ["ariaOrientation", ["horizontal", "vertical", "undefined"]],
+    ["ariaPressed", ["true", "false", "mixed", "undefined"]],
+    ["ariaReadOnly", ["true", "false"]],
+    ["ariaRequired", ["true", "false"]],
+    ["ariaSelected", ["true", "false", "undefined"]],
+    ["ariaSort", ["ascending", "descending", "none", "other"]],
+    ["ariaAtomic", ["true", "false"]],
+    ["ariaBusy", ["true", "false"]],
+  ]) {
+    reflect(Element.prototype, name, "aria-" + name.slice(4).toLowerCase(),
+      "enumerated", { keywords, missing: null, invalid: "" });
+  }
+
   // ── per-tag interfaces ───────────────────────────────────────────────────
   //
   // A browser has HTMLAnchorElement, HTMLTableCellElement and eighty more, and
@@ -3301,9 +3334,44 @@
   /// either sees them. `load` deliberately does not bubble, matching a browser:
   /// a page that listens for `load` on a container to catch its images must not
   /// be told the document is one.
+  /// Expose elements with an `id` as globals, the way a browser does.
+  ///
+  /// `<div id="target">` makes `window.target` that element. It is a legacy
+  /// corner of the platform and it is *everywhere* in test suites and in older
+  /// page script: "target is not defined" was the single largest cause of files
+  /// this engine could not report on at all — 267 in `css` alone, plus `main`,
+  /// `container`, `host` and a long tail. A ReferenceError on the first line
+  /// stops a file before it can say anything, which is why one missing legacy
+  /// behaviour cost more than most missing APIs.
+  ///
+  /// Getters rather than values, so the global follows the element if the page
+  /// replaces it, and never a name `globalThis` already has: an element with
+  /// `id="document"` must not be able to take `document` away from the page.
+  globalThis.__h5iInstallNamedAccess = function () {
+    for (const id of api.queryAll("[id]", 0)) {
+      const name = api.getAttr(id, "id");
+      if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) continue;
+      if (name in globalThis) continue;
+      Object.defineProperty(globalThis, name, {
+        configurable: true,
+        enumerable: false,
+        get() { return wrap(api.query("#" + cssEscapeIdent(name), 0)); },
+      });
+    }
+  };
+
+  /// Enough escaping to put an id back into a selector safely.
+  function cssEscapeIdent(name) {
+    return name.replace(/[^\w-]/g, (ch) => "\\" + ch);
+  }
+
   globalThis.__h5iFireLifecycle = function () {
     const root = wrap(api.root());
     const at = (event) => { if (root) root.dispatchEvent(event); };
+
+    // Again here: a script that ran during parsing may have added elements
+    // with ids, and the handlers about to run will reach for them by name.
+    globalThis.__h5iInstallNamedAccess();
 
     documentReadyState = "interactive";
     at(new Event("readystatechange"));

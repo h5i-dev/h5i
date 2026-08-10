@@ -1279,6 +1279,24 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     let id = arg_id(args, 0, context)?;
     let property = arg_string(args, 1, context)?.to_lowercase();
     let host = host(context)?;
+
+    // Recompute the cascade first if the tree moved since it last ran.
+    //
+    // A browser resolves style on demand, and pages depend on it: the CSSOM
+    // tests build their whole subject in script — `createElement`, `appendChild`,
+    // then `getComputedStyle` — and every one of them read "" here, because
+    // Stylo had never seen the new nodes. `resolve` is safe to call from a
+    // primitive for the same reason every other mutation is: it never calls back
+    // into script, so nothing can re-enter while it runs.
+    //
+    // `styles_stale` rather than `dirty`, because the settle loop consumes
+    // `dirty` to decide whether to lay out and clearing it here would skip a
+    // layout pass someone else was waiting for.
+    if *host.styles_stale.borrow() {
+        *host.styles_stale.borrow_mut() = false;
+        host.dom.borrow_mut().resolve(0.0);
+    }
+
     let doc = host.dom.borrow();
 
     let Some(node) = doc.get_node(id) else {

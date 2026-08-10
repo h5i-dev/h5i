@@ -115,6 +115,15 @@ pub struct Host {
     /// Set whenever script changed the tree, so the engine knows to re-resolve
     /// style and layout once rather than after every mutation.
     pub dirty: RefCell<bool>,
+    /// Whether the cascade has been recomputed since the tree last changed.
+    ///
+    /// Separate from `dirty`, which the settle loop consumes to decide whether
+    /// to lay out. `getComputedStyle` needs a *style* recalc rather than a
+    /// layout, and it needs one on demand: a page that builds its DOM in script
+    /// and asks for a computed value gets nothing otherwise, because Stylo has
+    /// not seen the new nodes. Two flags because one consumer clearing the
+    /// other's would skip a pass someone was relying on.
+    pub styles_stale: RefCell<bool>,
 
     pub console: RefCell<Vec<ConsoleLine>>,
 
@@ -210,6 +219,7 @@ impl Host {
             broker,
             base,
             dirty: RefCell::new(false),
+            styles_stale: RefCell::new(false),
             console: RefCell::new(Vec::new()),
             unsupported: RefCell::new(Unsupported::default()),
             requests: RefCell::new(Vec::new()),
@@ -222,6 +232,7 @@ impl Host {
 
     pub fn mark_dirty(&self) {
         *self.dirty.borrow_mut() = true;
+        *self.styles_stale.borrow_mut() = true;
     }
 
     pub fn take_dirty(&self) -> bool {

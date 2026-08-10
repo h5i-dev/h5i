@@ -452,6 +452,15 @@ impl Page {
         let mut script = crate::script::Script::new(self.dom(), broker.clone(), &self.url)
             .map_err(H5iError::Metadata)?;
 
+        // `<div id="x">` makes `x` a global, which is legacy and is also how a
+        // great deal of test and older page script finds its subject. Installed
+        // before the first script rather than after, because the first script is
+        // usually the one that reaches for it, and a ReferenceError on line one
+        // ends a file before it can report anything at all.
+        if let Err(error) = script.eval("__h5iInstallNamedAccess()") {
+            script.note_error(&format!("named access could not be installed: {error}"));
+        }
+
         // Classic scripts first, in document order, then modules in document
         // order. That is the deferred semantics `type="module"` carries: a
         // module never runs before a classic script that follows it in the
