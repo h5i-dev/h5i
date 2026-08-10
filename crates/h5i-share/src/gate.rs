@@ -247,7 +247,7 @@ fn headers_are_unambiguous(headers: &[&str]) -> bool {
 /// lookup in this module while being a malformed line to the box. That is the
 /// same disagreement as a space before the colon, arriving by a door two
 /// characters wide.
-fn is_tchar(b: u8) -> bool {
+pub fn is_tchar(b: u8) -> bool {
     b.is_ascii_alphanumeric()
         || matches!(
             b,
@@ -322,7 +322,12 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
     // a `Content-Length` beside a `Transfer-Encoding`, are the two shapes that
     // let two parsers disagree about that.
     let lengths = headers_named(&headers, "content-length");
-    let chunked = !headers_named(&headers, "transfer-encoding").is_empty();
+    // Only `chunked` frames a body. `identity` is legal, deprecated, and means
+    // "no encoding" — the response side learned this a round ago and this side
+    // did not, so `Transfer-Encoding: identity` was refused as ambiguous.
+    let chunked = headers_named(&headers, "transfer-encoding")
+        .iter()
+        .any(|v| v.to_ascii_lowercase().contains("chunked"));
     if lengths.len() > 1 || (chunked && !lengths.is_empty()) {
         return None;
     }

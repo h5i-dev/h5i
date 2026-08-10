@@ -494,12 +494,6 @@ pub fn revoke(env_dir: &std::path::Path, grant_id: &str) -> Result<(), H5iError>
     })
 }
 
-/// Stop a share running in another terminal.
-///
-/// Implemented as "revoke everything" rather than as a signal, and that is the
-/// safer shape: the serving process notices within a second, drops its live
-/// connections, writes its receipt and clears the session file on its own way
-/// out. Killing it would skip the receipt, which is the part that matters.
 /// What `stop` found when it looked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stopped {
@@ -512,6 +506,12 @@ pub enum Stopped {
     Stale,
 }
 
+/// Stop a share running in another terminal.
+///
+/// Implemented as "revoke everything" rather than as a signal, and that is the
+/// safer shape: the serving process notices within a second, drops its live
+/// connections, writes its receipt and clears the session file on its own way
+/// out. Killing it would skip the receipt, which is the part that matters.
 pub fn stop(env_dir: &std::path::Path) -> Result<Stopped, H5iError> {
     // One lock hold for the whole decision — see `session::stop`.
     Ok(if session::stop(env_dir)? {

@@ -343,11 +343,17 @@ where
         }
         let switched = complete && is_switching(&head);
         if switched {
-            peer_w.write_all(&head).await?;
+            // Filtered like every other response head. This was the one that
+            // was not — and it is the only `1xx` a dev server actually sends,
+            // so it was strictly more reachable than the `103` case that got
+            // the filter first. `Connection` is left alone: an upgrade is where
+            // that header means something.
+            let cleaned = strip_share_cookies(&head);
+            peer_w.write_all(&cleaned).await?;
             if !rest.is_empty() {
                 peer_w.write_all(&rest).await?;
             }
-            to_peer.fetch_add((head.len() + rest.len()) as u64, Ordering::Relaxed);
+            to_peer.fetch_add((cleaned.len() + rest.len()) as u64, Ordering::Relaxed);
             // Whatever the client sent in the same read as its handshake. An
             // upgrade has no `Content-Length`, so the body loop above forwarded
             // none of it, and a client that speaks first would have had its
@@ -443,6 +449,9 @@ where
             // The terminating chunk, then any trailers, then a blank line.
             loop {
                 let t = read_crlf_line(r, &mut buf, MAX_CHUNK_LINE).await?;
+                if !is_trailer(&t) {
+                    return Err(std::io::Error::other("not a trailer"));
+                }
                 w.write_all(&t).await?;
                 to_box.fetch_add(t.len() as u64, Ordering::Relaxed);
                 if t.as_slice() == b"\r\n" {
@@ -511,14 +520,48 @@ async fn fill<R: tokio::io::AsyncRead + Unpin>(
 }
 
 /// The size from a chunk header line, ignoring any extension after `;`.
+///
+/// Held to the same discipline as a header line, for the same reason. The gate
+/// refuses a bare LF in the head because it is how a line means one thing to
+/// this proxy and another to the box; a chunk-size line is the *only* thing
+/// telling this proxy where the request ends, so it is the last place to be
+/// relaxed about it. No embedded CR or LF, no controls, no surrounding
+/// whitespace (the grammar allows none), and hex that is hex.
 fn chunk_size(line: &[u8]) -> Option<u64> {
     let line = line.strip_suffix(b"\r\n")?;
+    if !is_clean_line(line) {
+        return None;
+    }
     let hex = line.split(|&b| b == b';').next()?;
-    let hex = std::str::from_utf8(hex).ok()?.trim();
+    let hex = std::str::from_utf8(hex).ok()?;
     if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     u64::from_str_radix(hex, 16).ok()
+}
+
+/// No control characters, and nothing that another parser would read as the
+/// end of a line.
+fn is_clean_line(line: &[u8]) -> bool {
+    line.iter()
+        .all(|&b| b >= 0x20 && b != 0x7f || b == b'\t')
+}
+
+/// A trailer line: a header, held to the header rules.
+fn is_trailer(line: &[u8]) -> bool {
+    let Some(line) = line.strip_suffix(b"\r\n") else {
+        return false;
+    };
+    if line.is_empty() {
+        return true;
+    }
+    if !is_clean_line(line) || line.starts_with(b" ") || line.starts_with(b"\t") {
+        return false;
+    }
+    match line.iter().position(|&b| b == b':') {
+        Some(colon) => colon > 0 && line[..colon].iter().all(|&b| crate::gate::is_tchar(b)),
+        None => false,
+    }
 }
 
 /// Read the box's response head.
@@ -601,9 +644,10 @@ where
         // box chooses when to stop talking, so that was the whole sanitiser
         // behind a door the box holds. A refusal the visitor can read is the
         // better half of the trade.
-        let _ = peer_w
-            .write_all(unfinished_response().as_bytes())
-            .await;
+        let reply = unfinished_response();
+        if peer_w.write_all(reply.as_bytes()).await.is_ok() {
+            to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
+        }
         let _ = peer_w.shutdown().await;
         return Ok(());
     }
@@ -929,6 +973,40 @@ mod response_tests {
                 forward_chunked(&mut peer, &mut out, &[], &counted).await.is_err(),
                 "accepted {body:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_chunk_line_is_held_to_the_rules_a_header_line_is() {
+        // The gate refuses a bare LF in the head because it is how a line means
+        // one thing here and another to the box. A chunk-size line is the only
+        // thing telling this proxy where the request ends, so it is the last
+        // place to be relaxed about it.
+        assert_eq!(chunk_size(b"5\r\n"), Some(5));
+        for bad in [
+            &b" 5 \r\n"[..],          // the grammar allows no whitespace
+            &b"\t5\r\n"[..],
+            &b"5\x0c\r\n"[..],        // form feed, which `trim` used to eat
+            &b"5\r\r\n"[..],          // an embedded bare CR
+            &b"5;x\nGET / HTTP/1.1\r\n"[..],
+            &b"5;x\x00y\r\n"[..],
+        ] {
+            assert_eq!(chunk_size(bad), None, "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_trailer_is_held_to_the_same_rules() {
+        assert!(is_trailer(b"\r\n"));
+        assert!(is_trailer(b"X-Checksum: abc\r\n"));
+        for bad in [
+            &b"X: a\nGET / HTTP/1.1\r\n"[..],
+            &b"X: a\x00b\r\n"[..],
+            &b" X: folded\r\n"[..],
+            &b"no colon\r\n"[..],
+            &b"X\x0c: a\r\n"[..],
+        ] {
+            assert!(!is_trailer(bad), "accepted {bad:?}");
         }
     }
 

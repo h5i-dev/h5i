@@ -744,9 +744,11 @@ Four decisions made during the build that the proposal above did not contain:
   that answers keep-alive leaves the front holding an ungated pipe. The second
   review caught exactly that, so the front now reads the head plus the declared
   body and then **stops reading the client**, which needs nothing from the box.
-  Two things fall out and both are the right trade: a chunked request body is
-  refused with a `501`, because forwarding one request means knowing where it
-  ends; and an upgrade earns its two-way pipe only after the box answers `101`,
+  Two things fall out. A chunked request body has to be *parsed* rather than
+  just copied, because forwarding one request means knowing where it ends and a
+  chunk stream only says so in its own framing — it was refused with a `501`
+  for two rounds, which meant no streamed upload worked at all. And an upgrade
+  earns its two-way pipe only after the box answers `101`,
   with the request required to carry both `Upgrade` and `Connection: upgrade` —
   a lone `Upgrade:` header is something any client can attach to a request that
   will never upgrade, and it was an opt-out from the whole rule.

@@ -279,7 +279,7 @@ async fn serve_connection(
         let bridge = bridge.clone();
         let who = who.clone();
         let peer_id = peer_id.clone();
-        let path = observed_path(&conn).unwrap_or(Path::Direct);
+        let path = observed_path(&conn);
         let conn_for_stream = conn.clone();
         streams.spawn(async move {
             if let Err(e) =
@@ -320,7 +320,7 @@ async fn serve_stream(
     mut send: iroh::endpoint::SendStream,
     mut recv: iroh::endpoint::RecvStream,
     who: &str,
-    path: Path,
+    path: Option<Path>,
     peer_id: &std::sync::Mutex<Option<crate::bridge::PeerId>>,
     conn: &Connection,
 ) -> Result<(), H5iError> {
@@ -390,7 +390,12 @@ async fn serve_stream(
         let mut slot = peer_id.lock().expect("peer id");
         *slot.get_or_insert_with(|| bridge.peer_joined(short(who), &grant, path))
     };
-    bridge.peer_path(id, path);
+    // Recorded only when something actually observed it. Feeding the join-time
+    // value back through `peer_path` marked a guess as an observation, which is
+    // the thing that flag exists to prevent.
+    if let Some(p) = path {
+        bridge.peer_path(id, p);
+    }
     bridge.peer_connection(id);
 
     send.write_all(&[wire::REPLY_OK])

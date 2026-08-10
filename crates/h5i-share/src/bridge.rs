@@ -59,11 +59,12 @@ pub struct PeerRecord {
     pub peer: String,
     pub grant: String,
     pub label: Option<String>,
-    pub path: Path,
-    /// Has a path actually been seen carrying this peer? Until one has, `path`
-    /// is a placeholder and the first observation replaces it outright rather
-    /// than being folded in.
-    pub path_observed: bool,
+    /// How this peer's bytes travelled, once something actually observed it.
+    /// `None` until then, and rendered as such: a transport that has not
+    /// selected a path yet is not evidence of either answer, and writing a
+    /// guess here put "via direct" in the receipt for connections a relay
+    /// carried.
+    pub path: Option<Path>,
     pub opened: DateTime<Utc>,
     pub closed: Option<DateTime<Utc>>,
     /// TCP connections into the box carried for this peer.
@@ -292,7 +293,7 @@ impl Bridge {
         &self,
         peer: String,
         grant: &AuthorizedGrant,
-        path: Path,
+        path: Option<Path>,
     ) -> PeerId {
         // Fail soft like every other accessor here. This one used to `expect`,
         // and it is called while the tunnel front holds its own peer map — so a
@@ -303,14 +304,16 @@ impl Bridge {
             Err(p) => p.into_inner(),
         };
         if t.peers.len() >= MAX_PEER_RECORDS {
-            return PeerId(t.peers.len().saturating_sub(1));
+            // A handle that names nothing. Returning the *last* record folded
+            // peer 257's bytes, connections and path observations into peer
+            // 256 — including setting a path 256 had never had observed.
+            return PeerId(usize::MAX);
         }
         t.peers.push(PeerRecord {
             peer,
             grant: grant.id.clone(),
             label: grant.label.clone(),
             path,
-            path_observed: false,
             opened: Utc::now(),
             closed: None,
             connections: 0,
@@ -324,24 +327,19 @@ impl Bridge {
     /// direct path when hole punching lands. The receipt should say what
     /// actually carried the bytes, so the transport corrects this when it sees
     /// the path change.
+    /// Record an actual observation of how a peer's bytes are travelling.
+    ///
+    /// Only ever called with something a transport really saw. The first one
+    /// wins outright; after that only the weaker claim sticks, because a
+    /// connection that spent any time on a relay is a connection that used one,
+    /// and rounding that off would be flattering.
     pub fn peer_path(&self, id: PeerId, path: Path) {
         if let Ok(mut t) = self.tally.lock() {
             if let Some(p) = t.peers.get_mut(id.0) {
-                if !p.path_observed {
-                    // The first real observation. Until now `path` was whatever
-                    // the caller guessed at a moment when the transport had not
-                    // selected one — and guessing "direct" and then only ever
-                    // downgrading meant a peer whose path was simply not yet
-                    // known was recorded as direct for good.
-                    p.path = path;
-                    p.path_observed = true;
-                    return;
-                }
-                // After that, only toward the weaker claim: a connection that
-                // spent any time on a relay is a connection that used one, and
-                // rounding that off would be flattering.
-                if p.path == Path::Direct && path == Path::Relayed {
-                    p.path = Path::Relayed;
+                match p.path {
+                    None => p.path = Some(path),
+                    Some(Path::Direct) if path == Path::Relayed => p.path = Some(Path::Relayed),
+                    Some(_) => {}
                 }
             }
         }
@@ -561,7 +559,7 @@ pub fn render_receipt(s: &Summary) -> String {
             out.push_str(&format!(
                 "  {} via {} — grant {}{}, {held}s, {}, {} in / {} out\n",
                 p.peer,
-                p.path.as_str(),
+                p.path.map(|x| x.as_str()).unwrap_or("a path nothing observed"),
                 p.grant,
                 p.label
                     .as_ref()
@@ -572,7 +570,7 @@ pub fn render_receipt(s: &Summary) -> String {
                 p.bytes_to_peer,
             ));
         }
-        let relayed = s.peers.iter().filter(|p| p.path == Path::Relayed).count();
+        let relayed = s.peers.iter().filter(|p| p.path == Some(Path::Relayed)).count();
         if relayed > 0 {
             out.push_str(&format!(
                 "relay    {relayed} peer(s) used a relay. It moved sealed packets and could not \
@@ -695,8 +693,7 @@ mod tests {
             peer: name.into(),
             grant: "a1b2c3d4".into(),
             label: Some("alex".into()),
-            path,
-            path_observed: true,
+            path: Some(path),
             opened: at("2026-08-10T10:00:00Z"),
             closed: Some(at("2026-08-10T10:05:00Z")),
             connections: 12,
@@ -863,13 +860,14 @@ mod tests {
             label: None,
             expires_at: 4_000_000_000,
         };
-        let id = b.peer_joined("kbcd…".into(), &g, Path::Direct);
+        let id = b.peer_joined("kbcd…".into(), &g, None);
+        assert_eq!(b.tally.lock().unwrap().peers[0].path, None);
         b.peer_path(id, Path::Relayed);
-        assert_eq!(b.tally.lock().unwrap().peers[0].path, Path::Relayed);
+        assert_eq!(b.tally.lock().unwrap().peers[0].path, Some(Path::Relayed));
 
         // And once observed, only the weaker claim sticks.
         b.peer_path(id, Path::Direct);
-        assert_eq!(b.tally.lock().unwrap().peers[0].path, Path::Relayed);
+        assert_eq!(b.tally.lock().unwrap().peers[0].path, Some(Path::Relayed));
     }
 
     #[test]
@@ -878,7 +876,7 @@ mod tests {
         // that spent any time relayed used a relay, and the receipt must not
         // flatter it once a direct path appears later.
         let mut p = peer("kbcd…", Path::Relayed);
-        p.path = Path::Relayed;
+        p.path = Some(Path::Relayed);
         let body = render_receipt(&summary(vec![p], vec![]));
         assert!(body.contains("relayed"));
     }

@@ -377,7 +377,9 @@ async fn handle(
             bridge.peer_joined(
                 "a browser (the tunnel cannot tell two apart)".into(),
                 &grant,
-                Path::Tunnel,
+                // Observed, and there is nothing else it could be: this
+                // transport has exactly one path.
+                Some(Path::Tunnel),
             )
         })
     };
