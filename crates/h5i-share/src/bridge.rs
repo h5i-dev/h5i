@@ -67,7 +67,9 @@ pub struct PeerRecord {
     pub path: Option<Path>,
     pub opened: DateTime<Utc>,
     pub closed: Option<DateTime<Utc>>,
-    /// TCP connections into the box carried for this peer.
+    /// TCP connections into the box carried for this peer. Not the number of
+    /// requests: a peer that followed the invite link and read nothing has a
+    /// record with none.
     pub connections: u64,
     pub bytes_to_peer: u64,
     pub bytes_from_peer: u64,
@@ -747,6 +749,20 @@ mod tests {
         assert!(body.contains("grant a1b2c3d4 (alex)"));
         assert!(body.contains("12 connections"));
         assert!(body.contains("900 in / 5000 out"));
+    }
+
+    #[test]
+    fn a_peer_who_arrived_and_read_nothing_is_a_peer_with_no_connections() {
+        // Following the invite link is a fact worth recording, and it is a
+        // different fact from reaching the dev server. The receipt says the
+        // second thing, so a redirect must not be counted as one.
+        let mut p = peer("a browser", Path::Tunnel);
+        p.connections = 0;
+        p.bytes_to_peer = 190;
+        p.bytes_from_peer = 0;
+        let body = render_receipt(&summary(vec![p], vec![]));
+        assert!(body.contains("0 connections"), "{body}");
+        assert!(!body.contains("nobody connected"), "{body}");
     }
 
     #[test]

@@ -356,8 +356,13 @@ async fn handle(
             // peer who opened the link and then read nothing used to leave the
             // receipt saying nobody came.
             if let Some(g) = &grant {
+                // Registered, and its bytes counted — but *not* counted as a
+                // connection. A redirect never reaches the box, and the
+                // receipt's connection count is documented as connections into
+                // it. Saying "somebody arrived" and "somebody reached the dev
+                // server" are different facts and the receipt should not merge
+                // them.
                 let id = register(&bridge, &peers, g);
-                bridge.peer_connection(id);
                 bridge.peer_bytes(id, body.len() as u64, 0);
             }
             http_front::respond(&mut sock, &body).await;

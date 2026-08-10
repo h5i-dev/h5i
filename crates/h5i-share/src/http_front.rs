@@ -58,6 +58,16 @@ const MAX_TRAILERS: usize = 8 * 1024;
 /// subject to it: they end when their body does.
 const UNFRAMED_LIFETIME: Duration = Duration::from_secs(3600);
 
+/// The longest a request body may take to arrive, whatever the peer does.
+///
+/// Its own constant rather than the response's, because it answers a different
+/// question: not "how long may a stream stay quiet" but "how long may somebody
+/// take to finish saying what they said they would". An hour is far past any
+/// upload a share is for, and without it a peer declaring a body of
+/// `u64::MAX` and dribbling a byte a minute holds a slot for the life of its
+/// ticket.
+const BODY_LIFETIME: Duration = Duration::from_secs(3600);
+
 /// How many `1xx` heads may precede the real response. A server sends at most
 /// one or two; this is a backstop, not a budget.
 const MAX_INTERIM_RESPONSES: usize = 8;
@@ -277,7 +287,7 @@ where
         // authorized peer declaring a body it never finishes — one byte every
         // twenty-nine seconds — holds a share slot and a socket into the box
         // for the life of its ticket, which is up to a day.
-        let body_deadline = tokio::time::Instant::now() + UNFRAMED_LIFETIME;
+        let body_deadline = tokio::time::Instant::now() + BODY_LIFETIME;
         from_rest = (rest.len() as u64).min(want) as usize;
         if from_rest > 0 {
             up_w.write_all(&rest[..from_rest]).await?;
@@ -287,6 +297,15 @@ where
         let mut buf = vec![0u8; 32 * 1024];
         while remaining > 0 {
             if tokio::time::Instant::now() >= body_deadline {
+                // Answered rather than dropped. The peer is still there — that
+                // is the whole problem — and a closed socket with no reply is
+                // the least informative thing to hand somebody whose upload
+                // was too slow.
+                let reply = timed_out_response();
+                if peer_w.write_all(reply.as_bytes()).await.is_ok() {
+                    to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
+                }
+                let _ = peer_w.shutdown().await;
                 return Ok(());
             }
             let take = (remaining as usize).min(buf.len());
@@ -442,7 +461,7 @@ where
 {
     use std::sync::atomic::Ordering;
     let mut buf = initial.to_vec();
-    let deadline = tokio::time::Instant::now() + UNFRAMED_LIFETIME;
+    let deadline = tokio::time::Instant::now() + BODY_LIFETIME;
     let mut trailer_bytes = 0usize;
 
     loop {
@@ -871,6 +890,20 @@ fn response_framing(head: &[u8]) -> Framing {
 const UNFINISHED_BODY: &str =
     "The app in this box began a reply and did not finish it. Whoever shared it needs to look.";
 
+/// What a peer gets when it declared a body and took too long to send it.
+const TIMED_OUT_BODY: &str = "That request took too long to arrive. Try it again.";
+
+fn timed_out_response() -> String {
+    format!(
+        "HTTP/1.1 408 Request Timeout\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\
+         Content-Length: {}\r\n\
+         Cache-Control: no-store\r\n\
+         Connection: close\r\n\r\n{TIMED_OUT_BODY}",
+        TIMED_OUT_BODY.len()
+    )
+}
+
 /// Built from the body, because a hand-counted length is a truncated page.
 fn unfinished_response() -> String {
     format!(
@@ -1101,6 +1134,16 @@ mod response_tests {
         assert!(has_no_body("HEAD", b"HTTP/1.1 200 OK\r\nContent-Length: 9000\r\n\r\n"));
         assert!(has_no_body("head", b"HTTP/1.1 200 OK\r\n\r\n"));
         assert!(!has_no_body("GET", b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n"));
+    }
+
+    #[test]
+    fn every_built_in_answer_declares_the_length_it_has() {
+        for r in [unfinished_response(), timed_out_response()] {
+            let (head, body) = r.split_once("\r\n\r\n").expect("a head and a body");
+            assert!(head.contains(&format!("Content-Length: {}", body.len())), "{r}");
+            assert!(head.contains("Connection: close"), "{r}");
+        }
+        assert!(timed_out_response().starts_with("HTTP/1.1 408 "));
     }
 
     #[test]
