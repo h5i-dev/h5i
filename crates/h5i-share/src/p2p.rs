@@ -187,7 +187,10 @@ fn refuse_addresses_that_point_inward(value: &serde_json::Value) -> Result<(), H
                         .map(|s| points_inward(&s.ip()))
                         .unwrap_or(false)
                 } else if let Some(url) = o.get("Relay").and_then(|v| v.as_str()) {
-                    relay_host(url).is_some_and(|ip| points_inward(&ip))
+                    match relay_host(url) {
+                        Host::Ip(ip) => points_inward(&ip),
+                        Host::Name(n) => names_this_machine(&n),
+                    }
                 } else {
                     false
                 }
@@ -205,12 +208,31 @@ fn refuse_addresses_that_point_inward(value: &serde_json::Value) -> Result<(), H
     Ok(())
 }
 
-/// The IP a relay URL names, when it names one literally.
+/// What a relay URL's authority names.
+enum Host {
+    Ip(std::net::IpAddr),
+    Name(String),
+}
+
+/// Hostnames that mean "the machine doing the dialling" without a lookup.
 ///
-/// A hostname is left alone: resolving it here would be a DNS lookup performed
-/// on an attacker's string before anything has been checked, which trades one
-/// problem for another.
-fn relay_host(url: &str) -> Option<std::net::IpAddr> {
+/// Found by the ticket fuzzer, which offered `http://localhost:11434/` — the
+/// port an Ollama listens on — and watched the filter accept it, because the
+/// filter only knew how to read IP literals. RFC 6761 reserves `localhost` and
+/// everything under `.localhost` to loopback, so this needs no resolver.
+///
+/// What is deliberately still allowed is any *other* hostname. Refusing those
+/// would mean resolving an attacker's string before anything has been checked,
+/// which trades this problem for a different one; and a name that resolves to
+/// loopback through the joiner's own `/etc/hosts` or a record the ticket's
+/// author controls is a residual this cannot close from here.
+fn names_this_machine(host: &str) -> bool {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    h == "localhost" || h.ends_with(".localhost")
+}
+
+/// The host a relay URL names.
+fn relay_host(url: &str) -> Host {
     let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
     let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
     let host = match host.strip_prefix('[') {
@@ -218,7 +240,10 @@ fn relay_host(url: &str) -> Option<std::net::IpAddr> {
         Some(v6) => v6.split(']').next().unwrap_or(v6),
         None => host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host),
     };
-    host.parse().ok()
+    match host.parse() {
+        Ok(ip) => Host::Ip(ip),
+        Err(_) => Host::Name(host.to_string()),
+    }
 }
 
 /// Is this an address on the machine doing the dialling?
@@ -1212,6 +1237,13 @@ mod tests {
             r#"{"Relay":"http://0.0.0.0:9200/"}"#,
             r#"{"Relay":"http://[::ffff:127.0.0.1]:9200/"}"#,
             r#"{"Relay":"https://[::1]/"}"#,
+            // Found by the ticket fuzzer: a hostname, so the filter's IP
+            // parsing saw nothing and let it through. 11434 is what an Ollama
+            // listens on. RFC 6761 reserves this name to loopback, so no
+            // resolver is needed to know what it means.
+            r#"{"Relay":"http://localhost:11434/"}"#,
+            r#"{"Relay":"http://LocalHost.:11434/"}"#,
+            r#"{"Relay":"http://anything.localhost/"}"#,
         ] {
             let v: serde_json::Value =
                 serde_json::from_str(&format!(r#"{{"id":"{id}","addrs":[{bad}]}}"#)).expect("json");
@@ -1554,5 +1586,106 @@ mod tests {
         ] {
             assert!(parse_addr(&junk).is_err(), "accepted {junk}");
         }
+    }
+}
+
+#[cfg(test)]
+mod ticket_fuzz {
+    use super::*;
+    use crate::fuzz::{encode_ticket, rounds, ticket_json, Rng};
+
+    /// What a pasted ticket may make this machine do.
+    ///
+    /// The two defects hand-written review found here were both about what an
+    /// accepted ticket is allowed to contain, so these are properties of the
+    /// *accepted* set rather than of the parser's mood: nothing that points at
+    /// the joiner's own machine, and not very many places at all.
+    #[test]
+    fn no_ticket_this_accepts_points_at_the_joiner_or_names_a_crowd() {
+        let mut rng = Rng::new(0x71C4E7);
+        let mut decoded = 0usize;
+        let mut with_addrs = 0usize;
+        for i in 0..rounds() {
+            let seed = rng.next();
+            let mut one = Rng::new(seed);
+            let body = ticket_json(&mut one);
+            let text = encode_ticket(&body);
+            let ctx = || format!("round {i}, seed {seed:#x}, body {body}");
+
+            // Never panics, whatever it is handed.
+            let Ok(t) = crate::ticket::Ticket::decode(&text) else {
+                continue;
+            };
+            decoded += 1;
+
+            // A decoded ticket's secret is always something the gate can
+            // compare without arguing about encodings.
+            assert_eq!(
+                t.secret.len(),
+                crate::ticket::SECRET_BYTES * 2,
+                "a decoded ticket carried a secret of the wrong width: {}",
+                ctx()
+            );
+            assert!(
+                t.secret.bytes().all(|b| b.is_ascii_hexdigit()),
+                "a decoded ticket carried a secret that is not hex: {}",
+                ctx()
+            );
+
+            // And what the joiner would then dial.
+            let listed = t
+                .addr
+                .get("addrs")
+                .and_then(|a| a.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            if listed > 0 {
+                with_addrs += 1;
+            }
+            if refuse_addresses_that_point_inward(&t.addr).is_ok() {
+                assert!(
+                    listed <= MAX_TICKET_ADDRS,
+                    "an accepted ticket named {listed} places: {}",
+                    ctx()
+                );
+                for entry in t
+                    .addr
+                    .get("addrs")
+                    .and_then(|a| a.as_array())
+                    .into_iter()
+                    .flatten()
+                {
+                    let text = entry.to_string();
+                    for inward in [
+                        "127.0.0.1",
+                        "0.0.0.0",
+                        "[::1]",
+                        "[::]",
+                        "::ffff:127.0.0.1",
+                        "169.254.",
+                        "localhost",
+                    ] {
+                        assert!(
+                            !text.contains(inward),
+                            "an accepted ticket named {inward}: {}",
+                            ctx()
+                        );
+                    }
+                }
+            }
+        }
+
+        // Floors, so a generator that stops producing tickets this can decode
+        // cannot read as coverage. Learned the hard way on the HTTP fuzzer,
+        // whose headline invariant had never executed once.
+        let n = rounds();
+        assert!(
+            decoded * 20 > n,
+            "only {decoded} of {n} generated tickets decoded at all"
+        );
+        assert!(
+            with_addrs * 50 > n,
+            "only {with_addrs} of {n} carried any addressing, so the filter was barely asked"
+        );
     }
 }

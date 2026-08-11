@@ -318,3 +318,89 @@ fn floor_char(s: &str, mut i: usize) -> usize {
     }
     i
 }
+
+/// Pieces of a ticket, including every shape a hostile one would use.
+///
+/// A ticket is the one thing on the joiner's side that arrives entirely from
+/// somebody else and is pasted in by hand. Hand-written review of it has
+/// already found two real defects — an address filter that caught one spelling
+/// of loopback out of four, and no cap on how many places one ticket could aim
+/// at — so it is worth generating rather than only imagining.
+const TICKET_ADDRS: &[&str] = &[
+    r#"{"Ip":"127.0.0.1:2375"}"#,
+    r#"{"Ip":"0.0.0.0:2375"}"#,
+    r#"{"Ip":"[::1]:9200"}"#,
+    r#"{"Ip":"[::]:9200"}"#,
+    r#"{"Ip":"[::ffff:127.0.0.1]:9200"}"#,
+    r#"{"Ip":"169.254.169.254:80"}"#,
+    r#"{"Ip":"192.168.1.20:41641"}"#,
+    r#"{"Ip":"10.0.0.5:41641"}"#,
+    r#"{"Ip":"8.8.8.8:41641"}"#,
+    r#"{"Relay":"http://127.0.0.1:9200/"}"#,
+    r#"{"Relay":"http://0.0.0.0:9200/"}"#,
+    r#"{"Relay":"http://[::ffff:127.0.0.1]:9200/"}"#,
+    r#"{"Relay":"https://use1-1.relay.n0.iroh.link./"}"#,
+    r#"{"Relay":"file:///etc/passwd"}"#,
+    r#"{"Relay":"http://localhost:11434/"}"#,
+    r#"{"Custom":"whatever"}"#,
+    "null",
+    "42",
+    r#""a string""#,
+];
+
+const TICKET_SECRETS: &[&str] = &["", "ff", "zz", "not-hex-at-all", "0011"];
+
+/// Build something ticket-shaped. Sometimes valid, usually not.
+pub fn ticket_json(rng: &mut Rng) -> String {
+    let mut addrs: Vec<String> = Vec::new();
+    let many = rng.chance(6);
+    for _ in 0..rng.below(if many { 300 } else { 6 }) {
+        addrs.push(rng.pick(TICKET_ADDRS).to_string());
+    }
+    let good = "ab".repeat(crate::ticket::SECRET_BYTES);
+    // Weighted toward valid. The interesting properties are about what an
+    // *accepted* ticket may contain, so a generator that mostly produces
+    // tickets the decoder throws out is an expensive way of testing the
+    // decoder's mood: measured at 3.6% accepted before this, against floors
+    // that then failed and said so.
+    let secret = if rng.chance(4) {
+        rng.pick(TICKET_SECRETS)
+    } else {
+        good.as_str()
+    };
+    let id = if rng.chance(20) {
+        String::new()
+    } else {
+        "cd".repeat(32)
+    };
+    format!(
+        concat!(
+            r#"{{"v":{},"box_id":{},"port":{},"grant":"g1","expires_at":{},"#,
+            r#""secret":"{}","addr":{{"id":"{}","addrs":[{}]}}}}"#
+        ),
+        rng.pick(&[1u32, 1, 1, 1, 1, 1, 0, 2, 99]),
+        rng.pick(&[
+            r#""env/human/demo""#,
+            r#""env/human/demo""#,
+            r#""env/human/demo""#,
+            r#""esc-here""#,
+            r#""""#,
+            "null",
+            "5"
+        ]),
+        rng.pick(&[3000u32, 0, 65535, 70000]),
+        rng.pick(&[4_000_000_000i64, 0, -1, i64::MAX]),
+        secret,
+        id,
+        addrs.join(",")
+    )
+}
+
+/// Wrap a ticket body the way `h5i box share` prints it.
+pub fn encode_ticket(body: &str) -> String {
+    use base64::Engine as _;
+    format!(
+        "h5i1_{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(body.as_bytes())
+    )
+}
