@@ -1108,6 +1108,92 @@ mod tests {
         }
     }
 
+    /// A dev server that accepts, reads, and then never answers.
+    fn silent_after_read() -> u16 {
+        use std::io::Read;
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                let mut buf = [0u8; 1024];
+                let _ = c.read(&mut buf);
+                held.push(c);
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_revoke_reaches_every_stream_in_flight() {
+        // The tunnel's watchdog is per *connection*; this one is per *stream*,
+        // because one QUIC connection can carry two grants and enforcing a
+        // revoke of the wrong one is worse than not enforcing it. Two
+        // implementations of the same promise, and only one of them had been
+        // tested with more than a single thing open.
+        let port = silent_after_read();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret) = test_bridge(dir.path(), port);
+
+        let sharer = local_endpoint(true).await;
+        let addr = dialable(&sharer).await;
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, sharer, false).await }
+        });
+
+        let joiner = local_endpoint(false).await;
+        let conn = joiner
+            .connect(addr, wire::ALPN)
+            .await
+            .expect("connect to the sharer");
+
+        // Twenty streams on one connection, each parked waiting for a dev
+        // server that will never answer.
+        const N: usize = 20;
+        let mut held = Vec::new();
+        for _ in 0..N {
+            let (mut send, recv) = open_stream(&conn, &secret).await.expect("authorized");
+            send.write_all(b"GET / HTTP/1.1\r\n\r\n")
+                .await
+                .expect("write");
+            held.push((send, recv));
+        }
+        for _ in 0..400 {
+            if bridge.free_slots() == crate::bridge::Bridge::MAX_CONNECTIONS - N {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(
+            bridge.free_slots(),
+            crate::bridge::Bridge::MAX_CONNECTIONS - N,
+            "the streams never all took a slot"
+        );
+
+        let id = session::read(dir.path()).expect("session").grants[0]
+            .id
+            .clone();
+        crate::run::revoke(dir.path(), &id).expect("revoke");
+
+        for _ in 0..400 {
+            if bridge.free_slots() == crate::bridge::Bridge::MAX_CONNECTIONS {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(
+            bridge.free_slots(),
+            crate::bridge::Bridge::MAX_CONNECTIONS,
+            "a revoke left streams serving"
+        );
+
+        serving.abort();
+        drop(held);
+        drop(conn);
+    }
+
     #[tokio::test]
     async fn a_flood_at_the_front_door_is_recorded_as_a_flood() {
         // Never tested. `front_refused` is the counter that distinguishes "this
