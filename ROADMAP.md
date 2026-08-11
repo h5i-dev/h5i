@@ -1986,6 +1986,21 @@ Also verified live, and worth recording because it was a defect this branch
 introduced and fixed: two `h5i join` sessions on one machine, a browser holding
 both of their cookies, and the box seeing neither — only the app's own `sid=9`.
 
+**Rounds 8 to 10, and what live running kept finding.** A ticket expiring on
+its own — not revoked, not interrupted — ends the share, writes the receipt,
+clears the record, and now tells the joiner why; that path was verified twice
+because the first fix for it was inert. A dev server that rejects a request
+before reading its body has its own answer relayed rather than replaced. And a
+`--tunnel` share with two grants had one of them revoked while the other kept
+working.
+
+The pattern across all ten rounds is worth recording, because it is the argument
+for having run them: **every round found real defects in the previous round's
+fixes**, and three of the sharpest were fixes that did nothing at all — a
+`Connection: close` the box could ignore, a shutdown signal that was sent after
+the shutdown, and a flag that recorded truncation for the rarest of the four
+ways a response gets cut short.
+
 **Still not demonstrated.** The two h5i processes were on one machine: a real
 direct QUIC path through the host's network stack, but not two machines on two
 networks. And `--direct-only` has never been exercised against a hole punch that
