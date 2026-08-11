@@ -79,11 +79,18 @@ enum Inner {
         sock: Mutex<(std::os::fd::OwnedFd, bool)>,
         child: libc::pid_t,
     },
-    /// macOS: the box binds the host's loopback, so there is nothing to enter.
-    #[cfg(target_os = "macos")]
-    Loopback,
-    /// Everything else: no route, and the constructor says so.
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    /// Everywhere else: no route, and the constructor says so.
+    ///
+    /// macOS used to have an arm of its own that connected to
+    /// `127.0.0.1:<port>` on the *host*, because a macOS box binds host
+    /// loopback. That is not a route into a box, it is the host's own port —
+    /// and on Linux this feature refuses exactly that shape, because a
+    /// `workspace`-tier box shares the host's network and sharing it would
+    /// publish whatever happened to be listening. The macOS arm was the same
+    /// situation with the refusal missing, and it was unreachable anyway:
+    /// `view::box_pid` returns `None` there, so the CLI declines before a
+    /// `Dialer` exists.
+    #[cfg(not(target_os = "linux"))]
     Unsupported,
 }
 
@@ -111,20 +118,7 @@ impl Dialer {
         match &self.inner {
             #[cfg(target_os = "linux")]
             Inner::Helper { sock, child } => self.request(sock, *child),
-            #[cfg(target_os = "macos")]
-            Inner::Loopback => TcpStream::connect(("127.0.0.1", self.port)).map_err(|e| {
-                let msg = H5iError::Metadata(format!(
-                    "could not connect to 127.0.0.1:{} — is the dev server running inside the \
-                     box? ({e})",
-                    self.port
-                ));
-                if e.kind() == std::io::ErrorKind::ConnectionRefused {
-                    DialError::NothingListening(msg)
-                } else {
-                    DialError::Broken(msg)
-                }
-            }),
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(not(target_os = "linux"))]
             Inner::Unsupported => Err(DialError::Broken(unsupported())),
         }
     }
@@ -180,11 +174,11 @@ impl From<DialError> for H5iError {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(target_os = "linux"))]
 fn unsupported() -> H5iError {
     H5iError::Metadata(
-        "sharing a box's port needs Linux namespaces or macOS loopback; it is not available on \
-         this platform"
+        "sharing a box's port needs a network namespace to enter, which is a Linux thing. \
+         `h5i box share` is not available on this platform."
             .into(),
     )
 }
@@ -207,8 +201,8 @@ impl Dialer {
     }
 
     /// For a box with no network namespace of its own — the `workspace` tier,
-    /// where nothing is unshared, and any tier on macOS. The port is already on
-    /// this machine's loopback.
+    /// where nothing is unshared. The port is already on this machine's
+    /// loopback.
     ///
     /// Still forks a helper rather than connecting inline, and that is worth a
     /// sentence: one code path means one thing to get right, and the caller
@@ -626,44 +620,6 @@ impl Drop for Dialer {
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-    }
-}
-
-// ─── macOS ──────────────────────────────────────────────────────────────────
-
-/// macOS has no namespace to enter: Seatbelt confines the box's filesystem and
-/// its outbound network, but a box still binds the **host's** loopback, because
-/// without a netns that is the only way a dev server in a box is reachable at
-/// all.
-///
-/// The difference worth stating rather than hiding: on Linux the shared port
-/// lives in the box's own network namespace and this dialer is the only route
-/// to it. On macOS the port is on shared loopback, so any local process can
-/// reach it directly. The grant table governs *this* path; it cannot govern the
-/// port itself.
-#[cfg(target_os = "macos")]
-impl Dialer {
-    pub fn spawn(box_pid: u32, port: u16) -> Result<Dialer, H5iError> {
-        let _ = box_pid;
-        Dialer::spawn_local(port)
-    }
-
-    pub fn spawn_local(port: u16) -> Result<Dialer, H5iError> {
-        Ok(Dialer {
-            inner: Inner::Loopback,
-            port,
-        })
-    }
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-impl Dialer {
-    pub fn spawn(_box_pid: u32, _port: u16) -> Result<Dialer, H5iError> {
-        Err(unsupported())
-    }
-
-    pub fn spawn_local(_port: u16) -> Result<Dialer, H5iError> {
-        Err(unsupported())
     }
 }
 
