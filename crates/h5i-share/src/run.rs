@@ -114,8 +114,11 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
                 return Err(H5iError::Metadata("this box cannot be shared".into()));
             };
             return Err(H5iError::Metadata(format!(
-                "{said}\n   Share a box at the `supervised` or `container` tier instead: those \
-                 get a network of their own *and* a loopback to go with it."
+                "{said}\n   This is decided by the *profile*, not the tier: a profile that \
+                 denies egress gets a namespace of its own with nothing brought up in it, at \
+                 every tier. Create the box with an agent profile — `--profile agent`, \
+                 `agent-claude` or `agent-codex` — which get an egress allowlist and a working \
+                 loopback with it."
             )));
         }
         // The reason is carried through rather than assumed. "Nothing is

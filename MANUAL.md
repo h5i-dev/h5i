@@ -404,11 +404,15 @@ otherwise sharing it would publish whatever happened to be listening on the
 host, so `h5i box share` refuses rather than guessing. macOS boxes bind the
 host's loopback, so it refuses there too, and says which reason it is.
 
-A box has a network of its own when it is running and either at the
-`supervised` or `container` tier. A `process`-tier box with a profile that
-denies egress gets a namespace too, but an empty one: no loopback comes up in
-it, so nothing inside can reach even itself, and `h5i box share` refuses it
-rather than minting a ticket that can never move a byte. It does not at `workspace`, or at `process` with a profile that grants
+A box has a network of its own when it is running and at the `supervised` or
+`container` tier, or at `process` with a profile that denies egress. But having
+one is not enough, and the second condition is about the **profile**: a profile
+that denies egress gets an empty namespace with no loopback brought up in it,
+at *every* tier, so nothing inside can reach even itself. `h5i box share`
+refuses such a box rather than minting a ticket that can never move a byte.
+What works is a profile with an egress allowlist — the `agent`, `agent-claude`
+and `agent-codex` profiles — because the uplink those get brings a loopback
+with it. `scripts/share_matrix.sh` checks this combination by combination. It does not at `workspace`, or at `process` with a profile that grants
 egress, because both share the host's network.
 
 #### The ticket is the whole access model

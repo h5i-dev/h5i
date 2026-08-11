@@ -71,9 +71,11 @@ exits without it.
   machine can enter and the only route in goes there. macOS boxes bind the
   host's loopback, so `h5i box share` refuses on macOS and says so.
 - The box must be **running** (a live `h5i box shell` or `h5i box run`) and have
-  a network of its own **with a loopback in it** — `supervised` or
-  `container`. A `process`-tier box that denies egress gets an empty namespace
-  with no `lo` up, so it cannot be shared and `share` says so. Otherwise "the box's port 3000" is the host's port
+  a network of its own **with a loopback in it**. That second half is decided by
+  the profile, not the tier: a profile that denies egress gets an empty
+  namespace with no `lo` up at every tier, so `default`-profile boxes cannot be
+  shared and `share` says so. Use an agent profile (`agent`, `agent-claude`,
+  `agent-codex`), whose egress allowlist brings a loopback with it. Otherwise "the box's port 3000" is the host's port
   3000, and `share` refuses rather than publishing whatever is listening. The
   error says which of the two is missing.
 - Something should be listening on the port — whatever the dev server inside
