@@ -1,0 +1,156 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Write an h5i box policy | h5i</title><meta name="description" content="Define an h5i profile with an explicit isolation tier, filesystem grants, default-deny networking, and resource limits, then verify it.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/write-a-box-policy/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Write an h5i box policy | h5i"><meta property="og:description" content="Define an h5i profile with an explicit isolation tier, filesystem grants, default-deny networking, and resource limits, then verify it.">
+<meta property="og:url" content="https://h5i.dev/guides/write-a-box-policy/"><meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Write an h5i box policy | h5i">
+<meta name="twitter:description" content="Define an h5i profile with an explicit isolation tier, filesystem grants, default-deny networking, and resource limits, then verify it."><meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Write down what the agent may reach",
+      "description": "Define an h5i profile with an explicit isolation tier, filesystem grants, default-deny networking, and resource limits, then verify it.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-08-10",
+      "dateModified": "2026-08-10",
+      "mainEntityOfPage": "https://h5i.dev/guides/write-a-box-policy/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Write down what the agent may reach",
+          "item": "https://h5i.dev/guides/write-a-box-policy/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What happens if my machine cannot provide the requested tier?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Creation fails before a partial box is left behind. Explicit isolation requests are never silently downgraded."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why is container egress weaker than supervised egress?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The container tier uses an HTTP/HTTPS proxy allowlist, so software that ignores proxy settings can bypass that L7 route. The supervised tier enforces destination access in a private network namespace at L3/L4."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Are memory and process limits enforced on macOS?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not at the process and supervised tiers. h5i marks those values instead of claiming enforcement. Use container or microvm when a hard memory or process ceiling is required."
+          }
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css"><link rel="stylesheet" href="/_static/highlight.css">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Guide 03 / Policy &middot; 2026-08-10</div>
+<h1>Write down what the agent may reach</h1><p class="post-deck">Permission prompts ask the agent to police itself. A box policy is resolved before the agent starts, enforced outside its process, and digested into every receipt.</p>
+<div class="post-meta"><span>8 min read</span><span>Isolation &middot; Egress &middot; Resources</span></div></header>
+
+<div class="callout"><strong>Start narrow.</strong> Grant the workspace, the system paths required to run, the destinations required for the task, and a finite wall clock. Add authority only after a refusal explains why it is needed.</div>
+<h2 id="profile">1. Add a named profile</h2>
+<p>Create <code>.h5i/env.toml</code> in the repository. This example supports a bounded review that needs the GitHub API:</p>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">.h5i/env.toml</span></div>
+<div class="terminal-body"><pre><code>[profile.review]
+isolation = "supervised"
+
+[profile.review.fs]
+read  = ["/usr", "/etc"]
+write = ["$WORK"]
+
+[profile.review.net]
+mode   = "deny"
+egress = ["api.github.com"]
+unix   = false
+
+[profile.review.resources]
+mem   = "4G"
+procs = 256
+wall  = "30m"</code></pre></div></div>
+<p><code>$WORK</code> is the box workspace, not your current checkout. <code>mode = "deny"</code> makes the allowlist meaningful: everything not named is refused.</p>
+<h2 id="tier">2. Choose the tier by threat model</h2>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Tier</th><th>Use it for</th><th>Boundary to remember</th></tr></thead><tbody>
+<tr><th><code>workspace</code></th><td>Checkout separation only</td><td>No confinement</td></tr>
+<tr><th><code>process</code></th><td>Fast local build and test</td><td>Shared kernel; network is deny or host</td></tr>
+<tr><th><code>supervised</code></th><td>Untrusted dependencies and bounded egress</td><td>Shared kernel; L3/L4 egress enforcement</td></tr>
+<tr><th><code>container</code></th><td>Portable image-based environments</td><td>Proxy-respecting L7 egress only</td></tr>
+<tr><th><code>microvm</code></th><td>Work that must not share the host kernel</td><td>Needs virtualization, <code>msb</code>, and a pre-pulled image</td></tr>
+</tbody></table></div>
+<p><code>container</code> buys portability. It does not provide tighter egress enforcement than <code>supervised</code>. Pick the property you need instead of assuming every higher-sounding rung is stronger in every dimension.</p>
+<h2 id="verify">3. Prove the requested policy is satisfiable</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i box probe
+$ h5i box create policy-check --profile review
+$ h5i box status policy-check
+$ h5i box doctor policy-check</code></pre></div></div>
+<p>An explicit tier either exists or creation fails. h5i does not silently downgrade. The status prints the resolved policy, while <code>doctor</code> checks that the box can still support its claim.</p>
+<h2 id="denials">4. Let denials guide refinement</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i box run policy-check -- npm test
+$ h5i box log policy-check
+$ h5i box export policy-check --out ./policy-check-report</code></pre></div></div>
+<p>A denied registry host may justify one more destination. A denied telemetry host usually does not. Treat each addition as a reviewable transfer of authority, not a way to make the error disappear.</p>
+<div class="callout warn"><strong>Do not turn on Unix sockets casually.</strong> <code>unix = true</code> permits <code>AF_UNIX</code> sockets, which can carry file descriptors through <code>SCM_RIGHTS</code>. The browser profile needs this; most build profiles do not.</div>
+<h2 id="commit">5. Commit the policy with the code</h2>
+<p>A checked-in profile gives reviewers one file to discuss. At creation, h5i resolves machine-specific values, serializes the result, hashes it, and puts that digest on the receipts. The repository states the intended boundary; the receipt names the boundary that actually ran.</p>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>What happens if my machine cannot provide the requested tier?</summary><div class="faq-answer">Creation fails before a partial box is left behind. Explicit isolation requests are never silently downgraded.</div></details><details class="faq-item"><summary>Why is container egress weaker than supervised egress?</summary><div class="faq-answer">The container tier uses an HTTP/HTTPS proxy allowlist, so software that ignores proxy settings can bypass that L7 route. The supervised tier enforces destination access in a private network namespace at L3/L4.</div></details><details class="faq-item"><summary>Are memory and process limits enforced on macOS?</summary><div class="faq-answer">Not at the process and supervised tiers. h5i marks those values instead of claiming enforcement. Use container or microvm when a hard memory or process ceiling is required.</div></details></div>
+<a class="next-up" href="/blog/choosing-agent-isolation/"><span class="label">Design rationale</span><h3>Five tiers, five different promises</h3><p>Read the threat-model argument behind the ladder.</p></a>
+<div class="post-cta"><h3>Make authority reviewable</h3><p>A small policy file is easier to reason about than a trail of permission clicks.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/manual/#policy">Open the policy reference</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js" defer></script><script src="/_static/highlight.js" defer></script></body></html>

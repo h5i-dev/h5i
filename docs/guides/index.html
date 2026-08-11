@@ -1,165 +1,68 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Guides: run coding agents in a contained box</title>
-  <meta name="description" content="Task-focused h5i guides: review a pull request in a box, export a reviewable patch, keep API tokens out, contain a prompt-injected agent, and warm the dependency cache.">
-  <meta name="keywords" content="h5i guides, claude code sandbox guides, agent containment how-to, review pull request sandbox, agent credentials, prompt injection containment, dependency cache">
-  <meta name="author" content="Koukyosyumei">
-  <meta name="theme-color" content="#D21C1C">
-  <meta name="color-scheme" content="dark">
-  <meta name="robots" content="index, follow, max-image-preview:large">
-  <link rel="canonical" href="https://h5i.dev/guides/">
-  <link rel="icon" type="image/png" href="/_static/logo.png">
-  <link rel="apple-touch-icon" href="/_static/logo.png">
-
-  <meta property="og:type" content="website">
-  <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i Guides: run coding agents in a contained box">
-  <meta property="og:description" content="Task-focused guides for running Claude Code and Codex inside an h5i sandbox: review a pull request in a box, pass API tokens without leaking them, contain a prompt-injected agent, export a reviewable patch and execution logs, and warm the dependency cache so boxes start fast.">
-  <meta property="og:url" content="https://h5i.dev/guides/">
-  <meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
-
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i Guides">
-  <meta name="twitter:description" content="Task-focused guides for running Claude Code and Codex inside a contained, disposable box.">
-  <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
-
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
-  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-  <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
-  <link rel="stylesheet" href="/_static/blog.css">
-  <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}]}
-  </script>
-  <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "ItemList", "name": "h5i Guides", "itemListElement": [{"@type": "ListItem", "position": 1, "url": "https://h5i.dev/workflows/"}, {"@type": "ListItem", "position": 2, "url": "https://h5i.dev/guides/ai-code-review-audit/"}, {"@type": "ListItem", "position": 3, "url": "https://h5i.dev/guides/ai-code-provenance/"}, {"@type": "ListItem", "position": 4, "url": "https://h5i.dev/guides/secure-api-tokens-in-agent-box/"}, {"@type": "ListItem", "position": 5, "url": "https://h5i.dev/guides/prompt-injection-detection-for-agents/"}, {"@type": "ListItem", "position": 6, "url": "https://h5i.dev/guides/claude-code-memory/"}, {"@type": "ListItem", "position": 7, "url": "https://h5i.dev/guides/codex-claude-code-collaboration/"}, {"@type": "ListItem", "position": 8, "url": "https://h5i.dev/guides/git-blame-for-ai-code/"}, {"@type": "ListItem", "position": 9, "url": "https://h5i.dev/guides/token-reduction-capture-run/"}]}
-  </script>
-  <link rel="stylesheet" href="/_static/highlight.css">
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>h5i guides: from first box to reviewed patch</title><meta name="description" content="Four practical h5i guides: create a first box, review an untrusted pull request, write a policy, and watch the isolated browser.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="website"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="h5i guides: from first box to reviewed patch"><meta property="og:description" content="Four practical h5i guides: create a first box, review an untrusted pull request, write a policy, and watch the isolated browser.">
+<meta property="og:url" content="https://h5i.dev/guides/"><meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="h5i guides: from first box to reviewed patch">
+<meta name="twitter:description" content="Four practical h5i guides: create a first box, review an untrusted pull request, write a policy, and watch the isolated browser."><meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "ItemList",
+  "name": "h5i guides: from first box to reviewed patch",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "url": "https://h5i.dev/guides/first-box/",
+      "name": "Take one coding task from prompt to reviewed patch"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "url": "https://h5i.dev/guides/review-a-pull-request/",
+      "name": "Run the pull request before you trust the pull request"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "url": "https://h5i.dev/guides/write-a-box-policy/",
+      "name": "Write down what the agent may reach"
+    },
+    {
+      "@type": "ListItem",
+      "position": 4,
+      "url": "https://h5i.dev/guides/watch-the-browser/",
+      "name": "Watch the page, then take the controls"
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css"><link rel="stylesheet" href="/_static/highlight.css">
 </head>
-<body>
-
-
-
-<nav class="blog-nav">
-  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
   <ul class="nav-links">
-    <li><a href="/features/">Features</a></li>
-    <li><a href="/guides/">Guides</a></li>
-    <li><a href="/manual/">Manual</a></li>
-    <li><a href="/blog/">Blog</a></li>
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
     <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
   </ul>
-</nav>
-
-<section class="index-hero">
-  <div class="post-eyebrow">h5i Guides</div>
-  <h1>Give a coding agent a box, get a reviewed patch back</h1>
-  <p>
-    Task-focused walkthroughs, each one a short numbered sequence with the commands that actually run.
-    Start with the workflow overview for the shape of the loop, then pick the guide for the thing you
-    are doing: reviewing somebody else's branch, keeping credentials out, bounding what an injected
-    agent can reach, or making box creation cheap enough to do constantly.
-  </p>
-</section>
-
-<section class="post-list">
-
-  <div class="featured-wrap">
-    <a class="post-card featured" href="/workflows/">
-      <div class="card-meta">
-        <span>Overview &#183; Workflow</span>
-      </div>
-      <h2>The loop: box, work, export, apply</h2>
-      <p>The whole shape on one page. Copy the code into a disposable box, let an agent build and test and drive a browser inside it, then export a patch, a report and an execution receipt and decide what to take.</p>
-    </a>
-  </div>
-
-  <a class="post-card" href="/guides/ai-code-review-audit/">
-    <div class="card-meta">
-      <span>Guide &#183; Review</span>
-    </div>
-    <h2>Review a pull request in a box</h2>
-    <p>Fetch a pull request head into a detached box with no host credentials, build and exercise it, then read a report whose first section is every destination the boundary refused.</p>
-  </a>
-
-  <a class="post-card" href="/guides/ai-code-provenance/">
-    <div class="card-meta">
-      <span>Guide &#183; Export</span>
-    </div>
-    <h2>Export a reviewable patch from a box</h2>
-    <p>Three files out of the output gate: a path-validated patch, a report of what ran, and a receipt of every observed execution. Then <code>git apply --3way</code> wherever you want it.</p>
-  </a>
-
-  <a class="post-card" href="/guides/secure-api-tokens-in-agent-box/">
-    <div class="card-meta">
-      <span>Guide &#183; Security</span>
-    </div>
-    <h2>Pass API tokens to a coding agent without leaking them</h2>
-    <p>Keep the real key on the host. The box authenticates through a credential-injecting proxy, so a prompt-injected agent has no reusable token to steal.</p>
-  </a>
-
-  <a class="post-card" href="/guides/prompt-injection-detection-for-agents/">
-    <div class="card-meta">
-      <span>Guide &#183; Security</span>
-    </div>
-    <h2>Contain a prompt-injected agent</h2>
-    <p>Skip detection, which is low-recall by construction. Assume the injection worked, and write down in a profile exactly what the compromised agent is able to reach.</p>
-  </a>
-
-  <a class="post-card" href="/guides/claude-code-memory/">
-    <div class="card-meta">
-      <span>Guide &#183; Credentials</span>
-    </div>
-    <h2>Give a box your Claude Code config without your credentials</h2>
-    <p>Your settings come with it; credential-shaped files are dropped by shape at any depth. How the seed works, and how to check what a box actually got.</p>
-  </a>
-
-  <a class="post-card" href="/guides/codex-claude-code-collaboration/">
-    <div class="card-meta">
-      <span>Guide &#183; Multi-runtime</span>
-    </div>
-    <h2>Run Claude Code and Codex in separate boxes</h2>
-    <p>Two runtimes on one task means two boxes and two credential sets, because a box holding both is a laundering path waiting for a prompt injection.</p>
-  </a>
-
-  <a class="post-card" href="/guides/git-blame-for-ai-code/">
-    <div class="card-meta">
-      <span>Guide &#183; Receipts</span>
-    </div>
-    <h2>Find out what actually ran in a box</h2>
-    <p>Four commands for what a supervisor watched, what a proxy refused, and which grade of evidence each line came from. None of them needs the agent to cooperate.</p>
-  </a>
-
-  <a class="post-card" href="/guides/token-reduction-capture-run/">
-    <div class="card-meta">
-      <span>Guide &#183; Performance</span>
-    </div>
-    <h2>Warm the dependency cache so boxes start fast</h2>
-    <p>Populate a cache once in a box with no agent in it, keyed by lockfile digest, then every agent box mounts it read-only. A twenty-second box instead of a four-minute one.</p>
-  </a>
-
-</section>
-
-<footer class="blog-footer">
-  <div class="blog-footer-inner">
-    <div class="brand">h5i<span class="red"> / high-five</span></div>
-    <nav class="links">
-      <a href="/">Home</a>
-      <a href="/guides/">Guides</a>
-      <a href="/blog/">Blog</a>
-      <a href="https://github.com/h5i-dev/h5i">GitHub</a>
-      <a href="/manual/">Manual</a>
-    </nav>
-    <div class="legal">Apache 2.0 · Built with Rust</div>
-  </div>
-</footer>
-
-<script src="/_static/blog.js" defer></script>
-<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
-<script src="/_static/highlight.js" defer></script>
-</body>
-</html>
+</nav><section class="index-hero"><div class="post-eyebrow">Field guides</div>
+<h1>One path from first box to deliberate boundary</h1><p>Start at the top and follow the sequence. Each guide has one outcome, commands you can run, a verification step, and the point where human judgment belongs.</p></section><section class="post-list"><a class="post-card featured" href="/guides/first-box/">
+<div class="card-meta"><span>Step 01</span><span>7 min</span></div>
+<h2>Take one coding task from prompt to reviewed patch</h2><p>Create your first h5i sandbox, run an agent inside it, inspect the diff and execution record, then export or apply the result.</p></a><a class="post-card" href="/guides/review-a-pull-request/">
+<div class="card-meta"><span>Step 02</span><span>6 min</span></div>
+<h2>Run the pull request before you trust the pull request</h2><p>Fetch an untrusted pull request into a detached h5i box, build and exercise it, inspect denied activity, and export a review bundle.</p></a><a class="post-card" href="/guides/write-a-box-policy/">
+<div class="card-meta"><span>Step 03</span><span>8 min</span></div>
+<h2>Write down what the agent may reach</h2><p>Define an h5i profile with an explicit isolation tier, filesystem grants, default-deny networking, and resource limits, then verify it.</p></a><a class="post-card" href="/guides/watch-the-browser/">
+<div class="card-meta"><span>Step 04</span><span>5 min</span></div>
+<h2>Watch the page, then take the controls</h2><p>Run a dev server and browser inside an h5i box, watch it through a loopback-only viewer, and safely transfer control from agent to human.</p></a></section><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js" defer></script><script src="/_static/highlight.js" defer></script></body></html>

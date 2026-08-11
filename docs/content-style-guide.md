@@ -1,145 +1,92 @@
-# h5i Content Style Guide
+# h5i editorial guide
 
-How every blog post and guide on h5i.dev should sound, flow, and rank. The
-**pitch deck** (`/pitch/`) is the reference for *voice*. It is **not** the
-reference for *structure* — guides and reference posts have different jobs.
-Share the voice; pick the template that fits the page.
+The documentation has four jobs. Product pages answer what h5i is. Guides help
+a reader finish a task. The manual defines commands and fields. Blog essays
+explain durable design choices. Do not make one page perform another layer's
+job.
 
----
+## Keep the collection small
 
-## 1. Voice — borrowed from the pitch deck
+A new page needs a job no existing page can do.
 
-The deck's voice is the project's strongest asset. Five rules:
+- Extend a guide when the reader is still pursuing the same outcome.
+- Extend the manual when the material defines a command, field, or limit.
+- Extend an essay when the material supports the same central claim.
+- Add a page only for a genuinely different reader, outcome, or argument.
 
-1. **Confident and declarative.** State the claim, then back it. No "we think",
-   "arguably", "it could be argued". The deck says *"One agent is a single point
-   of failure."* — not *"single agents may sometimes be less reliable."*
-2. **Concrete over abstract.** Name the command, the ref, the number. *"capture
-   cut tool-output tokens by ~95%"* beats *"capture significantly reduces token
-   usage."*
-3. **Contrast-driven.** Define by opposition. The signature move:
-   > Git records **what** changed. h5i records **the rest** — the prompt, the
-   > model, the reasoning, the verdict.
-4. **One idea per sentence, short sentences carry the punch.** Let a long
-   explanatory sentence be followed by a 4-word verdict.
-5. **No marketing fog.** Avoid "revolutionary", "seamless", "powerful",
-   "cutting-edge", "game-changing". The product is opinionated; the prose should
-   be plain.
+Never split one subject into a series to manufacture volume. Redirect retired
+URLs to the closest replacement. Keep redirects out of indexes, feeds, the
+sitemap, and llms.txt.
 
-### Sentence patterns to reuse
-- **Colon reveal:** `The winning unit is not the best single agent: it is the best managed agent team.`
-- **Not-X-but-Y:** `Not a group chat. Not a daemon. A thin coordination layer.`
-- **The triad:** `isolate the work, summarize the evidence, keep raw noise out of context.`
-- **Stakes line:** a one-sentence "why this bites" after the setup.
+## Voice
 
----
+h5i is confident, concrete, and honest about boundaries.
 
-## 2. Canonical vocabulary
+1. State the claim early.
+2. Name the command, mechanism, or limitation that supports it.
+3. Prefer short sentences at the moment the argument turns.
+4. Use contrast when it clarifies a boundary: state versus execution,
+   testimony versus observation, portability versus network enforcement.
+5. Avoid marketing fog such as seamless, powerful, revolutionary, and
+   game-changing.
 
-Use these exact terms; they are how the project talks about itself, so reusing
-them compounds brand + keyword consistency.
+Use h5i in lowercase. A disposable environment is a box. The security property
+is a boundary or confinement. Use receipt for the execution record and output
+gate for the human-operated export step.
 
-| Use | Not |
-|---|---|
-| agent **ensemble** / agent **team** | "swarm", "fleet", "crowd" |
-| **independent / sealed** attempts | "parallel runs" |
-| **neutral verifier** | "judge AI", "evaluator model" |
-| **auditable workspace** | "logged session" |
-| **Git-native** / **Git sidecar** | "plugin", "wrapper", "SaaS" |
-| **provenance** (prompt · model · agent) | "metadata" (when you mean provenance) |
-| **capture** (compact tool output) | "logging" |
-| **i5h messaging** / `refs/h5i/msg` | "chat", "inbox" (except UI labels) |
-| **sandboxed env** / **confined** | "VM", "container" (unless literally that tier) |
-| **no SaaS, no lock-in**, lives in `refs/h5i/*` | "our platform", "our cloud" |
+Do not resurrect removed product language. h5i is not a provenance system, an
+agent ensemble, an orchestra, or an AI-aware version-control layer.
 
-Always: `h5i` lowercase, pronounced *high-five*. Commands in `<code>`.
+## Guides
 
----
+A guide is imperative and outcome-shaped. It contains:
 
-## 3. The hook formula (every page, first 2–3 sentences)
+1. A short explanation of why the task needs a box.
+2. An outcome callout.
+3. Numbered steps with imperative headings.
+4. Commands that match the current manual.
+5. A check after every consequential action.
+6. The security gotcha most likely to change the decision.
+7. A stopping point: export, apply, or remove.
+8. Links to the relevant manual section and the next guide.
 
-> **Tension → Stakes → Turn**
+Do not narrate product history in a guide. Do not hide prerequisites in the
+third step. Do not show fictional output as if it came from a real run.
 
-1. **Tension:** what Git / a single agent / the naive setup *cannot* do.
-2. **Stakes:** the one sentence on why that bites in practice.
-3. **Turn:** what h5i gives you instead — concrete, with the command or ref.
+## Blog essays
 
-This is the one pitch move that travels to *every* content type. Most current
-posts open with neutral exposition; lead with the hook instead.
+An essay earns its place by making one durable argument:
 
----
+1. Claim: one self-contained answer in the opening callout.
+2. Tension: the familiar approach and the limit it reaches.
+3. Mechanism: the concrete design choice that changes the result.
+4. Tradeoff: what the design does not solve or makes worse.
+5. Practical test: questions the reader can apply elsewhere.
 
-## 4. Templates — pick by the page's job
+The blog is not a changelog, vulnerability feed, benchmark archive, or release
+announcement surface.
 
-Share the voice; do **not** force the deck's 13-beat arc onto a how-to.
+## Claims and limits
 
-### A. Explainer / pillar post (`what is…`, `why…`)
-Reader arrived from search wanting an answer. Be answer-first.
-1. **Eyebrow** + H1 (keyword-forward).
-2. **Answer-first TL;DR** — a `.callout` box that defines the term in 1–2
-   sentences. (LLM answer engines and featured snippets quote this.)
-3. **Hook** (§3).
-4. Body H2s, several phrased **as questions** ("Why isn't Git enough?").
-5. **FAQ** with `FAQPage` schema (§5).
-6. **Sources and verification.**
-7. Next-up link + CTA.
+Name the layer and the observer.
 
-### B. Comparison / opinion (`X vs h5i`, `why diffs aren't enough`)
-1. Eyebrow + H1.
-2. **One-line verdict** in a `.callout` (the answer-engine pull-quote).
-3. Hook framing the tension as a real decision.
-4. **Comparison table** (`.tbl-wrap`) — scannable, the asset answer engines lift.
-5. "When X is still the right call" (earns trust by conceding).
-6. FAQ schema + Sources + CTA.
+- supervised and microvm enforce egress at L3/L4.
+- container uses an L7 proxy allowlist.
+- Every tier below microvm shares the host kernel.
+- A host-observed exit is evidence. An agent-authored summary is testimony.
+- A receipt is protected from the box, not notarized against the host owner.
+- Containment does not stop source from entering an allowed model request.
 
-### C. How-to guide (`/guides/*`)
-Reader wants the command now. **Keep it imperative and numbered — do not
-narrate.** Voice shows up only in the intro and the callouts.
-1. Eyebrow + H1 (task-shaped: "Keep tool output out of your agent's context").
-2. **2-sentence hook** — the problem and the one-line fix.
-3. **Numbered steps**, each an imperative verb ("Wrap a command").
-4. **Copy-paste blocks** that actually run.
-5. A `.callout` for the one gotcha.
-6. FAQ schema (optional) + "Related guides".
+If a section is unavailable, say why. Absence must not impersonate success.
 
----
+## Page mechanics
 
-## 5. SEO + AEO checklist (apply to every page)
+Every canonical article needs one H1; descriptive metadata; canonical, Open
+Graph, and Twitter tags; TechArticle and BreadcrumbList JSON-LD; visible FAQ
+text when FAQPage data is present; useful internal links; a current
+dateModified; and inclusion in sitemap.xml. Blog essays also enter feed.xml.
 
-**Classic SEO**
-- [ ] One `<h1>`, keyword in the first 100 words and in the H1.
-- [ ] `<title>` ≤ ~60 chars, primary keyword first, **no duplicated site
-      suffix** (use a single ` | h5i` or none — never `…: h5i: h5i`).
-- [ ] `<meta name="description">` 140–160 chars, leads with the answer.
-- [ ] `rel="canonical"`, OG + Twitter card, descriptive `alt` on every image.
-- [ ] Internal links to 2–3 sibling posts/guides with descriptive anchors.
-- [ ] `dateModified` bumped whenever content changes substantively.
-
-**AEO (answer-engine / AI-search optimization)**
-- [ ] **Answer-first:** the opening `.callout` answers the title question in 1–2
-      self-contained sentences (no "as described above"). This is the chunk an
-      LLM lifts.
-- [ ] **Question headings:** phrase H2/H3 as the questions people actually ask.
-- [ ] **`FAQPage` JSON-LD** mirroring the visible FAQ, verbatim Q&A.
-- [ ] **`TechArticle`/`Article` JSON-LD** with `headline`, `description`,
-      `author`, `datePublished`, `dateModified`, `keywords`, `mainEntityOfPage`.
-- [ ] **`BreadcrumbList` JSON-LD** (Home › Blog/Guides › This page).
-- [ ] **Self-contained claims:** each section stands alone when quoted out of
-      context — spell out "h5i" and the key noun rather than relying on "it".
-- [ ] **Definitions and numbers near the top**, stated as plain facts an engine
-      can extract ("h5i stores this in `refs/h5i/*`").
-
----
-
-## 6. Quick before/after
-
-> **Before (flat):** "Git records what changed. It does not record why, by whom,
-> with what context, or whether the result was tested."
->
-> **After (pitch voice):** "Git records **what** changed — and stops there. It
-> can't tell you *who* wrote a line (agent or human), *what* prompt produced it,
-> or *whether* it was tested. h5i records that rest, in `refs/h5i/*`, beside your
-> code."
-
-Same facts. Confident, concrete, contrast-driven, keyword-dense, and the first
-two sentences are quotable on their own.
+Before publishing, remove repeated setup, claims without mechanisms, invented
+precision, and references to features the manual no longer documents. Then
+read the opening callout and every heading without the body. They should still
+tell the whole story.
