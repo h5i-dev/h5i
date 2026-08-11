@@ -608,11 +608,6 @@ impl Bridge {
         self.tally().settled = settled;
     }
 
-    /// Record that the teardown did not wait for the connections at all.
-    pub fn skipped_the_wait(&self) {
-        self.tally().settled = false;
-    }
-
     /// Resolves when the share is winding up. Connections select on it so a
     /// shutdown does not have to wait out their idle timeouts.
     pub async fn shutting_down(&self) {

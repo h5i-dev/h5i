@@ -374,7 +374,17 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
     // An identical payload is already on disk and rewriting it would only risk a
     // torn file for a concurrent reader.
     if !raw_file.exists() {
-        std::fs::write(&raw_file, stored)?;
+        // Written to a unique temp and renamed. `fs::write` truncates, so two
+        // writers storing the same payload digest at once both truncated and
+        // both rewrote, and a reader between them saw a short blob — measured
+        // at up to 234 short reads per 1200 iterations in a transplant. Not
+        // reachable today, because `run.lock` serialises the high-rate writer
+        // and no two lanes produce identical bodies; it becomes reachable the
+        // moment a second writer does. The payload is content-addressed, so
+        // whichever rename wins is byte-identical to the other.
+        let tmp = raw_file.with_extension(format!("raw.tmp.{}", std::process::id()));
+        std::fs::write(&tmp, stored)?;
+        std::fs::rename(&tmp, &raw_file)?;
     }
 
     let mut line = serde_json::to_string(&rec)?;

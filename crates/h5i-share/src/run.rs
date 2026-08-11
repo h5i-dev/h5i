@@ -285,10 +285,13 @@ async fn serve_async(
         // The transport still has to go, or `cloudflared` outlives this
         // process. Not awaited on the interrupted path beyond its own bounds.
         started.shutdown().await;
-        // And the receipt has to admit what it is: written without waiting, so
-        // its byte counts are short. The stderr line above is gone by the time
-        // anybody reads the artifact.
-        bridge.skipped_the_wait();
+        // Nothing to record here. `settled` starts false and only a completed
+        // `quiesce` sets it true, so abandoning the teardown leaves it false by
+        // construction and the receipt already says it is partial. The explicit
+        // call this used to make was worse than redundant: both arms of the
+        // `select!` above can become ready in the same poll and the pick is
+        // random, so a run whose quiesce *had* completed could still land here
+        // and unmark it — a receipt calling itself partial when it had waited.
     }
     // Every path out writes the receipt and takes the session file with it, so
     // `share ls` describes what is running rather than what once ran.
@@ -434,7 +437,16 @@ async fn stopped_elsewhere(bridge: Arc<Bridge>) -> String {
 async fn box_went_away(env_dir: PathBuf, pinned: Option<String>) -> String {
     loop {
         tokio::time::sleep(BOX_POLL).await;
-        if h5i_core::env::live_sessions(&env_dir).is_empty() {
+        // Only *writers* count. A read-only observer is a session, and it kept
+        // this loop quiet after the box's real session had gone — so somebody
+        // could `h5i box abort` a box, be told it was aborted, and have a
+        // public tunnel URL keep pointing at it for the rest of the ticket's
+        // life while `share ls` reported it healthy. An observer holds a
+        // worktree open; it is not a box that is running.
+        let writers = h5i_core::env::live_sessions(&env_dir)
+            .iter()
+            .any(|s| h5i_core::env::live_is_writer(&s.kind));
+        if !writers {
             return "the box is no longer running, so there is nothing left to share \
                     (start a session and share again)"
                 .to_string();
@@ -448,8 +460,13 @@ async fn box_went_away(env_dir: PathBuf, pinned: Option<String>) -> String {
         // reported it healthy; the visitor was told to ask the sharer to start
         // a dev server that was already running; and the fix — restart the
         // share — was undiscoverable from either terminal.
-        if let (Some(want), Some(now)) = (&pinned, current_netns(&env_dir)) {
-            if *want != now {
+        // And a box with no *writer* has no namespace to compare against, which
+        // is not "nothing to check" but "the thing we were pinned to is gone" —
+        // the very case this comparison was added for. The `if let` skipped it
+        // silently.
+        if let Some(want) = &pinned {
+            let now = current_netns(&env_dir);
+            if now.as_deref() != Some(want.as_str()) {
                 return "the box restarted, so it has a new network namespace and this share \
                         is pinned to the old one. Nothing it serves can reach the box any \
                         more — start a fresh share."
