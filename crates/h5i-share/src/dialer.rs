@@ -86,21 +86,68 @@ impl Dialer {
     /// Every peer connection gets its own: the bridge never multiplexes two
     /// peers onto one upstream socket, so one peer's keep-alive cannot carry
     /// another's request.
-    pub fn connect(&self) -> Result<TcpStream, H5iError> {
+    /// Why a dial failed, kept apart because the receipt says different things
+    /// about them and one of them blames the wrong person.
+    ///
+    /// `unreached N connection(s) were authorized but found nothing listening
+    /// on port 3000` is a sentence about the *user's dev server*. It was
+    /// printed for every dial failure, including the ones where the route into
+    /// the box had broken — and the broken-channel case is sticky, so one lost
+    /// reply produced a receipt confidently asserting hundreds of times that
+    /// somebody's dev server was down when it was running the whole time.
+    pub fn connect(&self) -> Result<TcpStream, DialError> {
         match &self.inner {
             #[cfg(target_os = "linux")]
             Inner::Helper { sock, child } => self.request(sock, *child),
             #[cfg(target_os = "macos")]
             Inner::Loopback => TcpStream::connect(("127.0.0.1", self.port)).map_err(|e| {
-                H5iError::Metadata(format!(
+                DialError::NothingListening(H5iError::Metadata(format!(
                     "nothing is listening on 127.0.0.1:{} — is the dev server running inside \
                      the box? ({e})",
                     self.port
-                ))
+                )))
             }),
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            Inner::Unsupported => Err(unsupported()),
+            Inner::Unsupported => Err(DialError::Broken(unsupported())),
         }
+    }
+}
+
+/// Why a dial failed.
+#[derive(Debug)]
+pub enum DialError {
+    /// The route into the box worked and the port had nothing on it. A fact
+    /// about the user's dev server, and the only one the receipt should report
+    /// as such.
+    NothingListening(H5iError),
+    /// The route itself failed: the helper is gone, retired, or answering
+    /// nonsense. A fact about h5i, and it used to be reported as the first.
+    Broken(H5iError),
+}
+
+impl DialError {
+    pub fn into_inner(self) -> H5iError {
+        match self {
+            DialError::NothingListening(e) | DialError::Broken(e) => e,
+        }
+    }
+
+    pub fn nothing_listening(&self) -> bool {
+        matches!(self, DialError::NothingListening(_))
+    }
+}
+
+impl std::fmt::Display for DialError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DialError::NothingListening(e) | DialError::Broken(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl From<DialError> for H5iError {
+    fn from(d: DialError) -> H5iError {
+        d.into_inner()
     }
 }
 
@@ -221,7 +268,7 @@ impl Dialer {
         &self,
         sock: &Mutex<(std::os::fd::OwnedFd, bool)>,
         child: libc::pid_t,
-    ) -> Result<TcpStream, H5iError> {
+    ) -> Result<TcpStream, DialError> {
         use std::os::fd::{AsRawFd, FromRawFd};
 
         // One request in flight at a time. The reply carries an fd in its
@@ -236,10 +283,10 @@ impl Dialer {
             .unwrap_or_else(|p| p.into_inner());
         let (ref owned, ref mut in_step) = *guard;
         if !*in_step {
-            return Err(H5iError::Metadata(format!(
+            return Err(DialError::Broken(H5iError::Metadata(format!(
                 "the box dialer (pid {child}) lost track of a reply and was retired, so this \
                  share can no longer reach the box. Restart the share."
-            )));
+            ))));
         }
         let fd = owned.as_raw_fd();
         let req = [REQUEST];
@@ -253,9 +300,9 @@ impl Dialer {
         } != 1
         {
             *in_step = false;
-            return Err(H5iError::Metadata(format!(
+            return Err(DialError::Broken(H5iError::Metadata(format!(
                 "the box dialer (pid {child}) is gone; the share cannot reach the box any more"
-            )));
+            ))));
         }
         let (status, got) = recv_status(fd);
         // A descriptor arriving with anything but a clean OK is one nobody is
@@ -270,18 +317,18 @@ impl Dialer {
             (Some(STATUS_OK), Some(raw)) => Ok(unsafe { TcpStream::from_raw_fd(raw) }),
             (Some(STATUS_CONNECT_FAILED), got) => {
                 close_stray(got);
-                Err(H5iError::Metadata(format!(
+                Err(DialError::NothingListening(H5iError::Metadata(format!(
                     "nothing is listening on 127.0.0.1:{} inside the box. Start the dev server \
                      in the box, or share the port it is actually on.",
                     self.port
-                )))
+                ))))
             }
             (Some(_), got) => {
                 close_stray(got);
-                Err(H5iError::Metadata(format!(
+                Err(DialError::Broken(H5iError::Metadata(format!(
                     "the box dialer (pid {child}) answered something unexpected; the share \
                      cannot reach the box any more"
-                )))
+                ))))
             }
             // No reply at all. The helper may yet send one, and it would land in
             // the *next* caller's `recvmsg` — so the channel is out of step and
@@ -289,10 +336,10 @@ impl Dialer {
             (None, got) => {
                 close_stray(got);
                 *in_step = false;
-                Err(H5iError::Metadata(format!(
+                Err(DialError::Broken(H5iError::Metadata(format!(
                     "the box dialer (pid {child}) stopped answering; the share cannot reach the \
                      box any more"
-                )))
+                ))))
             }
         }
     }

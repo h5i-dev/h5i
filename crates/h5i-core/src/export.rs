@@ -300,6 +300,43 @@ fn report(
         }
     }
 
+    // Who was let *in*. Every other lane in an export is about what left the
+    // box; this is the one path that let a second person reach inside it while
+    // it was running, and a reviewer who cannot see it is reviewing a different
+    // artifact from the one that exists. It was rendered as an ordinary row in
+    // "What ran" — `h5i box share demo (port 3000, 1 peer(s), 600s)` — which
+    // reads as a command the box happened to execute.
+    let shares: Vec<_> = records.iter().filter(|r| r.source == "share").collect();
+    if !shares.is_empty() {
+        out.push_str("\n## Shared with someone\n\n");
+        out.push_str(
+            "This box was opened to another person while it was running. h5i owned both ends \
+             of the bridge, so this is host-observed evidence and the box supplied none of \
+             it.\n\n| when | session |\n|---|---|\n",
+        );
+        for r in &shares {
+            out.push_str(&format!(
+                "| {} | {} |\n",
+                r.timestamp,
+                md_escape(&crate::redact::sanitize_display(r.cmd.as_deref().unwrap_or("")))
+            ));
+        }
+        if shares
+            .iter()
+            .any(|r| r.cmd.as_deref().unwrap_or("").contains("tunnel"))
+        {
+            out.push_str(
+                "\n**At least one of these went through a Cloudflare quick tunnel**, which \
+                 terminates TLS — so that traffic was not end to end encrypted.\n",
+            );
+        }
+        out.push_str(
+            "\nThe full account of each — who connected, over what path, for how long, and \
+             what was refused — is the receipt payload named by `raw_oid` in \
+             `receipt.json`.\n",
+        );
+    }
+
     out.push_str("\n## Proposal\n\n```\n");
     out.push_str(brief);
     out.push_str("\n```\n");
@@ -421,6 +458,24 @@ mod tests {
         };
         let text = report(&manifest(), &summary(), &[record(Some(blind))], "brief");
         assert!(text.contains("no browser available to observe"), "{text}");
+    }
+
+    #[test]
+    fn a_box_that_was_shared_with_somebody_says_so() {
+        // The one path that lets a second person reach *into* a running box,
+        // rendered as an ordinary row in "What ran" — which reads as a command
+        // the box happened to execute rather than as a door that was opened.
+        let mut r = record(None);
+        r.source = "share".into();
+        r.cmd = Some("h5i box share demo --tunnel (port 3000, 1 peer(s), 600s)".into());
+        let text = report(&manifest(), &summary(), &[r], "brief");
+        assert!(text.contains("## Shared with someone"), "{text}");
+        assert!(text.contains("terminates TLS"), "{text}");
+        assert!(text.contains("raw_oid"), "{text}");
+
+        // And a box nobody shared does not grow the section.
+        let text = report(&manifest(), &summary(), &[record(None)], "brief");
+        assert!(!text.contains("## Shared with someone"), "{text}");
     }
 
     #[test]

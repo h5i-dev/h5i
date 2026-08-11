@@ -100,6 +100,12 @@ pub enum Denied {
     Unknown,
     Expired,
     Revoked,
+    /// Nobody presented anything. Separate from [`Denied::Unknown`] because on
+    /// a public tunnel URL this is the commonest event of the whole session — a
+    /// scanner fetching `/` — and folding it into "unknown ticket" made the
+    /// dominant row of the receipt a sentence that was usually false: no ticket
+    /// was presented, so none was unknown.
+    NoCredential,
 }
 
 impl Denied {
@@ -109,6 +115,7 @@ impl Denied {
     pub fn explain(self) -> &'static str {
         match self {
             Denied::Unknown => "that ticket is not one this share knows",
+            Denied::NoCredential => "this share needs an invite link",
             Denied::Expired => "that ticket has expired — ask for a new one",
             Denied::Revoked => "that ticket was revoked",
         }

@@ -369,6 +369,14 @@ async fn handle(
             if !presented && body.starts_with("HTTP/1.1 401") {
                 bridge.record_refused();
             }
+            // The `400`s: everything `gate::parse` refuses — obs-folds, bare
+            // LF, two `Content-Length`s, `Content-Length\u{0c}`. These were
+            // answered and forgotten, which left the one lane whose job is
+            // "who was turned away" silent about the entire attack class this
+            // crate spent fifteen rounds hardening against.
+            if body.starts_with("HTTP/1.1 400") {
+                bridge.record_turned_away(crate::bridge::TurnedAwayReason::Unparseable);
+            }
             // A redirect is not a refusal: it is a visitor following the invite
             // link, authorized, on the first request every visitor makes. A
             // peer who opened the link and then read nothing used to leave the
@@ -420,7 +428,6 @@ async fn handle(
                 // visitor nothing about a dev server that is simply not up —
                 // and the joiner's proxy has answered this case since it was
                 // written.
-                bridge.record_unreachable();
                 let body = unreachable_response();
                 bridge.peer_bytes(id, body.len() as u64, 0);
                 http_front::respond(&mut sock, &body).await;
@@ -432,6 +439,10 @@ async fn handle(
     let upstream = tokio::net::TcpStream::from_std(upstream)?;
 
     bridge.peer_connection(id);
+    // Stamped on every connection, because the tunnel has no close to observe:
+    // a visitor is a grant, and their connections come and go. Without it the
+    // receipt wrote every tunnel peer down as connected until the share ended.
+    bridge.peer_seen(id);
 
     let (up_r, up_w) = upstream.into_split();
     let counts = http_front::Counters::default();

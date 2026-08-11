@@ -67,6 +67,9 @@ pub struct PeerRecord {
     pub path: Option<Path>,
     pub opened: DateTime<Utc>,
     pub closed: Option<DateTime<Utc>>,
+    /// The last time this peer did anything, for a transport with no close to
+    /// observe. See [`Bridge::peer_seen`].
+    pub last_seen: Option<DateTime<Utc>>,
     /// TCP connections into the box carried for this peer. One request each,
     /// because one connection is all a request gets — so this is also the count
     /// of requests that reached the box, and *not* the count of requests made:
@@ -74,6 +77,34 @@ pub struct PeerRecord {
     pub connections: u64,
     pub bytes_to_peer: u64,
     pub bytes_from_peer: u64,
+}
+
+/// A connection turned away for something other than its credential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnedAway {
+    pub at: DateTime<Utc>,
+    pub why: TurnedAwayReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnedAwayReason {
+    /// `--direct-only`, and the connection was on a relay.
+    NoDirectPath,
+    /// Connected, then never presented a ticket.
+    NeverGreeted,
+    /// A request the gate would not parse: the smuggling shapes it exists to
+    /// refuse.
+    Unparseable,
+}
+
+impl TurnedAwayReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            TurnedAwayReason::NoDirectPath => "no direct path was available",
+            TurnedAwayReason::NeverGreeted => "connected but never presented a ticket",
+            TurnedAwayReason::Unparseable => "sent something this share would not parse",
+        }
+    }
 }
 
 /// Someone knocked and was not let in. Worth recording: a share that was probed
@@ -86,6 +117,15 @@ pub struct DeniedAttempt {
 
 #[derive(Debug, Default)]
 struct Tally {
+    /// Did every connection finish before the receipt was written? Starts
+    /// false: a receipt written without a quiesce at all has not settled
+    /// either, and defaulting the other way would make silence look like a
+    /// clean ending.
+    settled: bool,
+    /// See [`Summary::route_broken`].
+    route_broken: u64,
+    /// See [`Summary::turned_away`].
+    turned_away: Vec<TurnedAway>,
     peers: Vec<PeerRecord>,
     denied: Vec<DeniedAttempt>,
     /// Attempts past what the list will hold. Counted so the receipt can say
@@ -311,8 +351,28 @@ impl Bridge {
     }
 
     /// Open a fresh connection into the box.
+    /// A socket into the box, and the accounting that goes with failing to get
+    /// one.
+    ///
+    /// The two failures are recorded apart because the receipt says different
+    /// things about them, and one of them blames the wrong person: `unreached
+    /// N connection(s) ... found nothing listening on port 3000` is a sentence
+    /// about the user's dev server, and it was printed for a broken dialer
+    /// too. That case is sticky — a retired channel fails every later request
+    /// the same way — so one lost reply produced a receipt asserting hundreds
+    /// of times that a dev server was down while it was running the whole time.
     pub fn open_upstream(&self) -> Result<std::net::TcpStream, H5iError> {
-        self.dialer.connect()
+        match self.dialer.connect() {
+            Ok(s) => Ok(s),
+            Err(e) => {
+                if e.nothing_listening() {
+                    self.tally().unreachable += 1;
+                } else {
+                    self.tally().route_broken += 1;
+                }
+                Err(e.into_inner())
+            }
+        }
     }
 
     fn record_denied(&self, reason: Denied) {
@@ -363,6 +423,7 @@ impl Bridge {
             path,
             opened: Utc::now(),
             closed: None,
+            last_seen: None,
             connections: 0,
             bytes_to_peer: 0,
             bytes_from_peer: 0,
@@ -387,6 +448,40 @@ impl Bridge {
                 Some(Path::Direct) if path == Path::Relayed => p.path = Some(Path::Relayed),
                 Some(_) => {}
             }
+        }
+    }
+
+    /// The last moment this peer was seen doing anything.
+    ///
+    /// The tunnel has no connection lifecycle to hang `peer_left` on — a
+    /// visitor is a grant, and their connections come and go — so without this
+    /// `closed` stayed `None` and every tunnel peer rendered as held to the end
+    /// of the share. Somebody who opened one page in minute two of a six-hour
+    /// share was written down as having been connected for six hours.
+    /// Somebody was turned away for a reason that has nothing to do with their
+    /// ticket.
+    ///
+    /// These left no trace anywhere. A user behind a symmetric NAT running
+    /// `--direct-only` — the flag this feature advertises as its strongest
+    /// guarantee — watched `refused ... no direct path` scroll past their
+    /// terminal and then got a receipt saying `peers none — the share was open
+    /// but nobody connected`. Likewise every smuggling attempt the gate exists
+    /// to refuse: answered with a `400` and forgotten, in the one lane whose
+    /// job is to say who was turned away.
+    pub fn record_turned_away(&self, why: TurnedAwayReason) {
+        let mut t = self.tally();
+        // Bounded like the denial list, and for the same reason.
+        if t.turned_away.len() < 1024 {
+            t.turned_away.push(TurnedAway {
+                at: Utc::now(),
+                why,
+            });
+        }
+    }
+
+    pub fn peer_seen(&self, id: PeerId) {
+        if let Some(p) = self.tally().peers.get_mut(id.0) {
+            p.last_seen = Some(Utc::now());
         }
     }
 
@@ -415,17 +510,12 @@ impl Bridge {
     /// the commonest probe of a public tunnel URL — a scanner fetching `/` —
     /// left the receipt completely silent about having been probed.
     pub fn record_refused(&self) {
-        self.record_denied(Denied::Unknown);
+        self.record_denied(Denied::NoCredential);
     }
 
     /// A response the box left unfinished.
     pub fn record_truncated(&self) {
         self.tally().truncated += 1;
-    }
-
-    /// A peer got through the gate and the box had nothing listening.
-    pub fn record_unreachable(&self) {
-        self.tally().unreachable += 1;
     }
 
     /// Wait for every connection into the box to finish, or give up.
@@ -464,7 +554,20 @@ impl Bridge {
         // exactly on the path this exists for.
         let _ = self.shutdown.send_replace(true);
         let all = u32::try_from(MAX_CONNECTIONS).unwrap_or(u32::MAX);
-        let _ = tokio::time::timeout(within, self.capacity.acquire_many(all)).await;
+        // The answer is kept. Two paths write a receipt with connections still
+        // mid-copy — this timing out, and an interrupt that skips the wait
+        // entirely — and in both the byte counts are short and the peers render
+        // as still connected. The stderr line saying so is gone by the time
+        // anybody reads the artifact, so the artifact has to say it itself.
+        let settled = tokio::time::timeout(within, self.capacity.acquire_many(all))
+            .await
+            .is_ok();
+        self.tally().settled = settled;
+    }
+
+    /// Record that the teardown did not wait for the connections at all.
+    pub fn skipped_the_wait(&self) {
+        self.tally().settled = false;
     }
 
     /// Resolves when the share is winding up. Connections select on it so a
@@ -491,6 +594,23 @@ impl Bridge {
     /// call this on the way out: a receipt that only got written on a clean
     /// shutdown would be missing from exactly the sessions people actually run.
     pub fn write_receipt(&self) {
+        self.write_receipt_with(0);
+    }
+
+    /// The same, for a share that ended badly.
+    ///
+    /// The code was a constant `0` on every path, including the one where
+    /// `cloudflared` died and the error is "the public URL for this share is
+    /// gone". The receipt said the session succeeded, `signals()` did not count
+    /// it among the failures, and the export table showed a zero. It is a
+    /// constant because leaving it unset renders as "signal", which reads as a
+    /// kill — the answer to that is a code for the failures, not a code for
+    /// everything.
+    pub fn write_receipt_failed(&self) {
+        self.write_receipt_with(1);
+    }
+
+    fn write_receipt_with(&self, exit_code: i32) {
         let ended = Utc::now();
         let seconds = (ended - self.started).num_seconds().max(0);
         // Snapshotted, and the lock let go before anything is written. Held
@@ -501,6 +621,9 @@ impl Bridge {
         let summary = {
             let t = self.tally();
             Summary {
+                route_broken: t.route_broken,
+                settled: t.settled,
+                turned_away: t.turned_away.clone(),
                 transport: self.transport,
                 endpoint: self.endpoint.clone(),
                 port: self.dialer.port(),
@@ -541,7 +664,7 @@ impl Bridge {
             // A share ends when it is asked to. Left unset, the receipt viewer
             // renders "signal" for it, which reads in an export as though the
             // session had been killed.
-            exit_code: Some(0),
+            exit_code: Some(exit_code),
             ..Default::default()
         };
         if let Err(e) = h5i_core::receipt::append(&self.env_dir, input, body.as_bytes()) {
@@ -578,6 +701,17 @@ pub struct Summary {
     pub front_refused: u64,
     /// Authorized peers who found nothing listening inside the box.
     pub unreachable: u64,
+    /// Dials that failed because the route into the box did, rather than
+    /// because nothing was listening on the shared port.
+    pub route_broken: u64,
+    /// Whether every connection had finished when this was written. When it is
+    /// false the byte counts are short and the peers may render as still
+    /// connected, and the receipt says so rather than reading as complete.
+    pub settled: bool,
+    /// Connections turned away for a reason that is not about a credential:
+    /// `--direct-only` with no direct path, a greeting that was not one, a
+    /// request the gate would not parse.
+    pub turned_away: Vec<TurnedAway>,
     /// Responses the box left unfinished.
     pub truncated: u64,
 }
@@ -620,12 +754,25 @@ pub fn render_receipt(s: &Summary) -> String {
         );
     }
 
+    if !s.settled {
+        // Said before the numbers, not after, because it changes how to read
+        // every one of them.
+        out.push_str(
+            "partial  this was written before every connection had finished, so the byte \
+             counts below are short and a peer may read as still connected\n",
+        );
+    }
+
     if s.peers.is_empty() {
         out.push_str("peers    none — the share was open but nobody connected\n");
     } else {
         out.push_str(&format!("peers    {}\n", s.peers.len()));
         for p in &s.peers {
-            let closed = p.closed.unwrap_or(s.ended);
+            // `closed` where a transport has a connection lifecycle, the last
+            // time we saw them where it does not, and only then the end of the
+            // share — which is the honest reading of "still there when it
+            // ended" rather than a default that quietly applies to everyone.
+            let closed = p.closed.or(p.last_seen).unwrap_or(s.ended);
             let held = (closed - p.opened).num_seconds().max(0);
             out.push_str(&format!(
                 "  {} via {} — grant {}{}, {held}s, {}, {} in / {} out\n",
@@ -694,6 +841,43 @@ pub fn render_receipt(s: &Summary) -> String {
         ));
     }
 
+    if !s.turned_away.is_empty() {
+        // Its own line, not folded into `refused`, because none of these is
+        // about a credential. A `--direct-only` refusal in particular is the
+        // feature working exactly as advertised, and it used to leave the
+        // receipt saying nobody connected while the operator watched the
+        // refusals scroll past their terminal.
+        let mut kinds: Vec<(TurnedAwayReason, usize)> = Vec::new();
+        for t in &s.turned_away {
+            match kinds.iter_mut().find(|(k, _)| *k == t.why) {
+                Some((_, n)) => *n += 1,
+                None => kinds.push((t.why, 1)),
+            }
+        }
+        let listed: Vec<String> = kinds
+            .iter()
+            .map(|(k, n)| format!("{n} {}", k.as_str()))
+            .collect();
+        out.push_str(&format!(
+            "turned   {} connection(s) away before any ticket was weighed: {}\n",
+            s.turned_away.len(),
+            listed.join(", ")
+        ));
+    }
+
+    if s.route_broken > 0 {
+        // Deliberately not folded into the line below. That one is a sentence
+        // about the user's dev server, and this is a sentence about h5i: the
+        // route into the box failed, which is sticky once it does, so a reader
+        // told "nothing was listening" would go and check a server that was
+        // running fine the whole time.
+        out.push_str(&format!(
+            "route    {} connection(s) were authorized and then h5i could not reach the box \
+             at all\n",
+            s.route_broken
+        ));
+    }
+
     if s.unreachable > 0 {
         // A peer with a good ticket that found nothing listening is a fact
         // about the box, not about the peer, and it is the difference between
@@ -720,15 +904,25 @@ pub fn render_receipt(s: &Summary) -> String {
             .iter()
             .filter(|d| d.reason == Denied::Revoked)
             .count();
+        let none = s
+            .denied
+            .iter()
+            .filter(|d| d.reason == Denied::NoCredential)
+            .count();
+        // The leading number counts every refusal, not just the ones kept
+        // individually. It read `refused 1024 attempt(s)` for fifty thousand,
+        // with the truth in a trailing clause — and the sub-counts are over the
+        // recorded sample, so their sum does not match and the line now says so.
         out.push_str(&format!(
-            "refused  {} attempt(s): {unknown} unknown ticket, {expired} expired, {revoked} \
-             revoked{}\n",
-            s.denied.len(),
+            "refused  {} attempt(s){}: of the {} recorded, {none} presented no invite, \
+             {unknown} an unknown ticket, {expired} expired, {revoked} revoked\n",
+            s.denied.len() as u64 + s.denied_overflow,
             if s.denied_overflow > 0 {
-                format!(", and {} more not recorded individually", s.denied_overflow)
+                format!(" ({} of them not recorded individually)", s.denied_overflow)
             } else {
                 String::new()
-            }
+            },
+            s.denied.len()
         ));
     }
     out
@@ -811,6 +1005,7 @@ mod tests {
             path: Some(path),
             opened: at("2026-08-10T10:00:00Z"),
             closed: Some(at("2026-08-10T10:05:00Z")),
+            last_seen: None,
             connections: 12,
             bytes_to_peer: 5_000,
             bytes_from_peer: 900,
@@ -831,6 +1026,9 @@ mod tests {
             over_capacity: 0,
             front_refused: 0,
             unreachable: 0,
+            route_broken: 0,
+            settled: true,
+            turned_away: Vec::new(),
             truncated: 0,
         }
     }
@@ -844,6 +1042,106 @@ mod tests {
         assert!(body.contains("grant a1b2c3d4 (alex)"));
         assert!(body.contains("12 connections"));
         assert!(body.contains("900 in / 5000 out"));
+    }
+
+    #[test]
+    fn a_knock_with_no_invite_is_not_an_unknown_ticket() {
+        // On a public tunnel URL a scanner fetching `/` is the commonest event
+        // of the whole session, and folding it into "unknown ticket" made the
+        // dominant row of the receipt a sentence that was usually false.
+        let mut s = summary(vec![], vec![]);
+        s.denied = vec![
+            DeniedAttempt {
+                at: at("2026-08-10T10:01:00Z"),
+                reason: Denied::NoCredential,
+            },
+            DeniedAttempt {
+                at: at("2026-08-10T10:02:00Z"),
+                reason: Denied::Unknown,
+            },
+        ];
+        let body = render_receipt(&s);
+        assert!(body.contains("1 presented no invite"), "{body}");
+        assert!(body.contains("1 an unknown ticket"), "{body}");
+    }
+
+    #[test]
+    fn a_broken_route_is_not_the_user_s_dev_server_being_down() {
+        // `unreached ... found nothing listening on port 3000` is a sentence
+        // about somebody's dev server. It was printed for a broken dialer too,
+        // and that case is sticky — so one lost reply produced a receipt
+        // asserting hundreds of times that a server was down while it ran.
+        let mut s = summary(vec![], vec![]);
+        s.route_broken = 3;
+        s.unreachable = 0;
+        let body = render_receipt(&s);
+        assert!(body.contains("could not reach the box at all"), "{body}");
+        assert!(!body.contains("nothing listening"), "{body}");
+    }
+
+    #[test]
+    fn a_connection_turned_away_before_any_ticket_leaves_a_trace() {
+        // A user behind a symmetric NAT running `--direct-only` — the flag this
+        // feature advertises as its strongest guarantee — watched the refusals
+        // scroll past their terminal and then got a receipt saying nobody
+        // connected.
+        let mut s = summary(vec![], vec![]);
+        s.turned_away = vec![
+            TurnedAway {
+                at: at("2026-08-10T10:01:00Z"),
+                why: TurnedAwayReason::NoDirectPath,
+            },
+            TurnedAway {
+                at: at("2026-08-10T10:02:00Z"),
+                why: TurnedAwayReason::NoDirectPath,
+            },
+            TurnedAway {
+                at: at("2026-08-10T10:03:00Z"),
+                why: TurnedAwayReason::Unparseable,
+            },
+        ];
+        let body = render_receipt(&s);
+        assert!(body.contains("turned   3 connection(s) away"), "{body}");
+        assert!(body.contains("2 no direct path was available"), "{body}");
+        assert!(
+            body.contains("1 sent something this share would not parse"),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn a_receipt_written_before_the_connections_finished_says_so() {
+        // Two paths reach here — the quiesce timing out, and an interrupt that
+        // skips the wait — and in both the byte counts are short. The stderr
+        // line saying so is gone by the time anyone reads the artifact.
+        let mut s = summary(vec![], vec![]);
+        s.settled = false;
+        let body = render_receipt(&s);
+        assert!(
+            body.contains("written before every connection had finished"),
+            "{body}"
+        );
+
+        s.settled = true;
+        assert!(!render_receipt(&s).contains("written before every"));
+    }
+
+    #[test]
+    fn a_tunnel_peer_is_not_held_to_the_end_of_the_share() {
+        // The tunnel has no close to observe, so `closed` stayed `None` and
+        // every peer rendered as connected until the share ended: somebody who
+        // opened one page in minute two of a six-hour share was written down as
+        // having been there for six hours.
+        let mut p = peer("alex", Path::Tunnel);
+        p.opened = at("2026-08-10T10:01:00Z");
+        p.closed = None;
+        p.last_seen = Some(at("2026-08-10T10:02:00Z"));
+        let body = render_receipt(&summary(vec![p], vec![]));
+        assert!(body.contains("60s"), "{body}");
+        assert!(
+            !body.contains("540s"),
+            "the peer was held to the end anyway: {body}"
+        );
     }
 
     #[test]
@@ -946,8 +1244,8 @@ mod tests {
             "flooded  900000 connection(s) refused at the front door",
             "unreached 2 connection(s) were authorized",
             "truncated 1 response(s) the box left unfinished",
-            "refused  2 attempt(s)",
-            "and 12 more not recorded individually",
+            "refused  14 attempt(s)",
+            "(12 of them not recorded individually)",
         ] {
             assert!(body.contains(expected), "missing {expected:?} in:\n{body}");
         }
@@ -1006,7 +1304,7 @@ mod tests {
         ];
         let body = render_receipt(&summary(vec![], denied));
         assert!(body.contains("refused  3 attempt(s)"));
-        assert!(body.contains("2 unknown ticket"));
+        assert!(body.contains("2 an unknown ticket"), "{body}");
         assert!(body.contains("1 revoked"));
     }
 
@@ -1036,7 +1334,11 @@ mod tests {
         );
         s.denied_overflow = 48_976;
         let body = render_receipt(&s);
-        assert!(body.contains("48976 more not recorded"), "{body}");
+        // The leading number is every refusal, not just the recorded sample:
+        // it read "refused 1024 attempt(s)" for fifty thousand of them, with
+        // the truth demoted to a trailing clause.
+        assert!(body.contains("refused  48979 attempt(s)"), "{body}");
+        assert!(body.contains("48976 of them not recorded"), "{body}");
     }
 
     #[test]

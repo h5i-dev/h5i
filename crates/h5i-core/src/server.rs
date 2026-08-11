@@ -290,8 +290,18 @@ async fn asset(Path(path): Path<String>) -> Response {
 /// box's own account and is counted as such.
 // The browser mediator is host-observed like the viewer: the records are
 // written by an h5i process sitting on the socket, not claimed by the box.
-const HOST_OBSERVED_LANES: [&str; 4] =
-    ["host-env-run", "shell-egress", "viewer", "browser-proxy"];
+// `share` is on this list because h5i owns both ends of the share bridge, the
+// box supplies none of it, and the box cannot suppress it. Leaving it off
+// inverted the badge: a box whose only receipt was a share read as having no
+// host-observed evidence at all — the grey "the box told us this" badge — for
+// the one lane the box cannot touch.
+const HOST_OBSERVED_LANES: [&str; 5] = [
+    "host-env-run",
+    "shell-egress",
+    "viewer",
+    "browser-proxy",
+    "share",
+];
 
 #[derive(Serialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct Signals {
@@ -966,6 +976,16 @@ mod tests {
     /// The box writes `inbox-capture` records into its own spool. Counting any
     /// unknown source as host-observed let it clear the grey "box-claimed"
     /// badge — the one distinction this screen is built on.
+    #[test]
+    fn a_share_is_host_observed_evidence() {
+        // h5i owns both ends of the share bridge and the box supplies none of
+        // it, so leaving the lane off the list inverted the badge: a box whose
+        // only receipt was a share read as having no host-observed evidence at
+        // all, which is the grey "the box told us this" badge — for the one
+        // lane the box cannot touch.
+        assert!(HOST_OBSERVED_LANES.contains(&"share"));
+    }
+
     #[test]
     fn box_written_lanes_are_never_counted_as_host_observed() {
         let m = manifest("container");

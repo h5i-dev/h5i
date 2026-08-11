@@ -441,7 +441,18 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     runtime.block_on(h5i_share::join::run(ticket, port, |joined| {
-        println!("{} joined {}", SUCCESS, joined.box_id);
+        // Sanitised, because this string came out of a ticket somebody pasted.
+        // `ticket::decode` validates the version, the base64, the JSON shape
+        // and the secret's width, and nothing about `box_id` — so a `\r` or an
+        // `\x1b[1A` in it can erase or forge the lines below, one of which is
+        // the warning telling this person they are about to run somebody else's
+        // agent's code on their loopback. They are the one who did not choose
+        // to take that risk.
+        println!(
+            "{} joined {}",
+            SUCCESS,
+            h5i_core::redact::sanitize_display(&joined.box_id)
+        );
         println!();
         println!("   {}", joined.url);
         println!();

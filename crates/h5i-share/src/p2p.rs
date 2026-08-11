@@ -191,6 +191,7 @@ async fn serve_connection(
     let who = conn.remote_id().to_string();
 
     if direct_only && !wait_for_direct(&conn).await {
+        bridge.record_turned_away(crate::bridge::TurnedAwayReason::NoDirectPath);
         // Said on both sides. The peer gets a close reason it can print, and
         // the sharer gets a line, because "nothing happened" is the failure
         // mode a person cannot debug.
@@ -258,6 +259,7 @@ async fn serve_connection(
                 // out. Nothing has been authorized, so nothing is lost by
                 // hanging up on it.
                 if seen.is_none() && tokio::time::Instant::now() >= deadline {
+                    bridge.record_turned_away(crate::bridge::TurnedAwayReason::NeverGreeted);
                     conn.close(4u32.into(), b"h5i: no ticket was presented");
                     return;
                 }
@@ -285,6 +287,8 @@ async fn serve_connection(
                     // connections and libelled honest ones in the receipt.
                     Some(Path::Relayed) => {
                         if direct_only {
+                            bridge
+                                .record_turned_away(crate::bridge::TurnedAwayReason::NoDirectPath);
                             conn.close(
                                 3u32.into(),
                                 b"h5i: --direct-only, and the direct path was lost",
@@ -485,7 +489,6 @@ async fn serve_stream(
                 // chasing something that is not the problem — and recorded,
                 // because otherwise a share where the dev server was down reads
                 // as one nobody ever tried to use.
-                bridge.record_unreachable();
                 let _ = send.write_all(&[wire::REPLY_UNREACHABLE]).await;
                 let _ = send.finish();
                 return Err(e);

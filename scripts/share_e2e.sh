@@ -96,6 +96,17 @@ PY
 # else's process is alive is worse than no check.
 joiner_alive() { kill -0 "$JOIN_PID" 2>/dev/null; }
 
+last_receipt() {
+  python3 - "$ENV_DIR" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+rs = [json.loads(l) for l in open(os.path.join(d, "receipt.jsonl"))
+      if json.loads(l).get("source") == "share"]
+last = rs[-1]
+print(open(os.path.join(d, "receipts", last["raw_oid"].split(":")[1][:16] + ".raw")).read())
+PY
+}
+
 # `share ls` says "No box on this clone is being shared." when there is none.
 no_record() { "$H5I" box share ls 2>/dev/null | grep -q "No box on this clone"; }
 
@@ -203,11 +214,24 @@ if [ "$WITH_TUNNEL" = "1" ]; then
   check "$SLOW" "4194304" "and to a client that reads slowly"
   ANON=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "${URL%%\?*}/")
   check "$ANON" "401" "an anonymous visitor gets a 401"
+  # A request the gate refuses outright, which used to be answered and
+  # forgotten by the one lane whose job is to say who was turned away.
+  printf 'GET / HTTP/1.1\r\nHost: t\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n' \
+    | timeout 30 nc -q 2 "${URL#https://}" 443 >/dev/null 2>&1
   "$H5I" box share stop "$BOX" >/dev/null 2>&1
-  sleep 5
+  sleep 6
+  LAST=$(last_receipt)
+  echo "$LAST" | grep -q "presented no invite" \
+    && pass "an anonymous knock is recorded as one, not as an unknown ticket" \
+    || fail "the anonymous knock was miscounted: $(echo "$LAST" | grep refused)"
+  echo "$LAST" | grep -q "unknown ticket, 0 expired" \
+    && pass "and the refusal line still names every reason" \
+    || fail "the refusal line changed shape"
 fi
 
 # ── the receipt says what happened ──────────────────────────────────────────
+
+
 
 say "the receipt"
 python3 - "$ENV_DIR" <<'PY'
@@ -225,6 +249,10 @@ PY
 
 say "done"
 if [ "$FAILED" = 0 ]; then
+  # The dev server holds the box busy, so `rm` refuses until it is gone. The
+  # first version of this script left a box behind on every clean run.
+  for p in $(pgrep -f "box run $BOX"); do kill "$p" 2>/dev/null; done
+  sleep 2
   "$H5I" box rm "$BOX" --force >/dev/null 2>&1
   git worktree prune
   printf '\033[32mall checks passed\033[0m\n'

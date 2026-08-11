@@ -246,10 +246,20 @@ async fn serve_async(
         // The transport still has to go, or `cloudflared` outlives this
         // process. Not awaited on the interrupted path beyond its own bounds.
         started.shutdown().await;
+        // And the receipt has to admit what it is: written without waiting, so
+        // its byte counts are short. The stderr line above is gone by the time
+        // anybody reads the artifact.
+        bridge.skipped_the_wait();
     }
     // Every path out writes the receipt and takes the session file with it, so
     // `share ls` describes what is running rather than what once ran.
-    bridge.write_receipt();
+    // Which receipt depends on how it ended. A share whose tunnel died did not
+    // succeed, and a reader of the export should not have to guess.
+    if outcome.is_ok() {
+        bridge.write_receipt();
+    } else {
+        bridge.write_receipt_failed();
+    }
     session::clear(&req.env_dir);
     outcome
 }
