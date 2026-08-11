@@ -176,34 +176,44 @@ async fn write_to_box<W: tokio::io::AsyncWrite + Unpin>(
     buf: &[u8],
 ) -> std::io::Result<()> {
     write_timed(w, buf).await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::TimedOut {
-            std::io::Error::other(BoxStalled)
-        } else {
-            e
-        }
+        std::io::Error::other(BoxWrite {
+            stalled: e.kind() == std::io::ErrorKind::TimedOut,
+        })
     })
 }
 
-/// A marker only this module can construct.
+/// A write to the box failed. A marker only this module can construct.
 ///
-/// The first version of this used `ErrorKind::BrokenPipe`, which the *kernel*
-/// also produces — so a dev server that answers early and resets the connection
-/// (a `413` from a body-size limit, a `401` before the body is read) was
-/// reported to the visitor as "the app stopped reading", and its real answer,
-/// already sitting in the socket, was never relayed.
+/// Two things it carries, and both matter to what the visitor is told. That the
+/// failure was on the *box* side at all — an earlier version used
+/// `ErrorKind::BrokenPipe`, which the kernel also produces, so a peer's own
+/// disconnect could be reported as the box's. And whether the box *stalled*
+/// (nothing moved for two minutes: it is wedged, and the visitor gets a `502`)
+/// or *closed* (it answered early and hung up: a `413` from a size limit, a
+/// `401` before the body is read — and its answer is already in the socket
+/// waiting to be relayed).
 #[derive(Debug)]
-struct BoxStalled;
+struct BoxWrite {
+    stalled: bool,
+}
 
-impl std::fmt::Display for BoxStalled {
+impl std::fmt::Display for BoxWrite {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "the box stopped reading")
+        if self.stalled {
+            write!(f, "the box stopped reading")
+        } else {
+            write!(f, "the box closed while the request was being sent")
+        }
     }
 }
 
-impl std::error::Error for BoxStalled {}
+impl std::error::Error for BoxWrite {}
 
-fn is_box_stall(e: &std::io::Error) -> bool {
-    e.get_ref().is_some_and(|r| r.is::<BoxStalled>())
+/// `Some(stalled)` when this failure was a write to the box.
+fn box_write_failure(e: &std::io::Error) -> Option<bool> {
+    e.get_ref()
+        .and_then(|r| r.downcast_ref::<BoxWrite>())
+        .map(|b| b.stalled)
 }
 
 /// Index just past the blank line that ends an HTTP head.
@@ -341,7 +351,12 @@ where
         to_peer.fetch_add(25, Ordering::Relaxed);
     }
 
-    write_to_box(&mut up_w, head.as_bytes()).await?;
+    // The box refusing the head at all — wedged, or gone. There is no answer
+    // to go and read, so this is the one write to the box that always ends the
+    // request.
+    if write_to_box(&mut up_w, head.as_bytes()).await.is_err() {
+        return refuse_the_response(&mut peer_w, unreachable_box_response(), to_peer).await;
+    }
     to_box.fetch_add(head.len() as u64, Ordering::Relaxed);
 
     // The declared body, and only the declared body. Anything past it on this
@@ -366,16 +381,31 @@ where
             // chunks every body it forwards — the slow one is the common case,
             // so telling a visitor on hotel wifi that their request is not one
             // this share can serve is the message they would actually get.
-            let reply = match e.kind() {
-                std::io::ErrorKind::TimedOut => timed_out_response(),
-                _ if is_box_stall(&e) => unreachable_box_response(),
-                _ => gate::refusal_response(gate::Refusal::Malformed),
-            };
-            if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
-                to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
+            match box_write_failure(&e) {
+                // The box closed its read side. It has almost certainly already
+                // written the answer that explains why — a `413`, a `401` — so
+                // stop sending and go and read it, exactly as the
+                // `Content-Length` path does. Answering `400` here told the
+                // visitor their request was malformed when it was not, and
+                // threw the box's real answer away.
+                Some(false) => {}
+                Some(true) => {
+                    return refuse_the_response(
+                        &mut peer_w,
+                        unreachable_box_response(),
+                        to_peer,
+                    )
+                    .await
+                }
+                None => {
+                    let reply = if e.kind() == std::io::ErrorKind::TimedOut {
+                        timed_out_response()
+                    } else {
+                        gate::refusal_response(gate::Refusal::Malformed)
+                    };
+                    return refuse_the_response(&mut peer_w, reply, to_peer).await;
+                }
             }
-            let _ = peer_w.shutdown().await;
-            return Ok(());
         }
         from_rest = rest_from_client.len();
     } else {
@@ -431,7 +461,7 @@ where
                 return Ok(());
             }
             if let Err(e) = write_to_box(&mut up_w, &buf[..n]).await {
-                if is_box_stall(&e) {
+                if box_write_failure(&e) == Some(true) {
                     return refuse_the_response(
                         &mut peer_w,
                         unreachable_box_response(),
@@ -1375,6 +1405,29 @@ mod response_tests {
         assert!(has_no_body("HEAD", b"HTTP/1.1 200 OK\r\nContent-Length: 9000\r\n\r\n"));
         assert!(has_no_body("head", b"HTTP/1.1 200 OK\r\n\r\n"));
         assert!(!has_no_body("GET", b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n"));
+    }
+
+    #[test]
+    fn a_box_that_stalled_and_a_box_that_hung_up_are_told_apart() {
+        // They call for opposite handling: a stalled box is wedged and the
+        // visitor gets a `502`, a closed one has already written the answer
+        // that explains itself — a `413`, a `401` — and the right move is to go
+        // and read it rather than invent one.
+        let stalled = std::io::Error::other(BoxWrite { stalled: true });
+        let closed = std::io::Error::other(BoxWrite { stalled: false });
+        assert_eq!(box_write_failure(&stalled), Some(true));
+        assert_eq!(box_write_failure(&closed), Some(false));
+        // And a failure that was not a write to the box is neither. An earlier
+        // version signalled this with `ErrorKind::BrokenPipe`, which the kernel
+        // also produces, so a peer's own disconnect could be read as the box's.
+        assert_eq!(
+            box_write_failure(&std::io::Error::from(std::io::ErrorKind::BrokenPipe)),
+            None
+        );
+        assert_eq!(
+            box_write_failure(&std::io::Error::from(std::io::ErrorKind::TimedOut)),
+            None
+        );
     }
 
     #[test]
