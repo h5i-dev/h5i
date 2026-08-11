@@ -149,7 +149,21 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
                 })
                 .collect();
             if json {
-                let out: Vec<_> = rows.iter().map(|(_, s)| s).collect();
+                // With the box's name and whether anything is actually serving.
+                // The record alone carries neither: a consumer could not tell a
+                // running share from one left by a crash — the human view says
+                // "GONE" for that and the JSON said nothing — and could not map
+                // a row back to a name to act on it.
+                let out: Vec<_> = rows
+                    .iter()
+                    .map(|(m, s)| {
+                        serde_json::json!({
+                            "name": m.slug,
+                            "live": h5i_share::session::is_live(s),
+                            "share": s,
+                        })
+                    })
+                    .collect();
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else if rows.is_empty() {
                 println!("No box on this clone is being shared.");

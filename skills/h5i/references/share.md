@@ -34,7 +34,8 @@ cannot be reproduced.
 
 ```bash
 h5i box share status <name>          # the endpoint and every grant
-h5i box share ls                     # what is shared on this clone
+h5i box share ls                     # this clone's share records
+h5i box share ls --json              # the same, with `name` and `live` per row
 h5i box share grant <name> --label sam   # a second ticket (--tunnel shares only)
 h5i box share revoke <name> <grant>  # cut off one peer
 h5i box share stop <name>            # end it

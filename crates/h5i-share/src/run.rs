@@ -94,9 +94,16 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
     // a port that is not up yet.
     let warning = match dialer.connect() {
         Ok(_) => None,
-        Err(_) => Some(format!(
+        // The reason is carried through rather than assumed. "Nothing is
+        // listening yet" is the overwhelmingly common cause and the only one
+        // worth advice, but it is not the only way this fails — the helper can
+        // have failed to enter the namespace, or the channel can have been
+        // retired — and telling somebody to start their dev server when the
+        // dev server is not the problem is an afternoon spent in the wrong
+        // place.
+        Err(e) => Some(format!(
             "nothing is listening on port {} inside the box yet — peers will get an error \
-             until the dev server starts",
+             until the dev server starts ({e})",
             req.port
         )),
     };
