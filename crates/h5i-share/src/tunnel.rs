@@ -587,18 +587,31 @@ mod tests {
                 "{what}: the request line was rewritten"
             );
 
-            // Every header the client sent arrives, byte for byte, except the
-            // two the proxy owns.
-            for l in &sent_lines[1..] {
+            // Compared as a *sequence*, not as a set. Two `contains` loops
+            // caught a dropped or re-cased header and nothing else: mutating
+            // the rewrite to emit every header twice, or in reverse order,
+            // left both of them green. Duplication is the worse miss — a
+            // rewrite that doubled a `Content-Length` is the smuggling shape
+            // this crate spends most of its budget refusing.
+            let owned = |l: &&str| {
                 let name = l.split(':').next().unwrap_or("").to_ascii_lowercase();
-                if name == "cookie" || name == "connection" {
-                    continue;
-                }
-                assert!(
-                    arrived_lines.contains(l),
-                    "{what}: `{l}` did not reach the box. Got: {arrived_lines:?}"
-                );
-            }
+                name == "cookie" || name == "connection"
+            };
+            let expected: Vec<&str> = sent_lines[1..]
+                .iter()
+                .copied()
+                .filter(|l| !owned(l))
+                .collect();
+            let actual: Vec<&str> = arrived_lines[1..]
+                .iter()
+                .copied()
+                .filter(|l| !owned(l))
+                .collect();
+            assert_eq!(
+                actual, expected,
+                "{what}: the headers the box saw are not the headers the client sent, \
+                 in the order it sent them"
+            );
 
             // The cookie arrives with ours taken out and the app's left alone.
             let cookie = arrived_lines
@@ -613,18 +626,16 @@ mod tests {
             );
             assert!(cookie.contains("other=1"), "{what}: {cookie}");
 
-            // And nothing was invented: the only header the proxy adds is the
-            // one that ends the connection.
-            for l in &arrived_lines[1..] {
-                let name = l.split(':').next().unwrap_or("").to_ascii_lowercase();
-                if name == "connection" || name == "cookie" {
-                    continue;
-                }
-                assert!(
-                    sent_lines.contains(l),
-                    "{what}: the box saw `{l}`, which the client never sent"
-                );
-            }
+            // And exactly one of each header the proxy owns, rather than one
+            // more than it started with.
+            let count = |name: &str, lines: &[&str]| {
+                lines
+                    .iter()
+                    .filter(|l| l.split(':').next().unwrap_or("").eq_ignore_ascii_case(name))
+                    .count()
+            };
+            assert_eq!(count("connection", &arrived_lines), 1, "{what}");
+            assert_eq!(count("cookie", &arrived_lines), 1, "{what}");
         }
 
         serving.abort();
@@ -706,6 +717,31 @@ mod tests {
         assert!(got.contains("Connection: close"), "{got}");
         assert!(!got.to_ascii_lowercase().contains("keep-alive"), "{got}");
 
+        // The reverse direction, which the first version of this test did not
+        // have: a proxy that replaced the head with a canned one carrying the
+        // eight strings above would have passed it. Every header the visitor
+        // received has to be one the box sent, or one this proxy owns.
+        let sent_names = [
+            "content-type",
+            "content-length",
+            "cache-control",
+            "etag",
+            "x-frame-options",
+            "set-cookie",
+            "vary",
+            "connection",
+        ];
+        for line in got.split("\r\n").skip(1) {
+            if line.is_empty() {
+                break;
+            }
+            let name = line.split(':').next().unwrap_or("").to_ascii_lowercase();
+            assert!(
+                sent_names.contains(&name.as_str()),
+                "the visitor received `{line}`, which the box never sent"
+            );
+        }
+
         serving.abort();
     }
 
@@ -777,9 +813,21 @@ mod tests {
         bridge.write_receipt();
         let receipt = receipt_of(dir.path());
         assert!(receipt.contains(&format!("{N} connections")), "{receipt}");
+        // Deliberately not asserting per-connection bytes: the receipt renders
+        // one line per *peer* with aggregate counts, and all forty of these
+        // are one peer — so one connection reporting and thirty-nine
+        // reporting nothing produces an identical line. The first version of
+        // this test claimed otherwise. What is checkable is that the aggregate
+        // is too large to have come from one of them.
+        let out: u64 = receipt
+            .split(" in / ")
+            .nth(1)
+            .and_then(|r| r.split(' ').next())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0);
         assert!(
-            !receipt.contains(" 0 out"),
-            "a revoked connection reported nothing: {receipt}"
+            out >= 10 * N as u64,
+            "the aggregate is too small for {N} connections that each got ten bytes: {receipt}"
         );
 
         drop(held);

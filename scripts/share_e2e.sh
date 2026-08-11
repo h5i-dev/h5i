@@ -255,6 +255,62 @@ AFTER=$(receipts)
 [ "$AFTER" -gt "$BEFORE" ] && pass "the receipt survived an interrupt mid-teardown" || fail "an interrupt during the teardown lost the receipt"
 grep -q "interrupted again" "$WORK/s3.log" && fail "a first interrupt was treated as a second" || pass "and was not called a second interrupt"
 
+# ── the sharer disappears mid-download ──────────────────────────────────────
+
+say "the sharer vanishes while somebody is downloading"
+# Not a graceful stop: `kill -9` on the serving process, which is what a laptop
+# lid or an OOM kill looks like. The visitor is mid-transfer. What they must not
+# get is a hang — a browser spinning on a connection nobody will ever answer is
+# the worst of the three possible endings.
+setsid "$H5I" box share "$BOX" --port $PORT --expire 10m > "$WORK/v.log" 2>&1 &
+sleep 12
+VT=$(grep -o 'h5i1_[A-Za-z0-9_-]*' "$WORK/v.log" | head -1)
+"$H5I" join "$VT" --port 8951 > "$WORK/vjoin.log" 2>&1 &
+VJ=$!
+sleep 8
+VTOK=$(grep -o 'h5i=[a-f0-9]*' "$WORK/vjoin.log" | head -1 | cut -d= -f2)
+VP=$(share_pid)
+
+# A download slow enough that the kill lands in the middle of it.
+( curl -s -b "h5i_share_8951=$VTOK" --limit-rate 60k -o "$WORK/partial.bin"     --max-time 120 "http://127.0.0.1:8951/" ; echo "curl=$?" > "$WORK/curl.rc" ) &
+sleep 4
+kill -9 "$VP" 2>/dev/null
+
+# The client has to come back. Sixty seconds is far more than any of the
+# proxy's own deadlines, so anything still running at that point is a hang.
+for _ in $(seq 1 120); do
+  [ -f "$WORK/curl.rc" ] && break
+  sleep 0.5
+done
+if [ -f "$WORK/curl.rc" ]; then
+  pass "the visitor's client returned rather than hanging ($(cat "$WORK/curl.rc"))"
+else
+  fail "the visitor's client was still waiting a minute after the sharer died"
+fi
+# Deliberately not asserted: whether the body arrived whole. That is a race
+# between the rate limit and the kill, not a property — a sharer killed after
+# the bytes were already delivered has delivered them, and asserting otherwise
+# pins how fast this machine happens to be. What matters is the two endings:
+# the client comes back, and the joiner does not sit there offering a share
+# with nothing behind it.
+
+# And the joiner notices, rather than sitting there offering a dead share.
+for _ in $(seq 1 60); do
+  joiner_dead=1
+  kill -0 "$VJ" 2>/dev/null && joiner_dead=0
+  [ "$joiner_dead" = 1 ] && break
+  sleep 0.5
+done
+if kill -0 "$VJ" 2>/dev/null; then
+  fail "the joiner is still running with no sharer behind it"
+  kill "$VJ" 2>/dev/null
+else
+  pass "the joiner noticed and exited"
+fi
+grep -qi "share" "$WORK/vjoin.log" && pass "and said something about it"   || fail "the joiner exited silently"
+
+"$H5I" box share stop "$BOX" --force >/dev/null 2>&1
+
 # ── descriptors and memory, under sustained use ─────────────────────────────
 
 if [ "$WITH_LEAK" = "1" ]; then

@@ -600,8 +600,10 @@ otherwise sharing it would publish whatever happened to be listening on the
 host, so <code>h5i box share</code> refuses rather than guessing. macOS boxes bind the
 host's loopback, so it refuses there too, and says which reason it is.</p>
 <p>A box has a network of its own when it is running and either at the
-<code>supervised</code> or <code>container</code> tier, or at <code>process</code> with a profile that denies
-egress. It does not at <code>workspace</code>, or at <code>process</code> with a profile that grants
+<code>supervised</code> or <code>container</code> tier. A <code>process</code>-tier box with a profile that
+denies egress gets a namespace too, but an empty one: no loopback comes up in
+it, so nothing inside can reach even itself, and <code>h5i box share</code> refuses it
+rather than minting a ticket that can never move a byte. It does not at <code>workspace</code>, or at <code>process</code> with a profile that grants
 egress, because both share the host's network.</p>
 <h4 id="the-ticket-is-the-whole-access-model">The ticket is the whole access model</h4>
 <p>A ticket names one box, one port, one grant and an expiry, and carries a

@@ -1423,14 +1423,6 @@ fn unfinished_response() -> String {
     )
 }
 
-/// Is every line ending in this head a CRLF, and is every header line a header
-/// rather than a continuation of one?
-///
-/// Both rules are the request side's, for the request side's reason: a line
-/// this proxy reads as one thing and the visitor's browser reads as two is a
-/// header walking past the filters. Obs-fold is the second door — `header_name`
-/// trims, so a folded continuation matches a filter and gets dropped, or
-/// survives a dropped line and reattaches itself to the header above.
 /// `HTTP/<d>.<d> <3 digits>`, and then whatever reason phrase it likes.
 ///
 /// A `starts_with(b"HTTP/")` test was the first attempt and it is not the same
@@ -1462,6 +1454,14 @@ fn is_status_line(l: &[u8]) -> bool {
     version_ok && status.len() == 3 && status.iter().all(|b| b.is_ascii_digit())
 }
 
+/// Is every line ending in this head a CRLF, and is every header line a header
+/// rather than a continuation of one?
+///
+/// Both rules are the request side's, for the request side's reason: a line
+/// this proxy reads as one thing and the visitor's browser reads as two is a
+/// header walking past the filters. Obs-fold is the second door — `header_name`
+/// trims, so a folded continuation matches a filter and gets dropped, or
+/// survives a dropped line and reattaches itself to the header above.
 fn head_is_well_formed(head: &[u8]) -> bool {
     // It has to be a response at all. The sanitiser rebuilds a head by dropping
     // the lines a filter rejects, and it drops empty ones — so a box whose

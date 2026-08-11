@@ -94,6 +94,26 @@ pub struct Request {
 /// absent `Origin` is allowed — that is an ordinary navigation, which is how
 /// every visitor arrives.
 fn is_cross_origin(headers: &[&str], host: Option<&str>) -> bool {
+    // `Sec-Fetch-Site` first, because `Origin` is not sent at all on a
+    // subresource GET — which is the shape the check was written for and did
+    // not stop. `<img src="http://127.0.0.1:8899/api/reset">` on a page served
+    // by the share next door puts the credential on the wire with no `Origin`
+    // header anywhere, and it was served. Every browser that has service
+    // workers has this header too, so the two arrived together.
+    if let Some(site) = header(headers, "sec-fetch-site") {
+        return match site.trim() {
+            // The share's own page, or a user-initiated load: typed, clicked
+            // from a bookmark, or opened from the address bar.
+            "same-origin" | "none" => false,
+            // Anything else is another page driving this one. A *navigation*
+            // is still allowed, because that is how every visitor arrives:
+            // the invite link is followed from a chat window, which is
+            // cross-site by construction. A navigation loads a document into
+            // the address bar, where the person can see where they are; a
+            // subresource does not.
+            _ => !is_a_navigation(headers),
+        };
+    }
     let Some(origin) = header(headers, "origin") else {
         return false;
     };
@@ -108,6 +128,19 @@ fn is_cross_origin(headers: &[&str], host: Option<&str>) -> bool {
         // No `Host` to compare against is itself a request no browser makes.
         None => true,
     }
+}
+
+/// A top-level navigation, as the fetch metadata describes it.
+///
+/// Both halves are required. `Sec-Fetch-Mode: navigate` alone is also sent for
+/// an `<iframe>` and for a prefetch; pairing it with `Sec-Fetch-Dest: document`
+/// is what narrows it to the address bar. An `<iframe>` of this share from
+/// another page is `dest: iframe`, and is refused — a framed share is not
+/// something a visitor can see the address of.
+fn is_a_navigation(headers: &[&str]) -> bool {
+    let mode = header(headers, "sec-fetch-mode").map(str::trim);
+    let dest = header(headers, "sec-fetch-dest").map(str::trim);
+    mode == Some("navigate") && dest == Some("document")
 }
 
 /// Is this request trying to register a service worker?
@@ -638,6 +671,67 @@ mod origin_tests {
     }
 
     #[test]
+    fn a_subresource_from_the_share_next_door_is_refused() {
+        // The shape the `Origin` check missed entirely. Browsers send no
+        // `Origin` on a subresource GET, so
+        // `<img src="http://127.0.0.1:8899/api/reset">` on a page served by
+        // another share put the credential on the wire with no `Origin`
+        // anywhere — and was served. Routes like `/reset`, `/logout` and
+        // `/delete?id=` are exactly what agent-written demo apps are full of.
+        let img = req(
+            "Sec-Fetch-Site: same-site\r\nSec-Fetch-Mode: no-cors\r\nSec-Fetch-Dest: image\r\n",
+        )
+        .expect("parses");
+        assert!(img.cross_origin);
+
+        // A cross-site subresource too, and a framed one — a share inside
+        // somebody else's iframe is not something a visitor can see the
+        // address of.
+        let far =
+            req("Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Dest: empty\r\n")
+                .expect("parses");
+        assert!(far.cross_origin);
+        let framed = req(
+            "Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: iframe\r\n",
+        )
+        .expect("parses");
+        assert!(framed.cross_origin);
+    }
+
+    #[test]
+    fn the_invite_link_still_works_from_wherever_it_was_sent() {
+        // The other direction, and the one that breaks the feature if it is
+        // wrong. The invite is followed from a chat window, which is
+        // cross-site by construction — refusing it would refuse every visitor
+        // at the front door.
+        let from_chat =
+            req("Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: document\r\n")
+                .expect("parses");
+        assert!(!from_chat.cross_origin);
+
+        // Typed, or opened from a bookmark.
+        let typed =
+            req("Sec-Fetch-Site: none\r\nSec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: document\r\n")
+                .expect("parses");
+        assert!(!typed.cross_origin);
+
+        // And the share's own page fetching its own assets.
+        let own =
+            req("Sec-Fetch-Site: same-origin\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Dest: empty\r\n")
+                .expect("parses");
+        assert!(!own.cross_origin);
+
+        // A client that sends no fetch metadata at all falls back to the
+        // `Origin` rule, which is what `curl` and every older browser do.
+        assert!(!req("").expect("parses").cross_origin);
+        assert!(
+            req("Origin: http://127.0.0.1:8900\r\n")
+                .expect("parses")
+                .cross_origin
+        );
+    }
+
+    #[test]
     fn a_tunnel_share_is_not_foreign_to_itself() {
         // Cloudflare terminates TLS, so the app's own requests arrive with an
         // `https` origin and an unschemed `Host`. Comparing schemes would
@@ -700,15 +794,44 @@ mod fuzz_tests {
         let mut parsed = 0usize;
         let mut with_cookie = 0usize;
         let mut with_framing = 0usize;
+        // Counted before `parse` runs, because that is the only place the
+        // both-framings shape exists: the parser's job is to refuse it.
+        let mut both_framings = 0usize;
+        let mut both_parsed = 0usize;
         for i in 0..rounds() {
             let seed = rng.next();
             let mut one = Rng::new(seed);
             let head = request_head(&mut one);
             let ctx = || format!("round {i}, seed {seed:#x}, head {head:?}");
 
+            // Matched on the header *name*, not on the text appearing
+            // anywhere: the first version of this counted a header called
+            // `007Content-Length` as a `Content-Length`, reported that a head
+            // carrying both framings had been accepted, and the parser had
+            // been right all along.
+            let named = |want: &str| {
+                head.split("\r\n").skip(1).any(|l| {
+                    l.split_once(':')
+                        .is_some_and(|(k, _)| k.eq_ignore_ascii_case(want))
+                })
+            };
+            let offers_both = named("content-length")
+                && head.split("\r\n").skip(1).any(|l| {
+                    l.split_once(':').is_some_and(|(k, v)| {
+                        k.eq_ignore_ascii_case("transfer-encoding")
+                            && v.split(',')
+                                .any(|t| t.trim().eq_ignore_ascii_case("chunked"))
+                    })
+                });
+            if offers_both {
+                both_framings += 1;
+            }
             let Some(req) = parse(&head, COOKIE) else {
                 continue;
             };
+            if offers_both {
+                both_parsed += 1;
+            }
             parsed += 1;
             if req.chunked || req.content_length.is_some() {
                 with_framing += 1;
@@ -717,14 +840,12 @@ mod fuzz_tests {
                 with_cookie += 1;
             }
 
-            // A request cannot be both framings at once. Downstream picks one
-            // and reads exactly that many bytes, so an input that sets both is
-            // an input two parsers can disagree about.
-            assert!(
-                !(req.chunked && req.content_length.is_some()),
-                "both framings survived parse: {}",
-                ctx()
-            );
+            // Not asserted here: that a parsed request never carries both
+            // framings. `parse` returns `None` for exactly that combination,
+            // so after a successful parse the conjunction is unreachable — for
+            // any corpus, forever. It read as coverage of the crate's central
+            // property and was a tautology. The property is real and is
+            // checked where it can fail, on the *rejection* side, below.
 
             let out = rewrite_for_upstream(&head, &req, COOKIE);
 
@@ -801,8 +922,20 @@ mod fuzz_tests {
         );
         assert!(
             with_framing * 500 > n,
-            "almost nothing declared a body length, so the two-framings assertion had \
-             nothing to work on: {counts}"
+            "almost nothing declared a body length, so nothing exercised the framing \
+             arithmetic: {counts}"
+        );
+        // The property the tautology above was pretending to check: a head
+        // carrying both framings is *refused*, rather than parsed into
+        // something a downstream parser could read differently.
+        assert!(
+            both_framings > 0,
+            "no head carried both a length and a chunked encoding, so the one shape \
+             two parsers disagree about was never offered: {counts}"
+        );
+        assert_eq!(
+            both_parsed, 0,
+            "a head carrying both framings was accepted: {counts}"
         );
         assert!(
             with_cookie * 500 > n,

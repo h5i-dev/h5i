@@ -574,7 +574,13 @@ async fn serve_stream(
                 // chasing something that is not the problem — and recorded,
                 // because otherwise a share where the dev server was down reads
                 // as one nobody ever tried to use.
-                let _ = send.write_all(&[wire::REPLY_UNREACHABLE]).await;
+                let code = if e.to_string().contains("dialer") || e.to_string().contains("loopback")
+                {
+                    wire::REPLY_ROUTE_BROKEN
+                } else {
+                    wire::REPLY_UNREACHABLE
+                };
+                let _ = send.write_all(&[code]).await;
                 let _ = send.finish();
                 return Err(e);
             }
@@ -685,6 +691,8 @@ pub enum OpenError {
     Refused,
     /// The ticket was fine; the box had nothing listening on the shared port.
     Unreachable,
+    /// The ticket was fine and h5i could not reach the box at all.
+    RouteBroken,
     /// Something below the handshake went wrong.
     Transport(String),
 }
@@ -696,6 +704,12 @@ impl std::fmt::Display for OpenError {
                 f,
                 "the share is already carrying as many connections as it will. Nothing is wrong \
                  with your ticket — wait a moment and reload."
+            ),
+            OpenError::RouteBroken => write!(
+                f,
+                "the share is up and h5i cannot reach inside the box any more. Nothing is \
+                 wrong with your ticket and nothing is wrong with their dev server — whoever \
+                 shared it needs to restart the share."
             ),
             OpenError::Refused => write!(
                 f,
@@ -783,6 +797,7 @@ pub async fn open_stream(
         wire::REPLY_OK => Ok((send, recv)),
         wire::REPLY_BUSY => Err(OpenError::Busy),
         wire::REPLY_UNREACHABLE => Err(OpenError::Unreachable),
+        wire::REPLY_ROUTE_BROKEN => Err(OpenError::RouteBroken),
         _ => Err(OpenError::Refused),
     }
 }
@@ -840,6 +855,7 @@ pub async fn verify_ticket(conn: &Connection, secret: &str) -> Result<(), OpenEr
         wire::REPLY_OK => Ok(()),
         wire::REPLY_BUSY => Err(OpenError::Busy),
         wire::REPLY_UNREACHABLE => Err(OpenError::Unreachable),
+        wire::REPLY_ROUTE_BROKEN => Err(OpenError::RouteBroken),
         _ => Err(OpenError::Refused),
     }
 }

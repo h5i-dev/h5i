@@ -230,6 +230,10 @@ async fn handle(
 fn check_outcome(r: Result<(), crate::p2p::OpenError>) -> Result<Option<String>, H5iError> {
     match r {
         Ok(()) => Ok(None),
+        // The route into the box is broken on the sharer's side. Not fatal to
+        // the join — a restarted share on the same ticket would work — but
+        // worth saying up front rather than letting the first page load say it.
+        Err(e @ crate::p2p::OpenError::RouteBroken) => Ok(Some(format!("{e}"))),
         // Refused is the only answer about the ticket itself, so it is the only
         // one that stops the command. Busy and unreachable are both conditions
         // that clear on their own — the share fills up and empties again, the
@@ -286,6 +290,12 @@ mod tests {
         let err = check_outcome(Err(OpenError::Transport("gone".into())))
             .expect_err("an unusable connection is fatal");
         assert!(format!("{err}").contains("gone"), "{err}");
+
+        // And a broken route says so instead of blaming their dev server.
+        let broken = check_outcome(Err(OpenError::RouteBroken)).expect("not fatal");
+        let said = broken.expect("a warning");
+        assert!(said.contains("cannot reach inside the box"), "{said}");
+        assert!(!said.contains("start their dev server"), "{said}");
 
         let busy = check_outcome(Err(OpenError::Busy)).expect("busy is not fatal");
         assert!(busy.expect("a warning").contains("as many connections"));

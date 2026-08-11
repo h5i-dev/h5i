@@ -87,6 +87,13 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
     // Before the runtime. See the module note; this is the whole reason this
     // function is not simply `async`.
     let dialer = Dialer::spawn(req.box_pid, req.port)?;
+    // Which namespace the helper went into, so the share can notice if the box
+    // later gets a different one. Read here rather than inside the loop: after
+    // the fork this is a fact about what we are pinned to, not about what the
+    // box happens to have now.
+    let pinned_netns = std::fs::read_link(format!("/proc/{}/ns/net", req.box_pid))
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned());
 
     // A share of a port with nothing behind it is almost always a mistake, and
     // the peer is the one who would find out. Warn rather than refuse: an agent
@@ -94,6 +101,23 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
     // a port that is not up yet.
     let warning = match dialer.connect() {
         Ok(_) => None,
+        // Refused, not warned. This box's namespace has no loopback, so
+        // nothing inside it can reach itself and no ticket minted here will
+        // ever move a byte — the share would start, print an invite, and leave
+        // both people reading messages about a dev server that is running
+        // fine. `process` with a profile that denies egress is exactly this
+        // shape, and it is a configuration the docs used to recommend.
+        Err(e) if e.no_loopback() => {
+            // The inner error's own text, not its `Display`: wrapping one
+            // `H5iError` in another prints "Metadata error: Metadata error:".
+            let H5iError::Metadata(said) = e.into_inner() else {
+                return Err(H5iError::Metadata("this box cannot be shared".into()));
+            };
+            return Err(H5iError::Metadata(format!(
+                "{said}\n   Share a box at the `supervised` or `container` tier instead: those \
+                 get a network of their own *and* a loopback to go with it."
+            )));
+        }
         // The reason is carried through rather than assumed. "Nothing is
         // listening yet" is the overwhelmingly common cause and the only one
         // worth advice, but it is not the only way this fails — the helper can
@@ -123,7 +147,8 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
         .build()
         .map_err(|e| H5iError::Metadata(format!("could not start the share runtime: {e}")))?;
 
-    let out = runtime.block_on(async move { serve_async(req, dialer, warning, announce).await });
+    let out = runtime
+        .block_on(async move { serve_async(req, dialer, warning, pinned_netns, announce).await });
     // Not a plain drop. `open_upstream` runs under `spawn_blocking`, blocking
     // tasks are never cancelled, and the dialer's reply is bounded only by
     // `CONNECT_TIMEOUT` — so a dev server that accepts nothing meant this
@@ -137,6 +162,7 @@ async fn serve_async(
     req: Request,
     dialer: Dialer,
     warning: Option<String>,
+    pinned_netns: Option<String>,
     announce: impl FnOnce(&Started),
 ) -> Result<(), H5iError> {
     let expires_at = (chrono::Utc::now()
@@ -204,7 +230,7 @@ async fn serve_async(
             eprintln!("share: {reason}");
             (Ok(()), false)
         }
-        reason = box_went_away(req.env_dir.clone()) => {
+        reason = box_went_away(req.env_dir.clone(), pinned_netns.clone()) => {
             eprintln!("share: {reason}");
             (Ok(()), false)
         }
@@ -402,7 +428,7 @@ async fn stopped_elsewhere(bridge: Arc<Bridge>) -> String {
 /// rather than failing in a way anybody would notice. Left alone, a share whose
 /// box died answers `502` forever, and a box restarted afterwards gets a *new*
 /// namespace that this share will never reach. So the share ends, and says why.
-async fn box_went_away(env_dir: PathBuf) -> String {
+async fn box_went_away(env_dir: PathBuf, pinned: Option<String>) -> String {
     loop {
         tokio::time::sleep(BOX_POLL).await;
         if h5i_core::env::live_sessions(&env_dir).is_empty() {
@@ -410,7 +436,36 @@ async fn box_went_away(env_dir: PathBuf) -> String {
                     (start a session and share again)"
                 .to_string();
         }
+        // "Is there *any* session" was the whole test, and it is not the
+        // question. Every session of a box gets a brand-new network namespace,
+        // and the dialer is pinned to the one that existed at startup — so a
+        // person who exits their shell and starts another, or who has a
+        // read-only observer attached while they restart, leaves this loop
+        // quiet and the share pinned to a namespace nothing is in. `share ls`
+        // reported it healthy; the visitor was told to ask the sharer to start
+        // a dev server that was already running; and the fix — restart the
+        // share — was undiscoverable from either terminal.
+        if let (Some(want), Some(now)) = (&pinned, current_netns(&env_dir)) {
+            if *want != now {
+                return "the box restarted, so it has a new network namespace and this share \
+                        is pinned to the old one. Nothing it serves can reach the box any \
+                        more — start a fresh share."
+                    .to_string();
+            }
+        }
     }
+}
+
+/// The identity of the network namespace the box's session is in right now.
+///
+/// `/proc/<pid>/ns/net` reads as `net:[4026536311]`, and that number changes
+/// with every session, which is exactly what makes it usable as "is this still
+/// the box I forked into".
+fn current_netns(env_dir: &std::path::Path) -> Option<String> {
+    let pid = h5i_core::view::box_pid(env_dir)?;
+    std::fs::read_link(format!("/proc/{pid}/ns/net"))
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// The transport, once it is running. Kept as an enum rather than a trait

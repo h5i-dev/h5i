@@ -405,8 +405,10 @@ host, so `h5i box share` refuses rather than guessing. macOS boxes bind the
 host's loopback, so it refuses there too, and says which reason it is.
 
 A box has a network of its own when it is running and either at the
-`supervised` or `container` tier, or at `process` with a profile that denies
-egress. It does not at `workspace`, or at `process` with a profile that grants
+`supervised` or `container` tier. A `process`-tier box with a profile that
+denies egress gets a namespace too, but an empty one: no loopback comes up in
+it, so nothing inside can reach even itself, and `h5i box share` refuses it
+rather than minting a ticket that can never move a byte. It does not at `workspace`, or at `process` with a profile that grants
 egress, because both share the host's network.
 
 #### The ticket is the whole access model

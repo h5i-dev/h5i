@@ -73,6 +73,14 @@ pub const REPLY_BUSY: u8 = 2;
 /// sharer's problem to fix, and a peer told "your ticket was refused" will go
 /// and ask for a new one that works no better.
 pub const REPLY_UNREACHABLE: u8 = 3;
+/// The ticket was fine and h5i itself could not reach the box — the dialer is
+/// gone, retired, or the namespace has no loopback. Distinct from
+/// [`REPLY_UNREACHABLE`] for the third time in the same argument: that one is a
+/// sentence about the sharer's dev server, and this is a sentence about h5i.
+/// The receipt learned to tell them apart a few rounds ago; the wire could not,
+/// so the joiner's browser still said "whoever shared it needs to start their
+/// dev server" while the sharer's terminal said the dialer had died.
+pub const REPLY_ROUTE_BROKEN: u8 = 4;
 
 /// Build the greeting a joiner sends.
 pub fn encode_hello(secret: &str) -> Option<[u8; HELLO_LEN]> {

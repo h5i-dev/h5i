@@ -156,7 +156,15 @@ pub fn export(
     };
 
     let report_path = out.join("report.md");
-    std::fs::write(&report_path, report(m, &summary, &records, &brief).as_bytes())
+    // Read straight off disk rather than plumbed in: this crate is below
+    // `h5i-share`, and the one fact needed here — is a live process serving
+    // this box right now — is a two-line read of a file that sits beside the
+    // receipt log.
+    let live_share = live_share_pid(&m.dir(h5i_root));
+    std::fs::write(
+        &report_path,
+        report(m, &summary, &records, &brief, live_share.as_deref()).as_bytes(),
+    )
         .map_err(|e| H5iError::with_path(e, &report_path))?;
 
     Ok(summary)
@@ -165,11 +173,31 @@ pub fn export(
 /// The human half of the bundle: what this box was, what it changed, and every
 /// command it ran. Written from the identity-validated manifest and the
 /// receipts, never from anything the box wrote into `$WORK`.
+/// The pid of a process serving a share of this box, if one is.
+///
+/// Deliberately not a dependency on `h5i-share`: this crate is below it. The
+/// file is `<env>/share.json`, a sibling of the receipt log, and the only
+/// fields read are the two that decide whether anything is serving.
+fn live_share_pid(env_dir: &Path) -> Option<String> {
+    let raw = std::fs::read(env_dir.join("share.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+    let pid = v.get("pid")?.as_u64()?;
+    #[cfg(unix)]
+    {
+        // The same test the share itself uses for "is this record live".
+        if pid == 0 || unsafe { libc::kill(pid as i32, 0) } != 0 {
+            return None;
+        }
+    }
+    Some(pid.to_string())
+}
+
 fn report(
     m: &EnvManifest,
     s: &ExportSummary,
     records: &[crate::receipt::ExecRecord],
     brief: &str,
+    live_share: Option<&str>,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!("# Export: {}\n\n", m.id));
@@ -306,6 +334,21 @@ fn report(
     // artifact from the one that exists. It was rendered as an ordinary row in
     // "What ran" — `h5i box share demo (port 3000, 1 peer(s), 600s)` — which
     // reads as a command the box happened to execute.
+    // A share that is *still running* has written no receipt — it writes one
+    // when it ends — so an export taken during a demo was silent about the box
+    // having been opened to somebody, which is the moment somebody is most
+    // likely to take one. The manual says an export "should not be silent
+    // about which one it came from"; taken mid-share, it was exactly that.
+    if live_share.is_some() {
+        out.push_str("\n## Shared with someone, right now\n\n");
+        out.push_str(
+            "**This box was being shared when this export was taken.** Somebody outside was \
+             able to reach a server inside it while this patch was being produced. The \
+             receipt for that session is written when the share ends, so it is not in this \
+             bundle — export again afterwards if you need the account of who connected.\n",
+        );
+    }
+
     let shares: Vec<_> = records.iter().filter(|r| r.source == "share").collect();
     if !shares.is_empty() {
         out.push_str("\n## Shared with someone\n\n");
@@ -426,7 +469,7 @@ mod tests {
             failed_requests: vec!["500 POST /api/save".into()],
             ..Default::default()
         };
-        let text = report(&manifest(), &summary(), &[record(Some(ev))], "brief");
+        let text = report(&manifest(), &summary(), &[record(Some(ev))], "brief", None);
 
         assert!(text.contains("## What the browser saw"), "{text}");
         assert!(text.contains("TypeError: cannot read 'boom' of null"), "{text}");
@@ -446,7 +489,7 @@ mod tests {
             verb: Some("snapshot".into()),
             ..Default::default()
         };
-        let text = report(&manifest(), &summary(), &[record(Some(clean))], "brief");
+        let text = report(&manifest(), &summary(), &[record(Some(clean))], "brief", None);
         assert!(text.contains("no console errors"), "{text}");
 
         // The distinction that matters: this one was never looked at, and the
@@ -456,8 +499,22 @@ mod tests {
             unavailable: true,
             ..Default::default()
         };
-        let text = report(&manifest(), &summary(), &[record(Some(blind))], "brief");
+        let text = report(&manifest(), &summary(), &[record(Some(blind))], "brief", None);
         assert!(text.contains("no browser available to observe"), "{text}");
+    }
+
+    #[test]
+    fn an_export_taken_during_a_share_says_the_share_is_still_open() {
+        // A live share has written no receipt yet, so an export taken during a
+        // demo said nothing at all about the box having been opened to
+        // somebody — and during a demo is when somebody takes one.
+        let text = report(&manifest(), &summary(), &[record(None)], "brief", Some("4242"));
+        assert!(text.contains("Shared with someone, right now"), "{text}");
+        assert!(text.contains("written when the share ends"), "{text}");
+
+        // And a box nobody is sharing does not grow the section.
+        let quiet = report(&manifest(), &summary(), &[record(None)], "brief", None);
+        assert!(!quiet.contains("right now"), "{quiet}");
     }
 
     #[test]
@@ -468,13 +525,13 @@ mod tests {
         let mut r = record(None);
         r.source = "share".into();
         r.cmd = Some("h5i box share demo --tunnel (port 3000, 1 peer(s), 600s)".into());
-        let text = report(&manifest(), &summary(), &[r], "brief");
+        let text = report(&manifest(), &summary(), &[r], "brief", None);
         assert!(text.contains("## Shared with someone"), "{text}");
         assert!(text.contains("terminates TLS"), "{text}");
         assert!(text.contains("raw_oid"), "{text}");
 
         // And a box nobody shared does not grow the section.
-        let text = report(&manifest(), &summary(), &[record(None)], "brief");
+        let text = report(&manifest(), &summary(), &[record(None)], "brief", None);
         assert!(!text.contains("## Shared with someone"), "{text}");
     }
 
@@ -483,7 +540,7 @@ mod tests {
         let mut r = record(None);
         r.source = "viewer".into();
         r.cmd = Some("h5i box view (human took control, 42s)".into());
-        let text = report(&manifest(), &summary(), &[r], "brief");
+        let text = report(&manifest(), &summary(), &[r], "brief", None);
 
         assert!(text.contains("## Viewer sessions"), "{text}");
         // The load-bearing sentence: some of what the agent claims to have
@@ -494,7 +551,7 @@ mod tests {
         let mut watched = record(None);
         watched.source = "viewer".into();
         watched.cmd = Some("h5i box view (agent, 42s)".into());
-        let text = report(&manifest(), &summary(), &[watched], "brief");
+        let text = report(&manifest(), &summary(), &[watched], "brief", None);
         assert!(text.contains("## Viewer sessions"), "{text}");
         assert!(!text.contains("A human took control"), "{text}");
     }
@@ -503,7 +560,7 @@ mod tests {
     fn a_run_that_never_touched_a_browser_gets_no_section() {
         // Most boxes are not browser boxes; they should not carry an empty
         // heading implying an inspection that never happened.
-        let text = report(&manifest(), &summary(), &[record(None)], "brief");
+        let text = report(&manifest(), &summary(), &[record(None)], "brief", None);
         assert!(!text.contains("What the browser saw"), "{text}");
     }
 }

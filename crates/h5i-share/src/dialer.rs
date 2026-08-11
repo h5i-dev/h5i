@@ -38,6 +38,11 @@ const STATUS_CONNECT_FAILED: u8 = 1;
 /// failures inside the helper (`EMFILE`, `ENETDOWN`), which are not facts about
 /// the user's dev server at all.
 const STATUS_CONNECT_STUCK: u8 = 2;
+/// There is no route to `127.0.0.1` at all — the box's network namespace has no
+/// loopback interface up. Nothing inside such a box can reach itself, so a
+/// share of it can never work, and it is worth its own status because the
+/// answer is not "start your dev server" but "this box cannot be shared".
+const STATUS_NO_LOOPBACK: u8 = 3;
 const STATUS_NO_NS: u8 = 2;
 const STATUS_SETNS: u8 = 3;
 /// The parent's request. One value, so there is nothing to parse.
@@ -128,6 +133,10 @@ impl Dialer {
 /// Why a dial failed.
 #[derive(Debug)]
 pub enum DialError {
+    /// The box's namespace has no loopback at all. Distinct from the two below
+    /// because it is not a transient condition and not the dev server's fault:
+    /// the box cannot be shared, and the answer is to use a different tier.
+    NoLoopback(H5iError),
     /// The route into the box worked and the port had nothing on it. A fact
     /// about the user's dev server, and the only one the receipt should report
     /// as such.
@@ -140,8 +149,14 @@ pub enum DialError {
 impl DialError {
     pub fn into_inner(self) -> H5iError {
         match self {
-            DialError::NothingListening(e) | DialError::Broken(e) => e,
+            DialError::NoLoopback(e) | DialError::NothingListening(e) | DialError::Broken(e) => e,
         }
+    }
+
+    /// The box cannot be shared at all, so the caller should refuse rather than
+    /// start something that will never move a byte.
+    pub fn no_loopback(&self) -> bool {
+        matches!(self, DialError::NoLoopback(_))
     }
 
     pub fn nothing_listening(&self) -> bool {
@@ -152,7 +167,9 @@ impl DialError {
 impl std::fmt::Display for DialError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DialError::NothingListening(e) | DialError::Broken(e) => write!(f, "{e}"),
+            DialError::NoLoopback(e) | DialError::NothingListening(e) | DialError::Broken(e) => {
+                write!(f, "{e}")
+            }
         }
     }
 }
@@ -335,6 +352,15 @@ impl Dialer {
                     self.port
                 ))))
             }
+            (Some(STATUS_NO_LOOPBACK), got) => {
+                close_stray(got);
+                Err(DialError::NoLoopback(H5iError::Metadata(format!(
+                    "this box's network namespace has no loopback interface, so nothing inside \
+                     it can reach 127.0.0.1:{} — not even the box itself. A share of it cannot \
+                     work.",
+                    self.port
+                ))))
+            }
             (Some(STATUS_CONNECT_STUCK), got) => {
                 close_stray(got);
                 Err(DialError::Broken(H5iError::Metadata(format!(
@@ -467,14 +493,13 @@ fn helper_main(box_pid: Option<u32>, port: u16, sock: i32) -> i32 {
             // channel-protocol failures and a wedged dev server was still
             // filed as an absent one.
             Err(e) => {
-                let refused = matches!(
-                    e.kind(),
-                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::AddrNotAvailable
-                );
-                let status = if refused {
-                    STATUS_CONNECT_FAILED
-                } else {
-                    STATUS_CONNECT_STUCK
+                let status = match e.kind() {
+                    std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::AddrNotAvailable => STATUS_CONNECT_FAILED,
+                    // `ENETUNREACH`. A namespace with no `lo` up gives this for
+                    // every address including its own loopback.
+                    std::io::ErrorKind::NetworkUnreachable => STATUS_NO_LOOPBACK,
+                    _ => STATUS_CONNECT_STUCK,
                 };
                 send_status(sock, status, None);
             }

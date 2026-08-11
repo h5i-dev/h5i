@@ -693,7 +693,7 @@ h5i join <ticket> [--port N]                     # the other machine
 
 #### 5.11.1 What shipped, and what it cost to be honest about
 
-`crates/h5i-share/`, ~11k lines with 178 tests, behind a default-on `share`
+`crates/h5i-share/`, ~12k lines with 187 tests, behind a default-on `share`
 feature on the binary and a default-on `p2p` feature inside the crate (iroh 1.0,
 `tls-ring` only). A `--no-default-features` build has no `share` verb rather
 than a broken one, and `--no-default-features` on the crate alone keeps the
@@ -2079,6 +2079,31 @@ true and meant almost nothing. Sampling the line ending once per head rather
 than once per line, and leaving two thirds of heads unmutated, took those to
 18%, 0.8% and 0.8%; the test now asserts floors on all three, so a generator
 that stops reaching the code fails instead of passing.
+
+**Rounds 27 to 36** kept changing the lens. Two more directions had never been
+looked at, and both paid: a review from the **joiner's** side (what a hostile
+*sharer* can do to the person who pasted the ticket) and one of **how a live
+share interacts with the rest of h5i** — the lifecycle verbs, the export, the
+console, and the fact that a share holds a box's namespace open.
+
+The worst thing either found: **a share of a box at the `process` tier with a
+profile that denies egress can never work, and the docs recommended exactly
+that configuration.** Such a box gets a network namespace of its own with no
+loopback brought up in it, so nothing inside can reach even itself. The share
+started, printed a ticket, and left both people reading messages about a dev
+server that was running the whole time. It is refused now, by name, and the
+MANUAL and the skill no longer name that tier as an option.
+
+Second: **a share pins one namespace at startup and only asked whether the box
+had *any* session.** Every session gets a new namespace, so somebody who exits
+a shell and starts another — or who has a read-only observer attached while
+they restart — left the share serving a namespace nothing was in, with
+`share ls` reporting it healthy. It compares the namespace now.
+
+Third, and the same argument for the third time: the wire had four reply codes
+and no way to say "h5i cannot reach the box". The receipt learned to tell that
+apart from "your dev server is down" in round 19; the joiner's browser was
+still being told to go and ask the sharer to start a server that was running.
 
 The pattern across all fifteen rounds is worth recording, because it is the
 argument for having run them: **every round found real defects in the previous
