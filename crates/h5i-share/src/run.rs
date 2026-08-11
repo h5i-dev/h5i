@@ -33,6 +33,10 @@ const STOP_POLL: Duration = Duration::from_secs(1);
 /// the check walks a directory.
 const BOX_POLL: Duration = Duration::from_secs(3);
 
+/// How long the connections get to close themselves, with a reason, before the
+/// transport closes them without one.
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(200);
+
 /// How long to wait, after the transport is closed, for the connections it was
 /// carrying to finish recording what they moved.
 const QUIESCE: Duration = Duration::from_secs(5);
@@ -183,7 +187,15 @@ async fn serve_async(
         }
     };
 
-    // Shut the transport down *first*, then wait for the connections it was
+    // Tell the connections first, tear the transport down second. `iroh`'s
+    // `Endpoint::close` closes every connection with code `0` and an empty
+    // reason, so a connection that wanted to close with an explanation has to
+    // have done it before that runs — otherwise the joiner is told "closed by
+    // peer: 0" for a ticket that simply expired.
+    bridge.begin_shutdown();
+    tokio::time::sleep(SHUTDOWN_GRACE).await;
+
+    // Then the transport, then wait for the connections it was
     // carrying to actually finish. Closing the endpoint tells them to stop; it
     // does not join them, and they are detached tasks. Writing the receipt
     // straight afterwards is a race that a fast network usually wins and a slow

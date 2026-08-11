@@ -191,14 +191,19 @@ impl Bridge {
     /// hold at all. A share taken down by a flood of anonymous connections used
     /// to write a receipt that said nobody came.
     pub fn record_front_refusal(&self) {
-        // Recovered rather than skipped on a poisoned lock, like `peer_joined`:
-        // otherwise one panic under the tally lock silently stops this counting
-        // while everything else keeps accruing.
-        let mut t = match self.tally.lock() {
+        self.tally().front_refused += 1;
+    }
+
+    /// The tally, recovered rather than lost if a previous holder panicked.
+    ///
+    /// One accessor for all of them. Half of these used `if let Ok(…)` and
+    /// silently stopped counting after a poison while the other half carried on
+    /// — which is the asymmetry the one that recovered was added to object to.
+    fn tally(&self) -> std::sync::MutexGuard<'_, Tally> {
+        match self.tally.lock() {
             Ok(t) => t,
             Err(p) => p.into_inner(),
-        };
-        t.front_refused += 1;
+        }
     }
 
     /// Take a slot for one connection into the box, or `None` if the share is
@@ -212,9 +217,7 @@ impl Bridge {
         match self.capacity.clone().try_acquire_owned() {
             Ok(permit) => Some(permit),
             Err(_) => {
-                if let Ok(mut t) = self.tally.lock() {
-                    t.over_capacity += 1;
-                }
+                self.tally().over_capacity += 1;
                 None
             }
         }
@@ -301,7 +304,8 @@ impl Bridge {
     }
 
     fn record_denied(&self, reason: Denied) {
-        if let Ok(mut t) = self.tally.lock() {
+        {
+            let mut t = self.tally();
             // Bounded: a share left open on the internet can be knocked on all
             // day, and an unbounded list would be a memory leak with a receipt
             // attached. The count past the cap still shows up in the summary.
@@ -339,10 +343,7 @@ impl Bridge {
         // and it is called while the tunnel front holds its own peer map — so a
         // poisoned tally would have poisoned that too, and taken every later
         // connection with it.
-        let mut t = match self.tally.lock() {
-            Ok(t) => t,
-            Err(p) => p.into_inner(),
-        };
+        let mut t = self.tally();
         if t.peers.len() >= MAX_PEER_RECORDS {
             // A handle that names nothing. Returning the *last* record folded
             // peer 257's bytes, connections and path observations into peer
@@ -375,8 +376,8 @@ impl Bridge {
     /// connection that spent any time on a relay is a connection that used one,
     /// and rounding that off would be flattering.
     pub fn peer_path(&self, id: PeerId, path: Path) {
-        if let Ok(mut t) = self.tally.lock() {
-            if let Some(p) = t.peers.get_mut(id.0) {
+        {
+            if let Some(p) = self.tally().peers.get_mut(id.0) {
                 match p.path {
                     None => p.path = Some(path),
                     Some(Path::Direct) if path == Path::Relayed => p.path = Some(Path::Relayed),
@@ -387,27 +388,21 @@ impl Bridge {
     }
 
     pub fn peer_connection(&self, id: PeerId) {
-        if let Ok(mut t) = self.tally.lock() {
-            if let Some(p) = t.peers.get_mut(id.0) {
-                p.connections += 1;
-            }
+        if let Some(p) = self.tally().peers.get_mut(id.0) {
+            p.connections += 1;
         }
     }
 
     pub fn peer_bytes(&self, id: PeerId, to_peer: u64, from_peer: u64) {
-        if let Ok(mut t) = self.tally.lock() {
-            if let Some(p) = t.peers.get_mut(id.0) {
-                p.bytes_to_peer += to_peer;
-                p.bytes_from_peer += from_peer;
-            }
+        if let Some(p) = self.tally().peers.get_mut(id.0) {
+            p.bytes_to_peer += to_peer;
+            p.bytes_from_peer += from_peer;
         }
     }
 
     pub fn peer_left(&self, id: PeerId) {
-        if let Ok(mut t) = self.tally.lock() {
-            if let Some(p) = t.peers.get_mut(id.0) {
-                p.closed = Some(Utc::now());
-            }
+        if let Some(p) = self.tally().peers.get_mut(id.0) {
+            p.closed = Some(Utc::now());
         }
     }
 
@@ -422,16 +417,12 @@ impl Bridge {
 
     /// A response was cut off by the wall clock rather than by finishing.
     pub fn record_truncated(&self) {
-        if let Ok(mut t) = self.tally.lock() {
-            t.truncated += 1;
-        }
+        self.tally().truncated += 1;
     }
 
     /// A peer got through the gate and the box had nothing listening.
     pub fn record_unreachable(&self) {
-        if let Ok(mut t) = self.tally.lock() {
-            t.unreachable += 1;
-        }
+        self.tally().unreachable += 1;
     }
 
     /// Wait for every connection into the box to finish, or give up.
@@ -445,6 +436,19 @@ impl Bridge {
     /// Uses the capacity permits as the count of live connections, which they
     /// already are: each is released after its connection has recorded what it
     /// moved.
+    /// Tell every connection the share is winding up.
+    ///
+    /// Separate from [`Self::quiesce`], and called before the transport is torn
+    /// down, because the order is the whole point: `Endpoint::close` closes
+    /// every connection with code `0` and an empty reason, so anything that
+    /// wanted to close one with an *explanation* has to have done it already.
+    /// Setting the flag inside `quiesce` — after the shutdown — meant the task
+    /// that closes with a reason could never win, and the commit that added it
+    /// was inert.
+    pub fn begin_shutdown(&self) {
+        let _ = self.shutdown.send_replace(true);
+    }
+
     pub async fn quiesce(&self, within: std::time::Duration) {
         // Tell them to stop *before* waiting for them to. A connection carrying
         // a response with no declared length waits up to five minutes for the
@@ -474,7 +478,7 @@ impl Bridge {
     /// How many peers have connected. Used by tests and by the sharer's
     /// terminal line.
     pub fn peer_count(&self) -> usize {
-        self.tally.lock().map(|t| t.peers.len()).unwrap_or(0)
+        self.tally().peers.len()
     }
 
     /// Write the session into the box's receipt log.
@@ -486,10 +490,7 @@ impl Bridge {
     pub fn write_receipt(&self) {
         let ended = Utc::now();
         let seconds = (ended - self.started).num_seconds().max(0);
-        let t = match self.tally.lock() {
-            Ok(t) => t,
-            Err(p) => p.into_inner(),
-        };
+        let t = self.tally();
         let body = render_receipt(
             &Summary {
                 transport: self.transport,

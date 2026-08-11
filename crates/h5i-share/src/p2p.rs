@@ -219,7 +219,7 @@ async fn serve_connection(
     // And keeping the receipt's record of the path honest, because a long-lived
     // stream sampled once at its start would be recorded as direct for a
     // session that spent most of itself on a relay.
-    let watchdog = {
+    let watchdog = AbortOnDrop({
         let bridge = bridge.clone();
         let conn = conn.clone();
         let peer_id = peer_id.clone();
@@ -274,7 +274,7 @@ async fn serve_connection(
                 }
             }
         })
-    };
+    });
     let mut streams = tokio::task::JoinSet::new();
     loop {
         // Reap what has finished. A `JoinSet` only releases a task's allocation
@@ -307,7 +307,12 @@ async fn serve_connection(
         });
     }
 
-    watchdog.abort();
+    // Explicit, and also guarded: `serve_connection` is spawned detached today,
+    // so it always reaches here — but a future caller that drops the future
+    // instead would otherwise leave the watchdog, its `Connection` clone and
+    // its own child task polling forever. The leak-proof idiom was already one
+    // level down; it belongs here too.
+    watchdog.0.abort();
     // Recorded before the drain, not after. The peer has gone the moment
     // `accept_bi` stops answering; noting it afterwards meant the shutdown path
     // — the only path where it matters — almost always finished first and every

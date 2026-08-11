@@ -410,6 +410,8 @@ where
         from_rest = rest_from_client.len();
     } else {
         let want = req.content_length.unwrap_or(0);
+        // Set when the box stopped taking the body and its answer is waiting.
+        let mut remaining_override = false;
         // The same wall clock the chunked path has. `Content-Length` is
         // deliberately accepted all the way to `u64::MAX`, so without one an
         // authorized peer declaring a body it never finishes — one byte every
@@ -418,10 +420,26 @@ where
         let body_deadline = tokio::time::Instant::now() + BODY_LIFETIME;
         from_rest = (rest.len() as u64).min(want) as usize;
         if from_rest > 0 {
-            write_to_box(&mut up_w, &rest[..from_rest]).await?;
-            to_box.fetch_add(from_rest as u64, Ordering::Relaxed);
+            // Handled like every other write of the body, rather than dropped:
+            // this is the first chunk, so it is the *likeliest* place a box
+            // that rejects early closes its read side, and the answer it has
+            // already written is the one the visitor should get.
+            if let Err(e) = write_to_box(&mut up_w, &rest[..from_rest]).await {
+                if box_write_failure(&e) == Some(true) {
+                    return refuse_the_response(&mut peer_w, unreachable_box_response(), to_peer)
+                        .await;
+                }
+                remaining_override = true;
+            }
+            if !remaining_override {
+                to_box.fetch_add(from_rest as u64, Ordering::Relaxed);
+            }
         }
-        let mut remaining = want - from_rest as u64;
+        let mut remaining = if remaining_override {
+            0
+        } else {
+            want - from_rest as u64
+        };
         let mut buf = vec![0u8; 32 * 1024];
         while remaining > 0 {
             if tokio::time::Instant::now() >= body_deadline {
@@ -955,7 +973,6 @@ where
         // four minutes resets the idle timer forever, and "framed responses end
         // when their body does" is a promise agent-written code never made.
         if tokio::time::Instant::now() >= hard_deadline {
-            truncated.store(true, Ordering::Relaxed);
             break;
         }
         tokio::select! {
@@ -990,6 +1007,15 @@ where
                 }
             }
         }
+    }
+    // Truncation is "the body was short", not "a particular timer fired". Set
+    // on the deadline alone, this missed the three commoner ways a declared
+    // body ends early — the box going quiet for five minutes, closing, or
+    // resetting — and it set the flag on an *unframed* response that had
+    // finished an hour earlier. A length we were given and did not deliver is
+    // the only thing knowable here, and it is the only thing claimed.
+    if body_len.is_some_and(|n| sent_body < n) {
+        truncated.store(true, Ordering::Relaxed);
     }
     let _ = peer_w.shutdown().await;
     Ok(())
