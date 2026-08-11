@@ -532,6 +532,46 @@ pub fn safe_location(target: &str) -> String {
 /// upgrade is negotiated. That is safe for the same reason it is necessary: an
 /// upgraded connection stops being an HTTP connection and is never returned to
 /// anybody's pool.
+/// Headers that say who the visitor is, dropped before the box sees them.
+///
+/// Measured through a real quick tunnel, echoed back by a dev server inside a
+/// box:
+///
+/// ```text
+/// Cf-Connecting-Ip: 160.39.54.165
+/// Cf-Ipcountry: US
+/// X-Forwarded-For: 160.39.54.165
+/// Cf-Ray: a29916242859de98-EWR
+/// ```
+///
+/// So the agent-written code being demonstrated was handed the visitor's
+/// public IP address and their country, by a feature whose roadmap entry says
+/// "nothing inside the box learns it is being shared". The person who clicked
+/// the link is a third party who agreed to look at a page, not to identify
+/// themselves to whatever is running in somebody else's sandbox.
+///
+/// `Host` and `X-Forwarded-Proto` are deliberately *not* here: a dev server
+/// builds absolute URLs out of them and a share that broke every link on the
+/// page would not be used. They tell the box it is behind a proxy, which the
+/// docs now say plainly instead of claiming otherwise.
+const HIDE_FROM_BOX: &[&str] = &[
+    "cf-connecting-ip",
+    "cf-connecting-ipv6",
+    "cf-ipcountry",
+    "cf-ray",
+    "cf-visitor",
+    "cf-warp-tag-id",
+    "cf-ew-via",
+    "cf-worker",
+    "cdn-loop",
+    "true-client-ip",
+    "x-forwarded-for",
+    "x-real-ip",
+    // RFC 7239's own spelling, which carries `for=` and would be the obvious
+    // way for any other front to say the same thing.
+    "forwarded",
+];
+
 pub fn rewrite_for_upstream(head: &str, req: &Request, cookie: &str) -> String {
     let Some((request_line, _)) = lines(head) else {
         return head.to_string();
@@ -558,6 +598,12 @@ pub fn rewrite_for_upstream(head: &str, req: &Request, cookie: &str) -> String {
             if !kept.is_empty() {
                 out.push_str(&format!("Cookie: {kept}\r\n"));
             }
+            continue;
+        }
+        if HIDE_FROM_BOX
+            .iter()
+            .any(|h| k.trim().eq_ignore_ascii_case(h))
+        {
             continue;
         }
         if k.trim().eq_ignore_ascii_case("expect") && req.expects_continue {
@@ -801,6 +847,64 @@ mod fuzz_tests {
     /// against generated heads rather than against the ones somebody thought
     /// of. Every previous defect here was a case a person constructed; this is
     /// the other half.
+    #[test]
+    fn the_box_is_not_told_who_is_visiting() {
+        // Measured through a real quick tunnel: the dev server inside the box
+        // was handed `Cf-Connecting-Ip: 160.39.54.165`, `Cf-Ipcountry: US` and
+        // an `X-Forwarded-For` with the same address. Whoever clicked the link
+        // agreed to look at a page, not to identify themselves to
+        // agent-written code in somebody else's sandbox — and the roadmap
+        // entry for this feature says nothing inside the box learns it is
+        // being shared.
+        let head = "GET /app HTTP/1.1\r\n\
+                    Host: odd-cat.trycloudflare.com\r\n\
+                    Cf-Connecting-Ip: 203.0.113.7\r\n\
+                    X-Forwarded-For: 203.0.113.7, 198.51.100.2\r\n\
+                    True-Client-Ip: 203.0.113.7\r\n\
+                    X-Real-IP: 203.0.113.7\r\n\
+                    Forwarded: for=203.0.113.7;proto=https\r\n\
+                    Cf-Ipcountry: US\r\n\
+                    Cf-Ray: a29916242859de98-EWR\r\n\
+                    Cf-Visitor: {\"scheme\":\"https\"}\r\n\
+                    Cf-Warp-Tag-Id: c5646e5b\r\n\
+                    Cf-Ew-Via: 15\r\n\
+                    Cf-Worker: trycloudflare.com\r\n\
+                    Cdn-Loop: cloudflare; loops=1\r\n\
+                    X-Forwarded-Proto: https\r\n\
+                    User-Agent: Mozilla/5.0\r\n\
+                    Cookie: h5i_share=abc; sid=9\r\n\r\n";
+        let req = parse(head, "h5i_share").expect("parses");
+        let out = rewrite_for_upstream(head, &req, "h5i_share");
+
+        // Nothing that names the visitor or where they are.
+        assert!(!out.contains("203.0.113.7"), "{out}");
+        assert!(!out.contains("198.51.100.2"), "{out}");
+        for gone in [
+            "Cf-Connecting-Ip",
+            "X-Forwarded-For",
+            "True-Client-Ip",
+            "X-Real-IP",
+            "Forwarded:",
+            "Cf-Ipcountry",
+            "Cf-Ray",
+            "Cf-Visitor",
+            "Cf-Warp-Tag-Id",
+            "Cf-Ew-Via",
+            "Cf-Worker",
+            "Cdn-Loop",
+        ] {
+            assert!(!out.contains(gone), "{gone} still reached the box:\n{out}");
+        }
+
+        // And the app still works: the two headers a dev server builds URLs
+        // from are untouched, as is everything the visitor's browser said
+        // about itself.
+        assert!(out.contains("Host: odd-cat.trycloudflare.com"), "{out}");
+        assert!(out.contains("X-Forwarded-Proto: https"), "{out}");
+        assert!(out.contains("User-Agent: Mozilla/5.0"), "{out}");
+        assert!(out.contains("Cookie: sid=9"), "{out}");
+    }
+
     #[test]
     fn a_forwarded_head_never_carries_the_credential_or_two_framings() {
         const COOKIE: &str = "h5i_share";

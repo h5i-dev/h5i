@@ -570,6 +570,17 @@ The cost is that every request is its own connection. For a dev server that
 serves each module separately, a first page load is a few hundred of them, each
 with its own dial into the box. It works and it is not free.
 
+**What the box learns about whoever visits.** On a quick tunnel, Cloudflare
+adds the visitor's public IP (`CF-Connecting-IP`, `X-Forwarded-For`), their
+country, and a handful of `CF-*` request headers. h5i drops all of them at the
+gate: the code being demonstrated is agent-written and the person who clicked
+the link is a third party who agreed to look at a page. What does reach the box
+is what any web server sees from a browser — `User-Agent`, `Accept`, the app's
+own cookies — plus `Host` and `X-Forwarded-Proto`, which stay because dev
+servers build absolute URLs out of them. So the box can tell it is behind a
+proxy; it cannot tell who is on the other end. On the peer-to-peer path the
+question does not arise: requests come from the joiner's own loopback proxy.
+
 #### What the person joining is taking on
 
 The app is agent-written code, and joining runs it in their browser. That is the

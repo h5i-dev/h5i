@@ -615,7 +615,14 @@ the bytes travel:
 - **Reach the dev server.** The box's port is never published. The bridge
   enters the box's network namespace by pid and dials loopback per connection,
   exactly the seam the viewer forward and the terminal viewer already use
-  (5.9, 5.10). Nothing inside the box learns it is being shared, the netns
+  (5.9, 5.10). Nothing inside the box learns *who* is visiting — a quick tunnel
+  hands its origin `Cf-Connecting-Ip`, `Cf-Ipcountry` and `X-Forwarded-For`,
+  and the gate drops every one of them before the box sees a byte, because a
+  person who clicked a link agreed to look at a page and not to identify
+  themselves to somebody else's agent. What the box can tell is that it is
+  behind a proxy: `Host` and `X-Forwarded-Proto` stay, because a dev server
+  builds its URLs out of them and a share that broke every link on the page
+  would not get used. The netns
   gains no hole, and the box's egress policy is untouched — the bridge is a
   host process, outside the boundary, like the CONNECT proxy.
 - **Hold the capability.** A ticket minted at share time is the whole access
