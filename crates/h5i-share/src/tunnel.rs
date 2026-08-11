@@ -130,6 +130,12 @@ pub fn extract_url(line: &str) -> Option<String> {
 ///
 /// The argv is built here, never through a shell: the only value that varies is
 /// a port number this process chose.
+/// How much of `cloudflared`'s stderr to read while waiting for a URL.
+///
+/// Generous for a startup banner, and a ceiling on a subprocess h5i does not
+/// ship. See the note at the reader.
+const MAX_CLOUDFLARED_OUTPUT: u64 = 1024 * 1024;
+
 pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
     let mut cmd = tokio::process::Command::new("cloudflared");
     cmd.arg("tunnel")
@@ -200,12 +206,31 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
         .stderr
         .take()
         .ok_or_else(|| H5iError::Metadata("cloudflared produced no output to read".into()))?;
-    let mut lines = BufReader::new(stderr).lines();
+    // Capped. `lines()` accumulates until it sees a newline, and a
+    // `cloudflared` that writes without one — or a different binary of that
+    // name — grows one `String` without limit: a fake writing 150 MiB with no
+    // newline took this process from 25 MB to 178 MB of RSS in two seconds,
+    // and it would have kept going for the whole URL timeout. h5i neither
+    // ships nor pins that binary, so what it does is not h5i's to assume.
+    let mut lines = BufReader::new(tokio::io::AsyncReadExt::take(
+        stderr,
+        MAX_CLOUDFLARED_OUTPUT,
+    ))
+    .lines();
 
+    // Kept, so the reason it failed can be repeated. `cloudflared` prints why
+    // it is unhappy and this used to read that line, discard it, and then tell
+    // the operator to "run it once by hand to see what it says" — having
+    // already been told.
+    let mut last_said: Option<String> = None;
     let found = tokio::time::timeout(URL_TIMEOUT, async {
         while let Ok(Some(line)) = lines.next_line().await {
             if let Some(url) = extract_url(&line) {
                 return Some(url);
+            }
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                last_said = Some(trimmed.chars().take(200).collect());
             }
         }
         None
@@ -225,11 +250,20 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
         }
         Ok(None) => {
             let _ = child.kill().await;
-            Err(H5iError::Metadata(
-                "`cloudflared` exited without publishing a URL. Run it once by hand to see what \
-                 it says: `cloudflared tunnel --url http://127.0.0.1:3000`."
+            // Repeating what it said, rather than sending somebody to run it
+            // again to find out. `cloudflared` prints its reason — "failed to
+            // create tunnel: …" — and this read that line and threw it away.
+            Err(H5iError::Metadata(match &last_said {
+                Some(said) => format!(
+                    "`cloudflared` exited without publishing a URL. The last thing it said was: \
+                     {}",
+                    h5i_core::redact::sanitize_display(said)
+                ),
+                None => "`cloudflared` exited without publishing a URL, and said nothing at \
+                         all. Run it by hand to see: `cloudflared tunnel --url \
+                         http://127.0.0.1:3000`."
                     .into(),
-            ))
+            }))
         }
         Err(_) => {
             let _ = child.kill().await;

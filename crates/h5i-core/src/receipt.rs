@@ -383,8 +383,12 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
         // moment a second writer does. The payload is content-addressed, so
         // whichever rename wins is byte-identical to the other.
         let tmp = raw_file.with_extension(format!("raw.tmp.{}", std::process::id()));
-        std::fs::write(&tmp, stored)?;
-        std::fs::rename(&tmp, &raw_file)?;
+        if let Err(e) = std::fs::write(&tmp, stored) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(H5iError::with_path(e, &tmp));
+        }
+        std::fs::rename(&tmp, &raw_file)
+            .map_err(|e| H5iError::with_path(e, &raw_file))?;
     }
 
     let mut line = serde_json::to_string(&rec)?;
@@ -393,7 +397,13 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
         .create(true)
         .append(true)
         .open(log_path(env_dir))?;
-    f.write_all(line.as_bytes())?;
+    // One `write_all` of a line that already ends in a newline, so a short
+    // write cannot leave a fragment the *next* append glues itself onto —
+    // which `list()` would then drop silently, losing two receipts and saying
+    // nothing. And named: this used to report `Permission denied` with no hint
+    // of which file refused.
+    f.write_all(line.as_bytes())
+        .map_err(|e| H5iError::with_path(e, log_path(env_dir)))?;
 
     Ok(rec)
 }

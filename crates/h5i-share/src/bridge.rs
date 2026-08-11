@@ -335,10 +335,13 @@ impl Bridge {
         let now = Utc::now().timestamp();
         let Some(s) = session::read(&self.env_dir) else {
             // The grant table is gone or unreadable, so nothing authorizes
-            // anything. Recorded like any other refusal: it is the one denial
-            // class that used to leave the receipt silent.
-            self.record_denied(Denied::Unknown);
-            return Err(Denied::Unknown);
+            // anything — but *why* it could not be read is the sharer's
+            // problem, not the visitor's. Reported as `Unknown` this told the
+            // visitor to ask for a new invite (which would behave identically),
+            // told the sharer their peer had presented a ticket nobody knows,
+            // and wrote "3 unknown ticket" into the receipt, for a full disk.
+            self.record_denied(Denied::TableUnreadable);
+            return Err(Denied::TableUnreadable);
         };
         match s.authorize(secret, now) {
             Ok(g) => Ok(AuthorizedGrant {
@@ -987,20 +990,33 @@ pub fn render_receipt(s: &Summary) -> String {
             .iter()
             .filter(|d| d.reason == Denied::NoCredential)
             .count();
+        let unreadable = s
+            .denied
+            .iter()
+            .filter(|d| d.reason == Denied::TableUnreadable)
+            .count();
         // The leading number counts every refusal, not just the ones kept
         // individually. It read `refused 1024 attempt(s)` for fifty thousand,
         // with the truth in a trailing clause — and the sub-counts are over the
         // recorded sample, so their sum does not match and the line now says so.
         out.push_str(&format!(
             "refused  {} attempt(s){}: of the {} recorded, {none} presented no invite, \
-             {unknown} an unknown ticket, {expired} expired, {revoked} revoked\n",
+             {unknown} an unknown ticket, {expired} expired, {revoked} revoked{}\n",
             s.denied.len() as u64 + s.denied_overflow,
             if s.denied_overflow > 0 {
                 format!(" ({} of them not recorded individually)", s.denied_overflow)
             } else {
                 String::new()
             },
-            s.denied.len()
+            s.denied.len(),
+            if unreadable > 0 {
+                format!(
+                    "; and {unreadable} could not be weighed at all, because this share could \
+                     not read its own grant table — a problem on the sharing machine"
+                )
+            } else {
+                String::new()
+            }
         ));
     }
     out
@@ -1246,6 +1262,41 @@ mod tests {
         // four figures of gibibytes.
         assert_eq!(bytes(1024u64 * 1024 * 1024 * 1024), "1.0 TiB");
         assert_eq!(bytes(u64::MAX), "16777216.0 TiB");
+    }
+
+    #[test]
+    fn a_grant_table_this_share_cannot_read_is_not_the_visitors_fault() {
+        // Every I/O failure reading `share.json` — a full disk, no descriptors
+        // left, a permission problem — used to be reported as `Unknown`. So
+        // the visitor was told "the sharer refused this ticket, ask for a new
+        // one" (which would behave identically), the sharer's terminal said
+        // their peer had presented a ticket nobody knows, and the receipt
+        // permanently recorded "3 unknown ticket" — for a machine problem on
+        // the sharing side.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let b = test_bridge(dir.path());
+
+        // No readable table at all.
+        let err = b.authorize("ab".repeat(32).as_str()).expect_err("no table");
+        assert_eq!(err, Denied::TableUnreadable);
+        assert!(
+            err.explain().contains("problem on the sharing machine"),
+            "{}",
+            err.explain()
+        );
+        assert!(!err.explain().contains("not one this share knows"));
+
+        // And it is counted apart in the receipt, with its own sentence — but
+        // only when it happened, which is this file's own rule.
+        let s = b.snapshot();
+        let body = render_receipt(&s);
+        assert!(
+            body.contains("could not read its own grant table"),
+            "{body}"
+        );
+
+        let quiet = summary(vec![], vec![]);
+        assert!(!render_receipt(&quiet).contains("could not read its own"));
     }
 
     #[test]

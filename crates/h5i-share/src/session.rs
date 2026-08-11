@@ -98,6 +98,13 @@ pub struct ShareSession {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Denied {
     Unknown,
+    /// The grant table could not be read at all — the disk is full, the file
+    /// is unreadable, the process is out of descriptors. Not a fact about the
+    /// visitor's ticket, and it used to be reported as one: the visitor was
+    /// told to ask for a new invite, the sharer's terminal said "that ticket
+    /// is not one this share knows", and the receipt recorded an unknown
+    /// ticket — for a machine problem on the sharer's own side.
+    TableUnreadable,
     Expired,
     Revoked,
     /// Nobody presented anything. Separate from [`Denied::Unknown`] because on
@@ -115,6 +122,10 @@ impl Denied {
     pub fn explain(self) -> &'static str {
         match self {
             Denied::Unknown => "that ticket is not one this share knows",
+            Denied::TableUnreadable => {
+                "this share cannot read its own grant table — that is a problem on the \
+                 sharing machine, not with your invite"
+            }
             Denied::NoCredential => "this share needs an invite link",
             Denied::Expired => "that ticket has expired — ask for a new one",
             Denied::Revoked => "that ticket was revoked",
@@ -281,8 +292,21 @@ impl Lock {
                     // need this: deciding whether the holder is really gone, and
                     // making sure the loser of a break race cannot remove the
                     // winner's lock on its way out.
+                    //
+                    // A stamp that cannot be written is a lock nobody can
+                    // reason about, so it is not held. On a full disk the
+                    // `create_new` succeeds and the write does not, and `Drop`
+                    // then saw content that was not its own and left the file:
+                    // every later verb waited five seconds and blamed a holder
+                    // that had never existed, leaking another one on the way
+                    // out. Measured at 3.8s, 5.2s, 5.6s for three verbs in a
+                    // row after one ENOSPC.
                     use std::io::Write as _;
-                    let _ = f.write_all(mine.as_bytes());
+                    if let Err(e) = f.write_all(mine.as_bytes()) {
+                        drop(f);
+                        let _ = std::fs::remove_file(&path);
+                        return Err(H5iError::with_path(e, &path));
+                    }
                     return Ok(Lock { path, owner: mine });
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -332,11 +356,18 @@ fn lock_is_stale(path: &Path) -> bool {
     // at four to five seconds of retries and then "another h5i is holding this
     // box's share lock", for a holder that did not exist. Age is the fallback
     // for a file with no readable pid, not the gate in front of the question.
-    if let Some(pid) = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|p| p.trim().parse::<u32>().ok())
-    {
-        return !pid_alive(pid);
+    if let Ok(text) = std::fs::read_to_string(path) {
+        // Stamped: the pid is the question.
+        if let Ok(pid) = text.trim().parse::<u32>() {
+            return !pid_alive(pid);
+        }
+        // Readable and not a pid — an empty file is the shape a failed stamp
+        // leaves. Nobody can be holding a lock that does not say who they are,
+        // and waiting thirty seconds to conclude that is thirty seconds of a
+        // share nobody can revoke.
+        if text.trim().is_empty() {
+            return true;
+        }
     }
     let old_enough = std::fs::metadata(path)
         .and_then(|m| m.modified())
@@ -396,7 +427,13 @@ pub fn write(env_dir: &Path, s: &ShareSession) -> Result<(), H5iError> {
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
     let body = serde_json::to_vec_pretty(s)?;
-    std::fs::write(&tmp, &body).map_err(|e| H5iError::with_path(e, &tmp))?;
+    if let Err(e) = std::fs::write(&tmp, &body) {
+        // Cleared on the way out. A failed write leaves a zero-byte temp
+        // behind, and nothing in the tree — no `gc`, no `doctor`, no docs —
+        // knows those exist or would ever remove one.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(H5iError::with_path(e, &tmp));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -490,7 +527,14 @@ pub fn begin_winding_up(env_dir: &Path) {
 /// the only fix was knowing to delete a file nothing had told the operator
 /// about.
 pub fn forget(env_dir: &Path) -> Result<bool, H5iError> {
-    let _lock = Lock::acquire(env_dir)?;
+    // The lock is taken if it can be, and its absence does not stop the
+    // removal. This is the documented escape from a wedged record, and taking
+    // the lock *first* meant that on a read-only or full env directory —
+    // exactly when a record gets wedged — `share stop --force` failed too, and
+    // there was no way left to revoke somebody's access short of Ctrl-C in the
+    // sharer's own terminal. An unconditional delete of one file needs nothing
+    // serialised anyway.
+    let _lock = Lock::acquire(env_dir);
     let p = session_path(env_dir);
     match std::fs::remove_file(&p) {
         Ok(()) => Ok(true),
@@ -676,6 +720,37 @@ mod tests {
         let seen = h5i_core::share_record::read_live(dir.path()).expect("still a live process");
         assert!(seen.winding_up);
         assert!(!seen.is_admitting());
+    }
+
+    #[test]
+    fn a_lock_nobody_could_stamp_is_not_held_by_anybody() {
+        // On a full disk the `create_new` succeeds and the stamp write does
+        // not, so `Drop` saw content that was not its own and left the file.
+        // Every later verb then waited five seconds and blamed a holder that
+        // had never existed, leaking another one on the way out — measured at
+        // 3.8s, 5.2s and 5.6s for three verbs in a row after one ENOSPC.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("share.lock");
+        std::fs::write(&path, "").expect("write an unstamped lock");
+        assert!(
+            lock_is_stale(&path),
+            "a lock with no holder in it is held by nobody"
+        );
+
+        // So acquiring past one is prompt rather than a thirty-second wait.
+        let started = std::time::Instant::now();
+        let held = Lock::acquire(dir.path()).expect("acquire past an unstamped lock");
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(500),
+            "waited {:?} for a lock nobody was holding",
+            started.elapsed()
+        );
+        drop(held);
+
+        // And a lock file with something else in it is left alone: only an
+        // empty one is evidence of a failed stamp.
+        std::fs::write(&path, "not-a-pid").expect("write");
+        assert!(!lock_is_stale(&path));
     }
 
     #[test]
