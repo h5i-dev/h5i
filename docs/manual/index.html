@@ -1145,7 +1145,7 @@ container and microVM tiers do not share a terminal at all.</p>
 <tbody>
 <tr>
 <td><code>H5I_AGENT</code></td>
-<td>Which runtime a box is scoped to (<code>claude</code>, <code>codex</code>). Decides the <code>agent</code> profile's credentials and egress.</td>
+<td>Agent identity used for the branch namespace and automatic runtime profile selection. Leading and trailing whitespace is trimmed; valid values contain 1–64 ASCII letters, digits, hyphens, or underscores. An unset value silently uses <code>human</code>; a present invalid value warns on stderr and falls back to <code>human</code>.</td>
 </tr>
 <tr>
 <td><code>H5I_DEFAULT_ISOLATION</code></td>

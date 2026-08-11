@@ -375,15 +375,31 @@ pub enum EnvServiceCommands {
 /// sets `claude`, Codex sets `codex`); a human on a bare shell gets `human`.
 /// The identity scopes the env's branch namespace and the agent-in-box profile.
 fn agent_identity() -> String {
-    std::env::var("H5I_AGENT")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| {
-            !s.is_empty()
-                && s.len() <= 64
-                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        })
-        .unwrap_or_else(|| "human".to_string())
+    match std::env::var("H5I_AGENT") {
+        Err(std::env::VarError::NotPresent) => "human".to_string(),
+        Ok(value) => {
+            let identity = value.trim();
+            if !identity.is_empty()
+                && identity.len() <= 64
+                && identity
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                identity.to_string()
+            } else {
+                warn_invalid_agent_identity()
+            }
+        }
+        Err(std::env::VarError::NotUnicode(_)) => warn_invalid_agent_identity(),
+    }
+}
+
+fn warn_invalid_agent_identity() -> String {
+    eprintln!(
+        "{} invalid H5I_AGENT; expected 1-64 ASCII letters, digits, hyphens, or underscores; using 'human'",
+        style("warning:").yellow()
+    );
+    "human".to_string()
 }
 
 /// Is `source` a pull request spec (a number, `#number`, or a GitHub PR URL)?
