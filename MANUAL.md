@@ -360,9 +360,10 @@ h5i box share <name> --tunnel         # any browser, no h5i on their side
 
 h5i box share status <name>
 h5i box share ls
-h5i box share grant <name> [--label sam]     # a second ticket (--tunnel only, see below)
+h5i box share grant <name> [--label sam] [--expire 30m]   # a second ticket (--tunnel only)
 h5i box share revoke <name> <grant>
 h5i box share stop <name>
+h5i box share stop <name> --force            # delete a record whose process is gone
 ```
 
 The other side runs:
@@ -373,14 +374,22 @@ h5i join h5i1_eyJ2IjoxLCJib3hf…
 
 **The box's port is never published.** h5i enters the box's network namespace by
 pid — the same way `h5i box view` does — dials `127.0.0.1:<port>` from inside,
-and passes the socket back out. Nothing binds an external address on this
-machine, and the box gains no reachability it did not have. That entry happens
+and passes the socket back out. No TCP listener is bound on an external address
+and no port is forwarded, so the box gains no reachability it did not have.
+(Peer-to-peer mode does bind a UDP socket that anyone may send to — hole
+punching requires it — and everything that arrives on it has to present a ticket
+before it becomes anything. The claim is about the box's port, not about there
+being no socket.) That entry happens
 **once**, at startup: a small helper process lives in the box's namespaces for
 the life of the share and answers "connect me", pinned to the one port you named.
 Nothing on the wire, from a peer or from the shared page, can move where it
 connects.
 
-**A share needs a box with a network of its own.** Only then is "the box's port
+**A share needs Linux, and a box with a network of its own.** All of the above
+rests on the box having a network namespace this machine can enter; macOS boxes
+bind the host's loopback, so `h5i box share` refuses there and says so.
+
+**A box with a network of its own.** Only then is "the box's port
 3000" a distinct thing from this machine's port 3000; otherwise sharing it would
 publish whatever happened to be listening on the host, so `h5i box share`
 refuses rather than guessing. A box has one when it is running and either at the

@@ -131,7 +131,10 @@ mod tests {
         server.read_to_end(&mut got).await.unwrap();
         assert_eq!(&got, b"GET / HTTP/1.1\r\n\r\n");
 
-        server.write_all(b"HTTP/1.1 200 OK\r\n\r\nhi").await.unwrap();
+        server
+            .write_all(b"HTTP/1.1 200 OK\r\n\r\nhi")
+            .await
+            .unwrap();
         server.shutdown().await.unwrap();
         let mut back = Vec::new();
         peer.read_to_end(&mut back).await.unwrap();
@@ -185,6 +188,9 @@ mod tests {
             duplex(peer_r, peer_w, server_r, server_w, &a, &b),
         )
         .await;
-        assert!(out.is_ok(), "duplex did not finish when both peers went away");
+        assert!(
+            out.is_ok(),
+            "duplex did not finish when both peers went away"
+        );
     }
 }

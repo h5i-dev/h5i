@@ -333,12 +333,7 @@ impl Bridge {
     /// counted here and reported, because folding them into the last record
     /// corrupted that record, and dropping them silently made a busy share
     /// look like a quiet one.
-    pub fn peer_joined(
-        &self,
-        peer: String,
-        grant: &AuthorizedGrant,
-        path: Option<Path>,
-    ) -> PeerId {
+    pub fn peer_joined(&self, peer: String, grant: &AuthorizedGrant, path: Option<Path>) -> PeerId {
         // Fail soft like every other accessor here. This one used to `expect`,
         // and it is called while the tunnel front holds its own peer map — so a
         // poisoned tally would have poisoned that too, and taken every later
@@ -625,7 +620,9 @@ pub fn render_receipt(s: &Summary) -> String {
             out.push_str(&format!(
                 "  {} via {} — grant {}{}, {held}s, {}, {} in / {} out\n",
                 p.peer,
-                p.path.map(|x| x.as_str()).unwrap_or("a path nothing observed"),
+                p.path
+                    .map(|x| x.as_str())
+                    .unwrap_or("a path nothing observed"),
                 p.grant,
                 p.label
                     .as_ref()
@@ -643,7 +640,11 @@ pub fn render_receipt(s: &Summary) -> String {
                 s.peers_overflow
             ));
         }
-        let relayed = s.peers.iter().filter(|p| p.path == Some(Path::Relayed)).count();
+        let relayed = s
+            .peers
+            .iter()
+            .filter(|p| p.path == Some(Path::Relayed))
+            .count();
         if relayed > 0 {
             out.push_str(&format!(
                 "relay    {relayed} peer(s) used a relay. It moved sealed packets and could not \
@@ -694,9 +695,21 @@ pub fn render_receipt(s: &Summary) -> String {
     }
 
     if !s.denied.is_empty() {
-        let unknown = s.denied.iter().filter(|d| d.reason == Denied::Unknown).count();
-        let expired = s.denied.iter().filter(|d| d.reason == Denied::Expired).count();
-        let revoked = s.denied.iter().filter(|d| d.reason == Denied::Revoked).count();
+        let unknown = s
+            .denied
+            .iter()
+            .filter(|d| d.reason == Denied::Unknown)
+            .count();
+        let expired = s
+            .denied
+            .iter()
+            .filter(|d| d.reason == Denied::Expired)
+            .count();
+        let revoked = s
+            .denied
+            .iter()
+            .filter(|d| d.reason == Denied::Revoked)
+            .count();
         out.push_str(&format!(
             "refused  {} attempt(s): {unknown} unknown ticket, {expired} expired, {revoked} \
              revoked{}\n",
@@ -743,8 +756,7 @@ pub fn render_status(s: &ShareSession, now: i64) -> String {
         } else if g.expires_at <= now {
             "expired".to_string()
         } else {
-            let mins = (g.expires_at - now) / 60;
-            format!("{mins}m left")
+            format!("{} left", crate::session::humanise(g.expires_at - now))
         };
         out.push_str(&format!(
             "    {}  {:<10}{}\n",
@@ -824,6 +836,27 @@ mod tests {
         assert!(body.contains("900 in / 5000 out"));
     }
 
+    #[test]
+    fn status_says_seconds_when_seconds_is_what_is_left() {
+        // `announce` was fixed to stop rendering a 45-second ticket as "0m",
+        // and `status` — the view somebody actually consults before re-minting
+        // — was left on integer minutes, one column away from "expired".
+        let now = chrono::Utc::now().timestamp();
+        let mut s = crate::session::ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::Tunnel,
+            "https://x",
+            chrono::Utc::now(),
+        );
+        let (mut g, _) = crate::session::mint_grant(None, now + 45).expect("mint");
+        g.expires_at = now + 45;
+        s.grants = vec![g];
+        let out = render_status(&s, now);
+        assert!(out.contains("45s left"), "{out}");
+        assert!(!out.contains("0m"), "{out}");
+    }
+
     #[tokio::test]
     async fn winding_up_is_told_to_the_connections_before_anything_waits_on_them() {
         // The order is the whole point, and it was wrong for a round: the flag
@@ -836,12 +869,11 @@ mod tests {
             let b = b.clone();
             tokio::spawn(async move { b.shutting_down().await })
         };
-        // Not yet.
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(50), async {})
-                .await
-                .is_ok()
-        );
+        // Not yet. An actual sleep, so the spawned watcher is really given a
+        // chance to run: `timeout(_, async {})` returns without yielding at
+        // all, so on a current-thread runtime the watcher had never been polled
+        // and `is_finished()` was false whatever `shutting_down` did.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert!(!watcher.is_finished());
 
         b.begin_shutdown();
@@ -863,10 +895,19 @@ mod tests {
         // added one round at a time. This is the only place they are all seen
         // together, which is where a line that reads as noise would show up.
         let mut s = summary(
-            vec![peer("kbcd…", Path::Direct), peer("a browser", Path::Relayed)],
             vec![
-                DeniedAttempt { at: at("2026-08-10T10:01:00Z"), reason: Denied::Unknown },
-                DeniedAttempt { at: at("2026-08-10T10:02:00Z"), reason: Denied::Revoked },
+                peer("kbcd…", Path::Direct),
+                peer("a browser", Path::Relayed),
+            ],
+            vec![
+                DeniedAttempt {
+                    at: at("2026-08-10T10:01:00Z"),
+                    reason: Denied::Unknown,
+                },
+                DeniedAttempt {
+                    at: at("2026-08-10T10:02:00Z"),
+                    reason: Denied::Revoked,
+                },
             ],
         );
         s.transport = Transport::Tunnel;
@@ -940,9 +981,18 @@ mod tests {
     #[test]
     fn being_knocked_on_is_evidence_and_is_kept() {
         let denied = vec![
-            DeniedAttempt { at: at("2026-08-10T10:01:00Z"), reason: Denied::Unknown },
-            DeniedAttempt { at: at("2026-08-10T10:02:00Z"), reason: Denied::Unknown },
-            DeniedAttempt { at: at("2026-08-10T10:03:00Z"), reason: Denied::Revoked },
+            DeniedAttempt {
+                at: at("2026-08-10T10:01:00Z"),
+                reason: Denied::Unknown,
+            },
+            DeniedAttempt {
+                at: at("2026-08-10T10:02:00Z"),
+                reason: Denied::Unknown,
+            },
+            DeniedAttempt {
+                at: at("2026-08-10T10:03:00Z"),
+                reason: Denied::Revoked,
+            },
         ];
         let body = render_receipt(&summary(vec![], denied));
         assert!(body.contains("refused  3 attempt(s)"));
@@ -1007,7 +1057,10 @@ mod tests {
         s.over_capacity = 7;
         let body = render_receipt(&s);
         assert!(body.contains("capacity 7 connection(s) refused"), "{body}");
-        assert!(!body.contains("refused  "), "load must not read as a credential failure");
+        assert!(
+            !body.contains("refused  "),
+            "load must not read as a credential failure"
+        );
     }
 
     #[test]

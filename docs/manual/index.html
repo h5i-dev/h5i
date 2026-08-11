@@ -562,22 +562,30 @@ h5i box share &lt;name&gt; --tunnel         # any browser, no h5i on their side
 
 h5i box share status &lt;name&gt;
 h5i box share ls
-h5i box share grant &lt;name&gt; [--label sam]     # a second ticket (--tunnel only, see below)
+h5i box share grant &lt;name&gt; [--label sam] [--expire 30m]   # a second ticket (--tunnel only)
 h5i box share revoke &lt;name&gt; &lt;grant&gt;
 h5i box share stop &lt;name&gt;
+h5i box share stop &lt;name&gt; --force            # delete a record whose process is gone
 </code></pre>
 <p>The other side runs:</p>
 <pre><code class="language-bash">h5i join h5i1_eyJ2IjoxLCJib3hf…
 </code></pre>
 <p><strong>The box's port is never published.</strong> h5i enters the box's network namespace by
 pid — the same way <code>h5i box view</code> does — dials <code>127.0.0.1:&lt;port&gt;</code> from inside,
-and passes the socket back out. Nothing binds an external address on this
-machine, and the box gains no reachability it did not have. That entry happens
+and passes the socket back out. No TCP listener is bound on an external address
+and no port is forwarded, so the box gains no reachability it did not have.
+(Peer-to-peer mode does bind a UDP socket that anyone may send to — hole
+punching requires it — and everything that arrives on it has to present a ticket
+before it becomes anything. The claim is about the box's port, not about there
+being no socket.) That entry happens
 <strong>once</strong>, at startup: a small helper process lives in the box's namespaces for
 the life of the share and answers "connect me", pinned to the one port you named.
 Nothing on the wire, from a peer or from the shared page, can move where it
 connects.</p>
-<p><strong>A share needs a box with a network of its own.</strong> Only then is "the box's port
+<p><strong>A share needs Linux, and a box with a network of its own.</strong> All of the above
+rests on the box having a network namespace this machine can enter; macOS boxes
+bind the host's loopback, so <code>h5i box share</code> refuses there and says so.</p>
+<p><strong>A box with a network of its own.</strong> Only then is "the box's port
 3000" a distinct thing from this machine's port 3000; otherwise sharing it would
 publish whatever happened to be listening on the host, so <code>h5i box share</code>
 refuses rather than guessing. A box has one when it is running and either at the

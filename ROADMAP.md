@@ -622,7 +622,8 @@ the bytes travel:
   model: it names the box, the port, an expiry, and a secret; possession is
   authorization. One ticket admits one peer — share with two people by minting
   two — so revocation (`h5i box share revoke`) is per person, and `stop` ends
-  the session for everyone. No account on either side.
+  the session for everyone. No account on either side. (As shipped, minting a
+  second ticket works on `--tunnel` shares only; see 5.11.1.)
 - **Write the ingress receipt.** Every lane in 5.7 observes egress. This is
   the first inbound evidence: peer, connection times, requests proxied, bytes,
   and the transport actually used (direct, relayed, tunnel), in the same
@@ -692,7 +693,7 @@ h5i join <ticket> [--port N]                     # the other machine
 
 #### 5.11.1 What shipped, and what it cost to be honest about
 
-`crates/h5i-share/`, ~5.2k lines with 109 tests, behind a default-on `share`
+`crates/h5i-share/`, ~9.2k lines with 157 tests, behind a default-on `share`
 feature on the binary and a default-on `p2p` feature inside the crate (iroh 1.0,
 `tls-ring` only). A `--no-default-features` build has no `share` verb rather
 than a broken one, and `--no-default-features` on the crate alone keeps the
@@ -1994,12 +1995,36 @@ before reading its body has its own answer relayed rather than replaced. And a
 `--tunnel` share with two grants had one of them revoked while the other kept
 working.
 
-The pattern across all ten rounds is worth recording, because it is the argument
-for having run them: **every round found real defects in the previous round's
-fixes**, and three of the sharpest were fixes that did nothing at all — a
+**Rounds 11 to 14, and the two that would have bitten a real user.** A client
+that sends its request and then shuts down its write side — legal HTTP/1.1, and
+what anything built out of one write and one read does — had that EOF read as
+"the visitor left", so the relay stopped on the spot: a 2 MB download arrived as
+63 bytes, with a clean close and nothing recorded anywhere. And `h5i join` was
+hung up on by the sharer thirty seconds after connecting, because the sharer
+drops a connection that has never authorized a stream and the joiner did not
+open one until somebody visited the page — so the ordinary sequence (send a
+ticket, they join, *then* they open the browser) killed itself. The joiner now
+presents its ticket once at connect time, which fixes that and makes "joined" a
+statement about the ticket rather than about the network: a revoked ticket fails
+at `join` instead of at the first page load.
+
+The same rounds found `share status` rendering every share as `0m left` for its
+final minute, one column away from `expired`; `share grant` racing `share stop`
+closely enough to bring a stopped share back to life; a `revoke` on a crashed
+share reporting that connections had been dropped; a reused pid producing a
+share that could be neither stopped nor restarted by any verb; and Ctrl-C being
+swallowed for the whole six-second teardown on three of the four ways a share
+ends.
+
+The pattern across all fourteen rounds is worth recording, because it is the
+argument for having run them: **every round found real defects in the previous
+round's fixes**, and four of the sharpest were fixes that did nothing at all — a
 `Connection: close` the box could ignore, a shutdown signal that was sent after
-the shutdown, and a flag that recorded truncation for the rarest of the four
-ways a response gets cut short.
+the shutdown, a flag that recorded truncation for the rarest of the four ways a
+response gets cut short, and a linger drain whose two dedicated tests both
+passed with it deleted. That last one is now documented as what it is: bounded,
+kept for the sake of the intermediary on a tunnel share, and not a thing we can
+show changes what a visitor receives on Linux.
 
 `--direct-only` has been run, and it does what it says on the half that can be
 run here: the share starts, the peer gets a direct path, traffic flows, and the
@@ -2007,7 +2032,9 @@ receipt records `via direct`.
 
 **Still not demonstrated.** The two h5i processes were on one machine: a real
 direct QUIC path through the host's network stack, but not two machines on two
-networks. And `--direct-only` has never been exercised against a hole punch that
+networks. `h5i box share` is also Linux-only in practice — `view::box_pid` finds
+nothing on macOS, so the command refuses there, and the Seatbelt path through
+the dialer has never run. And `--direct-only` has never been exercised against a hole punch that
 actually *fails* — the refusal is the half that matters and it needs two hostile
 NATs to reach. Those two are what remains of the exit criteria.
 

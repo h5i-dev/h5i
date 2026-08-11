@@ -113,7 +113,11 @@ fn parse_addr(value: &serde_json::Value) -> Result<EndpointAddr, H5iError> {
 fn observed_path(conn: &Connection) -> Option<Path> {
     for p in conn.paths().iter() {
         if p.is_selected() {
-            return Some(if p.is_relay() { Path::Relayed } else { Path::Direct });
+            return Some(if p.is_relay() {
+                Path::Relayed
+            } else {
+                Path::Direct
+            });
         }
     }
     None
@@ -503,20 +507,14 @@ pub fn short(id: &str) -> String {
 // ─── the joining side ───────────────────────────────────────────────────────
 
 /// Dial the sharer named by a ticket.
-pub async fn dial(
-    endpoint: &Endpoint,
-    addr: &serde_json::Value,
-) -> Result<Connection, H5iError> {
+pub async fn dial(endpoint: &Endpoint, addr: &serde_json::Value) -> Result<Connection, H5iError> {
     let addr = parse_addr(addr)?;
-    endpoint
-        .connect(addr, wire::ALPN)
-        .await
-        .map_err(|e| {
-            H5iError::Metadata(format!(
-                "could not reach the sharer: {e}. They may have stopped sharing, or the ticket \
+    endpoint.connect(addr, wire::ALPN).await.map_err(|e| {
+        H5iError::Metadata(format!(
+            "could not reach the sharer: {e}. They may have stopped sharing, or the ticket \
                  may have been minted by a machine that has since moved networks."
-            ))
-        })
+        ))
+    })
 }
 
 /// Why a joiner could not get a stream.
@@ -583,15 +581,41 @@ pub async fn open_stream(
         .await
         .map_err(|e| OpenError::Transport(format!("could not greet the sharer: {e}")))?;
     let mut reply = [0u8; 1];
-    recv.read_exact(&mut reply)
-        .await
-        .map_err(|e| OpenError::Transport(format!("the sharer did not answer the handshake: {e}")))?;
+    recv.read_exact(&mut reply).await.map_err(|e| {
+        OpenError::Transport(format!("the sharer did not answer the handshake: {e}"))
+    })?;
     match reply[0] {
         wire::REPLY_OK => Ok((send, recv)),
         wire::REPLY_BUSY => Err(OpenError::Busy),
         wire::REPLY_UNREACHABLE => Err(OpenError::Unreachable),
         _ => Err(OpenError::Refused),
     }
+}
+
+/// Present the ticket once, right after connecting, and close the stream again.
+///
+/// Two things this buys, and the second one is a bug fix.
+///
+/// **`h5i join` finds out now whether the ticket works.** Before this it
+/// printed "joined", along with the warning about running somebody else's
+/// agent's code, on the strength of a QUIC handshake alone — a revoked or
+/// expired ticket looked exactly like a good one until the first page load
+/// answered `502`.
+///
+/// **A joiner that nobody has visited yet stops being killed.** The sharer hangs
+/// up on a connection that has never authorized a stream, after
+/// `UNAUTHENTICATED_GRACE`, because an endpoint anyone can dial must not be
+/// holdable for free. But the normal way this feature is used is: send someone a
+/// ticket, they run `h5i join`, and *then* they open the browser — so the real
+/// client was the one being cut off, thirty seconds in, with "closed by peer:
+/// h5i: no ticket was presented".
+pub async fn verify_ticket(conn: &Connection, secret: &str) -> Result<(), OpenError> {
+    let (mut send, recv) = open_stream(conn, secret).await?;
+    // Nothing is sent over it. The sharer has a socket into the box open for
+    // this stream and closing it at once is what tells it to let that go.
+    let _ = send.finish();
+    drop(recv);
+    Ok(())
 }
 
 /// Report how a joined connection is actually carried, for the joiner's own
@@ -721,6 +745,110 @@ mod tests {
 
         // And the share recorded the peer that did get in.
         assert_eq!(bridge.peer_count(), 1);
+
+        serving.abort();
+        drop(conn);
+    }
+
+    /// A joiner that has connected but whose browser has not been opened yet.
+    #[tokio::test]
+    async fn a_ticket_presented_once_keeps_an_idle_joiner_alive() {
+        // The sharer hangs up on a connection that never authorizes a stream,
+        // because an endpoint anyone can dial must not be holdable for free.
+        // But the normal way this feature is used is: send someone a ticket,
+        // they run `h5i join`, and *then* they open the browser. That person
+        // was being cut off thirty seconds in, with "closed by peer: h5i: no
+        // ticket was presented", for doing nothing wrong.
+        //
+        // Time is paused, so this asserts about the grace itself rather than
+        // about how long a test is willing to sit still.
+        tokio::time::pause();
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret) = test_bridge(dir.path(), port);
+
+        let sharer = local_endpoint(true).await;
+        let addr = dialable(&sharer).await;
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, sharer, false).await }
+        });
+
+        let joiner = local_endpoint(false).await;
+        let conn = joiner
+            .connect(addr.clone(), wire::ALPN)
+            .await
+            .expect("connect to the sharer");
+
+        // What `h5i join` now does before it prints anything.
+        verify_ticket(&conn, &secret)
+            .await
+            .expect("the ticket works");
+
+        // And then nobody opens the page for a long time.
+        tokio::time::advance(UNAUTHENTICATED_GRACE * 3).await;
+        tokio::task::yield_now().await;
+        assert!(
+            conn.close_reason().is_none(),
+            "an idle joiner that had presented its ticket was hung up on: {:?}",
+            conn.close_reason()
+        );
+
+        // The connection is still usable, which is the point.
+        let (mut send, mut recv) = open_stream(&conn, &secret).await.expect("still authorized");
+        send.write_all(b"hello").await.expect("write");
+        let mut got = [0u8; 9];
+        recv.read_exact(&mut got).await.expect("read the reply");
+        assert_eq!(&got, b"saw 5 byt");
+
+        // And the grace has not been softened into nothing: a connection that
+        // presents no ticket at all is still hung up on, which is the whole
+        // reason it exists on an endpoint anyone can dial.
+        let silent = local_endpoint(false).await;
+        let quiet = silent.connect(addr, wire::ALPN).await.expect("connect");
+        for _ in 0..20 {
+            tokio::time::advance(UNAUTHENTICATED_GRACE).await;
+            tokio::task::yield_now().await;
+            if quiet.close_reason().is_some() {
+                break;
+            }
+        }
+        assert!(
+            format!("{:?}", quiet.close_reason()).contains("no ticket"),
+            "a connection that never presented a ticket was left alone: {:?}",
+            quiet.close_reason()
+        );
+
+        serving.abort();
+        drop(conn);
+    }
+
+    #[tokio::test]
+    async fn a_revoked_ticket_is_refused_at_join_time_rather_than_at_first_page_load() {
+        // `h5i join` used to print "joined", and the warning about running
+        // somebody else's agent's code, on the strength of a QUIC handshake
+        // alone. A revoked ticket looked exactly like a good one until the
+        // first page load answered 502.
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret) = test_bridge(dir.path(), port);
+
+        let sharer = local_endpoint(true).await;
+        let addr = dialable(&sharer).await;
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, sharer, false).await }
+        });
+
+        crate::run::stop(dir.path()).expect("stop the share");
+
+        let joiner = local_endpoint(false).await;
+        let conn = joiner
+            .connect(addr, wire::ALPN)
+            .await
+            .expect("connect to the sharer");
+        let err = verify_ticket(&conn, &secret).await.expect_err("revoked");
+        assert!(matches!(err, OpenError::Refused), "{err}");
 
         serving.abort();
         drop(conn);

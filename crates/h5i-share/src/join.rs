@@ -41,6 +41,9 @@ pub struct Joined {
     pub path: Option<Path>,
     /// The box on the far end, as the ticket names it.
     pub box_id: String,
+    /// The ticket worked, but the share said something worth repeating: it is
+    /// full, or the box has nothing listening on the shared port yet.
+    pub warning: Option<String>,
 }
 
 /// Connect, bind, and serve until interrupted.
@@ -64,6 +67,23 @@ pub async fn run(
     let conn = crate::p2p::dial(&endpoint, &ticket.addr).await?;
     let path = crate::p2p::path_of(&conn);
 
+    // Presented once, before anything is announced. See `verify_ticket`: it
+    // turns "joined" into a statement about the ticket rather than about the
+    // network, and it keeps a joiner who has not opened the page yet from being
+    // hung up on thirty seconds later.
+    let warning = match crate::p2p::verify_ticket(&conn, &ticket.secret).await {
+        Ok(()) => None,
+        // The only one that is fatal. Busy and unreachable are both conditions
+        // that clear on their own — the share fills up and empties again, the
+        // dev server is started a minute later — and failing on them would mean
+        // telling somebody their invite is broken when it is not.
+        Err(e @ crate::p2p::OpenError::Refused) => return Err(H5iError::Metadata(format!("{e}"))),
+        Err(e @ crate::p2p::OpenError::Transport(_)) => {
+            return Err(H5iError::Metadata(format!("{e}")))
+        }
+        Err(e) => Some(format!("{e}")),
+    };
+
     // Loopback only. Never an external address, on any code path: this proxy
     // exists to give one browser on this machine a door, not to republish
     // someone else's dev server.
@@ -85,6 +105,7 @@ pub async fn run(
         ),
         path,
         box_id: ticket.box_id.clone(),
+        warning,
     });
 
     let secret = std::sync::Arc::new(ticket.secret.clone());
@@ -201,9 +222,7 @@ async fn handle(
     if counts.was_truncated() {
         // The joiner has no receipt of its own, so this is the only place a
         // person learns their download was cut off rather than finished.
-        eprintln!(
-            "join: the box left a response unfinished; what arrived is incomplete"
-        );
+        eprintln!("join: the box left a response unfinished; what arrived is incomplete");
     }
     Ok(())
 }
@@ -271,9 +290,11 @@ mod tests {
         // Checked here as well as by the sharer. The joiner should be told
         // plainly rather than watching a connection fail for reasons that look
         // like a network problem.
-        let err = run(ticket(1), 0, |_| panic!("must not get as far as announcing"))
-            .await
-            .expect_err("expired");
+        let err = run(ticket(1), 0, |_| {
+            panic!("must not get as far as announcing")
+        })
+        .await
+        .expect_err("expired");
         assert!(format!("{err}").contains("expired"));
     }
 }

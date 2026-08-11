@@ -84,6 +84,10 @@ pub struct ShareSession {
     /// The host-side `h5i box share` process. Used to tell a live share from a
     /// stale file left by a crash.
     pub pid: u32,
+    /// Set once the serving process has decided to stop but has not yet removed
+    /// this file. `pid` is still alive throughout, so nothing else could tell.
+    #[serde(default)]
+    pub winding_up: bool,
     pub grants: Vec<Grant>,
 }
 
@@ -135,7 +139,10 @@ fn digest_matches(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.bytes()
+        .zip(b.bytes())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 impl ShareSession {
@@ -154,6 +161,7 @@ impl ShareSession {
             endpoint: endpoint.to_string(),
             started_at: started_at.to_rfc3339(),
             pid: std::process::id(),
+            winding_up: false,
             grants: Vec::new(),
         }
     }
@@ -194,19 +202,31 @@ impl ShareSession {
     /// revoked or wholly expired share drops its live connections instead of
     /// serving them until the peer gets bored.
     pub fn is_spent(&self, now: i64) -> bool {
-        !self
-            .grants
-            .iter()
-            .any(|g| !g.revoked && g.expires_at > now)
+        !self.grants.iter().any(|g| !g.revoked && g.expires_at > now)
     }
+}
 
+/// `45s`, `4m`, `1h30m` — whichever unit does not read as zero.
+///
+/// Lives here rather than in the CLI because two callers render "how long is
+/// left" and they were not the same function: the announce line was fixed to
+/// stop saying `0m` for a 45-second ticket, and `share status` was left on
+/// integer minutes, so every share in existence read `0m left` for its final
+/// minute — right next to `expired` in the same column, at the exact moment
+/// somebody runs `status` to decide whether to re-mint.
+pub fn humanise(seconds: i64) -> String {
+    let s = seconds.max(0);
+    if s < 60 {
+        format!("{s}s")
+    } else if s < 3600 {
+        format!("{}m", s / 60)
+    } else {
+        format!("{}h{}m", s / 3600, (s % 3600) / 60)
+    }
 }
 
 /// Mint a grant, returning it and the secret that must be printed **now**.
-pub fn mint_grant(
-    label: Option<String>,
-    expires_at: i64,
-) -> Result<(Grant, String), H5iError> {
+pub fn mint_grant(label: Option<String>, expires_at: i64) -> Result<(Grant, String), H5iError> {
     let secret = crate::ticket::mint_secret()?;
     // Eight hex characters is a handle to type, not a secret: it identifies a
     // grant in `share ls` and `share revoke` and authorizes nothing.
@@ -256,14 +276,15 @@ impl Lock {
                     // winner's lock on its way out.
                     use std::io::Write as _;
                     let _ = f.write_all(mine.as_bytes());
-                    return Ok(Lock {
-                        path,
-                        owner: mine,
-                    });
+                    return Ok(Lock { path, owner: mine });
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if lock_is_stale(&path) {
-                        let _ = std::fs::remove_file(&path);
+                    // Only skip the wait when the break actually worked. It
+                    // can fail — a read-only directory, an immutable file — and
+                    // retrying instantly then burned all 100 attempts in a few
+                    // microseconds and reported contention that was really a
+                    // permissions problem.
+                    if lock_is_stale(&path) && std::fs::remove_file(&path).is_ok() {
                         continue;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -297,7 +318,10 @@ fn lock_is_stale(path: &Path) -> bool {
     if !old_enough {
         return false;
     }
-    match std::fs::read_to_string(path).ok().and_then(|p| p.trim().parse::<u32>().ok()) {
+    match std::fs::read_to_string(path)
+        .ok()
+        .and_then(|p| p.trim().parse::<u32>().ok())
+    {
         Some(pid) => !pid_alive(pid),
         // No pid to check, so age is all there is.
         None => true,
@@ -366,23 +390,72 @@ pub fn write(env_dir: &Path, s: &ShareSession) -> Result<(), H5iError> {
 /// A record whose process is gone is a leftover from a crash and is taken over
 /// rather than obeyed; the caller is told, because silently clearing somebody's
 /// share record is not something to do without saying so.
-pub fn claim(env_dir: &Path, s: &ShareSession) -> Result<Option<u32>, H5iError> {
+pub fn claim(env_dir: &Path, s: &ShareSession, name: &str) -> Result<Option<u32>, H5iError> {
     let _lock = Lock::acquire(env_dir)?;
     let mut cleared = None;
     if let Some(existing) = read(env_dir) {
         if is_live(&existing) {
-            return Err(H5iError::Metadata(format!(
-                "this box is already being shared by pid {} over {}. Stop it first \
-                 (`h5i box share stop <name>`), or add a peer to the share you have \
-                 (`h5i box share grant <name>`).",
-                existing.pid,
-                existing.transport.as_str()
-            )));
+            return Err(already_shared(&existing, name));
         }
         cleared = Some(existing.pid);
     }
     write(env_dir, s)?;
     Ok(cleared)
+}
+
+/// The refusal a second `share` gets, with the box's real name in it.
+///
+/// One function rather than two spellings, because the copy in `run` said
+/// `h5i box share stop <name>` — angle brackets and all — to somebody who then
+/// had to guess what to type. The library does not know the name; the caller
+/// does, so it passes it in.
+pub fn already_shared(existing: &ShareSession, name: &str) -> H5iError {
+    if existing.winding_up {
+        return H5iError::Metadata(format!(
+            "this box's share is shutting down (pid {}) — it is writing its receipt and will be \
+             gone in a moment. Run `h5i box share {name}` again then.",
+            existing.pid
+        ));
+    }
+    H5iError::Metadata(format!(
+        "this box is already being shared by pid {} over {}. Stop it first \
+         (`h5i box share stop {name}`), or add a peer to the share you have \
+         (`h5i box share grant {name}`).",
+        existing.pid,
+        existing.transport.as_str()
+    ))
+}
+
+/// Mark the share as winding up, so the other verbs stop pretending it serves.
+///
+/// The gap this closes: between the serving process deciding to stop and the
+/// moment it removes the record, `is_live` is still true — the pid is right
+/// there. So `share grant` in that window minted a ticket, printed a secret
+/// that by contract is printed once, and then the serving process deleted the
+/// table it was written into. The peer got a URL that never worked.
+pub fn begin_winding_up(env_dir: &Path) {
+    let _ = update(env_dir, |s| {
+        s.winding_up = true;
+        Ok(())
+    });
+}
+
+/// Remove the record outright, whatever it says.
+///
+/// The escape hatch for a record whose pid has been reused by an unrelated
+/// process. `is_live` is `kill(pid, 0)`, so such a record reads as serving
+/// forever: `stop` revokes grants nobody reads and leaves the file, and `share`
+/// refuses because the box is "already shared". No verb got out of that, and
+/// the only fix was knowing to delete a file nothing had told the operator
+/// about.
+pub fn forget(env_dir: &Path) -> Result<bool, H5iError> {
+    let _lock = Lock::acquire(env_dir)?;
+    let p = session_path(env_dir);
+    match std::fs::remove_file(&p) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(H5iError::with_path(e, &p)),
+    }
 }
 
 /// End a share, under a single lock hold.
@@ -407,6 +480,14 @@ pub fn stop(env_dir: &Path) -> Result<bool, H5iError> {
     for g in &mut s.grants {
         g.revoked = true;
     }
+    // In the same locked step as the revoke, not left to the serving process to
+    // set when it notices. It notices by polling, so between `stop` returning
+    // and that poll there was a window where `share grant` still saw a live
+    // share — and a grant landing in that window did not merely mint a doomed
+    // ticket, it added a live grant, which is exactly the condition the serving
+    // process polls for. A share could be resurrected by the race with the
+    // command that was stopping it.
+    s.winding_up = true;
     write(env_dir, &s)?;
     Ok(true)
 }
@@ -418,9 +499,7 @@ pub fn update<T>(
 ) -> Result<T, H5iError> {
     let _lock = Lock::acquire(env_dir)?;
     let mut s = read(env_dir).ok_or_else(|| {
-        H5iError::Metadata(
-            "this box is not being shared — run `h5i box share <name>` first".into(),
-        )
+        H5iError::Metadata("this box is not being shared — run `h5i box share <name>` first".into())
     })?;
     let out = f(&mut s)?;
     write(env_dir, &s)?;
@@ -462,6 +541,44 @@ pub fn is_live(s: &ShareSession) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_share_record_can_always_be_forgotten() {
+        // The dead end this exits: `is_live` is `kill(pid, 0)` and nothing
+        // else, so a record whose pid has been reused by an unrelated process
+        // reads as serving forever. `stop` revoked grants nobody was reading
+        // and left the file; `share` refused because the box was already
+        // shared; `status` said the pid was live. No verb got out of it.
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(!forget(dir.path()).expect("no record is not an error"));
+
+        let s = session_with(vec![]);
+        write(dir.path(), &s).expect("write");
+        assert!(forget(dir.path()).expect("forget"));
+        assert!(read(dir.path()).is_none());
+    }
+
+    #[test]
+    fn how_long_is_left_never_reads_as_zero_while_it_is_not() {
+        // Integer minutes made every share in existence say "0m left" for its
+        // final minute, in the same column that says "expired", at the exact
+        // moment somebody runs `status` to decide whether to re-mint.
+        assert_eq!(humanise(45), "45s");
+        assert_eq!(humanise(59), "59s");
+        assert_eq!(humanise(60), "1m");
+        assert_eq!(humanise(3600), "1h0m");
+        assert_eq!(humanise(-5), "0s");
+    }
+
+    #[test]
+    fn winding_up_survives_a_file_written_before_the_field_existed() {
+        // `#[serde(default)]`, checked rather than assumed: a share.json from
+        // an older h5i must still read, and must read as *not* winding up.
+        let old = r#"{"v":1,"box_id":"env/a/demo","port":3000,"transport":"tunnel",
+            "endpoint":"https://x","started_at":"2026-01-01T00:00:00Z","pid":1,"grants":[]}"#;
+        let s: ShareSession = serde_json::from_str(old).expect("an older record still reads");
+        assert!(!s.winding_up);
+    }
+
     fn session_with(grants: Vec<Grant>) -> ShareSession {
         let mut s = ShareSession::new(
             "env/agent/demo",
@@ -499,7 +616,10 @@ mod tests {
         let (g, secret) = mint_grant(Some("alex".into()), 4_000_000_000).expect("mint");
         let s = session_with(vec![g]);
         let json = serde_json::to_string(&s).expect("serialize");
-        assert!(!json.contains(&secret), "share.json must not carry the secret");
+        assert!(
+            !json.contains(&secret),
+            "share.json must not carry the secret"
+        );
         assert!(json.contains(&hash_secret(&secret)));
     }
 
@@ -511,8 +631,14 @@ mod tests {
         revoked.id = "revoked0".into();
         revoked.revoked = true;
         let s = session_with(vec![expired, revoked]);
-        assert_eq!(s.authorize(&expired_secret, 2_000).unwrap_err(), Denied::Expired);
-        assert_eq!(s.authorize(&revoked_secret, 2_000).unwrap_err(), Denied::Revoked);
+        assert_eq!(
+            s.authorize(&expired_secret, 2_000).unwrap_err(),
+            Denied::Expired
+        );
+        assert_eq!(
+            s.authorize(&revoked_secret, 2_000).unwrap_err(),
+            Denied::Revoked
+        );
     }
 
     #[test]
@@ -557,7 +683,10 @@ mod tests {
         let id = g.id.clone();
         write(dir.path(), &session_with(vec![g])).expect("write");
         update(dir.path(), |s| {
-            s.grants.iter_mut().filter(|g| g.id == id).for_each(|g| g.revoked = true);
+            s.grants
+                .iter_mut()
+                .filter(|g| g.id == id)
+                .for_each(|g| g.revoked = true);
             Ok(())
         })
         .expect("update");
@@ -604,14 +733,26 @@ mod tests {
         std::fs::write(&path, std::process::id().to_string()).expect("write");
         // Make it look ancient.
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
-        let f = std::fs::File::options().write(true).open(&path).expect("open");
+        let f = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open");
         f.set_modified(old).expect("backdate");
-        assert!(!lock_is_stale(&path), "a live holder's lock was called stale");
+        assert!(
+            !lock_is_stale(&path),
+            "a live holder's lock was called stale"
+        );
 
         std::fs::write(&path, "999999").expect("write");
-        let f = std::fs::File::options().write(true).open(&path).expect("open");
+        let f = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open");
         f.set_modified(old).expect("backdate");
-        assert!(lock_is_stale(&path), "a dead holder's lock was not called stale");
+        assert!(
+            lock_is_stale(&path),
+            "a dead holder's lock was not called stale"
+        );
     }
 
     #[test]

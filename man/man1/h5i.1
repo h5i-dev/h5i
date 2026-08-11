@@ -303,7 +303,7 @@ Let one other person try this box's web app, from their own machine
 The port inside the box \(em whatever the dev server in there binds
 .TP
 \fB\-\-expire\fR \fI<EXPIRE>\fR [default: 60m]
-How long the ticket lasts (`30m`, `2h`, `90s`)
+How long the ticket lasts: `30m`, `2h`, `90s`, or bare seconds. 24h max
 .TP
 \fB\-\-label\fR \fI<LABEL>\fR
 A name for the peer you are sending this to, for `status` and the receipt
@@ -340,7 +340,7 @@ Print help
 <\fINAME\fR>
 
 .SH "H5I BOX SHARE LIST"
-List the boxes on this clone that are being shared right now
+List this clone's share records, live ones and any left by a crash
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -368,7 +368,7 @@ Mint another ticket for a running share, so a second person can join
 A name for this peer, to make `status` and the receipt readable
 .TP
 \fB\-\-expire\fR \fI<EXPIRE>\fR [default: 60m]
-How long this ticket lasts (`30m`, `2h`, `90s`)
+How long this ticket lasts: `30m`, `2h`, `90s`, or bare seconds. 24h max
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
@@ -398,10 +398,15 @@ Stop a share running in another terminal
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBstop\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBstop\fR [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
+.TP
+\fB\-\-force\fR
+Delete the share record instead of asking its process to stop.
+
+For a record whose pid has been taken over by an unrelated process: h5i then believes the share is serving forever, and no other verb gets out of that. No receipt is written, because the process that would have written one is gone.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)

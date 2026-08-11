@@ -80,13 +80,7 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
     // starts could both walk through.
     if let Some(existing) = session::read(&req.env_dir) {
         if session::is_live(&existing) {
-            return Err(H5iError::Metadata(format!(
-                "this box is already being shared by pid {} over {}. Stop it first \
-                 (`h5i box share stop <name>`), or add a peer to the share you have \
-                 (`h5i box share grant <name>`).",
-                existing.pid,
-                existing.transport.as_str()
-            )));
+            return Err(session::already_shared(&existing, &req.box_name));
         }
     }
 
@@ -112,7 +106,14 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
         .build()
         .map_err(|e| H5iError::Metadata(format!("could not start the share runtime: {e}")))?;
 
-    runtime.block_on(async move { serve_async(req, dialer, warning, announce).await })
+    let out = runtime.block_on(async move { serve_async(req, dialer, warning, announce).await });
+    // Not a plain drop. `open_upstream` runs under `spawn_blocking`, blocking
+    // tasks are never cancelled, and the dialer's reply is bounded only by
+    // `CONNECT_TIMEOUT` — so a dev server that accepts nothing meant this
+    // command sat there for ten more seconds after printing everything it had
+    // to say, which is an operator's whole experience of a hang.
+    runtime.shutdown_timeout(Duration::from_millis(200));
+    out
 }
 
 async fn serve_async(
@@ -121,8 +122,9 @@ async fn serve_async(
     warning: Option<String>,
     announce: impl FnOnce(&Started),
 ) -> Result<(), H5iError> {
-    let expires_at = (chrono::Utc::now() + chrono::Duration::from_std(req.expire).unwrap_or_default())
-        .timestamp();
+    let expires_at = (chrono::Utc::now()
+        + chrono::Duration::from_std(req.expire).unwrap_or_default())
+    .timestamp();
     let (grant, secret) = session::mint_grant(req.label.clone(), expires_at)?;
     let grant_id = grant.id.clone();
 
@@ -144,7 +146,7 @@ async fn serve_async(
     // the right order: better a wasted endpoint than two bridges sharing one
     // grant table on two different ports, where a ticket for one authorizes the
     // other.
-    match session::claim(&req.env_dir, &sess) {
+    match session::claim(&req.env_dir, &sess, &req.box_name) {
         Ok(Some(stale)) => eprintln!(
             "share: cleared a leftover share record from pid {stale} (that process is gone)"
         ),
@@ -176,7 +178,7 @@ async fn serve_async(
 
     let outcome = tokio::select! {
         r = started.serve(bridge.clone(), req.direct_only) => r,
-        _ = interrupted() => Ok(()),
+        _ = interrupted(&req.env_dir) => Ok(()),
         reason = stopped_elsewhere(bridge.clone()) => {
             eprintln!("share: {reason}");
             Ok(())
@@ -186,6 +188,23 @@ async fn serve_async(
             Ok(())
         }
     };
+
+    // Whatever ended the select, the operator can still press Ctrl-C — and
+    // until this call there was nobody listening for it on three of the four
+    // exits. Registering a signal handler replaces the default disposition for
+    // the rest of the process's life, so once `interrupted()` had been polled
+    // even once, a `select!` that resolved on some *other* branch left SIGINT
+    // and SIGTERM installed and unwatched: the teardown below is up to six
+    // seconds, and for all of it Ctrl-C and `kill` did nothing at all.
+    #[cfg(unix)]
+    arm_second_signal(&req.env_dir);
+
+    // Say so on disk before doing any of it. `is_live` is `kill(pid, 0)`, and
+    // this process is about to spend several seconds writing a receipt while
+    // still very much alive — so `share grant` in that window minted a ticket,
+    // printed the one copy of its secret, and then watched this function delete
+    // the table it went into.
+    session::begin_winding_up(&req.env_dir);
 
     // Tell the connections first, tear the transport down second. `iroh`'s
     // `Endpoint::close` closes every connection with code `0` and an empty
@@ -216,7 +235,7 @@ async fn serve_async(
 /// process supervisor tidying up are all ordinary ways a foreground command
 /// ends — and handling only the interrupt means the ingress receipt is lost in
 /// exactly those cases, which are the ones nobody planned for.
-async fn interrupted() {
+async fn interrupted(env_dir: &std::path::Path) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
@@ -224,7 +243,7 @@ async fn interrupted() {
             Ok(s) => s,
             Err(_) => {
                 let _ = tokio::signal::ctrl_c().await;
-                arm_second_signal();
+                arm_second_signal(env_dir);
                 return;
             }
         };
@@ -232,10 +251,11 @@ async fn interrupted() {
             _ = tokio::signal::ctrl_c() => {}
             _ = term.recv() => {}
         }
-        arm_second_signal();
+        arm_second_signal(env_dir);
     }
     #[cfg(not(unix))]
     {
+        let _ = env_dir;
         let _ = tokio::signal::ctrl_c().await;
     }
 }
@@ -249,8 +269,16 @@ async fn interrupted() {
 /// operator pressing Ctrl-C twice is asking for it to stop now. They lose the
 /// receipt, which is the trade they just made.
 #[cfg(unix)]
-fn arm_second_signal() {
-    tokio::spawn(async {
+fn arm_second_signal(env_dir: &std::path::Path) {
+    // Armed at most once. The normal shutdown path calls this too, so on a
+    // Ctrl-C both calls happen and a second watcher would race the first to
+    // `exit(130)` — harmless, but it also means two handlers for one signal.
+    static ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if ARMED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let env_dir = env_dir.to_path_buf();
+    tokio::spawn(async move {
         use tokio::signal::unix::{signal, SignalKind};
         let mut term = signal(SignalKind::terminate()).ok();
         let again = async {
@@ -268,6 +296,11 @@ fn arm_second_signal() {
         };
         again.await;
         eprintln!("share: interrupted again — exiting without writing the receipt");
+        // The receipt is the trade the operator just made. The *record* is not:
+        // leaving `share.json` behind means the next `share ls` shows a share
+        // that is gone and the next `share` refuses to start, which is a mess
+        // made by this exit rather than chosen by them.
+        session::clear(&env_dir);
         std::process::exit(130);
     });
 }
@@ -468,6 +501,13 @@ pub fn grant(
                     .into(),
             ));
         }
+        if s.winding_up {
+            return Err(H5iError::Metadata(
+                "this share is shutting down, so a ticket minted now would be deleted with \
+                 the rest of the table a moment later. Start a fresh share."
+                    .into(),
+            ));
+        }
         // Every reason to refuse is checked *before* the grant goes in the
         // table. A grant written and then refused is a grant whose secret was
         // printed nowhere: unusable by anyone, and still counted as live, so
@@ -493,6 +533,17 @@ pub fn grant(
 /// Revoke one grant. The share keeps serving everyone else.
 pub fn revoke(env_dir: &std::path::Path, grant_id: &str) -> Result<(), H5iError> {
     session::update(env_dir, |s| {
+        // Checked here for the same reason `grant` checks it: the CLI prints
+        // "any connection that peer had is dropped within a second", and
+        // against a record left by a crashed process every word of that is
+        // false. A share nothing is serving needs `share stop`, not a revoke.
+        if !session::is_live(s) {
+            return Err(H5iError::Metadata(
+                "the process serving this share is gone, so there is nothing to revoke from. \
+                 Run `h5i box share stop <name>` to clear the leftover record."
+                    .into(),
+            ));
+        }
         let found = s.grants.iter_mut().find(|g| g.id == grant_id);
         match found {
             Some(g) => {
@@ -550,7 +601,7 @@ mod tests {
             chrono::Utc::now(),
         );
         session::write(dir.path(), &s).expect("write");
-        let err = session::claim(dir.path(), &s).expect_err("already shared");
+        let err = session::claim(dir.path(), &s, "demo").expect_err("already shared");
         assert!(format!("{err}").contains("already being shared"));
     }
 
@@ -574,8 +625,13 @@ mod tests {
             "https://x.trycloudflare.com",
             chrono::Utc::now(),
         );
-        let cleared = session::claim(dir.path(), &fresh).expect("a dead share must not block one");
-        assert_eq!(cleared, Some(0), "the operator should be told what was cleared");
+        let cleared =
+            session::claim(dir.path(), &fresh, "demo").expect("a dead share must not block one");
+        assert_eq!(
+            cleared,
+            Some(0),
+            "the operator should be told what was cleared"
+        );
         assert_eq!(session::read(dir.path()).expect("read").port, 4000);
     }
 
@@ -661,7 +717,10 @@ mod tests {
 
         let after = session::read(dir.path()).expect("read");
         assert_eq!(after.grants.len(), 1, "a refused grant was written anyway");
-        assert!(after.is_spent(2_000), "a phantom grant kept the share alive");
+        assert!(
+            after.is_spent(2_000),
+            "a phantom grant kept the share alive"
+        );
     }
 
     #[test]
@@ -680,5 +739,95 @@ mod tests {
         session::write(dir.path(), &s).expect("write");
         let err = grant(dir.path(), None, Duration::from_secs(600)).expect_err("dead share");
         assert!(format!("{err}").contains("gone"));
+    }
+
+    #[test]
+    fn a_ticket_is_refused_while_the_share_is_winding_up() {
+        // The window this closes: `is_live` is `kill(pid, 0)`, and the serving
+        // process spends several seconds writing its receipt while very much
+        // alive. A grant minted in there printed the one copy of its secret and
+        // was then deleted with the rest of the table.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut s = ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::Tunnel,
+            "https://x.trycloudflare.com",
+            chrono::Utc::now(),
+        );
+        let (g, _) = session::mint_grant(None, 4_000_000_000).unwrap();
+        s.grants = vec![g];
+        session::write(dir.path(), &s).expect("write");
+
+        grant(dir.path(), None, Duration::from_secs(600)).expect("a live share mints");
+        session::begin_winding_up(dir.path());
+        let err = grant(dir.path(), None, Duration::from_secs(600)).expect_err("winding up");
+        assert!(format!("{err}").contains("shutting down"), "{err}");
+        assert_eq!(
+            session::read(dir.path()).expect("read").grants.len(),
+            2,
+            "a refused grant was written anyway"
+        );
+
+        // And the refusal a second `share` gets says so too, rather than
+        // telling somebody to stop a share that is already stopping.
+        let err = session::already_shared(&session::read(dir.path()).unwrap(), "demo");
+        assert!(format!("{err}").contains("shutting down"), "{err}");
+    }
+
+    #[test]
+    fn stopping_a_share_shuts_the_door_on_a_racing_grant() {
+        // `stop` revokes every grant and lets the serving process notice by
+        // polling. A `grant` landing in that gap did not just mint a ticket
+        // about to be deleted — it added a *live* grant, which is the very
+        // condition the serving process polls for, so the share it was racing
+        // could come back from the dead.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut s = ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::Tunnel,
+            "https://x.trycloudflare.com",
+            chrono::Utc::now(),
+        );
+        let (g, _) = session::mint_grant(None, 4_000_000_000).unwrap();
+        s.grants = vec![g];
+        session::write(dir.path(), &s).expect("write");
+
+        assert_eq!(stop(dir.path()).expect("stop"), Stopped::Serving);
+        let err = grant(dir.path(), None, Duration::from_secs(600)).expect_err("racing grant");
+        assert!(format!("{err}").contains("shutting down"), "{err}");
+        let after = session::read(dir.path()).expect("read");
+        assert!(
+            after.is_spent(chrono::Utc::now().timestamp()),
+            "a stopped share was brought back to life by a racing grant"
+        );
+    }
+
+    #[test]
+    fn revoking_on_a_share_nothing_is_serving_is_refused() {
+        // The CLI prints "any connection that peer had is dropped within a
+        // second" on success. Against a record left by a crash, every word of
+        // that is false.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut s = ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::Tunnel,
+            "https://x.trycloudflare.com",
+            chrono::Utc::now(),
+        );
+        let (g, _) = session::mint_grant(None, 4_000_000_000).unwrap();
+        let id = g.id.clone();
+        s.grants = vec![g];
+        s.pid = 0;
+        session::write(dir.path(), &s).expect("write");
+
+        let err = revoke(dir.path(), &id).expect_err("dead share");
+        assert!(format!("{err}").contains("gone"), "{err}");
+        assert!(
+            !session::read(dir.path()).unwrap().grants[0].revoked,
+            "the table was edited by a verb that refused"
+        );
     }
 }

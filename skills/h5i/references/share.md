@@ -38,7 +38,11 @@ h5i box share ls                     # what is shared on this clone
 h5i box share grant <name> --label sam   # a second ticket (--tunnel shares only)
 h5i box share revoke <name> <grant>  # cut off one peer
 h5i box share stop <name>            # end it
+h5i box share stop <name> --force    # delete the record; nothing is asked to stop
 ```
+
+`grant` also takes `--expire`, so a second peer can get a shorter ticket than
+the first.
 
 `grant` works on a `--tunnel` share only. A peer-to-peer ticket needs the
 running endpoint's addressing, which lives in the serving process, so adding a
@@ -52,9 +56,11 @@ asking them to reload, and the count lands in the receipt.
 
 It also ends on its own, and in each case it writes its receipt on the way out:
 when the last ticket expires, when the box stops having a running session, and —
-on `--tunnel` — if `cloudflared` exits. So a share is never something you have
-to remember to clean up, but it is also not something you can start and assume
-is still up an hour later.
+on `--tunnel` — if `cloudflared` exits. So a share is not normally something you
+have to remember to clean up, and it is also not something you can start and
+assume is still up an hour later. The exception is a second Ctrl-C, which exits
+at once: that skips the receipt on purpose, and if the share record survives it
+`h5i box share stop <name>` clears it.
 
 ## What it needs, and what it refuses
 

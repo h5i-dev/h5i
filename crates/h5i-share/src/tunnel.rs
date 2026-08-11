@@ -622,14 +622,13 @@ mod tests {
         // No credential at all: refused without touching the box.
         let anon = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
         assert!(anon.starts_with("HTTP/1.1 401 "), "{anon}");
-        assert!(!anon.contains("SAW<"), "an anonymous request reached the box");
+        assert!(
+            !anon.contains("SAW<"),
+            "an anonymous request reached the box"
+        );
 
         // Following the invite link: bounced, with the token moved to a cookie.
-        let first = request(
-            addr,
-            "GET /dash HTTP/1.1\r\nHost: t\r\nCookie: x=1\r\n\r\n",
-        )
-        .await;
+        let first = request(addr, "GET /dash HTTP/1.1\r\nHost: t\r\nCookie: x=1\r\n\r\n").await;
         assert!(first.starts_with("HTTP/1.1 401 "), "{first}");
         let invited = request(
             addr,
@@ -639,7 +638,10 @@ mod tests {
         assert!(invited.contains("302"), "{invited}");
         assert!(invited.contains("Location: /dash"), "{invited}");
         assert!(invited.contains("Set-Cookie: h5i_share="), "{invited}");
-        assert!(!invited.contains("SAW<"), "the invite request reached the box");
+        assert!(
+            !invited.contains("SAW<"),
+            "the invite request reached the box"
+        );
 
         // With the cookie, it reaches the dev server — and the dev server never
         // sees the credential that admitted the visitor.
@@ -649,8 +651,14 @@ mod tests {
         )
         .await;
         assert!(served.contains("SAW<"), "{served}");
-        assert!(!served.contains(&secret), "the credential reached the box: {served}");
-        assert!(served.contains("Cookie: sid=9"), "the app's own cookie was dropped: {served}");
+        assert!(
+            !served.contains(&secret),
+            "the credential reached the box: {served}"
+        );
+        assert!(
+            served.contains("Cookie: sid=9"),
+            "the app's own cookie was dropped: {served}"
+        );
         assert!(served.contains("Connection: close"), "{served}");
 
         serving.abort();
@@ -710,11 +718,17 @@ mod tests {
              GET /smuggled HTTP/1.1\r\nHost: t\r\n\r\n"
         );
         let got = request(addr, &pipelined).await;
-        assert!(got.contains("hi"), "the first request should be served: {got}");
+        assert!(
+            got.contains("hi"),
+            "the first request should be served: {got}"
+        );
 
         tokio::time::sleep(Duration::from_millis(200)).await;
         let seen = seen.lock().unwrap().join("");
-        assert!(seen.contains("/first"), "the first request never arrived: {seen}");
+        assert!(
+            seen.contains("/first"),
+            "the first request never arrived: {seen}"
+        );
         assert!(
             !seen.contains("/smuggled"),
             "an ungated second request reached the box: {seen}"
@@ -883,7 +897,10 @@ mod tests {
         .await;
         assert!(got.contains("200 OK"), "{got}");
         assert!(!got.to_lowercase().contains("content-length"), "{got}");
-        assert!(got.ends_with("the body"), "the page was not delivered: {got}");
+        assert!(
+            got.ends_with("the body"),
+            "the page was not delivered: {got}"
+        );
 
         serving.abort();
     }
@@ -1150,19 +1167,21 @@ mod tests {
             async move { serve(bridge, listener).await }
         });
 
-        // A body far larger than what is actually sent, so the proxy is still
-        // waiting for it when the peer stops — and a `401` on a connection
-        // whose body was never read.
-        let anon = request_strict(
+        // Genuinely still uploading. The first version of this test sent its
+        // whole (short) body in one write, so `read_head` had already consumed
+        // every byte of it into userspace and the peer had stopped: the
+        // precondition it was written for — bytes queued in the kernel when the
+        // socket closes — never existed, and it passed with the drain deleted.
+        let anon = refused_mid_upload(
             addr,
-            "POST / HTTP/1.1\r\nHost: t\r\nContent-Length: 900000\r\n\r\npartial",
+            "POST / HTTP/1.1\r\nHost: t\r\nContent-Length: 900000\r\n\r\n",
         )
         .await;
         assert!(anon.starts_with("HTTP/1.1 401 "), "{anon}");
 
         // And a chunked body whose framing does not parse, which is answered
         // mid-request with the peer still mid-send.
-        let bad = request_strict(
+        let bad = refused_mid_upload(
             addr,
             &format!(
                 "POST / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
@@ -1173,6 +1192,202 @@ mod tests {
         assert!(bad.starts_with("HTTP/1.1 400 "), "{bad}");
 
         serving.abort();
+    }
+
+    /// Send a head, then keep pushing body bytes until the far side answers.
+    ///
+    /// The point is that the peer is *still sending* when the refusal is
+    /// written and when the socket closes — which is the state a drain exists
+    /// for, and which a single `write_all` of a short body does not produce.
+    async fn refused_mid_upload(addr: std::net::SocketAddr, head: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let c = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (mut r, mut w) = c.into_split();
+        w.write_all(head.as_bytes()).await.expect("head");
+        let pushing = tokio::spawn(async move {
+            let chunk = vec![b'u'; 64 * 1024];
+            // Bounded, so a proxy that answers nothing cannot wedge the test.
+            for _ in 0..64 {
+                if w.write_all(&chunk).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let mut got = Vec::new();
+        let out = tokio::time::timeout(Duration::from_secs(10), r.read_to_end(&mut got))
+            .await
+            .expect("the proxy never answered");
+        pushing.abort();
+        out.expect("the connection was reset rather than closed");
+        String::from_utf8_lossy(&got).to_string()
+    }
+
+    /// Answers every request with eight megabytes, so the response is still in
+    /// this side's send queue when the connection closes.
+    fn big_server(body: usize) -> u16 {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let _ = c.read(&mut buf);
+                    let _ = c.write_all(
+                        format!("HTTP/1.1 200 OK\r\nContent-Length: {body}\r\n\r\n").as_bytes(),
+                    );
+                    let _ = c.write_all(&vec![b'b'; body]);
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_big_response_reaches_a_client_that_pipelined_another_request() {
+        // Two things at once, and both were broken. The share serves exactly
+        // one request per connection, so a keep-alive client's follow-up sits
+        // unread — and the relay loop, which reads and discards whatever the
+        // peer says, has to keep delivering the response it is in the middle
+        // of rather than treating the peer's traffic as a reason to stop.
+        //
+        // Written first as a test for the linger drain, asserting that the
+        // close did not reset the connection. It passed with that drain
+        // deleted, so the claim was wrong and the name went with it — see
+        // `finish_with`. What it does discriminate is the megabytes.
+        const BODY: usize = 8 * 1024 * 1024;
+        let port = big_server(BODY);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let c = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let (mut r, mut w) = c.into_split();
+        w.write_all(
+            format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n").as_bytes(),
+        )
+        .await
+        .expect("request");
+        // A second request this share will never read: it serves exactly one
+        // per connection. Any keep-alive client that sends a follow-up leaves
+        // the connection in this state, so it is not an exotic shape.
+        let pipelined = tokio::spawn(async move {
+            let _ = w.write_all(&vec![b'x'; 1024 * 1024]).await;
+        });
+        // Do not read for a moment, so the response fills the buffers on both
+        // sides and there is something left to lose.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let mut got = Vec::new();
+        let out = tokio::time::timeout(Duration::from_secs(30), r.read_to_end(&mut got))
+            .await
+            .expect("the response never ended");
+        pipelined.abort();
+        out.expect("the connection was reset mid-response");
+        assert!(
+            got.len() > BODY,
+            "got {} bytes of an {BODY}-byte body plus head",
+            got.len()
+        );
+
+        serving.abort();
+    }
+
+    /// Accepts, reads, and hangs up without saying anything.
+    fn silent_server() -> u16 {
+        use std::io::Read;
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                let mut buf = [0u8; 4096];
+                let _ = c.read(&mut buf);
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn an_upgrade_the_box_never_answers_gets_a_readable_refusal() {
+        // This returned with nothing written at all, so the visitor's WebSocket
+        // failed with a bare close and no status — which a browser reports as
+        // "closed before receiving a handshake response", a sentence that says
+        // nothing about where the fault is. Every other silent box gets a 502.
+        let port = silent_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let got = request(
+            addr,
+            &format!(
+                "GET /ws HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
+                 Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+            ),
+        )
+        .await;
+        assert!(got.starts_with("HTTP/1.1 502 "), "{got}");
+
+        serving.abort();
+    }
+
+    #[tokio::test]
+    async fn a_client_that_half_closes_still_gets_its_whole_response() {
+        // Sending a request and then shutting down the write side is legal
+        // HTTP/1.1 and is what anything built out of one write and one read
+        // does — `printf ... | nc`, a CI scraper, `curl -T-`. That EOF was read
+        // as "the visitor left", so the relay stopped on the spot and those
+        // clients got the first read of a download and a clean close, with
+        // nothing recorded anywhere.
+        const BODY: usize = 2 * 1024 * 1024;
+        let port = big_server(BODY);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut c = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        c.write_all(
+            format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n").as_bytes(),
+        )
+        .await
+        .expect("request");
+        c.shutdown().await.expect("half close");
+
+        let mut got = Vec::new();
+        tokio::time::timeout(Duration::from_secs(30), c.read_to_end(&mut got))
+            .await
+            .expect("the response never ended")
+            .expect("read");
+        assert!(
+            got.len() > BODY,
+            "a half-closed client got {} bytes of an {BODY}-byte body",
+            got.len()
+        );
+
+        serving.abort();
+        bridge.quiesce(Duration::from_secs(2)).await;
+        bridge.write_receipt();
+        let receipt = receipt_of(dir.path());
+        assert!(
+            !receipt.contains("truncated"),
+            "a complete response was recorded as truncated: {receipt}"
+        );
     }
 
     #[tokio::test]
@@ -1252,11 +1467,26 @@ mod tests {
             // And walk away mid-download.
         }
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
         serving.abort();
+        // A real barrier rather than a sleep, and positive assertions as well
+        // as the negative one: without them this passes just as well when the
+        // request never reached the box at all, which is the wrong reason to be
+        // green about a claim concerning what the box did.
+        bridge.quiesce(Duration::from_secs(5)).await;
         bridge.write_receipt();
         let receipt = receipt_of(dir.path());
-        assert!(!receipt.contains("truncated"), "the visitor was blamed on the box: {receipt}");
+        assert!(
+            receipt.contains("1 connection"),
+            "no connection was recorded, so nothing was proved about one: {receipt}"
+        );
+        assert!(
+            !receipt.contains(" 0 out"),
+            "no bytes reached the visitor, so the relay loop was never entered: {receipt}"
+        );
+        assert!(
+            !receipt.contains("truncated"),
+            "the visitor was blamed on the box: {receipt}"
+        );
     }
 
     #[tokio::test]
@@ -1286,7 +1516,10 @@ mod tests {
         )
         .await;
         assert!(after.starts_with("HTTP/1.1 401 "), "{after}");
-        assert!(!after.contains("SAW<"), "a stopped share still reached the box");
+        assert!(
+            !after.contains("SAW<"),
+            "a stopped share still reached the box"
+        );
 
         serving.abort();
     }
@@ -1298,7 +1531,10 @@ mod tests {
         // hand once and one of them was wrong.
         for r in [busy_response(), unreachable_response()] {
             let (head, body) = r.split_once("\r\n\r\n").expect("a head and a body");
-            assert!(head.contains(&format!("Content-Length: {}", body.len())), "{r}");
+            assert!(
+                head.contains(&format!("Content-Length: {}", body.len())),
+                "{r}"
+            );
             assert!(head.contains("Connection: close"), "{r}");
         }
         assert!(busy_response().starts_with("HTTP/1.1 503 "));

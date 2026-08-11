@@ -21,7 +21,7 @@ pub enum ShareCommands {
         #[arg(long)]
         json: bool,
     },
-    /// List the boxes on this clone that are being shared right now.
+    /// List this clone's share records, live ones and any left by a crash.
     #[command(visible_alias = "ls")]
     List {
         #[arg(long)]
@@ -33,7 +33,7 @@ pub enum ShareCommands {
         /// A name for this peer, to make `status` and the receipt readable
         #[arg(long)]
         label: Option<String>,
-        /// How long this ticket lasts (`30m`, `2h`, `90s`)
+        /// How long this ticket lasts: `30m`, `2h`, `90s`, or bare seconds. 24h max.
         #[arg(long, default_value = "60m")]
         expire: String,
     },
@@ -44,7 +44,17 @@ pub enum ShareCommands {
     ///
     /// Revokes every grant rather than killing the process, so the share writes
     /// its receipt and clears its record on the way out.
-    Stop { name: String },
+    Stop {
+        name: String,
+        /// Delete the share record instead of asking its process to stop.
+        ///
+        /// For a record whose pid has been taken over by an unrelated process:
+        /// h5i then believes the share is serving forever, and no other verb
+        /// gets out of that. No receipt is written, because the process that
+        /// would have written one is gone.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// `h5i box share <name>` starts one; with a verb it is the management surface.
@@ -64,7 +74,7 @@ pub struct ShareArgs {
     #[arg(long, default_value_t = 3000)]
     pub port: u16,
 
-    /// How long the ticket lasts (`30m`, `2h`, `90s`).
+    /// How long the ticket lasts: `30m`, `2h`, `90s`, or bare seconds. 24h max.
     #[arg(long, default_value = "60m")]
     pub expire: String,
 
@@ -210,13 +220,31 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
             Ok(())
         }
 
-        Some(ShareCommands::Stop { name }) => {
+        Some(ShareCommands::Stop { name, force }) => {
             let dir = box_dir(&h5i_root, &name)?;
+            if force {
+                if h5i_share::session::forget(&dir)? {
+                    println!("{} deleted the share record for {name}", SUCCESS);
+                    println!(
+                        "   Nothing was asked to stop and no receipt was written. If a process \
+                         really was serving it, it will notice and exit."
+                    );
+                } else {
+                    println!(
+                        "{} `{name}` had no share record — nothing to delete.",
+                        SUCCESS
+                    );
+                }
+                return Ok(());
+            }
             if h5i_share::session::read(&dir).is_none() {
                 // Asking to stop something that is not running is not an error
                 // worth failing on, and `update`'s "run `h5i box share` first"
                 // is advice for a different verb entirely.
-                println!("{} `{name}` is not being shared — nothing to stop.", SUCCESS);
+                println!(
+                    "{} `{name}` is not being shared — nothing to stop.",
+                    SUCCESS
+                );
                 return Ok(());
             }
             match h5i_share::run::stop(&dir)? {
@@ -228,7 +256,9 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
                 }
                 h5i_share::run::Stopped::Stale => {
                     println!("{} cleared a leftover share record on {name}", SUCCESS);
-                    println!("   The process that owned it was already gone, so nothing was serving.");
+                    println!(
+                        "   The process that owned it was already gone, so nothing was serving."
+                    );
                 }
             }
             Ok(())
@@ -274,7 +304,21 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
     // denies egress and shares the host's when it does not, so naming tiers
     // here would be advice that is wrong half the time.
     let Some(box_pid) = h5i_core::view::box_pid(&dir) else {
+        // Said plainly rather than through the tier advice below, which on a
+        // platform with no network namespaces at all is advice nobody can
+        // follow: there is no tier that satisfies it, so the message sent
+        // people to try each one in turn.
+        #[cfg(not(target_os = "linux"))]
+        anyhow::bail!(
+            "`h5i box share` is Linux-only. A share is safe because the box has a network \
+             namespace of its own and the only route in enters it; on this platform a box \
+             binds the host's loopback, so h5i cannot tell the box's port {} from anything \
+             else listening on it.",
+            args.port
+        );
+        #[cfg(target_os = "linux")]
         let running = !h5i_core::env::live_sessions(&dir).is_empty();
+        #[cfg(target_os = "linux")]
         anyhow::bail!(
             "h5i cannot find a process of `{name}` in a network namespace of its own, so it \
              cannot tell the box's port {} from any other port on this machine — and sharing \
@@ -317,53 +361,55 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `45s`, `4m`, `2h` — whichever unit does not read as zero.
-fn humanise(seconds: i64) -> String {
-    let s = seconds.max(0);
-    if s < 60 {
-        format!("{s}s")
-    } else if s < 3600 {
-        format!("{}m", s / 60)
-    } else {
-        format!("{}h{}m", s / 3600, (s % 3600) / 60)
-    }
+/// Print a line, and do not die if nobody is reading.
+///
+/// `println!` panics on `EPIPE` because Rust ignores `SIGPIPE`, so
+/// `h5i box share demo | head -1` unwound out of the serving function between
+/// claiming the share and serving it: no receipt, `cloudflared` killed only by
+/// its drop guard, and `share.json` left on disk claiming a share that never
+/// started.
+macro_rules! say {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout(), $($arg)*);
+    }};
 }
 
 fn announce(name: &str, args: &ShareArgs, s: &h5i_share::run::Started) {
-    let left = humanise(s.expires_at - chrono::Utc::now().timestamp());
-    println!("{} sharing port {} of {name}", SUCCESS, args.port);
-    println!();
-    println!("   {}", s.invite);
-    println!();
-    println!("   they      {}", s.how);
-    println!("   expires   in {left} (grant {})", s.grant_id);
+    let left = h5i_share::session::humanise(s.expires_at - chrono::Utc::now().timestamp());
+    say!("{} sharing port {} of {name}", SUCCESS, args.port);
+    say!("");
+    say!("   {}", s.invite);
+    say!("");
+    say!("   they      {}", s.how);
+    say!("   expires   in {left} (grant {})", s.grant_id);
     match s.transport {
         Transport::P2p => {
             if args.direct_only {
-                println!(
+                say!(
                     "   relay     refused — a peer that cannot get a direct path is turned \
                      away rather than relayed, and one that loses it is cut off"
                 );
             } else {
-                println!(
+                say!(
                     "   relay     used only if a direct path cannot be made; it moves sealed \
                      packets and cannot read them"
                 );
             }
         }
         Transport::Tunnel => {
-            println!(
+            say!(
                 "   {} Cloudflare terminates TLS on this path, so it is not end-to-end \
                  encrypted. That is recorded in the box's receipt.",
                 WARN
             );
         }
     }
-    println!("   revoke    h5i box share revoke {name} {}", s.grant_id);
-    println!("   stop      Ctrl-C, or `h5i box share stop {name}`");
+    say!("   revoke    h5i box share revoke {name} {}", s.grant_id);
+    say!("   stop      Ctrl-C, or `h5i box share stop {name}`");
     if let Some(w) = &s.warning {
-        println!();
-        println!("   {WARN} {w}");
+        say!("");
+        say!("   {WARN} {w}");
     }
 }
 
@@ -402,6 +448,10 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
             WARN
         );
         println!("   stop      Ctrl-C");
+        if let Some(w) = &joined.warning {
+            println!();
+            println!("   {WARN} {w}");
+        }
     }))?;
     Ok(())
 }
@@ -413,12 +463,12 @@ mod tests {
     #[test]
     fn a_short_share_does_not_announce_itself_as_already_over() {
         // Integer minutes rendered `--expire 45` as "expires in 0m".
-        assert_eq!(humanise(45), "45s");
-        assert_eq!(humanise(59), "59s");
-        assert_eq!(humanise(60), "1m");
-        assert_eq!(humanise(3599), "59m");
-        assert_eq!(humanise(3600), "1h0m");
-        assert_eq!(humanise(-5), "0s");
+        assert_eq!(h5i_share::session::humanise(45), "45s");
+        assert_eq!(h5i_share::session::humanise(59), "59s");
+        assert_eq!(h5i_share::session::humanise(60), "1m");
+        assert_eq!(h5i_share::session::humanise(3599), "59m");
+        assert_eq!(h5i_share::session::humanise(3600), "1h0m");
+        assert_eq!(h5i_share::session::humanise(-5), "0s");
     }
 
     #[test]

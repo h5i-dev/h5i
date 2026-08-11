@@ -98,7 +98,9 @@ impl Ticket {
                 )
             })?;
         let t: Ticket = serde_json::from_slice(&raw).map_err(|e| {
-            H5iError::Metadata(format!("this ticket is not in a format h5i understands: {e}"))
+            H5iError::Metadata(format!(
+                "this ticket is not in a format h5i understands: {e}"
+            ))
         })?;
         if t.v != 1 {
             return Err(H5iError::Metadata(format!(
@@ -187,7 +189,12 @@ mod tests {
         // The failure this prevents is a ticket whose secret is empty or
         // truncated sailing through decode and then being compared — a short
         // secret is a weak secret, and it should not get as far as the gate.
-        for bad in ["", "zz", &"ab".repeat(SECRET_BYTES - 1), &"gg".repeat(SECRET_BYTES)] {
+        for bad in [
+            "",
+            "zz",
+            &"ab".repeat(SECRET_BYTES - 1),
+            &"gg".repeat(SECRET_BYTES),
+        ] {
             let mut t = sample();
             t.secret = bad.to_string();
             let encoded = t.encode().expect("encode");

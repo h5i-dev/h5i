@@ -243,7 +243,14 @@ impl Dialer {
         }
         let fd = owned.as_raw_fd();
         let req = [REQUEST];
-        if unsafe { libc::send(fd, req.as_ptr() as *const libc::c_void, 1, libc::MSG_NOSIGNAL) } != 1
+        if unsafe {
+            libc::send(
+                fd,
+                req.as_ptr() as *const libc::c_void,
+                1,
+                libc::MSG_NOSIGNAL,
+            )
+        } != 1
         {
             *in_step = false;
             return Err(H5iError::Metadata(format!(
@@ -443,7 +450,17 @@ fn recv_status(raw: i32) -> (Option<u8>, Option<i32>) {
         msg.msg_control = cmsg_buf.as_mut_ptr() as *mut libc::c_void;
         msg.msg_controllen = cmsg_buf.len() as _;
 
-        let n = libc::recvmsg(raw, &mut msg, 0);
+        // Retried on `EINTR`, and only on `EINTR`. Anything else that is not
+        // exactly one byte retires the channel for the life of the share —
+        // every later connection answers "the box dialer lost track of a reply"
+        // and the share serves that error until somebody restarts it. A signal
+        // arriving mid-`recvmsg` is not a reason to be in that state. tokio
+        // installs its handlers with `SA_RESTART`, so this should not fire; the
+        // cost of being wrong about that is the whole share.
+        let mut n = libc::recvmsg(raw, &mut msg, 0);
+        while n < 0 && *libc::__errno_location() == libc::EINTR {
+            n = libc::recvmsg(raw, &mut msg, 0);
+        }
         if n != 1 {
             return (None, None);
         }
@@ -603,7 +620,10 @@ mod tests {
         // so no peer input can move where this connects.
         let a = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let b = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let (pa, pb) = (a.local_addr().unwrap().port(), b.local_addr().unwrap().port());
+        let (pa, pb) = (
+            a.local_addr().unwrap().port(),
+            b.local_addr().unwrap().port(),
+        );
         let dialer = dialer_to(pa);
         assert_eq!(dialer.port(), pa);
         let sock = dialer.connect().expect("connect");

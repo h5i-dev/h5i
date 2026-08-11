@@ -124,9 +124,7 @@ fn header<'a>(headers: &[&'a str], name: &str) -> Option<&'a str> {
 /// authorization path never sees a megabyte-long "token", and a cookie full of
 /// junk is a miss rather than an argument about encodings.
 fn plausible(token: &str) -> bool {
-    !token.is_empty()
-        && token.len() <= 128
-        && token.bytes().all(|b| b.is_ascii_alphanumeric())
+    !token.is_empty() && token.len() <= 128 && token.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
 /// Remove the share parameter from a request target, leaving the rest of the
@@ -251,8 +249,20 @@ pub fn is_tchar(b: u8) -> bool {
     b.is_ascii_alphanumeric()
         || matches!(
             b,
-            b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*'
-                | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
         )
 }
 
@@ -375,9 +385,7 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
 /// share's origin in the `Referer`. Only an origin-relative path is ever
 /// echoed back; anything else goes to the root.
 pub fn safe_location(target: &str) -> String {
-    let ok = target.starts_with('/')
-        && !target.starts_with("//")
-        && !target.starts_with("/\\");
+    let ok = target.starts_with('/') && !target.starts_with("//") && !target.starts_with("/\\");
     if ok {
         target.to_string()
     } else {
@@ -559,7 +567,10 @@ mod tests {
         );
         let r = parse_default(&raw).expect("parse");
         let up = rewrite_for_upstream(&raw, &r, COOKIE);
-        assert!(!up.contains("SECRETTOKEN"), "credential leaked upstream: {up}");
+        assert!(
+            !up.contains("SECRETTOKEN"),
+            "credential leaked upstream: {up}"
+        );
         assert!(!up.contains("h5i_share"));
         assert!(!up.contains("h5i="));
     }
@@ -569,8 +580,11 @@ mod tests {
         // The flag decides whether a connection may stay open for a second
         // request, so a lone `Upgrade:` header — which any client can attach to
         // an ordinary request that will never upgrade — must not set it.
-        let lone = parse_default(&head("GET / HTTP/1.1", &["Upgrade: h2c", "Connection: keep-alive"]))
-            .expect("parse");
+        let lone = parse_default(&head(
+            "GET / HTTP/1.1",
+            &["Upgrade: h2c", "Connection: keep-alive"],
+        ))
+        .expect("parse");
         assert!(!lone.upgrade);
 
         let real = parse_default(&head(
@@ -593,7 +607,11 @@ mod tests {
 
     #[test]
     fn framing_that_two_parsers_could_read_differently_is_refused() {
-        assert!(parse_default(&head("POST / HTTP/1.1", &["Content-Length: 5", "Content-Length: 6"])).is_none());
+        assert!(parse_default(&head(
+            "POST / HTTP/1.1",
+            &["Content-Length: 5", "Content-Length: 6"]
+        ))
+        .is_none());
         assert!(parse_default(&head(
             "POST / HTTP/1.1",
             &["Content-Length: 5", "Transfer-Encoding: chunked"]
@@ -604,9 +622,11 @@ mod tests {
 
     #[test]
     fn a_body_this_proxy_cannot_measure_is_flagged_rather_than_forwarded() {
-        let r = parse_default(&head("POST / HTTP/1.1", &["Transfer-Encoding: chunked"])).expect("parse");
+        let r = parse_default(&head("POST / HTTP/1.1", &["Transfer-Encoding: chunked"]))
+            .expect("parse");
         assert!(r.chunked);
-        let plain = parse_default(&head("POST / HTTP/1.1", &["Content-Length: 12"])).expect("parse");
+        let plain =
+            parse_default(&head("POST / HTTP/1.1", &["Content-Length: 12"])).expect("parse");
         assert_eq!(plain.content_length, Some(12));
         assert!(!plain.chunked);
     }
@@ -632,7 +652,11 @@ mod tests {
         // connection cannot carry a second one.
         let raw = head(
             "GET / HTTP/1.1",
-            &["Cookie: h5i_share=abc123", "Connection: keep-alive", "Keep-Alive: timeout=60"],
+            &[
+                "Cookie: h5i_share=abc123",
+                "Connection: keep-alive",
+                "Keep-Alive: timeout=60",
+            ],
         );
         let r = parse_default(&raw).expect("parse");
         let up = rewrite_for_upstream(&raw, &r, COOKIE);
@@ -647,7 +671,11 @@ mod tests {
         // anybody's pool.
         let raw = head(
             "GET /hmr HTTP/1.1",
-            &["Cookie: h5i_share=abc123", "Connection: Upgrade", "Upgrade: websocket"],
+            &[
+                "Cookie: h5i_share=abc123",
+                "Connection: Upgrade",
+                "Upgrade: websocket",
+            ],
         );
         let r = parse_default(&raw).expect("parse");
         let up = rewrite_for_upstream(&raw, &r, COOKIE);
@@ -675,7 +703,11 @@ mod tests {
     fn an_upgrade_is_recognised_so_hot_reload_can_be_proxied() {
         let r = parse_default(&head(
             "GET /_next/webpack-hmr HTTP/1.1",
-            &["Upgrade: websocket", "Connection: Upgrade", "Cookie: h5i_share=abc"],
+            &[
+                "Upgrade: websocket",
+                "Connection: Upgrade",
+                "Cookie: h5i_share=abc",
+            ],
         ))
         .expect("parse");
         assert!(r.upgrade);
@@ -686,8 +718,11 @@ mod tests {
     fn a_token_that_could_not_be_one_is_not_carried_forward() {
         // Keeps absurd input away from the authorization path entirely.
         for bad in ["", &"a".repeat(200), "abc/../../etc", "a b"] {
-            let r = parse_default(&head("GET / HTTP/1.1", &[&format!("Cookie: h5i_share={bad}")]))
-                .expect("parse");
+            let r = parse_default(&head(
+                "GET / HTTP/1.1",
+                &[&format!("Cookie: h5i_share={bad}")],
+            ))
+            .expect("parse");
             assert_eq!(r.token, None, "accepted a token of {:?}", bad);
         }
     }
@@ -696,8 +731,11 @@ mod tests {
     fn the_query_wins_over_a_stale_cookie() {
         // Following a fresh invite link must replace an old grant's cookie,
         // or a revoked peer with a stale cookie could never be re-admitted.
-        let r = parse_default(&head("GET /?h5i=fresh HTTP/1.1", &["Cookie: h5i_share=stale"]))
-            .expect("parse");
+        let r = parse_default(&head(
+            "GET /?h5i=fresh HTTP/1.1",
+            &["Cookie: h5i_share=stale"],
+        ))
+        .expect("parse");
         assert_eq!(r.token.as_deref(), Some("fresh"));
         assert!(r.from_query);
     }
@@ -737,7 +775,10 @@ mod tests {
         assert_eq!(r.token.as_deref(), Some("mine1111"));
         let up = rewrite_for_upstream(&raw, &r, &a);
         assert!(!up.contains("mine1111"), "{up}");
-        assert!(!up.contains("theirs2222"), "another share's credential leaked: {up}");
+        assert!(
+            !up.contains("theirs2222"),
+            "another share's credential leaked: {up}"
+        );
         // The app's own cookies still survive, which is the whole reason this
         // is a filter rather than a `Cookie` header that gets dropped.
         assert!(up.contains("sid=9"), "{up}");
@@ -749,12 +790,17 @@ mod tests {
         // `Content-Length\u{0c}` used to match every lookup here while being a
         // malformed line to the box — which is a smuggled request, by a door
         // two characters wide.
-        for pad in ["\u{0b}", "\u{0c}", "\u{85}", "\u{a0}", "\u{2000}", "\u{3000}"] {
+        for pad in [
+            "\u{0b}", "\u{0c}", "\u{85}", "\u{a0}", "\u{2000}", "\u{3000}",
+        ] {
             let raw = head(
                 "POST / HTTP/1.1",
                 &[&format!("Content-Length{pad}: 5"), "Cookie: h5i_share=abc"],
             );
-            assert!(parse_default(&raw).is_none(), "accepted a name padded with {pad:?}");
+            assert!(
+                parse_default(&raw).is_none(),
+                "accepted a name padded with {pad:?}"
+            );
         }
         assert!(parse_default(&head("POST / HTTP/1.1", &["Content-Length: 5"])).is_some());
     }
@@ -763,7 +809,11 @@ mod tests {
     fn an_expect_header_is_noticed_and_not_passed_on() {
         let raw = head(
             "POST / HTTP/1.1",
-            &["Expect: 100-continue", "Content-Length: 5", "Cookie: h5i_share=abc"],
+            &[
+                "Expect: 100-continue",
+                "Content-Length: 5",
+                "Cookie: h5i_share=abc",
+            ],
         );
         let r = parse_default(&raw).expect("parse");
         assert!(r.expects_continue);
@@ -774,7 +824,10 @@ mod tests {
 
     #[test]
     fn a_token_in_a_second_cookie_header_is_still_found() {
-        let raw = head("GET / HTTP/1.1", &["Cookie: sid=9", "Cookie: h5i_share=abc123"]);
+        let raw = head(
+            "GET / HTTP/1.1",
+            &["Cookie: sid=9", "Cookie: h5i_share=abc123"],
+        );
         let r = parse_default(&raw).expect("parse");
         assert_eq!(r.token.as_deref(), Some("abc123"));
         assert!(!rewrite_for_upstream(&raw, &r, COOKIE).contains("abc123"));
@@ -785,8 +838,12 @@ mod tests {
         // Obs-fold: `X-Pad: a` continued onto the next line is one header to a
         // server that implements folding and two to anything splitting on CRLF
         // — no body to one, a 35-byte body to the other.
-        assert!(parse_default("GET / HTTP/1.1\r\nX-Pad: a\r\n Content-Length: 35\r\n\r\n").is_none());
-        assert!(parse_default("GET / HTTP/1.1\r\nX-Pad: a\r\n\tContent-Length: 35\r\n\r\n").is_none());
+        assert!(
+            parse_default("GET / HTTP/1.1\r\nX-Pad: a\r\n Content-Length: 35\r\n\r\n").is_none()
+        );
+        assert!(
+            parse_default("GET / HTTP/1.1\r\nX-Pad: a\r\n\tContent-Length: 35\r\n\r\n").is_none()
+        );
         // A space before the colon: a conforming server must reject it, and
         // anything that trims the name reads it as a real header.
         assert!(parse_default(&head("POST / HTTP/1.1", &["Content-Length : 35"])).is_none());
@@ -802,7 +859,11 @@ mod tests {
         // for chunks that would never arrive — holding a slot for free.
         let r = parse_default(&head(
             "POST / HTTP/1.1",
-            &["Transfer-Encoding: chunked", "Upgrade: websocket", "Connection: Upgrade"],
+            &[
+                "Transfer-Encoding: chunked",
+                "Upgrade: websocket",
+                "Connection: Upgrade",
+            ],
         ))
         .expect("parse");
         assert!(r.chunked);
@@ -838,9 +899,18 @@ mod tests {
         let a = cookie_for_port(43821);
         let b = cookie_for_port(43822);
         assert_ne!(a, b);
-        let raw = head("GET / HTTP/1.1", &[&format!("Cookie: {a}=mine; {b}=theirs")]);
-        assert_eq!(parse(&raw, &a).expect("parse").token.as_deref(), Some("mine"));
-        assert_eq!(parse(&raw, &b).expect("parse").token.as_deref(), Some("theirs"));
+        let raw = head(
+            "GET / HTTP/1.1",
+            &[&format!("Cookie: {a}=mine; {b}=theirs")],
+        );
+        assert_eq!(
+            parse(&raw, &a).expect("parse").token.as_deref(),
+            Some("mine")
+        );
+        assert_eq!(
+            parse(&raw, &b).expect("parse").token.as_deref(),
+            Some("theirs")
+        );
         // And each strips only its own on the way to the box.
         let r = parse(&raw, &a).expect("parse");
         let up = rewrite_for_upstream(&raw, &r, &a);
