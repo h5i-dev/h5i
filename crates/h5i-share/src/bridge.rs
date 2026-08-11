@@ -1061,7 +1061,7 @@ mod tests {
         )
     }
 
-    fn at(s: &str) -> DateTime<Utc> {
+    pub(super) fn at(s: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(s).expect("timestamp").into()
     }
 
@@ -1641,5 +1641,205 @@ mod tests {
         p.path = Some(Path::Relayed);
         let body = render_receipt(&summary(vec![p], vec![]));
         assert!(body.contains("relayed"));
+    }
+}
+
+#[cfg(test)]
+mod receipt_fuzz {
+    use super::tests::at;
+    use super::*;
+    use crate::fuzz::{rounds, Rng};
+
+    fn any_summary(rng: &mut Rng) -> Summary {
+        let started = at("2026-08-10T10:00:00Z");
+        let peers: Vec<PeerRecord> = (0..rng.below(5))
+            .map(|i| {
+                let mut p = PeerRecord {
+                    peer: format!("peer{i}"),
+                    grant: "a1b2c3d4".into(),
+                    label: if rng.chance(2) {
+                        Some("alex".into())
+                    } else {
+                        None
+                    },
+                    path: match rng.below(4) {
+                        0 => Some(Path::Direct),
+                        1 => Some(Path::Relayed),
+                        2 => Some(Path::Tunnel),
+                        _ => None,
+                    },
+                    opened: started,
+                    closed: None,
+                    last_seen: None,
+                    connections: rng.below(2000) as u64,
+                    bytes_to_peer: rng.next() % 10_000_000,
+                    bytes_from_peer: rng.next() % 10_000_000,
+                };
+                if rng.chance(2) {
+                    p.closed = Some(at("2026-08-10T10:05:00Z"));
+                }
+                if rng.chance(3) {
+                    p.last_seen = Some(at("2026-08-10T10:02:00Z"));
+                }
+                p
+            })
+            .collect();
+        let denied: Vec<DeniedAttempt> = (0..rng.below(6))
+            .map(|_| DeniedAttempt {
+                at: started,
+                reason: match rng.below(4) {
+                    0 => Denied::Unknown,
+                    1 => Denied::Expired,
+                    2 => Denied::Revoked,
+                    _ => Denied::NoCredential,
+                },
+            })
+            .collect();
+        let turned_away: Vec<TurnedAway> = (0..rng.below(4))
+            .map(|_| TurnedAway {
+                at: started,
+                why: match rng.below(3) {
+                    0 => TurnedAwayReason::NoDirectPath,
+                    1 => TurnedAwayReason::NeverGreeted,
+                    _ => TurnedAwayReason::Unparseable,
+                },
+            })
+            .collect();
+        Summary {
+            transport: if rng.chance(2) {
+                Transport::P2p
+            } else {
+                Transport::Tunnel
+            },
+            endpoint: "abcdef".into(),
+            port: 3000,
+            started,
+            ended: at("2026-08-10T10:10:00Z"),
+            peers,
+            peers_overflow: rng.next() % 500,
+            denied,
+            denied_overflow: rng.next() % 100_000,
+            over_capacity: rng.next() % 100,
+            front_refused: rng.next() % 100,
+            unreachable: rng.next() % 100,
+            route_broken: rng.next() % 100,
+            settled: rng.chance(2),
+            turned_away,
+            turned_away_overflow: rng.next() % 1000,
+            truncated: rng.next() % 10,
+            failed_because: if rng.chance(4) {
+                Some("the tunnel died".into())
+            } else {
+                None
+            },
+        }
+    }
+
+    /// The receipt is the artifact this whole feature exists to produce, and
+    /// every round that has read it found a sentence claiming more than its
+    /// counter supported. These are the claims checked against the numbers,
+    /// for whatever combination of numbers turns up.
+    #[test]
+    fn no_line_of_a_receipt_claims_more_than_its_counter() {
+        let mut rng = Rng::new(0x2ECE197);
+        for i in 0..rounds().min(20_000) {
+            let seed = rng.next();
+            let mut one = Rng::new(seed);
+            let s = any_summary(&mut one);
+            let body = render_receipt(&s);
+            let ctx = || format!("round {i}, seed {seed:#x}");
+
+            // A line only appears when it has something to say. Each of these
+            // was, at some point, printed for a count of zero or omitted for a
+            // count that was not.
+            assert_eq!(
+                body.contains("truncated"),
+                s.truncated > 0,
+                "truncated said {} for {}: {}",
+                body.contains("truncated"),
+                s.truncated,
+                ctx()
+            );
+            assert_eq!(body.contains("\npartial "), !s.settled, "{}", ctx());
+            assert_eq!(
+                body.contains("\ncapacity "),
+                s.over_capacity > 0,
+                "{}",
+                ctx()
+            );
+            assert_eq!(
+                body.contains("\nflooded "),
+                s.front_refused > 0,
+                "{}",
+                ctx()
+            );
+            assert_eq!(
+                body.contains("\nunreached "),
+                s.unreachable > 0,
+                "{}",
+                ctx()
+            );
+            assert_eq!(body.contains("\nroute "), s.route_broken > 0, "{}", ctx());
+            assert_eq!(
+                body.contains("\nended    badly"),
+                s.failed_because.is_some(),
+                "{}",
+                ctx()
+            );
+            assert_eq!(
+                body.contains("\nturned "),
+                !s.turned_away.is_empty(),
+                "{}",
+                ctx()
+            );
+            assert_eq!(
+                body.contains("\nrefused "),
+                !s.denied.is_empty(),
+                "{}",
+                ctx()
+            );
+
+            // The two leading counts are totals, not samples. Both were
+            // sample-sized once, so a share knocked on fifty thousand times
+            // read as one knocked on a thousand times.
+            if !s.denied.is_empty() {
+                let total = s.denied.len() as u64 + s.denied_overflow;
+                assert!(
+                    body.contains(&format!("refused  {total} attempt(s)")),
+                    "the refusal total is not the total: {}",
+                    ctx()
+                );
+            }
+            if !s.turned_away.is_empty() {
+                let total = s.turned_away.len() as u64 + s.turned_away_overflow;
+                assert!(
+                    body.contains(&format!("turned   {total} connection(s)")),
+                    "the turned-away total is not the total: {}",
+                    ctx()
+                );
+            }
+
+            // Nobody connected is a different statement from somebody did.
+            assert_eq!(
+                body.contains("nobody connected"),
+                s.peers.is_empty(),
+                "{}",
+                ctx()
+            );
+
+            // And a peer is never held for longer than the share existed.
+            let whole = (s.ended - s.started).num_seconds();
+            for line in body.lines().filter(|l| l.starts_with("  peer")) {
+                let held: i64 = line
+                    .split(", ")
+                    .find_map(|f| f.strip_suffix('s').and_then(|n| n.parse().ok()))
+                    .unwrap_or(0);
+                assert!(
+                    held <= whole,
+                    "a peer was held {held}s of a {whole}s share: {line} ({})",
+                    ctx()
+                );
+            }
+        }
     }
 }
