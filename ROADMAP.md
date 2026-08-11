@@ -620,9 +620,13 @@ the bytes travel:
   host process, outside the boundary, like the CONNECT proxy.
 - **Hold the capability.** A ticket minted at share time is the whole access
   model: it names the box, the port, an expiry, and a secret; possession is
-  authorization. One ticket admits one peer — share with two people by minting
-  two — so revocation (`h5i box share revoke`) is per person, and `stop` ends
-  the session for everyone. No account on either side. (As shipped, minting a
+  authorization, and possession is all of it: a ticket is a bearer capability,
+  so forwarding the text admits everyone it reaches under the one grant.
+  Measured, because this line used to claim the opposite: two `h5i join`
+  processes on one ticket both reached the dev server and both appear in the
+  receipt against the same grant. Mint one ticket per person if you want
+  `h5i box share revoke` to cut off one person rather than all of them; `stop`
+  ends the session for everyone. No account on either side. (As shipped, minting a
   second ticket works on `--tunnel` shares only; see 5.11.1.)
 - **Write the ingress receipt.** Every lane in 5.7 observes egress. This is
   the first inbound evidence: peer, connection times, requests proxied, bytes,

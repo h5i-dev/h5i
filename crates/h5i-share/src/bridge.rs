@@ -1080,6 +1080,27 @@ pub fn render_receipt(s: &Summary) -> String {
                 s.peers_overflow
             ));
         }
+        // A ticket is a bearer capability: forwarding the text admits everyone
+        // it reaches, all under the one grant. That is the design, and the
+        // receipt is the only place it ever becomes visible — two endpoint ids
+        // against one grant id, which a reader has to notice for themselves in
+        // a list that may be long. Said out loud here, because it is also the
+        // one thing that makes `share revoke` cut off more people than the
+        // sharer thinks they are cutting off.
+        let mut per_grant: std::collections::HashMap<&str, usize> = Default::default();
+        for p in &s.peers {
+            *per_grant.entry(p.grant.as_str()).or_default() += 1;
+        }
+        let mut forwarded: Vec<(&str, usize)> =
+            per_grant.into_iter().filter(|(_, n)| *n > 1).collect();
+        forwarded.sort();
+        for (grant, n) in forwarded {
+            out.push_str(&format!(
+                "ticket   grant {grant} was used by {n} separate peers — a ticket admits \
+                 everyone it is forwarded to, and revoking it cuts off all of them\n"
+            ));
+        }
+
         let relayed = s
             .peers
             .iter()
@@ -1519,6 +1540,38 @@ mod tests {
         // four figures of gibibytes.
         assert_eq!(bytes(1024u64 * 1024 * 1024 * 1024), "1.0 TiB");
         assert_eq!(bytes(u64::MAX), "16777216.0 TiB");
+    }
+
+    #[test]
+    fn a_ticket_used_by_two_people_says_so() {
+        // Measured against a real box: two `h5i join` processes on one ticket
+        // both got 200, both reached the dev server, and both appear in the
+        // receipt under the same grant id. That is the design — a ticket is a
+        // bearer capability, and the manual says so — but the roadmap still
+        // claimed "one ticket admits one peer ... revocation is per person",
+        // and the receipt left a reader to notice two endpoint ids against one
+        // grant in a list that can run to 256 entries.
+        let mut a = peer("aaaa", Path::Direct);
+        a.grant = "g1".into();
+        let mut b = peer("bbbb", Path::Direct);
+        b.grant = "g1".into();
+        let mut c = peer("cccc", Path::Direct);
+        c.grant = "g2".into();
+
+        let body = render_receipt(&summary(vec![a, b, c], vec![]));
+        assert!(
+            body.contains("ticket   grant g1 was used by 2 separate peers"),
+            "{body}"
+        );
+        assert!(body.contains("cuts off all of them"), "{body}");
+        // The grant that only one person used gets no such line: this is a
+        // notice about a thing that happened, not a lecture attached to every
+        // receipt.
+        assert!(!body.contains("grant g2 was used"), "{body}");
+
+        // And one peer per grant says nothing at all.
+        let quiet = render_receipt(&summary(vec![peer("aaaa", Path::Direct)], vec![]));
+        assert!(!quiet.contains("separate peers"), "{quiet}");
     }
 
     #[test]

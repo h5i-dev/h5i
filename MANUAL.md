@@ -433,7 +433,11 @@ cannot be reprinted** — mint another with `share grant`.
 A ticket is a capability, not a seat: nothing marks one as used or binds it to a
 person, so forwarding the text admits everyone it reaches, under the one grant.
 What one ticket per person buys is that `share revoke <name> <grant>` cuts off
-exactly the people you gave *that* ticket to, rather than everybody. `share grant` mints a second one, but
+exactly the people you gave *that* ticket to, rather than everybody. The receipt
+is where a forwarded ticket becomes visible: a grant used by more than one peer
+gets a line of its own saying so, because two endpoint ids against one grant id
+is otherwise something a reader has to spot for themselves in a list that can
+run to 256 entries. `share grant` mints a second one, but
 only for a `--tunnel` share today: a peer-to-peer ticket needs the running
 endpoint's addressing and only the serving process has it, so `grant` refuses on
 a P2P share and says to start a second one instead.
