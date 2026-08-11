@@ -932,11 +932,21 @@ impl SeenClock {
         if moved.abs() > tolerance {
             self.stepped += moved;
             if moved < 0 {
-                // Only the backward half is corrected for. A clock that jumps
-                // forward is honoured: expiring a ticket early is the safe
-                // direction, and a machine that was simply set wrong should be
-                // allowed to find out.
+                // A backward jump buys nobody time.
                 self.correction -= moved;
+            } else {
+                // A forward jump *unwinds* the correction, down to zero and no
+                // further. Without this, the commonest real pattern — a clock
+                // that goes wrong and is then put right — left the correction
+                // standing: back an hour, forward an hour, and every ticket
+                // afterwards expired an hour early against a clock that was
+                // now correct. NTP overshoot and a VM resumed then resynced
+                // both look exactly like that.
+                //
+                // Below zero it would become a way to buy time by jumping
+                // forward and back, so it clamps: a genuine forward jump past
+                // the correction is honoured, which is the safe direction.
+                self.correction = (self.correction - moved).max(0);
             }
         }
         self.last_wall = wall_s;
@@ -1648,6 +1658,53 @@ mod tests {
         let jumped = c.observe(base + chrono::Duration::seconds(3601), sec(1));
         assert_eq!(jumped, base + chrono::Duration::seconds(3601));
         assert_eq!(c.stepped, 3600);
+    }
+
+    #[test]
+    fn a_clock_put_right_again_does_not_leave_every_ticket_short() {
+        // The commonest real pattern is not a jump: it is a jump and then a
+        // correction. NTP overshooting and settling, a VM resumed from a
+        // snapshot and then resynced — both go wrong and then right. The first
+        // version of this kept the backward correction forever, so after the
+        // clock was fixed every ticket expired by however far it had wandered:
+        // back an hour, forward an hour, and a one-hour ticket dies on issue.
+        let base = at("2026-08-10T10:00:00Z");
+        let sec = |n: u64| std::time::Duration::from_secs(n);
+        let mut c = SeenClock::default();
+        c.observe(base, sec(0));
+
+        // Back an hour.
+        let out = c.observe(base - chrono::Duration::seconds(3599), sec(1));
+        assert_eq!(out, base + chrono::Duration::seconds(1));
+        assert_eq!(c.correction, 3600);
+
+        // And put right again a second later.
+        let out = c.observe(base + chrono::Duration::seconds(2), sec(2));
+        assert_eq!(c.correction, 0, "the correction outlived the problem");
+        assert_eq!(
+            out,
+            base + chrono::Duration::seconds(2),
+            "a corrected clock was still being corrected"
+        );
+        // Both jumps are still reported; they cancel, and the receipt says so
+        // by saying nothing, which is right — the session's timestamps do
+        // bracket its length again.
+        assert_eq!(c.stepped, 0);
+
+        // A forward jump on its own is honoured, and cannot dig the correction
+        // below zero — otherwise jumping forward and back would be a way to
+        // buy time rather than lose it.
+        let mut c = SeenClock::default();
+        c.observe(base, sec(0));
+        let out = c.observe(base + chrono::Duration::seconds(3601), sec(1));
+        assert_eq!(out, base + chrono::Duration::seconds(3601));
+        assert_eq!(c.correction, 0);
+        let out = c.observe(base - chrono::Duration::seconds(3598), sec(2));
+        assert_eq!(
+            out,
+            base + chrono::Duration::seconds(3602),
+            "a clock that went forward and came back bought itself time"
+        );
     }
 
     #[test]
