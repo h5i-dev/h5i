@@ -70,6 +70,44 @@ pub struct Request {
     /// The browser is asking to register a service worker. See
     /// [`registers_a_service_worker`].
     pub service_worker: bool,
+    /// The request carries an `Origin` that is not this share's own. See
+    /// [`is_cross_origin`].
+    pub cross_origin: bool,
+}
+
+/// Does this request come from a page that is not this share?
+///
+/// Two `h5i join` proxies on one machine are `127.0.0.1:A` and `127.0.0.1:B`.
+/// Those are different *origins* but the **same site**, so `SameSite=Lax` does
+/// not hold a cookie back between them: a page served by one share could make
+/// credentialed requests to another colleague's box on the next port, and they
+/// reached it. CORS stops the page reading the answers; it does not stop the
+/// side effects, and a demo of somebody's agent-written app is exactly the
+/// place a request like that would come from.
+///
+/// The console's own gate (`h5i_core::server::authorize`) has had this check
+/// since it was written, for the same reason. This one never got it.
+///
+/// Compared by host and port only, not by scheme: a tunnel share arrives with
+/// `Origin: https://…trycloudflare.com` and `Host: …trycloudflare.com`, and
+/// requiring the schemes to agree would refuse the app's own requests. An
+/// absent `Origin` is allowed — that is an ordinary navigation, which is how
+/// every visitor arrives.
+fn is_cross_origin(headers: &[&str], host: Option<&str>) -> bool {
+    let Some(origin) = header(headers, "origin") else {
+        return false;
+    };
+    // `null` is what a sandboxed context sends. It cannot be this share, and a
+    // page that wants to demonstrate itself has no reason to send it.
+    let Some(rest) = origin.split_once("://").map(|(_, r)| r) else {
+        return true;
+    };
+    let origin_host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    match host {
+        Some(h) => !origin_host.eq_ignore_ascii_case(h.trim()),
+        // No `Host` to compare against is itself a request no browser makes.
+        None => true,
+    }
 }
 
 /// Is this request trying to register a service worker?
@@ -97,6 +135,8 @@ pub enum Refusal {
     Malformed,
     /// A service worker registration, which would outlive the share.
     ServiceWorker,
+    /// The request came from a page that is not this share.
+    ForeignOrigin,
 }
 
 impl Refusal {
@@ -105,6 +145,7 @@ impl Refusal {
             Refusal::NotAuthorized => (401, "Unauthorized"),
             Refusal::Malformed => (400, "Bad Request"),
             Refusal::ServiceWorker => (403, "Forbidden"),
+            Refusal::ForeignOrigin => (403, "Forbidden"),
         }
     }
 
@@ -124,6 +165,7 @@ impl Refusal {
                 "This share will not register a service worker. One would keep control of \
                  this address after the share ends."
             }
+            Refusal::ForeignOrigin => "That request came from another page, not from this share.",
         }
     }
 }
@@ -403,6 +445,7 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
         content_length,
         expects_continue,
         service_worker: registers_a_service_worker(&headers),
+        cross_origin: is_cross_origin(&headers, header(&headers, "host")),
         // Carried as its own flag rather than encoded in the length. As a
         // sentinel value it collided with a real `Content-Length` of
         // `u64::MAX`, and it was skipped entirely when the request also asked
@@ -557,6 +600,55 @@ mod cookie_shape_tests {
         // anywhere: somebody else's cookie that merely contains ours is theirs.
         let (_, kept) = split_cookie("999h5i_share=x; y=2", "h5i_share");
         assert_eq!(kept, "999h5i_share=x; y=2");
+    }
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+
+    fn req(extra: &str) -> Option<Request> {
+        parse(
+            &format!(
+                "GET /a HTTP/1.1\r\nHost: 127.0.0.1:8899\r\nCookie: h5i_share=abc\r\n{extra}\r\n"
+            ),
+            "h5i_share",
+        )
+    }
+
+    #[test]
+    fn a_page_on_another_loopback_port_is_not_this_share() {
+        // Two `h5i join` proxies on one machine are the same *site*, so
+        // `SameSite=Lax` does not hold the cookie back between them: a page
+        // served by one share could drive another colleague's box on the next
+        // port, with the credential attached, and it reached it.
+        let other = req("Origin: http://127.0.0.1:8900\r\n").expect("parses");
+        assert!(other.cross_origin);
+
+        // The share's own page is not foreign to itself.
+        let mine = req("Origin: http://127.0.0.1:8899\r\n").expect("parses");
+        assert!(!mine.cross_origin);
+
+        // A navigation carries no `Origin`, and that is how every visitor
+        // arrives — refusing it would refuse the invite link itself.
+        assert!(!req("").expect("parses").cross_origin);
+
+        // `null` is a sandboxed context. It cannot be this share.
+        assert!(req("Origin: null\r\n").expect("parses").cross_origin);
+    }
+
+    #[test]
+    fn a_tunnel_share_is_not_foreign_to_itself() {
+        // Cloudflare terminates TLS, so the app's own requests arrive with an
+        // `https` origin and an unschemed `Host`. Comparing schemes would
+        // refuse every request the shared page makes to itself.
+        let head = "GET /a HTTP/1.1\r\nHost: odd-cat.trycloudflare.com\r\n\
+                    Cookie: h5i_share=abc\r\nOrigin: https://odd-cat.trycloudflare.com\r\n\r\n";
+        assert!(!parse(head, "h5i_share").expect("parses").cross_origin);
+
+        let elsewhere = "GET /a HTTP/1.1\r\nHost: odd-cat.trycloudflare.com\r\n\
+                         Cookie: h5i_share=abc\r\nOrigin: https://evil.example\r\n\r\n";
+        assert!(parse(elsewhere, "h5i_share").expect("parses").cross_origin);
     }
 }
 

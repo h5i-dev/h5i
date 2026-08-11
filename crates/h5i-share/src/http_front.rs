@@ -239,6 +239,12 @@ pub fn decide(
     if req.service_worker {
         return Next::Respond(gate::refusal_response(gate::Refusal::ServiceWorker));
     }
+    // Also before the credential: the cookie is exactly what makes this worth
+    // refusing, because the browser attaches it to a request the page had no
+    // business making.
+    if req.cross_origin {
+        return Next::Respond(gate::refusal_response(gate::Refusal::ForeignOrigin));
+    }
     let Some(token) = req.token.clone() else {
         return Next::Respond(gate::refusal_response(gate::Refusal::NotAuthorized));
     };

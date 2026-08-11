@@ -178,7 +178,25 @@ case "$SW" in
   *) fail "a service worker registration was allowed: $SW" ;;
 esac
 
-joiner_alive && pass "and the joiner survived both" || fail "a refused request ended the join"
+# A request from a page on another loopback port. Two `h5i join` proxies are
+# the same *site* to a browser, so `SameSite` does not hold the cookie back
+# between them — the credential is attached and the request used to arrive.
+FOREIGN=$(printf 'GET / HTTP/1.1\r\nHost: 127.0.0.1:8899\r\nCookie: h5i_share_8899=%s\r\nOrigin: http://127.0.0.1:8900\r\n\r\n' "$TOKEN" \
+  | timeout 30 nc -q 2 127.0.0.1 8899 | head -1)
+case "$FOREIGN" in
+  HTTP/1.1\ 403*) pass "a page on another loopback port is refused" ;;
+  *) fail "a cross-origin request was served: $FOREIGN" ;;
+esac
+
+# And the share's own page is not foreign to itself.
+OWN=$(printf 'GET / HTTP/1.1\r\nHost: 127.0.0.1:8899\r\nCookie: h5i_share_8899=%s\r\nOrigin: http://127.0.0.1:8899\r\n\r\n' "$TOKEN" \
+  | timeout 60 nc -q 5 127.0.0.1 8899 | head -1)
+case "$OWN" in
+  HTTP/1.1\ 200*) pass "the shared page can still call itself" ;;
+  *) fail "the origin check refused the share's own page: $OWN" ;;
+esac
+
+joiner_alive && pass "and the joiner survived all of them" || fail "a refused request ended the join"
 
 kill "$JOIN_PID" 2>/dev/null
 

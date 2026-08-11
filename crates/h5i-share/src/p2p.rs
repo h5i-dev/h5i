@@ -75,7 +75,22 @@ pub async fn bind_sharer() -> Result<Endpoint, H5iError> {
 
 /// Bind an endpoint that only dials.
 pub async fn bind_joiner() -> Result<Endpoint, H5iError> {
-    Endpoint::bind(presets::N0)
+    // No ALPN is configured and `accept()` is never called, so a third party
+    // cannot open a connection here. What it *could* do is open streams on the
+    // connection the joiner established: quinn's defaults allow 100 bidi and
+    // 100 uni, each with about 1.25 MB of receive window, and data on a stream
+    // nobody accepts stays buffered — roughly 250 MB of the joiner's memory,
+    // from a sharer doing nothing but opening streams. iroh's own
+    // documentation for this setter says protocols that forbid
+    // remotely-initiated streams should set both to zero, and this one does:
+    // every stream in this protocol is opened by the joiner.
+    let transport = iroh::endpoint::QuicTransportConfig::builder()
+        .max_concurrent_bidi_streams(0u32.into())
+        .max_concurrent_uni_streams(0u32.into())
+        .build();
+    Endpoint::builder(presets::N0)
+        .transport_config(transport)
+        .bind()
         .await
         .map_err(|e| H5iError::Metadata(format!("could not start the peer-to-peer endpoint: {e}")))
 }

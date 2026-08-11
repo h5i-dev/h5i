@@ -379,7 +379,10 @@ stranger is still a stranger's. The page then arrives on `http://127.0.0.1:<port
 which browsers treat as a trustworthy origin — it shares that origin with every
 other local service you run, so cookies it sets reach them. Service worker
 registration is refused outright, because one would keep control of that address
-after the share ended. Nothing else the page does is sandboxed by h5i.
+after the share ended, and a request carrying an `Origin` that is not this
+share's own is refused too — two `h5i join` proxies on one machine are the same
+*site* to a browser, so one share's page could otherwise drive another's box
+with the credential attached. Nothing else the page does is sandboxed by h5i.
 
 **The box's port is never published.** h5i enters the box's network namespace by
 pid — the same way `h5i box view` does — dials `127.0.0.1:<port>` from inside,
