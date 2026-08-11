@@ -1016,7 +1016,7 @@ pub fn path_of(conn: &Connection) -> Option<Path> {
 // Transport tests, and every one of them dials into a box: the dialer forks a
 // helper into a network namespace, which is Linux. Sharing itself refuses on
 // other platforms, so there is nothing here for them to check.
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;

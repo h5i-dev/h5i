@@ -67,9 +67,14 @@ exits without it.
 
 ## What it needs, and what it refuses
 
-- **Linux.** A share is safe because the box has a network namespace this
-  machine can enter and the only route in goes there. macOS boxes bind the
-  host's loopback, so `h5i box share` refuses on macOS and says so.
+- **Linux or macOS**, by two different arguments. On Linux a share is safe
+  because the box has a network namespace this machine can enter and the only
+  route in goes there. macOS has no namespaces — a box binds the host's
+  loopback — so h5i instead asks Darwin which process holds the listening
+  socket and shares it only if that process belongs to the box (its session
+  and descendants), refusing and naming the holder otherwise. It re-checks on
+  every connection. macOS boxes at the `container` or `microvm` tier run inside
+  a VM, where no host process holds the port; those are refused.
 - The box must be **running** (a live `h5i box shell` or `h5i box run`) and have
   a network of its own **with a loopback in it**. That second half is decided by
   the profile, not the tier: a profile that denies egress gets an empty

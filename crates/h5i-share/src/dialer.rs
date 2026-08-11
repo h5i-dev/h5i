@@ -60,12 +60,13 @@ const STATUS_SETNS: u8 = 3;
 #[cfg(target_os = "linux")]
 const REQUEST: u8 = 0x01;
 
-/// How long the helper will wait for the box's dev server to accept.
+/// How long to wait for the box's dev server to accept.
 ///
-/// Loopback inside the box, so a working server answers in microseconds and a
-/// dead port refuses immediately. This bounds the one case in between: a server
-/// that is up but not accepting.
-#[cfg(target_os = "linux")]
+/// Loopback either way — inside the box's namespace on Linux, on the host's on
+/// macOS — so a working server answers in microseconds and a dead port refuses
+/// immediately. This bounds the one case in between: a server that is up but
+/// not accepting.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// A live route into one port of one box.
@@ -73,7 +74,20 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 pub struct Dialer {
     #[cfg(target_os = "linux")]
     inner: Inner,
+    #[cfg(target_os = "macos")]
+    mac: Mac,
     port: u16,
+}
+
+/// The macOS route: no helper and no namespace, because there is neither to
+/// enter. What is pinned instead is the box's **process tree**, and every dial
+/// re-answers "is the box still the one holding this port".
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+struct Mac {
+    /// The process whose descendants are the box — the session `h5i` started.
+    /// Its children are the shell, the agent and the dev server.
+    root: u32,
 }
 
 #[cfg(target_os = "linux")]
@@ -120,11 +134,15 @@ impl Dialer {
             let Inner::Helper { sock, child } = &self.inner;
             self.request(sock, *child)
         }
+        #[cfg(target_os = "macos")]
+        {
+            self.dial_attributed()
+        }
         // Unreachable in practice — `spawn` refuses on this platform, so no
         // `Dialer` exists to call this on — and an answer rather than a
         // `todo!()`, because "the route into the box is broken" is exactly
         // what a platform with no namespace to enter amounts to.
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         Err(DialError::Broken(unsupported()))
     }
 }
@@ -143,12 +161,26 @@ pub enum DialError {
     /// The route itself failed: the helper is gone, retired, or answering
     /// nonsense. A fact about h5i, and it used to be reported as the first.
     Broken(H5iError),
+    /// Something is listening on the port and it is **not this box** — or the
+    /// box and something else hold it in a way that decides per connection who
+    /// answers. macOS only, where the box's port and the host's port are the
+    /// same port and only attribution tells them apart ([`crate::owner`]).
+    ///
+    /// Kept apart from all three above because it is the one failure where
+    /// serving the connection would be the *unsafe* outcome rather than a
+    /// useless one: what is on the other end is a process the operator never
+    /// offered to share. A share refuses to start on it, and a share already
+    /// running refuses the connection.
+    NotTheBox(H5iError),
 }
 
 impl DialError {
     pub fn into_inner(self) -> H5iError {
         match self {
-            DialError::NoLoopback(e) | DialError::NothingListening(e) | DialError::Broken(e) => e,
+            DialError::NoLoopback(e)
+            | DialError::NothingListening(e)
+            | DialError::Broken(e)
+            | DialError::NotTheBox(e) => e,
         }
     }
 
@@ -161,12 +193,30 @@ impl DialError {
     pub fn nothing_listening(&self) -> bool {
         matches!(self, DialError::NothingListening(_))
     }
+
+    /// The port is not the box's. The caller must refuse rather than serve it.
+    pub fn not_the_box(&self) -> bool {
+        matches!(self, DialError::NotTheBox(_))
+    }
+
+    /// This share must not start, or must not continue: the box cannot be
+    /// reached and no ticket minted for it can ever be honoured safely.
+    ///
+    /// The two are grouped because callers act on them identically — refuse —
+    /// and grouping them here is what stops a third such condition being added
+    /// later and quietly handled as a warning at one of the two call sites.
+    pub fn fatal(&self) -> bool {
+        self.no_loopback() || self.not_the_box()
+    }
 }
 
 impl std::fmt::Display for DialError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DialError::NoLoopback(e) | DialError::NothingListening(e) | DialError::Broken(e) => {
+            DialError::NoLoopback(e)
+            | DialError::NothingListening(e)
+            | DialError::Broken(e)
+            | DialError::NotTheBox(e) => {
                 write!(f, "{e}")
             }
         }
@@ -179,11 +229,12 @@ impl From<DialError> for H5iError {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn unsupported() -> H5iError {
     H5iError::Metadata(
-        "sharing a box's port needs a network namespace to enter, which is a Linux thing. \
-         `h5i box share` is not available on this platform."
+        "sharing a box's port needs a network namespace to enter (Linux) or a way to attribute \
+         a listening socket to the box's processes (macOS). `h5i box share` is not available on \
+         this platform."
             .into(),
     )
 }
@@ -205,7 +256,12 @@ fn unsupported() -> H5iError {
 /// visitor's first request. `h5i join` is unaffected and works on any platform
 /// — it terminates QUIC and serves on its own loopback, and needs no namespace
 /// to enter.
-#[cfg(not(target_os = "linux"))]
+///
+/// macOS left this arm when [`crate::owner`] gave it a route of its own. The
+/// reasoning above still stands for it and is worth keeping in view: what was
+/// wrong with the *old* macOS arm was not that it lacked a namespace, but that
+/// it connected to `127.0.0.1:<port>` and called whatever answered "the box".
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 impl Dialer {
     pub fn spawn(_box_pid: u32, _port: u16) -> Result<Dialer, H5iError> {
         Err(unsupported())
@@ -213,6 +269,146 @@ impl Dialer {
 
     pub fn spawn_local(_port: u16) -> Result<Dialer, H5iError> {
         Err(unsupported())
+    }
+}
+
+// ─── macOS ──────────────────────────────────────────────────────────────────
+
+/// The macOS route into a box.
+///
+/// There is no namespace here and no helper process: a Seatbelt box's dev
+/// server listens on the **host's** loopback, so the connect is an ordinary
+/// one and needs nothing entered. What is not ordinary is deciding *what to
+/// connect to*, and that is the whole of this arm.
+///
+/// An earlier version of this file connected to `127.0.0.1:<port>` and treated
+/// whatever answered as the box. It was deleted for the right reason: the box's
+/// port and the host's port are the same port, so that code published whatever
+/// happened to be listening — the one outcome the Linux side refuses by
+/// construction. [`crate::owner`] is what makes the question answerable, and
+/// every dial asks it again.
+#[cfg(target_os = "macos")]
+impl Dialer {
+    /// Pin a dialer to one port of one box.
+    ///
+    /// `box_pid` is the box's **session** process — the `h5i` that is running
+    /// the shell or the command, whose descendants are the box. This differs
+    /// from the Linux meaning of the same argument (a pid *inside* the box's
+    /// namespaces) because the two platforms identify a box differently: there
+    /// by the namespace a process is in, here by the tree a process is under.
+    ///
+    /// Resolved once here so `h5i box share` can refuse with a sentence rather
+    /// than print a ticket that cannot work — the same reason the Linux arm
+    /// waits for its helper to report before returning.
+    ///
+    /// A port with *nothing* on it is not a refusal, and that asymmetry is
+    /// deliberate: an agent about to start its dev server is a perfectly good
+    /// reason to share a port that is not up yet, and `run::serve` turns it
+    /// into a warning. A port held by a **stranger** is a refusal, because
+    /// there is nothing to wait for — it is already the wrong process.
+    pub fn spawn(box_pid: u32, port: u16) -> Result<Dialer, H5iError> {
+        let d = Dialer {
+            mac: Mac { root: box_pid },
+            port,
+        };
+        match d.resolve() {
+            Ok(_) => Ok(d),
+            Err(e) if e.nothing_listening() => Ok(d),
+            Err(e) => Err(e.into_inner()),
+        }
+    }
+
+    /// For a box that is this very process tree. Tests only, and the macOS
+    /// counterpart of the Linux "no namespace to enter" constructor: there, a
+    /// helper that skips `setns`; here, a box whose processes are ours.
+    ///
+    /// It exercises the real attribution path — a socket this process binds is
+    /// found, attributed and dialled exactly as a box's would be — which is
+    /// what makes it worth having rather than a stub.
+    pub fn spawn_local(port: u16) -> Result<Dialer, H5iError> {
+        Dialer::spawn(std::process::id(), port)
+    }
+
+    /// Who holds the port, right now.
+    ///
+    /// Re-run per dial rather than cached, and that is affordable rather than
+    /// merely careful: measured on the machine this was written on, the two
+    /// scans behind it cost about 1.4 ms together (0.84 ms to walk every
+    /// process's sockets, 0.58 ms to walk the process tree). Caching it would
+    /// buy a millisecond and cost the property that matters — that a box whose
+    /// dev server has died cannot have its share quietly inherited by the next
+    /// process to claim the port.
+    fn resolve(&self) -> Result<std::net::SocketAddr, DialError> {
+        use crate::owner::{self, Ownership};
+
+        let pids = owner::process_tree(self.mac.root);
+        let listeners = owner::listening_sockets();
+        let named = |pid: u32| match owner::process_name(pid) {
+            Some(n) => format!("`{n}` (pid {pid})"),
+            None => format!("pid {pid}"),
+        };
+        match owner::decide(&listeners, self.port, &pids) {
+            Ownership::Box { addr, .. } => Ok(addr),
+            Ownership::Nobody => Err(DialError::NothingListening(H5iError::Metadata(format!(
+                "nothing is listening on port {} in the box. Start the dev server in the box, \
+                 or share the port it is actually on.",
+                self.port
+            )))),
+            Ownership::Stranger { pid, addr } => {
+                Err(DialError::NotTheBox(H5iError::Metadata(format!(
+                    "port {} on this machine is held by {}, which is not part of this box — so \
+                     h5i will not share it.\n   On macOS a box has no network of its own: it \
+                     binds the host's loopback, and `{}` is what a connection to port {} \
+                     reaches. Sharing it would publish a process you did not choose.\n   Stop \
+                     whatever is using port {}, or share the port the box's server is actually \
+                     on.",
+                    self.port,
+                    named(pid),
+                    addr,
+                    self.port,
+                    self.port
+                ))))
+            }
+            Ownership::Contested { addr, others } => {
+                let who = others
+                    .iter()
+                    .map(|p| named(*p))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Err(DialError::NotTheBox(H5iError::Metadata(format!(
+                    "port {} is held on {} by this box *and* by {} at the same time, so the \
+                     kernel decides per connection which one answers.\n   h5i will not share a \
+                     port it cannot promise leads to the box. Stop the other listener and start \
+                     the share again.",
+                    self.port, addr, who
+                ))))
+            }
+        }
+    }
+
+    /// Resolve, then connect to exactly what was resolved.
+    fn dial_attributed(&self) -> Result<TcpStream, DialError> {
+        let addr = self.resolve()?;
+        TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT).map_err(|e| {
+            // Classified the way the Linux helper classifies its own connect,
+            // so the receipt and the warnings read the same on both platforms.
+            // A refusal here is a race rather than the ordinary case — the
+            // listener was there a moment ago, when `resolve` saw it — but it
+            // is still a fact about the dev server, not about h5i.
+            match e.kind() {
+                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::AddrNotAvailable => {
+                    DialError::NothingListening(H5iError::Metadata(format!(
+                        "nothing is listening on {addr} in the box any more. Start the dev \
+                         server in the box, or share the port it is actually on."
+                    )))
+                }
+                _ => DialError::Broken(H5iError::Metadata(format!(
+                    "could not open a connection to {addr} in the box: {e}. Something is \
+                     listening but not accepting, or this machine is out of sockets. Not the \
+                     same as nothing being there."
+                ))),
+            }
+        })
     }
 }
 
@@ -653,6 +849,137 @@ impl Drop for Dialer {
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
+    }
+}
+
+/// The macOS route, driven end to end through the real `Dialer`.
+///
+/// [`crate::owner`] tests the decision rule against a table of listeners; these
+/// test that the dialer built on it actually reaches the right socket and
+/// refuses the wrong one — the difference between a correct rule and a correct
+/// feature.
+///
+/// The trick that makes the refusal testable in one process: root the dialer at
+/// a **child** process rather than at ourselves. The box is then a tree that
+/// this test is not in, so a socket the test binds is, by construction, a
+/// stranger's — which is exactly the shape that must be refused.
+#[cfg(all(test, target_os = "macos"))]
+mod mac_tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    /// A child that does nothing but exist, so its pid can root a tree.
+    fn a_child() -> std::process::Child {
+        std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn a child to root the box's tree at")
+    }
+
+    #[test]
+    fn the_dialer_reaches_a_listener_in_the_boxs_tree() {
+        let server = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = server.local_addr().unwrap().port();
+        let t = std::thread::spawn(move || {
+            let (mut s, _) = server.accept().expect("accept");
+            let mut buf = [0u8; 5];
+            s.read_exact(&mut buf).expect("read");
+            s.write_all(b"pong").expect("write");
+        });
+
+        let dialer = Dialer::spawn_local(port).expect("spawn a dialer for our own tree");
+        let mut sock = dialer.connect().expect("connect through the dialer");
+        sock.write_all(b"hello").expect("write");
+        let mut back = [0u8; 4];
+        sock.read_exact(&mut back).expect("read");
+        assert_eq!(&back, b"pong");
+        t.join().expect("server thread");
+    }
+
+    #[test]
+    fn a_dead_port_is_reported_as_a_dead_port() {
+        // Port 1, for the reason the Linux test gives: an ephemeral port that
+        // was just released gets handed straight back out to another test in
+        // this binary. Nothing binds port 1 without privileges we do not have.
+        let dialer = Dialer::spawn_local(1).expect("nothing listening is not a refusal");
+        let err = dialer.connect().expect_err("nothing is listening");
+        assert!(
+            err.nothing_listening(),
+            "a port with nothing on it is the dev server's business, not a refusal: {err}"
+        );
+    }
+
+    #[test]
+    fn a_port_held_by_a_stranger_is_refused_at_spawn() {
+        // The whole reason this platform's route exists, as a test. The socket
+        // is bound by *this* process, and the box is a child's tree — so from
+        // the dialer's point of view it belongs to somebody else entirely.
+        let mut child = a_child();
+        let stranger = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = stranger.local_addr().unwrap().port();
+
+        let err = Dialer::spawn(child.id(), port)
+            .expect_err("a port held by a stranger must not be shared");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("not part of this box"),
+            "the refusal must say whose port it is: {msg}"
+        );
+        // And it must name what holds it, or the operator has nowhere to look.
+        assert!(
+            msg.contains(&format!("{}", std::process::id())) || msg.contains('`'),
+            "the refusal must identify the holder: {msg}"
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn a_stranger_that_appears_later_is_refused_at_the_next_dial() {
+        // The property that per-dial re-resolution buys, and the reason it is
+        // not cached: a dialer that spawned cleanly must not keep serving once
+        // the port has changed hands. Here it changes hands the other way —
+        // the dialer starts with nothing listening and a stranger arrives —
+        // which is the same transition a box's dev server exiting produces.
+        let mut child = a_child();
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+
+        let dialer = Dialer::spawn(child.id(), port).expect("nothing listening yet");
+        let stranger = std::net::TcpListener::bind(("127.0.0.1", port));
+        // The kernel can hand this port to somebody else between the drop and
+        // the re-bind; if it did, there is nothing to assert about.
+        if stranger.is_ok() {
+            let err = dialer.connect().expect_err("a stranger now holds the port");
+            assert!(
+                err.not_the_box(),
+                "a port that changed hands must be refused, not served: {err}"
+            );
+            assert!(err.fatal(), "and it must be one of the refusals");
+        }
+
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn the_destination_cannot_be_redirected_after_spawn() {
+        // The same property the Linux arm states: the port is fixed at spawn
+        // and nothing a peer sends can move it. Here it is pinned in the
+        // `Dialer` itself and re-resolved only against that number.
+        let a = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let b = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let (pa, pb) = (
+            a.local_addr().unwrap().port(),
+            b.local_addr().unwrap().port(),
+        );
+        let dialer = Dialer::spawn_local(pa).expect("dialer");
+        assert_eq!(dialer.port(), pa);
+        let sock = dialer.connect().expect("connect");
+        assert_eq!(sock.peer_addr().unwrap().port(), pa);
+        assert_ne!(pa, pb);
     }
 }
 

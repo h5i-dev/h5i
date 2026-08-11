@@ -414,12 +414,35 @@ the life of the share and answers "connect me", pinned to the one port you named
 Nothing on the wire, from a peer or from the shared page, can move where it
 connects.
 
-**A share needs Linux, and a box with a network of its own.** All of the above
-rests on the box having a network namespace this machine can enter, and only
-then is "the box's port 3000" a distinct thing from this machine's port 3000;
-otherwise sharing it would publish whatever happened to be listening on the
-host, so `h5i box share` refuses rather than guessing. macOS boxes bind the
-host's loopback, so it refuses there too, and says which reason it is.
+**A share needs the box's port to be distinguishable from the host's**, and the
+two platforms establish that differently.
+
+On **Linux** it rests on the box having a network namespace this machine can
+enter: only then is "the box's port 3000" a distinct thing from this machine's
+port 3000. Without one, sharing would publish whatever happened to be listening
+on the host, so `h5i box share` refuses rather than guessing.
+
+On **macOS** there are no namespaces and a box binds the host's loopback, so the
+two ports really are the same port — and h5i asks Darwin who holds it. It shares
+the port only when the listening socket belongs to a process of that box (the
+session and its descendants), and refuses when it belongs to anything else,
+naming what holds it. The refusal is not hypothetical: a stray `serve.py` left
+on port 3000 is enough, and h5i will not publish it just because it answers.
+Two processes holding the same address (`SO_REUSEPORT`) is refused too, since
+the kernel — not h5i — would decide which one a visitor reached. That check runs
+again on **every** connection, so a box whose dev server exits cannot have its
+share inherited by the next process to claim the port. macOS boxes at the
+`container` or `microvm` tier run inside a VM, where no host process holds the
+port at all; those are refused, and say so.
+
+The paragraph above is about **Linux**, where the box needs a network of its
+own. On macOS the condition is different — the box needs to be the process
+holding the port — so the tier and profile advice below does not apply there;
+what matters is that the box is running and its dev server is the listener.
+`scripts/share_macos.sh` checks the four outcomes on that platform: a
+stranger's port refused, an empty port warned about, a box shadowed by a more
+specific listener refused, and a visitor reaching the box rather than the
+stranger.
 
 A box has a network of its own when it is running and at the `supervised` or
 `container` tier, or at `process` with a profile that denies egress. But having
@@ -1231,7 +1254,10 @@ Being explicit about these is a feature, since the claim is a security claim.
   the host's loopback (deliberately: it is the only way a dev server in a box is
   reachable). h5i closes the outbound half of this, denying the box every
   outbound loopback destination except its own egress proxy, but the box's own
-  listening ports are reachable by any local process.
+  listening ports are reachable by any local process. `h5i box share` works on
+  macOS by identifying which process holds the port rather than by owning the
+  route to it, so it can promise that what it publishes is the box's server —
+  it cannot make the port private to the box, and does not claim to.
 - **Cost.** A Chrome sidecar is real RAM and CPU, even headless. Headless boxes
   stay first class, and the browser is opt-in per box.
 - **The viewport is not a desktop.** CDP screencast shows the page. Native

@@ -653,7 +653,7 @@ async fn handle(
 // Transport tests, and every one of them dials into a box: the dialer forks a
 // helper into a network namespace, which is Linux. Sharing itself refuses on
 // other platforms, so there is nothing here for them to check.
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1090,6 +1090,25 @@ mod tests {
         serving.abort();
     }
 
+    /// Linux-only, and this one alone among the tests this module recovered
+    /// when macOS got a dialer.
+    ///
+    /// It is the heaviest test here by a distance: it holds `MAX_CONNECTIONS`
+    /// stalled relays open at once and then waits on the scheduler to hand a
+    /// slot back. In isolation on macOS it passes every time (15 for 15). Run
+    /// as part of the whole suite, where a couple of hundred other tests are
+    /// competing for the same machine, it failed about one run in twelve — and
+    /// still one in fifteen after the poll budget was tripled to fifteen
+    /// seconds, which is long past the point where a longer wait is a fix
+    /// rather than a way of not looking.
+    ///
+    /// So it stays on the platform where it is stable rather than becoming the
+    /// flaky test everybody learns to re-run. What it covers — `over_capacity`,
+    /// the `503`, and the slot coming back — is platform-independent logic that
+    /// Linux CI checks on every push. The gap is honest and it is narrow: no
+    /// *behaviour* is unverified on macOS, only this timing-sensitive way of
+    /// verifying it.
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn a_share_at_its_ceiling_says_so_and_keeps_the_ones_it_has() {
         // Nothing tested this. `over_capacity` is the one counter that says a
@@ -1121,7 +1140,7 @@ mod tests {
             held.push(c);
         }
         // Wait for them all to have taken a slot rather than sleeping a guess.
-        for _ in 0..200 {
+        for _ in 0..600 {
             if bridge.free_slots() == 0 {
                 break;
             }
@@ -1156,7 +1175,7 @@ mod tests {
 
         // Letting one go frees exactly one slot.
         held.pop();
-        for _ in 0..200 {
+        for _ in 0..600 {
             if bridge.free_slots() > 0 {
                 break;
             }

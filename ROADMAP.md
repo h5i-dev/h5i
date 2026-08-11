@@ -2165,13 +2165,36 @@ show changes what a visitor receives on Linux.
 run here: the share starts, the peer gets a direct path, traffic flows, and the
 receipt records `via direct`.
 
+**macOS now has a route, and it is a different argument rather than the same
+one ported.** A Seatbelt box has no namespace to enter and binds the host's
+loopback, so "the box's port 3000" and "this machine's port 3000" are one port
+— which is why an earlier macOS arm, deleted in round 51, was wrong to connect
+to it and call whatever answered the box. What replaces it (`share::owner`)
+asks Darwin which process holds the listening socket and shares it only when
+that process is in the box's tree; a stranger, or a second process sharing the
+address, is refused and named. The check is redone on every dial, so a dev
+server that exits cannot have its share inherited by whatever claims the port
+next.
+
+That this is not a theoretical hazard was demonstrated by the machine it was
+written on: port 3000 was held by the box's `python3 -m http.server` on `::`
+*and* by an unrelated `serve.py` on `127.0.0.1`, and a plain loopback connect
+reached the stranger. Run end to end on macOS — share, `h5i join`, a direct
+QUIC path, and the visitor receiving the box's directory listing rather than
+the stranger's page. The three outcomes were each exercised: the box's port
+shared, a stranger's port refused by name, and an empty port warned about
+rather than refused. Boxes at the `container` and `microvm` tiers on macOS live
+inside a VM where no host process holds the port; they are refused with that
+reason rather than "nothing is listening".
+
 **Still not demonstrated.** The two h5i processes were on one machine: a real
 direct QUIC path through the host's network stack, but not two machines on two
-networks. `h5i box share` is also Linux-only in practice — `view::box_pid` finds
-nothing on macOS, so the command refuses there, and the Seatbelt path through
-the dialer has never run. And `--direct-only` has never been exercised against a hole punch that
-actually *fails* — the refusal is the half that matters and it needs two hostile
-NATs to reach. Those two are what remains of the exit criteria.
+networks. On macOS the two-machine half is likewise untried, and `SO_REUSEPORT`
+contention is covered by unit tests over the decision rule rather than by two
+real processes racing for one address. And `--direct-only` has never been
+exercised against a hole punch that actually *fails* — the refusal is the half
+that matters and it needs two hostile NATs to reach. Those are what remains of
+the exit criteria.
 
 ## 9. Limits we state up front
 

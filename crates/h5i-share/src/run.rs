@@ -47,7 +47,10 @@ pub struct Request {
     pub env_id: String,
     pub policy_digest: String,
     pub box_name: String,
-    /// A pid living inside the box's namespaces.
+    /// The pid that identifies the box, which means different things on the
+    /// two platforms because they bound a box differently: on Linux, a pid
+    /// living **inside** the box's namespaces; on macOS, the box's **session**
+    /// process, whose descendants are the box.
     pub box_pid: u32,
     /// The port to share, inside the box.
     pub port: u16,
@@ -87,13 +90,10 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
     // Before the runtime. See the module note; this is the whole reason this
     // function is not simply `async`.
     let dialer = Dialer::spawn(req.box_pid, req.port)?;
-    // Which namespace the helper went into, so the share can notice if the box
-    // later gets a different one. Read here rather than inside the loop: after
-    // the fork this is a fact about what we are pinned to, not about what the
-    // box happens to have now.
-    let pinned_netns = std::fs::read_link(format!("/proc/{}/ns/net", req.box_pid))
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned());
+    // What the dialer is pinned to, so the share can notice if the box later
+    // becomes a different box. Read here rather than inside the loop: this is a
+    // fact about what we pinned, not about what the box happens to have now.
+    let pinned_route = pinned_route(req.box_pid);
 
     // A share of a port with nothing behind it is almost always a mistake, and
     // the peer is the one who would find out. Warn rather than refuse: an agent
@@ -101,18 +101,33 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
     // a port that is not up yet.
     let warning = match dialer.connect() {
         Ok(_) => None,
-        // Refused, not warned. This box's namespace has no loopback, so
-        // nothing inside it can reach itself and no ticket minted here will
-        // ever move a byte — the share would start, print an invite, and leave
-        // both people reading messages about a dev server that is running
-        // fine. `process` with a profile that denies egress is exactly this
-        // shape, and it is a configuration the docs used to recommend.
-        Err(e) if e.no_loopback() => {
+        // Refused, not warned — the two conditions where starting would be
+        // worse than failing, taken together because the answer to both is to
+        // stop rather than print an invite.
+        //
+        // *No loopback* (Linux): the box's namespace has none, so nothing
+        // inside it can reach itself and no ticket minted here will ever move a
+        // byte — the share would start, print an invite, and leave both people
+        // reading messages about a dev server that is running fine. `process`
+        // with a profile that denies egress is exactly this shape, and it is a
+        // configuration the docs used to recommend.
+        //
+        // *Not the box* (macOS): something is listening, and it is not this
+        // box's. Starting here would publish a process nobody offered to share.
+        Err(e) if e.fatal() => {
+            let loopback = e.no_loopback();
             // The inner error's own text, not its `Display`: wrapping one
             // `H5iError` in another prints "Metadata error: Metadata error:".
             let H5iError::Metadata(said) = e.into_inner() else {
                 return Err(H5iError::Metadata("this box cannot be shared".into()));
             };
+            if !loopback {
+                // A port held by something that is not the box (macOS). The
+                // dialer's message already names what holds it and what to do;
+                // the namespace advice below would be wrong here — there is no
+                // profile that changes who owns a host port.
+                return Err(H5iError::Metadata(said));
+            }
             return Err(H5iError::Metadata(format!(
                 "{said}\n   This is decided by the *profile*, not the tier: a profile that \
                  denies egress gets a namespace of its own with nothing brought up in it, at \
@@ -151,7 +166,7 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
         .map_err(|e| H5iError::Metadata(format!("could not start the share runtime: {e}")))?;
 
     let out = runtime
-        .block_on(async move { serve_async(req, dialer, warning, pinned_netns, announce).await });
+        .block_on(async move { serve_async(req, dialer, warning, pinned_route, announce).await });
     // Not a plain drop. `open_upstream` runs under `spawn_blocking`, blocking
     // tasks are never cancelled, and the dialer's reply is bounded only by
     // `CONNECT_TIMEOUT` — so a dev server that accepts nothing meant this
@@ -471,27 +486,57 @@ async fn box_went_away(env_dir: PathBuf, pinned: Option<String>) -> String {
         // the very case this comparison was added for. The `if let` skipped it
         // silently.
         if let Some(want) = &pinned {
-            let now = current_netns(&env_dir);
+            let now = current_route(&env_dir);
             if now.as_deref() != Some(want.as_str()) {
-                return "the box restarted, so it has a new network namespace and this share \
-                        is pinned to the old one. Nothing it serves can reach the box any \
-                        more — start a fresh share."
+                // Worded for what both platforms have in common, because both
+                // have this failure: on Linux the restarted box has a new
+                // namespace this share cannot enter, and on macOS it is a new
+                // process tree, so the dialer would attribute the port to a
+                // box that no longer exists — and refuse every connection.
+                return "the box restarted, so this share is pinned to a box that is no longer \
+                        there. Nothing it serves can reach the box any more — start a fresh \
+                        share."
                     .to_string();
             }
         }
     }
 }
 
-/// The identity of the network namespace the box's session is in right now.
+/// What the dialer is pinned to, named so it can be compared later.
 ///
-/// `/proc/<pid>/ns/net` reads as `net:[4026536311]`, and that number changes
-/// with every session, which is exactly what makes it usable as "is this still
-/// the box I forked into".
-fn current_netns(env_dir: &std::path::Path) -> Option<String> {
-    let pid = h5i_core::view::box_pid(env_dir)?;
-    std::fs::read_link(format!("/proc/{pid}/ns/net"))
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned())
+/// The two platforms pin different things, because they identify a box
+/// differently — and both change when a box restarts, which is the event this
+/// exists to notice.
+///
+/// * **Linux**: the network namespace. `/proc/<pid>/ns/net` reads as
+///   `net:[4026536311]`, and that number is new for every session.
+/// * **macOS**: the session process itself. There is no namespace to name, and
+///   the dialer's whole notion of "the box" is the tree under that pid — so a
+///   new session is a new tree, and the old pin is a box that no longer exists.
+fn pinned_route(box_pid: u32) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_link(format!("/proc/{box_pid}/ns/net"))
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Some(format!("session {box_pid}"))
+    }
+}
+
+/// The same identity, for the box as it is *now*. `None` when there is nothing
+/// to compare against, which the caller treats as "what we pinned is gone".
+fn current_route(env_dir: &std::path::Path) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        pinned_route(h5i_core::view::box_pid(env_dir)?)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        pinned_route(h5i_core::view::session_pid(env_dir)?)
+    }
 }
 
 /// The transport, once it is running. Kept as an enum rather than a trait
@@ -772,7 +817,7 @@ pub fn stop(env_dir: &std::path::Path) -> Result<Stopped, H5iError> {
 
 // Same: these drive `run::serve` and its session handling through a real
 // dialer.
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

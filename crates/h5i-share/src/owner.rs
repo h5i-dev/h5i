@@ -1,0 +1,808 @@
+//! Whose port is this? — the macOS answer to the question Linux answers with a
+//! namespace.
+//!
+//! On Linux a share is safe by construction: the box's dev server listens
+//! inside a network namespace of its own, [`crate::dialer`] is the only route
+//! into it, and "the box's port 3000" is a different object from "this
+//! machine's port 3000". macOS has no such boundary. A Seatbelt box binds the
+//! **host's** loopback, deliberately — it is the only way a dev server in the
+//! box is reachable at all — so the two ports are the same port, and the
+//! command refused rather than guess which one it was about.
+//!
+//! That refusal was right, and this module is what replaces it. The premise of
+//! the refusal was "h5i cannot tell the box's port from anything else listening
+//! on it". It can: Darwin will say which process holds a listening socket, h5i
+//! knows the box's process tree, and the two together answer the question by
+//! observation rather than by assumption.
+//!
+//! **This is not a theoretical hazard.** On the machine this module was written
+//! on, port 3000 had two listeners at once: the box's `python3 -m http.server`
+//! on `*:3000`, and an unrelated leftover `serve.py` on `127.0.0.1:3000`. A
+//! plain `TcpStream::connect(("127.0.0.1", 3000))` — which is exactly what an
+//! earlier macOS route did, before it was deleted for this reason — reached the
+//! stranger. A share built on it would have published a process the operator
+//! never chose, to the public internet, under a hostname h5i minted.
+//!
+//! So the rule here is not "is the box listening" but **"is the box the
+//! unambiguous winner for the address h5i is about to dial"**, and anything
+//! else is refused rather than resolved in the box's favour.
+//!
+//! # What the kernel is asked
+//!
+//! `proc_listallpids` for the process table, `PROC_PIDTBSDINFO` for each
+//! process's parent (to walk the box's tree), `PROC_PIDLISTFDS` for a process's
+//! descriptors and `PROC_PIDFDSOCKETINFO` for the ones that are sockets. All of
+//! it is readable for our own processes without privilege, which is what `lsof`
+//! relies on for the same job.
+//!
+//! Only same-uid processes answer `PROC_PIDLISTFDS`, and that is a limit worth
+//! stating: a listener belonging to **another user** is visible in the process
+//! table but its sockets are not. It therefore cannot be mistaken for the box's
+//! — it is never attributed to anything — and the ambiguity rule below refuses
+//! rather than assuming the box won.
+//!
+//! The policy below ([`decide`]) is pure and compiled everywhere, so the rule
+//! that decides what gets published is unit-tested on both CI platforms rather
+//! than only on the one that can run it. Everything that asks Darwin a question
+//! is gated to macOS, where the question exists.
+
+use std::collections::HashSet;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+// ─── the policy, which is pure and therefore tested ─────────────────────────
+
+/// One listening TCP socket, as observed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listener {
+    pub pid: u32,
+    pub addr: SocketAddr,
+}
+
+/// What h5i found when it asked who holds the port.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ownership {
+    /// The box holds it, unambiguously, at this address. Dial exactly this —
+    /// not "loopback", *this*, because which socket a connection reaches
+    /// depends on the address it was made to.
+    Box { pid: u32, addr: SocketAddr },
+    /// Nothing at all is listening on that port. The dev server has not started
+    /// yet, which is a warning rather than a refusal: an agent about to start
+    /// one is a perfectly good reason to share a port that is not up.
+    Nobody,
+    /// Something is listening and it is not this box. The refusal that matters:
+    /// this is the case where a share would have published a stranger.
+    Stranger { pid: u32, addr: SocketAddr },
+    /// The box holds it, and so does something else, in a way that decides
+    /// per connection which one answers — two sockets on the same address via
+    /// `SO_REUSEPORT`. Refused, because "usually the box" is not a promise
+    /// worth making about what goes on the public internet.
+    Contested { addr: SocketAddr, others: Vec<u32> },
+}
+
+/// Where h5i would dial, in the order it would prefer, and what beats what.
+///
+/// The kernel picks the listener for an incoming connection by **specificity**:
+/// a socket bound to the exact address beats one bound to the wildcard. So
+/// "the box is listening on port 3000" is not enough to know the box will be
+/// the one that answers — the address decides, and a stranger on
+/// `127.0.0.1:3000` takes the connection from a box on `0.0.0.0:3000`.
+///
+/// Both loopback addresses are candidates because a dev server may bind either,
+/// and the IPv4 one is preferred only as a tie-break: it is what a browser
+/// resolving `localhost` most often reaches, so a share that works for h5i
+/// works for the visitor.
+const DIAL_CANDIDATES: [IpAddr; 2] = [
+    IpAddr::V4(Ipv4Addr::LOCALHOST),
+    IpAddr::V6(Ipv6Addr::LOCALHOST),
+];
+
+/// How well a listening socket matches a dial address. Higher wins; `None`
+/// means it cannot serve that address at all.
+///
+/// The dual-stack case is the one worth spelling out. A socket bound to `::`
+/// with `IPV6_V6ONLY` off also accepts IPv4 connections, and libproc does not
+/// report that flag — so a `::` listener is treated as a *possible* answerer
+/// for an IPv4 dial at wildcard rank. Treating it as unable to answer would let
+/// a stranger on `::` quietly take connections h5i had attributed to the box;
+/// ranking it as a wildcard means the ambiguity is seen and refused.
+fn specificity(listen: &SocketAddr, dial: IpAddr) -> Option<u8> {
+    let l = listen.ip();
+    match (l, dial) {
+        // Exactly the address being dialled.
+        (a, b) if a == b => Some(2),
+        // The wildcard of the same family.
+        (IpAddr::V4(a), IpAddr::V4(_)) if a.is_unspecified() => Some(1),
+        (IpAddr::V6(a), IpAddr::V6(_)) if a.is_unspecified() => Some(1),
+        // A dual-stack `::` socket, for an IPv4 dial. See above.
+        (IpAddr::V6(a), IpAddr::V4(_)) if a.is_unspecified() => Some(1),
+        _ => None,
+    }
+}
+
+/// Decide who answers, for one port, given every listener on it.
+///
+/// Fail-closed by construction: the box is reported as the owner only when it
+/// wins a candidate address outright. Every other shape — nobody, a stranger,
+/// a tie — is returned as itself, so the caller can say which one happened
+/// instead of printing one message for four different situations.
+pub fn decide(listeners: &[Listener], port: u16, box_pids: &HashSet<u32>) -> Ownership {
+    let on_port: Vec<&Listener> = listeners.iter().filter(|l| l.addr.port() == port).collect();
+    if on_port.is_empty() {
+        return Ownership::Nobody;
+    }
+
+    let mut fallback: Option<Ownership> = None;
+    for dial in DIAL_CANDIDATES {
+        // Everything that could answer a connection to this address, best match
+        // first.
+        let mut reachable: Vec<(u8, &Listener)> = on_port
+            .iter()
+            .filter_map(|l| specificity(&l.addr, dial).map(|s| (s, *l)))
+            .collect();
+        if reachable.is_empty() {
+            continue;
+        }
+        let best = reachable.iter().map(|(s, _)| *s).max().unwrap_or(0);
+        reachable.retain(|(s, _)| *s == best);
+
+        // A tie at the winning rank is `SO_REUSEPORT`: the kernel spreads
+        // connections across them and h5i cannot promise which one a visitor
+        // gets.
+        if reachable.len() > 1 {
+            let ours = reachable.iter().any(|(_, l)| box_pids.contains(&l.pid));
+            let others: Vec<u32> = reachable
+                .iter()
+                .map(|(_, l)| l.pid)
+                .filter(|p| !box_pids.contains(p))
+                .collect();
+            // Unless every one of them is the box's. A tie is only a problem
+            // because h5i cannot say *which* socket answers; when they all
+            // belong to the box, that question has no wrong answer — a worker
+            // pool sharing one port with `SO_REUSEPORT` is an ordinary way to
+            // run a server, and refusing it would be refusing the box's own
+            // dev server for being well written.
+            if others.is_empty() {
+                return Ownership::Box {
+                    pid: reachable[0].1.pid,
+                    addr: SocketAddr::new(dial, port),
+                };
+            }
+            // Only interesting if the box is one of them; otherwise it is a
+            // stranger's port and the stranger arm below says so more clearly.
+            if ours && fallback.is_none() {
+                fallback = Some(Ownership::Contested {
+                    addr: SocketAddr::new(dial, port),
+                    others,
+                });
+            }
+            continue;
+        }
+
+        let winner = reachable[0].1;
+        if box_pids.contains(&winner.pid) {
+            // Dial the address h5i just reasoned about, not the address the
+            // socket is bound to: a box on `0.0.0.0:3000` is reached at
+            // `127.0.0.1:3000`, and dialling `0.0.0.0` is not a thing.
+            return Ownership::Box {
+                pid: winner.pid,
+                addr: SocketAddr::new(dial, port),
+            };
+        }
+        if fallback.is_none() {
+            fallback = Some(Ownership::Stranger {
+                pid: winner.pid,
+                addr: winner.addr,
+            });
+        }
+    }
+
+    // No candidate address the box wins. Report the most useful reason seen;
+    // if the port is held only on addresses h5i would never dial (a LAN
+    // address, say), that is still "not reachable as the box's port".
+    fallback.unwrap_or_else(|| {
+        let l = on_port[0];
+        if box_pids.contains(&l.pid) {
+            // The box is listening, but somewhere h5i cannot dial it — a
+            // specific LAN address and no loopback bind.
+            Ownership::Nobody
+        } else {
+            Ownership::Stranger {
+                pid: l.pid,
+                addr: l.addr,
+            }
+        }
+    })
+}
+
+// ─── asking the kernel ──────────────────────────────────────────────────────
+
+/// Every listening TCP socket this user can see, with the pid that holds it.
+///
+/// Errors are not propagated per process on purpose: a process that exits
+/// between the pid list and the fd list, or one belonging to another user,
+/// simply contributes nothing. That is the fail-closed direction — an
+/// unattributed listener is never counted as the box's — and the alternative
+/// would be a share that refuses because something unrelated on the machine
+/// happened to exit at the wrong moment.
+#[cfg(target_os = "macos")]
+pub fn listening_sockets() -> Vec<Listener> {
+    let mut out = Vec::new();
+    for pid in all_pids() {
+        for fd in fds_of(pid) {
+            if fd.proc_fdtype != libc::PROX_FDTYPE_SOCKET as u32 {
+                continue;
+            }
+            if let Some(addr) = listening_addr(pid, fd.proc_fd) {
+                out.push(Listener { pid, addr });
+            }
+        }
+    }
+    out
+}
+
+/// The box's processes: the session h5i started, and everything under it.
+///
+/// The tree is walked from a snapshot of the whole process table rather than
+/// per-pid, so a process that forks while this runs is either in the snapshot
+/// or is a child of something in it — and the next call, a moment later, sees
+/// it. The share re-checks on every dial, so that staleness costs nothing.
+#[cfg(target_os = "macos")]
+pub fn process_tree(root: u32) -> HashSet<u32> {
+    let mut children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    for pid in all_pids() {
+        if let Some(ppid) = parent_of(pid) {
+            children.entry(ppid).or_default().push(pid);
+        }
+    }
+    let mut seen = HashSet::from([root]);
+    let mut queue = std::collections::VecDeque::from([root]);
+    while let Some(pid) = queue.pop_front() {
+        for &child in children.get(&pid).map(Vec::as_slice).unwrap_or(&[]) {
+            if seen.insert(child) {
+                queue.push_back(child);
+            }
+        }
+    }
+    seen
+}
+
+/// A process's name, for a refusal that can be acted on.
+///
+/// "Port 3000 is held by something that is not the box" sends somebody hunting;
+/// "held by `node` (pid 4820), which is not part of box `demo`" ends the hunt.
+/// Best-effort by design — a process that exits first, or belongs to another
+/// user, simply has no name here, and the refusal still stands on the pid.
+#[cfg(target_os = "macos")]
+pub fn process_name(pid: u32) -> Option<String> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let got = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        )
+    };
+    if got != size {
+        return None;
+    }
+    // `pbi_name` is the long form and is empty for some processes, where
+    // `pbi_comm` (truncated to 16) is all there is.
+    let read = |field: &[libc::c_char]| -> String {
+        field
+            .iter()
+            .take_while(|&&c| c != 0)
+            .map(|&c| c as u8 as char)
+            .collect()
+    };
+    let name = read(&info.pbi_name);
+    let name = if name.is_empty() {
+        read(&info.pbi_comm)
+    } else {
+        name
+    };
+    (!name.is_empty()).then_some(name)
+}
+
+#[cfg(target_os = "macos")]
+fn all_pids() -> Vec<u32> {
+    // Sized from the kernel's own answer, then re-read: the count can grow
+    // between the two calls, which shows up as a truncated list rather than an
+    // error, so the buffer gets slack.
+    let n = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
+    if n <= 0 {
+        return Vec::new();
+    }
+    let mut buf = vec![0i32; n as usize + 64];
+    let bytes = (buf.len() * std::mem::size_of::<i32>()) as libc::c_int;
+    let got = unsafe { libc::proc_listallpids(buf.as_mut_ptr() as *mut libc::c_void, bytes) };
+    if got <= 0 {
+        return Vec::new();
+    }
+    buf.truncate(got as usize);
+    buf.into_iter()
+        .filter(|&p| p > 0)
+        .map(|p| p as u32)
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn parent_of(pid: u32) -> Option<u32> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let got = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        )
+    };
+    (got == size).then_some(info.pbi_ppid)
+}
+
+#[cfg(target_os = "macos")]
+fn fds_of(pid: u32) -> Vec<libc::proc_fdinfo> {
+    let size = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDLISTFDS,
+            0,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if size <= 0 {
+        return Vec::new();
+    }
+    let each = std::mem::size_of::<libc::proc_fdinfo>();
+    // Slack for descriptors opened between the sizing call and this one.
+    let count = size as usize / each + 32;
+    let mut buf: Vec<libc::proc_fdinfo> = vec![unsafe { std::mem::zeroed() }; count];
+    let got = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDLISTFDS,
+            0,
+            buf.as_mut_ptr() as *mut libc::c_void,
+            (count * each) as libc::c_int,
+        )
+    };
+    if got <= 0 {
+        return Vec::new();
+    }
+    buf.truncate(got as usize / each);
+    buf
+}
+
+/// `PROC_PIDFDSOCKETINFO`, read by offset.
+///
+/// The flavour returns `struct socket_fdinfo`, which libc does not define. It
+/// is not hand-declared here either, and that is deliberate: the struct nests
+/// `vinfo_stat`, two `sockbuf_info`s and a seven-arm union, so a Rust
+/// transcription that is wrong in its *tail* is a struct the kernel overruns,
+/// and one that is wrong in its *middle* is a security decision made on
+/// misread memory.
+///
+/// Instead the buffer is deliberately oversized and the four fields this needs
+/// are read at fixed offsets, bounds-checked, from the bytes the kernel wrote.
+/// The offsets are derived below and — more to the point — are *proved* by
+/// [`tests::the_offsets_find_a_socket_we_bound_ourselves`], which binds real
+/// sockets on known addresses and asserts this function reports them back. A
+/// wrong offset does not produce a subtly wrong answer there; it produces no
+/// answer at all.
+///
+/// ```text
+/// struct socket_fdinfo {                   offset
+///   struct proc_fileinfo pfi;                 0    24 bytes
+///   struct socket_info   psi;                24
+/// };
+/// struct socket_info {                     (from 24)
+///   struct vinfo_stat soi_stat;              +0    136 bytes
+///   uint64_t soi_so, soi_pcb;              +136
+///   int soi_type, soi_protocol, soi_family;+152
+///   short soi_options … soi_timeo;         +164
+///   u_short soi_error; uint32_t soi_oobmark;
+///   struct sockbuf_info soi_rcv, soi_snd;  +184    24 bytes each
+///   int soi_kind;                          +232
+///   uint32_t rfu_1;                        +236
+///   union { … } soi_proto;                 +240
+/// };
+/// struct in_sockinfo {                     (from 264 = 24 + 240)
+///   int insi_fport, insi_lport;              +0
+///   uint64_t insi_gencnt;                    +8
+///   uint32_t insi_flags, insi_flow;         +16
+///   uint8_t insi_vflag, insi_ip_ttl;        +24
+///   uint32_t rfu_1;                         +28
+///   union {…} insi_faddr;                   +32    16 bytes
+///   union {…} insi_laddr;                   +48    16 bytes
+/// };
+/// struct tcp_sockinfo { struct in_sockinfo tcpsi_ini; int tcpsi_state; … };
+/// ```
+#[cfg(target_os = "macos")]
+fn listening_addr(pid: u32, fd: i32) -> Option<SocketAddr> {
+    /// `PROC_PIDFDSOCKETINFO`. Not in libc, and its value is part of the
+    /// stable `proc_info` interface.
+    const PROC_PIDFDSOCKETINFO: libc::c_int = 3;
+    /// `soi_kind` for a TCP socket, and the TCP state that means "listening"
+    /// (`TCPS_LISTEN` from `netinet/tcp_fsm.h`).
+    const SOCKINFO_TCP: i32 = 2;
+    const TCPS_LISTEN: i32 = 1;
+    /// `insi_vflag`.
+    const INI_IPV4: u8 = 0x1;
+    const INI_IPV6: u8 = 0x2;
+
+    const SOI_KIND: usize = 24 + 232;
+    const SOI_FAMILY: usize = 24 + 160;
+    const PROTO: usize = 24 + 240;
+    const INSI_LPORT: usize = PROTO + 4;
+    const INSI_VFLAG: usize = PROTO + 24;
+    const INSI_LADDR: usize = PROTO + 48;
+    const TCPSI_STATE: usize = PROTO + 80;
+
+    // Comfortably larger than the struct (~700 bytes on every Darwin this
+    // runs on). The kernel refuses the call outright if the buffer is too
+    // small, so slack here is the difference between working and returning
+    // nothing — never between working and being overrun.
+    let mut buf = [0u8; 2048];
+    let got = unsafe {
+        libc::proc_pidfdinfo(
+            pid as libc::c_int,
+            fd,
+            PROC_PIDFDSOCKETINFO,
+            buf.as_mut_ptr() as *mut libc::c_void,
+            buf.len() as libc::c_int,
+        )
+    };
+    // A short answer is not a partially usable one.
+    if got < TCPSI_STATE as libc::c_int + 4 {
+        return None;
+    }
+
+    // Every offset read here is a compile-time constant well inside `buf`, so
+    // this cannot be out of bounds; the length check above is about what the
+    // *kernel* wrote, not about what can be indexed.
+    let i32_at = |off: usize| -> i32 {
+        i32::from_ne_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]])
+    };
+    // Only TCP, and only while listening. A connected socket on the same port
+    // is not something a visitor can be handed.
+    if i32_at(SOI_KIND) != SOCKINFO_TCP || i32_at(TCPSI_STATE) != TCPS_LISTEN {
+        return None;
+    }
+    // Network byte order, read as bytes rather than swapped from a native
+    // `int`, so the endianness is stated where it happens.
+    let port = u16::from_be_bytes([buf[INSI_LPORT], buf[INSI_LPORT + 1]]);
+    if port == 0 {
+        return None;
+    }
+
+    // `soi_family` decides how to read the address, and `insi_vflag` does not.
+    //
+    // That is not a stylistic preference; it was measured. A socket bound to
+    // `::` with `IPV6_V6ONLY` off — which is what Rust's
+    // `TcpListener::bind("[::]:0")` and a great many dev servers produce — has
+    // the **IPv4** bit set in `insi_vflag` as well as the IPv6 one, because it
+    // really does serve both families. Reading the v4 arm for it reports
+    // `0.0.0.0`, which loses the fact that the socket also answers on `::1`,
+    // and the share then refuses a box it could have reached (fail-closed, but
+    // wrong). Worse in the other direction: reading the v6 arm of a genuine
+    // AF_INET socket reinterprets `in4in6_addr`'s padding as address bytes and
+    // reports `127.0.0.1` as `::7f00:1`.
+    //
+    // The socket's domain has no such ambiguity, so it is what is read, and
+    // `insi_vflag` is left as the fallback for a kernel that does not set one.
+    let family = i32_at(SOI_FAMILY);
+    let vflag = buf[INSI_VFLAG];
+    let v6 = || -> Option<IpAddr> {
+        let b: [u8; 16] = buf[INSI_LADDR..INSI_LADDR + 16].try_into().ok()?;
+        Some(IpAddr::V6(Ipv6Addr::from(b)))
+    };
+    let v4 = || -> Option<IpAddr> {
+        // `in4in6_addr`: three words of padding, then the v4 address.
+        let b: [u8; 4] = buf[INSI_LADDR + 12..INSI_LADDR + 16].try_into().ok()?;
+        Some(IpAddr::V4(Ipv4Addr::from(b)))
+    };
+    let ip = if family == libc::AF_INET6 {
+        v6()?
+    } else if family == libc::AF_INET {
+        v4()?
+    } else if vflag & INI_IPV6 != 0 {
+        v6()?
+    } else if vflag & INI_IPV4 != 0 {
+        v4()?
+    } else {
+        return None;
+    };
+    Some(SocketAddr::new(ip, port))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn l(pid: u32, addr: &str) -> Listener {
+        Listener {
+            pid,
+            addr: addr.parse().expect("test address"),
+        }
+    }
+
+    fn boxed(pids: &[u32]) -> HashSet<u32> {
+        pids.iter().copied().collect()
+    }
+
+    #[test]
+    fn nothing_listening_is_its_own_answer() {
+        assert_eq!(decide(&[], 3000, &boxed(&[10])), Ownership::Nobody);
+        // Something on another port is not something on this one.
+        assert_eq!(
+            decide(&[l(10, "127.0.0.1:5173")], 3000, &boxed(&[10])),
+            Ownership::Nobody
+        );
+    }
+
+    #[test]
+    fn the_box_on_loopback_is_dialled_there() {
+        assert_eq!(
+            decide(&[l(10, "127.0.0.1:3000")], 3000, &boxed(&[10])),
+            Ownership::Box {
+                pid: 10,
+                addr: "127.0.0.1:3000".parse().unwrap()
+            }
+        );
+    }
+
+    #[test]
+    fn a_wildcard_box_is_dialled_on_loopback_not_on_the_wildcard() {
+        // `0.0.0.0` is what the socket is bound to; it is not an address to
+        // connect to.
+        assert_eq!(
+            decide(&[l(10, "0.0.0.0:3000")], 3000, &boxed(&[10])),
+            Ownership::Box {
+                pid: 10,
+                addr: "127.0.0.1:3000".parse().unwrap()
+            }
+        );
+    }
+
+    #[test]
+    fn a_stranger_holding_the_port_is_refused_not_shared() {
+        // The whole point of the module.
+        assert_eq!(
+            decide(&[l(99, "127.0.0.1:3000")], 3000, &boxed(&[10])),
+            Ownership::Stranger {
+                pid: 99,
+                addr: "127.0.0.1:3000".parse().unwrap()
+            }
+        );
+    }
+
+    #[test]
+    fn a_specific_stranger_beats_a_wildcard_box_and_that_is_refused() {
+        // The situation this module was written for, and the one a plain
+        // `connect("127.0.0.1", 3000)` gets wrong: the box holds the IPv6
+        // wildcard, a stranger holds IPv4 loopback exactly. Dialling
+        // 127.0.0.1 reaches the stranger — so IPv4 is not offered, and the
+        // box is found on `::1`, where it wins.
+        let got = decide(
+            &[l(10, "[::]:3000"), l(99, "127.0.0.1:3000")],
+            3000,
+            &boxed(&[10]),
+        );
+        assert_eq!(
+            got,
+            Ownership::Box {
+                pid: 10,
+                addr: "[::1]:3000".parse().unwrap()
+            },
+            "the box must be reached where it actually wins"
+        );
+    }
+
+    #[test]
+    fn a_stranger_on_both_loopbacks_leaves_the_box_nowhere_to_be_dialled() {
+        let got = decide(
+            &[
+                l(10, "0.0.0.0:3000"),
+                l(99, "127.0.0.1:3000"),
+                l(98, "[::1]:3000"),
+            ],
+            3000,
+            &boxed(&[10]),
+        );
+        assert!(
+            matches!(got, Ownership::Stranger { .. }),
+            "no candidate address the box wins, so this must refuse: {got:?}"
+        );
+    }
+
+    #[test]
+    fn two_sockets_on_one_address_are_contested_not_resolved_in_our_favour() {
+        // `SO_REUSEPORT`: the kernel decides per connection. "Usually the box"
+        // is not a promise to make about the public internet.
+        let got = decide(
+            &[l(10, "127.0.0.1:3000"), l(99, "127.0.0.1:3000")],
+            3000,
+            &boxed(&[10]),
+        );
+        match got {
+            Ownership::Contested { addr, others } => {
+                assert_eq!(addr, "127.0.0.1:3000".parse().unwrap());
+                assert_eq!(others, vec![99]);
+            }
+            other => panic!("a shared address must be refused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_worker_pool_sharing_one_address_is_the_box_not_a_contest() {
+        // Two box processes on one address via `SO_REUSEPORT` — how a good
+        // many servers run. The kernel picks one per connection and both are
+        // the box, so there is nothing to refuse; treating this as contested
+        // would refuse a dev server for being multi-process.
+        let got = decide(
+            &[l(10, "127.0.0.1:3000"), l(11, "127.0.0.1:3000")],
+            3000,
+            &boxed(&[10, 11]),
+        );
+        match got {
+            Ownership::Box { addr, pid } => {
+                assert_eq!(addr, "127.0.0.1:3000".parse().unwrap());
+                assert!(pid == 10 || pid == 11, "either worker is the box");
+            }
+            other => panic!("all-box listeners must not be a contest: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_box_that_holds_both_families_is_still_just_the_box() {
+        let got = decide(
+            &[l(10, "127.0.0.1:3000"), l(10, "[::1]:3000")],
+            3000,
+            &boxed(&[10]),
+        );
+        assert_eq!(
+            got,
+            Ownership::Box {
+                pid: 10,
+                addr: "127.0.0.1:3000".parse().unwrap()
+            }
+        );
+    }
+
+    #[test]
+    fn a_box_child_holds_the_port_not_the_session_leader() {
+        // The listener is the dev server, which is a descendant of the session
+        // h5i started — never the session process itself.
+        assert_eq!(
+            decide(&[l(14508, "127.0.0.1:3000")], 3000, &boxed(&[14506, 14508])),
+            Ownership::Box {
+                pid: 14508,
+                addr: "127.0.0.1:3000".parse().unwrap()
+            }
+        );
+    }
+
+    /// The ABI test: bind real sockets, then ask the reader to find them.
+    ///
+    /// This is what stands in for a hand-declared `socket_fdinfo`. Every offset
+    /// in [`listening_addr`] has to be right for this to pass — a wrong one
+    /// fails the TCP/listening check and the socket is simply not found.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_offsets_find_a_socket_we_bound_ourselves() {
+        use std::net::{TcpListener, TcpStream};
+
+        let me = std::process::id();
+        let v4 = TcpListener::bind("127.0.0.1:0").expect("bind v4 loopback");
+        let v6 = TcpListener::bind("[::1]:0").expect("bind v6 loopback");
+        let wild = TcpListener::bind("0.0.0.0:0").expect("bind v4 wildcard");
+        let (p4, p6, pw) = (
+            v4.local_addr().unwrap().port(),
+            v6.local_addr().unwrap().port(),
+            wild.local_addr().unwrap().port(),
+        );
+
+        let found = listening_sockets();
+        let mine: Vec<&Listener> = found.iter().filter(|l| l.pid == me).collect();
+        assert!(
+            mine.iter()
+                .any(|l| l.addr == format!("127.0.0.1:{p4}").parse().unwrap()),
+            "the v4 loopback listener on {p4} was not found among {mine:?}"
+        );
+        assert!(
+            mine.iter()
+                .any(|l| l.addr == format!("[::1]:{p6}").parse().unwrap()),
+            "the v6 loopback listener on {p6} was not found among {mine:?}"
+        );
+        assert!(
+            mine.iter()
+                .any(|l| l.addr == format!("0.0.0.0:{pw}").parse().unwrap()),
+            "the wildcard listener on {pw} was not found among {mine:?}"
+        );
+
+        // A *connected* socket is not a listening one, and must not be
+        // reported: handing a visitor an established connection is not a thing
+        // that can work.
+        let peer = TcpStream::connect(("127.0.0.1", p4)).expect("connect");
+        let (_accepted, _) = v4.accept().expect("accept");
+        let after = listening_sockets();
+        let local = peer.local_addr().unwrap();
+        assert!(
+            !after.iter().any(|l| l.pid == me && l.addr == local),
+            "an established connection was reported as a listener"
+        );
+    }
+
+    /// What Darwin calls a dual-stack `::` socket, which decides whether
+    /// [`specificity`]'s dual-stack arm is reasoning about a shape that exists.
+    ///
+    /// Rust's `TcpListener::bind("[::]:0")` leaves `IPV6_V6ONLY` off, so this
+    /// one socket accepts both families. The question is what libproc reports
+    /// it as — and the answer drives the rule: reported as `::`, the dual-stack
+    /// arm is what stops a stranger on `::` from quietly taking an IPv4
+    /// connection h5i attributed to the box.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_dual_stack_wildcard_is_reported_as_the_v6_wildcard() {
+        use std::net::TcpListener;
+
+        let dual = TcpListener::bind("[::]:0").expect("bind the v6 wildcard");
+        let port = dual.local_addr().unwrap().port();
+        let me = std::process::id();
+
+        let found = listening_sockets();
+        let ours: Vec<&Listener> = found
+            .iter()
+            .filter(|l| l.pid == me && l.addr.port() == port)
+            .collect();
+        assert_eq!(
+            ours.len(),
+            1,
+            "one bind is one socket, however many families it serves: {ours:?}"
+        );
+        assert_eq!(
+            ours[0].addr.ip(),
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+            "a dual-stack socket must be reported as `::`, which is what the \
+             dual-stack arm of `specificity` is written against"
+        );
+
+        // And the rule built on it: this socket really does answer an IPv4
+        // loopback connection, which is why `::` ranks as a wildcard for an
+        // IPv4 dial rather than as unable to serve one.
+        let peer = std::net::TcpStream::connect(("127.0.0.1", port));
+        assert!(
+            peer.is_ok(),
+            "a dual-stack `::` listener answers 127.0.0.1, so h5i must treat it \
+             as a contender for an IPv4 dial: {peer:?}"
+        );
+    }
+
+    /// The tree walk, against a process we actually fork.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_process_tree_finds_a_child_and_stops_at_the_root() {
+        let mut child = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn a child");
+        let me = std::process::id();
+        let tree = process_tree(me);
+        assert!(tree.contains(&me), "the root itself is in its own tree");
+        assert!(
+            tree.contains(&child.id()),
+            "a child of this process must be in its tree"
+        );
+        assert!(
+            !tree.contains(&1),
+            "launchd is not a descendant of this test"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}

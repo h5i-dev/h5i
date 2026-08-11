@@ -187,7 +187,13 @@ fn child_map() -> std::collections::HashMap<u32, Vec<u32>> {
 }
 
 /// The host-side `h5i` pid holding this box's session, from the live registry.
-fn session_pid(env_dir: &Path) -> Option<u32> {
+///
+/// Public because it is what "the box" *means* on a platform with no
+/// namespaces. [`box_pid`] answers "which pid is inside the box's network
+/// namespace", which is a question only Linux has; on macOS a box is the
+/// process tree under this pid, and `h5i box share` identifies it that way
+/// (`h5i_share::owner`).
+pub fn session_pid(env_dir: &Path) -> Option<u32> {
     let mut best: Option<(String, u32)> = None;
     for e in std::fs::read_dir(env_dir.join("live")).ok()?.flatten() {
         let Ok(text) = std::fs::read_to_string(e.path()) else {

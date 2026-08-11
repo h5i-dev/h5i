@@ -372,22 +372,9 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
     // not a list of tiers. A `process`-tier box gets one when its profile
     // denies egress and shares the host's when it does not, so naming tiers
     // here would be advice that is wrong half the time.
+    #[cfg(target_os = "linux")]
     let Some(box_pid) = h5i_core::view::box_pid(&dir) else {
-        // Said plainly rather than through the tier advice below, which on a
-        // platform with no network namespaces at all is advice nobody can
-        // follow: there is no tier that satisfies it, so the message sent
-        // people to try each one in turn.
-        #[cfg(not(target_os = "linux"))]
-        anyhow::bail!(
-            "`h5i box share` is Linux-only. A share is safe because the box has a network \
-             namespace of its own and the only route in enters it; on this platform a box \
-             binds the host's loopback, so h5i cannot tell the box's port {} from anything \
-             else listening on it.",
-            args.port
-        );
-        #[cfg(target_os = "linux")]
         let running = !h5i_core::env::live_sessions(&dir).is_empty();
-        #[cfg(target_os = "linux")]
         anyhow::bail!(
             "h5i cannot find a process of `{name}` in a network namespace of its own, so it \
              cannot tell the box's port {} from any other port on this machine — and sharing \
@@ -405,6 +392,56 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
             }
         );
     };
+
+    // macOS identifies a box by its **process tree**, not by a namespace, and
+    // the safety that a namespace gives Linux for free is established here by
+    // attribution instead: `h5i_share::owner` asks Darwin which process holds
+    // the listening socket and refuses unless it is one of this box's. The
+    // dialer does that on every connection, so what this function needs is only
+    // the root of the tree — the session process itself.
+    #[cfg(target_os = "macos")]
+    let box_pid = {
+        // A box inside a VM has no host process holding its port, so
+        // attribution would find nothing and report "nothing is listening",
+        // which is both untrue and unactionable. Said plainly instead.
+        //
+        // Keyed on the resolved claim rather than on probing for a VM: these
+        // are exactly the tiers whose boxes do not run as host processes, and a
+        // box that asked for one and did not get it has a different claim
+        // recorded here.
+        if matches!(
+            m.isolation_claim.as_str(),
+            "container" | "hardened-container" | "microvm"
+        ) {
+            anyhow::bail!(
+                "`{name}` runs at the `{}` tier, which on macOS means it runs inside a virtual \
+                 machine — a Podman machine or a microVM guest — and its port {} lives in that \
+                 machine's network, not on this one.\n   h5i shares a macOS box by identifying \
+                 the process that holds the port, and there is no such process here to \
+                 identify. Sharing it would need a route through the VM that h5i does not \
+                 have.\n   A box at the `workspace`, `process` or `supervised` tier runs as \
+                 processes on this Mac and can be shared.",
+                m.isolation_claim,
+                args.port
+            );
+        }
+        match h5i_core::view::session_pid(&dir) {
+            Some(pid) => pid,
+            None => anyhow::bail!(
+                "`{name}` has no session running, so h5i has no box to attribute port {} to. \
+                 A box is only a set of processes while a session is running.\n   Start one \
+                 first: `h5i box shell {name}`.",
+                args.port
+            ),
+        }
+    };
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let box_pid: u32 = anyhow::bail!(
+        "`h5i box share` needs either a network namespace to enter (Linux) or a way to \
+         attribute a listening socket to the box's processes (macOS). It is not available on \
+         this platform."
+    );
 
     let transport = if args.tunnel {
         Transport::Tunnel
