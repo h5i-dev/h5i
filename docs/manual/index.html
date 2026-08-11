@@ -735,8 +735,11 @@ not the ticket secret — nothing that authorizes the share is ever handed to a
 browser.</p>
 <p>While a share is open, <code>h5i ui</code> marks the box <strong>shared now</strong>, with the port,
 the transport and how many tickets can still admit somebody. That indicator is
-live; the receipt below is what lands when the share ends. <code>h5i box rm</code> refuses
-a box that is being shared and names the share; <code>--force</code> removes it anyway,
+live; the receipt below is what lands when the share ends. <code>h5i box rm</code>, <code>abort</code>, <code>apply</code> and <code>rebase</code> all refuse a box that is being
+shared, and name the share and the command that ends it — <code>rebase</code> in
+particular force-checks-out the worktree, which would change the files under
+the dev server a visitor is looking at. <code>gc</code> skips such a box and reclaims the
+others. <code>rm --force</code> removes it anyway,
 and once the removal is actually going ahead it says so, at which point the
 share notices within a few seconds and ends itself.</p>
 <p>A ticket is worth the same care as a password in one more respect: it is an
@@ -752,7 +755,7 @@ closed   2026-08-10T10:10:12+00:00
 shared   port 3000 inside the box, never published on the host
 endpoint kbcd7fq2m4xn8s6r3v9w1y5z7a2b4c6d8e0f2g4h6j8k0l2m4n
 peers    1
-  kbcd7fq2m4x… via direct — grant a1b2c3d4 (alex), 300s, 12 connections, 900 in / 5000 out
+  kbcd7fq2m4x… via direct — grant a1b2c3d4 (alex), 300s, 12 connections, 900 B in / 4.9 KiB out
 refused  3 attempt(s): of the 3 recorded, 1 presented no invite, 1 an unknown ticket, 0 expired, 1 revoked
 turned   2 connection(s) away before any ticket was weighed: 2 no direct path was available
 </code></pre>

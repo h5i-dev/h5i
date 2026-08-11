@@ -861,12 +861,17 @@ mod tests {
         // reporting nothing produces an identical line. The first version of
         // this test claimed otherwise. What is checkable is that the aggregate
         // is too large to have come from one of them.
-        let out: u64 = receipt
-            .split(" in / ")
-            .nth(1)
-            .and_then(|r| r.split(' ').next())
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(0);
+        //
+        // Read off the tally rather than parsed back out of the rendering: the
+        // second version of this scraped the number from the receipt text and
+        // broke the moment those counts grew a unit, which is a test coupled
+        // to a format it has no opinion about.
+        let out: u64 = bridge
+            .snapshot()
+            .peers
+            .iter()
+            .map(|p| p.bytes_to_peer)
+            .sum();
         assert!(
             out >= 10 * N as u64,
             "the aggregate is too small for {N} connections that each got ten bytes: {receipt}"

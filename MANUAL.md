@@ -561,8 +561,11 @@ browser.
 
 While a share is open, `h5i ui` marks the box **shared now**, with the port,
 the transport and how many tickets can still admit somebody. That indicator is
-live; the receipt below is what lands when the share ends. `h5i box rm` refuses
-a box that is being shared and names the share; `--force` removes it anyway,
+live; the receipt below is what lands when the share ends. `h5i box rm`, `abort`, `apply` and `rebase` all refuse a box that is being
+shared, and name the share and the command that ends it — `rebase` in
+particular force-checks-out the worktree, which would change the files under
+the dev server a visitor is looking at. `gc` skips such a box and reclaims the
+others. `rm --force` removes it anyway,
 and once the removal is actually going ahead it says so, at which point the
 share notices within a few seconds and ends itself.
 
@@ -583,7 +586,7 @@ closed   2026-08-10T10:10:12+00:00
 shared   port 3000 inside the box, never published on the host
 endpoint kbcd7fq2m4xn8s6r3v9w1y5z7a2b4c6d8e0f2g4h6j8k0l2m4n
 peers    1
-  kbcd7fq2m4x… via direct — grant a1b2c3d4 (alex), 300s, 12 connections, 900 in / 5000 out
+  kbcd7fq2m4x… via direct — grant a1b2c3d4 (alex), 300s, 12 connections, 900 B in / 4.9 KiB out
 refused  3 attempt(s): of the 3 recorded, 1 presented no invite, 1 an unknown ticket, 0 expired, 1 revoked
 turned   2 connection(s) away before any ticket was weighed: 2 no direct path was available
 ```

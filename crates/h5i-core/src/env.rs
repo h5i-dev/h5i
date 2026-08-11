@@ -8052,6 +8052,40 @@ fn conflict_runbook(m: &EnvManifest) -> String {
 /// requires the parent branch checked out and a clean tracked working tree.
 /// `--patch` squashes the env's diff into one commit; the default `--merge`
 /// fast-forwards or creates a two-parent merge commit. Conflicts refuse.
+/// Refuse a lifecycle operation on a box somebody is connected to.
+///
+/// `rm` learned this first, and the other verbs did not: `abort`, `apply` and
+/// `rebase` all took `run.lock` and none of them took any notice of a share, so
+/// with no writer session holding the lock they ran straight through. `abort`
+/// printed success and `box ls` said `aborted` while a public tunnel URL and a
+/// valid ticket kept pointing at the box. `rebase` is the sharpest of the
+/// three: it force-checks-out the worktree, which changes the files under the
+/// dev server a visitor is looking at.
+///
+/// There is no `--force` on these the way there is on `rm`, and none is added
+/// here: `h5i box share stop <name>` is a documented verb that always works,
+/// and `--force` on it clears even a wedged record — so the way out is never
+/// more than one command, and it is the command that tells the other person
+/// their access has ended rather than pulling it out from under them.
+fn refuse_if_shared(h5i_root: &Path, m: &EnvManifest, verb: &str) -> Result<(), H5iError> {
+    let Some(s) = crate::share_record::read_live(&m.dir(h5i_root)) else {
+        return Ok(());
+    };
+    if s.winding_up {
+        return Err(H5iError::Metadata(format!(
+            "{} is being shared by pid {} and that share is already shutting down — it will be \
+             gone in a moment. Run `h5i box {verb} {}` again then.",
+            m.id, s.pid, m.slug
+        )));
+    }
+    Err(H5iError::Metadata(format!(
+        "{} is being shared right now by pid {} — somebody outside may be connected to it, and \
+         `{verb}` would change the box under them. Stop the share first: \
+         `h5i box share stop {}`.",
+        m.id, s.pid, m.slug
+    )))
+}
+
 pub fn apply(
     repo: &Repository,
     h5i_root: &Path,
@@ -8065,6 +8099,7 @@ pub fn apply(
     // the manifest) against any concurrent run/shell on the same env.
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
+    refuse_if_shared(h5i_root, m, "apply")?;
     if m.status != ST_PROPOSED {
         return Err(H5iError::Metadata(format!(
             "{} is '{}' — run `h5i box propose {}` first (apply is never automatic)",
@@ -8243,6 +8278,7 @@ pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result
     // serialize against a concurrent `env run`/`shell` exactly like propose.
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
+    refuse_if_shared(h5i_root, m, "rebase")?;
     match m.status.as_str() {
         ST_CREATED | ST_RUNNING | ST_IDLE => {}
         other => {
@@ -8365,6 +8401,7 @@ pub fn abort(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result<
     // holds the lock → abort waits/fails "busy" until it ends or is killed).
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
+    refuse_if_shared(h5i_root, m, "abort")?;
     if m.status == ST_APPLIED {
         return Err(H5iError::Metadata(format!(
             "{} is already applied — nothing to abort",
@@ -8436,6 +8473,14 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
             Ok(g) => g,
             Err(_) => continue,
         };
+        // Skipped rather than refused, because this is a bulk sweep: one box
+        // being shared is no reason to stop reclaiming the others. Same shape
+        // as the observer case above. A share of an already-applied or aborted
+        // box is unusual, and pruning its worktree out from under a visitor is
+        // not something to do quietly.
+        if crate::share_record::read_live(&m.dir(h5i_root)).is_some() {
+            continue;
+        }
         // A failed prune leaves this env for a later sweep rather than aborting
         // the whole gc; skip it and keep going.
         if prune_workspace(repo, h5i_root, &m).is_err() {
@@ -10772,6 +10817,75 @@ mod tests {
     }
 
     // ── build_branch_scoped_merge / scoped_code_branch_refs ─────────────────
+
+
+    #[test]
+    fn a_lifecycle_verb_will_not_change_a_box_somebody_is_connected_to() {
+        // `rm` learned to check this first and the other verbs did not: they
+        // all take `run.lock` and none took any notice of a share, so with the
+        // writer session gone they ran straight through. `abort` printed
+        // success and `box ls` said `aborted` while a public tunnel URL and a
+        // valid ticket kept pointing at the box; `rebase` force-checks-out the
+        // worktree, which changes the files under the dev server a visitor is
+        // looking at.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let m = canonical_manifest("human", "shared");
+        let dir = m.dir(root);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+
+        // No share record: every verb proceeds.
+        for verb in ["abort", "apply", "rebase"] {
+            assert!(refuse_if_shared(root, &m, verb).is_ok(), "{verb} refused an unshared box");
+        }
+
+        let record = |winding: bool| {
+            serde_json::json!({
+                "v": 1,
+                "box_id": m.id,
+                "port": 3000,
+                "transport": "tunnel",
+                "endpoint": "https://x",
+                "started_at": "2026-01-01T00:00:00Z",
+                "pid": std::process::id(),
+                "winding_up": winding,
+                "grants": [{
+                    "id": "a1b2c3d4",
+                    "secret_sha256": "ff",
+                    "revoked": false,
+                    "expires_at": 4_000_000_000i64,
+                }],
+            })
+            .to_string()
+        };
+
+        std::fs::write(dir.join("share.json"), record(false)).expect("write");
+        for verb in ["abort", "apply", "rebase"] {
+            let err = refuse_if_shared(root, &m, verb)
+                .expect_err("a live share must stop a lifecycle verb");
+            let said = format!("{err}");
+            assert!(said.contains("being shared right now"), "{verb}: {said}");
+            // With a command that works, and it is the one that tells the other
+            // person their access has ended rather than pulling it out from
+            // under them.
+            assert!(said.contains("h5i box share stop shared"), "{verb}: {said}");
+        }
+
+        // A share already on its way out says so, and says to try again — it
+        // will be gone in seconds, so refusing outright would be advice to
+        // wait without saying so.
+        std::fs::write(dir.join("share.json"), record(true)).expect("write");
+        let err = refuse_if_shared(root, &m, "abort").expect_err("winding up");
+        let said = format!("{err}");
+        assert!(said.contains("already shutting down"), "{said}");
+        assert!(said.contains("h5i box abort shared"), "{said}");
+
+        // And a record whose process is gone is not a share.
+        std::fs::write(dir.join("share.json"), r#"{"v":1,"box_id":"x","port":1,
+            "transport":"p2p","endpoint":"e","started_at":"t","pid":0,"grants":[]}"#)
+            .expect("write");
+        assert!(refuse_if_shared(root, &m, "abort").is_ok(), "a dead record blocked abort");
+    }
 
     fn manifest_on_branch(agent: &str, slug: &str, parent_branch: &str) -> EnvManifest {
         let mut m = canonical_manifest(agent, slug);

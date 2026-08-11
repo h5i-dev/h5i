@@ -854,8 +854,8 @@ pub fn render_receipt(s: &Summary) -> String {
                     .map(|l| format!(" ({l})"))
                     .unwrap_or_default(),
                 plural(p.connections, "connection", "connections"),
-                p.bytes_from_peer,
-                p.bytes_to_peer,
+                bytes(p.bytes_from_peer),
+                bytes(p.bytes_to_peer),
             ));
         }
         if s.peers_overflow > 0 {
@@ -1007,6 +1007,28 @@ pub fn render_receipt(s: &Summary) -> String {
 }
 
 /// The grant table as `h5i box share status` shows it.
+/// A byte count somebody can read at a glance.
+///
+/// The receipt printed bare numbers with no unit, so `96 in / 7209077 out` left
+/// a reader to guess at both the unit and the magnitude — and the magnitude is
+/// the thing they are reading the line for. Powers of 1024, because that is
+/// what a socket buffer and a page cache are counted in, and one decimal place
+/// because two is a precision this number does not have.
+fn bytes(n: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+    match n {
+        n if n >= GIB => format!("{:.1} GiB", n as f64 / GIB as f64),
+        n if n >= MIB => format!("{:.1} MiB", n as f64 / MIB as f64),
+        n if n >= KIB => format!("{:.1} KiB", n as f64 / KIB as f64),
+        // Under a kibibyte the exact count is both short and interesting: it is
+        // the difference between a request that carried a body and one that
+        // carried none.
+        n => format!("{n} B"),
+    }
+}
+
 /// The slug a person types, out of a full `env/agent/slug` id.
 fn short_name(box_id: &str) -> &str {
     box_id.rsplit('/').next().unwrap_or(box_id)
@@ -1143,7 +1165,7 @@ mod tests {
         assert!(body.contains("kbcd… via direct"));
         assert!(body.contains("grant a1b2c3d4 (alex)"));
         assert!(body.contains("12 connections"));
-        assert!(body.contains("900 in / 5000 out"));
+        assert!(body.contains("900 B in / 4.9 KiB out"), "{body}");
     }
 
     #[test]
@@ -1178,6 +1200,20 @@ mod tests {
             !gone.exists(),
             "the receipt recreated a box that had been removed"
         );
+    }
+
+    #[test]
+    fn a_byte_count_says_what_it_counts() {
+        // `96 in / 7209077 out` left a reader guessing at both the unit and
+        // the magnitude, and the magnitude is what they are reading the line
+        // for.
+        assert_eq!(bytes(0), "0 B");
+        assert_eq!(bytes(96), "96 B");
+        assert_eq!(bytes(1023), "1023 B");
+        assert_eq!(bytes(1024), "1.0 KiB");
+        assert_eq!(bytes(5000), "4.9 KiB");
+        assert_eq!(bytes(7_209_077), "6.9 MiB");
+        assert_eq!(bytes(4 * 1024 * 1024 * 1024), "4.0 GiB");
     }
 
     #[test]

@@ -85,6 +85,10 @@ exits without it.
   to start is a reasonable thing to share.
 - Tickets expire — one hour by default, 24 hours at most.
 
+While a share is running, the box is held: `h5i box rm`, `abort`, `apply` and
+`rebase` all refuse it and say which share to stop first, and `gc` leaves it
+alone. Stop the share and they work again.
+
 ## What lands in the receipt
 
 A share writes its own lane into the box's receipt: who connected, over what
