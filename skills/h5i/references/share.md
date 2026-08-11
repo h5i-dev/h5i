@@ -50,6 +50,12 @@ see it rather than in a background job they cannot find later. A share carries
 at most 64 connections into the box at once; past that a visitor gets a `503`
 asking them to reload, and the count lands in the receipt.
 
+It also ends on its own, and in each case it writes its receipt on the way out:
+when the last ticket expires, when the box stops having a running session, and —
+on `--tunnel` — if `cloudflared` exits. So a share is never something you have
+to remember to clean up, but it is also not something you can start and assume
+is still up an hour later.
+
 ## What it needs, and what it refuses
 
 - The box must be **running** (a live `h5i box shell` or `h5i box run`) and have
