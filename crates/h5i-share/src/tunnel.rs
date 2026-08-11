@@ -575,13 +575,37 @@ mod tests {
     }
 
     /// One request, one connection, exactly as `cloudflared` would send it.
-    async fn request(addr: std::net::SocketAddr, head: &str) -> String {
+    ///
+    /// The `Result` is handed back rather than swallowed, and `request_strict`
+    /// is what most tests should use. A `let _ =` here hid a real defect for a
+    /// whole round: closing a socket with unread request bytes queued makes the
+    /// kernel send an RST, which tells the peer's stack to throw away its
+    /// receive buffer — so the response *was* written, `out` kept the bytes
+    /// that arrived before the error, and the assertion passed in exactly the
+    /// scenario where a browser shows "connection reset".
+    async fn request_raw(
+        addr: std::net::SocketAddr,
+        head: &str,
+    ) -> (String, std::io::Result<usize>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let mut c = tokio::net::TcpStream::connect(addr).await.expect("connect");
         c.write_all(head.as_bytes()).await.expect("write");
         let mut out = Vec::new();
-        let _ = tokio::time::timeout(Duration::from_secs(5), c.read_to_end(&mut out)).await;
-        String::from_utf8_lossy(&out).to_string()
+        let read = tokio::time::timeout(Duration::from_secs(5), c.read_to_end(&mut out))
+            .await
+            .unwrap_or(Ok(0));
+        (String::from_utf8_lossy(&out).to_string(), read)
+    }
+
+    async fn request(addr: std::net::SocketAddr, head: &str) -> String {
+        request_raw(addr, head).await.0
+    }
+
+    /// Like `request`, and insists the connection ended cleanly — no reset.
+    async fn request_strict(addr: std::net::SocketAddr, head: &str) -> String {
+        let (body, read) = request_raw(addr, head).await;
+        read.expect("the connection was reset rather than closed");
+        body
     }
 
     #[tokio::test]
@@ -910,7 +934,7 @@ mod tests {
         });
 
         let big = "x".repeat(400_000);
-        let got = request(
+        let got = request_strict(
             addr,
             &format!(
                 "POST /upload HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
@@ -919,7 +943,10 @@ mod tests {
             ),
         )
         .await;
-        assert!(got.contains("413"), "the box's own answer did not reach the visitor: {got}");
+        assert!(
+            got.contains("413"),
+            "the box's own answer did not reach the visitor: {got}"
+        );
         assert!(got.contains("too big"), "{got}");
 
         serving.abort();
@@ -1074,6 +1101,122 @@ mod tests {
         );
 
         serving.abort();
+    }
+
+    /// The share's receipt body, as an export would carry it.
+    fn receipt_of(dir: &std::path::Path) -> String {
+        let log = std::fs::read_to_string(dir.join("receipt.jsonl")).expect("receipt log");
+        let line = log
+            .lines()
+            .find(|l| l.contains("\"source\":\"share\""))
+            .expect("a share record");
+        let oid = line
+            .split("\"raw_oid\":\"sha256:")
+            .nth(1)
+            .and_then(|r| r.get(..16))
+            .expect("a payload id");
+        std::fs::read_to_string(dir.join("receipts").join(format!("{oid}.raw")))
+            .expect("the payload")
+    }
+
+    /// A dev server that promises a hundred bytes and sends ten.
+    fn short_server() -> u16 {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                let mut buf = [0u8; 4096];
+                let _ = c.read(&mut buf);
+                let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort-body");
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_response_the_box_left_unfinished_is_recorded() {
+        let port = short_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let got = request(
+            addr,
+            &format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n"),
+        )
+        .await;
+        assert!(got.ends_with("short-body"), "{got}");
+
+        serving.abort();
+        bridge.quiesce(Duration::from_secs(2)).await;
+        bridge.write_receipt();
+        let receipt = receipt_of(dir.path());
+        assert!(
+            receipt.contains("truncated 1 response(s) the box left unfinished"),
+            "{receipt}"
+        );
+    }
+
+    /// Promises a hundred bytes, sends ten, and then holds the connection open
+    /// without ever finishing — so only the *visitor* can end it.
+    fn stalling_server() -> u16 {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let _ = c.read(&mut buf);
+                    let _ =
+                        c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort-body");
+                    std::thread::sleep(Duration::from_secs(120));
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_visitor_who_walks_away_is_not_the_box_truncating() {
+        // The commonest way this loop ends is somebody closing a tab. Calling
+        // that "the box left a response unfinished" libels the box in the one
+        // artifact that is supposed to be evidence.
+        let port = stalling_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut c = tokio::net::TcpStream::connect(addr).await.expect("connect");
+            c.write_all(
+                format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .expect("write");
+            let mut buf = [0u8; 64];
+            let _ = tokio::time::timeout(Duration::from_secs(5), c.read(&mut buf)).await;
+            // And walk away mid-download.
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        serving.abort();
+        bridge.write_receipt();
+        let receipt = receipt_of(dir.path());
+        assert!(!receipt.contains("truncated"), "the visitor was blamed on the box: {receipt}");
     }
 
     #[tokio::test]

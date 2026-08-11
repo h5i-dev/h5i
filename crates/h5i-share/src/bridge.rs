@@ -110,10 +110,11 @@ struct Tally {
     /// box. Without this a share where the dev server was down reads as one
     /// nobody ever tried to use.
     unreachable: u64,
-    /// Responses that stopped short of the `Content-Length` they promised —
-    /// the box went quiet, closed, reset, or ran out the clock. A truncated
-    /// download reads to the visitor as the app being broken, so the receipt
-    /// says which it was.
+    /// Responses the box left unfinished: short of a `Content-Length` it
+    /// declared, or an unframed stream it stopped feeding without closing. A
+    /// truncated download reads to the visitor as the app being broken, so the
+    /// receipt says which it was — and a visitor who cancelled a download is
+    /// deliberately not counted here.
     truncated: u64,
 }
 
@@ -412,7 +413,7 @@ impl Bridge {
         self.record_denied(Denied::Unknown);
     }
 
-    /// A response stopped short of the length it promised.
+    /// A response the box left unfinished.
     pub fn record_truncated(&self) {
         self.tally().truncated += 1;
     }
@@ -572,7 +573,7 @@ pub struct Summary {
     pub front_refused: u64,
     /// Authorized peers who found nothing listening inside the box.
     pub unreachable: u64,
-    /// Responses that stopped short of the length they promised.
+    /// Responses the box left unfinished.
     pub truncated: u64,
 }
 
@@ -676,8 +677,8 @@ pub fn render_receipt(s: &Summary) -> String {
 
     if s.truncated > 0 {
         out.push_str(&format!(
-            "truncated {} response(s) stopped short of the length they promised, so what the \
-             visitor got was incomplete\n",
+            "truncated {} response(s) the box left unfinished, so what the visitor got was \
+             incomplete\n",
             s.truncated
         ));
     }
@@ -823,6 +824,39 @@ mod tests {
         assert!(body.contains("900 in / 5000 out"));
     }
 
+    #[tokio::test]
+    async fn winding_up_is_told_to_the_connections_before_anything_waits_on_them() {
+        // The order is the whole point, and it was wrong for a round: the flag
+        // used to be set inside `quiesce`, after the transport had already
+        // closed every connection with an empty reason, so the task that closes
+        // one with an explanation could never win.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let b = std::sync::Arc::new(test_bridge(dir.path()));
+        let watcher = {
+            let b = b.clone();
+            tokio::spawn(async move { b.shutting_down().await })
+        };
+        // Not yet.
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), async {})
+                .await
+                .is_ok()
+        );
+        assert!(!watcher.is_finished());
+
+        b.begin_shutdown();
+        tokio::time::timeout(std::time::Duration::from_secs(2), watcher)
+            .await
+            .expect("shutting_down did not fire")
+            .expect("the watcher task");
+
+        // And a receiver that subscribes *after* the flag is set returns at
+        // once, which is what a connection accepted during shutdown needs.
+        tokio::time::timeout(std::time::Duration::from_secs(2), b.shutting_down())
+            .await
+            .expect("a late subscriber waited forever");
+    }
+
     #[test]
     fn a_receipt_with_everything_in_it_still_reads_as_sentences() {
         // The receipt is this feature's evidence artifact and the counters were
@@ -860,7 +894,7 @@ mod tests {
             "capacity 5 connection(s) refused",
             "flooded  900000 connection(s) refused at the front door",
             "unreached 2 connection(s) were authorized",
-            "truncated 1 response(s) stopped short",
+            "truncated 1 response(s) the box left unfinished",
             "refused  2 attempt(s)",
             "and 12 more not recorded individually",
         ] {

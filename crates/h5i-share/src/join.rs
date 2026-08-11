@@ -202,8 +202,7 @@ async fn handle(
         // The joiner has no receipt of its own, so this is the only place a
         // person learns their download was cut off rather than finished.
         eprintln!(
-            "join: a response stopped short of the length it promised; what arrived is \
-             incomplete"
+            "join: the box left a response unfinished; what arrived is incomplete"
         );
     }
     Ok(())

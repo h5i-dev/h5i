@@ -279,9 +279,10 @@ pub struct Forwarded<'a> {
 pub struct Counters {
     pub to_box: std::sync::atomic::AtomicU64,
     pub to_peer: std::sync::atomic::AtomicU64,
-    /// Set when a response stopped short of the length it promised. Silent
-    /// truncation is the part a visitor cannot debug and the sharer cannot see,
-    /// so it is carried back out to the receipt.
+    /// Set when the box left a response unfinished. Silent truncation is the
+    /// part a visitor cannot debug and the sharer cannot see, so it is carried
+    /// back out to the receipt — and a visitor who cancelled a download is
+    /// deliberately not counted, because that is not the box's doing.
     pub truncated: std::sync::atomic::AtomicBool,
 }
 
@@ -950,12 +951,24 @@ where
     }
 
     if body_len == Some(sent_body) {
-        let _ = peer_w.shutdown().await;
+        // The response is complete. Do not just drop the socket: the peer's own
+        // request body may still be unread — a dev server that answers before
+        // reading it is the ordinary case — and closing on unread bytes resets
+        // the connection, which throws away the answer just delivered.
+        finish_with(peer_r, peer_w).await;
         return Ok(());
     }
 
     let mut buf = vec![0u8; 32 * 1024];
     let mut discard = vec![0u8; 8 * 1024];
+    // Which side ended the relay. Truncation is a claim about the *box*, and
+    // the visitor closing a tab mid-download is the commonest way this loop
+    // ends — reporting that as the box cutting a response short libels it in
+    // the one artifact that is supposed to be evidence.
+    let mut box_ended_it = false;
+    // Specifically: a timer, rather than the box closing. For an unframed
+    // response the close *is* the end, so only a timer leaves it short.
+    let mut timed_out = false;
     // An absolute cap as well as an idle one. The idle timeout is rebuilt every
     // time round the loop, including when the *client* says something — so a
     // peer dribbling a byte a minute could hold an unframed response open for
@@ -973,12 +986,29 @@ where
         // four minutes resets the idle timer forever, and "framed responses end
         // when their body does" is a promise agent-written code never made.
         if tokio::time::Instant::now() >= hard_deadline {
+            box_ended_it = true;
+            timed_out = true;
             break;
         }
         tokio::select! {
             from_box = tokio::time::timeout(RESPONSE_IDLE, up_r.read(&mut buf)) => {
                 let n = match from_box {
-                    Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
+                    // The box stopped: an end of stream, a reset, or five
+                    // minutes of silence. Whether that leaves the response
+                    // short is decided below; that it was the box's doing is
+                    // decided here.
+                    Ok(Ok(0)) | Ok(Err(_)) => {
+                        box_ended_it = true;
+                        break;
+                    }
+                    // The idle timeout: the box went quiet without ever
+                    // finishing. For an unframed response that is the only way
+                    // to know it was cut short.
+                    Err(_) => {
+                        box_ended_it = true;
+                        timed_out = true;
+                        break;
+                    }
                     Ok(Ok(n)) => n,
                 };
                 let take = match body_len {
@@ -1008,16 +1038,23 @@ where
             }
         }
     }
-    // Truncation is "the body was short", not "a particular timer fired". Set
-    // on the deadline alone, this missed the three commoner ways a declared
-    // body ends early — the box going quiet for five minutes, closing, or
-    // resetting — and it set the flag on an *unframed* response that had
-    // finished an hour earlier. A length we were given and did not deliver is
-    // the only thing knowable here, and it is the only thing claimed.
-    if body_len.is_some_and(|n| sent_body < n) {
+    // Two questions, and the flag needs both. *Did the box end it* — because a
+    // visitor closing a tab mid-download is the commonest way out of this loop
+    // and is nobody's fault but theirs. And *was what arrived short* — which
+    // for a declared length is arithmetic, and for an unframed response is
+    // knowable only when the box stopped without ever closing its stream:
+    // the deadline and the idle timeout, both of which cut a stream the client
+    // is still owed the end of.
+    let short = match body_len {
+        Some(n) => sent_body < n,
+        // Unframed: an `Ok(0)` is the box closing, which *is* the end of an
+        // until-close response. A timer firing is not.
+        None => timed_out,
+    };
+    if box_ended_it && short {
         truncated.store(true, Ordering::Relaxed);
     }
-    let _ = peer_w.shutdown().await;
+    finish_with(peer_r, peer_w).await;
     Ok(())
 }
 
@@ -1119,8 +1156,7 @@ const UNFINISHED_BODY: &str =
 
 /// What a visitor gets when the box's answer is shaped in a way this proxy
 /// will not pass on.
-const MALFORMED_HEAD_BODY: &str =
-    "The app in this box sent a reply h5i will not forward: its headers are not      well formed. Whoever shared it needs to look.";
+const MALFORMED_HEAD_BODY: &str = "The app in this box sent a reply h5i will not forward: its headers are not well formed. Whoever shared it needs to look.";
 
 fn malformed_head_response() -> String {
     format!(
@@ -1145,6 +1181,36 @@ async fn refuse_the_response<W: tokio::io::AsyncWrite + Unpin>(
     }
     let _ = peer_w.shutdown().await;
     Ok(())
+}
+
+/// How long to spend swallowing what the peer is still sending, so the socket
+/// can close without a reset.
+const LINGER_DRAIN: Duration = Duration::from_secs(2);
+
+/// Finish with a peer: stop writing, swallow whatever it is still sending, and
+/// only then let the socket go.
+///
+/// This is not politeness. Closing a TCP socket with unread bytes still in its
+/// receive queue makes the kernel send an RST, and an RST tells the peer's
+/// stack to **discard its receive buffer** — including the response just
+/// written into it. So a dev server that answers `413` and hangs up without
+/// reading the upload had its answer delivered by this proxy and then destroyed
+/// by the close, and the visitor saw a connection reset instead.
+async fn finish_with<PR, PW>(mut peer_r: PR, mut peer_w: PW)
+where
+    PR: tokio::io::AsyncRead + Unpin,
+    PW: tokio::io::AsyncWrite + Unpin,
+{
+    let _ = peer_w.shutdown().await;
+    let mut discard = vec![0u8; 8 * 1024];
+    let _ = tokio::time::timeout(LINGER_DRAIN, async {
+        while let Ok(n) = peer_r.read(&mut discard).await {
+            if n == 0 {
+                break;
+            }
+        }
+    })
+    .await;
 }
 
 /// What a peer gets when the box stopped reading its request.
