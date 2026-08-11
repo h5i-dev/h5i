@@ -519,6 +519,197 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn what_the_box_receives_is_what_the_client_sent_except_for_the_rewrites() {
+        // A differential check rather than a list of cases somebody thought of.
+        // The proxy is entitled to change exactly three things on the way in —
+        // strip the share cookie, replace the connection-lifetime headers, and
+        // refuse what it will not parse — and everything else about a request
+        // should reach the box as sent. Nothing verified that: the tests here
+        // assert about particular headers, so a rewrite that quietly dropped,
+        // reordered or re-cased an unrelated one would pass all of them.
+        let (port, seen) = stubborn_keepalive_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        // Shapes a real client produces, including the awkward ones.
+        let cases: Vec<(&str, String)> = vec![
+            ("a bare GET", "GET / HTTP/1.1\r\n".into()),
+            ("a deep path", "GET /a/b/c/d.js?x=1&y=2 HTTP/1.1\r\n".into()),
+            (
+                "an escaped path",
+                "GET /caf%C3%A9/%20space?q=a%2Bb HTTP/1.1\r\n".into(),
+            ),
+            ("a HEAD", "HEAD /index.html HTTP/1.1\r\n".into()),
+            ("an OPTIONS", "OPTIONS /api HTTP/1.1\r\n".into()),
+            (
+                "a long target",
+                format!("GET /{} HTTP/1.1\r\n", "z".repeat(1000)),
+            ),
+        ];
+        // Headers the client sends that must arrive untouched, including odd
+        // casing, a repeated name, and a value with commas and spaces.
+        let headers = [
+            "x-custom: one",
+            "X-CUSTOM-TWO: Two",
+            "accept: text/html, application/xhtml+xml;q=0.9",
+            "Accept-Language: en-GB,en;q=0.5",
+            "x-repeated: a",
+            "x-repeated: b",
+            "User-Agent: h5i-test/1.0 (differential)",
+            "Referer: http://127.0.0.1/from",
+        ];
+        let extra = format!("{}\r\n", headers.join("\r\n"));
+
+        for (what, line) in cases {
+            seen.lock().unwrap().clear();
+            let sent = format!(
+                "{line}Host: t\r\nCookie: sid=9; h5i_share={secret}; other=1\r\n{extra}\r\n"
+            );
+            let got = request(addr, &sent).await;
+            assert!(got.starts_with("HTTP/1.1 200 "), "{what}: {got}");
+
+            let arrived = seen.lock().unwrap().join("");
+            let sent_lines: Vec<&str> = sent.split("\r\n").filter(|l| !l.is_empty()).collect();
+            let arrived_lines: Vec<&str> =
+                arrived.split("\r\n").filter(|l| !l.is_empty()).collect();
+
+            // The request line reaches the box exactly as sent. A target the
+            // proxy rewrote would send the app to a different page than the
+            // visitor asked for.
+            assert_eq!(
+                arrived_lines.first(),
+                sent_lines.first(),
+                "{what}: the request line was rewritten"
+            );
+
+            // Every header the client sent arrives, byte for byte, except the
+            // two the proxy owns.
+            for l in &sent_lines[1..] {
+                let name = l.split(':').next().unwrap_or("").to_ascii_lowercase();
+                if name == "cookie" || name == "connection" {
+                    continue;
+                }
+                assert!(
+                    arrived_lines.contains(l),
+                    "{what}: `{l}` did not reach the box. Got: {arrived_lines:?}"
+                );
+            }
+
+            // The cookie arrives with ours taken out and the app's left alone.
+            let cookie = arrived_lines
+                .iter()
+                .find(|l| l.to_ascii_lowercase().starts_with("cookie:"))
+                .copied()
+                .unwrap_or("");
+            assert!(!cookie.contains("h5i_share"), "{what}: {cookie}");
+            assert!(
+                cookie.contains("sid=9"),
+                "{what}: the app's own cookie was dropped: {cookie}"
+            );
+            assert!(cookie.contains("other=1"), "{what}: {cookie}");
+
+            // And nothing was invented: the only header the proxy adds is the
+            // one that ends the connection.
+            for l in &arrived_lines[1..] {
+                let name = l.split(':').next().unwrap_or("").to_ascii_lowercase();
+                if name == "connection" || name == "cookie" {
+                    continue;
+                }
+                assert!(
+                    sent_lines.contains(l),
+                    "{what}: the box saw `{l}`, which the client never sent"
+                );
+            }
+        }
+
+        serving.abort();
+    }
+
+    /// Answers with a fixed set of response headers, so a test can compare what
+    /// the visitor received against what the box actually sent.
+    fn header_rich_server() -> u16 {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 8192];
+                    let _ = c.read(&mut buf);
+                    let head = [
+                        "HTTP/1.1 200 OK",
+                        "Content-Type: text/html; charset=utf-8",
+                        "Content-Length: 2",
+                        "Cache-Control: no-store, max-age=0",
+                        "ETag: \"abc123\"",
+                        "X-Frame-Options: DENY",
+                        "Set-Cookie: sid=9; Path=/; HttpOnly",
+                        "Set-Cookie: theme=dark; Path=/",
+                        "Vary: Accept-Encoding",
+                        "Connection: keep-alive",
+                    ]
+                    .join("\r\n");
+                    let _ = c.write_all(format!("{head}\r\n\r\nhi").as_bytes());
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn what_the_visitor_receives_is_what_the_box_sent_except_for_the_rewrites() {
+        // The other half of the differential. The proxy may replace the
+        // connection-lifetime headers and drop a share cookie the box tried to
+        // set; everything else the app chose — its content type, its caching,
+        // its own cookies, its security headers — has to arrive, or the page
+        // the visitor sees is not the page the app served.
+        let port = header_rich_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let got = request(
+            addr,
+            &format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n"),
+        )
+        .await;
+        assert!(got.starts_with("HTTP/1.1 200 OK"), "{got}");
+
+        for must in [
+            "Content-Type: text/html; charset=utf-8",
+            "Content-Length: 2",
+            "Cache-Control: no-store, max-age=0",
+            "ETag: \"abc123\"",
+            "X-Frame-Options: DENY",
+            "Set-Cookie: sid=9; Path=/; HttpOnly",
+            "Set-Cookie: theme=dark; Path=/",
+            "Vary: Accept-Encoding",
+        ] {
+            assert!(
+                got.contains(must),
+                "the box sent `{must}` and the visitor did not get it: {got}"
+            );
+        }
+        assert!(got.ends_with("hi"), "the body did not arrive: {got}");
+
+        // And the one header the proxy owns says what it must.
+        assert!(got.contains("Connection: close"), "{got}");
+        assert!(!got.to_ascii_lowercase().contains("keep-alive"), "{got}");
+
+        serving.abort();
+    }
+
+    #[tokio::test]
     async fn a_share_at_its_ceiling_says_so_and_keeps_the_ones_it_has() {
         // Nothing tested this. `over_capacity` is the one counter that says a
         // share was hammered, and every test that exercised the sentence built
