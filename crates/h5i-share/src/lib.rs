@@ -52,7 +52,11 @@
 //!   which one it came from.
 
 pub mod bridge;
+// Random heads for the two parsers. Tests only: it exists to be run, not
+// shipped, and nothing outside a test may depend on it.
 pub mod dialer;
+#[cfg(test)]
+mod fuzz;
 pub mod gate;
 pub mod http_front;
 pub mod pump;

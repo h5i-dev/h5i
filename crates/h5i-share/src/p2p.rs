@@ -329,8 +329,7 @@ async fn serve_connection(
                 last_grant: &last_grant,
                 conn: &conn_for_stream,
             };
-            if let Err(e) = serve_stream(&bridge, send, recv, &on).await
-            {
+            if let Err(e) = serve_stream(&bridge, send, recv, &on).await {
                 eprintln!("share: {e}");
             }
         });

@@ -1420,6 +1420,24 @@ fn unfinished_response() -> String {
 /// trims, so a folded continuation matches a filter and gets dropped, or
 /// survives a dropped line and reattaches itself to the header above.
 fn head_is_well_formed(head: &[u8]) -> bool {
+    // It has to be a response at all. The sanitiser rebuilds a head by dropping
+    // the lines a filter rejects, and it drops empty ones — so a box whose
+    // first line is a header rather than a status line had that header
+    // *promoted* into the status line's place, and the visitor got a reply
+    // beginning `Connection: close` with no status in it at all. A browser
+    // calls that a protocol error and says nothing about where the fault is.
+    //
+    // A leading blank line before a real status line is still fine, and is
+    // absorbed: clients have always tolerated one, and refusing it would fail a
+    // response that is only untidy.
+    let first = head
+        .split(|&b| b == b'\n')
+        .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
+        .find(|l| !l.is_empty());
+    match first {
+        Some(l) if l.starts_with(b"HTTP/") => {}
+        _ => return false,
+    }
     for (i, &c) in head.iter().enumerate() {
         if c == b'\n' && (i == 0 || head[i - 1] != b'\r') {
             return false;
@@ -1493,6 +1511,161 @@ fn sets_a_share_cookie(line: &[u8]) -> bool {
     String::from_utf8_lossy(&line[colon + 1..])
         .trim_start()
         .starts_with(crate::gate::COOKIE)
+}
+
+#[cfg(test)]
+mod status_line_tests {
+    use super::*;
+
+    #[test]
+    fn a_reply_with_no_status_line_is_not_a_response() {
+        // Found by the fuzzer. The sanitiser rebuilds a head by dropping the
+        // lines a filter rejects, and it drops empty ones — so a box whose
+        // first line is a header rather than a status line had that header
+        // promoted into the status line's place, and the visitor got a reply
+        // that began `Connection: close` with no status in it at all. A browser
+        // reports that as a protocol error and says nothing about the cause.
+        assert!(!head_is_well_formed(b"Connection: close\r\n\r\n"));
+        assert!(!head_is_well_formed(b"\r\nConnection: close\r\n\r\n"));
+        assert!(!head_is_well_formed(b"\r\n\r\n"));
+        assert!(!head_is_well_formed(b""));
+
+        // A leading blank line before a real status line is only untidy, and
+        // clients have always tolerated one. It is absorbed, not refused.
+        assert!(head_is_well_formed(b"\r\nHTTP/1.1 200 OK\r\n\r\n"));
+        let out = close_the_connection(b"\r\nHTTP/1.1 200 OK\r\nConnection: keep-alive\r\n\r\n");
+        assert_eq!(&out, b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+    }
+}
+
+#[cfg(test)]
+mod response_fuzz {
+    use super::*;
+    use crate::fuzz::{response_head, rounds, Rng};
+
+    /// What the response side owes a visitor, for every head a box can emit.
+    ///
+    /// The box is agent-written code we are deliberately showing somebody, so
+    /// "a real server would not send that" is not an argument available here.
+    #[test]
+    fn a_sanitised_response_head_has_one_framing_one_connection_and_no_cookie() {
+        let mut rng = Rng::new(0xC0FFEE);
+        for i in 0..rounds() {
+            let seed = rng.next();
+            let mut one = Rng::new(seed);
+            let head = response_head(&mut one);
+            let ctx = || {
+                format!(
+                    "round {i}, seed {seed:#x}, head {:?}",
+                    String::from_utf8_lossy(&head)
+                )
+            };
+
+            // Everything below runs only for heads the front is willing to
+            // relay; a malformed one is answered with our own page, and that
+            // page is a constant.
+            if !head_is_well_formed(&head) {
+                continue;
+            }
+
+            let framing = response_framing(&head);
+            let rewritten = close_the_connection(&head);
+            let out = match framing {
+                Framing::Ambiguous => strip_lengths(&rewritten),
+                _ => rewritten,
+            };
+
+            // One `Connection`, and it says the connection ends here. This is
+            // what makes one-request-per-connection true rather than requested.
+            let conns: Vec<String> = header_values(&out, "connection");
+            assert_eq!(
+                conns.len(),
+                1,
+                "not exactly one Connection: {} -> {out:?}",
+                ctx()
+            );
+            assert!(
+                conns[0].eq_ignore_ascii_case("close"),
+                "the connection was not closed: {} -> {conns:?}",
+                ctx()
+            );
+
+            // No share cookie, ever. The box cannot guess a token, but it can
+            // clear one — and cookies ignore the port, so on the joining side
+            // one box could log a visitor out of a different share.
+            for v in header_values(&out, "set-cookie") {
+                assert!(
+                    !v.trim_start().starts_with(crate::gate::COOKIE),
+                    "the box set a share cookie: {} -> {v:?}",
+                    ctx()
+                );
+            }
+
+            // One framing on the way out. Two lengths, or a length beside a
+            // chunked encoding, is a response-smuggling shape: the visitor's
+            // client picks one and we picked the other.
+            let lengths = header_values(&out, "content-length").len();
+            let chunked = header_values(&out, "transfer-encoding").iter().any(|v| {
+                v.split(',')
+                    .any(|t| t.trim().eq_ignore_ascii_case("chunked"))
+            });
+            assert!(
+                lengths <= 1 && !(chunked && lengths > 0),
+                "two framings reached the visitor ({lengths} lengths, chunked={chunked}): {} -> {out:?}",
+                ctx()
+            );
+
+            // And whatever we decided about the body has to be a decision the
+            // sanitised head still supports.
+            match framing {
+                // By value, not by spelling. `007` is a legal length and
+                // every parser reads it as 7, so requiring the text to match
+                // would be asserting about formatting rather than about
+                // whether two parsers can disagree.
+                Framing::Length(n) => {
+                    let declared: Vec<Option<u64>> = header_values(&out, "content-length")
+                        .iter()
+                        .map(|v| v.parse::<u64>().ok())
+                        .collect();
+                    assert_eq!(
+                        declared,
+                        vec![Some(n)],
+                        "the head disagrees with the length we will read: {}",
+                        ctx()
+                    );
+                }
+                Framing::Ambiguous => assert_eq!(
+                    lengths,
+                    0,
+                    "an ambiguous head kept a length: {} -> {out:?}",
+                    ctx()
+                ),
+                Framing::UntilClose => {}
+            }
+
+            // Line discipline, out as well as in.
+            assert!(
+                head_is_well_formed(&out),
+                "the sanitiser emitted a head it would itself refuse: {} -> {out:?}",
+                ctx()
+            );
+        }
+    }
+
+    /// Every value for a header name, as a downstream parser would read them.
+    fn header_values(head: &[u8], name: &str) -> Vec<String> {
+        head.split(|&b| b == b'\n')
+            .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
+            .skip(1)
+            .filter_map(|l| {
+                let colon = l.iter().position(|&b| b == b':')?;
+                let k = String::from_utf8_lossy(&l[..colon])
+                    .trim()
+                    .to_ascii_lowercase();
+                (k == name).then(|| String::from_utf8_lossy(&l[colon + 1..]).trim().to_string())
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]

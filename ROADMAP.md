@@ -693,7 +693,7 @@ h5i join <ticket> [--port N]                     # the other machine
 
 #### 5.11.1 What shipped, and what it cost to be honest about
 
-`crates/h5i-share/`, ~9.5k lines with 162 tests, behind a default-on `share`
+`crates/h5i-share/`, ~9.9k lines with 167 tests, behind a default-on `share`
 feature on the binary and a default-on `p2p` feature inside the crate (iroh 1.0,
 `tls-ring` only). A `--no-default-features` build has no `share` verb rather
 than a broken one, and `--no-default-features` on the crate alone keeps the
@@ -2034,6 +2034,25 @@ greeting changed without the ALPN changing; and that `clear`, `clear_now` and
 `forget` deleted whatever record was on disk without checking whose it was,
 which a `stop --force` followed by a fresh `share` turns into one process
 deleting another's grant table after its ticket has been given to a human.
+
+**Round 16 was a fuzzer rather than a reader**, on the argument that fifteen
+rounds of adversarial reading had started mostly finding the previous round's
+work. `crates/h5i-share/src/fuzz.rs` generates request and response heads from a
+grammar seeded with every awkward token the earlier rounds turned up, mutates
+them, and asserts the properties the rest of the crate is entitled to assume:
+the credential never reaches the box, a redirect never leaves the origin, one
+framing and one `Connection` on the way out, line discipline in both
+directions. It is deterministic, prints the seed for any failure, and
+`H5I_FUZZ_ROUNDS` turns it into a soak.
+
+Twenty million heads found two defects a person had not: `split_cookie` applied
+its "nothing named like ours goes upstream" rule on the branch where a cookie
+has an `=` and not on the branch where it does not, and a response head with no
+status line at all was relayed with a *header* promoted into the status line's
+place, which a browser reports as a protocol error and nobody can trace. Two of
+the four failures it reported were the invariants being wrong rather than the
+code, which is its own kind of useful: `007` is a legal `Content-Length` and a
+cookie named `999h5i_share` is somebody else's.
 
 The pattern across all fifteen rounds is worth recording, because it is the
 argument for having run them: **every round found real defects in the previous

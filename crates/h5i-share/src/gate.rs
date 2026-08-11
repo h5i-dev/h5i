@@ -181,7 +181,14 @@ fn split_cookie(value: &str, name: &str) -> (Option<String>, String) {
                     }
                     !k.starts_with(COOKIE)
                 }
-                None => !c.is_empty(),
+                // A segment with no `=` at all. It cannot carry a token —
+                // there is nothing after an equals sign to carry it — so this
+                // is not a leak. It is the prefix rule being applied on one
+                // branch and not the other, which is the exact shape of every
+                // "the check ran on two of the three paths" defect this file
+                // has already had. Whatever is named like ours does not go to
+                // the box, however it is spelled.
+                None => !c.is_empty() && !c.starts_with(COOKIE),
             }
         })
         .map(|c| c.trim())
@@ -501,6 +508,214 @@ pub fn refusal_response(r: Refusal) -> String {
          Connection: close\r\n\r\n{body}",
         body.len()
     )
+}
+
+#[cfg(test)]
+mod cookie_shape_tests {
+    use super::*;
+
+    #[test]
+    fn a_share_cookie_with_no_value_is_still_not_the_box_s_business() {
+        // Found by the fuzzer. `split_cookie` applied the "nothing named like
+        // ours goes upstream" rule on the branch where a cookie has an `=` and
+        // not on the branch where it does not — the same "the check ran on two
+        // of the three paths" shape as several earlier defects here. It is not
+        // a leak on its own (a segment with no `=` carries no value), but a
+        // rule with a hole in it is a rule nobody can reason about.
+        let (ours, kept) = split_cookie("a=1; h5i_share_8899; b=2", "h5i_share_8899");
+        assert_eq!(ours, None);
+        assert_eq!(kept, "a=1; b=2");
+
+        // And the rule is about the *name*, not about the string appearing
+        // anywhere: somebody else's cookie that merely contains ours is theirs.
+        let (_, kept) = split_cookie("999h5i_share=x; y=2", "h5i_share");
+        assert_eq!(kept, "999h5i_share=x; y=2");
+    }
+}
+
+#[cfg(test)]
+mod fuzz_tests {
+    use super::*;
+    use crate::fuzz::{request_head, rounds, Rng};
+
+    /// The properties the request side owes everything downstream, checked
+    /// against generated heads rather than against the ones somebody thought
+    /// of. Every previous defect here was a case a person constructed; this is
+    /// the other half.
+    #[test]
+    fn a_forwarded_head_never_carries_the_credential_or_two_framings() {
+        const COOKIE: &str = "h5i_share";
+        let mut rng = Rng::new(0x5EED);
+        for i in 0..rounds() {
+            let seed = rng.next();
+            let mut one = Rng::new(seed);
+            let head = request_head(&mut one);
+            let ctx = || format!("round {i}, seed {seed:#x}, head {head:?}");
+
+            let Some(req) = parse(&head, COOKIE) else {
+                continue;
+            };
+
+            // A request cannot be both framings at once. Downstream picks one
+            // and reads exactly that many bytes, so an input that sets both is
+            // an input two parsers can disagree about.
+            assert!(
+                !(req.chunked && req.content_length.is_some()),
+                "both framings survived parse: {}",
+                ctx()
+            );
+
+            let out = rewrite_for_upstream(&head, &req, COOKIE);
+
+            // The box must never see the credential that admitted its
+            // visitor. Scoped to the headers and the request target — the two
+            // places this proxy decides what to send — rather than to the whole
+            // head: a client that puts the string in its own method or in a
+            // header of its own invention is leaking a token it already holds
+            // to a box it already reached, which is not a property this code
+            // can or should enforce.
+            // By cookie *name*, not by substring of the line. A cookie called
+            // `999h5i_share` merely contains the string and is somebody else's
+            // cookie; ours are the ones named `h5i_share` or `h5i_share_<port>`.
+            for line in header_lines(&out) {
+                if header_name_of(line) != "cookie" {
+                    continue;
+                }
+                let value = line.split_once(':').map(|(_, v)| v).unwrap_or("");
+                for c in value.split(';') {
+                    let name = c.trim().split_once('=').map(|(k, _)| k).unwrap_or(c).trim();
+                    assert!(
+                        !name.starts_with(COOKIE),
+                        "a share cookie reached the box: {} -> {line:?}",
+                        ctx()
+                    );
+                }
+            }
+
+            // And not in the URL either. A token in the target lands in the
+            // app's own logs and in `Referer` on every link out of the page,
+            // which is the whole reason an authorized query redirects instead
+            // of proxying.
+            let target = out.split_whitespace().nth(1).unwrap_or("");
+            for (k, v) in query_params(target) {
+                assert!(
+                    k != QUERY_PARAM || v.is_empty(),
+                    "a share token reached the box in the URL: {} -> {target:?}",
+                    ctx()
+                );
+            }
+
+            // One line discipline, so the box's parser and ours cannot
+            // disagree about where a header ends.
+            assert!(
+                crlf_is_clean(out.as_bytes()),
+                "a bare CR or LF reached the box: {} -> {out:?}",
+                ctx()
+            );
+
+            // And one framing on the way out, however many came in.
+            let (lengths, chunked) = count_framing(&out);
+            assert!(
+                lengths <= 1 && !(chunked && lengths > 0),
+                "two framings reached the box ({lengths} lengths, chunked={chunked}): {} -> {out:?}",
+                ctx()
+            );
+        }
+    }
+
+    /// Wherever a browser is sent, it is somewhere on this origin.
+    #[test]
+    fn a_redirect_never_leaves_the_origin() {
+        let mut rng = Rng::new(0xB0B);
+        for i in 0..rounds() {
+            let seed = rng.next();
+            let mut one = Rng::new(seed);
+            let head = request_head(&mut one);
+            let Some(req) = parse(&head, "h5i_share") else {
+                continue;
+            };
+            let loc = safe_location(&req.clean_target);
+            let ctx = || format!("round {i}, seed {seed:#x}, target {:?}", req.clean_target);
+            assert!(
+                loc.starts_with('/'),
+                "not origin-relative: {} -> {loc:?}",
+                ctx()
+            );
+            assert!(
+                !loc.starts_with("//") && !loc.starts_with("/\\"),
+                "protocol-relative, so it leaves this origin: {} -> {loc:?}",
+                ctx()
+            );
+            assert!(
+                !loc.contains('\r') && !loc.contains('\n'),
+                "a redirect target could split the response head: {} -> {loc:?}",
+                ctx()
+            );
+        }
+    }
+
+    /// The header lines of a head, without the request line.
+    fn header_lines(head: &str) -> impl Iterator<Item = &str> {
+        head.split("\r\n").skip(1).filter(|l| !l.is_empty())
+    }
+
+    fn header_name_of(line: &str) -> String {
+        line.split_once(':')
+            .map(|(n, _)| n.trim().to_ascii_lowercase())
+            .unwrap_or_default()
+    }
+
+    /// The query as a downstream app would split it.
+    fn query_params(target: &str) -> Vec<(String, String)> {
+        let Some((_, q)) = target.split_once('?') else {
+            return Vec::new();
+        };
+        q.split('&')
+            .filter(|p| !p.is_empty())
+            .map(|p| match p.split_once('=') {
+                Some((k, v)) => (k.to_string(), v.to_string()),
+                None => (p.to_string(), String::new()),
+            })
+            .collect()
+    }
+
+    /// No bare CR and no bare LF anywhere.
+    fn crlf_is_clean(b: &[u8]) -> bool {
+        for (i, &c) in b.iter().enumerate() {
+            if c == b'\n' && (i == 0 || b[i - 1] != b'\r') {
+                return false;
+            }
+            if c == b'\r' && b.get(i + 1) != Some(&b'\n') {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// How many `Content-Length` headers, and whether a chunked
+    /// `Transfer-Encoding` is present, counted the naive way a downstream
+    /// parser would.
+    fn count_framing(head: &str) -> (usize, bool) {
+        let mut lengths = 0;
+        let mut chunked = false;
+        for line in head.split("\r\n").skip(1) {
+            let Some((name, value)) = line.split_once(':') else {
+                continue;
+            };
+            let name = name.trim().to_ascii_lowercase();
+            if name == "content-length" {
+                lengths += 1;
+            }
+            if name == "transfer-encoding"
+                && value
+                    .split(',')
+                    .any(|t| t.trim().eq_ignore_ascii_case("chunked"))
+            {
+                chunked = true;
+            }
+        }
+        (lengths, chunked)
+    }
 }
 
 #[cfg(test)]
