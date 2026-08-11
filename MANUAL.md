@@ -578,8 +578,18 @@ the link is a third party who agreed to look at a page. What does reach the box
 is what any web server sees from a browser — `User-Agent`, `Accept`, the app's
 own cookies — plus `Host` and `X-Forwarded-Proto`, which stay because dev
 servers build absolute URLs out of them. So the box can tell it is behind a
-proxy; it cannot tell who is on the other end. On the peer-to-peer path the
-question does not arise: requests come from the joiner's own loopback proxy.
+proxy; it cannot tell who is on the other end.
+
+Where that stripping happens differs by transport, and it is worth being exact.
+On a tunnel the request arrives at the sharer's own front, which is what rewrites
+it. Peer to peer, the sharer is a raw pipe by design — the stream carried its own
+ticket, so everything on it comes from the peer that ticket admitted — and the
+rewriting happened a moment earlier, in the joiner's gate on their machine.
+Measured both ways: a visitor who forges `X-Forwarded-For` and `CF-Connecting-IP`
+at their own joiner proxy has both dropped before the bytes cross, while an
+ordinary custom header of theirs is passed through untouched. What this does not
+defend against is a peer running modified software, who can put anything on that
+stream — but the only person they can identify that way is themselves.
 
 #### What the person joining is taking on
 
