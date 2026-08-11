@@ -786,6 +786,78 @@ mod tests {
         serving.abort();
     }
 
+    /// Declares ten bytes and sends far more, then keeps talking.
+    fn overlong_server() -> u16 {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let _ = c.read(&mut buf);
+                    let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n");
+                    let _ = c.write_all(b"0123456789");
+                    // Everything past the declared length. A visitor's client
+                    // reads ten bytes and then treats whatever follows as the
+                    // start of the next response on the connection.
+                    let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nOWNED");
+                    let _ = c.write_all(&vec![b'x'; 4096]);
+                    std::thread::sleep(Duration::from_secs(30));
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_box_that_sends_more_than_it_declared_cannot_smuggle_a_second_response() {
+        // The response-smuggling shape from the box's side. If the front
+        // forwarded everything the box wrote rather than exactly the length it
+        // declared, the bytes after the body would be read by the visitor's
+        // client as a *second* response — one the app appended itself, on a
+        // connection the visitor believes belongs to the page they asked for.
+        // Nothing tested this: every framing test so far has been about the
+        // head, and this is about what happens after it.
+        //
+        // Verified by construction, and the construction is worth recording:
+        // the length is clamped in *two* places — once for the bytes that
+        // arrived in the same read as the head, once for the relay loop — and
+        // removing either alone leaves the other covering it for this input.
+        // Only removing both makes this test fail. So it pins the property
+        // rather than one of the two implementations of it.
+        let port = overlong_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let got = request(
+            addr,
+            &format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n"),
+        )
+        .await;
+
+        assert!(got.starts_with("HTTP/1.1 200 OK"), "{got}");
+        assert!(
+            got.ends_with("0123456789"),
+            "the declared body did not arrive whole: {got}"
+        );
+        assert!(
+            !got.contains("OWNED"),
+            "the box smuggled a second response past the declared length: {got}"
+        );
+        // And the padding after it is gone too — the visitor gets the body and
+        // then the connection ends, which is what `Content-Length: 10` means.
+        assert!(!got.contains("xxxx"), "{got}");
+
+        serving.abort();
+    }
+
     #[tokio::test]
     async fn a_share_at_its_ceiling_says_so_and_keeps_the_ones_it_has() {
         // Nothing tested this. `over_capacity` is the one counter that says a
