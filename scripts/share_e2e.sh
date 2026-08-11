@@ -21,7 +21,14 @@
 set -uo pipefail
 
 H5I="${H5I:-./target/debug/h5i}"
-BOX="${BOX:-e2e-share}"
+# Unique per run, box and ports alike. Fixed names collided with anything else
+# on the machine doing the same thing — another session running this script, or
+# a review agent that happened to pick the same box name — and the collision
+# presented as a product failure: a joiner that could not bind its port, a
+# `curl` that got nothing, a smuggling probe with no listener to refuse it.
+# A harness that reports somebody else's box as a bug in this one is worse
+# than no harness.
+BOX="${BOX:-e2e-share-$$}"
 PORT=3000
 WITH_TUNNEL=0
 WITH_LEAK=0
@@ -112,8 +119,21 @@ print(open(os.path.join(d, "receipts", last["raw_oid"].split(":")[1][:16] + ".ra
 PY
 }
 
-# `share ls` says "No box on this clone is being shared." when there is none.
-no_record() { "$H5I" box share ls 2>/dev/null | grep -q "No box on this clone"; }
+# This box's own record, not the clone-wide listing. `share ls` answers for
+# every box, so the first version failed whenever *anything else* on the
+# machine was being shared — which, on a machine also running review agents,
+# is a false failure reported as a product bug. The property is about one box.
+#
+# Polled rather than slept for: the record goes about a second after `stop`,
+# but the teardown can take up to about six with connections still finishing,
+# and a fixed sleep shorter than that is a stopwatch pretending to be a check.
+no_record() {
+  for _ in $(seq 1 100); do
+    [ -e "$ENV_DIR/share.json" ] || return 0
+    sleep 0.1
+  done
+  return 1
+}
 
 share_pid() { "$H5I" box share status "$BOX" 2>/dev/null | sed -n 's/.*pid \([0-9]*\).*/\1/p' | head -1; }
 

@@ -8048,10 +8048,6 @@ fn conflict_runbook(m: &EnvManifest) -> String {
     )
 }
 
-/// Apply a proposed env onto its parent branch. Explicit, reviewer-driven:
-/// requires the parent branch checked out and a clean tracked working tree.
-/// `--patch` squashes the env's diff into one commit; the default `--merge`
-/// fast-forwards or creates a two-parent merge commit. Conflicts refuse.
 /// Refuse a lifecycle operation on a box somebody is connected to.
 ///
 /// `rm` learned this first, and the other verbs did not: `abort`, `apply` and
@@ -8071,6 +8067,13 @@ fn refuse_if_shared(h5i_root: &Path, m: &EnvManifest, verb: &str) -> Result<(), 
     let Some(s) = crate::share_record::read_live(&m.dir(h5i_root)) else {
         return Ok(());
     };
+    // Only a share that can still let somebody in. `read_live` answers "a
+    // process holds this record"; `is_admitting` answers the question actually
+    // being asked, and a share whose grants are all revoked or expired is
+    // holding nothing — blocking on it costs the user a teardown for nothing.
+    if !s.is_admitting() && !s.winding_up {
+        return Ok(());
+    }
     if s.winding_up {
         return Err(H5iError::Metadata(format!(
             "{} is being shared by pid {} and that share is already shutting down — it will be \
@@ -8078,14 +8081,22 @@ fn refuse_if_shared(h5i_root: &Path, m: &EnvManifest, verb: &str) -> Result<(), 
             m.id, s.pid, m.slug
         )));
     }
+    // Naming `--force` as well, because a record this cannot fully read is
+    // still counted as a share — the safe direction — and without the escape
+    // that becomes two refusals pointing at each other: the verb says stop the
+    // share, and `share stop` says the box is not being shared.
     Err(H5iError::Metadata(format!(
         "{} is being shared right now by pid {} — somebody outside may be connected to it, and \
          `{verb}` would change the box under them. Stop the share first: \
-         `h5i box share stop {}`.",
+         `h5i box share stop {}` (or `--force` on that, if nothing really is).",
         m.id, s.pid, m.slug
     )))
 }
 
+/// Apply a proposed env onto its parent branch. Explicit, reviewer-driven:
+/// requires the parent branch checked out and a clean tracked working tree.
+/// `--patch` squashes the env's diff into one commit; the default `--merge`
+/// fast-forwards or creates a two-parent merge commit. Conflicts refuse.
 pub fn apply(
     repo: &Repository,
     h5i_root: &Path,
@@ -8097,9 +8108,18 @@ pub fn apply(
     }
     // Serialize the PROPOSED→APPLIED transition (reads the env state, mutates
     // the manifest) against any concurrent run/shell on the same env.
+    // Above the lock. Below it this was unreachable: a live share implies a
+    // live writer session, so `run.lock` is held and "environment is busy"
+    // fired first — the same mistake `rm`'s first version made, one function
+    // away from the comment explaining it.
+    //
+    // Above the *status* guards too, and deliberately left there: moving it
+    // below them would put it behind `run.lock` again for `apply`, whose own
+    // ordering ("busy" wins over "wrong status") is pinned by a test and is
+    // not this change's to alter.
+    refuse_if_shared(h5i_root, m, "apply")?;
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
-    refuse_if_shared(h5i_root, m, "apply")?;
     if m.status != ST_PROPOSED {
         return Err(H5iError::Metadata(format!(
             "{} is '{}' — run `h5i box propose {}` first (apply is never automatic)",
@@ -8276,9 +8296,9 @@ pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result
     }
     // Rebase force-checks-out the worktree and re-pins the base in the manifest;
     // serialize against a concurrent `env run`/`shell` exactly like propose.
+    refuse_if_shared(h5i_root, m, "rebase")?;
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
-    refuse_if_shared(h5i_root, m, "rebase")?;
     match m.status.as_str() {
         ST_CREATED | ST_RUNNING | ST_IDLE => {}
         other => {
@@ -8399,9 +8419,9 @@ pub fn abort(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result<
     // Mutates the manifest status; serialize against a concurrent run/shell so
     // a run's terminal IDLE write can't clobber the ABORTED set here (a live run
     // holds the lock → abort waits/fails "busy" until it ends or is killed).
+    refuse_if_shared(h5i_root, m, "abort")?;
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
-    refuse_if_shared(h5i_root, m, "abort")?;
     if m.status == ST_APPLIED {
         return Err(H5iError::Metadata(format!(
             "{} is already applied — nothing to abort",

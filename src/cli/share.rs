@@ -523,6 +523,16 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
              close it when you are done looking."
         );
         println!("   stop      Ctrl-C");
+        // Restored. This block was lost when the closure was restructured, and
+        // nothing printed `Joined.warning` for a round — so a joiner whose
+        // share was full, or whose box had nothing listening, or whose route
+        // into the box had broken, got a clean "joined" and a URL, then a bare
+        // 502 on the first page load. The explanation was in hand and thrown
+        // away, which is the thing the check exists to avoid.
+        if let Some(w) = &joined.warning {
+            println!();
+            println!("   {WARN} {w}");
+        }
     }))?;
     // A share ending is the most ordinary thing that happens to one, so it
     // leaves by the front door: a line on stdout and exit 0. It used to be

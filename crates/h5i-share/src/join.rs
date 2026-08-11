@@ -153,7 +153,25 @@ pub async fn run(
                 // reason with `from_utf8_lossy`, so a `\r` or an `\x1b[2J` in
                 // it can erase or forge the lines around it.
                 let said = h5i_core::redact::sanitize_display(&reason.to_string());
-                return Ok(format!("the share ended{}", why_it_ended(&said)));
+                // A share *ending* is ordinary; a connection *failing* is not,
+                // and the first version returned `Ok` for both. So a sharer
+                // killed mid-session — or a laptop lid, or a dropped link —
+                // printed "they stopped sharing, or the ticket ran out" and
+                // exited 0, when the ticket was almost certainly still good
+                // and joining again would have worked. Only the sharer's own
+                // application close is an ending; everything else is the error
+                // it was before.
+                return match &reason {
+                    iroh::endpoint::ConnectionError::ApplicationClosed(_)
+                    | iroh::endpoint::ConnectionError::LocallyClosed => {
+                        Ok(format!("the share ended{}", why_it_ended(&said)))
+                    }
+                    _ => Err(H5iError::Metadata(format!(
+                        "the connection to the sharer failed: {said}. Their machine or the \
+                         network went away rather than the share ending — the ticket is \
+                         probably still good, so joining again may just work."
+                    ))),
+                };
             }
         }
     }
@@ -255,10 +273,21 @@ fn why_it_ended(said: &str) -> String {
         " — that ticket was revoked or ran out".into()
     } else if said.contains("this share has ended") {
         " — they stopped sharing".into()
-    } else if said.contains("no direct path") {
-        " — no direct connection could be kept, and they shared with --direct-only".into()
+    } else if said.contains("direct path") {
+        // Matches both of the sharer's `--direct-only` closes. The first
+        // version matched only "no direct path", which is sent *before* the
+        // joiner finishes its handshake and so never reaches here; the one
+        // that does reach here says "the direct path was lost", which it
+        // missed — so it printed the raw wire text instead.
+        " — the direct connection was lost, and they shared with --direct-only".into()
+    } else if said.contains("no ticket was presented") {
+        // A joiner that connected and never opened the URL. The wire string is
+        // written for the other end of a socket, and "h5i: no ticket was
+        // presented" told the person nothing about what to do.
+        " — nothing was opened, so the sharer hung up. Open the link next time before it does"
+            .into()
     } else if said.contains("h5i:") {
-        format!(" — {said}")
+        format!(" — {}", said.replace("h5i: ", ""))
     } else {
         " — they stopped sharing, or the ticket ran out".into()
     }
@@ -289,6 +318,40 @@ fn upstream_failure(e: &crate::p2p::OpenError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_ending_is_attributed_to_what_actually_happened() {
+        // Every one of these was wrong at some point in the last two rounds:
+        // the `--direct-only` arm matched the close the joiner never sees and
+        // missed the one it does; the grace hang-up leaked a wire string with
+        // its `h5i:` prefix intact as a success; and a killed sharer was
+        // reported as "they stopped sharing, or the ticket ran out".
+        let cases = [
+            (
+                "h5i: this ticket was revoked or has expired",
+                "revoked or ran out",
+            ),
+            ("h5i: this share has ended", "they stopped sharing"),
+            (
+                "h5i: --direct-only, and the direct path was lost",
+                "direct connection was lost",
+            ),
+            ("h5i: no ticket was presented", "nothing was opened"),
+        ];
+        for (wire, expected) in cases {
+            let said = why_it_ended(wire);
+            assert!(said.contains(expected), "{wire} -> {said}");
+            // And the wire's own prefix does not reach the person.
+            assert!(!said.contains("h5i:"), "{wire} -> {said}");
+        }
+
+        // Anything unrecognised is the honest hedge rather than a guess.
+        let said = why_it_ended("closed by peer: 0");
+        assert!(
+            said.contains("stopped sharing, or the ticket ran out"),
+            "{said}"
+        );
+    }
 
     #[test]
     fn only_a_refused_ticket_stops_the_command() {

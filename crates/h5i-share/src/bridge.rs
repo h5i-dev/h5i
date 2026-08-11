@@ -715,7 +715,7 @@ impl Bridge {
                 rec.id,
                 peers_seen,
                 seconds,
-                summary.peers.iter().map(|p| p.bytes_to_peer).sum::<u64>(),
+                bytes(summary.peers.iter().map(|p| p.bytes_to_peer).sum()),
                 self.box_name,
                 rec.id
             ),
@@ -1018,10 +1018,21 @@ fn bytes(n: u64) -> String {
     const KIB: u64 = 1024;
     const MIB: u64 = KIB * 1024;
     const GIB: u64 = MIB * 1024;
+    const TIB: u64 = GIB * 1024;
+    // Thresholds allow for the rounding that follows them. At exactly `>= KIB`
+    // a value a hair under a mebibyte formats as `1024.0 KiB`, which is a
+    // number nobody writes; the unit has to change slightly before the
+    // arithmetic says so.
+    const ROUNDS_UP: f64 = 1023.95;
+    let scaled = |unit: u64| n as f64 / unit as f64;
     match n {
-        n if n >= GIB => format!("{:.1} GiB", n as f64 / GIB as f64),
-        n if n >= MIB => format!("{:.1} MiB", n as f64 / MIB as f64),
-        n if n >= KIB => format!("{:.1} KiB", n as f64 / KIB as f64),
+        _ if scaled(TIB) >= 1.0 => format!("{:.1} TiB", scaled(TIB)),
+        _ if scaled(GIB) >= ROUNDS_UP => format!("{:.1} TiB", scaled(TIB)),
+        _ if scaled(GIB) >= 1.0 => format!("{:.1} GiB", scaled(GIB)),
+        _ if scaled(MIB) >= ROUNDS_UP => format!("{:.1} GiB", scaled(GIB)),
+        _ if scaled(MIB) >= 1.0 => format!("{:.1} MiB", scaled(MIB)),
+        _ if scaled(KIB) >= ROUNDS_UP => format!("{:.1} MiB", scaled(MIB)),
+        _ if scaled(KIB) >= 1.0 => format!("{:.1} KiB", scaled(KIB)),
         // Under a kibibyte the exact count is both short and interesting: it is
         // the difference between a request that carried a body and one that
         // carried none.
@@ -1037,8 +1048,15 @@ fn short_name(box_id: &str) -> &str {
 pub fn render_status(s: &ShareSession, now: i64) -> String {
     let mut out = String::new();
     let live = session::is_live(s);
+    let headline = if !live {
+        "— was sharing"
+    } else if s.winding_up {
+        "— shutting down, was sharing"
+    } else {
+        "— sharing"
+    };
     out.push_str(&format!(
-        "{} — sharing port {} over {}\n",
+        "{} {headline} port {} over {}\n",
         s.box_id,
         s.port,
         s.transport.as_str()
@@ -1214,6 +1232,20 @@ mod tests {
         assert_eq!(bytes(5000), "4.9 KiB");
         assert_eq!(bytes(7_209_077), "6.9 MiB");
         assert_eq!(bytes(4 * 1024 * 1024 * 1024), "4.0 GiB");
+        // Boundaries, which the first version of this test skipped. The one
+        // that matters: just under a megabyte must not read as "1024.0 KiB",
+        // which is a number nobody writes.
+        assert_eq!(
+            bytes(1_048_575),
+            "1.0 MiB",
+            "a hair under a mebibyte is not 1024.0 KiB"
+        );
+        assert_eq!(bytes(1_073_741_823), "1.0 GiB");
+        assert_eq!(bytes(1_048_576), "1.0 MiB");
+        // And there is a terabyte unit now, so a big share does not read as
+        // four figures of gibibytes.
+        assert_eq!(bytes(1024u64 * 1024 * 1024 * 1024), "1.0 TiB");
+        assert_eq!(bytes(u64::MAX), "16777216.0 TiB");
     }
 
     #[test]
