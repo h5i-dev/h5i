@@ -1496,6 +1496,9 @@ mod tests {
         assert!(body.contains("900 B in / 4.9 KiB out"), "{body}");
     }
 
+    // Builds its bridge inline rather than through `test_bridge`, which is how
+    // it slipped past the gating and turned up on the macOS runner instead.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_receipt_does_not_resurrect_a_box_that_was_removed() {
         // `receipt::append` creates the directory it writes into, so a share
