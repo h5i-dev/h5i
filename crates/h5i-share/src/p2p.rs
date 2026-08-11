@@ -225,6 +225,20 @@ async fn serve_connection(
         let peer_id = peer_id.clone();
         tokio::spawn(async move {
             let deadline = tokio::time::Instant::now() + UNAUTHENTICATED_GRACE;
+            // The share winding up is a close with a reason, said here rather
+            // than left to `Endpoint::close`, which has none. A joiner whose
+            // ticket simply ran out was told "closed by peer: 0", where a
+            // revoked one got a sentence — same ending, and only one of them
+            // explained itself.
+            let winding_up = {
+                let bridge = bridge.clone();
+                let conn = conn.clone();
+                tokio::spawn(async move {
+                    bridge.shutting_down().await;
+                    conn.close(5u32.into(), b"h5i: this share has ended");
+                })
+            };
+            let _guard = AbortOnDrop(winding_up);
             loop {
                 tokio::time::sleep(REVOKE_POLL).await;
                 let seen = *peer_id.lock().expect("peer id");
@@ -460,6 +474,15 @@ async fn revoked(bridge: Arc<Bridge>, grant_id: String) {
         if !bridge.grant_is_live(&grant_id) {
             return;
         }
+    }
+}
+
+/// Aborts a spawned task when it goes out of scope.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 

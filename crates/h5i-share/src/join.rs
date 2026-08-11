@@ -131,9 +131,16 @@ pub async fn run(
             // and exit, rather than leaving a local URL that answers every
             // request with a failure the joiner has to interpret.
             reason = conn.closed() => {
-                return Err(H5iError::Metadata(format!(
-                    "the share ended: {reason}"
-                )));
+                // The sharer's own words when it had any. A bare transport
+                // code is not an explanation, so it does not get dressed up as
+                // one.
+                let said = reason.to_string();
+                return Err(H5iError::Metadata(if said.contains("h5i:") {
+                    format!("the share ended: {said}")
+                } else {
+                    "the share ended — the other side stopped sharing, or the ticket ran out"
+                        .to_string()
+                }));
             }
         }
     }
