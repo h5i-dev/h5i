@@ -83,6 +83,35 @@ fn md_escape(s: &str) -> String {
     out
 }
 
+/// A command, as a Markdown code span inside a table cell.
+///
+/// Not [`md_escape`] plus backticks, which is what this was. Backslash escapes
+/// are not processed inside a code span, so every command containing a
+/// parenthesis rendered to the reviewer with the backslashes still in it —
+/// `h5i box share demo \(port 3000, 1 peer\(s\), 20s\)`. The one character a
+/// table cell genuinely needs escaped is the pipe, which GFM splits on before
+/// any inline parsing and which is honoured inside code spans for exactly that
+/// reason.
+///
+/// A backtick in the content is handled the way CommonMark intends: a fence
+/// longer than the longest run inside it, padded with spaces when the content
+/// starts or ends with one.
+fn md_code(s: &str) -> String {
+    let escaped = s.replace('|', "\\|");
+    let longest = escaped
+        .split(|c| c != '`')
+        .map(|run| run.len())
+        .max()
+        .unwrap_or(0);
+    let fence = "`".repeat(longest + 1);
+    let pad = if escaped.starts_with('`') || escaped.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{escaped}{pad}{fence}")
+}
+
 pub fn export(
     repo: &Repository,
     h5i_root: &Path,
@@ -100,6 +129,24 @@ pub fn export(
                 out.display()
             )));
         }
+    }
+
+    // Asked before the freeze, purely so the answer is the true one. A share
+    // needs a live process inside the box, that process holds `run.lock`, and
+    // `propose` below takes the same lock — so an export attempted during a
+    // share has always failed with "environment is busy — another `h5i box
+    // run`/`shell` or lifecycle op holds it". True, and not the fact the
+    // operator needs: what is holding it is the session their share is
+    // standing on, and stopping the share is the thing to do about it.
+    if let Some(sh) = crate::share_record::read_live(&m.dir(h5i_root)) {
+        return Err(H5iError::Metadata(format!(
+            "{} is being shared right now by pid {} — the export has to freeze the box into a \
+             commit, and it cannot do that under somebody who is looking at it. Stop the share \
+             first (`h5i box share stop {}`), then export: the ingress receipt is written when \
+             the share ends, so exporting afterwards is also the only way to get the account of \
+             who connected.",
+            m.id, sh.pid, m.slug
+        )));
     }
 
     // Same freeze as `propose`: the mediated commit is what makes the diff
@@ -214,13 +261,13 @@ fn report(
         out.push_str("| when | lane | exit | command |\n|---|---|---|---|\n");
         for r in records {
             out.push_str(&format!(
-                "| {} | {} | {} | `{}` |\n",
+                "| {} | {} | {} | {} |\n",
                 r.timestamp,
                 r.source,
                 r.exit_code
                     .map(|c| c.to_string())
                     .unwrap_or_else(|| "signal".into()),
-                md_escape(&crate::redact::sanitize_display(r.cmd.as_deref().unwrap_or(""))),
+                md_code(&crate::redact::sanitize_display(r.cmd.as_deref().unwrap_or(""))),
             ));
         }
     }
@@ -250,8 +297,10 @@ fn report(
             );
             for (r, b) in findings {
                 out.push_str(&format!(
-                    "- `{}` ({})\n",
-                    md_escape(&crate::redact::sanitize_display(b.verb.as_deref().unwrap_or("browser"))),
+                    "- {} ({})\n",
+                    md_code(&crate::redact::sanitize_display(
+                        b.verb.as_deref().unwrap_or("browser")
+                    )),
                     r.timestamp
                 ));
                 for line in b
@@ -375,6 +424,55 @@ fn report(
 mod tests {
     use super::*;
     use crate::receipt::{BrowserEvidence, ExecRecord};
+
+    #[test]
+    fn the_mid_share_section_is_reachable_only_in_the_gap_it_describes() {
+        // Kept, and worth being exact about why. A live share needs a live
+        // process inside the box; that process holds `run.lock`; and `export`
+        // freezes through `propose`, which takes it — so the ordinary
+        // mid-share export never gets this far, and now fails with a message
+        // that names the share instead of the lock. What remains reachable is
+        // the second between the box session ending and the share process
+        // noticing and exiting: the lock is free, the record is still live.
+        // That is a real second, and it is the one this section is for.
+        let m = manifest();
+        let s = summary();
+        let body = report(&m, &s, &[], "", Some("4321"));
+        assert!(body.contains("Shared with someone, right now"), "{body}");
+        assert!(body.contains("export again afterwards"), "{body}");
+
+        let quiet = report(&m, &s, &[], "", None);
+        assert!(!quiet.contains("right now"), "{quiet}");
+    }
+
+    #[test]
+    fn a_command_in_a_table_reaches_the_reviewer_without_its_escapes() {
+        // Backslash escapes are not processed inside a code span, so escaping
+        // the content and then wrapping it in backticks put the backslashes on
+        // the reviewer's screen. Every share receipt says "(port 3000, 1
+        // peer(s), 20s)", so every export of a shared box carried four of
+        // them: `h5i box share demo \(port 3000, 1 peer\(s\), 20s\)`.
+        let cell = md_code("h5i box share demo (port 3000, 1 peer(s), 20s)");
+        assert_eq!(cell, "`h5i box share demo (port 3000, 1 peer(s), 20s)`");
+        assert!(!cell.contains('\\'));
+
+        // The pipe is the exception, because GFM splits a row on pipes before
+        // it parses anything inline — so that one really does need escaping,
+        // code span or not.
+        assert_eq!(md_code("a | b"), "`a \\| b`");
+
+        // A backtick in the command gets a longer fence rather than a broken
+        // cell, and content that starts or ends with one gets the padding
+        // CommonMark asks for.
+        // Padded on both sides, which is what CommonMark strips: one space
+        // either end of a code span whose content touches a backtick.
+        assert_eq!(md_code("echo `date`"), "`` echo `date` ``");
+        assert_eq!(md_code("`x`"), "`` `x` ``");
+        assert_eq!(md_code("a ``b`` c"), "```a ``b`` c```");
+
+        // And the plain-cell escaper is still the right tool for a plain cell.
+        assert_eq!(md_escape("a (b)"), "a \\(b\\)");
+    }
 
     fn manifest() -> EnvManifest {
         EnvManifest {
