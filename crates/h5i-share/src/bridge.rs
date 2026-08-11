@@ -333,15 +333,26 @@ impl Bridge {
     /// nothing next to opening a TCP connection into a namespace.
     pub fn authorize(&self, secret: &str) -> Result<AuthorizedGrant, Denied> {
         let now = Utc::now().timestamp();
-        let Some(s) = session::read(&self.env_dir) else {
-            // The grant table is gone or unreadable, so nothing authorizes
-            // anything — but *why* it could not be read is the sharer's
-            // problem, not the visitor's. Reported as `Unknown` this told the
-            // visitor to ask for a new invite (which would behave identically),
-            // told the sharer their peer had presented a ticket nobody knows,
-            // and wrote "3 unknown ticket" into the receipt, for a full disk.
-            self.record_denied(Denied::TableUnreadable);
-            return Err(Denied::TableUnreadable);
+        let s = match session::read_state(&self.env_dir) {
+            session::ReadState::Present(s) => s,
+            // Gone, not broken. `share stop --force` removes the file and the
+            // serving process only notices on its next poll, so every request
+            // in that second used to be written into the receipt as a machine
+            // problem — for something the operator did on purpose.
+            session::ReadState::Gone => {
+                self.record_denied(Denied::ShareOver);
+                return Err(Denied::ShareOver);
+            }
+            session::ReadState::Unreadable => {
+                // The grant table is gone or unreadable, so nothing authorizes
+                // anything — but *why* it could not be read is the sharer's
+                // problem, not the visitor's. Reported as `Unknown` this told the
+                // visitor to ask for a new invite (which would behave identically),
+                // told the sharer their peer had presented a ticket nobody knows,
+                // and wrote "3 unknown ticket" into the receipt, for a full disk.
+                self.record_denied(Denied::TableUnreadable);
+                return Err(Denied::TableUnreadable);
+            }
         };
         match s.authorize(secret, now) {
             Ok(g) => Ok(AuthorizedGrant {
@@ -995,13 +1006,18 @@ pub fn render_receipt(s: &Summary) -> String {
             .iter()
             .filter(|d| d.reason == Denied::TableUnreadable)
             .count();
+        let after_stop = s
+            .denied
+            .iter()
+            .filter(|d| d.reason == Denied::ShareOver)
+            .count();
         // The leading number counts every refusal, not just the ones kept
         // individually. It read `refused 1024 attempt(s)` for fifty thousand,
         // with the truth in a trailing clause — and the sub-counts are over the
         // recorded sample, so their sum does not match and the line now says so.
         out.push_str(&format!(
             "refused  {} attempt(s){}: of the {} recorded, {none} presented no invite, \
-             {unknown} an unknown ticket, {expired} expired, {revoked} revoked{}\n",
+             {unknown} an unknown ticket, {expired} expired, {revoked} revoked{}{}\n",
             s.denied.len() as u64 + s.denied_overflow,
             if s.denied_overflow > 0 {
                 format!(" ({} of them not recorded individually)", s.denied_overflow)
@@ -1014,6 +1030,16 @@ pub fn render_receipt(s: &Summary) -> String {
                     "; and {unreadable} could not be weighed at all, because this share could \
                      not read its own grant table — a problem on the sharing machine"
                 )
+            } else {
+                String::new()
+            },
+            // Its own clause, because it is not a refusal in the same sense:
+            // these arrived after the grant table was removed, which is what
+            // stopping a share does. Counted with the unreadable ones it read
+            // as a machine fault; counted with the unknown ones it read as
+            // somebody probing with a bad ticket.
+            if after_stop > 0 {
+                format!("; and {after_stop} arrived after the share had been stopped")
             } else {
                 String::new()
             }
@@ -1276,7 +1302,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let b = test_bridge(dir.path());
 
-        // No readable table at all.
+        // A file that is there and cannot be understood. It has to be a
+        // *present* file: an absent one is what stopping a share leaves, and
+        // reading the two as one condition is what the round below fixes.
+        std::fs::write(dir.path().join("share.json"), b"{ this is not a record")
+            .expect("write junk");
         let err = b.authorize("ab".repeat(32).as_str()).expect_err("no table");
         assert_eq!(err, Denied::TableUnreadable);
         assert!(
@@ -1297,6 +1327,42 @@ mod tests {
 
         let quiet = summary(vec![], vec![]);
         assert!(!render_receipt(&quiet).contains("could not read its own"));
+    }
+
+    #[test]
+    fn a_share_that_has_been_stopped_is_not_a_broken_machine() {
+        // The fix above was itself too wide. `share stop --force` removes
+        // `share.json`, and the serving process only notices on its next poll,
+        // so for that second every arriving request was recorded as "this share
+        // could not read its own grant table — a problem on the sharing
+        // machine". Nothing was wrong with the machine: somebody stopped the
+        // share on purpose. One round replaced a false accusation against the
+        // visitor with a false accusation against the sharer's computer.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let b = test_bridge(dir.path());
+
+        // No file at all — the stopped share.
+        let err = b.authorize("ab".repeat(32).as_str()).expect_err("no table");
+        assert_eq!(err, Denied::ShareOver);
+        assert_eq!(err.explain(), "this share has ended");
+        assert!(!err.explain().contains("sharing machine"));
+
+        let body = render_receipt(&b.snapshot());
+        assert!(body.contains("after the share had been stopped"), "{body}");
+        assert!(
+            !body.contains("could not read its own grant table"),
+            "{body}"
+        );
+
+        // And the two travel as different bytes, so the visitor's browser is
+        // not told to go and ask for a replacement invite when the answer is
+        // "that share is over" or "their disk is full".
+        assert_ne!(
+            crate::wire::REPLY_SHARE_OVER,
+            crate::wire::REPLY_SHARER_FAULT
+        );
+        assert_ne!(crate::wire::REPLY_SHARE_OVER, crate::wire::REPLY_DENIED);
+        assert_ne!(crate::wire::REPLY_SHARER_FAULT, crate::wire::REPLY_DENIED);
     }
 
     #[test]
@@ -1839,11 +1905,17 @@ mod receipt_fuzz {
         let denied: Vec<DeniedAttempt> = (0..rng.below(6))
             .map(|_| DeniedAttempt {
                 at: started,
-                reason: match rng.below(4) {
+                reason: match rng.below(6) {
                     0 => Denied::Unknown,
                     1 => Denied::Expired,
                     2 => Denied::Revoked,
-                    _ => Denied::NoCredential,
+                    3 => Denied::NoCredential,
+                    // The two the generator never produced. They are the two
+                    // whose rendering is conditional — an `if count > 0` clause
+                    // each — so they were exactly the arms the fuzzer was there
+                    // to exercise, and it could not reach either.
+                    4 => Denied::TableUnreadable,
+                    _ => Denied::ShareOver,
                 },
             })
             .collect();

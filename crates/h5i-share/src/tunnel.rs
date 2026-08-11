@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use h5i_error::H5iError;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
 
 use crate::bridge::{Bridge, Path};
 use crate::http_front::{self, Next};
@@ -126,16 +126,20 @@ pub fn extract_url(line: &str) -> Option<String> {
     Some(url.to_string())
 }
 
+/// How much of one `cloudflared` line to hold before deciding it is not a line.
+///
+/// A bound on what is *kept*, never on what is read. Bounding the read with
+/// `take()` made `Take` report EOF at its limit, which ended the drain task,
+/// closed the pipe's read end, and gave `cloudflared` an EPIPE that Go turns
+/// into a fatal signal — so a healthy share died as soon as its subprocess had
+/// logged a megabyte. That is verbatim the failure the drain's own comment
+/// warns about, reintroduced by the fix for unbounded line buffering.
+const MAX_CLOUDFLARED_LINE: usize = 64 * 1024;
+
 /// Start `cloudflared` pointed at a loopback port, and wait for its URL.
 ///
 /// The argv is built here, never through a shell: the only value that varies is
 /// a port number this process chose.
-/// How much of `cloudflared`'s stderr to read while waiting for a URL.
-///
-/// Generous for a startup banner, and a ceiling on a subprocess h5i does not
-/// ship. See the note at the reader.
-const MAX_CLOUDFLARED_OUTPUT: u64 = 1024 * 1024;
-
 pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
     let mut cmd = tokio::process::Command::new("cloudflared");
     cmd.arg("tunnel")
@@ -212,11 +216,7 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
     // newline took this process from 25 MB to 178 MB of RSS in two seconds,
     // and it would have kept going for the whole URL timeout. h5i neither
     // ships nor pins that binary, so what it does is not h5i's to assume.
-    let mut lines = BufReader::new(tokio::io::AsyncReadExt::take(
-        stderr,
-        MAX_CLOUDFLARED_OUTPUT,
-    ))
-    .lines();
+    let mut reader = BufReader::new(stderr);
 
     // Kept, so the reason it failed can be repeated. `cloudflared` prints why
     // it is unhappy and this used to read that line, discard it, and then tell
@@ -224,16 +224,33 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
     // already been told.
     let mut last_said: Option<String> = None;
     let found = tokio::time::timeout(URL_TIMEOUT, async {
-        while let Ok(Some(line)) = lines.next_line().await {
-            if let Some(url) = extract_url(&line) {
-                return Some(url);
+        let mut buf = vec![0u8; 8 * 1024];
+        // At most one line's worth is held at a time, and something longer
+        // than a line is treated as one — a subprocess that never emits a
+        // newline cannot make this grow.
+        let mut pending = String::new();
+        loop {
+            let n = match tokio::io::AsyncReadExt::read(&mut reader, &mut buf).await {
+                Ok(0) | Err(_) => return None,
+                Ok(n) => n,
+            };
+            pending.push_str(&String::from_utf8_lossy(&buf[..n]));
+            while let Some(at) = pending.find('\n') {
+                let line: String = pending.drain(..=at).collect();
+                if let Some(url) = extract_url(&line) {
+                    return Some(url);
+                }
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    last_said = Some(trimmed.chars().take(200).collect());
+                }
             }
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                last_said = Some(trimmed.chars().take(200).collect());
+            if pending.len() > MAX_CLOUDFLARED_LINE {
+                // Not a line. Keep the tail, in case a URL is part-way through
+                // it, and drop what came before unread.
+                pending = pending.split_off(pending.len() - 512);
             }
         }
-        None
     })
     .await;
 
@@ -245,35 +262,81 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
             // tunnel that dies mid-share for that reason would report nothing
             // at all, so the lines are consumed and discarded for as long as it
             // runs.
-            tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+            // Consumed and discarded for as long as `cloudflared` runs, with no
+            // ceiling of its own — a ceiling here is exactly what closes the
+            // pipe and kills it.
+            tokio::spawn(async move {
+                let mut sink = vec![0u8; 8 * 1024];
+                while let Ok(n) = tokio::io::AsyncReadExt::read(&mut reader, &mut sink).await {
+                    if n == 0 {
+                        break;
+                    }
+                }
+            });
             Ok(Tunnel { child, url })
         }
         Ok(None) => {
+            // Whether it is actually gone is checked rather than assumed. This
+            // arm is reached whenever the pipe ends, and a pipe can end on a
+            // read error with the child alive and well — at which point
+            // "`cloudflared` exited" is a sentence about a running process,
+            // and the operator goes looking for a crash that did not happen.
+            let how = if matches!(child.try_wait(), Ok(None)) {
+                NoUrl::WentQuiet
+            } else {
+                NoUrl::Exited
+            };
             let _ = child.kill().await;
-            // Repeating what it said, rather than sending somebody to run it
-            // again to find out. `cloudflared` prints its reason — "failed to
-            // create tunnel: …" — and this read that line and threw it away.
-            Err(H5iError::Metadata(match &last_said {
-                Some(said) => format!(
-                    "`cloudflared` exited without publishing a URL. The last thing it said was: \
-                     {}",
-                    h5i_core::redact::sanitize_display(said)
-                ),
-                None => "`cloudflared` exited without publishing a URL, and said nothing at \
-                         all. Run it by hand to see: `cloudflared tunnel --url \
-                         http://127.0.0.1:3000`."
-                    .into(),
-            }))
+            Err(no_url(how, last_said.as_deref()))
         }
         Err(_) => {
             let _ = child.kill().await;
-            Err(H5iError::Metadata(format!(
-                "`cloudflared` did not publish a URL within {}s. Quick tunnels need outbound \
-                 network access to Cloudflare.",
-                URL_TIMEOUT.as_secs()
-            )))
+            Err(no_url(NoUrl::TimedOut, last_said.as_deref()))
         }
     }
+}
+
+/// How the wait for a URL ended.
+enum NoUrl {
+    /// The child is gone.
+    Exited,
+    /// The pipe ended and the child is still running.
+    WentQuiet,
+    /// Neither: h5i gave up waiting.
+    TimedOut,
+}
+
+/// What the operator is told when no URL arrived.
+///
+/// Its own function so it can be tested. `start` runs the real `cloudflared`
+/// from `PATH`, so nothing in the suite could reach these three sentences, and
+/// two of the three were wrong for a round each without a test noticing: one
+/// announced that a live child had exited, and the other — the arm a blocked
+/// or throttled network actually reaches — threw away the reason `cloudflared`
+/// had just printed and offered a guess about outbound access in its place.
+fn no_url(how: NoUrl, said: Option<&str>) -> H5iError {
+    let opening = match how {
+        NoUrl::Exited => "`cloudflared` exited without publishing a URL".to_string(),
+        NoUrl::WentQuiet => {
+            "`cloudflared` stopped talking to h5i (it is still running) and published no URL"
+                .to_string()
+        }
+        NoUrl::TimedOut => format!(
+            "`cloudflared` did not publish a URL within {}s. Quick tunnels need outbound \
+             network access to Cloudflare",
+            URL_TIMEOUT.as_secs()
+        ),
+    };
+    H5iError::Metadata(match said {
+        Some(said) => format!(
+            "{opening}. The last thing it said was: {}",
+            h5i_core::redact::sanitize_display(said)
+        ),
+        None => format!(
+            "{opening}, and said nothing at all. Run it by hand to see: `cloudflared tunnel \
+             --url http://127.0.0.1:3000`."
+        ),
+    })
 }
 
 /// What a visitor gets when the share is at capacity. Deliberately not a `401`:
@@ -1066,6 +1129,40 @@ mod tests {
         );
 
         serving.abort();
+    }
+
+    #[test]
+    fn every_no_url_message_repeats_what_cloudflared_said() {
+        // The reason `cloudflared` prints is the whole diagnosis, and only one
+        // of the three ways this can fail was repeating it. The timeout arm —
+        // the one a blocked or throttled network reaches, which is the common
+        // case — said "quick tunnels need outbound network access" and threw
+        // the actual line away.
+        let said = Some("failed to create tunnel: 403 from api.trycloudflare.com");
+        for how in [NoUrl::Exited, NoUrl::WentQuiet, NoUrl::TimedOut] {
+            let msg = format!("{}", no_url(how, said));
+            assert!(msg.contains("403 from api.trycloudflare.com"), "{msg}");
+        }
+
+        // And when it said nothing, all three say so and point at the command
+        // that would show it, rather than inventing a reason.
+        for how in [NoUrl::Exited, NoUrl::WentQuiet, NoUrl::TimedOut] {
+            let msg = format!("{}", no_url(how, None));
+            assert!(msg.contains("said nothing at all"), "{msg}");
+            assert!(msg.contains("cloudflared tunnel --url"), "{msg}");
+        }
+
+        // A child that is still running is not described as having exited. The
+        // pipe can end on a read error with the process alive, and that arm
+        // sent the operator looking for a crash that never happened.
+        let quiet = format!("{}", no_url(NoUrl::WentQuiet, None));
+        assert!(quiet.contains("still running"), "{quiet}");
+        assert!(!quiet.contains("exited"), "{quiet}");
+
+        // Whatever it said is sanitised on the way through: it is a third
+        // party's bytes going to a terminal.
+        let nasty = format!("{}", no_url(NoUrl::Exited, Some("boom \u{1b}[2J[31mred")));
+        assert!(!nasty.contains('\u{1b}'), "{nasty}");
     }
 
     #[tokio::test]

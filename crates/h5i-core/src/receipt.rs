@@ -387,16 +387,28 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
             let _ = std::fs::remove_file(&tmp);
             return Err(H5iError::with_path(e, &tmp));
         }
-        std::fs::rename(&tmp, &raw_file)
-            .map_err(|e| H5iError::with_path(e, &raw_file))?;
+        if let Err(e) = std::fs::rename(&tmp, &raw_file) {
+            // The same cleanup as above, for the other half of the operation.
+            // A rename can fail on its own — a read-only directory, a full
+            // disk, EXDEV — and the round that added the cleanup put it only
+            // on the write, so exactly the failures that leave a temp behind
+            // most often were the ones that left it.
+            let _ = std::fs::remove_file(&tmp);
+            return Err(H5iError::with_path(e, &raw_file));
+        }
     }
 
     let mut line = serde_json::to_string(&rec)?;
     line.push('\n');
+    // Named here as well as on the write below. The comment there says this
+    // "used to report `Permission denied` with no hint of which file refused",
+    // and on a read-only directory the refusal happens at the `open` — so the
+    // naming was attached to the one call that could not reach it.
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(log_path(env_dir))?;
+        .open(log_path(env_dir))
+        .map_err(|e| H5iError::with_path(e, log_path(env_dir)))?;
     // One `write_all` of a line that already ends in a newline, so a short
     // write cannot leave a fragment the *next* append glues itself onto —
     // which `list()` would then drop silently, losing two receipts and saying

@@ -255,18 +255,36 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
         Some(ShareCommands::Stop { name, force }) => {
             let dir = box_dir(&h5i_root, &name)?;
             if force {
-                if h5i_share::session::forget(&dir)? {
-                    println!("{} deleted the share record for {name}", SUCCESS);
-                    println!(
-                        "   Nothing was asked to stop. A process that really was serving it \
-                         notices within a second and then exits, writing its receipt on the \
-                         way — so use this only when you believe nothing is."
-                    );
-                } else {
-                    println!(
-                        "{} `{name}` had no share record — nothing to delete.",
-                        SUCCESS
-                    );
+                match h5i_share::session::forget(&dir)? {
+                    h5i_share::session::Forgotten::Deleted => {
+                        println!("{} deleted the share record for {name}", SUCCESS);
+                        println!(
+                            "   Nothing was asked to stop. A process that really was serving it \
+                             notices within a second and then exits, writing its receipt on the \
+                             way — so use this only when you believe nothing is."
+                        );
+                    }
+                    h5i_share::session::Forgotten::NothingThere => {
+                        println!(
+                            "{} `{name}` had no share record — nothing to delete.",
+                            SUCCESS
+                        );
+                    }
+                    // The delete worked and the record was back before this
+                    // line ran. Saying "deleted" there would have been a
+                    // sentence about a file, read as a sentence about access.
+                    h5i_share::session::Forgotten::Reappeared => {
+                        println!(
+                            "{} deleted the share record for {name}, and something wrote it \
+                             straight back.",
+                            WARN
+                        );
+                        println!(
+                            "   That means a process really is serving this box: it rewrites the \
+                             record as it runs. Access is NOT cut off. Stop it in its own \
+                             terminal, or `h5i box share stop {name}` without `--force`."
+                        );
+                    }
                 }
                 return Ok(());
             }

@@ -81,6 +81,17 @@ pub const REPLY_UNREACHABLE: u8 = 3;
 /// so the joiner's browser still said "whoever shared it needs to start their
 /// dev server" while the sharer's terminal said the dialer had died.
 pub const REPLY_ROUTE_BROKEN: u8 = 4;
+/// The share has ended. The ticket was never weighed, because there is no
+/// longer a grant table to weigh it against — `share stop` removes it, and a
+/// connection can arrive in the moment between that and the process exiting.
+/// Folded into [`REPLY_DENIED`] it told the visitor their invite had been
+/// revoked, which is a sentence about a decision somebody made about *them*.
+pub const REPLY_SHARE_OVER: u8 = 5;
+/// The sharer could not read its own grant table — full disk, no descriptors,
+/// a file it cannot parse. The one refusal that is nobody's ticket's fault and
+/// that a fresh ticket will not fix; as [`REPLY_DENIED`] it sent the visitor
+/// back to ask for a new invite that would fail in exactly the same way.
+pub const REPLY_SHARER_FAULT: u8 = 6;
 
 /// Build the greeting a joiner sends.
 pub fn encode_hello(secret: &str) -> Option<[u8; HELLO_LEN]> {

@@ -635,6 +635,12 @@ within about a second, by a watchdog that asks about <em>that peer's own grant</
 so revoking one person cuts their live connections while everyone else's keep
 working. <code>share stop</code> revokes everything; the serving process then writes its
 receipt and exits on its own, which is why it is not a <code>kill</code>.</p>
+<p><code>--force</code> is a different verb wearing the same name: it deletes the record and
+asks nothing to stop. A process that really was serving notices within about a
+second and exits, and in that second visitors are told the share has ended,
+which is what happened. Take the message it prints literally. If it says the
+record was written straight back, a process is still serving the box and access
+is <em>not</em> cut off.</p>
 <p>The longest a share may last is 24 hours, and the default is one.</p>
 <h4 id="the-two-transports">The two transports</h4>
 <p><strong>Peer to peer (the default).</strong> QUIC between the two h5i processes, end-to-end

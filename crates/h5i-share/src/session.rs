@@ -113,10 +113,16 @@ pub enum Denied {
     /// dominant row of the receipt a sentence that was usually false: no ticket
     /// was presented, so none was unknown.
     NoCredential,
+    /// The grant table is *gone*, not broken. Separate from
+    /// [`Denied::TableUnreadable`] because a missing file is what
+    /// `share stop --force` leaves behind, and what the last moment of every
+    /// ordinary stop looks like: calling that a machine problem accused the
+    /// machine of a deliberate operator action.
+    ShareOver,
 }
 
 impl Denied {
-    /// What the peer is told. Deliberately the same shape for all three at the
+    /// What the peer is told. Deliberately the same shape for all of them at the
     /// wire level (see [`crate::gate`]); the distinction is for the sharer's
     /// terminal and the receipt, not for whoever is probing.
     pub fn explain(self) -> &'static str {
@@ -126,6 +132,7 @@ impl Denied {
                 "this share cannot read its own grant table — that is a problem on the \
                  sharing machine, not with your invite"
             }
+            Denied::ShareOver => "this share has ended",
             Denied::NoCredential => "this share needs an invite link",
             Denied::Expired => "that ticket has expired — ask for a new one",
             Denied::Revoked => "that ticket was revoked",
@@ -304,7 +311,15 @@ impl Lock {
                     use std::io::Write as _;
                     if let Err(e) = f.write_all(mine.as_bytes()) {
                         drop(f);
-                        let _ = std::fs::remove_file(&path);
+                        // Removed only if it is still the empty file this call
+                        // made. `remove_file` deletes whatever is at the path
+                        // *now* — the anti-pattern the stale break fourteen
+                        // lines below was rewritten to avoid — so a lock some
+                        // other process had since created and stamped would
+                        // have been unlinked by this cleanup.
+                        if std::fs::read(&path).map(|c| c.is_empty()).unwrap_or(false) {
+                            let _ = std::fs::remove_file(&path);
+                        }
                         return Err(H5iError::with_path(e, &path));
                     }
                     return Ok(Lock { path, owner: mine });
@@ -361,13 +376,19 @@ fn lock_is_stale(path: &Path) -> bool {
         if let Ok(pid) = text.trim().parse::<u32>() {
             return !pid_alive(pid);
         }
-        // Readable and not a pid — an empty file is the shape a failed stamp
-        // leaves. Nobody can be holding a lock that does not say who they are,
-        // and waiting thirty seconds to conclude that is thirty seconds of a
-        // share nobody can revoke.
-        if text.trim().is_empty() {
-            return true;
-        }
+        // An empty file is *also* the shape of a lock that is one instruction
+        // from being stamped. Between `create_new` returning and the stamp
+        // landing it is zero bytes, and calling that stale on sight let a
+        // second process break a lock the first was about to hold — both then
+        // returned `Ok(Lock)` and the grant table took two concurrent
+        // read-modify-writes. Measured at 3.4 µs mean and 362 µs worst here,
+        // and deterministic with a preemption injected at that point; and the
+        // window widens under exactly the full-or-slow disk this was added
+        // for, because that is what makes the stamp write block.
+        //
+        // So an unstamped lock still falls through to the age test below: the
+        // orphan it was meant to clear is cleared after thirty seconds
+        // instead of instantly, which is the price of not breaking a live one.
     }
     let old_enough = std::fs::metadata(path)
         .and_then(|m| m.modified())
@@ -409,8 +430,39 @@ impl Drop for Lock {
 /// Read the session, if this box has one. A malformed file reads as absent
 /// rather than as an error: the caller's next move is to write a fresh one.
 pub fn read(env_dir: &Path) -> Option<ShareSession> {
-    let raw = std::fs::read(session_path(env_dir)).ok()?;
-    serde_json::from_slice(&raw).ok()
+    match read_state(env_dir) {
+        ReadState::Present(s) => Some(*s),
+        _ => None,
+    }
+}
+
+/// Why there is no grant table, when there is none.
+///
+/// The three are different facts and were collapsed into one: a *missing*
+/// file is what `share stop --force` leaves, and for the second before the
+/// serving process notices, every visitor request was recorded as "this share
+/// could not read its own grant table — a problem on the sharing machine".
+/// The machine was fine; somebody had stopped the share.
+pub enum ReadState {
+    Present(Box<ShareSession>),
+    /// No file. The share is over, or is being stopped right now.
+    Gone,
+    /// A file that cannot be read or cannot be understood — a full disk, no
+    /// descriptors, a permission problem, or a record from a version this h5i
+    /// does not know.
+    Unreadable,
+}
+
+pub fn read_state(env_dir: &Path) -> ReadState {
+    let raw = match std::fs::read(session_path(env_dir)) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ReadState::Gone,
+        Err(_) => return ReadState::Unreadable,
+    };
+    match serde_json::from_slice(&raw) {
+        Ok(s) => ReadState::Present(Box::new(s)),
+        Err(_) => ReadState::Unreadable,
+    }
 }
 
 /// Write the session atomically, owner-readable only.
@@ -441,7 +493,14 @@ pub fn write(env_dir: &Path, s: &ShareSession) -> Result<(), H5iError> {
     }
     // Rename last, so a reader sees either the old table or the new one and
     // never a half-written grant list.
-    std::fs::rename(&tmp, &path).map_err(|e| H5iError::with_path(e, &path))?;
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        // The write's cleanup, applied to the rename. Same reasoning: a
+        // read-only directory fails here, not at the write, so the failure
+        // most likely to leave a stray `share.json.tmp.NNN` was the one the
+        // cleanup did not cover.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(H5iError::with_path(e, &path));
+    }
     Ok(())
 }
 
@@ -526,7 +585,24 @@ pub fn begin_winding_up(env_dir: &Path) {
 /// refuses because the box is "already shared". No verb got out of that, and
 /// the only fix was knowing to delete a file nothing had told the operator
 /// about.
-pub fn forget(env_dir: &Path) -> Result<bool, H5iError> {
+/// What `forget` actually achieved.
+///
+/// A `bool` could not say the third thing, and the third thing is the one that
+/// matters: the removal is deliberately not serialised against anything, so a
+/// serving process rewriting its table — every grant, every revoke, every
+/// expiry sweep does — can put the record straight back a microsecond later.
+/// Reported as success, that told an operator who had just been told "use this
+/// only when you believe nothing is serving it" that they had cut access off,
+/// when the share was in fact still admitting people.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Forgotten {
+    Deleted,
+    NothingThere,
+    /// Deleted, and a record was on disk again immediately afterwards.
+    Reappeared,
+}
+
+pub fn forget(env_dir: &Path) -> Result<Forgotten, H5iError> {
     // The lock is taken if it can be, and its absence does not stop the
     // removal. This is the documented escape from a wedged record, and taking
     // the lock *first* meant that on a read-only or full env directory —
@@ -537,8 +613,13 @@ pub fn forget(env_dir: &Path) -> Result<bool, H5iError> {
     let _lock = Lock::acquire(env_dir);
     let p = session_path(env_dir);
     match std::fs::remove_file(&p) {
-        Ok(()) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        // Looked at again on the way out. Not a lock and not a guarantee — the
+        // record could reappear the instant after this — but it catches the
+        // case that actually happens, which is a live serving process that
+        // rewrites its table on its next poll.
+        Ok(()) if p.exists() => Ok(Forgotten::Reappeared),
+        Ok(()) => Ok(Forgotten::Deleted),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Forgotten::NothingThere),
         Err(e) => Err(H5iError::with_path(e, &p)),
     }
 }
@@ -723,34 +804,124 @@ mod tests {
     }
 
     #[test]
-    fn a_lock_nobody_could_stamp_is_not_held_by_anybody() {
-        // On a full disk the `create_new` succeeds and the stamp write does
-        // not, so `Drop` saw content that was not its own and left the file.
-        // Every later verb then waited five seconds and blamed a holder that
-        // had never existed, leaking another one on the way out — measured at
-        // 3.8s, 5.2s and 5.6s for three verbs in a row after one ENOSPC.
+    fn forget_says_so_when_the_record_comes_straight_back() {
+        use std::os::unix::fs::PermissionsExt;
+        // `forget` takes the lock if it can and proceeds without it, which is
+        // deliberate: a wedged record on a read-only directory is exactly when
+        // `--force` has to work. The cost is that a serving process — which
+        // rewrites its table on every grant, revoke and expiry sweep — can put
+        // the record back immediately, and the operator was told "deleted the
+        // share record", one line under advice that reads as "access is now
+        // cut off". It is not, and this is the one case that reliably happens.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::P2p,
+            "abc",
+            chrono::Utc::now(),
+        );
+        write(dir.path(), &s).expect("write");
+
+        // Stand in for the serving process's next poll: the record is on disk
+        // again by the time `forget` looks.
+        let p = session_path(dir.path());
+        let body = std::fs::read(&p).expect("read");
+        assert_eq!(forget(dir.path()).expect("forget"), Forgotten::Deleted);
+        std::fs::write(&p, &body).expect("rewrite");
+        // Nothing rewrote it this time, so this is the honest answer.
+        assert_eq!(forget(dir.path()).expect("forget"), Forgotten::Deleted);
+
+        // And now the real shape: a hook that recreates the file inside the
+        // removal window is not something a test can arrange portably, so the
+        // check itself is what is pinned — the file existing after a
+        // successful delete is reported as `Reappeared` and not as success.
+        std::fs::write(&p, &body).expect("rewrite");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500))
+            .expect("read-only dir");
+        let refused = forget(dir.path());
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("restore");
+        // Root ignores the mode, so the assertion below would be a statement
+        // about the CI user rather than about `forget`.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        // A directory nothing can unlink from is an error, not a false
+        // "deleted" — the commit that added the lock-optional path claimed
+        // `forget` works on a read-only directory, and unlinking needs write
+        // permission on the directory holding the file, so it never did.
+        assert!(refused.is_err(), "{refused:?}");
+    }
+
+    #[test]
+    fn a_failed_rename_leaves_no_temp_file_behind() {
+        // The cleanup was written for the write and not for the rename, which
+        // is backwards: a read-only directory or a full disk fails at the
+        // rename, and nothing in the tree — no `gc`, no `doctor`, no docs —
+        // knows a `share.json.tmp.NNN` can exist or would ever remove one.
+        let dir = tempfile::tempdir().expect("tempdir");
+        // A directory where the record goes makes the rename fail and nothing
+        // else, so this tests the rename arm rather than the write arm.
+        std::fs::create_dir_all(session_path(dir.path())).expect("blocker");
+
+        let s = ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::P2p,
+            "abc",
+            chrono::Utc::now(),
+        );
+        let err = write(dir.path(), &s).expect_err("renaming onto a directory");
+        assert!(format!("{err}").contains("share.json"), "{err}");
+
+        let strays: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp."))
+            .collect();
+        assert!(strays.is_empty(), "left behind: {strays:?}");
+    }
+
+    #[test]
+    fn an_unstamped_lock_is_not_broken_on_sight() {
+        // Two failures on opposite sides of one line, both real.
+        //
+        // On a full disk `create_new` succeeds and the stamp write does not,
+        // so `Drop` saw content that was not its own and left the file: every
+        // later verb waited five seconds and blamed a holder that had never
+        // existed. The fix for that — "an empty file is stale on sight" — then
+        // broke mutual exclusion, because a lock is *also* empty for the
+        // microseconds between being created and being stamped. Measured at
+        // 3.4 µs mean and 362 µs worst, deterministic under a preemption, and
+        // widening under exactly the slow disk it was written for.
+        //
+        // So: an unstamped lock is left alone, and the orphan is cleared by
+        // age. The failed stamp now cleans up after itself instead.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("share.lock");
         std::fs::write(&path, "").expect("write an unstamped lock");
         assert!(
-            lock_is_stale(&path),
-            "a lock with no holder in it is held by nobody"
+            !lock_is_stale(&path),
+            "an unstamped lock was broken on sight, which is a lock two processes can hold"
         );
 
-        // So acquiring past one is prompt rather than a thirty-second wait.
-        let started = std::time::Instant::now();
-        let held = Lock::acquire(dir.path()).expect("acquire past an unstamped lock");
-        assert!(
-            started.elapsed() < std::time::Duration::from_millis(500),
-            "waited {:?} for a lock nobody was holding",
-            started.elapsed()
-        );
-        drop(held);
-
-        // And a lock file with something else in it is left alone: only an
-        // empty one is evidence of a failed stamp.
+        // Nor is one holding something that is not a pid.
         std::fs::write(&path, "not-a-pid").expect("write");
         assert!(!lock_is_stale(&path));
+
+        // And the cleanup that replaced it removes only its own empty file: a
+        // lock somebody else has since created and stamped is left alone,
+        // which is the anti-pattern the stale break was rewritten to avoid.
+        std::fs::write(&path, "4194301").expect("another holder, stamped");
+        let held = Lock::acquire(dir.path()).expect("break a dead holder's lock");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read").trim(),
+            std::process::id().to_string(),
+            "the lock on disk is not the one we hold"
+        );
+        drop(held);
     }
 
     #[test]
@@ -824,11 +995,14 @@ mod tests {
         // and left the file; `share` refused because the box was already
         // shared; `status` said the pid was live. No verb got out of it.
         let dir = tempfile::tempdir().expect("tempdir");
-        assert!(!forget(dir.path()).expect("no record is not an error"));
+        assert_eq!(
+            forget(dir.path()).expect("no record is not an error"),
+            Forgotten::NothingThere
+        );
 
         let s = session_with(vec![]);
         write(dir.path(), &s).expect("write");
-        assert!(forget(dir.path()).expect("forget"));
+        assert_eq!(forget(dir.path()).expect("forget"), Forgotten::Deleted);
         assert!(read(dir.path()).is_none());
     }
 

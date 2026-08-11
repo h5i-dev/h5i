@@ -251,11 +251,17 @@ fn check_outcome(r: Result<(), crate::p2p::OpenError>) -> Result<Option<String>,
         // worth saying up front rather than letting the first page load say it.
         Err(e @ crate::p2p::OpenError::RouteBroken) => Ok(Some(format!("{e}"))),
         // Refused is the only answer about the ticket itself, so it is the only
-        // one that stops the command. Busy and unreachable are both conditions
-        // that clear on their own — the share fills up and empties again, the
-        // dev server is started a minute later — and failing on them would tell
-        // somebody their invite is broken when it is not.
+        // one that stops the command for that reason. Busy and unreachable are
+        // both conditions that clear on their own — the share fills up and
+        // empties again, the dev server is started a minute later — and failing
+        // on them would tell somebody their invite is broken when it is not.
+        // A sharer that cannot read its own grant table is in the second group:
+        // a freed-up disk or descriptor fixes it without a new ticket.
         Err(e @ crate::p2p::OpenError::Refused) => Err(H5iError::Metadata(format!("{e}"))),
+        // Also fatal, for the opposite reason: not "your ticket is bad" but
+        // "there is no share left to join". Waiting on it is pointless, since
+        // a share started again hands out a new ticket.
+        Err(e @ crate::p2p::OpenError::ShareOver) => Err(H5iError::Metadata(format!("{e}"))),
         // Not a statement about the ticket at all: the connection is unusable,
         // so there is nothing to go on to.
         Err(e @ crate::p2p::OpenError::Transport(_)) => Err(H5iError::Metadata(format!("{e}"))),
@@ -382,6 +388,23 @@ mod tests {
 
         let down = check_outcome(Err(OpenError::Unreachable)).expect("unreachable is not fatal");
         assert!(down.is_some(), "an unreachable box said nothing at all");
+
+        // A share that has ended is fatal for the opposite reason to a refusal
+        // — not "your ticket is bad" but "there is nothing left to join" — and
+        // must not say either of the two sentences that send somebody off to
+        // ask for a replacement invite.
+        let over = check_outcome(Err(OpenError::ShareOver)).expect_err("a dead share is fatal");
+        let over = format!("{over}");
+        assert!(over.contains("has ended"), "{over}");
+        assert!(!over.contains("refused"), "{over}");
+        assert!(!over.contains("expired"), "{over}");
+
+        // A sharer that cannot read its own grant table is not fatal: a freed
+        // disk or descriptor fixes it, on the ticket already in hand.
+        let fault = check_outcome(Err(OpenError::SharerFault)).expect("not fatal");
+        let fault = fault.expect("a warning");
+        assert!(fault.contains("could not read its own record"), "{fault}");
+        assert!(!fault.contains("ask for a new"), "{fault}");
     }
 
     fn ticket(expires_at: i64) -> Ticket {

@@ -30,6 +30,7 @@ use iroh::endpoint::{presets, Connection};
 use iroh::{Endpoint, EndpointAddr};
 
 use crate::bridge::{Bridge, Path};
+use crate::session::Denied;
 use crate::wire;
 
 /// How often the watchdog asks whether the share still admits anyone.
@@ -575,7 +576,16 @@ async fn serve_stream(
     let grant = match bridge.authorize(&secret) {
         Ok(g) => g,
         Err(denied) => {
-            let _ = send.write_all(&[wire::REPLY_DENIED]).await;
+            // Three of the five refusals are about the visitor's ticket and two
+            // are about this machine. Answering all of them with one byte sent
+            // somebody whose only problem was that the share had stopped away
+            // to ask for a replacement invite.
+            let code = match denied {
+                Denied::ShareOver => wire::REPLY_SHARE_OVER,
+                Denied::TableUnreadable => wire::REPLY_SHARER_FAULT,
+                _ => wire::REPLY_DENIED,
+            };
+            let _ = send.write_all(&[code]).await;
             let _ = send.finish();
             eprintln!("share: refused {} — {}", short(who), denied.explain());
             return Ok(());
@@ -799,6 +809,11 @@ pub enum OpenError {
     Unreachable,
     /// The ticket was fine and h5i could not reach the box at all.
     RouteBroken,
+    /// The share is over. Not a judgement on the ticket — there was nothing
+    /// left to judge it against.
+    ShareOver,
+    /// The sharer could not read its own grant table.
+    SharerFault,
     /// Something below the handshake went wrong.
     Transport(String),
 }
@@ -816,6 +831,17 @@ impl std::fmt::Display for OpenError {
                 "the share is up and h5i cannot reach inside the box any more. Nothing is \
                  wrong with your ticket and nothing is wrong with their dev server — whoever \
                  shared it needs to restart the share."
+            ),
+            OpenError::ShareOver => write!(
+                f,
+                "that share has ended. Nothing is wrong with your ticket — whoever shared it \
+                 stopped the share, and would have to start a new one."
+            ),
+            OpenError::SharerFault => write!(
+                f,
+                "the sharing machine could not read its own record of who is invited. Nothing \
+                 is wrong with your ticket, and a new one would fail the same way — whoever \
+                 shared it needs to look at their machine."
             ),
             OpenError::Refused => write!(
                 f,
@@ -904,6 +930,8 @@ pub async fn open_stream(
         wire::REPLY_BUSY => Err(OpenError::Busy),
         wire::REPLY_UNREACHABLE => Err(OpenError::Unreachable),
         wire::REPLY_ROUTE_BROKEN => Err(OpenError::RouteBroken),
+        wire::REPLY_SHARE_OVER => Err(OpenError::ShareOver),
+        wire::REPLY_SHARER_FAULT => Err(OpenError::SharerFault),
         _ => Err(OpenError::Refused),
     }
 }
@@ -962,6 +990,8 @@ pub async fn verify_ticket(conn: &Connection, secret: &str) -> Result<(), OpenEr
         wire::REPLY_BUSY => Err(OpenError::Busy),
         wire::REPLY_UNREACHABLE => Err(OpenError::Unreachable),
         wire::REPLY_ROUTE_BROKEN => Err(OpenError::RouteBroken),
+        wire::REPLY_SHARE_OVER => Err(OpenError::ShareOver),
+        wire::REPLY_SHARER_FAULT => Err(OpenError::SharerFault),
         _ => Err(OpenError::Refused),
     }
 }

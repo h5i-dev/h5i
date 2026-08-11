@@ -445,6 +445,13 @@ so revoking one person cuts their live connections while everyone else's keep
 working. `share stop` revokes everything; the serving process then writes its
 receipt and exits on its own, which is why it is not a `kill`.
 
+`--force` is a different verb wearing the same name: it deletes the record and
+asks nothing to stop. A process that really was serving notices within about a
+second and exits, and in that second visitors are told the share has ended,
+which is what happened. Take the message it prints literally. If it says the
+record was written straight back, a process is still serving the box and access
+is *not* cut off.
+
 The longest a share may last is 24 hours, and the default is one.
 
 #### The two transports
