@@ -379,10 +379,18 @@ stranger is still a stranger's. The page then arrives on `http://127.0.0.1:<port
 which browsers treat as a trustworthy origin — it shares that origin with every
 other local service you run, so cookies it sets reach them. Service worker
 registration is refused outright, because one would keep control of that address
-after the share ended, and a request carrying an `Origin` that is not this
-share's own is refused too — two `h5i join` proxies on one machine are the same
+after the share ended, and a request that fetch metadata says came from another
+page is refused too — including one from another `h5i join` on the next port,
+which is a *different origin* but the *same site*, so nothing in the browser
+holds the credential back between them — two `h5i join` proxies on one machine are the same
 *site* to a browser, so one share's page could otherwise drive another's box
-with the credential attached. Nothing else the page does is sandboxed by h5i.
+with the credential attached. Nothing else the page does is sandboxed by h5i, and some of it outlives the
+share: cookies (which ignore the port, so they reach your other local
+services), cached responses, `localStorage`, any permission you grant, and
+anything it persuades the browser to download. All of that belongs to whatever
+you next run on that port — which is why `h5i join` binds an ephemeral one
+unless you ask for a fixed one. A private window is the simple way to keep none
+of it.
 
 **The box's port is never published.** h5i enters the box's network namespace by
 pid — the same way `h5i box view` does — dials `127.0.0.1:<port>` from inside,

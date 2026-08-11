@@ -480,10 +480,18 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
         // and they are not the one who chose to.
         println!(
             "   {} the page you are about to open is somebody else's agent's code, served on \
-             your own loopback — which browsers trust more than a website. It shares an \
-             origin with anything else you run on 127.0.0.1, so cookies it sets go to your \
-             other local services too. Close this when you are done looking.",
+             your own loopback — which browsers trust more than a website does.",
             WARN
+        );
+        println!(
+            "             It shares an origin with anything else you run on this port, so what \
+             it leaves behind — cookies, cached responses, stored data, any permission you \
+             grant it — outlives this share and belongs to whatever you run there next. \
+             Cookies reach your other local services too, since they ignore the port."
+        );
+        println!(
+            "             Use a private window if you would rather none of that stuck, and \
+             close it when you are done looking."
         );
         println!("   stop      Ctrl-C");
         if let Some(w) = &joined.warning {

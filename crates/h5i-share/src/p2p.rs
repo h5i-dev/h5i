@@ -92,7 +92,22 @@ pub async fn bind_joiner() -> Result<Endpoint, H5iError> {
         .max_concurrent_bidi_streams(0u32.into())
         .max_concurrent_uni_streams(0u32.into())
         .build();
-    Endpoint::builder(presets::N0)
+    // `presets::N0` minus the publisher, assembled by hand. That preset
+    // installs a `PkarrPublisher`, which puts *this* endpoint's direct
+    // addresses — every local interface, so the LAN and any VPN — into a
+    // public directory keyed by its public key, and leaves them there for the
+    // record's lifetime. The sharer learns that key from the QUIC handshake,
+    // so it can look the joiner up afterwards.
+    //
+    // A joiner has no use for it: it configures no ALPN, never calls
+    // `accept()`, and nobody needs to find it by id. It still needs the two
+    // *resolvers*, to find the sharer, and the relay, to reach one behind a
+    // NAT — dropping the publisher costs neither. Address exchange for hole
+    // punching happens in-band on the connection itself.
+    Endpoint::builder(presets::Minimal)
+        .address_lookup(iroh::address_lookup::PkarrResolver::n0_dns())
+        .address_lookup(iroh::address_lookup::DnsAddressLookup::n0_dns())
+        .relay_mode(iroh::endpoint::default_relay_mode())
         .transport_config(transport)
         .bind()
         .await
