@@ -233,6 +233,12 @@ pub fn decide(
     let Some(req) = gate::parse(head, cookie) else {
         return Next::Respond(gate::refusal_response(gate::Refusal::Malformed));
     };
+    // Refused before the credential is even weighed: this is not about who is
+    // asking, it is about what a registration would leave behind on the
+    // joiner's machine once the share is over.
+    if req.service_worker {
+        return Next::Respond(gate::refusal_response(gate::Refusal::ServiceWorker));
+    }
     let Some(token) = req.token.clone() else {
         return Next::Respond(gate::refusal_response(gate::Refusal::NotAuthorized));
     };
@@ -1419,6 +1425,37 @@ fn unfinished_response() -> String {
 /// header walking past the filters. Obs-fold is the second door — `header_name`
 /// trims, so a folded continuation matches a filter and gets dropped, or
 /// survives a dropped line and reattaches itself to the header above.
+/// `HTTP/<d>.<d> <3 digits>`, and then whatever reason phrase it likes.
+///
+/// A `starts_with(b"HTTP/")` test was the first attempt and it is not the same
+/// thing: `HTTP/1.1`, `HTTP/`, `HTTP/oops` and `HTTP/1.1: 200 OK` all pass it,
+/// and a third of the heads the fuzz corpus produced that got through the check
+/// had a first line that was not a status line at all. Those relay verbatim —
+/// no filter predicate can match a `HTTP/`-prefixed line — so the visitor's
+/// browser reports the same nameless protocol error the check was added to
+/// cure.
+fn is_status_line(l: &[u8]) -> bool {
+    let Some(rest) = l.strip_prefix(b"HTTP/") else {
+        return false;
+    };
+    // `1.1`, `1.0`, and `2`/`3` for a box that answers with a version this
+    // proxy does not speak — refusing those is the same readable `502`.
+    let mut it = rest.splitn(2, |&b| b == b' ');
+    let Some(version) = it.next() else {
+        return false;
+    };
+    let version_ok = match version {
+        [maj] => maj.is_ascii_digit(),
+        [maj, b'.', min] => maj.is_ascii_digit() && min.is_ascii_digit(),
+        _ => false,
+    };
+    let Some(rest) = it.next() else {
+        return false;
+    };
+    let status: Vec<u8> = rest.iter().copied().take_while(|b| *b != b' ').collect();
+    version_ok && status.len() == 3 && status.iter().all(|b| b.is_ascii_digit())
+}
+
 fn head_is_well_formed(head: &[u8]) -> bool {
     // It has to be a response at all. The sanitiser rebuilds a head by dropping
     // the lines a filter rejects, and it drops empty ones — so a box whose
@@ -1435,7 +1472,7 @@ fn head_is_well_formed(head: &[u8]) -> bool {
         .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
         .find(|l| !l.is_empty());
     match first {
-        Some(l) if l.starts_with(b"HTTP/") => {}
+        Some(l) if is_status_line(l) => {}
         _ => return false,
     }
     for (i, &c) in head.iter().enumerate() {
@@ -1529,6 +1566,26 @@ mod status_line_tests {
         assert!(!head_is_well_formed(b"\r\nConnection: close\r\n\r\n"));
         assert!(!head_is_well_formed(b"\r\n\r\n"));
         assert!(!head_is_well_formed(b""));
+
+        // And a `HTTP/` prefix is not a status line. Every one of these got
+        // through the first version of the check and relayed verbatim, which
+        // is the same nameless protocol error the check exists to cure.
+        assert!(!head_is_well_formed(
+            b"HTTP/1.1\r\nContent-Length: 0\r\n\r\n"
+        ));
+        assert!(!head_is_well_formed(b"HTTP/\r\n\r\n"));
+        assert!(!head_is_well_formed(b"HTTP/1.1: 200 OK\r\nX: y\r\n\r\n"));
+        assert!(!head_is_well_formed(b"HTTP/oops\r\nX: y\r\n\r\n"));
+        assert!(!head_is_well_formed(b"HTTP/1.1 20 OK\r\n\r\n"));
+        assert!(!head_is_well_formed(b"HTTP/1.1 2000 OK\r\n\r\n"));
+
+        // The real ones, including a bare version and no reason phrase.
+        assert!(head_is_well_formed(b"HTTP/1.1 200 OK\r\n\r\n"));
+        assert!(head_is_well_formed(b"HTTP/1.1 204\r\n\r\n"));
+        assert!(head_is_well_formed(b"HTTP/2 200 OK\r\n\r\n"));
+        assert!(head_is_well_formed(
+            b"HTTP/1.1 500 Error: bad thing\r\n\r\n"
+        ));
 
         // A leading blank line before a real status line is only untidy, and
         // clients have always tolerated one. It is absorbed, not refused.

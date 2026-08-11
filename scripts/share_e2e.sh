@@ -14,6 +14,7 @@
 #
 #   scripts/share_e2e.sh           # everything that works offline
 #   scripts/share_e2e.sh --tunnel  # and the Cloudflare path as well
+#   scripts/share_e2e.sh --leak    # and five hundred requests, watching fds
 #
 # Exits non-zero on the first failure and leaves the box behind for inspection.
 
@@ -23,7 +24,11 @@ H5I="${H5I:-./target/debug/h5i}"
 BOX="${BOX:-e2e-share}"
 PORT=3000
 WITH_TUNNEL=0
-[ "${1:-}" = "--tunnel" ] && WITH_TUNNEL=1
+WITH_LEAK=0
+for a in "$@"; do
+  [ "$a" = "--tunnel" ] && WITH_TUNNEL=1
+  [ "$a" = "--leak" ] && WITH_LEAK=1
+done
 
 WORK="$(mktemp -d)"
 FAILED=0
@@ -152,6 +157,29 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "http://127.0.0.1:88
 check "$CODE" "401" "no credential gets a 401"
 joiner_alive && pass "the joiner survived it" || fail "an anonymous request ended the join"
 
+# A request the gate refuses outright — the smuggling shape this crate spent
+# fifteen rounds hardening against. Sent here rather than at the tunnel,
+# because the first version of this check spoke plaintext HTTP to port 443 and
+# Cloudflare's edge dropped it: the bytes never reached h5i at all, so the
+# counter it was written for had no coverage whatsoever.
+SMUG=$(printf 'GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share_8899=%s\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n' "$TOKEN" \
+  | timeout 30 nc -q 2 127.0.0.1 8899 | head -1)
+case "$SMUG" in
+  HTTP/1.1\ 400*) pass "two Content-Lengths are refused" ;;
+  *) fail "a smuggling shape was not refused: $SMUG" ;;
+esac
+
+# And a service worker registration, which would outlive the share and keep
+# control of this address afterwards.
+SW=$(printf 'GET /sw.js HTTP/1.1\r\nHost: t\r\nCookie: h5i_share_8899=%s\r\nService-Worker: script\r\n\r\n' "$TOKEN" \
+  | timeout 30 nc -q 2 127.0.0.1 8899 | head -1)
+case "$SW" in
+  HTTP/1.1\ 403*) pass "a service worker registration is refused" ;;
+  *) fail "a service worker registration was allowed: $SW" ;;
+esac
+
+joiner_alive && pass "and the joiner survived both" || fail "a refused request ended the join"
+
 kill "$JOIN_PID" 2>/dev/null
 
 # ── the verbs, and the windows between them ─────────────────────────────────
@@ -192,12 +220,63 @@ setsid "$H5I" box share "$BOX" --port $PORT --expire 10m > "$WORK/s3.log" 2>&1 &
 sleep 12
 P=$(share_pid)
 "$H5I" box share stop "$BOX" >/dev/null 2>&1
-sleep 0.4
+# Wait for the window rather than guessing at it. The serving process learns
+# about the stop by polling at one-second intervals, so the old `sleep 0.4`
+# signalled it while it was still in the main select — an ordinary first
+# Ctrl-C, which is the test above this one. It passed for the wrong reason.
+for _ in $(seq 1 100); do
+  grep -q "shutting down" "$WORK/s3.log" && break
+  sleep 0.05
+done
+grep -q "shutting down" "$WORK/s3.log" \
+  && pass "the teardown window was reached" \
+  || fail "never saw the teardown start, so the interrupt below proves nothing"
 kill -INT "$P" 2>/dev/null
 sleep 6
 AFTER=$(receipts)
 [ "$AFTER" -gt "$BEFORE" ] && pass "the receipt survived an interrupt mid-teardown" || fail "an interrupt during the teardown lost the receipt"
 grep -q "interrupted again" "$WORK/s3.log" && fail "a first interrupt was treated as a second" || pass "and was not called a second interrupt"
+
+# ── descriptors and memory, under sustained use ─────────────────────────────
+
+if [ "$WITH_LEAK" = "1" ]; then
+  say "five hundred requests, watching what grows"
+  # The dialer hands sockets across a socketpair with SCM_RIGHTS, and several
+  # paths close a stray descriptor that arrived beside an error status. A leak
+  # there is invisible until a long-lived share stops being able to open
+  # anything, which presents as a 502 on a share that worked an hour ago.
+  setsid "$H5I" box share "$BOX" --port $PORT --expire 20m > "$WORK/leak.log" 2>&1 &
+  sleep 12
+  SP=$(share_pid)
+  LT=$(grep -o 'h5i1_[A-Za-z0-9_-]*' "$WORK/leak.log" | head -1)
+  "$H5I" join "$LT" --port 8941 > "$WORK/leakjoin.log" 2>&1 &
+  LJ=$!
+  sleep 8
+  LTOK=$(grep -o 'h5i=[a-f0-9]*' "$WORK/leakjoin.log" | head -1 | cut -d= -f2)
+
+  fds() { ls "/proc/$1/fd" 2>/dev/null | wc -l; }
+  curl -s -b "h5i_share_8941=$LTOK" -o /dev/null --max-time 20 "http://127.0.0.1:8941/" >/dev/null
+  sleep 1
+  BASE_S=$(fds "$SP"); BASE_J=$(fds "$LJ")
+  for _ in $(seq 1 400); do
+    curl -s -b "h5i_share_8941=$LTOK" -o /dev/null --max-time 20 "http://127.0.0.1:8941/" >/dev/null 2>&1
+  done
+  # And a hundred refused ones, which leave by a different door.
+  for _ in $(seq 1 100); do
+    curl -s -o /dev/null --max-time 10 "http://127.0.0.1:8941/" >/dev/null 2>&1
+  done
+  sleep 3
+  END_S=$(fds "$SP"); END_J=$(fds "$LJ")
+  [ "$END_S" -le "$((BASE_S + 2))" ] \
+    && pass "the sharer held its descriptors ($BASE_S then $END_S)" \
+    || fail "the sharer leaked descriptors ($BASE_S then $END_S)"
+  [ "$END_J" -le "$((BASE_J + 2))" ] \
+    && pass "the joiner held its descriptors ($BASE_J then $END_J)" \
+    || fail "the joiner leaked descriptors ($BASE_J then $END_J)"
+  kill "$LJ" 2>/dev/null
+  "$H5I" box share stop "$BOX" >/dev/null 2>&1
+  sleep 6
+fi
 
 # ── the tunnel ──────────────────────────────────────────────────────────────
 
@@ -214,17 +293,13 @@ if [ "$WITH_TUNNEL" = "1" ]; then
   check "$SLOW" "4194304" "and to a client that reads slowly"
   ANON=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "${URL%%\?*}/")
   check "$ANON" "401" "an anonymous visitor gets a 401"
-  # A request the gate refuses outright, which used to be answered and
-  # forgotten by the one lane whose job is to say who was turned away.
-  printf 'GET / HTTP/1.1\r\nHost: t\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n' \
-    | timeout 30 nc -q 2 "${URL#https://}" 443 >/dev/null 2>&1
   "$H5I" box share stop "$BOX" >/dev/null 2>&1
   sleep 6
   LAST=$(last_receipt)
-  echo "$LAST" | grep -q "presented no invite" \
+  echo "$LAST" | grep -qE "[1-9][0-9]* presented no invite" \
     && pass "an anonymous knock is recorded as one, not as an unknown ticket" \
     || fail "the anonymous knock was miscounted: $(echo "$LAST" | grep refused)"
-  echo "$LAST" | grep -q "unknown ticket, 0 expired" \
+  echo "$LAST" | grep -q "an unknown ticket, 0 expired" \
     && pass "and the refusal line still names every reason" \
     || fail "the refusal line changed shape"
 fi

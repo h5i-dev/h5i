@@ -67,6 +67,25 @@ pub struct Request {
     pub chunked: bool,
     /// The client said `Expect: 100-continue` and is waiting for permission.
     pub expects_continue: bool,
+    /// The browser is asking to register a service worker. See
+    /// [`registers_a_service_worker`].
+    pub service_worker: bool,
+}
+
+/// Is this request trying to register a service worker?
+///
+/// Browsers treat `http://127.0.0.1:<port>` as a *potentially trustworthy*
+/// origin, so a page served over the joiner's loopback proxy is a secure
+/// context and may call `navigator.serviceWorker.register()`. What it registers
+/// **outlives `h5i join`**: after Ctrl-C the origin is still controlled, and if
+/// the joiner later runs their own dev server on that port — 3000, 5173, 8080 —
+/// the worker intercepts every fetch of their app.
+///
+/// The joiner is the person who did not choose this risk. A demo does not need
+/// a service worker, so the registration request is refused by name; browsers
+/// send `Service-Worker: script` on exactly that fetch and on nothing else.
+fn registers_a_service_worker(headers: &[&str]) -> bool {
+    header(headers, "service-worker").is_some_and(|v| v.eq_ignore_ascii_case("script"))
 }
 
 /// Why a request was refused.
@@ -76,6 +95,8 @@ pub enum Refusal {
     NotAuthorized,
     /// The request was not something we are willing to parse.
     Malformed,
+    /// A service worker registration, which would outlive the share.
+    ServiceWorker,
 }
 
 impl Refusal {
@@ -83,6 +104,7 @@ impl Refusal {
         match self {
             Refusal::NotAuthorized => (401, "Unauthorized"),
             Refusal::Malformed => (400, "Bad Request"),
+            Refusal::ServiceWorker => (403, "Forbidden"),
         }
     }
 
@@ -98,6 +120,10 @@ impl Refusal {
                 "This h5i share needs a valid invite link. Ask whoever shared it for a new one."
             }
             Refusal::Malformed => "That is not a request this share can serve.",
+            Refusal::ServiceWorker => {
+                "This share will not register a service worker. One would keep control of \
+                 this address after the share ends."
+            }
         }
     }
 }
@@ -376,6 +402,7 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
         upgrade,
         content_length,
         expects_continue,
+        service_worker: registers_a_service_worker(&headers),
         // Carried as its own flag rather than encoded in the length. As a
         // sentinel value it collided with a real `Content-Length` of
         // `u64::MAX`, and it was skipped entirely when the request also asked
@@ -534,6 +561,31 @@ mod cookie_shape_tests {
 }
 
 #[cfg(test)]
+mod service_worker_tests {
+    use super::*;
+
+    #[test]
+    fn a_service_worker_registration_is_refused() {
+        // What a registration leaves behind is the point: it outlives
+        // `h5i join`, so after Ctrl-C the origin is still controlled — and if
+        // the joiner later runs their own dev server on that port, the worker
+        // intercepts every fetch of their app.
+        let head = "GET /sw.js HTTP/1.1\r\nHost: t\r\nCookie: h5i_share=abc\r\n\
+                    Service-Worker: script\r\n\r\n";
+        let req = parse(head, "h5i_share").expect("parses");
+        assert!(req.service_worker);
+
+        // And an ordinary fetch of the same file is not refused: the header is
+        // what browsers send on a registration and on nothing else, so this
+        // does not stop an app serving its own script.
+        let plain = "GET /sw.js HTTP/1.1\r\nHost: t\r\nCookie: h5i_share=abc\r\n\r\n";
+        assert!(!parse(plain, "h5i_share").expect("parses").service_worker);
+
+        assert_eq!(Refusal::ServiceWorker.status().0, 403);
+    }
+}
+
+#[cfg(test)]
 mod fuzz_tests {
     use super::*;
     use crate::fuzz::{request_head, rounds, Rng};
@@ -546,6 +598,16 @@ mod fuzz_tests {
     fn a_forwarded_head_never_carries_the_credential_or_two_framings() {
         const COOKIE: &str = "h5i_share";
         let mut rng = Rng::new(0x5EED);
+        // Counted, and asserted on at the end. A generator that stops
+        // producing heads the parser will accept turns this whole test into an
+        // expensive way of running `parse` and discarding the answer — which is
+        // what it was: measured against the real parser, 1.88% of heads got in,
+        // *none* of two million carried both framings, and about one per run
+        // carried a share cookie. It passed twenty million heads and proved
+        // almost nothing it claimed to.
+        let mut parsed = 0usize;
+        let mut with_cookie = 0usize;
+        let mut with_framing = 0usize;
         for i in 0..rounds() {
             let seed = rng.next();
             let mut one = Rng::new(seed);
@@ -555,6 +617,13 @@ mod fuzz_tests {
             let Some(req) = parse(&head, COOKIE) else {
                 continue;
             };
+            parsed += 1;
+            if req.chunked || req.content_length.is_some() {
+                with_framing += 1;
+            }
+            if head.to_ascii_lowercase().contains("cookie:") && req.token.is_some() {
+                with_cookie += 1;
+            }
 
             // A request cannot be both framings at once. Downstream picks one
             // and reads exactly that many bytes, so an input that sets both is
@@ -621,6 +690,33 @@ mod fuzz_tests {
                 ctx()
             );
         }
+
+        // Floors, not exact numbers: the point is that the generator is still
+        // reaching the code, and a test that silently stops doing so is worse
+        // than no test because it reads as coverage.
+        // Floors, well under what the generator achieves today (about 18%,
+        // 0.8% and 0.8% of heads), so RNG variation cannot trip them but a
+        // collapse will. Before this was measured the same three numbers were
+        // 1.9%, 0.01% and 0.008%: the two-framings assertion had run on
+        // essentially nothing, and "the credential never reaches the box" —
+        // the property in the test's own name — on about one input per run.
+        let n = rounds();
+        let counts =
+            format!("parsed {parsed}, framed {with_framing}, cookied {with_cookie}, of {n}");
+        assert!(
+            parsed * 10 > n,
+            "the generator has stopped producing heads the parser accepts: {counts}"
+        );
+        assert!(
+            with_framing * 500 > n,
+            "almost nothing declared a body length, so the two-framings assertion had \
+             nothing to work on: {counts}"
+        );
+        assert!(
+            with_cookie * 500 > n,
+            "almost nothing carried a credential, so the property this test is named for \
+             was barely checked: {counts}"
+        );
     }
 
     /// Wherever a browser is sent, it is somewhere on this origin.

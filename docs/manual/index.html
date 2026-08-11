@@ -570,6 +570,14 @@ h5i box share stop &lt;name&gt; --force            # delete the record, whatever
 <p>The other side runs:</p>
 <pre><code class="language-bash">h5i join h5i1_eyJ2IjoxLCJib3hf…
 </code></pre>
+<p><strong>What the joining side is trusting.</strong> A ticket names a machine to dial and h5i
+will dial it, so a ticket is worth the same care as any link: h5i refuses one
+that names your <em>own</em> loopback or link-local addresses, but a ticket from a
+stranger is still a stranger's. The page then arrives on <code>http://127.0.0.1:&lt;port&gt;</code>,
+which browsers treat as a trustworthy origin — it shares that origin with every
+other local service you run, so cookies it sets reach them. Service worker
+registration is refused outright, because one would keep control of that address
+after the share ended. Nothing else the page does is sandboxed by h5i.</p>
 <p><strong>The box's port is never published.</strong> h5i enters the box's network namespace by
 pid — the same way <code>h5i box view</code> does — dials <code>127.0.0.1:&lt;port&gt;</code> from inside,
 and passes the socket back out. No TCP listener is bound on an external address

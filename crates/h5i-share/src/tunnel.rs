@@ -390,6 +390,9 @@ async fn handle(
                 // them.
                 let id = register(&bridge, &peers, g);
                 bridge.peer_bytes(id, body.len() as u64, 0);
+                bridge.peer_seen(id);
+                bridge.peer_seen(id);
+                bridge.peer_seen(id);
             }
             http_front::respond(&mut sock, &body).await;
             return Ok(());
@@ -408,6 +411,7 @@ async fn handle(
     let Some(_slot) = bridge.admit() else {
         let body = busy_response();
         bridge.peer_bytes(id, body.len() as u64, 0);
+        bridge.peer_seen(id);
         http_front::respond(&mut sock, &body).await;
         return Ok(());
     };
@@ -439,10 +443,6 @@ async fn handle(
     let upstream = tokio::net::TcpStream::from_std(upstream)?;
 
     bridge.peer_connection(id);
-    // Stamped on every connection, because the tunnel has no close to observe:
-    // a visitor is a grant, and their connections come and go. Without it the
-    // receipt wrote every tunnel peer down as connected until the share ended.
-    bridge.peer_seen(id);
 
     let (up_r, up_w) = upstream.into_split();
     let counts = http_front::Counters::default();
@@ -460,6 +460,14 @@ async fn handle(
     // what it had already moved.
     let (to_box, to_peer) = counts.read();
     bridge.peer_bytes(id, to_peer, to_box);
+    // Stamped when the connection *finishes*, not when it starts. The tunnel
+    // has no close to observe — a visitor is a grant, and their connections
+    // come and go — so this is the only thing that can bound how long they
+    // were inside. Stamped at the start it turned "held for the whole six-hour
+    // share" into "held for one second" for the archetypal case: a page whose
+    // hot-reload socket stays open for ninety minutes. Underreporting how long
+    // somebody was in the box is the worse direction of the two.
+    bridge.peer_seen(id);
     if counts.was_truncated() {
         bridge.record_truncated();
     }

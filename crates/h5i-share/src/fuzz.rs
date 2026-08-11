@@ -170,7 +170,24 @@ const METHODS: &[&str] = &[
     "GETGETGETGETGETGETGETGETGETGETGET",
 ];
 
-const EOLS: &[&str] = &["\r\n", "\n", "\r", "\r\r\n", "\n\r"];
+/// Line endings, sampled **once per head** rather than once per line.
+///
+/// Sampled per line, with four of the five illegal, acceptance decayed as
+/// (1/5)^(headers+1): measured against the real parser, 1.88% of heads got
+/// past `gate::parse`, and of two million heads **zero** carried both framings
+/// and about 157 carried a share cookie. The generator was emitting
+/// `Content-Length\u{0c}` and obs-folds in more than half of all heads and the
+/// parser was rejecting every one of them on line discipline before the
+/// assertions ran. So the test's headline property — the credential never
+/// reaches the box — was being checked on roughly one input per run, and the
+/// two-framings assertion on none at all.
+///
+/// A whole head in one ending is also the realistic shape: a client that emits
+/// bare LF emits it consistently.
+const EOLS: &[&str] = &[
+    "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n",
+    "\r\n", "\r\n", "\r\n", "\r\n", "\n", "\r", "\r\r\n", "\n\r",
+];
 
 const STATUS_LINES: &[&str] = &[
     "HTTP/1.1 200 OK",
@@ -189,6 +206,7 @@ const STATUS_LINES: &[&str] = &[
 
 /// Build a request head. Sometimes a plausible one, sometimes not.
 pub fn request_head(rng: &mut Rng) -> String {
+    let eol = rng.pick(EOLS);
     let mut out = String::new();
     out.push_str(rng.pick(METHODS));
     out.push(' ');
@@ -199,7 +217,7 @@ pub fn request_head(rng: &mut Rng) -> String {
     } else {
         "HTTP/1.1"
     });
-    out.push_str(rng.pick(EOLS));
+    out.push_str(eol);
     for _ in 0..rng.below(7) {
         out.push_str(rng.pick(NAMES));
         out.push(':');
@@ -207,24 +225,32 @@ pub fn request_head(rng: &mut Rng) -> String {
             out.push(' ');
         }
         out.push_str(rng.pick(VALUES));
-        out.push_str(rng.pick(EOLS));
+        out.push_str(eol);
         // An obs-fold continuation, which is the shape that let a smuggled
         // length hide behind a name the sanitiser had already passed.
         if rng.chance(9) {
             out.push_str(if rng.chance(2) { " " } else { "\t" });
             out.push_str(rng.pick(VALUES));
-            out.push_str(rng.pick(EOLS));
+            out.push_str(eol);
         }
     }
     out.push_str("\r\n");
-    mutate(rng, out)
+    // Most heads are left alone. Mutation is what makes the nasty ones, and it
+    // is also what makes them unparseable — mutating every head meant the
+    // parser rejected almost all of them and the assertions past it ran on
+    // roughly one input per run.
+    if rng.chance(3) {
+        return mutate(rng, out);
+    }
+    out
 }
 
 /// Build a response head.
 pub fn response_head(rng: &mut Rng) -> Vec<u8> {
+    let eol = rng.pick(EOLS);
     let mut out = String::new();
     out.push_str(rng.pick(STATUS_LINES));
-    out.push_str(rng.pick(EOLS));
+    out.push_str(eol);
     for _ in 0..rng.below(7) {
         out.push_str(rng.pick(NAMES));
         out.push(':');
@@ -232,15 +258,18 @@ pub fn response_head(rng: &mut Rng) -> Vec<u8> {
             out.push(' ');
         }
         out.push_str(rng.pick(VALUES));
-        out.push_str(rng.pick(EOLS));
+        out.push_str(eol);
         if rng.chance(9) {
             out.push('\t');
             out.push_str(rng.pick(VALUES));
-            out.push_str(rng.pick(EOLS));
+            out.push_str(eol);
         }
     }
     out.push_str("\r\n");
-    mutate(rng, out).into_bytes()
+    if rng.chance(3) {
+        return mutate(rng, out).into_bytes();
+    }
+    out.into_bytes()
 }
 
 /// Corrupt a head the way a hostile client would: splice, truncate, and inject

@@ -31,6 +31,13 @@ use h5i_error::H5iError;
 /// rather than messages because a forked child has no safe way to format one.
 const STATUS_OK: u8 = 0;
 const STATUS_CONNECT_FAILED: u8 = 1;
+/// The connect did not fail — it never finished. A dev server whose accept
+/// queue is full *is* listening, and reporting that as "nothing is listening on
+/// port 3000" sends somebody to start a server that is already running. Sent
+/// for anything that is not a refusal: the timeout, and h5i's own resource
+/// failures inside the helper (`EMFILE`, `ENETDOWN`), which are not facts about
+/// the user's dev server at all.
+const STATUS_CONNECT_STUCK: u8 = 2;
 const STATUS_NO_NS: u8 = 2;
 const STATUS_SETNS: u8 = 3;
 /// The parent's request. One value, so there is nothing to parse.
@@ -101,11 +108,16 @@ impl Dialer {
             Inner::Helper { sock, child } => self.request(sock, *child),
             #[cfg(target_os = "macos")]
             Inner::Loopback => TcpStream::connect(("127.0.0.1", self.port)).map_err(|e| {
-                DialError::NothingListening(H5iError::Metadata(format!(
-                    "nothing is listening on 127.0.0.1:{} — is the dev server running inside \
-                     the box? ({e})",
+                let msg = H5iError::Metadata(format!(
+                    "could not connect to 127.0.0.1:{} — is the dev server running inside the \
+                     box? ({e})",
                     self.port
-                )))
+                ));
+                if e.kind() == std::io::ErrorKind::ConnectionRefused {
+                    DialError::NothingListening(msg)
+                } else {
+                    DialError::Broken(msg)
+                }
             }),
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             Inner::Unsupported => Err(DialError::Broken(unsupported())),
@@ -323,6 +335,15 @@ impl Dialer {
                     self.port
                 ))))
             }
+            (Some(STATUS_CONNECT_STUCK), got) => {
+                close_stray(got);
+                Err(DialError::Broken(H5iError::Metadata(format!(
+                    "could not open a connection to 127.0.0.1:{} inside the box — something is \
+                     listening but not accepting, or this machine is out of sockets. Not the \
+                     same as nothing being there.",
+                    self.port
+                ))))
+            }
             (Some(_), got) => {
                 close_stray(got);
                 Err(DialError::Broken(H5iError::Metadata(format!(
@@ -441,7 +462,22 @@ fn helper_main(box_pid: Option<u32>, port: u16, sock: i32) -> i32 {
                 use std::os::fd::AsRawFd;
                 send_status(sock, STATUS_OK, Some(stream.as_raw_fd()));
             }
-            Err(_) => send_status(sock, STATUS_CONNECT_FAILED, None),
+            // Classified here, because here is where the `io::Error` exists.
+            // Doing it a layer up meant `route_broken` only ever counted
+            // channel-protocol failures and a wedged dev server was still
+            // filed as an absent one.
+            Err(e) => {
+                let refused = matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::AddrNotAvailable
+                );
+                let status = if refused {
+                    STATUS_CONNECT_FAILED
+                } else {
+                    STATUS_CONNECT_STUCK
+                };
+                send_status(sock, status, None);
+            }
         }
     }
 }

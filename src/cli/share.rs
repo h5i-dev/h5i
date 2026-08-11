@@ -479,8 +479,10 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
         // Said plainly, because the person joining is the one taking this risk
         // and they are not the one who chose to.
         println!(
-            "   {} the page you are about to open is somebody else's agent's code, running on \
-             your loopback. Treat it like any link a colleague sends you.",
+            "   {} the page you are about to open is somebody else's agent's code, served on \
+             your own loopback — which browsers trust more than a website. It shares an \
+             origin with anything else you run on 127.0.0.1, so cookies it sets go to your \
+             other local services too. Close this when you are done looking.",
             WARN
         );
         println!("   stop      Ctrl-C");

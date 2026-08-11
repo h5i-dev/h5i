@@ -101,9 +101,19 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
         // retired — and telling somebody to start their dev server when the
         // dev server is not the problem is an afternoon spent in the wrong
         // place.
-        Err(e) => Some(format!(
+        // Using the classifier, not assuming. `DialError` knows which of the
+        // two this is, and this is the only place a person sees the answer
+        // *while* the share is running — the receipt, which they read
+        // afterwards, was the half that got fixed. Telling somebody to start a
+        // dev server that is already running is the whole defect.
+        Err(e) if e.nothing_listening() => Some(format!(
             "nothing is listening on port {} inside the box yet — peers will get an error \
-             until the dev server starts ({e})",
+             until the dev server starts",
+            req.port
+        )),
+        Err(e) => Some(format!(
+            "h5i could not reach inside the box to check port {}: {e}. This is not your dev \
+             server; peers will get an error until the share is restarted.",
             req.port
         )),
     };
@@ -255,10 +265,12 @@ async fn serve_async(
     // `share ls` describes what is running rather than what once ran.
     // Which receipt depends on how it ended. A share whose tunnel died did not
     // succeed, and a reader of the export should not have to guess.
-    if outcome.is_ok() {
-        bridge.write_receipt();
-    } else {
-        bridge.write_receipt_failed();
+    match &outcome {
+        Ok(()) => bridge.write_receipt(),
+        // The reason goes in the body. Without it a reader who opened the
+        // receipt to find out why the box was flagged saw a body identical to
+        // a successful share's, and quick tunnels drop routinely.
+        Err(e) => bridge.write_receipt_failed(&e.to_string()),
     }
     session::clear(&req.env_dir);
     outcome
@@ -266,6 +278,13 @@ async fn serve_async(
 
 /// The orderly half: tell the connections, then the transport, then wait.
 async fn teardown(bridge: &Arc<Bridge>, started: &mut Setup) {
+    // Announced, so a test can wait for the window rather than guess at it.
+    // The end-to-end check for "a first Ctrl-C during the teardown" slept 0.4s
+    // after `share stop` and signalled — but the serving process only learns
+    // about a stop by polling at `STOP_POLL`, so at 0.4s it was still in the
+    // main select and the signal landed on the ordinary Ctrl-C path. The check
+    // passed, for a byte-for-byte repeat of the test above it.
+    eprintln!("share: shutting down");
     // Tell the connections first, tear the transport down second. `iroh`'s
     // `Endpoint::close` closes every connection with code `0` and an empty
     // reason, so a connection that wanted to close with an explanation has to

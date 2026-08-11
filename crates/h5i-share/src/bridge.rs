@@ -126,6 +126,10 @@ struct Tally {
     route_broken: u64,
     /// See [`Summary::turned_away`].
     turned_away: Vec<TurnedAway>,
+    /// See [`Summary::turned_away_overflow`].
+    turned_away_overflow: u64,
+    /// See [`Summary::failed_because`].
+    failed_because: Option<String>,
     peers: Vec<PeerRecord>,
     denied: Vec<DeniedAttempt>,
     /// Attempts past what the list will hold. Counted so the receipt can say
@@ -272,6 +276,8 @@ impl Bridge {
             route_broken: t.route_broken,
             settled: t.settled,
             turned_away: t.turned_away.clone(),
+            turned_away_overflow: t.turned_away_overflow,
+            failed_because: t.failed_because.clone(),
             transport: self.transport,
             endpoint: self.endpoint.clone(),
             port: self.dialer.port(),
@@ -500,12 +506,19 @@ impl Bridge {
     /// job is to say who was turned away.
     pub fn record_turned_away(&self, why: TurnedAwayReason) {
         let mut t = self.tally();
-        // Bounded like the denial list, and for the same reason.
+        // Bounded like the denial list, and — unlike the first version of this
+        // function — counting what it drops. `Unparseable` is driven by
+        // anonymous traffic on a public URL, so a scanner spraying malformed
+        // requests pinned the line at exactly 1024 and said nothing about it:
+        // the very defect the commit that added this counter fixed for the
+        // denial list, reintroduced in the same commit.
         if t.turned_away.len() < 1024 {
             t.turned_away.push(TurnedAway {
                 at: Utc::now(),
                 why,
             });
+        } else {
+            t.turned_away_overflow += 1;
         }
     }
 
@@ -636,7 +649,8 @@ impl Bridge {
     /// constant because leaving it unset renders as "signal", which reads as a
     /// kill — the answer to that is a code for the failures, not a code for
     /// everything.
-    pub fn write_receipt_failed(&self) {
+    pub fn write_receipt_failed(&self, why: &str) {
+        self.tally().failed_because = Some(why.to_string());
         self.write_receipt_with(1);
     }
 
@@ -722,6 +736,14 @@ pub struct Summary {
     /// `--direct-only` with no direct path, a greeting that was not one, a
     /// request the gate would not parse.
     pub turned_away: Vec<TurnedAway>,
+    /// Turned-away connections past what the list holds. Counted rather than
+    /// dropped, so the leading number is the truth.
+    pub turned_away_overflow: u64,
+    /// Why the share ended badly, when it did. Without it a failed share wrote
+    /// a body identical to a successful one and only the exit code differed —
+    /// which flips the box's console verdict to "attention" for good, with
+    /// nothing in the artifact saying why.
+    pub failed_because: Option<String>,
     /// Responses the box left unfinished.
     pub truncated: u64,
 }
@@ -762,6 +784,15 @@ pub fn render_receipt(s: &Summary) -> String {
             "note     a Cloudflare quick tunnel terminated TLS, so this traffic was not \
              end-to-end encrypted\n",
         );
+    }
+
+    if let Some(why) = &s.failed_because {
+        // First line after the header, because it changes what the rest of the
+        // receipt is an account of.
+        out.push_str(&format!(
+            "ended    badly: {}\n",
+            h5i_core::redact::sanitize_display(why)
+        ));
     }
 
     if !s.settled {
@@ -869,7 +900,17 @@ pub fn render_receipt(s: &Summary) -> String {
             .map(|(k, n)| format!("{n} {}", k.as_str()))
             .collect();
         out.push_str(&format!(
-            "turned   {} connection(s) away before any ticket was weighed: {}\n",
+            "turned   {} connection(s) away before any ticket was weighed{}: of the {} \
+             recorded, {}\n",
+            s.turned_away.len() as u64 + s.turned_away_overflow,
+            if s.turned_away_overflow > 0 {
+                format!(
+                    " ({} of them not recorded individually)",
+                    s.turned_away_overflow
+                )
+            } else {
+                String::new()
+            },
             s.turned_away.len(),
             listed.join(", ")
         ));
@@ -1039,6 +1080,8 @@ mod tests {
             route_broken: 0,
             settled: true,
             turned_away: Vec::new(),
+            turned_away_overflow: 0,
+            failed_because: None,
             truncated: 0,
         }
     }
@@ -1078,14 +1121,20 @@ mod tests {
         assert!(!b.is_spent(), "a live share read as spent");
 
         std::fs::remove_file(crate::session::session_path(dir.path())).expect("remove");
-        assert!(!b.grant_is_live(&id), "a deleted grant table still authorized a peer");
+        assert!(
+            !b.grant_is_live(&id),
+            "a deleted grant table still authorized a peer"
+        );
         assert!(b.is_spent(), "a deleted grant table left the share serving");
 
         // And a file that is there but unreadable as a session is the same
         // answer: `session::read` treats a malformed file as absent, so a box
         // that could somehow corrupt it must not thereby open the door.
         std::fs::write(crate::session::session_path(dir.path()), b"{not json").expect("write");
-        assert!(!b.grant_is_live(&id), "a corrupt grant table authorized a peer");
+        assert!(
+            !b.grant_is_live(&id),
+            "a corrupt grant table authorized a peer"
+        );
         assert!(b.is_spent(), "a corrupt grant table left the share serving");
     }
 

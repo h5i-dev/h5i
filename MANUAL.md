@@ -372,6 +372,15 @@ The other side runs:
 h5i join h5i1_eyJ2IjoxLCJib3hf…
 ```
 
+**What the joining side is trusting.** A ticket names a machine to dial and h5i
+will dial it, so a ticket is worth the same care as any link: h5i refuses one
+that names your *own* loopback or link-local addresses, but a ticket from a
+stranger is still a stranger's. The page then arrives on `http://127.0.0.1:<port>`,
+which browsers treat as a trustworthy origin — it shares that origin with every
+other local service you run, so cookies it sets reach them. Service worker
+registration is refused outright, because one would keep control of that address
+after the share ended. Nothing else the page does is sandboxed by h5i.
+
 **The box's port is never published.** h5i enters the box's network namespace by
 pid — the same way `h5i box view` does — dials `127.0.0.1:<port>` from inside,
 and passes the socket back out. No TCP listener is bound on an external address

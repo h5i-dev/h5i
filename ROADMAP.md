@@ -693,7 +693,7 @@ h5i join <ticket> [--port N]                     # the other machine
 
 #### 5.11.1 What shipped, and what it cost to be honest about
 
-`crates/h5i-share/`, ~9.9k lines with 167 tests, behind a default-on `share`
+`crates/h5i-share/`, ~11k lines with 178 tests, behind a default-on `share`
 feature on the binary and a default-on `p2p` feature inside the crate (iroh 1.0,
 `tls-ring` only). A `--no-default-features` build has no `share` verb rather
 than a broken one, and `--no-default-features` on the crate alone keeps the
@@ -2053,6 +2053,32 @@ place, which a browser reports as a protocol error and nobody can trace. Two of
 the four failures it reported were the invariants being wrong rather than the
 code, which is its own kind of useful: `007` is a legal `Content-Length` and a
 cookie named `999h5i_share` is somebody else's.
+
+**Rounds 16 to 26 changed the kind of reader**, on the argument that fifteen
+rounds of adversarial reading had started mostly finding the previous round's
+work. A fuzzer, an end-to-end script that automates the live checks that had
+been done by hand for five rounds, a leak hunt, a flake hunt, the two capacity
+ceilings nothing had ever driven, an accounting sweep of every counter, and —
+the one that found most — a review from the **joiner's** side, asking what a
+hostile *sharer* can do to the person who pasted their ticket.
+
+That last direction had never been examined. It found that the joiner's
+handshake had no deadline on any of its three steps, so a sharer who simply
+never answered left `h5i join` hung with nothing printed at all; that a page
+served on the joiner's loopback could register a service worker, which outlives
+the share and keeps control of that address afterwards; that a ticket's
+addressing went to iroh unexamined, so one naming `127.0.0.1:2375` made the
+joiner dial a service on its own machine; and that the QUIC close reason, which
+the sharer chooses, was printed to the joiner's terminal unsanitised — the same
+escape-injection the `box_id` fix had just closed, through the field next to it.
+
+The fuzzer needed a round of its own, too. Measured against the real parser,
+1.9% of its heads were parseable, **none** of two million carried both framings,
+and about one per run carried a credential — so "twenty million heads pass" was
+true and meant almost nothing. Sampling the line ending once per head rather
+than once per line, and leaving two thirds of heads unmutated, took those to
+18%, 0.8% and 0.8%; the test now asserts floors on all three, so a generator
+that stops reaching the code fails instead of passing.
 
 The pattern across all fifteen rounds is worth recording, because it is the
 argument for having run them: **every round found real defects in the previous

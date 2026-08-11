@@ -95,12 +95,82 @@ pub async fn addressing(ep: &Endpoint) -> Result<(String, serde_json::Value), H5
 }
 
 fn parse_addr(value: &serde_json::Value) -> Result<EndpointAddr, H5iError> {
-    serde_json::from_value(value.clone()).map_err(|e| {
+    let addr: EndpointAddr = serde_json::from_value(value.clone()).map_err(|e| {
         H5iError::Metadata(format!(
             "this ticket's addressing is not something this h5i understands ({e}) — the two \
              sides are probably different versions"
         ))
-    })
+    })?;
+    refuse_addresses_that_point_inward(&addr)?;
+    Ok(addr)
+}
+
+/// Refuse a ticket that would make the joiner dial its own machine.
+///
+/// The addressing in a ticket is chosen by whoever wrote the ticket, and until
+/// this ran the joiner handed it to iroh unexamined: an `Ip` entry naming
+/// `127.0.0.1:2375` or a `Relay` entry naming `http://127.0.0.1:9200/` made
+/// `h5i join` open connections to services on the *joiner's own* loopback,
+/// from inside their network, before any h5i-level check happened. A ticket is
+/// something people paste from a chat window.
+///
+/// What is deliberately **not** refused is a private LAN address. Two machines
+/// on one office network is the case direct P2P exists for, and refusing
+/// RFC1918 would break the feature to close a smaller hole than it opens.
+/// Loopback and link-local are refused because a sharer is never legitimately
+/// reachable at the joiner's own loopback, and `169.254`/`fe80` name the
+/// joiner's own link.
+fn refuse_addresses_that_point_inward(addr: &EndpointAddr) -> Result<(), H5iError> {
+    let refuse = |what: &str| {
+        Err(H5iError::Metadata(format!(
+            "this ticket names {what}, which is an address on your own machine rather than on \
+             the sharer's. h5i will not dial it. Ask for a ticket minted on the machine that \
+             is actually sharing."
+        )))
+    };
+    for t in addr.addrs.iter() {
+        let text = format!("{t:?}");
+        if let Some(ip) = first_ip(&text) {
+            if ip.is_loopback() || is_link_local(&ip) {
+                return refuse(&format!("`{ip}`"));
+            }
+        } else if text.contains("http://127.0.0.1")
+            || text.contains("http://localhost")
+            || text.contains("http://[::1]")
+            || text.contains("https://127.0.0.1")
+            || text.contains("https://localhost")
+            || text.contains("https://[::1]")
+        {
+            return refuse("a relay on your own loopback");
+        }
+    }
+    Ok(())
+}
+
+/// The first IP literal in a transport address's debug form.
+///
+/// Matching on the text rather than on the enum because `TransportAddr` is
+/// iroh's and gains variants between versions; a new one this code has never
+/// heard of should still be examined rather than waved through.
+fn first_ip(text: &str) -> Option<std::net::IpAddr> {
+    let start = text.find(|c: char| c.is_ascii_digit() || c == '[')?;
+    let rest = &text[start..];
+    let end = rest
+        .find(|c: char| !(c.is_ascii_hexdigit() || c == '.' || c == ':' || c == '[' || c == ']'))
+        .unwrap_or(rest.len());
+    let candidate = &rest[..end];
+    let bare = candidate
+        .rsplit_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or(candidate);
+    bare.trim_matches(|c| c == '[' || c == ']').parse().ok()
+}
+
+fn is_link_local(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_link_local(),
+        std::net::IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
+    }
 }
 
 /// Which path the bytes are taking right now, as the transport reports it.
@@ -637,23 +707,63 @@ impl From<OpenError> for H5iError {
 ///
 /// Returns the two halves of a stream that is already through the gate, so the
 /// caller has nothing left to do but move bytes.
+/// How long the joiner will wait on any single step of the handshake.
+///
+/// Every one of the three was unbounded, and a hostile sharer controls all
+/// three: advertise no stream credit and `open_bi` parks, advertise a zero
+/// window and the write parks, simply never answer and the read parks. iroh
+/// keeps the connection alive from both sides, so nothing times out on its own.
+/// The sharer's side of the same frame has had a deadline since it was written
+/// (`HELLO_TIMEOUT`); the joiner's never got one — so `h5i join` printed
+/// nothing at all and hung, before the listener was even bound.
+const JOINER_HANDSHAKE: Duration = Duration::from_secs(15);
+
+async fn deadlined<T, F>(what: &str, f: F) -> Result<T, OpenError>
+where
+    F: std::future::Future<Output = Result<T, OpenError>>,
+{
+    match tokio::time::timeout(JOINER_HANDSHAKE, f).await {
+        Ok(r) => r,
+        Err(_) => Err(OpenError::Transport(format!(
+            "the sharer stopped responding while {what}"
+        ))),
+    }
+}
+
 pub async fn open_stream(
     conn: &Connection,
     secret: &str,
 ) -> Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream), OpenError> {
     let hello = wire::encode_hello(secret)
         .ok_or_else(|| OpenError::Transport("this ticket's secret is malformed".into()))?;
-    let (mut send, mut recv) = conn
-        .open_bi()
-        .await
-        .map_err(|e| OpenError::Transport(format!("the sharer closed the connection: {e}")))?;
-    send.write_all(&hello)
-        .await
-        .map_err(|e| OpenError::Transport(format!("could not greet the sharer: {e}")))?;
+    let (mut send, mut recv) = deadlined("opening a stream", async {
+        conn.open_bi().await.map_err(|e| {
+            OpenError::Transport(format!(
+                "the sharer closed the connection: {}",
+                h5i_core::redact::sanitize_display(&e.to_string())
+            ))
+        })
+    })
+    .await?;
+    deadlined("sending the ticket", async {
+        send.write_all(&hello).await.map_err(|e| {
+            OpenError::Transport(format!(
+                "could not greet the sharer: {}",
+                h5i_core::redact::sanitize_display(&e.to_string())
+            ))
+        })
+    })
+    .await?;
     let mut reply = [0u8; 1];
-    recv.read_exact(&mut reply).await.map_err(|e| {
-        OpenError::Transport(format!("the sharer did not answer the handshake: {e}"))
-    })?;
+    deadlined("waiting for the answer", async {
+        recv.read_exact(&mut reply).await.map_err(|e| {
+            OpenError::Transport(format!(
+                "the sharer did not answer the handshake: {}",
+                h5i_core::redact::sanitize_display(&e.to_string())
+            ))
+        })
+    })
+    .await?;
     match reply[0] {
         wire::REPLY_OK => Ok((send, recv)),
         wire::REPLY_BUSY => Err(OpenError::Busy),
@@ -682,17 +792,34 @@ pub async fn open_stream(
 pub async fn verify_ticket(conn: &Connection, secret: &str) -> Result<(), OpenError> {
     let hello = wire::encode_probe(secret)
         .ok_or_else(|| OpenError::Transport("this ticket's secret is malformed".into()))?;
-    let (mut send, mut recv) = conn
-        .open_bi()
-        .await
-        .map_err(|e| OpenError::Transport(format!("the sharer closed the connection: {e}")))?;
-    send.write_all(&hello)
-        .await
-        .map_err(|e| OpenError::Transport(format!("could not greet the sharer: {e}")))?;
+    let (mut send, mut recv) = deadlined("opening a stream", async {
+        conn.open_bi().await.map_err(|e| {
+            OpenError::Transport(format!(
+                "the sharer closed the connection: {}",
+                h5i_core::redact::sanitize_display(&e.to_string())
+            ))
+        })
+    })
+    .await?;
+    deadlined("sending the ticket", async {
+        send.write_all(&hello).await.map_err(|e| {
+            OpenError::Transport(format!(
+                "could not greet the sharer: {}",
+                h5i_core::redact::sanitize_display(&e.to_string())
+            ))
+        })
+    })
+    .await?;
     let mut reply = [0u8; 1];
-    recv.read_exact(&mut reply).await.map_err(|e| {
-        OpenError::Transport(format!("the sharer did not answer the handshake: {e}"))
-    })?;
+    deadlined("waiting for the answer", async {
+        recv.read_exact(&mut reply).await.map_err(|e| {
+            OpenError::Transport(format!(
+                "the sharer did not answer the handshake: {}",
+                h5i_core::redact::sanitize_display(&e.to_string())
+            ))
+        })
+    })
+    .await?;
     let _ = send.finish();
     match reply[0] {
         wire::REPLY_OK => Ok(()),
@@ -924,6 +1051,46 @@ mod tests {
             }
         });
         (port, seen)
+    }
+
+    #[test]
+    fn a_ticket_that_points_at_your_own_machine_is_refused() {
+        // A ticket is something people paste out of a chat window, and until
+        // this ran the addressing in it went to iroh unexamined — so an `Ip`
+        // naming `127.0.0.1:2375` made `h5i join` dial a service on the
+        // *joiner's* own loopback, from inside their network, before any
+        // h5i-level check happened.
+        let id = "ab".repeat(32);
+        for bad in [
+            format!(r#"{{"id":"{id}","addrs":[{{"Ip":"127.0.0.1:2375"}}]}}"#),
+            format!(r#"{{"id":"{id}","addrs":[{{"Ip":"[::1]:9200"}}]}}"#),
+            format!(r#"{{"id":"{id}","addrs":[{{"Ip":"169.254.169.254:80"}}]}}"#),
+            format!(r#"{{"id":"{id}","addrs":[{{"Relay":"http://127.0.0.1:9200/"}}]}}"#),
+        ] {
+            let v: serde_json::Value = match serde_json::from_str(&bad) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if let Ok(addr) = serde_json::from_value::<EndpointAddr>(v.clone()) {
+                assert!(
+                    refuse_addresses_that_point_inward(&addr).is_err(),
+                    "a ticket pointing at the joiner's own machine was accepted: {bad}"
+                );
+            }
+        }
+
+        // And a LAN address is *not* refused: two machines on one office
+        // network is the case direct peer-to-peer exists for, and refusing
+        // RFC1918 would break the feature to close a smaller hole.
+        let ok = format!(r#"{{"id":"{id}","addrs":[{{"Ip":"192.168.1.20:41641"}}]}}"#);
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ok) {
+            if let Ok(addr) = serde_json::from_value::<EndpointAddr>(v) {
+                assert!(
+                    refuse_addresses_that_point_inward(&addr).is_ok(),
+                    "a LAN address was refused, which breaks the main use of direct p2p"
+                );
+            }
+        }
     }
 
     #[tokio::test]

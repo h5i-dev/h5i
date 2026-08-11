@@ -144,7 +144,12 @@ pub async fn run(
                 // The sharer's own words when it had any. A bare transport
                 // code is not an explanation, so it does not get dressed up as
                 // one.
-                let said = reason.to_string();
+                // Sanitised: this is bytes the *sharer* chose, arriving on the
+        // joiner's terminal. quinn renders an application close reason with
+        // `from_utf8_lossy`, so a `\r` or an `\x1b[2J` in it can erase or forge
+        // the lines around it — one of which is the warning telling this person
+        // they are about to run somebody else's agent's code.
+        let said = h5i_core::redact::sanitize_display(&reason.to_string());
                 return Err(H5iError::Metadata(if said.contains("h5i:") {
                     format!("the share ended: {said}")
                 } else {
