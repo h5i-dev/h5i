@@ -434,9 +434,18 @@ impl Bridge {
     /// telling the visitor their invite had run out, when what happened is
     /// that the person sharing pressed stop. Measured 3 times out of 3.
     pub fn share_is_ending(&self) -> bool {
-        session::read(&self.env_dir)
-            .map(|s| s.winding_up)
-            .unwrap_or(false)
+        match session::read_state(&self.env_dir) {
+            session::ReadState::Present(s) => s.winding_up,
+            // No record at all is the *most* ended a share gets: that is what
+            // `share stop --force` leaves. Written as `unwrap_or(false)` this
+            // sent exactly that case down the other branch and told the
+            // visitor their ticket had been revoked — the sentence this
+            // method exists to stop.
+            session::ReadState::Gone => true,
+            // A table this cannot read says nothing about whether the share
+            // was stopped, so it does not get to claim it was.
+            session::ReadState::Unreadable => false,
+        }
     }
 
     /// True once no grant can admit anyone: everything revoked, or everything
@@ -862,12 +871,17 @@ fn floor_now(
     started: DateTime<Utc>,
     elapsed: std::time::Duration,
 ) -> DateTime<Utc> {
-    let floor =
-        started + chrono::Duration::from_std(elapsed).unwrap_or(chrono::Duration::MAX);
-    if wall > floor {
-        wall
-    } else {
-        floor
+    // `checked_add_signed`, because `DateTime + Duration` panics on overflow
+    // and this is on the path of every authorization the share does. The
+    // duration comes from a monotonic clock so the overflow needs a process
+    // that has run for a few hundred million years — but a panic here takes
+    // the share down mid-session, and the fallback costs one branch.
+    match chrono::Duration::from_std(elapsed)
+        .ok()
+        .and_then(|d| started.checked_add_signed(d))
+    {
+        Some(floor) if floor > wall => floor,
+        _ => wall,
     }
 }
 
@@ -1214,6 +1228,25 @@ pub fn render_status(s: &ShareSession, now: i64) -> String {
     ));
     out.push_str(&format!("  endpoint  {}\n", s.endpoint));
     out.push_str(&format!("  started   {}\n", s.started_at));
+    // A share that started in this machine's future means the clock moved
+    // between then and now. Worth a line, because the serving process floors
+    // its expiry decisions against a monotonic clock and this command cannot:
+    // it is reading a file with whatever clock this shell has. So after a
+    // backward step the door closes earlier than the countdown below says, and
+    // without this the only symptom is a ticket that "still had time left"
+    // being refused.
+    if let Ok(started) = chrono::DateTime::parse_from_rfc3339(&s.started_at) {
+        let ahead = started.timestamp() - now;
+        if ahead > 5 {
+            out.push_str(&format!(
+                "            NOTE: this share reports starting {} in the future by this \
+                 machine's clock. The clock moved; the times below are this clock's opinion, \
+                 and the share itself goes by elapsed time, so it will close sooner than they \
+                 say.\n",
+                session::humanise(ahead)
+            ));
+        }
+    }
     out.push_str(&format!(
         "  process   pid {}{}\n",
         s.pid,
@@ -1399,6 +1432,42 @@ mod tests {
         // four figures of gibibytes.
         assert_eq!(bytes(1024u64 * 1024 * 1024 * 1024), "1.0 TiB");
         assert_eq!(bytes(u64::MAX), "16777216.0 TiB");
+    }
+
+    #[test]
+    fn a_stopped_share_is_the_most_ended_a_share_gets() {
+        // Written first as `session::read(..).map(|s| s.winding_up)
+        // .unwrap_or(false)`, which sends the *strongest* case — no record at
+        // all, which is what `share stop --force` leaves — down the branch
+        // that tells the visitor their ticket was revoked. That sentence is
+        // the one this method was added to stop saying.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let b = test_bridge(dir.path());
+
+        let mut s = crate::session::ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::P2p,
+            "abc",
+            Utc::now(),
+        );
+        session::write(dir.path(), &s).expect("write");
+        assert!(!b.share_is_ending(), "a serving share is not ending");
+
+        s.winding_up = true;
+        session::write(dir.path(), &s).expect("write");
+        assert!(b.share_is_ending());
+
+        std::fs::remove_file(dir.path().join("share.json")).expect("force stop");
+        assert!(
+            b.share_is_ending(),
+            "no record at all is not 'still serving'"
+        );
+
+        // And a table that cannot be read says nothing either way, so it does
+        // not get to claim the operator stopped anything.
+        std::fs::write(dir.path().join("share.json"), b"{ junk").expect("junk");
+        assert!(!b.share_is_ending());
     }
 
     #[test]

@@ -162,7 +162,7 @@ pub async fn run(
                 return match &reason {
                     iroh::endpoint::ConnectionError::ApplicationClosed(_)
                     | iroh::endpoint::ConnectionError::LocallyClosed => {
-                        Ok(format!("the share ended{}", why_it_ended(&said)))
+                        Ok(ending_line(&said))
                     }
                     _ => Err(H5iError::Metadata(format!(
                         "the connection to the sharer failed: {said}. Their machine or the \
@@ -285,6 +285,22 @@ fn expired_here(expires_at: i64, now: i64) -> String {
     )
 }
 
+/// The whole sentence a joiner reads when its connection is closed.
+///
+/// The headline is not always "the share ended". A revoke cuts *this peer* off
+/// and leaves the share running for everyone else — that is the advertised
+/// behaviour of `share revoke` — so announcing the share's end to the one
+/// person it was aimed at was a statement about somebody else's screen. The
+/// clause after it was already right; the sentence in front of it was not.
+fn ending_line(said: &str) -> String {
+    let cause = why_it_ended(said);
+    if said.contains("revoked") {
+        format!("your access to this share ended{cause}")
+    } else {
+        format!("the share ended{cause}")
+    }
+}
+
 /// The cause, in the joiner's words, when the sharer gave one.
 ///
 /// The wire reasons are written for the other end of a socket; this is the
@@ -378,6 +394,26 @@ mod tests {
             said.contains("stopped sharing, or the ticket ran out"),
             "{said}"
         );
+    }
+
+    #[test]
+    fn a_revoke_is_not_announced_as_the_end_of_the_share() {
+        // `share revoke` cuts one peer off and leaves the share serving
+        // everybody else — that is what it is for. The person it was aimed at
+        // was told "the share ended", which is a claim about other people's
+        // screens and the wrong thing to tell somebody deciding whether to ask
+        // for a new link.
+        let revoked = ending_line("h5i: this ticket was revoked or has expired");
+        assert!(
+            revoked.starts_with("your access to this share ended"),
+            "{revoked}"
+        );
+        assert!(revoked.contains("revoked or ran out"), "{revoked}");
+
+        // A stop really is the end of the share, for everyone.
+        let stopped = ending_line("h5i: this share has ended");
+        assert!(stopped.starts_with("the share ended"), "{stopped}");
+        assert!(stopped.contains("they stopped sharing"), "{stopped}");
     }
 
     #[test]

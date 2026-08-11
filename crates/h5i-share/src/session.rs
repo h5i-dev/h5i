@@ -1007,6 +1007,29 @@ mod tests {
     }
 
     #[test]
+    fn status_says_so_when_this_shell_and_the_share_disagree_about_now() {
+        // `share status` reads a file with whatever clock the shell it runs in
+        // has. The serving process floors its expiry against elapsed time and
+        // this command cannot, so after a backward clock step the door closes
+        // earlier than this countdown says — and the only symptom otherwise is
+        // a ticket refused while `status` still shows time left.
+        let started = chrono::Utc::now();
+        let mut s = ShareSession::new("env/a/demo", 3000, Transport::P2p, "abc", started);
+        let (g, _secret) = mint_grant(None, started.timestamp() + 600).expect("mint");
+        s.grants.push(g);
+
+        // A clock that agrees says nothing.
+        let quiet = crate::bridge::render_status(&s, started.timestamp() + 1);
+        assert!(!quiet.contains("NOTE:"), "{quiet}");
+
+        // A shell an hour behind the share sees the record start in its
+        // future.
+        let behind = crate::bridge::render_status(&s, started.timestamp() - 3600);
+        assert!(behind.contains("1h0m in the future"), "{behind}");
+        assert!(behind.contains("close sooner"), "{behind}");
+    }
+
+    #[test]
     fn every_definition_of_still_valid_flips_in_the_same_second() {
         // Six places in three crates decide whether a grant is still good, and
         // only one of them — `Ticket::remaining` — had a test that touched the
