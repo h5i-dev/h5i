@@ -569,7 +569,15 @@ h5i box share stop &lt;name&gt; --force            # delete the record, whatever
 </code></pre>
 <p>The other side runs:</p>
 <pre><code class="language-bash">h5i join h5i1_eyJ2IjoxLCJib3hf…
+h5i join -                            # the same, with the ticket on stdin
 </code></pre>
+<p>The share needs a live session of the box to dial into, not a live dev server:
+starting one before the server is up warns and carries on, visitors get a <code>502</code>
+saying the server is not up rather than that their link is bad, and it starts
+working the moment the port binds — measured, and the receipt counts those
+attempts on their own <code>unreached</code> line. The session is the constraint. A second
+<code>h5i box run</code> is refused while the first holds the box, so the server has to
+come up in the session that is already there.</p>
 <p><strong>What the joining side is trusting.</strong> A ticket names a machine to dial and h5i
 will dial it, so a ticket is worth the same care as any link: h5i refuses one
 that names your <em>own</em> loopback or link-local addresses, but a ticket from a

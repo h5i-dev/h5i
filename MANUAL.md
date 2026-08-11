@@ -370,7 +370,16 @@ The other side runs:
 
 ```bash
 h5i join h5i1_eyJ2IjoxLCJib3hf…
+h5i join -                            # the same, with the ticket on stdin
 ```
+
+The share needs a live session of the box to dial into, not a live dev server:
+starting one before the server is up warns and carries on, visitors get a `502`
+saying the server is not up rather than that their link is bad, and it starts
+working the moment the port binds — measured, and the receipt counts those
+attempts on their own `unreached` line. The session is the constraint. A second
+`h5i box run` is refused while the first holds the box, so the server has to
+come up in the session that is already there.
 
 **What the joining side is trusting.** A ticket names a machine to dial and h5i
 will dial it, so a ticket is worth the same care as any link: h5i refuses one
