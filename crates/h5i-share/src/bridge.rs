@@ -1055,6 +1055,62 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_grant_table_authorizes_nobody_and_ends_the_share() {
+        // The two fail-closed branches, which nothing touched. If either
+        // inverted, deleting `share.json` would leave a share admitting
+        // everybody with no way to revoke — and `share stop --force`, which
+        // deletes exactly that file, is a documented verb.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let b = test_bridge(dir.path());
+
+        let mut sess = crate::session::ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::P2p,
+            "local",
+            Utc::now(),
+        );
+        let (g, _secret) = crate::session::mint_grant(None, 4_000_000_000).expect("mint");
+        let id = g.id.clone();
+        sess.grants.push(g);
+        crate::session::write(dir.path(), &sess).expect("write");
+        assert!(b.grant_is_live(&id), "a live grant read as dead");
+        assert!(!b.is_spent(), "a live share read as spent");
+
+        std::fs::remove_file(crate::session::session_path(dir.path())).expect("remove");
+        assert!(!b.grant_is_live(&id), "a deleted grant table still authorized a peer");
+        assert!(b.is_spent(), "a deleted grant table left the share serving");
+
+        // And a file that is there but unreadable as a session is the same
+        // answer: `session::read` treats a malformed file as absent, so a box
+        // that could somehow corrupt it must not thereby open the door.
+        std::fs::write(crate::session::session_path(dir.path()), b"{not json").expect("write");
+        assert!(!b.grant_is_live(&id), "a corrupt grant table authorized a peer");
+        assert!(b.is_spent(), "a corrupt grant table left the share serving");
+    }
+
+    #[test]
+    fn more_peers_than_the_list_holds_are_counted_not_dropped() {
+        // The overflow path. A share past the peer cap must still say how many
+        // it saw, or a heavily used share reads as a lightly used one.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let b = test_bridge(dir.path());
+        let g = AuthorizedGrant {
+            id: "a1b2c3d4".into(),
+            label: Some("alex".into()),
+            expires_at: 4_000_000_000,
+        };
+        for _ in 0..(MAX_PEER_RECORDS + 5) {
+            b.peer_joined("somebody".into(), &g, Some(Path::Direct));
+        }
+        let s = b.snapshot();
+        assert_eq!(s.peers.len(), MAX_PEER_RECORDS);
+        assert_eq!(s.peers_overflow, 5);
+        let body = render_receipt(&s);
+        assert!(body.contains("and 5 more peer(s)"), "{body}");
+    }
+
+    #[test]
     fn a_knock_with_no_invite_is_not_an_unknown_ticket() {
         // On a public tunnel URL a scanner fetching `/` is the commonest event
         // of the whole session, and folding it into "unknown ticket" made the
