@@ -864,6 +864,67 @@ mod tests {
         serving.abort();
     }
 
+    /// A dev server that answers before reading the body and hangs up — a size
+    /// limit, or auth that rejects before parsing. The commonest reason a box
+    /// closes its read side mid-request.
+    fn early_rejecting_server() -> u16 {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                std::thread::spawn(move || {
+                    // The head only. The body is never read.
+                    let mut buf = [0u8; 1024];
+                    let _ = c.read(&mut buf);
+                    let body = b"too big";
+                    let _ = c.write_all(
+                        format!(
+                            "HTTP/1.1 413 Content Too Large\r\nContent-Length: {}\r\n\r\n",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                    let _ = c.write_all(body);
+                    let _ = c.shutdown(std::net::Shutdown::Both);
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn an_early_rejection_reaches_the_visitor_instead_of_being_replaced() {
+        // The box hangs up mid-body because it has already decided. Its answer
+        // is sitting in the socket; answering "your request is malformed" and
+        // dropping it told the visitor the wrong thing about their own request
+        // and hid the app's real reply.
+        let port = early_rejecting_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let big = "x".repeat(400_000);
+        let got = request(
+            addr,
+            &format!(
+                "POST /upload HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
+                 Content-Length: {}\r\n\r\n{big}",
+                big.len()
+            ),
+        )
+        .await;
+        assert!(got.contains("413"), "the box's own answer did not reach the visitor: {got}");
+        assert!(got.contains("too big"), "{got}");
+
+        serving.abort();
+    }
+
     #[tokio::test]
     async fn a_declared_body_reaches_the_box_whole() {
         // The other half of the one-request rule: stopping at the declared
