@@ -304,19 +304,17 @@ impl Bridge {
     }
 
     fn record_denied(&self, reason: Denied) {
-        {
-            let mut t = self.tally();
-            // Bounded: a share left open on the internet can be knocked on all
-            // day, and an unbounded list would be a memory leak with a receipt
-            // attached. The count past the cap still shows up in the summary.
-            if t.denied.len() < 1024 {
-                t.denied.push(DeniedAttempt {
-                    at: Utc::now(),
-                    reason,
-                });
-            } else {
-                t.denied_overflow += 1;
-            }
+        // Bounded: a share left open on the internet can be knocked on all day,
+        // and an unbounded list would be a memory leak with a receipt attached.
+        // The count past the cap shows up as its own figure in the summary.
+        let mut t = self.tally();
+        if t.denied.len() < 1024 {
+            t.denied.push(DeniedAttempt {
+                at: Utc::now(),
+                reason,
+            });
+        } else {
+            t.denied_overflow += 1;
         }
     }
 
@@ -376,13 +374,11 @@ impl Bridge {
     /// connection that spent any time on a relay is a connection that used one,
     /// and rounding that off would be flattering.
     pub fn peer_path(&self, id: PeerId, path: Path) {
-        {
-            if let Some(p) = self.tally().peers.get_mut(id.0) {
-                match p.path {
-                    None => p.path = Some(path),
-                    Some(Path::Direct) if path == Path::Relayed => p.path = Some(Path::Relayed),
-                    Some(_) => {}
-                }
+        if let Some(p) = self.tally().peers.get_mut(id.0) {
+            match p.path {
+                None => p.path = Some(path),
+                Some(Path::Direct) if path == Path::Relayed => p.path = Some(Path::Relayed),
+                Some(_) => {}
             }
         }
     }
