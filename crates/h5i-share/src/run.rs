@@ -300,7 +300,11 @@ fn arm_second_signal(env_dir: &std::path::Path) {
         // leaving `share.json` behind means the next `share ls` shows a share
         // that is gone and the next `share` refuses to start, which is a mess
         // made by this exit rather than chosen by them.
-        session::clear(&env_dir);
+        //
+        // Unlocked, because the lock this would wait on is most likely held by
+        // this process's own orderly shutdown — the one being abandoned — and
+        // five seconds of retrying is not what "stop now" means.
+        session::clear_now(&env_dir);
         std::process::exit(130);
     });
 }

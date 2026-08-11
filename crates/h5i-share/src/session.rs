@@ -517,7 +517,23 @@ pub fn clear(env_dir: &Path) {
     // `let _ = …` would drop the guard at the end of *this statement*, which is
     // to say before the removal it is guarding. It was written that way once,
     // under a comment explaining the race it was closing.
+    //
+    // Acquisition failing is not a reason to skip the removal: the alternative
+    // is a record for a process that is exiting anyway, which is the state
+    // every "GONE share nobody can clear" report starts from.
     let _lock = Lock::acquire(env_dir);
+    let _ = std::fs::remove_file(session_path(env_dir));
+}
+
+/// Remove the record without waiting for the lock.
+///
+/// Only for the second Ctrl-C, where the operator has said "stop now" and
+/// [`Lock::acquire`] would spend up to five seconds retrying before giving up
+/// and doing this anyway — most likely against a lock held by *this* process's
+/// own orderly shutdown, which is the thing being abandoned. There is nothing to
+/// serialise against: this is an unconditional delete of our own share's record
+/// by the process that wrote it, not a read-modify-write of the grant table.
+pub fn clear_now(env_dir: &Path) {
     let _ = std::fs::remove_file(session_path(env_dir));
 }
 
@@ -540,6 +556,27 @@ pub fn is_live(s: &ShareSession) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hard_exit_clears_the_record_without_waiting_for_the_lock() {
+        // A second Ctrl-C means "stop now". `clear` waits up to five seconds
+        // for a lock that, on this path, is most likely held by the orderly
+        // shutdown being abandoned — so the exit that is supposed to be instant
+        // was not.
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), &session_with(vec![])).expect("write");
+        let held = Lock::acquire(dir.path()).expect("hold the lock");
+
+        let started = std::time::Instant::now();
+        clear_now(dir.path());
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(500),
+            "clearing waited for a lock it should not have: {:?}",
+            started.elapsed()
+        );
+        assert!(read(dir.path()).is_none(), "the record survived the exit");
+        drop(held);
+    }
 
     #[test]
     fn a_share_record_can_always_be_forgotten() {
