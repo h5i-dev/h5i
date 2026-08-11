@@ -73,7 +73,14 @@ enum Commands {
     /// link a colleague sends you.
     #[cfg(feature = "share")]
     Join {
-        /// The `h5i1_…` ticket you were sent.
+        /// The `h5i1_…` ticket you were sent, or `-` to read it from stdin.
+        ///
+        /// `/proc/<pid>/cmdline` is world-readable on an ordinary Linux box
+        /// and this process runs for the whole session, so a ticket passed as
+        /// an argument is legible to every other user on the machine for as
+        /// long as you are joined — and a ticket is the whole authorization.
+        /// `pbpaste | h5i join -` keeps it out of the process table and out
+        /// of your shell history.
         #[arg(value_name = "TICKET")]
         ticket: String,
         /// Local port to serve it on. 0 picks a free one and prints it.

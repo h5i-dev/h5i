@@ -488,8 +488,32 @@ fn announce(name: &str, args: &ShareArgs, s: &h5i_share::run::Started) {
 // ─── the other machine ──────────────────────────────────────────────────────
 
 /// `h5i join <ticket>`.
+/// The ticket, from the argument or from stdin.
+///
+/// `-` is not a convenience. A ticket is the entire authorization, this
+/// process runs for the length of the session, and `/proc/<pid>/cmdline` is
+/// world-readable on an ordinary Linux box — so `h5i join h5i1_…` hands every
+/// other user on the machine a working invite for as long as you are joined.
+/// Reading it from a pipe is the way out, and it keeps the ticket out of shell
+/// history at the same time.
+fn ticket_text(arg: &str) -> anyhow::Result<String> {
+    if arg != "-" {
+        return Ok(arg.to_string());
+    }
+    let mut buf = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+    let ticket = buf.trim().to_string();
+    if ticket.is_empty() {
+        anyhow::bail!(
+            "nothing arrived on stdin. `h5i join -` reads the ticket from a pipe: \
+             `pbpaste | h5i join -`, or paste it and press Ctrl-D."
+        );
+    }
+    Ok(ticket)
+}
+
 pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
-    let ticket = h5i_share::ticket::Ticket::decode(ticket)?;
+    let ticket = h5i_share::ticket::Ticket::decode(&ticket_text(ticket)?)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -567,6 +591,19 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_ticket_can_arrive_without_going_through_the_process_table() {
+        // `/proc/<pid>/cmdline` is world-readable on an ordinary Linux box —
+        // mode `-r--r--r--`, no `hidepid` — and `h5i join` runs for the whole
+        // session. A ticket passed as an argument is therefore a working
+        // invite, legible to every other user on the machine, for as long as
+        // somebody is joined. Anything but `-` is still taken literally.
+        assert_eq!(ticket_text("h5i1_abc").expect("literal"), "h5i1_abc");
+        // Including a ticket that merely starts with one: only the whole
+        // argument means stdin.
+        assert_eq!(ticket_text("-h5i1_abc").expect("literal"), "-h5i1_abc");
+    }
 
     #[test]
     fn a_short_share_does_not_announce_itself_as_already_over() {

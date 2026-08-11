@@ -430,6 +430,16 @@ A ticket names one box, one port, one grant and an expiry, and carries a
 side. h5i keeps only the secret's SHA-256, so **a ticket is printed once and
 cannot be reprinted** — mint another with `share grant`.
 
+Because holding it is the whole authorization, where the text ends up matters.
+`/proc/<pid>/cmdline` is world-readable on an ordinary Linux box and `h5i join`
+runs for the length of the session, so `h5i join h5i1_…` leaves a working invite
+in the process table for every other user on that machine to read, and in shell
+history besides. `h5i join -` takes the ticket from stdin instead:
+
+```
+pbpaste | h5i join -          # or: h5i join - < ticket.txt
+```
+
 A ticket is a capability, not a seat: nothing marks one as used or binds it to a
 person, so forwarding the text admits everyone it reaches, under the one grant.
 What one ticket per person buys is that `share revoke <name> <grant>` cuts off
