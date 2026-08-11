@@ -258,6 +258,36 @@ impl Bridge {
     /// How many of the share's connection slots are free. For tests that need
     /// to show a path did *not* take one — "a later stream still works" leaves
     /// a handful of leaked permits invisible.
+    /// The tally as it stands, for a test that needs to assert about a counter
+    /// rather than about the sentence it eventually produces.
+    pub fn snapshot(&self) -> Summary {
+        self.summarise(Utc::now())
+    }
+
+    /// One place the tally becomes a `Summary`, so a snapshot and a receipt
+    /// cannot drift into describing the same share differently.
+    fn summarise(&self, ended: DateTime<Utc>) -> Summary {
+        let t = self.tally();
+        Summary {
+            route_broken: t.route_broken,
+            settled: t.settled,
+            turned_away: t.turned_away.clone(),
+            transport: self.transport,
+            endpoint: self.endpoint.clone(),
+            port: self.dialer.port(),
+            started: self.started,
+            ended,
+            peers: t.peers.clone(),
+            peers_overflow: t.peers_overflow,
+            denied: t.denied.clone(),
+            denied_overflow: t.denied_overflow,
+            over_capacity: t.over_capacity,
+            front_refused: t.front_refused,
+            unreachable: t.unreachable,
+            truncated: t.truncated,
+        }
+    }
+
     pub fn free_slots(&self) -> usize {
         self.capacity.available_permits()
     }
@@ -618,27 +648,7 @@ impl Bridge {
         // the whole body — it blocks any connection still trying to record what
         // it moved, which is the last thing that should be losing a race with
         // the receipt.
-        let summary = {
-            let t = self.tally();
-            Summary {
-                route_broken: t.route_broken,
-                settled: t.settled,
-                turned_away: t.turned_away.clone(),
-                transport: self.transport,
-                endpoint: self.endpoint.clone(),
-                port: self.dialer.port(),
-                started: self.started,
-                ended,
-                peers: t.peers.clone(),
-                peers_overflow: t.peers_overflow,
-                denied: t.denied.clone(),
-                denied_overflow: t.denied_overflow,
-                over_capacity: t.over_capacity,
-                front_refused: t.front_refused,
-                unreachable: t.unreachable,
-                truncated: t.truncated,
-            }
-        };
+        let summary = self.summarise(ended);
         let peers_seen = summary.peers.len() as u64 + summary.peers_overflow;
         let body = render_receipt(&summary);
         let input = h5i_core::receipt::RecordInput {

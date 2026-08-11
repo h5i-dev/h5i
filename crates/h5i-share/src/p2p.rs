@@ -927,6 +927,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_flood_at_the_front_door_is_recorded_as_a_flood() {
+        // Never tested. `front_refused` is the counter that distinguishes "this
+        // share was hammered" from "somebody guessed at tickets", and every
+        // test that exercised the sentence built the `Summary` by hand — so the
+        // refusal, the increment, and the fact that a refused connection costs
+        // no task were all unverified.
+        //
+        // Two different numbers on purpose: an endpoint anyone can dial is
+        // refused *before* a credential is asked for, so this must not land in
+        // the denial list.
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret) = test_bridge(dir.path(), port);
+
+        let sharer = local_endpoint(true).await;
+        let addr = dialable(&sharer).await;
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, sharer, false).await }
+        });
+
+        // Hold every front-door slot open. Each connection presents its ticket
+        // so the unauthenticated watchdog leaves it alone.
+        let mut held = Vec::new();
+        for _ in 0..MAX_LIVE_CONNECTIONS {
+            let ep = local_endpoint(false).await;
+            let conn = match ep.connect(addr.clone(), wire::ALPN).await {
+                Ok(c) => c,
+                Err(_) => break,
+            };
+            let _ = verify_ticket(&conn, &secret).await;
+            held.push((ep, conn));
+        }
+        assert_eq!(
+            held.len(),
+            MAX_LIVE_CONNECTIONS,
+            "could not open the front door's worth of connections"
+        );
+
+        // One more. It is refused at the transport, with no task and no
+        // credential asked for.
+        let extra = local_endpoint(false).await;
+        if let Ok(conn) = extra.connect(addr, wire::ALPN).await {
+            let _ = verify_ticket(&conn, &secret).await;
+        }
+        for _ in 0..200 {
+            if bridge.snapshot().front_refused > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        let s = bridge.snapshot();
+        assert!(s.front_refused > 0, "a flood left no trace");
+        assert!(
+            s.denied.is_empty(),
+            "a connection refused before any credential was counted as a bad ticket"
+        );
+
+        serving.abort();
+        drop(held);
+    }
+
+    #[tokio::test]
     async fn checking_a_ticket_does_not_touch_the_box() {
         // The first version of this check opened a normal stream, so every
         // `h5i join` cost a connection to the dev server, one of the share's 64

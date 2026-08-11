@@ -511,6 +511,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_share_at_its_ceiling_says_so_and_keeps_the_ones_it_has() {
+        // Nothing tested this. `over_capacity` is the one counter that says a
+        // share was hammered, and every test that exercised the sentence built
+        // the `Summary` by hand — so the increment, the `503`, and the release
+        // of a slot afterwards were all unverified.
+        let port = stalling_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        // Hold every slot. `stalling_server` never finishes a response, so each
+        // of these stays in the relay loop.
+        let all = crate::bridge::Bridge::MAX_CONNECTIONS;
+        let mut held = Vec::new();
+        for _ in 0..all {
+            use tokio::io::AsyncWriteExt;
+            let mut c = tokio::net::TcpStream::connect(addr).await.expect("connect");
+            c.write_all(
+                format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .expect("write");
+            held.push(c);
+        }
+        // Wait for them all to have taken a slot rather than sleeping a guess.
+        for _ in 0..200 {
+            if bridge.free_slots() == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(
+            bridge.free_slots(),
+            0,
+            "the connections never took their slots"
+        );
+
+        // One more, with a perfectly good ticket.
+        let over = request(
+            addr,
+            &format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n"),
+        )
+        .await;
+        assert!(over.starts_with("HTTP/1.1 503 "), "{over}");
+
+        // And it is recorded as load, not as a credential problem — the two
+        // mean opposite things about what happened to this share.
+        bridge.write_receipt();
+        let receipt = receipt_of(dir.path());
+        assert!(
+            receipt.contains("capacity 1 connection(s) refused"),
+            "{receipt}"
+        );
+        assert!(
+            !receipt.contains("refused  1 attempt"),
+            "a busy share read as a probed one: {receipt}"
+        );
+
+        // Letting one go frees exactly one slot.
+        held.pop();
+        for _ in 0..200 {
+            if bridge.free_slots() > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(
+            bridge.free_slots(),
+            1,
+            "a finished connection did not give its slot back"
+        );
+
+        serving.abort();
+    }
+
+    #[tokio::test]
     async fn a_missing_cloudflared_says_what_to_install_and_what_else_to_try() {
         // Only meaningful when cloudflared really is absent; where it is
         // installed this asserts nothing, which is the right trade for not
