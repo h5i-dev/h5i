@@ -199,6 +199,8 @@ pub struct Bridge {
     /// The same instant on a clock nothing can move. Every expiry decision in
     /// this process is floored against it; see [`Bridge::now`].
     started_mono: std::time::Instant,
+    /// What the wall clock has been seen doing. See [`SeenClock`].
+    clock: Mutex<SeenClock>,
     tally: Mutex<Tally>,
     /// One permit per live connection into the box, held for its lifetime.
     capacity: Arc<tokio::sync::Semaphore>,
@@ -227,6 +229,7 @@ impl Bridge {
             dialer,
             started: Utc::now(),
             started_mono: std::time::Instant::now(),
+            clock: Mutex::new(SeenClock::default()),
             tally: Mutex::new(Tally::default()),
             capacity: Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)),
             shutdown: tokio::sync::watch::Sender::new(false),
@@ -278,7 +281,7 @@ impl Bridge {
         let t = self.tally();
         Summary {
             seconds: self.started_mono.elapsed().as_secs() as i64,
-            clock_moved: self.clock_moved_by(ended),
+            clock_moved: self.clock_stepped_by(),
             route_broken: t.route_broken,
             settled: t.settled,
             turned_away: t.turned_away.clone(),
@@ -316,8 +319,18 @@ impl Bridge {
     /// is honoured, because expiring a ticket early is the safe direction and
     /// because a machine whose clock was genuinely wrong at start-up should be
     /// allowed to find that out.
+    ///
+    /// A *step* — not drift. The first version of this floored the wall clock
+    /// against `started + elapsed` outright, which assumes the two clocks run
+    /// at the same rate. Measured on the WSL2 host this was written on,
+    /// `CLOCK_REALTIME` advances 56.9s per 60s of `CLOCK_MONOTONIC`: a five
+    /// per cent difference, continuous, with nothing wrong. Under that floor a
+    /// one-hour ticket died at fifty-seven minutes and a day-long one would
+    /// lose over an hour, which is a promise broken in the other direction.
+    /// [`SeenClock`] tells the two apart.
     fn now(&self) -> DateTime<Utc> {
-        floor_now(Utc::now(), self.started, self.started_mono.elapsed())
+        let mut seen = self.clock.lock().expect("clock");
+        seen.observe(Utc::now(), self.started_mono.elapsed())
     }
 
     /// How far the wall clock has moved *out from under* this share, in
@@ -327,9 +340,8 @@ impl Bridge {
     /// happened, and "this session's timestamps are 3600s apart from what the
     /// elapsed time says" is a fact a reader needs in order to weigh the rest
     /// of it.
-    fn clock_moved_by(&self, ended: DateTime<Utc>) -> i64 {
-        let elapsed = self.started_mono.elapsed().as_secs() as i64;
-        (ended - self.started).num_seconds() - elapsed
+    fn clock_stepped_by(&self) -> i64 {
+        self.clock.lock().expect("clock").stepped
     }
 
     pub fn free_slots(&self) -> usize {
@@ -826,8 +838,10 @@ pub struct Summary {
     /// sit here is what turned an absurdity a reader would question into a
     /// plausible-looking zero.
     pub seconds: i64,
-    /// How far the wall clock moved out from under the session, in seconds.
-    /// Zero on any ordinary run.
+    /// The wall-clock *steps* seen during the session, signed and summed:
+    /// negative for a clock that jumped backwards. Zero on any ordinary run,
+    /// including on a host whose two clocks run at visibly different rates —
+    /// see `SeenClock` for why those are not the same thing.
     pub clock_moved: i64,
     pub peers: Vec<PeerRecord>,
     /// Peers past what the record list holds.
@@ -864,24 +878,74 @@ pub struct Summary {
     pub truncated: u64,
 }
 
-/// The floor itself, split out because the wall clock is not something a test
-/// can move.
-fn floor_now(
-    wall: DateTime<Utc>,
-    started: DateTime<Utc>,
-    elapsed: std::time::Duration,
-) -> DateTime<Utc> {
-    // `checked_add_signed`, because `DateTime + Duration` panics on overflow
-    // and this is on the path of every authorization the share does. The
-    // duration comes from a monotonic clock so the overflow needs a process
-    // that has run for a few hundred million years — but a panic here takes
-    // the share down mid-session, and the fallback costs one branch.
-    match chrono::Duration::from_std(elapsed)
-        .ok()
-        .and_then(|d| started.checked_add_signed(d))
-    {
-        Some(floor) if floor > wall => floor,
-        _ => wall,
+/// The wall clock, watched for jumps.
+///
+/// Two clocks disagreeing is not one thing. A *step* is a discontinuity — an
+/// NTP correction, a VM resumed from a snapshot, somebody running `date -s` —
+/// and it moves a ticket's expiry relative to the time its holder was
+/// promised. *Drift* is the two clocks running at different rates, which is
+/// ordinary: the machine this was written on runs `CLOCK_REALTIME` five per
+/// cent slower than `CLOCK_MONOTONIC`, all day, with nothing wrong.
+///
+/// The first version of the floor could not tell them apart, and treating
+/// drift as a step shortened every ticket on this host by five per cent.
+///
+/// So each observation is compared against what the monotonic clock says
+/// should have passed since the last one, with a tolerance proportional to
+/// that gap. Drift stays inside the tolerance by definition (it is a rate);
+/// a step of any size that matters does not.
+#[derive(Debug, Default)]
+struct SeenClock {
+    /// The raw wall reading at the last observation.
+    last_wall: i64,
+    /// The monotonic reading at the last observation, in seconds since start.
+    last_mono: i64,
+    /// Total of the backward steps seen, added back so they buy nobody time.
+    correction: i64,
+    /// Every step seen, signed and summed, for the receipt to report. Distinct
+    /// from `correction`, which only accumulates the backward half.
+    stepped: i64,
+    seen_any: bool,
+}
+
+/// The smallest jump worth calling a step, and the share of the gap between
+/// observations that is written off as drift.
+const STEP_FLOOR: i64 = 2;
+const DRIFT_SHARE: i64 = 4;
+
+impl SeenClock {
+    fn observe(&mut self, wall: DateTime<Utc>, elapsed: std::time::Duration) -> DateTime<Utc> {
+        let wall_s = wall.timestamp();
+        let mono_s = elapsed.as_secs() as i64;
+        if !self.seen_any {
+            self.seen_any = true;
+            self.last_wall = wall_s;
+            self.last_mono = mono_s;
+            return wall;
+        }
+        let gap = (mono_s - self.last_mono).max(0);
+        // A quarter of the gap, never less than two seconds. Drift is a rate,
+        // so it stays under any proportional bound wider than the rate itself;
+        // this host's five per cent has twenty points of room.
+        let tolerance = (gap / DRIFT_SHARE).max(STEP_FLOOR);
+        let moved = wall_s - (self.last_wall + gap);
+        if moved.abs() > tolerance {
+            self.stepped += moved;
+            if moved < 0 {
+                // Only the backward half is corrected for. A clock that jumps
+                // forward is honoured: expiring a ticket early is the safe
+                // direction, and a machine that was simply set wrong should be
+                // allowed to find out.
+                self.correction -= moved;
+            }
+        }
+        self.last_wall = wall_s;
+        self.last_mono = mono_s;
+        // `checked_add_signed`, because `DateTime + Duration` panics on
+        // overflow and this is on the path of every authorization the share
+        // does.
+        wall.checked_add_signed(chrono::Duration::seconds(self.correction))
+            .unwrap_or(wall)
     }
 }
 
@@ -914,17 +978,40 @@ pub fn render_receipt(s: &Summary) -> String {
     // are wall-clock subtractions, so this is the line that tells a reader
     // which numbers below to weigh and which to distrust. Five seconds of
     // tolerance: a poll interval and a rounding, not a clock step.
-    if s.clock_moved.abs() >= 5 {
+    if s.clock_moved != 0 {
         let (dir, by) = if s.clock_moved < 0 {
             ("back", -s.clock_moved)
         } else {
             ("forward", s.clock_moved)
         };
         out.push_str(&format!(
-            "clock    this machine's clock moved {dir} {by}s during the session — the length \
+            "clock    this machine's clock jumped {dir} {by}s during the session — the length \
              above is measured, but the two timestamps and each peer's held time are clock \
              readings and are off by that much\n"
         ));
+    } else {
+        // No jump, and the two clocks still disagree about how long this was.
+        // That is drift — two clocks running at different rates, which is
+        // ordinary and is not the sharer's machine misbehaving. Reported
+        // anyway, in weaker words, because the timestamps on this page are the
+        // wall clock's opinion and the length above is not, and a reader
+        // subtracting one from the other deserves to know they will not match.
+        // The host this was written on runs its wall clock five per cent slow,
+        // so this is not a hypothetical.
+        let span = (s.ended - s.started).num_seconds();
+        let off = span - seconds;
+        // Five seconds and two per cent. Two, because the host this was
+        // written on drifts five and a ten per cent bar would never fire where
+        // it is most true; five seconds absolute, so a short share does not
+        // report a rounding as a rate.
+        if off.abs() >= 5 && off.abs() * 50 >= seconds {
+            out.push_str(&format!(
+                "clock    the timestamps above are {}s apart and the session was measured at \
+                 {seconds}s — this machine's wall clock and its elapsed-time clock run at \
+                 different rates. Nothing jumped; the length is the measured one\n",
+                span
+            ));
+        }
     }
     out.push_str(&format!(
         "shared   port {} inside the box, never published on the host\n",
@@ -1477,35 +1564,78 @@ mod tests {
         // serving a peer through it. Every expiry decision in the process was
         // a bare `Utc::now()`, so a backward step of an hour extended every
         // live grant by an hour of real time — past what its holder was told,
-        // past what the sharer was told. An NTP correction after boot, a VM
-        // resumed from a snapshot and a dual-boot laptop's RTC all do this.
-        let started = at("2026-08-10T10:00:00Z");
+        // past what the sharer was told.
+        let base = at("2026-08-10T10:00:00Z");
+        let sec = |n: u64| std::time::Duration::from_secs(n);
+        let mut c = SeenClock::default();
 
-        // The clock has gone back an hour; two seconds of real time have
-        // passed. The share must read the second, not the hour.
-        let stepped = floor_now(
-            at("2026-08-10T09:00:00Z"),
-            started,
-            std::time::Duration::from_secs(2),
+        // First reading establishes the pair; it cannot judge anything yet.
+        assert_eq!(c.observe(base, sec(0)), base);
+        // Two ordinary seconds.
+        assert_eq!(
+            c.observe(base + chrono::Duration::seconds(2), sec(2)),
+            base + chrono::Duration::seconds(2)
         );
-        assert_eq!(stepped, started + chrono::Duration::seconds(2));
+
+        // The clock goes back an hour while one second passes. The share must
+        // read the second, not the hour.
+        let stepped = c.observe(base - chrono::Duration::seconds(3597), sec(3));
+        assert_eq!(stepped, base + chrono::Duration::seconds(3));
+        assert_eq!(c.stepped, -3600);
+        // And it stays corrected on the next reading, rather than snapping
+        // back the moment nothing new happens.
+        let after = c.observe(base - chrono::Duration::seconds(3596), sec(4));
+        assert_eq!(after, base + chrono::Duration::seconds(4));
 
         // Forward is honoured. Expiring a ticket early is the safe direction,
         // and a machine whose clock was wrong when the share started should be
         // allowed to find out.
-        let jumped = floor_now(
-            at("2026-08-10T11:00:00Z"),
-            started,
-            std::time::Duration::from_secs(2),
-        );
-        assert_eq!(jumped, at("2026-08-10T11:00:00Z"));
+        let mut c = SeenClock::default();
+        c.observe(base, sec(0));
+        let jumped = c.observe(base + chrono::Duration::seconds(3601), sec(1));
+        assert_eq!(jumped, base + chrono::Duration::seconds(3601));
+        assert_eq!(c.stepped, 3600);
+    }
 
-        // An untouched clock is passed through, not rounded to the floor.
-        let ordinary = at("2026-08-10T10:00:03.500Z");
-        assert_eq!(
-            floor_now(ordinary, started, std::time::Duration::from_secs(3)),
-            ordinary
+    #[test]
+    fn a_clock_that_merely_runs_slow_is_not_a_clock_that_jumped() {
+        // The first version of the floor could not tell a step from a rate,
+        // and this host makes that expensive: `CLOCK_REALTIME` here advances
+        // 56.9s per 60s of `CLOCK_MONOTONIC`, continuously, with nothing
+        // wrong. Flooring the wall clock against `started + elapsed` outright
+        // therefore expired a one-hour ticket at fifty-seven minutes, and
+        // would take over an hour off a day-long one.
+        let base = at("2026-08-10T10:00:00Z");
+        let mut c = SeenClock::default();
+        let mut wall = 0i64;
+        // An hour of this host's five per cent, sampled once a minute.
+        for minute in 0..60 {
+            wall += 57;
+            let out = c.observe(
+                base + chrono::Duration::seconds(wall),
+                std::time::Duration::from_secs((minute + 1) * 60),
+            );
+            // Untouched: no correction, because nothing jumped.
+            assert_eq!(
+                out,
+                base + chrono::Duration::seconds(wall),
+                "drift was corrected as if it were a step, at minute {minute}"
+            );
+        }
+        assert_eq!(c.stepped, 0, "drift was reported as a jump");
+
+        // And a real jump is still caught on a host that drifts.
+        let out = c.observe(
+            base + chrono::Duration::seconds(wall - 600),
+            std::time::Duration::from_secs(3660),
         );
+        assert!(
+            c.stepped < 0,
+            "a ten-minute jump went unnoticed on a drifting host"
+        );
+        // Corrected up to where the monotonic clock says the wall clock
+        // should have been: the last reading plus the minute that passed.
+        assert_eq!(out, base + chrono::Duration::seconds(wall + 660 - 600));
     }
 
     #[test]
@@ -1531,7 +1661,7 @@ mod tests {
         let body = render_receipt(&s);
         assert!(body.contains("share session, 97s"), "{body}");
         assert!(!body.contains("share session, 0s"), "{body}");
-        assert!(body.contains("clock moved back 3503s"), "{body}");
+        assert!(body.contains("clock jumped back 3503s"), "{body}");
         assert!(
             body.contains("are clock readings and are off by that much"),
             "{body}"
@@ -1544,14 +1674,30 @@ mod tests {
         s.clock_moved = 660;
         let body = render_receipt(&s);
         assert!(body.contains("share session, 23s"), "{body}");
-        assert!(body.contains("clock moved forward 660s"), "{body}");
+        assert!(body.contains("clock jumped forward 660s"), "{body}");
 
-        // And an ordinary session says nothing about clocks. A poll interval
-        // and a rounding are not a clock step.
+        // And an ordinary session says nothing about clocks.
         let mut s = summary(vec![], vec![]);
+        s.started = at("2026-08-10T10:00:00Z");
+        s.ended = at("2026-08-10T10:10:00Z");
         s.seconds = 600;
-        s.clock_moved = 1;
+        s.clock_moved = 0;
         assert!(!render_receipt(&s).contains("clock"));
+
+        // A host whose two clocks run at different rates gets a weaker
+        // sentence, and specifically not "your clock jumped". This one runs
+        // its wall clock five per cent slow all day with nothing wrong, and
+        // calling that a jump on every receipt would be the same false
+        // accusation this round set out to stop making.
+        let mut s = summary(vec![], vec![]);
+        s.started = at("2026-08-10T10:00:00Z");
+        s.ended = at("2026-08-10T10:09:30Z");
+        s.seconds = 600;
+        s.clock_moved = 0;
+        let body = render_receipt(&s);
+        assert!(body.contains("run at different rates"), "{body}");
+        assert!(!body.contains("clock jumped"), "{body}");
+        assert!(body.contains("Nothing jumped"), "{body}");
     }
 
     #[test]
