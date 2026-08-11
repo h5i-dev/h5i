@@ -547,8 +547,23 @@ shared   port 3000 inside the box, never published on the host
 endpoint kbcd7fq2m4xn8s6r3v9w1y5z7a2b4c6d8e0f2g4h6j8k0l2m4n
 peers    1
   kbcd7fq2m4x… via direct — grant a1b2c3d4 (alex), 300s, 12 connections, 900 in / 5000 out
-refused  2 attempt(s): 1 unknown ticket, 0 expired, 1 revoked
+refused  3 attempt(s): of the 3 recorded, 1 presented no invite, 1 an unknown ticket, 0 expired, 1 revoked
+turned   2 connection(s) away before any ticket was weighed: 2 no direct path was available
 ```
+
+Lines appear only when they have something to say. `turned` covers what is not
+a credential question at all: `--direct-only` with no direct path, a peer that
+connected and never presented a ticket, and requests the gate refuses to parse.
+`capacity` and `flooded` say the share was hammered rather than probed, and
+they are deliberately separate from `refused` because the two mean opposite
+things. `route` says h5i could not reach the box, which is a different fact
+from `unreached` — nothing was listening on the port — and blaming the second
+for the first sends somebody to check a dev server that is running fine.
+
+A receipt can also open with `partial`, which means it was written before every
+connection had finished: the byte counts below it are short and a peer may read
+as still connected. That happens when the quiesce times out, and when a Ctrl-C
+during the shutdown skips the wait.
 
 Read the numbers for what they are. "Connections" counts connections *into the
 box*, not requests to the share: a visitor who followed the invite link and read

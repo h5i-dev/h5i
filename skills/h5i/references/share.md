@@ -67,6 +67,9 @@ exits without it.
 
 ## What it needs, and what it refuses
 
+- **Linux.** A share is safe because the box has a network namespace this
+  machine can enter and the only route in goes there. macOS boxes bind the
+  host's loopback, so `h5i box share` refuses on macOS and says so.
 - The box must be **running** (a live `h5i box shell` or `h5i box run`) and have
   a network of its own — `supervised` or `container`, or `process` with a
   profile that denies egress. Otherwise "the box's port 3000" is the host's port
@@ -82,8 +85,8 @@ exits without it.
 ## What lands in the receipt
 
 A share writes its own lane into the box's receipt: who connected, over what
-path (direct, relayed, or tunnel), for how long, how much moved, and who was
-turned away. It is written when the share ends, so an export taken during a
+path (direct, relayed, or tunnel), for how long, how much moved, who was
+refused and why, and who was turned away before a ticket was weighed at all. It is written when the share ends, so an export taken during a
 share will not have it yet.
 
 If you are summarising a box's history, a share session is worth mentioning by

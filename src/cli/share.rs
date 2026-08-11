@@ -241,8 +241,8 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
                     println!("{} deleted the share record for {name}", SUCCESS);
                     println!(
                         "   Nothing was asked to stop. A process that really was serving it \
-                         notices within a second and exits, writing its receipt on the way — \
-                         so use this only when you believe nothing is."
+                         notices within a second and then exits, writing its receipt on the \
+                         way — so use this only when you believe nothing is."
                     );
                 } else {
                     println!(
@@ -265,8 +265,14 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
             match h5i_share::run::stop(&dir)? {
                 h5i_share::run::Stopped::Serving => {
                     println!("{} stopping the share on {name}", SUCCESS);
+                    // "Within a second" was the time it takes to *notice*
+                    // (`STOP_POLL`). Then comes the grace, the transport's
+                    // close and up to five seconds of waiting for connections
+                    // still mid-copy — so somebody who watched for a second and
+                    // saw it still listed concluded the stop had not worked.
                     println!(
-                        "   The serving process writes its receipt and exits within a second."
+                        "   It notices within a second, then writes its receipt and exits — \
+                         up to about six seconds if connections are still finishing."
                     );
                     println!(
                         "   If it is still listed a minute from now, nothing was really there: \
