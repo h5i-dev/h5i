@@ -321,11 +321,18 @@ fn floor_char(s: &str, mut i: usize) -> usize {
 
 /// Pieces of a ticket, including every shape a hostile one would use.
 ///
+/// Behind `p2p` because a ticket is: it carries the addressing of an iroh
+/// endpoint, and the parser these exercise is only compiled with that feature.
+/// Built unconditionally, they were dead code in a
+/// `--no-default-features` build — which is one of the two clippy runs CI does
+/// with `-D warnings`, and the one no local check here had ever run.
+///
 /// A ticket is the one thing on the joiner's side that arrives entirely from
 /// somebody else and is pasted in by hand. Hand-written review of it has
 /// already found two real defects — an address filter that caught one spelling
 /// of loopback out of four, and no cap on how many places one ticket could aim
 /// at — so it is worth generating rather than only imagining.
+#[cfg(feature = "p2p")]
 const TICKET_ADDRS: &[&str] = &[
     r#"{"Ip":"127.0.0.1:2375"}"#,
     r#"{"Ip":"0.0.0.0:2375"}"#,
@@ -348,9 +355,11 @@ const TICKET_ADDRS: &[&str] = &[
     r#""a string""#,
 ];
 
+#[cfg(feature = "p2p")]
 const TICKET_SECRETS: &[&str] = &["", "ff", "zz", "not-hex-at-all", "0011"];
 
 /// Build something ticket-shaped. Sometimes valid, usually not.
+#[cfg(feature = "p2p")]
 pub fn ticket_json(rng: &mut Rng) -> String {
     let mut addrs: Vec<String> = Vec::new();
     let many = rng.chance(6);
@@ -397,6 +406,7 @@ pub fn ticket_json(rng: &mut Rng) -> String {
 }
 
 /// Wrap a ticket body the way `h5i box share` prints it.
+#[cfg(feature = "p2p")]
 pub fn encode_ticket(body: &str) -> String {
     use base64::Engine as _;
     format!(

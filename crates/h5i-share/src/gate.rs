@@ -1041,6 +1041,25 @@ mod fuzz_tests {
         let n = rounds();
         let counts =
             format!("parsed {parsed}, framed {with_framing}, cookied {with_cookie}, of {n}");
+
+        // The correctness half, at any round count: whatever was generated,
+        // nothing that carried both framings was accepted.
+        assert_eq!(
+            both_parsed, 0,
+            "a head carrying both framings was accepted: {counts}"
+        );
+
+        // The reach half — did the generator actually offer the shapes this
+        // test exists to check — only when enough rounds were asked for to
+        // expect them. These are statements about a default-sized run: the
+        // rarest shape here is two specific headers landing on one head, and
+        // at `H5I_FUZZ_ROUNDS=200` the floors fired with messages blaming the
+        // generator for something the operator had chosen. A floor that
+        // reports the wrong cause is worse than no floor — it sends the next
+        // person to read a generator that is working perfectly.
+        if n < 1_000 {
+            return;
+        }
         assert!(
             parsed * 10 > n,
             "the generator has stopped producing heads the parser accepts: {counts}"
@@ -1050,17 +1069,10 @@ mod fuzz_tests {
             "almost nothing declared a body length, so nothing exercised the framing \
              arithmetic: {counts}"
         );
-        // The property the tautology above was pretending to check: a head
-        // carrying both framings is *refused*, rather than parsed into
-        // something a downstream parser could read differently.
         assert!(
             both_framings > 0,
             "no head carried both a length and a chunked encoding, so the one shape \
              two parsers disagree about was never offered: {counts}"
-        );
-        assert_eq!(
-            both_parsed, 0,
-            "a head carrying both framings was accepted: {counts}"
         );
         assert!(
             with_cookie * 500 > n,

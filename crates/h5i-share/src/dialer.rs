@@ -183,6 +183,34 @@ fn unsupported() -> H5iError {
     )
 }
 
+// ─── everywhere else ────────────────────────────────────────────────────────
+
+/// The two constructors, refusing.
+///
+/// `Inner::Unsupported` and a `connect` arm for it have been here since the
+/// module was written, and nothing ever built the object on those platforms:
+/// `run::serve` calls `Dialer::spawn`, `run.rs` is compiled everywhere, and
+/// `spawn` existed only under `cfg(target_os = "linux")`. So h5i did not
+/// compile at all for `aarch64-apple-darwin` or `x86_64-pc-windows-msvc` —
+/// found by CI's cross-check job the first time this branch was ever pushed
+/// through it.
+///
+/// Refusing here rather than returning a dialer that cannot dial: the failure
+/// belongs at `h5i box share`, with a sentence saying why, not at the first
+/// visitor's first request. `h5i join` is unaffected and works on any platform
+/// — it terminates QUIC and serves on its own loopback, and needs no namespace
+/// to enter.
+#[cfg(not(target_os = "linux"))]
+impl Dialer {
+    pub fn spawn(_box_pid: u32, _port: u16) -> Result<Dialer, H5iError> {
+        Err(unsupported())
+    }
+
+    pub fn spawn_local(_port: u16) -> Result<Dialer, H5iError> {
+        Err(unsupported())
+    }
+}
+
 // ─── Linux ──────────────────────────────────────────────────────────────────
 
 /// Linux only, and unlike the viewer forward this module needs no arch gate:
