@@ -105,13 +105,20 @@ fn is_cross_origin(headers: &[&str], host: Option<&str>) -> bool {
             // The share's own page, or a user-initiated load: typed, clicked
             // from a bookmark, or opened from the address bar.
             "same-origin" | "none" => false,
-            // Anything else is another page driving this one. A *navigation*
-            // is still allowed, because that is how every visitor arrives:
-            // the invite link is followed from a chat window, which is
-            // cross-site by construction. A navigation loads a document into
-            // the address bar, where the person can see where they are; a
-            // subresource does not.
-            _ => !is_a_navigation(headers),
+            // A navigation from *another site* is how every visitor arrives:
+            // the invite is followed from a chat window, and refusing that
+            // refuses everybody at the front door.
+            "cross-site" => !is_a_navigation(headers),
+            // But a navigation from the same *site* is not that. Two `h5i
+            // join` proxies on one machine are `127.0.0.1:A` and
+            // `127.0.0.1:B` — different origins, same site, because a site
+            // does not include the port — and `SameSite=Lax` constrains only
+            // cross-site requests, so a same-site POST is not constrained at
+            // all. A form on share A targeting share B arrived as
+            // `same-site` + `navigate` + `document`, which the carve-out let
+            // through with B's cookie attached. The invite link is never
+            // same-site.
+            _ => true,
         };
     }
     let Some(origin) = header(headers, "origin") else {
@@ -696,6 +703,20 @@ mod origin_tests {
         )
         .expect("parses");
         assert!(framed.cross_origin);
+
+        // And the one the carve-out let through: a form on the share next door
+        // targeting this one. Same site, because a site does not include the
+        // port, so `SameSite=Lax` constrains nothing — and it arrives as a
+        // navigation of a document, exactly the shape the invite link has.
+        // What tells them apart is that the invite comes from another *site*.
+        let neighbour = req(
+            "Sec-Fetch-Site: same-site\r\nSec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: document\r\n",
+        )
+        .expect("parses");
+        assert!(
+            neighbour.cross_origin,
+            "a navigation from the share next door was treated as the invite link"
+        );
     }
 
     #[test]

@@ -728,8 +728,12 @@ browser.</p>
 <p>While a share is open, <code>h5i ui</code> marks the box <strong>shared now</strong>, with the port,
 the transport and how many tickets can still admit somebody. That indicator is
 live; the receipt below is what lands when the share ends. <code>h5i box rm</code> refuses
-a box that is being shared and names the share, and <code>--force</code> removes it anyway
-and says so — the share notices within a few seconds and ends itself.</p>
+a box that is being shared and names the share; <code>--force</code> removes it anyway,
+and once the removal is actually going ahead it says so, at which point the
+share notices within a few seconds and ends itself.</p>
+<p>A ticket is worth the same care as a password in one more respect: it is an
+argument to <code>h5i join</code>, so any other user on the joining machine can read it out
+of <code>ps</code> for the life of the grant.</p>
 <h4 id="what-lands-in-the-receipt">What lands in the receipt</h4>
 <p>Every other receipt lane observes what left a box. This one records what came
 in, and it is host observed in the strongest sense available: h5i owns both ends

@@ -606,6 +606,47 @@ mod tests {
     }
 
     #[test]
+    fn what_this_crate_writes_is_what_h5i_core_reads() {
+        // The loop closed. `h5i-core` cannot call this crate — it sits below
+        // it — so `box rm`, `export` and the console each grew their own
+        // hand-rolled probe of `share.json`, and by the time anyone counted
+        // there were four definitions of "a live share" that did not agree.
+        // There is one reader down there now, and this is the test that stops
+        // the two drifting: a record written here, read there, field for
+        // field.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut s = session_with(vec![]);
+        s.port = 4321;
+        s.transport = Transport::Tunnel;
+        let (live, _) = mint_grant(Some("alex".into()), 4_000_000_000).expect("mint");
+        let (dead, _) = mint_grant(None, 1).expect("mint");
+        let (mut revoked, _) = mint_grant(None, 4_000_000_000).expect("mint");
+        revoked.revoked = true;
+        s.grants = vec![live, dead, revoked];
+        write(dir.path(), &s).expect("write");
+
+        let seen = h5i_core::share_record::read_live(dir.path())
+            .expect("h5i-core could not read a record this crate just wrote");
+        assert_eq!(seen.pid, std::process::id());
+        assert_eq!(seen.port, 4321);
+        assert_eq!(seen.transport, "tunnel");
+        assert!(!seen.winding_up);
+        assert_eq!(
+            seen.live_grants, 1,
+            "expired and revoked are not live grants"
+        );
+        assert!(seen.is_admitting());
+
+        // And the state the console used to call "somebody can reach this box
+        // right now" while the share was refusing to admit anybody.
+        s.winding_up = true;
+        write(dir.path(), &s).expect("write");
+        let seen = h5i_core::share_record::read_live(dir.path()).expect("still a live process");
+        assert!(seen.winding_up);
+        assert!(!seen.is_admitting());
+    }
+
+    #[test]
     fn a_share_record_can_always_be_forgotten() {
         // The dead end this exits: `is_live` is `kill(pid, 0)` and nothing
         // else, so a record whose pid has been reused by an unrelated process

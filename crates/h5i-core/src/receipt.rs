@@ -355,6 +355,20 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
     // so payloads stored by older versions remain readable.
     let raw_file = raw_path(env_dir, &digest[..ID_LEN]);
     if let Some(parent) = raw_file.parent() {
+        // Only under an env directory that still exists. `append` creating
+        // the whole tree is what let a share that outlived `h5i box rm`
+        // recreate the box it had just erased — as a receipt log and a payload
+        // under a path with no manifest, which every tool answers "no
+        // environment named that" for and only `rm -rf` clears. Guarding one
+        // caller left the next one armed.
+        if let Some(env_dir) = parent.parent() {
+            if !env_dir.exists() {
+                return Err(H5iError::Metadata(format!(
+                    "the box directory {} is gone, so there is nowhere to record this",
+                    env_dir.display()
+                )));
+            }
+        }
         std::fs::create_dir_all(parent)?;
     }
     // An identical payload is already on disk and rewriting it would only risk a

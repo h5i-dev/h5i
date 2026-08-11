@@ -276,17 +276,22 @@ VP=$(share_pid)
 sleep 4
 kill -9 "$VP" 2>/dev/null
 
-# The client has to come back. Sixty seconds is far more than any of the
-# proxy's own deadlines, so anything still running at that point is a hang.
-for _ in $(seq 1 120); do
+# The client has to come back, and "come back" means on its own rather than on
+# its own timeout. Waiting a fixed sixty seconds was wrong twice over: the
+# download legitimately takes about seventy at this rate when the joiner
+# already had the bytes, so a completed transfer read as a hang. What is
+# actually being asserted is that curl does not sit until `--max-time`, so the
+# wait is longer than that and `28` — curl's timeout — is the failure.
+for _ in $(seq 1 260); do
   [ -f "$WORK/curl.rc" ] && break
   sleep 0.5
 done
-if [ -f "$WORK/curl.rc" ]; then
-  pass "the visitor's client returned rather than hanging ($(cat "$WORK/curl.rc"))"
-else
-  fail "the visitor's client was still waiting a minute after the sharer died"
-fi
+rc=$(cat "$WORK/curl.rc" 2>/dev/null || echo missing)
+case "$rc" in
+  28)      fail "the visitor's client sat until its own timeout — that is the hang" ;;
+  missing) fail "the visitor's client never returned at all" ;;
+  *)       pass "the visitor's client returned on its own (curl=$rc)" ;;
+esac
 # Deliberately not asserted: whether the body arrived whole. That is a race
 # between the rate limit and the kill, not a property — a sharer killed after
 # the bytes were already delivered has delivered them, and asserting otherwise

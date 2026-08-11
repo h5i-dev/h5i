@@ -448,36 +448,20 @@ pub struct SharedNow {
 }
 
 fn shared_now(env_dir: &std::path::Path) -> Option<SharedNow> {
-    let raw = std::fs::read(env_dir.join("share.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
-    let pid = v.get("pid")?.as_u64()?;
-    #[cfg(unix)]
-    {
-        if pid == 0 || unsafe { libc::kill(pid as i32, 0) } != 0 {
-            return None;
-        }
+    // Only when somebody can actually reach in. A share that is winding up, or
+    // whose grants have all been revoked, has a live pid and admits nobody —
+    // and the badge said "somebody outside can reach port 3000 right now" of
+    // it, for as long as that process took to exit. On a screen whose job is
+    // saying what is pressing on a boundary, overclaiming toward alarm is the
+    // failure that costs it its credibility.
+    let r = crate::share_record::read_live(env_dir)?;
+    if !r.is_admitting() {
+        return None;
     }
-    let now = chrono::Utc::now().timestamp();
-    let grants = v
-        .get("grants")
-        .and_then(|g| g.as_array())
-        .map(|g| {
-            g.iter()
-                .filter(|x| {
-                    x.get("revoked") != Some(&serde_json::Value::Bool(true))
-                        && x.get("expires_at").and_then(|e| e.as_i64()).unwrap_or(0) > now
-                })
-                .count()
-        })
-        .unwrap_or(0);
     Some(SharedNow {
-        transport: v
-            .get("transport")
-            .and_then(|t| t.as_str())
-            .unwrap_or("unknown")
-            .to_string(),
-        port: v.get("port").and_then(|p| p.as_u64()).unwrap_or(0),
-        grants,
+        transport: r.transport,
+        port: r.port as u64,
+        grants: r.live_grants,
     })
 }
 
@@ -1042,17 +1026,26 @@ mod tests {
         assert!(shared_now(dir.path()).is_none(), "no file, nothing to say");
 
         let now = chrono::Utc::now().timestamp();
-        let live = serde_json::json!({
-            "pid": std::process::id(),
-            "transport": "tunnel",
-            "port": 3000,
-            "grants": [
-                {"id": "a", "revoked": false, "expires_at": now + 600},
-                {"id": "b", "revoked": true,  "expires_at": now + 600},
-                {"id": "c", "revoked": false, "expires_at": now - 1},
-            ],
-        });
-        std::fs::write(dir.path().join("share.json"), live.to_string()).expect("write");
+        let record = |extra: &str, revoked: bool| {
+            serde_json::json!({
+                "v": 1,
+                "box_id": "env/a/demo",
+                "port": 3000,
+                "transport": "tunnel",
+                "endpoint": "https://x",
+                "started_at": "2026-01-01T00:00:00Z",
+                "pid": std::process::id(),
+                "winding_up": extra == "winding",
+                "grants": [
+                    {"id": "a", "secret_sha256": "ff", "revoked": revoked, "expires_at": now + 600},
+                    {"id": "b", "secret_sha256": "ff", "revoked": true,    "expires_at": now + 600},
+                    {"id": "c", "secret_sha256": "ff", "revoked": false,   "expires_at": now - 1},
+                ],
+            })
+            .to_string()
+        };
+
+        std::fs::write(dir.path().join("share.json"), record("", false)).expect("write");
         let got = shared_now(dir.path()).expect("a live share");
         assert_eq!(got.transport, "tunnel");
         assert_eq!(got.port, 3000);
@@ -1060,9 +1053,18 @@ mod tests {
         // expired are two tickets that let nobody in.
         assert_eq!(got.grants, 1);
 
+        // A share that is winding up has a live pid and admits nobody. The
+        // badge used to say "somebody outside can reach port 3000 right now"
+        // of it, for as long as that process took to write its receipt.
+        std::fs::write(dir.path().join("share.json"), record("winding", false)).expect("write");
+        assert!(shared_now(dir.path()).is_none(), "a winding-up share is not admitting anyone");
+
+        // And so does one whose every grant has been revoked.
+        std::fs::write(dir.path().join("share.json"), record("", true)).expect("write");
+        assert!(shared_now(dir.path()).is_none(), "no live grant is nobody admitted");
+
         // A record left by a process that is gone is not a share.
-        let dead = serde_json::json!({"pid": 0, "transport": "p2p", "port": 1, "grants": []});
-        std::fs::write(dir.path().join("share.json"), dead.to_string()).expect("write");
+        std::fs::write(dir.path().join("share.json"), "{\"pid\":0}").expect("write");
         assert!(shared_now(dir.path()).is_none());
     }
 

@@ -160,7 +160,7 @@ pub fn export(
     // `h5i-share`, and the one fact needed here — is a live process serving
     // this box right now — is a two-line read of a file that sits beside the
     // receipt log.
-    let live_share = live_share_pid(&m.dir(h5i_root));
+    let live_share = crate::share_record::read_live(&m.dir(h5i_root)).map(|s| s.pid.to_string());
     std::fs::write(
         &report_path,
         report(m, &summary, &records, &brief, live_share.as_deref()).as_bytes(),
@@ -173,25 +173,6 @@ pub fn export(
 /// The human half of the bundle: what this box was, what it changed, and every
 /// command it ran. Written from the identity-validated manifest and the
 /// receipts, never from anything the box wrote into `$WORK`.
-/// The pid of a process serving a share of this box, if one is.
-///
-/// Deliberately not a dependency on `h5i-share`: this crate is below it. The
-/// file is `<env>/share.json`, a sibling of the receipt log, and the only
-/// fields read are the two that decide whether anything is serving.
-fn live_share_pid(env_dir: &Path) -> Option<String> {
-    let raw = std::fs::read(env_dir.join("share.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
-    let pid = v.get("pid")?.as_u64()?;
-    #[cfg(unix)]
-    {
-        // The same test the share itself uses for "is this record live".
-        if pid == 0 || unsafe { libc::kill(pid as i32, 0) } != 0 {
-            return None;
-        }
-    }
-    Some(pid.to_string())
-}
-
 fn report(
     m: &EnvManifest,
     s: &ExportSummary,

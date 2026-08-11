@@ -50,6 +50,10 @@ const MAX_LIVE_CONNECTIONS: usize = 256;
 /// iroh keeps a connection alive from this side, so a peer that completes the
 /// handshake and then says nothing never idles out on its own. Nothing has been
 /// authorized, so nothing is lost by hanging up.
+/// How many addresses one ticket may name. A real one has a relay and a few
+/// interfaces; two hundred is a way of making somebody's machine spray packets.
+const MAX_TICKET_ADDRS: usize = 12;
+
 const UNAUTHENTICATED_GRACE: Duration = Duration::from_secs(30);
 
 /// How long to wait for a closing connection's pumps to report their byte
@@ -110,81 +114,112 @@ pub async fn addressing(ep: &Endpoint) -> Result<(String, serde_json::Value), H5
 }
 
 fn parse_addr(value: &serde_json::Value) -> Result<EndpointAddr, H5iError> {
+    // Checked on the JSON, before serde builds an `EndpointAddr` out of it.
+    refuse_addresses_that_point_inward(value)?;
     let addr: EndpointAddr = serde_json::from_value(value.clone()).map_err(|e| {
         H5iError::Metadata(format!(
             "this ticket's addressing is not something this h5i understands ({e}) — the two \
              sides are probably different versions"
         ))
     })?;
-    refuse_addresses_that_point_inward(&addr)?;
     Ok(addr)
 }
 
-/// Refuse a ticket that would make the joiner dial its own machine.
+/// Refuse a ticket that would make the joiner dial its own machine, and cap how
+/// many places one ticket may point at.
 ///
-/// The addressing in a ticket is chosen by whoever wrote the ticket, and until
-/// this ran the joiner handed it to iroh unexamined: an `Ip` entry naming
-/// `127.0.0.1:2375` or a `Relay` entry naming `http://127.0.0.1:9200/` made
-/// `h5i join` open connections to services on the *joiner's own* loopback,
-/// from inside their network, before any h5i-level check happened. A ticket is
-/// something people paste from a chat window.
+/// The addressing in a ticket is chosen by whoever wrote the ticket, and a
+/// ticket is something people paste out of a chat window. Two things have to be
+/// true of it before iroh is handed it.
+///
+/// **Nowhere on the joiner's own machine.** The first version of this check
+/// formatted each address with `{:?}` and looked for an IP literal in the text,
+/// which caught `127.0.0.1` and missed every other spelling of the same place:
+/// `0.0.0.0` and `[::ffff:127.0.0.1]` both `connect()` to loopback on Linux,
+/// and neither is `is_loopback()`. Demonstrated: a ticket naming
+/// `http://0.0.0.0:39271/` made `h5i join` open a plaintext connection to a
+/// listener on `127.0.0.1:39271` and send it a request. The unauthenticated
+/// admin surfaces on a developer's loopback — a Docker socket, an Ollama, an
+/// Elasticsearch, their own `h5i ui` — are unauthenticated *because* they are
+/// loopback-only. It decides on parsed addresses now, and refuses loopback,
+/// unspecified and link-local, after unwrapping IPv4-mapped IPv6.
+///
+/// **Not very many places.** The 8 KiB ticket cap leaves room for about two
+/// hundred addresses, and iroh probes every one: measured, one pasted ticket
+/// produced 2,940 packets and 3.5 MB of UDP to 196 destinations of the ticket
+/// author's choosing, sent from inside the joiner's network and attributed to
+/// them. A real ticket names a handful.
 ///
 /// What is deliberately **not** refused is a private LAN address. Two machines
-/// on one office network is the case direct P2P exists for, and refusing
-/// RFC1918 would break the feature to close a smaller hole than it opens.
-/// Loopback and link-local are refused because a sharer is never legitimately
-/// reachable at the joiner's own loopback, and `169.254`/`fe80` name the
-/// joiner's own link.
-fn refuse_addresses_that_point_inward(addr: &EndpointAddr) -> Result<(), H5iError> {
-    let refuse = |what: &str| {
-        Err(H5iError::Metadata(format!(
-            "this ticket names {what}, which is an address on your own machine rather than on \
-             the sharer's. h5i will not dial it. Ask for a ticket minted on the machine that \
-             is actually sharing."
-        )))
-    };
-    for t in addr.addrs.iter() {
-        let text = format!("{t:?}");
-        if let Some(ip) = first_ip(&text) {
-            if ip.is_loopback() || is_link_local(&ip) {
-                return refuse(&format!("`{ip}`"));
+/// on one office network is the case direct P2P exists for.
+fn refuse_addresses_that_point_inward(value: &serde_json::Value) -> Result<(), H5iError> {
+    let addrs = value.get("addrs").and_then(|a| a.as_array());
+    let listed = addrs.map(|a| a.len()).unwrap_or(0);
+    if listed > MAX_TICKET_ADDRS {
+        return Err(H5iError::Metadata(format!(
+            "this ticket names {listed} addresses. A real one names a handful; this many is a \
+             way of making your machine spray packets at somebody else's choosing. Ask for a \
+             ticket minted by a current h5i."
+        )));
+    }
+    for entry in addrs.into_iter().flatten() {
+        // Decided on the parsed address, not on a debug rendering of it.
+        let bad = match entry {
+            serde_json::Value::Object(o) => {
+                if let Some(ip) = o.get("Ip").and_then(|v| v.as_str()) {
+                    ip.parse::<std::net::SocketAddr>()
+                        .ok()
+                        .map(|s| points_inward(&s.ip()))
+                        .unwrap_or(false)
+                } else if let Some(url) = o.get("Relay").and_then(|v| v.as_str()) {
+                    relay_host(url).is_some_and(|ip| points_inward(&ip))
+                } else {
+                    false
+                }
             }
-        } else if text.contains("http://127.0.0.1")
-            || text.contains("http://localhost")
-            || text.contains("http://[::1]")
-            || text.contains("https://127.0.0.1")
-            || text.contains("https://localhost")
-            || text.contains("https://[::1]")
-        {
-            return refuse("a relay on your own loopback");
+            _ => false,
+        };
+        if bad {
+            return Err(H5iError::Metadata(format!(
+                "this ticket names {entry}, which is an address on your own machine rather than \
+                 on the sharer's. h5i will not dial it. Ask for a ticket minted on the machine \
+                 that is actually sharing."
+            )));
         }
     }
     Ok(())
 }
 
-/// The first IP literal in a transport address's debug form.
+/// The IP a relay URL names, when it names one literally.
 ///
-/// Matching on the text rather than on the enum because `TransportAddr` is
-/// iroh's and gains variants between versions; a new one this code has never
-/// heard of should still be examined rather than waved through.
-fn first_ip(text: &str) -> Option<std::net::IpAddr> {
-    let start = text.find(|c: char| c.is_ascii_digit() || c == '[')?;
-    let rest = &text[start..];
-    let end = rest
-        .find(|c: char| !(c.is_ascii_hexdigit() || c == '.' || c == ':' || c == '[' || c == ']'))
-        .unwrap_or(rest.len());
-    let candidate = &rest[..end];
-    let bare = candidate
-        .rsplit_once(':')
-        .map(|(h, _)| h)
-        .unwrap_or(candidate);
-    bare.trim_matches(|c| c == '[' || c == ']').parse().ok()
+/// A hostname is left alone: resolving it here would be a DNS lookup performed
+/// on an attacker's string before anything has been checked, which trades one
+/// problem for another.
+fn relay_host(url: &str) -> Option<std::net::IpAddr> {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host = match host.strip_prefix('[') {
+        // `[::1]:9200` and `[::1]`.
+        Some(v6) => v6.split(']').next().unwrap_or(v6),
+        None => host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host),
+    };
+    host.parse().ok()
 }
 
-fn is_link_local(ip: &std::net::IpAddr) -> bool {
+/// Is this an address on the machine doing the dialling?
+fn points_inward(ip: &std::net::IpAddr) -> bool {
+    // `::ffff:127.0.0.1` is loopback wearing an IPv6 hat, and `connect()`
+    // treats it as such. Unwrap before asking.
+    let ip = match ip {
+        std::net::IpAddr::V6(v6) => v6.to_ipv4_mapped().map(std::net::IpAddr::V4).unwrap_or(*ip),
+        v4 => *v4,
+    };
     match ip {
-        std::net::IpAddr::V4(v4) => v4.is_link_local(),
-        std::net::IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
+        // `0.0.0.0` and `::` both land on loopback when connected to.
+        std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_unspecified() || v4.is_link_local(),
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
     }
 }
 
@@ -672,8 +707,9 @@ pub async fn dial(endpoint: &Endpoint, addr: &serde_json::Value) -> Result<Conne
     let addr = parse_addr(addr)?;
     endpoint.connect(addr, wire::ALPN).await.map_err(|e| {
         H5iError::Metadata(format!(
-            "could not reach the sharer: {e}. They may have stopped sharing, or the ticket \
-                 may have been minted by a machine that has since moved networks."
+            "could not reach the sharer: {}. They may have stopped sharing, or the ticket \
+                 may have been minted by a machine that has since moved networks.",
+            h5i_core::redact::sanitize_display(&e.to_string())
         ))
     })
 }
@@ -1085,43 +1121,72 @@ mod tests {
     }
 
     #[test]
-    fn a_ticket_that_points_at_your_own_machine_is_refused() {
-        // A ticket is something people paste out of a chat window, and until
-        // this ran the addressing in it went to iroh unexamined — so an `Ip`
-        // naming `127.0.0.1:2375` made `h5i join` dial a service on the
-        // *joiner's* own loopback, from inside their network, before any
-        // h5i-level check happened.
+    fn every_spelling_of_your_own_machine_is_refused() {
+        // The first version of this check read an IP literal out of a `{:?}`
+        // rendering, which caught `127.0.0.1` and missed the other spellings
+        // of the same place. Demonstrated live at the time: a ticket naming
+        // `http://0.0.0.0:39271/` made `h5i join` open a plaintext connection
+        // to a listener on `127.0.0.1:39271`.
         let id = "ab".repeat(32);
         for bad in [
-            format!(r#"{{"id":"{id}","addrs":[{{"Ip":"127.0.0.1:2375"}}]}}"#),
-            format!(r#"{{"id":"{id}","addrs":[{{"Ip":"[::1]:9200"}}]}}"#),
-            format!(r#"{{"id":"{id}","addrs":[{{"Ip":"169.254.169.254:80"}}]}}"#),
-            format!(r#"{{"id":"{id}","addrs":[{{"Relay":"http://127.0.0.1:9200/"}}]}}"#),
+            r#"{"Ip":"127.0.0.1:2375"}"#,
+            r#"{"Ip":"0.0.0.0:2375"}"#,
+            r#"{"Ip":"[::1]:2375"}"#,
+            r#"{"Ip":"[::]:2375"}"#,
+            r#"{"Ip":"[::ffff:127.0.0.1]:2375"}"#,
+            r#"{"Ip":"169.254.169.254:80"}"#,
+            r#"{"Relay":"http://127.0.0.1:9200/"}"#,
+            r#"{"Relay":"http://0.0.0.0:9200/"}"#,
+            r#"{"Relay":"http://[::ffff:127.0.0.1]:9200/"}"#,
+            r#"{"Relay":"https://[::1]/"}"#,
         ] {
-            let v: serde_json::Value = match serde_json::from_str(&bad) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            if let Ok(addr) = serde_json::from_value::<EndpointAddr>(v.clone()) {
-                assert!(
-                    refuse_addresses_that_point_inward(&addr).is_err(),
-                    "a ticket pointing at the joiner's own machine was accepted: {bad}"
-                );
-            }
+            let v: serde_json::Value =
+                serde_json::from_str(&format!(r#"{{"id":"{id}","addrs":[{bad}]}}"#)).expect("json");
+            assert!(
+                refuse_addresses_that_point_inward(&v).is_err(),
+                "a ticket naming {bad} was accepted"
+            );
         }
 
-        // And a LAN address is *not* refused: two machines on one office
-        // network is the case direct peer-to-peer exists for, and refusing
-        // RFC1918 would break the feature to close a smaller hole.
-        let ok = format!(r#"{{"id":"{id}","addrs":[{{"Ip":"192.168.1.20:41641"}}]}}"#);
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ok) {
-            if let Ok(addr) = serde_json::from_value::<EndpointAddr>(v) {
-                assert!(
-                    refuse_addresses_that_point_inward(&addr).is_ok(),
-                    "a LAN address was refused, which breaks the main use of direct p2p"
-                );
-            }
+        // And the ones that must still work: a LAN address, because two
+        // machines on one office network is what direct p2p is for, and a real
+        // relay by name.
+        for ok in [
+            r#"{"Ip":"192.168.1.20:41641"}"#,
+            r#"{"Ip":"10.0.0.5:41641"}"#,
+            r#"{"Relay":"https://use1-1.relay.n0.iroh.link./"}"#,
+        ] {
+            let v: serde_json::Value =
+                serde_json::from_str(&format!(r#"{{"id":"{id}","addrs":[{ok}]}}"#)).expect("json");
+            assert!(
+                refuse_addresses_that_point_inward(&v).is_ok(),
+                "a ticket naming {ok} was refused, which breaks the main use"
+            );
         }
+    }
+
+    #[test]
+    fn a_ticket_cannot_name_two_hundred_places() {
+        // Measured before this cap: one pasted ticket filled to the 8 KiB
+        // limit produced 2,940 packets and 3.5 MB of UDP to 196 destinations
+        // of the ticket author's choosing, from inside the joiner's network.
+        let id = "ab".repeat(32);
+        let many: Vec<String> = (1..200)
+            .map(|i| format!(r#"{{"Ip":"192.168.1.{}:4164{}"}}"#, i % 250 + 1, i % 10))
+            .collect();
+        let v: serde_json::Value =
+            serde_json::from_str(&format!(r#"{{"id":"{id}","addrs":[{}]}}"#, many.join(",")))
+                .expect("json");
+        let err = refuse_addresses_that_point_inward(&v).expect_err("199 addresses");
+        assert!(format!("{err}").contains("names 199 addresses"), "{err}");
+
+        // A handful is what a real ticket looks like.
+        let v: serde_json::Value = serde_json::from_str(&format!(
+            r#"{{"id":"{id}","addrs":[{}]}}"#,
+            many[..4].join(",")
+        ))
+        .expect("json");
+        assert!(refuse_addresses_that_point_inward(&v).is_ok());
     }
 
     /// A dev server that accepts, reads, and then never answers.

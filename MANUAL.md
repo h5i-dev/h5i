@@ -554,8 +554,13 @@ browser.
 While a share is open, `h5i ui` marks the box **shared now**, with the port,
 the transport and how many tickets can still admit somebody. That indicator is
 live; the receipt below is what lands when the share ends. `h5i box rm` refuses
-a box that is being shared and names the share, and `--force` removes it anyway
-and says so — the share notices within a few seconds and ends itself.
+a box that is being shared and names the share; `--force` removes it anyway,
+and once the removal is actually going ahead it says so, at which point the
+share notices within a few seconds and ends itself.
+
+A ticket is worth the same care as a password in one more respect: it is an
+argument to `h5i join`, so any other user on the joining machine can read it out
+of `ps` for the life of the grant.
 
 #### What lands in the receipt
 

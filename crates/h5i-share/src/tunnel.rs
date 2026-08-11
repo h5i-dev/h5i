@@ -147,22 +147,36 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
     // just been freed, so for that window anything on this machine that binds
     // it is on the public internet under a hostname h5i minted.
     //
-    // `PR_SET_PDEATHSIG` is the kernel doing it instead: when this process
-    // dies, by any means, the child gets the signal. Set in the child between
-    // fork and exec, which is the only place it can be set, and it is
-    // async-signal-safe.
+    // `PR_SET_PDEATHSIG` is the kernel doing it instead. Precisely: when the
+    // *thread* that forked this child exits, the child gets the signal —
+    // pdeathsig is thread-scoped, not process-scoped. That is safe here only
+    // because `run::serve` drives everything through `Runtime::block_on`, so
+    // this fork happens on the main thread and that thread's life is the
+    // process's. Moving `serve_async` behind a `tokio::spawn` or a
+    // `spawn_blocking` would start killing `cloudflared` mid-share when the
+    // worker thread retired, and nothing would point here.
     #[cfg(target_os = "linux")]
     unsafe {
+        // Read before the fork. The first version of this compared
+        // `getppid() == 1`, which is folklore and wrong in both directions: it
+        // misses a parent that died into a `PR_SET_CHILD_SUBREAPER` reaper
+        // (a `systemd --user` session is one), and — much worse — it fires
+        // when h5i legitimately *is* pid 1, which is every `docker run image
+        // h5i box share --tunnel`. There the child `_exit(0)`d before exec,
+        // std read a zero-length error pipe as a successful exec, and the
+        // share died with "cloudflared exited without publishing a URL" while
+        // running the same command by hand worked every time.
+        let parent = libc::getpid();
         // `tokio::process::Command` has its own `pre_exec`; the `CommandExt`
         // import this used to carry was shadowed by it and unused.
-        cmd.pre_exec(|| {
-            // A parent that died between the fork and this line leaves the
-            // child reparented, and the signal would never come — so ask
-            // again afterwards whether we are still the child we think we are.
+        cmd.pre_exec(move || {
             if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            if libc::getppid() == 1 {
+            // A parent that died between the fork and the prctl leaves the
+            // child reparented, and the signal will never come — so ask
+            // whether we are still the child of who forked us.
+            if libc::getppid() != parent {
                 libc::_exit(0);
             }
             Ok(())

@@ -8476,24 +8476,6 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
 ///
 /// `force` is required to remove a still-live env (created/running/idle/
 /// proposed); applied/aborted envs remove freely.
-/// The pid of a process serving a share of this box, if one is.
-///
-/// Not a dependency on `h5i-share`: that crate is above this one. The file is
-/// `<env>/share.json`, a sibling of the receipt log, and the only fields read
-/// are the two that decide whether anything is serving.
-fn live_share_pid(env_dir: &Path) -> Option<String> {
-    let raw = std::fs::read(env_dir.join("share.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
-    let pid = v.get("pid")?.as_u64()?;
-    #[cfg(unix)]
-    {
-        if pid == 0 || unsafe { libc::kill(pid as i32, 0) } != 0 {
-            return None;
-        }
-    }
-    Some(pid.to_string())
-}
-
 pub fn rm(
     repo: &Repository,
     h5i_root: &Path,
@@ -8509,20 +8491,16 @@ pub fn rm(
     // A share is not a session, so neither that guard nor the two locks
     // further down see it. `--force` still removes the box, because that is
     // what `--force` is for, but it says what it is doing.
-    if let Some(pid) = live_share_pid(&m.dir(h5i_root)) {
+    let shared = crate::share_record::read_live(&m.dir(h5i_root));
+    if let Some(s) = &shared {
         if !force {
             return Err(H5iError::Metadata(format!(
-                "{} is being shared right now by pid {pid} — somebody outside may be \
-                 connected to it. Stop the share first (`h5i box share stop {}`), or pass \
-                 --force to remove the box anyway.",
-                m.id, m.slug
+                "{} is being shared right now by pid {} — somebody outside may be connected \
+                 to it. Stop the share first (`h5i box share stop {}`), or pass --force to \
+                 remove the box anyway.",
+                m.id, s.pid, m.slug
             )));
         }
-        eprintln!(
-            "box rm: {} was being shared by pid {pid}; that share will notice within a few \
-             seconds and end itself.",
-            m.id
-        );
     }
 
     let live = matches!(
@@ -8550,6 +8528,19 @@ pub fn rm(
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     #[cfg(unix)]
     let _teardown = RunLock::acquire_teardown(&m.dir(h5i_root))?;
+
+    // Said here, not beside the check above. Up there it printed and *then*
+    // `rm` failed on a busy lock, so the operator was told a share would end
+    // itself in a few seconds while nothing had been removed and the share was
+    // still serving — and a shared box normally does have a live session, so
+    // that was the ordinary case rather than a corner.
+    if let Some(s) = &shared {
+        eprintln!(
+            "box rm: {} was being shared by pid {}; that share will notice within a few \
+             seconds and end itself.",
+            m.id, s.pid
+        );
+    }
 
     // 1. Reclaim the workspace. Must precede the branch delete: git refuses to
     //    delete a branch still checked out in a registered worktree.
