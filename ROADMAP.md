@@ -2001,11 +2001,15 @@ fixes**, and three of the sharpest were fixes that did nothing at all — a
 the shutdown, and a flag that recorded truncation for the rarest of the four
 ways a response gets cut short.
 
+`--direct-only` has been run, and it does what it says on the half that can be
+run here: the share starts, the peer gets a direct path, traffic flows, and the
+receipt records `via direct`.
+
 **Still not demonstrated.** The two h5i processes were on one machine: a real
 direct QUIC path through the host's network stack, but not two machines on two
 networks. And `--direct-only` has never been exercised against a hole punch that
-actually fails, only against ones that succeed. Those two are what remains of
-the exit criteria.
+actually *fails* — the refusal is the half that matters and it needs two hostile
+NATs to reach. Those two are what remains of the exit criteria.
 
 ## 9. Limits we state up front
 
