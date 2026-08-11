@@ -1450,8 +1450,18 @@ fn is_status_line(l: &[u8]) -> bool {
     let Some(rest) = it.next() else {
         return false;
     };
-    let status: Vec<u8> = rest.iter().copied().take_while(|b| *b != b' ').collect();
-    version_ok && status.len() == 3 && status.iter().all(|b| b.is_ascii_digit())
+    let mut parts = rest.splitn(2, |&b| b == b' ');
+    let status = parts.next().unwrap_or(b"");
+    // The reason phrase is the box's to choose and it reaches the visitor
+    // verbatim, so it is held to what RFC 7230 allows: HTAB, SP, visible ASCII
+    // and obs-text. A box answering `HTTP/1.1 200 \x1b[31mCOMPROMISED` had
+    // those escapes relayed to whatever the visitor was reading with — inert
+    // in a browser, not inert in a terminal, and malformed either way.
+    let reason_ok = parts.next().is_none_or(|r| {
+        r.iter()
+            .all(|b| *b == b'\t' || (0x20..0x7f).contains(b) || *b >= 0x80)
+    });
+    version_ok && reason_ok && status.len() == 3 && status.iter().all(|b| b.is_ascii_digit())
 }
 
 /// Is every line ending in this head a CRLF, and is every header line a header
