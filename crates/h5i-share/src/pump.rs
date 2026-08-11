@@ -25,8 +25,19 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// that a thousand idle connections are not a hundred megabytes of buffers.
 const CHUNK: usize = 32 * 1024;
 
+/// How a direction ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ended {
+    /// The reader ran out, or the far side went away. The other direction may
+    /// legitimately still be going — that is a half-close.
+    Cleanly,
+    /// The far side stopped *reading*. Nothing more can be delivered to it, in
+    /// either direction, so the connection is over.
+    WriteStalled,
+}
+
 /// Copy one direction, adding to `counter` after every write that lands.
-async fn copy_counted<R, W>(mut r: R, mut w: W, counter: &AtomicU64)
+async fn copy_counted<R, W>(mut r: R, mut w: W, counter: &AtomicU64) -> Ended
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -41,8 +52,13 @@ where
         // reading an upgraded connection — a backgrounded tab holding a
         // hot-reload socket — would otherwise park this copy forever, holding
         // one of the share's slots for the life of the ticket.
-        if crate::http_front::write_timed(&mut w, &buf[..n]).await.is_err() {
-            break;
+        if let Err(e) = crate::http_front::write_timed(&mut w, &buf[..n]).await {
+            let _ = w.shutdown().await;
+            return if e.kind() == std::io::ErrorKind::TimedOut {
+                Ended::WriteStalled
+            } else {
+                Ended::Cleanly
+            };
         }
         // After the write, so the number describes bytes that were delivered
         // rather than bytes that were read and then dropped on the floor.
@@ -52,6 +68,7 @@ where
     // away mid-request leaves the copy from the dev server waiting forever, and
     // the connection never finishes closing.
     let _ = w.shutdown().await;
+    Ended::Cleanly
 }
 
 /// Copy in both directions until both are done, counting into the two atomics.
@@ -68,10 +85,27 @@ pub async fn duplex<RA, WA, RB, WB>(
     RB: AsyncRead + Unpin + Send,
     WB: AsyncWrite + Unpin + Send,
 {
-    tokio::join!(
-        copy_counted(read_a, write_b, a_to_b),
-        copy_counted(read_b, write_a, b_to_a),
-    );
+    // Not `join!`. A peer that stops reading — the zero-receive-window case the
+    // write deadline exists for — leaves the *other* direction parked on a
+    // socket that is open and silent, so waiting for both meant the deadline
+    // fired and the connection was held anyway, which is the thing it was added
+    // to prevent. A stalled write ends the whole connection; anything else is a
+    // half-close and the other direction is still owed its chance to finish.
+    let a = copy_counted(read_a, write_b, a_to_b);
+    let b = copy_counted(read_b, write_a, b_to_a);
+    tokio::pin!(a, b);
+    tokio::select! {
+        ended = &mut a => {
+            if ended == Ended::Cleanly {
+                b.await;
+            }
+        }
+        ended = &mut b => {
+            if ended == Ended::Cleanly {
+                a.await;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

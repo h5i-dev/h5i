@@ -716,10 +716,16 @@ refused  2 attempt(s): 1 unknown ticket, 0 expired, 1 revoked
 <p>Read the numbers for what they are. "Connections" counts connections <em>into the
 box</em>, not requests to the share: a visitor who followed the invite link and read
 nothing is a peer with zero. Lines appear for what a share left out — attempts
-refused, connections turned away at the capacity ceiling, peers past the 256 the
-receipt lists individually, and authorized peers who found nothing listening —
-because a cap that stops counting silently makes a busy share read as a quiet
-one.</p>
+refused, connections turned away because the box was already carrying its limit,
+connections refused at the front door before a credential was asked for, peers
+past the 256 the receipt lists individually, authorized peers who found nothing
+listening, and responses cut off for taking too long — because a cap that stops
+counting silently makes a busy share read as a quiet one, and a truncated
+download reads to the visitor as the app being broken.</p>
+<p>The two refusal-for-load lines are separate on purpose: the front-door one costs
+an anonymous flooder a TCP connect and can be driven into the millions, and a
+reader who saw that number under the box's ceiling would draw the wrong
+conclusion from it.</p>
 <p>A box that was opened to someone and an identical box that was not are different
 artifacts, and an export should not be silent about which one it came from. A
 tunnel session carries the "not end-to-end encrypted" note in the same block.</p>

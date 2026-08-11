@@ -191,6 +191,11 @@ async fn handle(
         req: &req,
     };
     let _ = http_front::proxy_one(sock, recv, send, forwarded, &counts).await;
+    if counts.was_truncated() {
+        // The joiner has no receipt of its own, so this is the only place a
+        // person learns their download was cut off rather than finished.
+        eprintln!("join: a response was cut off after taking too long; it is incomplete");
+    }
     Ok(())
 }
 

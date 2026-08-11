@@ -75,6 +75,16 @@ const MAX_TRAILERS: usize = 8 * 1024;
 /// the idle timer for as long as it liked.
 const UNFRAMED_LIFETIME: Duration = Duration::from_secs(3600);
 
+/// The longest a response with a declared length may take.
+///
+/// Longer than the unframed cap because the two bound different risks. An
+/// unframed response is open-ended by construction and an hour is generous for
+/// it. A framed one is bounded in *bytes* already, and an hour of it is a
+/// perfectly ordinary large download on a slow link — a hundred megabytes over
+/// a hundred kilobits is over two hours. Cutting that off at an hour truncated
+/// it silently, which is the shape of failure a visitor cannot debug.
+const FRAMED_LIFETIME: Duration = Duration::from_secs(6 * 3600);
+
 /// The longest a request body may take to arrive, whatever the peer does.
 ///
 /// Its own constant rather than the response's, because it answers a different
@@ -167,11 +177,33 @@ async fn write_to_box<W: tokio::io::AsyncWrite + Unpin>(
 ) -> std::io::Result<()> {
     write_timed(w, buf).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::TimedOut {
-            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the box stopped reading")
+            std::io::Error::other(BoxStalled)
         } else {
             e
         }
     })
+}
+
+/// A marker only this module can construct.
+///
+/// The first version of this used `ErrorKind::BrokenPipe`, which the *kernel*
+/// also produces — so a dev server that answers early and resets the connection
+/// (a `413` from a body-size limit, a `401` before the body is read) was
+/// reported to the visitor as "the app stopped reading", and its real answer,
+/// already sitting in the socket, was never relayed.
+#[derive(Debug)]
+struct BoxStalled;
+
+impl std::fmt::Display for BoxStalled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the box stopped reading")
+    }
+}
+
+impl std::error::Error for BoxStalled {}
+
+fn is_box_stall(e: &std::io::Error) -> bool {
+    e.get_ref().is_some_and(|r| r.is::<BoxStalled>())
 }
 
 /// Index just past the blank line that ends an HTTP head.
@@ -237,9 +269,17 @@ pub struct Forwarded<'a> {
 pub struct Counters {
     pub to_box: std::sync::atomic::AtomicU64,
     pub to_peer: std::sync::atomic::AtomicU64,
+    /// Set when a response was cut off by the wall clock rather than by
+    /// finishing. Silent truncation is the part a visitor cannot debug and the
+    /// sharer cannot see, so it is carried back out to the receipt.
+    pub truncated: std::sync::atomic::AtomicBool,
 }
 
 impl Counters {
+    pub fn was_truncated(&self) -> bool {
+        self.truncated.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn read(&self) -> (u64, u64) {
         use std::sync::atomic::Ordering;
         (
@@ -328,7 +368,7 @@ where
             // this share can serve is the message they would actually get.
             let reply = match e.kind() {
                 std::io::ErrorKind::TimedOut => timed_out_response(),
-                std::io::ErrorKind::BrokenPipe => unreachable_box_response(),
+                _ if is_box_stall(&e) => unreachable_box_response(),
                 _ => gate::refusal_response(gate::Refusal::Malformed),
             };
             if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
@@ -391,15 +431,20 @@ where
                 return Ok(());
             }
             if let Err(e) = write_to_box(&mut up_w, &buf[..n]).await {
-                if e.kind() == std::io::ErrorKind::BrokenPipe {
-                    let reply = unreachable_box_response();
-                    if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
-                        to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
-                    }
-                    let _ = peer_w.shutdown().await;
-                    return Ok(());
+                if is_box_stall(&e) {
+                    return refuse_the_response(
+                        &mut peer_w,
+                        unreachable_box_response(),
+                        to_peer,
+                    )
+                    .await;
                 }
-                return Err(e);
+                // Not a stall: the box closed its read side, which is what a
+                // dev server does when it answers before reading the body — a
+                // `413` from a size limit, a `401` from auth. Its answer is
+                // already in the socket, so stop sending and go and read it
+                // rather than inventing one.
+                break;
             }
             to_box.fetch_add(n as u64, Ordering::Relaxed);
             remaining -= n as u64;
@@ -427,6 +472,14 @@ where
         if !(complete && is_informational(&head)) {
             break (head, complete);
         }
+        // Held to the same line discipline as the final head. Adding that check
+        // to `relay_response` alone left the two paths that relay a head
+        // *without* going through it — this one and the `101` — exactly as they
+        // were, which is to say the bare CR the fix was written for still
+        // walked a `Set-Cookie` past the filter.
+        if !head_is_well_formed(&head) {
+            return refuse_the_response(&mut peer_w, malformed_head_response(), to_peer).await;
+        }
         // Relayed as it came *except* for the share-cookie filter: an interim
         // head must keep its `Connection` (the answer has not started) but it
         // is still a place the box could set a cookie it has no business
@@ -450,6 +503,9 @@ where
         }
         let switched = complete && is_switching(&head);
         if switched {
+            if !head_is_well_formed(&head) {
+                return refuse_the_response(&mut peer_w, malformed_head_response(), to_peer).await;
+            }
             // Filtered like every other response head. This was the one that
             // was not — and it is the only `1xx` a dev server actually sends,
             // so it was strictly more reachable than the `103` case that got
@@ -476,7 +532,10 @@ where
     }
 
     let bodyless = has_no_body(&req.method, &head);
-    relay_response(peer_r, peer_w, up_r, head, rest, complete, bodyless, to_peer).await
+    relay_response(
+        peer_r, peer_w, up_r, head, rest, complete, bodyless, to_peer, &counts.truncated,
+    )
+    .await
 }
 
 /// A `101`: the box agreeing to change protocols.
@@ -740,6 +799,7 @@ async fn relay_response<PR, PW, UR>(
     complete: bool,
     bodyless: bool,
     to_peer: &std::sync::atomic::AtomicU64,
+    truncated: &std::sync::atomic::AtomicBool,
 ) -> std::io::Result<()>
 where
     PR: tokio::io::AsyncRead + Unpin + Send,
@@ -754,12 +814,11 @@ where
     // walked a `Connection: keep-alive` and a `Set-Cookie` past both filters —
     // the box deciding whether the sanitiser applied to it.
     if complete && !head_is_well_formed(&head) {
-        let reply = unfinished_response();
-        if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
-            to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
-        }
-        let _ = peer_w.shutdown().await;
-        return Ok(());
+        // Its own answer. The box *did* finish this head — it is malformed, not
+        // truncated — and telling the sharer to look for a truncation sends
+        // them after something that is not happening, while discarding the one
+        // signal that would tell them their app emits injectable headers.
+        return refuse_the_response(&mut peer_w, malformed_head_response(), to_peer).await;
     }
 
     if !complete {
@@ -845,13 +904,19 @@ where
     // peer dribbling a byte a minute could hold an unframed response open for
     // as long as it liked, which is the ceiling this share has instead of a
     // per-peer limit.
-    let hard_deadline = tokio::time::Instant::now() + UNFRAMED_LIFETIME;
+    let hard_deadline = tokio::time::Instant::now()
+        + if body_len.is_some() {
+            FRAMED_LIFETIME
+        } else {
+            UNFRAMED_LIFETIME
+        };
     loop {
         // Applied whether or not the response declared a length. A box
         // answering `Content-Length: 1000000000` and sending one byte every
         // four minutes resets the idle timer forever, and "framed responses end
         // when their body does" is a promise agent-written code never made.
         if tokio::time::Instant::now() >= hard_deadline {
+            truncated.store(true, Ordering::Relaxed);
             break;
         }
         tokio::select! {
@@ -986,6 +1051,36 @@ fn response_framing(head: &[u8]) -> Framing {
 /// What a visitor gets when the box starts a response and never finishes it.
 const UNFINISHED_BODY: &str =
     "The app in this box began a reply and did not finish it. Whoever shared it needs to look.";
+
+/// What a visitor gets when the box's answer is shaped in a way this proxy
+/// will not pass on.
+const MALFORMED_HEAD_BODY: &str =
+    "The app in this box sent a reply h5i will not forward: its headers are not      well formed. Whoever shared it needs to look.";
+
+fn malformed_head_response() -> String {
+    format!(
+        "HTTP/1.1 502 Bad Gateway\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\
+         Content-Length: {}\r\n\
+         Cache-Control: no-store\r\n\
+         Connection: close\r\n\r\n{MALFORMED_HEAD_BODY}",
+        MALFORMED_HEAD_BODY.len()
+    )
+}
+
+/// Answer the visitor on the box's behalf and close.
+async fn refuse_the_response<W: tokio::io::AsyncWrite + Unpin>(
+    peer_w: &mut W,
+    reply: String,
+    to_peer: &std::sync::atomic::AtomicU64,
+) -> std::io::Result<()> {
+    use std::sync::atomic::Ordering;
+    if write_timed(peer_w, reply.as_bytes()).await.is_ok() {
+        to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
+    }
+    let _ = peer_w.shutdown().await;
+    Ok(())
+}
 
 /// What a peer gets when the box stopped reading its request.
 const UNREACHABLE_BOX_BODY: &str =
@@ -1498,7 +1593,10 @@ mod response_tests {
 
 /// Write a response and close politely.
 pub async fn respond<W: tokio::io::AsyncWrite + Unpin>(w: &mut W, body: &str) {
-    let _ = w.write_all(body.as_bytes()).await;
+    // Deadlined like every other write. Small ones into an empty send buffer,
+    // so a stall needs a receive window closed from the first byte — but "every
+    // write has a deadline" is either true or it is not.
+    let _ = write_timed(w, body.as_bytes()).await;
     let _ = w.flush().await;
     let _ = w.shutdown().await;
 }

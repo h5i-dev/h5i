@@ -433,6 +433,9 @@ async fn handle(
     // what it had already moved.
     let (to_box, to_peer) = counts.read();
     bridge.peer_bytes(id, to_peer, to_box);
+    if counts.was_truncated() {
+        bridge.record_truncated();
+    }
     Ok(())
 }
 

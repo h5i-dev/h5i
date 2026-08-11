@@ -93,9 +93,15 @@ struct Tally {
     /// knocked on fifty thousand times as having been knocked on 1024 times.
     denied_overflow: u64,
     /// Connections turned away because the share was already carrying its
-    /// limit. Counted rather than listed: the interesting number is whether it
-    /// happened at all.
+    /// limit into the box. Counted rather than listed: the interesting number
+    /// is whether it happened at all.
     over_capacity: u64,
+    /// Connections turned away at the front door, before a credential was ever
+    /// asked for. A different fact from the one above and an anonymously
+    /// inflatable one — a flooder can drive this into the millions — so it gets
+    /// its own line rather than being added to a number a reader would take as
+    /// the box's ceiling having been hit.
+    front_refused: u64,
     /// Peers past what the record list holds. Counted, like the denial list's
     /// overflow, because a receipt that stops at 256 and says nothing is a
     /// receipt that reports a share nobody could read as a share nobody used.
@@ -104,6 +110,10 @@ struct Tally {
     /// box. Without this a share where the dev server was down reads as one
     /// nobody ever tried to use.
     unreachable: u64,
+    /// Responses cut off by the wall clock rather than by finishing. A
+    /// truncated download reads to the visitor as the app being broken, so the
+    /// receipt says which it was.
+    truncated: u64,
 }
 
 /// How many connections into the box a share will carry at once.
@@ -181,9 +191,14 @@ impl Bridge {
     /// hold at all. A share taken down by a flood of anonymous connections used
     /// to write a receipt that said nobody came.
     pub fn record_front_refusal(&self) {
-        if let Ok(mut t) = self.tally.lock() {
-            t.over_capacity += 1;
-        }
+        // Recovered rather than skipped on a poisoned lock, like `peer_joined`:
+        // otherwise one panic under the tally lock silently stops this counting
+        // while everything else keeps accruing.
+        let mut t = match self.tally.lock() {
+            Ok(t) => t,
+            Err(p) => p.into_inner(),
+        };
+        t.front_refused += 1;
     }
 
     /// Take a slot for one connection into the box, or `None` if the share is
@@ -405,6 +420,13 @@ impl Bridge {
         self.record_denied(Denied::Unknown);
     }
 
+    /// A response was cut off by the wall clock rather than by finishing.
+    pub fn record_truncated(&self) {
+        if let Ok(mut t) = self.tally.lock() {
+            t.truncated += 1;
+        }
+    }
+
     /// A peer got through the gate and the box had nothing listening.
     pub fn record_unreachable(&self) {
         if let Ok(mut t) = self.tally.lock() {
@@ -480,7 +502,9 @@ impl Bridge {
                 denied: t.denied.clone(),
                 denied_overflow: t.denied_overflow,
                 over_capacity: t.over_capacity,
+                front_refused: t.front_refused,
                 unreachable: t.unreachable,
+                truncated: t.truncated,
             },
         );
         let input = h5i_core::receipt::RecordInput {
@@ -539,8 +563,12 @@ pub struct Summary {
     pub denied_overflow: u64,
     /// Connections refused because the share was already at its limit.
     pub over_capacity: u64,
+    /// Connections refused at the front door, before any credential.
+    pub front_refused: u64,
     /// Authorized peers who found nothing listening inside the box.
     pub unreachable: u64,
+    /// Responses cut off by the wall clock rather than by finishing.
+    pub truncated: u64,
 }
 
 fn plural(n: u64, one: &str, many: &str) -> String {
@@ -623,10 +651,29 @@ pub fn render_receipt(s: &Summary) -> String {
         // turned away for load, not for credentials, and the two mean opposite
         // things about what happened here.
         out.push_str(&format!(
-            "capacity {} connection(s) refused for load — at most {MAX_CONNECTIONS} reach \
-             the box at once, and the share's own front door holds a bounded number \
-             before that\n",
+            "capacity {} connection(s) refused because {MAX_CONNECTIONS} were already \
+             reaching the box\n",
             s.over_capacity
+        ));
+    }
+
+    if s.front_refused > 0 {
+        // Its own line, and deliberately not added to the one above. This one
+        // costs an anonymous flooder a TCP connect, so it can be driven into
+        // the millions — and a reader who saw that number under "capacity"
+        // would take it as the box's ceiling having been hit that many times.
+        out.push_str(&format!(
+            "flooded  {} connection(s) refused at the front door, before any credential was \
+             asked for\n",
+            s.front_refused
+        ));
+    }
+
+    if s.truncated > 0 {
+        out.push_str(&format!(
+            "truncated {} response(s) were cut off after taking too long, so what the visitor \
+             got was incomplete\n",
+            s.truncated
         ));
     }
 
@@ -754,7 +801,9 @@ mod tests {
             denied,
             denied_overflow: 0,
             over_capacity: 0,
+            front_refused: 0,
             unreachable: 0,
+            truncated: 0,
         }
     }
 
@@ -785,7 +834,9 @@ mod tests {
         s.peers_overflow = 3;
         s.denied_overflow = 12;
         s.over_capacity = 5;
+        s.front_refused = 900_000;
         s.unreachable = 2;
+        s.truncated = 1;
         let body = render_receipt(&s);
 
         // Past the label column, which is aligned on purpose, a run of spaces
@@ -802,7 +853,9 @@ mod tests {
             "and 3 more peer(s)",
             "relay    1 peer(s) used a relay",
             "capacity 5 connection(s) refused",
+            "flooded  900000 connection(s) refused at the front door",
             "unreached 2 connection(s) were authorized",
+            "truncated 1 response(s) were cut off",
             "refused  2 attempt(s)",
             "and 12 more not recorded individually",
         ] {
@@ -906,8 +959,7 @@ mod tests {
         s.over_capacity = 1;
         let body = render_receipt(&s);
         assert!(!body.contains("  of "), "{body}");
-        assert!(body.contains("refused for load"), "{body}");
-        assert!(body.contains("at most 64 reach the box at once"), "{body}");
+        assert!(body.contains("64 were already reaching the box"), "{body}");
     }
 
     #[test]
