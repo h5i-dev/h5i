@@ -55,7 +55,7 @@ pub async fn run(
     ticket: Ticket,
     port: u16,
     announce: impl FnOnce(&Joined),
-) -> Result<(), H5iError> {
+) -> Result<String, H5iError> {
     let now = chrono::Utc::now().timestamp();
     if ticket.remaining(now).is_none() {
         return Err(H5iError::Metadata(
@@ -141,21 +141,19 @@ pub async fn run(
             // and exit, rather than leaving a local URL that answers every
             // request with a failure the joiner has to interpret.
             reason = conn.closed() => {
-                // The sharer's own words when it had any. A bare transport
-                // code is not an explanation, so it does not get dressed up as
-                // one.
-                // Sanitised: this is bytes the *sharer* chose, arriving on the
-        // joiner's terminal. quinn renders an application close reason with
-        // `from_utf8_lossy`, so a `\r` or an `\x1b[2J` in it can erase or forge
-        // the lines around it — one of which is the warning telling this person
-        // they are about to run somebody else's agent's code.
-        let said = h5i_core::redact::sanitize_display(&reason.to_string());
-                return Err(H5iError::Metadata(if said.contains("h5i:") {
-                    format!("the share ended: {said}")
-                } else {
-                    "the share ended — the other side stopped sharing, or the ticket ran out"
-                        .to_string()
-                }));
+                // Not an error. A share ending is the most ordinary thing that
+                // happens to one, and this used to exit non-zero with
+                // `Error: Metadata error: the share ended: closed by peer:
+                // h5i: this share has ended (code 5)` — an internal enum name,
+                // the same fact three times, and a wire constant, for a
+                // revoke, an expiry, a Ctrl-C and a stopped box alike.
+                //
+                // Sanitised: these are bytes the *sharer* chose, arriving on
+                // the joiner's terminal. quinn renders an application close
+                // reason with `from_utf8_lossy`, so a `\r` or an `\x1b[2J` in
+                // it can erase or forge the lines around it.
+                let said = h5i_core::redact::sanitize_display(&reason.to_string());
+                return Ok(format!("the share ended{}", why_it_ended(&said)));
             }
         }
     }
@@ -244,6 +242,25 @@ fn check_outcome(r: Result<(), crate::p2p::OpenError>) -> Result<Option<String>,
         // so there is nothing to go on to.
         Err(e @ crate::p2p::OpenError::Transport(_)) => Err(H5iError::Metadata(format!("{e}"))),
         Err(e) => Ok(Some(format!("{e}"))),
+    }
+}
+
+/// The cause, in the joiner's words, when the sharer gave one.
+///
+/// The wire reasons are written for the other end of a socket; this is the
+/// half a person reads. Anything unrecognised becomes the honest hedge rather
+/// than being dressed up as an explanation.
+fn why_it_ended(said: &str) -> String {
+    if said.contains("revoked") || said.contains("expired") {
+        " — that ticket was revoked or ran out".into()
+    } else if said.contains("this share has ended") {
+        " — they stopped sharing".into()
+    } else if said.contains("no direct path") {
+        " — no direct connection could be kept, and they shared with --direct-only".into()
+    } else if said.contains("h5i:") {
+        format!(" — {said}")
+    } else {
+        " — they stopped sharing, or the ticket ran out".into()
     }
 }
 

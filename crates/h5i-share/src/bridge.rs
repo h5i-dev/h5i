@@ -703,8 +703,23 @@ impl Bridge {
             );
             return;
         }
-        if let Err(e) = h5i_core::receipt::append(&self.env_dir, input, body.as_bytes()) {
-            eprintln!("share: could not record the session: {e}");
+        match h5i_core::receipt::append(&self.env_dir, input, body.as_bytes()) {
+            // Named on the way out. The one command whose whole pitch is "the
+            // session lands in the box's receipt" was the one that never
+            // mentioned the receipt again — and no discovery command lists it,
+            // so the id existed only inside `receipt.jsonl` and you had to
+            // know to `cat` it. `h5i box run` has printed its receipt id since
+            // it was written.
+            Ok(rec) => eprintln!(
+                "◈  receipt {} · {} peer(s), {}s, {} to visitors · h5i box inspect {} --capture {}",
+                rec.id,
+                peers_seen,
+                seconds,
+                summary.peers.iter().map(|p| p.bytes_to_peer).sum::<u64>(),
+                self.box_name,
+                rec.id
+            ),
+            Err(e) => eprintln!("share: could not record the session: {e}"),
         }
     }
 }
@@ -992,6 +1007,11 @@ pub fn render_receipt(s: &Summary) -> String {
 }
 
 /// The grant table as `h5i box share status` shows it.
+/// The slug a person types, out of a full `env/agent/slug` id.
+fn short_name(box_id: &str) -> &str {
+    box_id.rsplit('/').next().unwrap_or(box_id)
+}
+
 pub fn render_status(s: &ShareSession, now: i64) -> String {
     let mut out = String::new();
     let live = session::is_live(s);
@@ -1007,11 +1027,28 @@ pub fn render_status(s: &ShareSession, now: i64) -> String {
         "  process   pid {}{}\n",
         s.pid,
         if live {
-            ""
+            if s.winding_up {
+                // The human view was the only one that did not say this: the
+                // JSON carried `winding_up` and `grant` refused on it, while
+                // `status` one second earlier still said "sharing".
+                " — shutting down; it is writing its receipt and will be gone in a moment."
+            } else {
+                ""
+            }
         } else {
-            " — GONE. This share is not serving anything; run `h5i box share stop`."
+            ""
         }
     ));
+    if !live {
+        // With the box's name in it. Printed bare, this told somebody whose
+        // share had just been declared dead to run a command that answers with
+        // a clap usage error.
+        out.push_str(&format!(
+            "            GONE. This share is not serving anything; run \
+             `h5i box share stop {}`.\n",
+            short_name(&s.box_id)
+        ));
+    }
     if s.grants.is_empty() {
         out.push_str("  grants    none\n");
         return out;
@@ -1552,7 +1589,8 @@ mod tests {
         s.pid = 0;
         let out = render_status(&s, 0);
         assert!(out.contains("GONE"));
-        assert!(out.contains("share stop"));
+        // With a name, because printed bare this is a clap usage error.
+        assert!(out.contains("share stop demo"), "{out}");
     }
 
     #[test]

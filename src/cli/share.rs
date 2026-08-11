@@ -28,6 +28,10 @@ pub enum ShareCommands {
         json: bool,
     },
     /// Mint another ticket for a running share, so a second person can join.
+    ///
+    /// `--tunnel` shares only. A peer-to-peer ticket needs the running
+    /// endpoint's addressing, which lives in the serving process, so adding
+    /// somebody to one means stopping it and starting again.
     Grant {
         name: String,
         /// A name for this peer, to make `status` and the receipt readable
@@ -71,6 +75,9 @@ pub struct ShareArgs {
     pub name: Option<String>,
 
     /// The port inside the box — whatever the dev server in there binds.
+    ///
+    /// Not `0`: that is not a port a server can be listening on, and the same
+    /// spelling means "pick a free one" on `h5i join`, which is the opposite.
     #[arg(long, default_value_t = 3000)]
     pub port: u16,
 
@@ -204,9 +211,20 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
             let (id, invite) = h5i_share::run::grant(&dir, label, parse_expire(&expire)?)?;
             println!("{} minted grant {id} for {name}", SUCCESS);
             println!();
-            println!("   {invite}");
+            println!("   send them  {invite}");
             println!();
-            println!("   revoke   h5i box share revoke {name} {id}");
+            // The announce block carries an expiry and this did not, so a
+            // second link went out with nobody having seen how long it lives.
+            println!(
+                "   expires   in {} (grant {id})",
+                h5i_share::session::humanise(
+                    (chrono::Utc::now()
+                        + chrono::Duration::from_std(parse_expire(&expire)?).unwrap_or_default())
+                    .timestamp()
+                        - chrono::Utc::now().timestamp()
+                )
+            );
+            println!("   revoke    h5i box share revoke {name} {id}");
             Ok(())
         }
 
@@ -315,6 +333,17 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
     // not the box exists, and hearing about the box first sends people looking
     // in the wrong place.
     let expire = parse_expire(&args.expire)?;
+    if args.port == 0 {
+        // Refused at the front, beside `--expire 0`. It used to mint a
+        // complete ticket and then warn that nothing was listening on port
+        // zero, which nothing ever will be — and `h5i join --port 0` means
+        // "pick a free one", so the same spelling meant opposite things on the
+        // two sides.
+        anyhow::bail!(
+            "`--port 0` is not a port a dev server can be listening on. Name the port your \
+             server binds inside the box (often 3000, 5173 or 8080)."
+        );
+    }
     let m = h5i_core::env::find(h5i_root, &name)?;
     let dir = h5i_core::env::env_dir(h5i_root, &m.agent, &m.slug);
 
@@ -446,7 +475,7 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(h5i_share::join::run(ticket, port, |joined| {
+    let ending = runtime.block_on(h5i_share::join::run(ticket, port, |joined| {
         // Sanitised, because this string came out of a ticket somebody pasted.
         // `ticket::decode` validates the version, the base64, the JSON shape
         // and the secret's width, and nothing about `box_id` — so a `\r` or an
@@ -494,11 +523,16 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
              close it when you are done looking."
         );
         println!("   stop      Ctrl-C");
-        if let Some(w) = &joined.warning {
-            println!();
-            println!("   {WARN} {w}");
-        }
     }))?;
+    // A share ending is the most ordinary thing that happens to one, so it
+    // leaves by the front door: a line on stdout and exit 0. It used to be
+    // `Error: Metadata error: the share ended: closed by peer: h5i: this share
+    // has ended (code 5)` — an internal enum name, the same fact three times
+    // and a wire constant — for a revoke, an expiry, a Ctrl-C and a stopped
+    // box alike.
+    println!();
+    println!("{} {ending}", SUCCESS);
+    println!("   Ask them for a new invite if you need another look.");
     Ok(())
 }
 

@@ -670,10 +670,17 @@ pub fn grant(
             // session file records only its id. Re-deriving it here would be a
             // second source of truth for something that must match exactly, so
             // this verb is honest about what it cannot do alone.
+            // Naming the procedure that works, rather than one that does not.
+            // "Start a second share" was the advice, and starting a second
+            // share is refused because this one is running — so the two
+            // messages pointed at each other and somebody wanting a second
+            // viewer could alternate between them forever without learning
+            // that the answer is to stop and restart.
             return Err(H5iError::Metadata(
-                "adding a peer to a peer-to-peer share is not built yet: a new ticket needs the \
-                 running endpoint's addressing, and only the serving process has it. Start a \
-                 second share, or use `--tunnel`."
+                "a peer-to-peer share carries one ticket: a second one would need the running \
+                 endpoint's addressing, and only the serving process has that. To add \
+                 somebody, stop this share and start a new one — everybody gets a fresh \
+                 ticket — or share with `--tunnel`, where `grant` mints extra links."
                     .into(),
             ));
         }
@@ -704,7 +711,8 @@ pub fn revoke(env_dir: &std::path::Path, grant_id: &str) -> Result<(), H5iError>
                 Ok(())
             }
             None => Err(H5iError::Metadata(format!(
-                "this share has no grant `{grant_id}` — `h5i box share status` lists them"
+                "this share has no grant `{grant_id}` — `h5i box share status {}` lists them",
+                s.box_id.rsplit('/').next().unwrap_or(&s.box_id)
             ))),
         }
     })

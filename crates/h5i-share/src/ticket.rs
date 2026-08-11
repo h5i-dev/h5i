@@ -83,7 +83,17 @@ impl Ticket {
                 s.len()
             )));
         }
+        // Quotes come along when somebody copies out of a chat client, and
+        // the refusal read as a lie: they can see `h5i1_` on their screen.
+        let s = s.trim_matches(|c| c == '"' || c == '\'' || c == '`');
         let body = s.strip_prefix(PREFIX).ok_or_else(|| {
+            if s.starts_with("http://") || s.starts_with("https://") {
+                return H5iError::Metadata(
+                    "that is a tunnel link, not a ticket — open it in a browser. `h5i join` \
+                     takes the `h5i1_…` ticket a peer-to-peer share prints."
+                        .into(),
+                );
+            }
             H5iError::Metadata(format!(
                 "that does not look like an h5i ticket: it should start with `{PREFIX}`"
             ))
@@ -98,6 +108,15 @@ impl Ticket {
                 )
             })?;
         let t: Ticket = serde_json::from_slice(&raw).map_err(|e| {
+            // A cut-short ticket is the commoner of the two truncation cases —
+            // a chat client eliding a long line — and it used to be the one
+            // that got serde's cursor position while the line-wrapped case got
+            // plain language.
+            if e.is_eof() {
+                return H5iError::Metadata(
+                    "this ticket looks cut short — ask for the whole line, in one piece".into(),
+                );
+            }
             H5iError::Metadata(format!(
                 "this ticket is not in a format h5i understands: {e}"
             ))
@@ -147,6 +166,43 @@ mod tests {
             secret: "ab".repeat(SECRET_BYTES),
             addr: serde_json::json!({"id": "whatever", "addrs": []}),
         }
+    }
+
+    #[test]
+    fn the_three_ways_a_ticket_arrives_wrong_each_say_which() {
+        // A cut-short ticket used to get serde's cursor position while the
+        // line-wrapped one got plain language — backwards, since eliding a
+        // long line is the commoner accident.
+        let good = super::Ticket {
+            v: 1,
+            box_id: "env/human/demo".into(),
+            port: 3000,
+            grant: "g1".into(),
+            expires_at: 4_000_000_000,
+            secret: "ab".repeat(SECRET_BYTES),
+            addr: serde_json::json!({"id": "cd", "addrs": []}),
+        }
+        .encode()
+        .expect("encode");
+
+        let cut = &good[..good.len() / 2];
+        let err = format!("{}", Ticket::decode(cut).expect_err("cut short"));
+        assert!(
+            err.contains("cut short") || err.contains("not valid base64"),
+            "{err}"
+        );
+
+        // Quotes come along when somebody copies out of a chat client, and the
+        // refusal read as a lie: they can see `h5i1_` on their screen.
+        Ticket::decode(&format!("\"{good}\"")).expect("a quoted ticket still decodes");
+        Ticket::decode(&format!("`{good}`")).expect("a backticked ticket still decodes");
+
+        // And a tunnel link is not a ticket, but it is an easy thing to paste.
+        let err = format!(
+            "{}",
+            Ticket::decode("https://odd-cat.trycloudflare.com/?h5i=abc").expect_err("a url")
+        );
+        assert!(err.contains("open it in a browser"), "{err}");
     }
 
     #[test]

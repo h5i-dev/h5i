@@ -300,7 +300,9 @@ Let one other person try this box's web app, from their own machine
 .SS OPTIONS
 .TP
 \fB\-\-port\fR \fI<PORT>\fR [default: 3000]
-The port inside the box \(em whatever the dev server in there binds
+The port inside the box \(em whatever the dev server in there binds.
+
+Not `0`: that is not a port a server can be listening on, and the same spelling means "pick a free one" on `h5i join`, which is the opposite.
 .TP
 \fB\-\-expire\fR \fI<EXPIRE>\fR [default: 60m]
 How long the ticket lasts: `30m`, `2h`, `90s`, or bare seconds. 24h max
@@ -371,7 +373,7 @@ A name for this peer, to make `status` and the receipt readable
 How long this ticket lasts: `30m`, `2h`, `90s`, or bare seconds. 24h max
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fINAME\fR>
 

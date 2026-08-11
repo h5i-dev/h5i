@@ -447,10 +447,21 @@ pub fn already_shared(existing: &ShareSession, name: &str) -> H5iError {
             existing.pid
         ));
     }
+    // The second sentence depends on the transport, because `grant` is refused
+    // on a peer-to-peer share — recommending it there sent people into a loop
+    // between two refusals, each pointing at the other.
+    let and_then = match existing.transport {
+        Transport::Tunnel => format!(
+            " Stop it first (`h5i box share stop {name}`), or add a peer to the share you \
+             have (`h5i box share grant {name}`)."
+        ),
+        Transport::P2p => format!(
+            " A peer-to-peer share carries one ticket, so adding somebody means stopping this \
+             one and starting again: `h5i box share stop {name}`."
+        ),
+    };
     H5iError::Metadata(format!(
-        "this box is already being shared by pid {} over {}. Stop it first \
-         (`h5i box share stop {name}`), or add a peer to the share you have \
-         (`h5i box share grant {name}`).",
+        "this box is already being shared by pid {} over {}.{and_then}",
         existing.pid,
         existing.transport.as_str()
     ))
