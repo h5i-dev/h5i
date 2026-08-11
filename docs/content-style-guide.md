@@ -66,6 +66,20 @@ An essay earns its place by making one durable argument:
 The blog is not a changelog, vulnerability feed, benchmark archive, or release
 announcement surface.
 
+## Editorial depth
+
+Published essays should normally reach 1,800–2,800 words. Guides should usually
+reach 1,000–1,500 words without delaying the first runnable command. Word count
+is a floor for developed reasoning, not a target to pad.
+
+Every canonical page needs at least one useful visual: an architecture diagram,
+evidence screenshot, decision table, or workflow figure. The visual must teach
+a relationship the prose would otherwise make the reader reconstruct.
+
+An essay should include a concrete failure or run, implementation-level
+mechanism, the tradeoff that mechanism introduces, and sources. A guide should
+include expected evidence, common failure modes, and a clear stopping point.
+
 ## Claims and limits
 
 Name the layer and the observer.

@@ -96,20 +96,24 @@
 </nav><main class="article-wrap"><article class="post">
 <header><div class="post-eyebrow">Guide 02 / Untrusted code &middot; 2026-08-10</div>
 <h1>Run the pull request before you trust the pull request</h1><p class="post-deck">A diff shows the final tree. It cannot show what an install script attempted, what the branch contacted, or whether the tests ever ran. A detached box lets you find out without giving the branch your machine.</p>
-<div class="post-meta"><span>6 min read</span><span>Pull request &middot; Detached box &middot; Review</span></div></header>
+<div class="post-meta"><span>9 min read</span><span>Pull request &middot; Detached box &middot; Review</span></div></header>
 
 <div class="callout"><strong>Boundary first.</strong> A pull-request box gets its own repository, drops the inherited <code>origin</code>, and cannot be applied or rebased into the parent. External code leaves only through <code>export</code>.</div>
+<figure class="feature-figure"><img src="/_static/review-untrusted-repo.svg" alt="A malicious repository runs inside an h5i box with no host API key, default-deny network, and workspace-only filesystem access"><figcaption>The assumption is deliberately hostile: repository hooks and package scripts may execute. Their authority is the box's authority, not the developer account's.</figcaption></figure>
+<p>A pull request is executable input long before you run its application. Package manifests select install hooks. Build files select plugins. Test fixtures feed parsers. Editor and agent configuration can alter startup behavior. “I only want to read the diff” stops being true the moment a realistic review builds the branch.</p>
 <h2 id="create">1. Create a detached box</h2>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">repository root</span></div>
 <div class="terminal-body"><pre><code>$ h5i box create review-1234 --pr 1234 --profile agent-claude
 $ h5i box status review-1234</code></pre></div></div>
 <p><code>--pr</code> accepts a number, <code>#number</code>, or pull-request URL. h5i fetches the head on the host, pins it, then gives the box an independent repository with no inherited network remote.</p>
+<p>The host-side fetch uses access you already have, then ends. The box receives Git objects and a pinned revision—not the SSH agent, GitHub token, or a remote it can push to. This split lets private repositories be reviewed without turning repository access into a standing capability inside untrusted code.</p>
 <h2 id="baseline">2. Read the boundary before the branch</h2>
 <p>Confirm three things in <code>status</code>: the box is detached, the requested isolation tier is enforced, and network access is no broader than the review needs. Do this before running a package manager; install hooks are code execution.</p>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
 <div class="terminal-body"><pre><code>$ h5i box capabilities review-1234 --json
 $ h5i box secrets review-1234</code></pre></div></div>
 <p><code>secrets</code> shows declared grants and dry-run resolution, never secret values. A review that needs no authenticated service should have no grant.</p>
+<p>Also verify that <code>origin</code> is absent inside the box. Dropping the remote is not a complete network control, but it removes a ready-made authenticated handle and makes the detached shape obvious to tools that inspect Git configuration.</p>
 <h2 id="run">3. Build and test inside the box</h2>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">host, then box</span></div>
 <div class="terminal-body"><pre><code>$ h5i box shell review-1234
@@ -119,6 +123,7 @@ box$ npm run dev
 # In another host terminal: h5i box view review-1234
 box$ exit</code></pre></div></div>
 <p>Use the project's real install and test commands. If it is a web change, start the server in the same session and drive the isolated browser. The app, browser, and agent then agree on what <code>localhost</code> means.</p>
+<p>Test the claim the pull request makes, not merely the command its author suggests. A dependency change deserves an install from the pinned lockfile. A migration deserves a disposable database. A browser fix deserves console and failed-request evidence, not only a screenshot. The box makes destructive setup cheap enough to reproduce instead of infer.</p>
 <h2 id="review">4. Review evidence in the right order</h2>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
 <div class="terminal-body"><pre><code>$ h5i box export review-1234 --out ./review-1234
@@ -132,6 +137,22 @@ $ less ./review-1234/patch.diff</code></pre></div></div>
 <div class="terminal-body"><pre><code>$ h5i box rm review-1234
 $ h5i box gc</code></pre></div></div>
 <p>You can apply an accepted patch wherever you choose with <code>git apply --3way</code>. h5i refuses <code>box apply</code> for this detached box by design.</p>
+<h2 id="signals">Signals that deserve a second look</h2>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Signal</th><th>Benign explanation</th><th>Review question</th></tr></thead><tbody>
+<tr><th>Denied telemetry host</th><td>A dependency phones home by default</td><td>Does this dependency belong in the change?</td></tr>
+<tr><th>Test exits zero unusually fast</th><td>Cache hit or focused test target</td><td>Did the meaningful suite actually execute?</td></tr>
+<tr><th>Generated file outside expected tree</th><td>Build tooling creates metadata</td><td>Is it required, reproducible, and safe to apply?</td></tr>
+<tr><th>Browser has no captured evidence</th><td>No browser was started</td><td>Was the user-visible behavior exercised at all?</td></tr>
+<tr><th>Agent proposal omits a failed run</th><td>The agent retried and summarized the final state</td><td>What changed between failure and success?</td></tr>
+</tbody></table></div>
+<p>None of these is a verdict. They are attention routing. A useful report helps a reviewer spend time where the branch's behavior diverged from its story.</p>
+<h2 id="detached">Why detached is stronger than “remember not to merge”</h2>
+<p>The command surface itself refuses <code>apply</code> and <code>rebase</code> for external sources. That turns repository origin into a type-level lifecycle decision. An agent or hurried reviewer cannot accidentally use the convenient local landing path on code that arrived from somewhere else.</p>
+<p>Export remains available because review still needs an outcome. Its patch passes path validation before leaving: symlink escapes, nested Git repositories, and agent-introduced gitlinks are rejected. You can inspect the bundle, move it elsewhere, or discard it with no mutation to the parent repository.</p>
+<h2 id="troubleshoot">Common review failures</h2>
+<p>If the pull-request ref cannot be fetched, use the full URL and confirm the host—not the box—has repository access. If dependency installation is denied, add the exact registry hosts to a review profile rather than switching to host networking. If the application needs a service, declare or start it inside the same session so the review does not silently depend on a host database.</p>
+<h2 id="sources">Reference</h2>
+<ul><li><a href="/manual/#making-a-box">Box source shapes and detached semantics</a>.</li><li><a href="/manual/#h5i-box-export">The output gate and path validation</a>.</li><li><a href="/blog/evidence-for-agent-work/">Why the report and diff answer different questions</a>.</li><li><a href="/guides/watch-the-browser/">How to exercise a web change inside the box</a>.</li></ul>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Do GitHub credentials enter the box?</summary><div class="faq-answer">No. The host fetches the pull-request head. The detached box receives the code, not the host's SSH key, GitHub token, or inherited origin remote.</div></details><details class="faq-item"><summary>Why not check out the branch in a normal worktree?</summary><div class="faq-answer">A worktree separates checkouts, not authority. Package scripts would still run with your user's filesystem, network, sockets, and credentials unless another boundary removes them.</div></details><details class="faq-item"><summary>Can an agent perform the review?</summary><div class="faq-answer">Yes. Run it inside the box and ask it to build, test, inspect the browser, and write findings. The execution record remains separate from the agent's self-report.</div></details></div>
 <a class="next-up" href="/guides/write-a-box-policy/"><span class="label">Next guide</span><h3>Write the boundary down</h3><p>Turn filesystem, network, and resource assumptions into a checked-in profile.</p></a>
 <div class="post-cta"><h3>Review behavior, not just text</h3><p>Give untrusted code somewhere safe to execute before you decide whether to take it.</p>

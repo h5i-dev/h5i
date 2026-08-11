@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 340" width="800" height="340" role="img" aria-label="Opening an untrusted repo inside a box">
+<rect x="0" y="0" width="800" height="340" fill="#ffffff"/>
+<defs><marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#c0392b"/></marker></defs>
+<text x="400.0" y="44" font-size="21" font-weight="700" fill="#1a202c" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">Opening an untrusted repo inside a box</text>
+<rect x="40" y="132" width="160" height="116" rx="12" ry="12" fill="#fdecea" stroke="#c0392b" stroke-width="2"/>
+<text x="120" y="122" font-size="12" font-weight="700" fill="#c0392b" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">Malicious repo</text>
+<text x="120" y="198" font-size="13" font-weight="400" fill="#742a2a" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">.claude hook</text>
+<text x="120" y="218" font-size="13" font-weight="400" fill="#742a2a" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">runs on init</text>
+<rect x="280" y="100" width="240" height="210" rx="12" ry="12" fill="#ebf3ff" stroke="#2b6cb0" stroke-width="2"/>
+<text x="400" y="124" font-size="14" font-weight="700" fill="#2b6cb0" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">h5i box</text>
+<rect x="320" y="140" width="160" height="44" rx="12" ry="12" fill="#ffffff" stroke="#2b6cb0" stroke-width="2"/>
+<text x="400" y="167" font-size="11" font-weight="400" fill="#2b6cb0" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">agent — permissions off</text>
+<text x="400" y="208" font-size="10" font-weight="700" fill="#718096" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">ENFORCED BOUNDARY</text>
+<text x="400" y="232" font-size="12" font-weight="400" fill="#2c5282" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">box: no API key</text>
+<text x="400" y="256" font-size="12" font-weight="400" fill="#2c5282" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">net: deny</text>
+<text x="400" y="280" font-size="12" font-weight="400" fill="#2c5282" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">FS: $WORK only</text>
+<rect x="600" y="132" width="160" height="116" rx="12" ry="12" fill="#eafaf1" stroke="#2e7d32" stroke-width="2"/>
+<text x="680" y="122" font-size="12" font-weight="700" fill="#2e7d32" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">API key + host</text>
+<text x="680" y="198" font-size="13" font-weight="400" fill="#1e4620" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">nothing to steal,</text>
+<text x="680" y="218" font-size="13" font-weight="400" fill="#1e4620" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">no way out</text>
+<line x1="200" y1="185" x2="276" y2="185" stroke="#c0392b" stroke-width="2.5" marker-end="url(#ah)"/>
+<text x="240" y="173" font-size="10" font-weight="400" fill="#c0392b" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">runs code</text>
+<line x1="520" y1="185" x2="596" y2="185" stroke="#9aa5b1" stroke-width="2.5" stroke-dasharray="5 4"/>
+<circle cx="560" cy="185" r="14" fill="#ffffff" stroke="#c0392b" stroke-width="2.5"/><line x1="554" y1="179" x2="566" y2="191" stroke="#c0392b" stroke-width="3"/><line x1="554" y1="191" x2="566" y2="179" stroke="#c0392b" stroke-width="3"/>
+<text x="560" y="212" font-size="10" font-weight="700" fill="#c0392b" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">blocked</text>
+</svg>
