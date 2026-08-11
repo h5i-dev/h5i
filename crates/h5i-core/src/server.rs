@@ -424,6 +424,61 @@ pub struct BoxRow {
     pub deletions: usize,
     pub last_event: Option<EnvEvent>,
     pub signals: Signals,
+    /// A share serving this box **right now**, if one is.
+    ///
+    /// The receipt lands when the share ends, so until this the console showed
+    /// nothing at all while a box was open to somebody on another machine —
+    /// and the console's whole job is saying what is pressing on a boundary.
+    /// The one lane that lets somebody *in* was the one it could not see while
+    /// it was open.
+    pub shared_now: Option<SharedNow>,
+}
+
+/// What the console needs to say about a share that is open.
+///
+/// Read off `<env>/share.json`, which is where the share keeps it, rather than
+/// through `h5i-share`: that crate is above this one. No secret is in the file
+/// and none is read here — the grant table stores digests, and this takes the
+/// transport, the port and the number of grants that can still admit anybody.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct SharedNow {
+    pub transport: String,
+    pub port: u64,
+    pub grants: usize,
+}
+
+fn shared_now(env_dir: &std::path::Path) -> Option<SharedNow> {
+    let raw = std::fs::read(env_dir.join("share.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+    let pid = v.get("pid")?.as_u64()?;
+    #[cfg(unix)]
+    {
+        if pid == 0 || unsafe { libc::kill(pid as i32, 0) } != 0 {
+            return None;
+        }
+    }
+    let now = chrono::Utc::now().timestamp();
+    let grants = v
+        .get("grants")
+        .and_then(|g| g.as_array())
+        .map(|g| {
+            g.iter()
+                .filter(|x| {
+                    x.get("revoked") != Some(&serde_json::Value::Bool(true))
+                        && x.get("expires_at").and_then(|e| e.as_i64()).unwrap_or(0) > now
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    Some(SharedNow {
+        transport: v
+            .get("transport")
+            .and_then(|t| t.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        port: v.get("port").and_then(|p| p.as_u64()).unwrap_or(0),
+        grants,
+    })
 }
 
 fn build_row(
@@ -450,6 +505,7 @@ fn build_row(
         deletions,
         last_event: events.last().cloned(),
         signals: signals(m, receipts),
+        shared_now: shared_now(&m.dir(h5i_root)),
         manifest: m.clone(),
     }
 }
@@ -976,6 +1032,40 @@ mod tests {
     /// The box writes `inbox-capture` records into its own spool. Counting any
     /// unknown source as host-observed let it clear the grey "box-claimed"
     /// badge — the one distinction this screen is built on.
+    #[test]
+    fn a_box_being_shared_right_now_says_so() {
+        // The receipt lands when the share *ends*, so until this the console
+        // showed nothing at all while a box was open to somebody on another
+        // machine — for the one lane that lets somebody in, on a screen whose
+        // job is saying what is pressing on a boundary.
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(shared_now(dir.path()).is_none(), "no file, nothing to say");
+
+        let now = chrono::Utc::now().timestamp();
+        let live = serde_json::json!({
+            "pid": std::process::id(),
+            "transport": "tunnel",
+            "port": 3000,
+            "grants": [
+                {"id": "a", "revoked": false, "expires_at": now + 600},
+                {"id": "b", "revoked": true,  "expires_at": now + 600},
+                {"id": "c", "revoked": false, "expires_at": now - 1},
+            ],
+        });
+        std::fs::write(dir.path().join("share.json"), live.to_string()).expect("write");
+        let got = shared_now(dir.path()).expect("a live share");
+        assert_eq!(got.transport, "tunnel");
+        assert_eq!(got.port, 3000);
+        // Only the grants that can still admit somebody: one revoked and one
+        // expired are two tickets that let nobody in.
+        assert_eq!(got.grants, 1);
+
+        // A record left by a process that is gone is not a share.
+        let dead = serde_json::json!({"pid": 0, "transport": "p2p", "port": 1, "grants": []});
+        std::fs::write(dir.path().join("share.json"), dead.to_string()).expect("write");
+        assert!(shared_now(dir.path()).is_none());
+    }
+
     #[test]
     fn a_share_is_host_observed_evidence() {
         // h5i owns both ends of the share bridge and the box supplies none of

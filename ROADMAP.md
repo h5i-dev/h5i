@@ -2105,6 +2105,32 @@ and no way to say "h5i cannot reach the box". The receipt learned to tell that
 apart from "your dev server is down" in round 19; the joiner's browser was
 still being told to go and ask the sharer to start a server that was running.
 
+**The three findings rounds 27-36 recorded and did not fix** are fixed now, and
+each was verified by reproducing it first.
+
+`cloudflared` outlived a `SIGKILL` of the share by more than twenty seconds,
+with its public `trycloudflare.com` hostname still registered and still
+pointing at a loopback port that had just been freed — so for that window
+anything on the machine that bound it was on the public internet under a
+hostname h5i minted. `kill_on_drop` is a destructor and `SIGKILL` skips
+destructors; `PR_SET_PDEATHSIG` is the kernel doing it instead. Measured: gone
+in one second, against twenty-plus with the change removed.
+
+`h5i box rm` did not know what a share was. A shared box is almost always also
+`running`, so the operator was told to abort the box and never that somebody
+outside was connected to it — and the check has to sit *above* the status guard
+or it is unreachable. Worse, a share that outlived the removal wrote its
+receipt afterwards, and `receipt::append` creates the directory it writes into:
+the box came back as a receipt log and a payload under a path with no manifest,
+which every tool answers "no environment named that" for and only `rm -rf`
+clears. The receipt is skipped when the box is gone, which loses it — the right
+trade, since it is evidence about something that no longer exists.
+
+And the console showed nothing at all while a box was open to somebody. The
+receipt lands when the share *ends*, so the one lane that lets somebody **in**
+was the one lane the console could not see while it was open. `shared_now` is
+on the box row now.
+
 The pattern across all fifteen rounds is worth recording, because it is the
 argument for having run them: **every round found real defects in the previous
 round's fixes**, and five of the sharpest were fixes that did nothing at all — a

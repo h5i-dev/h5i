@@ -8476,12 +8476,55 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
 ///
 /// `force` is required to remove a still-live env (created/running/idle/
 /// proposed); applied/aborted envs remove freely.
+/// The pid of a process serving a share of this box, if one is.
+///
+/// Not a dependency on `h5i-share`: that crate is above this one. The file is
+/// `<env>/share.json`, a sibling of the receipt log, and the only fields read
+/// are the two that decide whether anything is serving.
+fn live_share_pid(env_dir: &Path) -> Option<String> {
+    let raw = std::fs::read(env_dir.join("share.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+    let pid = v.get("pid")?.as_u64()?;
+    #[cfg(unix)]
+    {
+        if pid == 0 || unsafe { libc::kill(pid as i32, 0) } != 0 {
+            return None;
+        }
+    }
+    Some(pid.to_string())
+}
+
 pub fn rm(
     repo: &Repository,
     h5i_root: &Path,
     m: &EnvManifest,
     force: bool,
 ) -> Result<(), H5iError> {
+    // Checked *before* the status guard below. A box being shared is almost
+    // always also `running`, so behind that guard this message was
+    // unreachable — the operator was told to abort the box and never that
+    // somebody outside was connected to it, which is the more surprising fact
+    // and the one that changes what they do next.
+    //
+    // A share is not a session, so neither that guard nor the two locks
+    // further down see it. `--force` still removes the box, because that is
+    // what `--force` is for, but it says what it is doing.
+    if let Some(pid) = live_share_pid(&m.dir(h5i_root)) {
+        if !force {
+            return Err(H5iError::Metadata(format!(
+                "{} is being shared right now by pid {pid} — somebody outside may be \
+                 connected to it. Stop the share first (`h5i box share stop {}`), or pass \
+                 --force to remove the box anyway.",
+                m.id, m.slug
+            )));
+        }
+        eprintln!(
+            "box rm: {} was being shared by pid {pid}; that share will notice within a few \
+             seconds and end itself.",
+            m.id
+        );
+    }
+
     let live = matches!(
         m.status.as_str(),
         ST_CREATED | ST_RUNNING | ST_IDLE | ST_PROPOSED
@@ -8493,6 +8536,7 @@ pub fn rm(
             m.id, m.status, m.slug
         )));
     }
+
 
     // Serialize against a concurrent read-write session and drain read-only
     // observers before destroying the worktree + branches: a writer may be

@@ -721,6 +721,11 @@ port on loopback is reachable by every process on that machine and every page in
 that browser. Its URL carries a token minted <strong>on the joining side</strong>, which is
 not the ticket secret — nothing that authorizes the share is ever handed to a
 browser.</p>
+<p>While a share is open, <code>h5i ui</code> marks the box <strong>shared now</strong>, with the port,
+the transport and how many tickets can still admit somebody. That indicator is
+live; the receipt below is what lands when the share ends. <code>h5i box rm</code> refuses
+a box that is being shared and names the share, and <code>--force</code> removes it anyway
+and says so — the share notices within a few seconds and ends itself.</p>
 <h4 id="what-lands-in-the-receipt">What lands in the receipt</h4>
 <p>Every other receipt lane observes what left a box. This one records what came
 in, and it is host observed in the strongest sense available: h5i owns both ends

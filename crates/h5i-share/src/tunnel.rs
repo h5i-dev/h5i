@@ -131,28 +131,56 @@ pub fn extract_url(line: &str) -> Option<String> {
 /// The argv is built here, never through a shell: the only value that varies is
 /// a port number this process chose.
 pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
-    let mut child = tokio::process::Command::new("cloudflared")
-        .arg("tunnel")
+    let mut cmd = tokio::process::Command::new("cloudflared");
+    cmd.arg("tunnel")
         .arg("--no-autoupdate")
         .arg("--url")
         .arg(format!("http://127.0.0.1:{local_port}"))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                H5iError::Metadata(
-                    "`cloudflared` is not installed, and `--tunnel` is a wrapper around it. \
+        .kill_on_drop(true);
+    // And a second, stronger rope. `kill_on_drop` runs a destructor, which a
+    // `SIGKILL` of this process skips entirely — so a killed share left
+    // `cloudflared` alive for another ten to twenty seconds with its public
+    // `trycloudflare.com` hostname still registered and still pointing at
+    // `http://127.0.0.1:<port>`. That port is in the ephemeral range and has
+    // just been freed, so for that window anything on this machine that binds
+    // it is on the public internet under a hostname h5i minted.
+    //
+    // `PR_SET_PDEATHSIG` is the kernel doing it instead: when this process
+    // dies, by any means, the child gets the signal. Set in the child between
+    // fork and exec, which is the only place it can be set, and it is
+    // async-signal-safe.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        // `tokio::process::Command` has its own `pre_exec`; the `CommandExt`
+        // import this used to carry was shadowed by it and unused.
+        cmd.pre_exec(|| {
+            // A parent that died between the fork and this line leaves the
+            // child reparented, and the signal would never come — so ask
+            // again afterwards whether we are still the child we think we are.
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() == 1 {
+                libc::_exit(0);
+            }
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            H5iError::Metadata(
+                "`cloudflared` is not installed, and `--tunnel` is a wrapper around it. \
                      Install it (https://developers.cloudflare.com/cloudflare-one/connections/\
                      connect-networks/downloads/), or share peer-to-peer with `h5i box share` \
                      and have the other side run `h5i join`."
-                        .into(),
-                )
-            } else {
-                H5iError::Metadata(format!("could not start `cloudflared`: {e}"))
-            }
-        })?;
+                    .into(),
+            )
+        } else {
+            H5iError::Metadata(format!("could not start `cloudflared`: {e}"))
+        }
+    })?;
 
     let stderr = child
         .stderr

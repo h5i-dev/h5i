@@ -116,6 +116,13 @@ export interface Signals {
   box_claimed_only: boolean;
 }
 
+/** A share serving this box right now. Absent when nobody is being let in. */
+export interface SharedNow {
+  transport: string;
+  port: number;
+  grants: number;
+}
+
 export interface BoxRow extends EnvManifest {
   drift: string;
   drift_summary: string;
@@ -127,6 +134,7 @@ export interface BoxRow extends EnvManifest {
   deletions: number;
   last_event?: EnvEvent;
   signals: Signals;
+  shared_now?: SharedNow | null;
 }
 
 export interface EnforcedPolicy {

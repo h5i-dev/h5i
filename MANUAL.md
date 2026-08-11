@@ -547,6 +547,12 @@ that browser. Its URL carries a token minted **on the joining side**, which is
 not the ticket secret — nothing that authorizes the share is ever handed to a
 browser.
 
+While a share is open, `h5i ui` marks the box **shared now**, with the port,
+the transport and how many tickets can still admit somebody. That indicator is
+live; the receipt below is what lands when the share ends. `h5i box rm` refuses
+a box that is being shared and names the share, and `--force` removes it anyway
+and says so — the share notices within a few seconds and ends itself.
+
 #### What lands in the receipt
 
 Every other receipt lane observes what left a box. This one records what came

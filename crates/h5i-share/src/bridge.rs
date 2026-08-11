@@ -691,6 +691,23 @@ impl Bridge {
             exit_code: Some(exit_code),
             ..Default::default()
         };
+        // Not if the box is gone. `receipt::append` creates the directory it
+        // writes into, so a share that outlived `h5i box rm` recreated the env
+        // directory it had just erased — leaving a `receipt.jsonl` and a blob
+        // under a path with no manifest, which `box ls`, `share ls`, `gc` and
+        // the console all answer "no environment named that" for, and which
+        // nothing but `rm -rf` can clear.
+        //
+        // The receipt is lost in that case, and that is the right trade: the
+        // box it was evidence about has been deleted, and a record of a thing
+        // that no longer exists, readable by no tool, is worse than none.
+        if !self.env_dir.exists() {
+            eprintln!(
+                "share: the box was removed while this share was running, so there is nowhere \
+                 to write the receipt"
+            );
+            return;
+        }
         if let Err(e) = h5i_core::receipt::append(&self.env_dir, input, body.as_bytes()) {
             eprintln!("share: could not record the session: {e}");
         }
@@ -1095,6 +1112,40 @@ mod tests {
         assert!(body.contains("grant a1b2c3d4 (alex)"));
         assert!(body.contains("12 connections"));
         assert!(body.contains("900 in / 5000 out"));
+    }
+
+    #[test]
+    fn a_receipt_does_not_resurrect_a_box_that_was_removed() {
+        // `receipt::append` creates the directory it writes into, so a share
+        // that outlived `h5i box rm` recreated the env directory that had just
+        // been erased. What was left behind had a receipt log and a payload
+        // and no manifest, so every tool answered "no environment named that"
+        // and only `rm -rf` could clear it.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gone = dir.path().join("removed");
+        std::fs::create_dir_all(&gone).expect("mkdir");
+        let b = Bridge::new(
+            gone.clone(),
+            "env/a/demo".into(),
+            "digest".into(),
+            "demo".into(),
+            Transport::P2p,
+            "local".into(),
+            crate::dialer::Dialer::spawn_local(1).expect("dialer"),
+        );
+
+        b.write_receipt();
+        assert!(
+            gone.join("receipt.jsonl").exists(),
+            "the ordinary case still writes one"
+        );
+
+        std::fs::remove_dir_all(&gone).expect("remove");
+        b.write_receipt();
+        assert!(
+            !gone.exists(),
+            "the receipt recreated a box that had been removed"
+        );
     }
 
     #[test]
