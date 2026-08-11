@@ -231,20 +231,36 @@ pub fn mint_grant(
 /// care about, and it needs no daemon. A stale lock from a killed process is
 /// broken after [`LOCK_STALE_SECS`], because the alternative is a share nobody
 /// can revoke.
-pub struct Lock(PathBuf);
+pub struct Lock {
+    path: PathBuf,
+    /// The pid we stamped into the file. Checked again on the way out.
+    owner: String,
+}
 
 const LOCK_STALE_SECS: u64 = 30;
 
 impl Lock {
     pub fn acquire(env_dir: &Path) -> Result<Lock, H5iError> {
         let path = env_dir.join(LOCK_FILE);
+        let mine = std::process::id().to_string();
         for _ in 0..100 {
             match std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&path)
             {
-                Ok(_) => return Ok(Lock(path)),
+                Ok(mut f) => {
+                    // Stamped with who holds it. Both halves of the stale-break
+                    // need this: deciding whether the holder is really gone, and
+                    // making sure the loser of a break race cannot remove the
+                    // winner's lock on its way out.
+                    use std::io::Write as _;
+                    let _ = f.write_all(mine.as_bytes());
+                    return Ok(Lock {
+                        path,
+                        owner: mine,
+                    });
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     if lock_is_stale(&path) {
                         let _ = std::fs::remove_file(&path);
@@ -263,20 +279,53 @@ impl Lock {
     }
 }
 
+/// Is this lock file one whose holder is gone?
+///
+/// Age alone was the whole test, which is a guess: a process that took thirty
+/// seconds under the lock would have had it broken underneath it. The pid the
+/// holder stamped is the actual question, and age is kept only as the fallback
+/// for a file written before this existed or by a pid we cannot read.
 fn lock_is_stale(path: &Path) -> bool {
-    std::fs::metadata(path)
+    let old_enough = std::fs::metadata(path)
         .and_then(|m| m.modified())
         .map(|t| {
             t.elapsed()
                 .map(|d| d.as_secs() > LOCK_STALE_SECS)
                 .unwrap_or(false)
         })
-        .unwrap_or(false)
+        .unwrap_or(false);
+    if !old_enough {
+        return false;
+    }
+    match std::fs::read_to_string(path).ok().and_then(|p| p.trim().parse::<u32>().ok()) {
+        Some(pid) => !pid_alive(pid),
+        // No pid to check, so age is all there is.
+        None => true,
+    }
+}
+
+#[cfg(unix)]
+fn pid_alive(pid: u32) -> bool {
+    pid != 0 && unsafe { libc::kill(pid as libc::pid_t, 0) } == 0
+}
+
+#[cfg(not(unix))]
+fn pid_alive(_pid: u32) -> bool {
+    true
 }
 
 impl Drop for Lock {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        // Only if it is still ours. Two processes breaking the same stale lock
+        // both create one, and only one of them wins — without this check the
+        // loser removed the winner's lock on its way out, and the grant table
+        // was then edited by two processes at once.
+        let still_mine = std::fs::read_to_string(&self.path)
+            .map(|c| c.trim() == self.owner)
+            .unwrap_or(false);
+        if still_mine {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -526,6 +575,43 @@ mod tests {
         assert_eq!(p, Path::new("/envs/demo/share.json"));
         assert!(!p.starts_with("/envs/demo/spool"));
         assert!(!p.starts_with("/envs/demo/tmp"));
+    }
+
+    #[test]
+    fn a_lock_is_only_removed_by_the_process_that_holds_it() {
+        // Two processes breaking the same stale lock both create one and only
+        // one wins. Without an owner check the loser removed the winner's lock
+        // on its way out, and two processes then edited the grant table at
+        // once.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let held = Lock::acquire(dir.path()).expect("acquire");
+        // Somebody else's lock, in the same place.
+        std::fs::write(dir.path().join(LOCK_FILE), "999999").expect("overwrite");
+        drop(held);
+        assert!(
+            dir.path().join(LOCK_FILE).exists(),
+            "a lock that was no longer ours was removed anyway"
+        );
+        std::fs::remove_file(dir.path().join(LOCK_FILE)).expect("tidy");
+    }
+
+    #[test]
+    fn a_lock_held_by_a_living_process_is_not_broken_for_being_old() {
+        // Age alone was the whole test, so a process that took thirty seconds
+        // under the lock had it broken underneath it.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(LOCK_FILE);
+        std::fs::write(&path, std::process::id().to_string()).expect("write");
+        // Make it look ancient.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        let f = std::fs::File::options().write(true).open(&path).expect("open");
+        f.set_modified(old).expect("backdate");
+        assert!(!lock_is_stale(&path), "a live holder's lock was called stale");
+
+        std::fs::write(&path, "999999").expect("write");
+        let f = std::fs::File::options().write(true).open(&path).expect("open");
+        f.set_modified(old).expect("backdate");
+        assert!(lock_is_stale(&path), "a dead holder's lock was not called stale");
     }
 
     #[test]
