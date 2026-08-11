@@ -710,6 +710,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_revoke_reaches_every_connection_in_flight_and_they_all_report() {
+        // Revocation is the promise the whole grant model rests on, and it has
+        // only ever been tested with one connection open. Under load there are
+        // two separate things to get wrong: a connection the watchdog misses,
+        // which keeps serving somebody the sharer meant to cut off; and a
+        // connection dropped without recording what it moved, which is exactly
+        // the traffic a reviewer most wants to see in the receipt.
+        let port = stalling_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        // Forty connections, each parked mid-response by a server that
+        // promises a hundred bytes and sends ten.
+        const N: usize = 40;
+        let mut held = Vec::new();
+        for _ in 0..N {
+            use tokio::io::AsyncWriteExt;
+            let mut c = tokio::net::TcpStream::connect(addr).await.expect("connect");
+            c.write_all(
+                format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .expect("write");
+            held.push(c);
+        }
+        for _ in 0..400 {
+            if bridge.free_slots() == Bridge::MAX_CONNECTIONS - N {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(
+            bridge.free_slots(),
+            Bridge::MAX_CONNECTIONS - N,
+            "the connections never all took a slot"
+        );
+
+        // Revoked from another process, which is how a revoke actually happens.
+        let id = crate::session::read(dir.path()).expect("session").grants[0]
+            .id
+            .clone();
+        crate::run::revoke(dir.path(), &id).expect("revoke");
+
+        // Every one of them goes, and within the watchdog's poll rather than
+        // eventually: the CLI tells the sharer "within a second".
+        for _ in 0..400 {
+            if bridge.free_slots() == Bridge::MAX_CONNECTIONS {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(
+            bridge.free_slots(),
+            Bridge::MAX_CONNECTIONS,
+            "a revoke left connections serving"
+        );
+
+        // And each of them said what it carried on the way out.
+        bridge.write_receipt();
+        let receipt = receipt_of(dir.path());
+        assert!(receipt.contains(&format!("{N} connections")), "{receipt}");
+        assert!(
+            !receipt.contains(" 0 out"),
+            "a revoked connection reported nothing: {receipt}"
+        );
+
+        drop(held);
+        serving.abort();
+    }
+
+    #[tokio::test]
     async fn a_share_at_its_ceiling_says_so_and_keeps_the_ones_it_has() {
         // Nothing tested this. `over_capacity` is the one counter that says a
         // share was hammered, and every test that exercised the sentence built
