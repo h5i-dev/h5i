@@ -58,9 +58,7 @@ pub async fn run(
 ) -> Result<String, H5iError> {
     let now = chrono::Utc::now().timestamp();
     if ticket.remaining(now).is_none() {
-        return Err(H5iError::Metadata(
-            "this ticket has expired. Ask whoever shared it for a new one.".into(),
-        ));
+        return Err(H5iError::Metadata(expired_here(ticket.expires_at, now)));
     }
 
     let endpoint = crate::p2p::bind_joiner().await?;
@@ -269,6 +267,24 @@ fn check_outcome(r: Result<(), crate::p2p::OpenError>) -> Result<Option<String>,
     }
 }
 
+/// What to say about a ticket that looks expired *on this machine*.
+///
+/// The check is local, and a local check against a wrong clock is an
+/// accusation. A joiner two hours fast refuses a ticket the sharer's own
+/// `share status` shows with 58 minutes left, tells the person to ask for a
+/// replacement, and every replacement fails the same way — with nothing in the
+/// message pointing at the actual problem. So: how long ago, in this machine's
+/// opinion, and what that opinion depends on. A ticket that expired minutes ago
+/// is almost certainly just expired; one that "expired" hours before it was
+/// sent is a clock.
+fn expired_here(expires_at: i64, now: i64) -> String {
+    let ago = now.saturating_sub(expires_at);
+    format!(
+        "this ticket expired {} ago, by this machine's clock. Ask whoever shared it for a new          one — and if they say it is still good, check the clocks: the two are compared here,          so a machine that is set wrong refuses good tickets and a new one will fail the same          way.",
+        crate::session::humanise(ago)
+    )
+}
+
 /// The cause, in the joiner's words, when the sharer gave one.
 ///
 /// The wire reasons are written for the other end of a socket; this is the
@@ -308,6 +324,11 @@ fn why_it_ended(said: &str) -> String {
 fn upstream_failure(e: &crate::p2p::OpenError) -> String {
     let (code, reason) = match e {
         crate::p2p::OpenError::Busy => (503, "Service Unavailable"),
+        // The same two codes the tunnel front uses for the same two answers,
+        // so the browser's own handling — and anything reading a log of
+        // statuses — does not depend on which transport carried it.
+        crate::p2p::OpenError::ShareOver => (410, "Gone"),
+        crate::p2p::OpenError::SharerFault => (503, "Service Unavailable"),
         _ => (502, "Bad Gateway"),
     };
     let body = e.to_string();
@@ -357,6 +378,24 @@ mod tests {
             said.contains("stopped sharing, or the ticket ran out"),
             "{said}"
         );
+    }
+
+    #[test]
+    fn a_ticket_this_machine_thinks_is_expired_says_whose_opinion_that_is() {
+        // The check is local. A joiner whose clock is two hours fast refuses a
+        // ticket the sharer's own `share status` shows with 58 minutes left,
+        // and the old sentence — "this ticket has expired, ask for a new one"
+        // — sent them round a loop where every replacement fails identically,
+        // with nothing naming the cause.
+        let msg = expired_here(1_000, 1_000 + 7_200);
+        assert!(msg.contains("2h0m ago"), "{msg}");
+        assert!(msg.contains("by this machine's clock"), "{msg}");
+        assert!(msg.contains("check the clocks"), "{msg}");
+
+        // A ticket that ran out a minute ago is almost certainly just expired,
+        // and the sentence still leads with that rather than with the clock.
+        let msg = expired_here(1_000, 1_060);
+        assert!(msg.starts_with("this ticket expired 1m ago"), "{msg}");
     }
 
     #[test]
@@ -426,6 +465,15 @@ mod tests {
         let busy = upstream_failure(&crate::p2p::OpenError::Busy);
         assert!(busy.starts_with("HTTP/1.1 503 "), "{busy}");
         assert!(busy.contains("wait a moment"), "{busy}");
+
+        // A share that has ended is `410`, not `502`: the resource is gone,
+        // and it is the same code the tunnel front answers with, so a visitor
+        // sees one behaviour whichever transport carried them.
+        let over = upstream_failure(&crate::p2p::OpenError::ShareOver);
+        assert!(over.starts_with("HTTP/1.1 410 "), "{over}");
+        assert!(over.contains("has ended"), "{over}");
+        let fault = upstream_failure(&crate::p2p::OpenError::SharerFault);
+        assert!(fault.starts_with("HTTP/1.1 503 "), "{fault}");
 
         let refused = upstream_failure(&crate::p2p::OpenError::Refused);
         assert!(refused.starts_with("HTTP/1.1 502 "), "{refused}");

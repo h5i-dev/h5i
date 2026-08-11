@@ -1007,6 +1007,45 @@ mod tests {
     }
 
     #[test]
+    fn every_definition_of_still_valid_flips_in_the_same_second() {
+        // Six places in three crates decide whether a grant is still good, and
+        // only one of them — `Ticket::remaining` — had a test that touched the
+        // boundary. Flipping `>` to `>=` in any of the other five passed the
+        // entire suite. This file's own module docs record that there were once
+        // four definitions of "a live share" in the codebase; this is the guard
+        // that keeps the surviving ones from drifting a second apart.
+        const T: i64 = 1_800_000_000;
+        let (g, secret) = mint_grant(None, T).expect("mint");
+        let mut s = ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::P2p,
+            "abc",
+            chrono::Utc::now(),
+        );
+        s.grants.push(g);
+
+        // One second before: alive, everywhere.
+        assert!(s.authorize(&secret, T - 1).is_ok());
+        assert_eq!(s.live_grants(T - 1), 1);
+        assert!(!s.is_spent(T - 1));
+
+        // At `expires_at` itself: expired, everywhere. This is the second the
+        // holder was promised up to, not through.
+        assert_eq!(s.authorize(&secret, T).unwrap_err(), Denied::Expired);
+        assert_eq!(s.live_grants(T), 0);
+        assert!(s.is_spent(T));
+        assert_eq!(s.authorize(&secret, T + 1).unwrap_err(), Denied::Expired);
+
+        // And what the sharer is shown agrees with what the door does.
+        let live = crate::bridge::render_status(&s, T - 1);
+        assert!(live.contains("1s left"), "{live}");
+        assert!(!live.contains("expired"), "{live}");
+        let dead = crate::bridge::render_status(&s, T);
+        assert!(dead.contains("expired"), "{dead}");
+    }
+
+    #[test]
     fn how_long_is_left_never_reads_as_zero_while_it_is_not() {
         // Integer minutes made every share in existence say "0m left" for its
         // final minute, in the same column that says "expired", at the exact

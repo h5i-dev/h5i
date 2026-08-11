@@ -196,6 +196,9 @@ pub struct Bridge {
     endpoint: String,
     dialer: Dialer,
     started: DateTime<Utc>,
+    /// The same instant on a clock nothing can move. Every expiry decision in
+    /// this process is floored against it; see [`Bridge::now`].
+    started_mono: std::time::Instant,
     tally: Mutex<Tally>,
     /// One permit per live connection into the box, held for its lifetime.
     capacity: Arc<tokio::sync::Semaphore>,
@@ -223,6 +226,7 @@ impl Bridge {
             endpoint,
             dialer,
             started: Utc::now(),
+            started_mono: std::time::Instant::now(),
             tally: Mutex::new(Tally::default()),
             capacity: Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)),
             shutdown: tokio::sync::watch::Sender::new(false),
@@ -273,6 +277,8 @@ impl Bridge {
     fn summarise(&self, ended: DateTime<Utc>) -> Summary {
         let t = self.tally();
         Summary {
+            seconds: self.started_mono.elapsed().as_secs() as i64,
+            clock_moved: self.clock_moved_by(ended),
             route_broken: t.route_broken,
             settled: t.settled,
             turned_away: t.turned_away.clone(),
@@ -292,6 +298,38 @@ impl Bridge {
             unreachable: t.unreachable,
             truncated: t.truncated,
         }
+    }
+
+    /// Now, but never earlier than the share's own start plus the time that
+    /// has actually passed.
+    ///
+    /// Every expiry decision here was a bare `Utc::now()`, and the wall clock
+    /// is not a clock a share can rely on: an NTP step after boot, a VM resumed
+    /// from a snapshot, a dual-boot laptop whose RTC holds local time. Stepping
+    /// a running share's clock back an hour was measured to extend *every* live
+    /// grant by an hour of real time — past what its holder was told, past what
+    /// the sharer was told, with nothing anywhere recording that the clock had
+    /// moved. A ticket is a promise about elapsed time and this is the only
+    /// clock that measures it.
+    ///
+    /// Deliberately one-directional. A backward step is refused; a forward step
+    /// is honoured, because expiring a ticket early is the safe direction and
+    /// because a machine whose clock was genuinely wrong at start-up should be
+    /// allowed to find that out.
+    fn now(&self) -> DateTime<Utc> {
+        floor_now(Utc::now(), self.started, self.started_mono.elapsed())
+    }
+
+    /// How far the wall clock has moved *out from under* this share, in
+    /// seconds: negative for a backward step, positive for a forward one.
+    ///
+    /// Reported rather than corrected. The receipt's job is to say what
+    /// happened, and "this session's timestamps are 3600s apart from what the
+    /// elapsed time says" is a fact a reader needs in order to weigh the rest
+    /// of it.
+    fn clock_moved_by(&self, ended: DateTime<Utc>) -> i64 {
+        let elapsed = self.started_mono.elapsed().as_secs() as i64;
+        (ended - self.started).num_seconds() - elapsed
     }
 
     pub fn free_slots(&self) -> usize {
@@ -332,7 +370,7 @@ impl Bridge {
     /// did nothing. The cost is one small file read per connection, which is
     /// nothing next to opening a TCP connection into a namespace.
     pub fn authorize(&self, secret: &str) -> Result<AuthorizedGrant, Denied> {
-        let now = Utc::now().timestamp();
+        let now = self.now().timestamp();
         let s = match session::read_state(&self.env_dir) {
             session::ReadState::Present(s) => s,
             // Gone, not broken. `share stop --force` removes the file and the
@@ -376,7 +414,7 @@ impl Bridge {
     /// their hot-reload socket, their event stream — running. Revocation is
     /// advertised as per person; this is what makes it so.
     pub fn grant_is_live(&self, grant_id: &str) -> bool {
-        let now = Utc::now().timestamp();
+        let now = self.now().timestamp();
         match session::read(&self.env_dir) {
             Some(s) => s
                 .grants
@@ -387,12 +425,26 @@ impl Bridge {
         }
     }
 
+    /// Has the share itself been told to stop?
+    ///
+    /// Distinct from any one grant being dead, and the distinction is a
+    /// sentence somebody reads. `session::stop` revokes every grant *and* sets
+    /// this in one write, so the per-connection watchdog's revoke check always
+    /// won the race and closed with "this ticket was revoked or has expired" —
+    /// telling the visitor their invite had run out, when what happened is
+    /// that the person sharing pressed stop. Measured 3 times out of 3.
+    pub fn share_is_ending(&self) -> bool {
+        session::read(&self.env_dir)
+            .map(|s| s.winding_up)
+            .unwrap_or(false)
+    }
+
     /// True once no grant can admit anyone: everything revoked, or everything
     /// expired. The transports poll this so a share that has been cut off drops
     /// the connections it is already carrying, instead of serving them until
     /// the peer gets bored.
     pub fn is_spent(&self) -> bool {
-        let now = Utc::now().timestamp();
+        let now = self.now().timestamp();
         match session::read(&self.env_dir) {
             Some(s) => s.is_spent(now),
             // The file is gone, so nothing authorizes anything. Fail closed.
@@ -665,7 +717,10 @@ impl Bridge {
 
     fn write_receipt_with(&self, exit_code: i32) {
         let ended = Utc::now();
-        let seconds = (ended - self.started).num_seconds().max(0);
+        // From the monotonic clock, like the body below. `wall_ms` in the
+        // receipt log said `0` for a two-minute session after a backward
+        // clock step, so an export summed the whole thing as nothing.
+        let seconds = self.started_mono.elapsed().as_secs() as i64;
         // Snapshotted, and the lock let go before anything is written. Held
         // across `receipt::append` — a file write plus a redaction scan over
         // the whole body — it blocks any connection still trying to record what
@@ -754,6 +809,17 @@ pub struct Summary {
     pub port: u16,
     pub started: DateTime<Utc>,
     pub ended: DateTime<Utc>,
+    /// How long the session really lasted, measured on a clock nothing can
+    /// move. Not `ended - started`: those are wall-clock readings, and a
+    /// backward NTP step between them produced a receipt reading `share
+    /// session, 0s` for a session that ran two minutes and moved 2.7 KiB,
+    /// with `closed` 58 minutes before `opened`. The `.max(0)` that used to
+    /// sit here is what turned an absurdity a reader would question into a
+    /// plausible-looking zero.
+    pub seconds: i64,
+    /// How far the wall clock moved out from under the session, in seconds.
+    /// Zero on any ordinary run.
+    pub clock_moved: i64,
     pub peers: Vec<PeerRecord>,
     /// Peers past what the record list holds.
     pub peers_overflow: u64,
@@ -789,6 +855,22 @@ pub struct Summary {
     pub truncated: u64,
 }
 
+/// The floor itself, split out because the wall clock is not something a test
+/// can move.
+fn floor_now(
+    wall: DateTime<Utc>,
+    started: DateTime<Utc>,
+    elapsed: std::time::Duration,
+) -> DateTime<Utc> {
+    let floor =
+        started + chrono::Duration::from_std(elapsed).unwrap_or(chrono::Duration::MAX);
+    if wall > floor {
+        wall
+    } else {
+        floor
+    }
+}
+
 fn plural(n: u64, one: &str, many: &str) -> String {
     if n == 1 {
         format!("{n} {one}")
@@ -804,7 +886,7 @@ fn plural(n: u64, one: &str, many: &str) -> String {
 /// was this box shared, over what, with whom, for how long, how much moved, and
 /// did anyone try who should not have.
 pub fn render_receipt(s: &Summary) -> String {
-    let seconds = (s.ended - s.started).num_seconds().max(0);
+    let seconds = s.seconds.max(0);
     let mut out = String::new();
     out.push_str(&format!(
         "share session, {seconds}s ({} transport)\n",
@@ -812,6 +894,24 @@ pub fn render_receipt(s: &Summary) -> String {
     ));
     out.push_str(&format!("opened   {}\n", s.started.to_rfc3339()));
     out.push_str(&format!("closed   {}\n", s.ended.to_rfc3339()));
+    // Said out loud, because everything else on this page is a wall-clock
+    // reading and the reader has no other way to know they moved. The two
+    // timestamps above can be out of order, and the per-peer `held` figures
+    // are wall-clock subtractions, so this is the line that tells a reader
+    // which numbers below to weigh and which to distrust. Five seconds of
+    // tolerance: a poll interval and a rounding, not a clock step.
+    if s.clock_moved.abs() >= 5 {
+        let (dir, by) = if s.clock_moved < 0 {
+            ("back", -s.clock_moved)
+        } else {
+            ("forward", s.clock_moved)
+        };
+        out.push_str(&format!(
+            "clock    this machine's clock moved {dir} {by}s during the session — the length \
+             above is measured, but the two timestamps and each peer's held time are clock \
+             readings and are off by that much\n"
+        ));
+    }
     out.push_str(&format!(
         "shared   port {} inside the box, never published on the host\n",
         s.port
@@ -1090,10 +1190,19 @@ fn short_name(box_id: &str) -> &str {
 pub fn render_status(s: &ShareSession, now: i64) -> String {
     let mut out = String::new();
     let live = session::is_live(s);
+    // Grants get a say in the headline, not just the process. A live process
+    // whose only grant has expired printed "sharing port 3000 over tunnel" and
+    // "allgone1  expired" three lines apart, from one command — while
+    // `is_admitting` correctly answered no everywhere else in the codebase, so
+    // `box rebase` went straight through the record this claimed was live. The
+    // window is about a second normally, and the whole width of a suspend, a
+    // freeze or a starved host otherwise.
     let headline = if !live {
         "— was sharing"
     } else if s.winding_up {
         "— shutting down, was sharing"
+    } else if s.is_spent(now) {
+        "— nobody can get in (every ticket is expired or revoked); was sharing"
     } else {
         "— sharing"
     };
@@ -1201,6 +1310,8 @@ mod tests {
             port: 3000,
             started: at("2026-08-10T10:00:00Z"),
             ended: at("2026-08-10T10:10:00Z"),
+            seconds: 600,
+            clock_moved: 0,
             peers,
             peers_overflow: 0,
             denied,
@@ -1288,6 +1399,90 @@ mod tests {
         // four figures of gibibytes.
         assert_eq!(bytes(1024u64 * 1024 * 1024 * 1024), "1.0 TiB");
         assert_eq!(bytes(u64::MAX), "16777216.0 TiB");
+    }
+
+    #[test]
+    fn a_clock_stepped_backwards_cannot_lengthen_a_ticket() {
+        // Measured, not imagined: stepping a running share's clock back an
+        // hour turned `8m left` into `1h8m left`, and the share went on
+        // serving a peer through it. Every expiry decision in the process was
+        // a bare `Utc::now()`, so a backward step of an hour extended every
+        // live grant by an hour of real time — past what its holder was told,
+        // past what the sharer was told. An NTP correction after boot, a VM
+        // resumed from a snapshot and a dual-boot laptop's RTC all do this.
+        let started = at("2026-08-10T10:00:00Z");
+
+        // The clock has gone back an hour; two seconds of real time have
+        // passed. The share must read the second, not the hour.
+        let stepped = floor_now(
+            at("2026-08-10T09:00:00Z"),
+            started,
+            std::time::Duration::from_secs(2),
+        );
+        assert_eq!(stepped, started + chrono::Duration::seconds(2));
+
+        // Forward is honoured. Expiring a ticket early is the safe direction,
+        // and a machine whose clock was wrong when the share started should be
+        // allowed to find out.
+        let jumped = floor_now(
+            at("2026-08-10T11:00:00Z"),
+            started,
+            std::time::Duration::from_secs(2),
+        );
+        assert_eq!(jumped, at("2026-08-10T11:00:00Z"));
+
+        // An untouched clock is passed through, not rounded to the floor.
+        let ordinary = at("2026-08-10T10:00:03.500Z");
+        assert_eq!(
+            floor_now(ordinary, started, std::time::Duration::from_secs(3)),
+            ordinary
+        );
+    }
+
+    #[test]
+    fn a_receipt_measures_the_session_and_says_when_the_clock_moved() {
+        // This is the real receipt from a share that ran two minutes and moved
+        // 2.7 KiB, with the clock stepped back an hour mid-session:
+        //
+        //     share session, 0s (p2p transport)
+        //     opened   2026-08-11T14:22:14+00:00
+        //     closed   2026-08-11T13:23:51+00:00
+        //
+        // `closed` before `opened`, and `0s` — from `(ended - started)
+        // .num_seconds().max(0)`, where the clamp turned an absurdity a reader
+        // would question into a plausible zero. The length is now measured on
+        // a clock nothing can move, and the reason the timestamps disagree
+        // with it is on the page.
+        let mut s = summary(vec![], vec![]);
+        s.started = at("2026-08-11T14:22:14Z");
+        s.ended = at("2026-08-11T13:23:51Z");
+        s.seconds = 97;
+        s.clock_moved = -3503;
+
+        let body = render_receipt(&s);
+        assert!(body.contains("share session, 97s"), "{body}");
+        assert!(!body.contains("share session, 0s"), "{body}");
+        assert!(body.contains("clock moved back 3503s"), "{body}");
+        assert!(
+            body.contains("are clock readings and are off by that much"),
+            "{body}"
+        );
+
+        // A forward step reads as one, and does not inflate the length: 683s
+        // was recorded for a 23-second session.
+        let mut s = summary(vec![], vec![]);
+        s.seconds = 23;
+        s.clock_moved = 660;
+        let body = render_receipt(&s);
+        assert!(body.contains("share session, 23s"), "{body}");
+        assert!(body.contains("clock moved forward 660s"), "{body}");
+
+        // And an ordinary session says nothing about clocks. A poll interval
+        // and a rounding are not a clock step.
+        let mut s = summary(vec![], vec![]);
+        s.seconds = 600;
+        s.clock_moved = 1;
+        assert!(!render_receipt(&s).contains("clock"));
     }
 
     #[test]
@@ -1935,6 +2130,8 @@ mod receipt_fuzz {
             } else {
                 Transport::Tunnel
             },
+            seconds: rng.next() as i64 % 100_000,
+            clock_moved: (rng.next() as i64 % 7_200) - 3_600,
             endpoint: "abcdef".into(),
             port: 3000,
             started,

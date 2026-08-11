@@ -480,6 +480,13 @@ async fn handle(
     // once truthfully and once as "unknown" — in the one number the receipt
     // sells as ingress evidence.
     let mut presented = false;
+    // Kept, because two of the five refusals are not about the visitor at all.
+    // The gate answers every one of them with the same `401` on purpose — a
+    // prober must not learn whether a ticket is unknown, expired or revoked —
+    // but "the share has ended" and "this machine cannot read its own grant
+    // table" are facts about *this side*, and a browser told to go and ask for
+    // a new invite will come back with one that fails identically.
+    let mut why: Option<crate::session::Denied> = None;
     let next = http_front::decide(
         &head,
         // The bare name: a quick tunnel's host is its own site (trycloudflare
@@ -493,7 +500,10 @@ async fn handle(
                     grant = Some(g);
                     true
                 }
-                Err(_) => false,
+                Err(d) => {
+                    why = Some(d);
+                    false
+                }
             }
         },
         // The visitor's origin is https, because Cloudflare terminates it.
@@ -501,7 +511,34 @@ async fn handle(
     );
 
     let (head, req) = match next {
-        Next::Respond(body) => {
+        Next::Respond(mut body) => {
+            // Substituted after the fact rather than threaded through `decide`,
+            // which takes a `bool` and is shared with the joiner's front. Only
+            // the `401` is rewritten: a `400` is about the request's bytes and
+            // a `403` about where it came from, and neither becomes truer for
+            // the share having stopped.
+            if body.starts_with("HTTP/1.1 401") {
+                match why {
+                    Some(crate::session::Denied::ShareOver) => {
+                        body = plain_response(
+                            "410 Gone",
+                            "",
+                            "This share has ended. Nothing is wrong with your link — whoever \
+                             shared it stopped the share.",
+                        );
+                    }
+                    Some(crate::session::Denied::TableUnreadable) => {
+                        body = plain_response(
+                            "503 Service Unavailable",
+                            "",
+                            "The sharing machine could not read its own record of who is \
+                             invited. Nothing is wrong with your link, and a new one would \
+                             fail the same way.",
+                        );
+                    }
+                    _ => {}
+                }
+            }
             // A `401` here is somebody knocking with nothing, which `authorize`
             // never sees and so never counted. On a public tunnel URL that is
             // the commonest thing that happens to a share.
@@ -1342,6 +1379,82 @@ mod tests {
             "the app's own cookie was dropped: {served}"
         );
         assert!(served.contains("Connection: close"), "{served}");
+
+        serving.abort();
+    }
+
+    #[tokio::test]
+    async fn a_browser_is_told_the_share_ended_rather_than_to_ask_for_a_new_link() {
+        // The gate answers every ticket refusal with the same `401` so that a
+        // prober learns nothing, and that is right for unknown, expired and
+        // revoked. It is wrong for the two refusals that are not about the
+        // visitor: a share that has been stopped, and a machine that cannot
+        // read its own grant table. Both told the visitor their invite was no
+        // good and to ask for another, which would fail identically.
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        // It works first, so the difference below is the record and not the
+        // ticket.
+        let ok = request(
+            addr,
+            &format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n"),
+        )
+        .await;
+        assert!(ok.contains("SAW<"), "{ok}");
+
+        // The share is stopped out from under the serving process, which is
+        // what `share stop --force` does and what the last moment of every
+        // ordinary stop looks like.
+        std::fs::remove_file(dir.path().join("share.json")).expect("stop the share");
+        let over = request(
+            addr,
+            &format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n"),
+        )
+        .await;
+        assert!(over.starts_with("HTTP/1.1 410 "), "{over}");
+        assert!(over.contains("This share has ended"), "{over}");
+        assert!(!over.contains("ask"), "{over}");
+        assert!(!over.contains("SAW<"), "a stopped share reached the box");
+
+        // And a table that is there and cannot be read is the other sentence:
+        // a new link would fail the same way, so nobody is sent to fetch one.
+        std::fs::write(dir.path().join("share.json"), b"{ not a record").expect("junk");
+        let broken = request(
+            addr,
+            &format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n"),
+        )
+        .await;
+        assert!(broken.starts_with("HTTP/1.1 503 "), "{broken}");
+        assert!(broken.contains("could not read its own record"), "{broken}");
+        assert!(
+            !broken.contains("SAW<"),
+            "an unreadable table reached the box"
+        );
+
+        // The refusals that *are* about the ticket keep the one `401` they
+        // have always had: this must not become an oracle for which of
+        // unknown, expired and revoked a probe hit.
+        let sess = crate::session::ShareSession::new(
+            "env/test/demo",
+            port,
+            crate::session::Transport::Tunnel,
+            "https://test.trycloudflare.com",
+            chrono::Utc::now(),
+        );
+        session::write(dir.path(), &sess).expect("empty table");
+        let unknown = request(
+            addr,
+            &format!("GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n"),
+        )
+        .await;
+        assert!(unknown.starts_with("HTTP/1.1 401 "), "{unknown}");
 
         serving.abort();
     }

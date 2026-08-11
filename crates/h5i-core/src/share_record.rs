@@ -169,6 +169,29 @@ mod tests {
     }
 
     #[test]
+    fn a_grant_is_live_up_to_its_expiry_and_not_through_it() {
+        // The sixth definition of "still valid", in a different crate from the
+        // other five, and the only one below `h5i-share`. It had no boundary
+        // test either: `>=` here and `>` there would have `box rm` refusing a
+        // share whose door the share itself had already shut, for one second
+        // per expiry — or the reverse, which is worse.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pid = std::process::id();
+        let at = |t: i64| {
+            full(pid, "").replace("\"expires_at\":4000000000", &format!("\"expires_at\":{t}"))
+        };
+
+        let now = chrono::Utc::now().timestamp();
+        write(dir.path(), &at(now + 1));
+        assert_eq!(read_live(dir.path()).expect("live").live_grants, 1);
+
+        write(dir.path(), &at(now));
+        let r = read_live(dir.path()).expect("the process is still alive");
+        assert_eq!(r.live_grants, 0, "a grant expiring this second still counted");
+        assert!(!r.is_admitting());
+    }
+
+    #[test]
     fn a_live_pid_is_not_the_same_as_admitting_anybody() {
         let dir = tempfile::tempdir().expect("tempdir");
         write(dir.path(), &full(std::process::id(), ""));

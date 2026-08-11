@@ -208,21 +208,21 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
         }) => {
             let dir = box_dir(&h5i_root, &name)?;
             not_shared(&dir, &name)?;
-            let (id, invite) = h5i_share::run::grant(&dir, label, parse_expire(&expire)?)?;
+            let minted = h5i_share::run::grant(&dir, label, parse_expire(&expire)?)?;
+            let id = minted.id;
             println!("{} minted grant {id} for {name}", SUCCESS);
             println!();
-            println!("   send them  {invite}");
+            println!("   send them  {}", minted.invite);
             println!();
             // The announce block carries an expiry and this did not, so a
             // second link went out with nobody having seen how long it lives.
+            //
+            // Derived from the grant that was actually written, not from
+            // `--expire` re-parsed against a fresh clock. The write waits for
+            // the share lock, so the two disagreed by however long that took.
             println!(
                 "   expires   in {} (grant {id})",
-                h5i_share::session::humanise(
-                    (chrono::Utc::now()
-                        + chrono::Duration::from_std(parse_expire(&expire)?).unwrap_or_default())
-                    .timestamp()
-                        - chrono::Utc::now().timestamp()
-                )
+                h5i_share::session::humanise(minted.expires_at - chrono::Utc::now().timestamp())
             );
             println!("   revoke    h5i box share revoke {name} {id}");
             Ok(())

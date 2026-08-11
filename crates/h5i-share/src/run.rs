@@ -168,16 +168,22 @@ async fn serve_async(
     pinned_netns: Option<String>,
     announce: impl FnOnce(&Started),
 ) -> Result<(), H5iError> {
+    // Transport setup first: it decides the endpoint the session records, and
+    // it is the step most likely to fail (no network, no cloudflared). Failing
+    // before anything is written keeps a dead share.json off disk.
+    let mut started = Setup::start(&req).await?;
+
+    // Minted *after* that, not before. `--tunnel` waits up to 45 seconds for
+    // `cloudflared` to publish a URL, and the clock was started before the
+    // wait: `--tunnel --expire 30s` printed a success tick, a complete
+    // ticket, and `expires in 0s` — a ticket already dead when it was handed
+    // over, and printed once. Whoever asked for thirty seconds meant thirty
+    // seconds of somebody being able to use it.
     let expires_at = (chrono::Utc::now()
         + chrono::Duration::from_std(req.expire).unwrap_or_default())
     .timestamp();
     let (grant, secret) = session::mint_grant(req.label.clone(), expires_at)?;
     let grant_id = grant.id.clone();
-
-    // Transport setup first: it decides the endpoint the session records, and
-    // it is the step most likely to fail (no network, no cloudflared). Failing
-    // before anything is written keeps a dead share.json off disk.
-    let mut started = Setup::start(&req).await?;
 
     let mut sess = ShareSession::new(
         &req.env_id,
@@ -641,7 +647,7 @@ pub fn grant(
     env_dir: &std::path::Path,
     label: Option<String>,
     expire: Duration,
-) -> Result<(String, String), H5iError> {
+) -> Result<Minted, H5iError> {
     let expires_at =
         (chrono::Utc::now() + chrono::Duration::from_std(expire).unwrap_or_default()).timestamp();
     let (g, secret) = session::mint_grant(label, expires_at)?;
@@ -687,7 +693,26 @@ pub fn grant(
         s.grants.push(g);
         Ok(s.clone())
     })?;
-    Ok((id, crate::tunnel::invite_url(&sess.endpoint, &secret)))
+    Ok(Minted {
+        id,
+        invite: crate::tunnel::invite_url(&sess.endpoint, &secret),
+        expires_at,
+    })
+}
+
+/// A grant, as the caller needs to describe it.
+///
+/// `expires_at` is here because the CLI was computing its own: it re-parsed
+/// `--expire`, added it to a fresh `Utc::now()`, and printed that. The grant in
+/// the table is anchored at the `now` above, and `session::update` then waits
+/// for the lock — up to five seconds of retries. Measured with a three-second
+/// hold, the terminal said `expires in 1m` for a grant that `share status`
+/// showed with 58 seconds left. Two clocks for one fact is one clock too many.
+#[derive(Debug)]
+pub struct Minted {
+    pub id: String,
+    pub invite: String,
+    pub expires_at: i64,
 }
 
 /// Revoke one grant. The share keeps serving everyone else.

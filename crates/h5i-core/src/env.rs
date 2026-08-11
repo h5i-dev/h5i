@@ -8081,10 +8081,22 @@ fn refuse_if_shared(h5i_root: &Path, m: &EnvManifest, verb: &str) -> Result<(), 
             m.id, s.pid, m.slug
         )));
     }
-    // Naming `--force` as well, because a record this cannot fully read is
-    // still counted as a share — the safe direction — and without the escape
-    // that becomes two refusals pointing at each other: the verb says stop the
-    // share, and `share stop` says the box is not being shared.
+    // Naming `--force` as well, because the two verbs read the file with
+    // different rules: this one goes through `share_record`, which requires
+    // every field it knows about, and `share stop` goes through `h5i-share`.
+    // A record one accepts and the other does not leaves two refusals pointing
+    // at each other — the verb says stop the share, and `share stop` says the
+    // box is not being shared — and `--force` is the way out of that.
+    //
+    // Which way `share_record` fails is worth being exact about, because an
+    // earlier version of this comment had it backwards: a file it cannot fully
+    // parse reads as *no share at all*, so this returns `Ok` and the verb goes
+    // ahead. That is deliberate (see the module docs: a malformed file must not
+    // wedge `box rm` forever) and it is not the cautious direction. It is
+    // defensible only because a record the share itself cannot read admits
+    // nobody either — the bridge denies every ticket against it — so the box is
+    // not gaining visitors while this decision is made. Connections already
+    // open are the gap, and they are the reason this is written down.
     Err(H5iError::Metadata(format!(
         "{} is being shared right now by pid {} — somebody outside may be connected to it, and \
          `{verb}` would change the box under them. Stop the share first: \

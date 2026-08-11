@@ -607,6 +607,14 @@ things. `route` says h5i could not reach the box, which is a different fact
 from `unreached` — nothing was listening on the port — and blaming the second
 for the first sends somebody to check a dev server that is running fine.
 
+`clock` appears when the machine's wall clock moved during the session, and it
+is worth understanding why the line exists. The session length is measured on a
+clock nothing can move, so it is right regardless; the timestamps beside it and
+each peer's held time are wall-clock readings, and after an NTP correction or a
+resumed snapshot they can be minutes or hours out, or even out of order. Ticket
+expiry is measured the same way: a clock stepped backwards cannot extend a live
+ticket, which was measured putting an hour back onto every grant before this.
+
 A receipt can also open with `partial`, which means it was written before every
 connection had finished: the byte counts below it are short and a peer may read
 as still connected. That happens when the quiesce times out, and when a Ctrl-C
