@@ -1136,6 +1136,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_refusal_reaches_a_visitor_who_was_still_uploading() {
+        // The refusal paths are where a peer is *most* likely to still be
+        // sending — it declared a body and we refused part-way through it — so
+        // they are where a reset would most reliably destroy the answer. Only
+        // two of the seven close paths had the drain when this was written.
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        // A body far larger than what is actually sent, so the proxy is still
+        // waiting for it when the peer stops — and a `401` on a connection
+        // whose body was never read.
+        let anon = request_strict(
+            addr,
+            "POST / HTTP/1.1\r\nHost: t\r\nContent-Length: 900000\r\n\r\npartial",
+        )
+        .await;
+        assert!(anon.starts_with("HTTP/1.1 401 "), "{anon}");
+
+        // And a chunked body whose framing does not parse, which is answered
+        // mid-request with the peer still mid-send.
+        let bad = request_strict(
+            addr,
+            &format!(
+                "POST / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
+                 Transfer-Encoding: chunked\r\n\r\nnot-a-chunk-size\r\n"
+            ),
+        )
+        .await;
+        assert!(bad.starts_with("HTTP/1.1 400 "), "{bad}");
+
+        serving.abort();
+    }
+
+    #[tokio::test]
     async fn a_response_the_box_left_unfinished_is_recorded() {
         let port = short_server();
         let dir = tempfile::tempdir().expect("tempdir");

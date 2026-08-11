@@ -356,7 +356,7 @@ where
     // to go and read, so this is the one write to the box that always ends the
     // request.
     if write_to_box(&mut up_w, head.as_bytes()).await.is_err() {
-        return refuse_the_response(&mut peer_w, unreachable_box_response(), to_peer).await;
+        return refuse_the_response(&mut peer_r, &mut peer_w, unreachable_box_response(), to_peer).await;
     }
     to_box.fetch_add(head.len() as u64, Ordering::Relaxed);
 
@@ -391,8 +391,7 @@ where
                 // threw the box's real answer away.
                 Some(false) => {}
                 Some(true) => {
-                    return refuse_the_response(
-                        &mut peer_w,
+                    return refuse_the_response(&mut peer_r, &mut peer_w,
                         unreachable_box_response(),
                         to_peer,
                     )
@@ -404,7 +403,7 @@ where
                     } else {
                         gate::refusal_response(gate::Refusal::Malformed)
                     };
-                    return refuse_the_response(&mut peer_w, reply, to_peer).await;
+                    return refuse_the_response(&mut peer_r, &mut peer_w, reply, to_peer).await;
                 }
             }
         }
@@ -427,7 +426,7 @@ where
             // already written is the one the visitor should get.
             if let Err(e) = write_to_box(&mut up_w, &rest[..from_rest]).await {
                 if box_write_failure(&e) == Some(true) {
-                    return refuse_the_response(&mut peer_w, unreachable_box_response(), to_peer)
+                    return refuse_the_response(&mut peer_r, &mut peer_w, unreachable_box_response(), to_peer)
                         .await;
                 }
                 remaining_override = true;
@@ -448,12 +447,13 @@ where
                 // is the whole problem — and a closed socket with no reply is
                 // the least informative thing to hand somebody whose upload
                 // was too slow.
-                let reply = timed_out_response();
-                if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
-                    to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
-                }
-                let _ = peer_w.shutdown().await;
-                return Ok(());
+                return refuse_the_response(
+                    &mut peer_r,
+                    &mut peer_w,
+                    timed_out_response(),
+                    to_peer,
+                )
+                .await;
             }
             let take = (remaining as usize).min(buf.len());
             // Deadlined per read. Declaring a megabyte, sending one byte and
@@ -465,12 +465,13 @@ where
                 // be a bare connection reset. The once-an-hour cap above got an
                 // answer a round ago and this one did not.
                 Err(_) => {
-                    let reply = timed_out_response();
-                    if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
-                        to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
-                    }
-                    let _ = peer_w.shutdown().await;
-                    return Ok(());
+                    return refuse_the_response(
+                        &mut peer_r,
+                        &mut peer_w,
+                        timed_out_response(),
+                        to_peer,
+                    )
+                    .await;
                 }
             };
             if n == 0 {
@@ -481,8 +482,7 @@ where
             }
             if let Err(e) = write_to_box(&mut up_w, &buf[..n]).await {
                 if box_write_failure(&e) == Some(true) {
-                    return refuse_the_response(
-                        &mut peer_w,
+                    return refuse_the_response(&mut peer_r, &mut peer_w,
                         unreachable_box_response(),
                         to_peer,
                     )
@@ -527,7 +527,7 @@ where
         // were, which is to say the bare CR the fix was written for still
         // walked a `Set-Cookie` past the filter.
         if !head_is_well_formed(&head) {
-            return refuse_the_response(&mut peer_w, malformed_head_response(), to_peer).await;
+            return refuse_the_response(&mut peer_r, &mut peer_w, malformed_head_response(), to_peer).await;
         }
         // Relayed as it came *except* for the share-cookie filter: an interim
         // head must keep its `Connection` (the answer has not started) but it
@@ -540,7 +540,7 @@ where
         // server does, and it is a thing agent-written code can do by accident.
         interim += 1;
         if interim >= MAX_INTERIM_RESPONSES {
-            let _ = peer_w.shutdown().await;
+            finish_with(&mut peer_r, &mut peer_w).await;
             return Ok(());
         }
     };
@@ -553,7 +553,7 @@ where
         let switched = complete && is_switching(&head);
         if switched {
             if !head_is_well_formed(&head) {
-                return refuse_the_response(&mut peer_w, malformed_head_response(), to_peer).await;
+                return refuse_the_response(&mut peer_r, &mut peer_w, malformed_head_response(), to_peer).await;
             }
             // Filtered like every other response head. This was the one that
             // was not — and it is the only `1xx` a dev server actually sends,
@@ -867,7 +867,7 @@ where
         // truncated — and telling the sharer to look for a truncation sends
         // them after something that is not happening, while discarding the one
         // signal that would tell them their app emits injectable headers.
-        return refuse_the_response(&mut peer_w, malformed_head_response(), to_peer).await;
+        return refuse_the_response(&mut peer_r, &mut peer_w, malformed_head_response(), to_peer).await;
     }
 
     if !complete && head.is_empty() {
@@ -876,7 +876,7 @@ where
         // happens when a dev server rejects a request by hanging up — so the
         // sharer is told the box answered nothing rather than sent to look for
         // a truncation.
-        return refuse_the_response(&mut peer_w, unreachable_box_response(), to_peer).await;
+        return refuse_the_response(&mut peer_r, &mut peer_w, unreachable_box_response(), to_peer).await;
     }
 
     if !complete {
@@ -887,12 +887,8 @@ where
         // box chooses when to stop talking, so that was the whole sanitiser
         // behind a door the box holds. A refusal the visitor can read is the
         // better half of the trade.
-        let reply = unfinished_response();
-        if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
-            to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
-        }
-        let _ = peer_w.shutdown().await;
-        return Ok(());
+        return refuse_the_response(&mut peer_r, &mut peer_w, unfinished_response(), to_peer)
+            .await;
     }
 
     let (out, body_len) = {
@@ -1170,22 +1166,35 @@ fn malformed_head_response() -> String {
 }
 
 /// Answer the visitor on the box's behalf and close.
-async fn refuse_the_response<W: tokio::io::AsyncWrite + Unpin>(
-    peer_w: &mut W,
+async fn refuse_the_response<PR, PW>(
+    peer_r: PR,
+    mut peer_w: PW,
     reply: String,
     to_peer: &std::sync::atomic::AtomicU64,
-) -> std::io::Result<()> {
+) -> std::io::Result<()>
+where
+    PR: tokio::io::AsyncRead + Unpin,
+    PW: tokio::io::AsyncWrite + Unpin,
+{
     use std::sync::atomic::Ordering;
-    if write_timed(peer_w, reply.as_bytes()).await.is_ok() {
+    if write_timed(&mut peer_w, reply.as_bytes()).await.is_ok() {
         to_peer.fetch_add(reply.len() as u64, Ordering::Relaxed);
     }
-    let _ = peer_w.shutdown().await;
+    // Drained, like every other close. These are the paths where the peer is
+    // *most* likely to still be sending — it declared a body and we refused
+    // part-way through it — so they are the ones a reset would most reliably
+    // destroy the answer on.
+    finish_with(peer_r, peer_w).await;
     Ok(())
 }
 
 /// How long to spend swallowing what the peer is still sending, so the socket
 /// can close without a reset.
 const LINGER_DRAIN: Duration = Duration::from_secs(2);
+
+/// And how much of it to swallow. Plenty for a form post that was refused;
+/// nowhere near a file upload nobody is going to look at.
+const MAX_LINGER_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Finish with a peer: stop writing, swallow whatever it is still sending, and
 /// only then let the socket go.
@@ -1203,9 +1212,17 @@ where
 {
     let _ = peer_w.shutdown().await;
     let mut discard = vec![0u8; 8 * 1024];
+    let mut swallowed = 0u64;
     let _ = tokio::time::timeout(LINGER_DRAIN, async {
         while let Ok(n) = peer_r.read(&mut discard).await {
             if n == 0 {
+                break;
+            }
+            // Bounded in bytes as well as time. The point is to let the kernel
+            // close cleanly, not to read out an upload nobody wants; past this
+            // the reset is the lesser cost.
+            swallowed += n as u64;
+            if swallowed > MAX_LINGER_BYTES {
                 break;
             }
         }
@@ -1746,13 +1763,22 @@ mod response_tests {
 }
 
 /// Write a response and close politely.
-pub async fn respond<W: tokio::io::AsyncWrite + Unpin>(w: &mut W, body: &str) {
+pub async fn respond<S>(sock: &mut S, body: &str)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     // Deadlined like every other write. Small ones into an empty send buffer,
     // so a stall needs a receive window closed from the first byte — but "every
     // write has a deadline" is either true or it is not.
-    let _ = write_timed(w, body.as_bytes()).await;
-    let _ = w.flush().await;
-    let _ = w.shutdown().await;
+    let _ = write_timed(sock, body.as_bytes()).await;
+    let _ = sock.flush().await;
+    // And drained like every other close. This is the writer for every
+    // front-door answer — the `401`, the `503`, the invite redirect — and a
+    // refusal is precisely when a peer is most likely to still be sending a
+    // body nobody read, which is what turns the close into a reset that
+    // destroys the answer.
+    let (r, w) = tokio::io::split(sock);
+    finish_with(r, w).await;
 }
 
 #[cfg(test)]
