@@ -71,18 +71,7 @@ pub async fn run(
     // turns "joined" into a statement about the ticket rather than about the
     // network, and it keeps a joiner who has not opened the page yet from being
     // hung up on thirty seconds later.
-    let warning = match crate::p2p::verify_ticket(&conn, &ticket.secret).await {
-        Ok(()) => None,
-        // The only one that is fatal. Busy and unreachable are both conditions
-        // that clear on their own — the share fills up and empties again, the
-        // dev server is started a minute later — and failing on them would mean
-        // telling somebody their invite is broken when it is not.
-        Err(e @ crate::p2p::OpenError::Refused) => return Err(H5iError::Metadata(format!("{e}"))),
-        Err(e @ crate::p2p::OpenError::Transport(_)) => {
-            return Err(H5iError::Metadata(format!("{e}")))
-        }
-        Err(e) => Some(format!("{e}")),
-    };
+    let warning = check_outcome(crate::p2p::verify_ticket(&conn, &ticket.secret).await)?;
 
     // Loopback only. Never an external address, on any code path: this proxy
     // exists to give one browser on this machine a door, not to republish
@@ -227,6 +216,28 @@ async fn handle(
     Ok(())
 }
 
+/// What the join-time ticket check means for the command.
+///
+/// Its own function so the decision can be tested: `run` binds a listener and
+/// serves until interrupted, so a test that went through it would be a test of
+/// tokio. This is the whole behaviour change of the check — which of the four
+/// answers stops the command and which is only worth repeating.
+fn check_outcome(r: Result<(), crate::p2p::OpenError>) -> Result<Option<String>, H5iError> {
+    match r {
+        Ok(()) => Ok(None),
+        // Refused is the only answer about the ticket itself, so it is the only
+        // one that stops the command. Busy and unreachable are both conditions
+        // that clear on their own — the share fills up and empties again, the
+        // dev server is started a minute later — and failing on them would tell
+        // somebody their invite is broken when it is not.
+        Err(e @ crate::p2p::OpenError::Refused) => Err(H5iError::Metadata(format!("{e}"))),
+        // Not a statement about the ticket at all: the connection is unusable,
+        // so there is nothing to go on to.
+        Err(e @ crate::p2p::OpenError::Transport(_)) => Err(H5iError::Metadata(format!("{e}"))),
+        Err(e) => Ok(Some(format!("{e}"))),
+    }
+}
+
 /// Turn a failure to reach the sharer into something a browser renders.
 ///
 /// `503` for busy, because reloading is the right move; `502` for everything
@@ -252,6 +263,31 @@ fn upstream_failure(e: &crate::p2p::OpenError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_refused_ticket_stops_the_command() {
+        use crate::p2p::OpenError;
+        // The whole point of checking at join time is that a bad ticket fails
+        // here rather than at the first page load. The equally important half
+        // is that the other three answers do *not* fail: a share that is
+        // momentarily full, or a dev server that has not been started yet, are
+        // both things that fix themselves, and telling somebody their invite is
+        // broken sends them back to ask for a ticket that works no better.
+        assert!(check_outcome(Ok(())).expect("a good ticket").is_none());
+
+        let err = check_outcome(Err(OpenError::Refused)).expect_err("refused is fatal");
+        assert!(format!("{err}").contains("refused"), "{err}");
+
+        let err = check_outcome(Err(OpenError::Transport("gone".into())))
+            .expect_err("an unusable connection is fatal");
+        assert!(format!("{err}").contains("gone"), "{err}");
+
+        let busy = check_outcome(Err(OpenError::Busy)).expect("busy is not fatal");
+        assert!(busy.expect("a warning").contains("as many connections"));
+
+        let down = check_outcome(Err(OpenError::Unreachable)).expect("unreachable is not fatal");
+        assert!(down.is_some(), "an unreachable box said nothing at all");
+    }
 
     fn ticket(expires_at: i64) -> Ticket {
         Ticket {

@@ -215,6 +215,16 @@ impl Bridge {
     /// latency for the person who is legitimately using the share, and hide the
     /// fact that anything unusual happened; a refusal is immediate, visible in
     /// the receipt, and leaves the connections already in flight alone.
+    /// How many of the share's connection slots are free. For tests that need
+    /// to show a path did *not* take one — "a later stream still works" leaves
+    /// a handful of leaked permits invisible.
+    pub fn free_slots(&self) -> usize {
+        self.capacity.available_permits()
+    }
+
+    /// The ceiling, so a test can say "all of them" without hard-coding it.
+    pub const MAX_CONNECTIONS: usize = MAX_CONNECTIONS;
+
     pub fn admit(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
         match self.capacity.clone().try_acquire_owned() {
             Ok(permit) => Some(permit),

@@ -183,28 +183,22 @@ async fn serve_async(
         warning,
     });
 
-    let outcome = tokio::select! {
-        r = started.serve(bridge.clone(), req.direct_only) => r,
-        _ = interrupted(&req.env_dir) => Ok(()),
+    // The `bool` is "a signal has already been delivered", and it decides who
+    // owns the *next* one. On this branch `interrupted()` has armed the
+    // hard-exit watcher, so a second Ctrl-C exits without a receipt, as
+    // promised — and the teardown below must not also race for it.
+    let (outcome, already_signalled) = tokio::select! {
+        r = started.serve(bridge.clone(), req.direct_only) => (r, false),
+        _ = interrupted(&req.env_dir) => (Ok(()), true),
         reason = stopped_elsewhere(bridge.clone()) => {
             eprintln!("share: {reason}");
-            Ok(())
+            (Ok(()), false)
         }
         reason = box_went_away(req.env_dir.clone()) => {
             eprintln!("share: {reason}");
-            Ok(())
+            (Ok(()), false)
         }
     };
-
-    // Whatever ended the select, the operator can still press Ctrl-C — and
-    // until this call there was nobody listening for it on three of the four
-    // exits. Registering a signal handler replaces the default disposition for
-    // the rest of the process's life, so once `interrupted()` had been polled
-    // even once, a `select!` that resolved on some *other* branch left SIGINT
-    // and SIGTERM installed and unwatched: the teardown below is up to six
-    // seconds, and for all of it Ctrl-C and `kill` did nothing at all.
-    #[cfg(unix)]
-    arm_second_signal(&req.env_dir);
 
     // Say so on disk before doing any of it. `is_live` is `kill(pid, 0)`, and
     // this process is about to spend several seconds writing a receipt while
@@ -213,6 +207,55 @@ async fn serve_async(
     // the table it went into.
     session::begin_winding_up(&req.env_dir);
 
+    // The teardown, and a way out of the *waiting* part of it.
+    //
+    // This is a select and not an unconditional `arm_second_signal` for a
+    // reason that cost a round to learn. Arming the hard-exit watcher here
+    // meant that on the three exits where no signal had been delivered yet —
+    // `share stop` from another terminal, the box going away, the transport
+    // ending — the operator's **first** Ctrl-C hit a watcher built for their
+    // second: it printed "interrupted again", threw the receipt away and
+    // exited. Pressing Ctrl-C once to get a prompt back destroyed the one
+    // artifact this whole feature exists to produce, and told them they had
+    // done it twice.
+    //
+    // What an interrupt during the teardown should mean is "stop waiting", not
+    // "stop recording". So it skips the grace and the quiesce — losing the
+    // closing bytes of whatever was still mid-copy, which is the trade the
+    // operator just asked for — and still writes the receipt. Only a *second*
+    // one, armed by `interrupted()` on the path where a first has actually been
+    // delivered, exits without it.
+    let waited = if already_signalled {
+        // The hard-exit watcher is armed and owns the next signal. Racing it
+        // here would make a second Ctrl-C do one of two different things
+        // depending on which task woke first.
+        teardown(&bridge, &mut started).await;
+        true
+    } else {
+        tokio::select! {
+            _ = teardown(&bridge, &mut started) => true,
+            _ = interrupted(&req.env_dir) => {
+                eprintln!(
+                    "share: not waiting for connections to finish — the receipt is still written"
+                );
+                false
+            }
+        }
+    };
+    if !waited {
+        // The transport still has to go, or `cloudflared` outlives this
+        // process. Not awaited on the interrupted path beyond its own bounds.
+        started.shutdown().await;
+    }
+    // Every path out writes the receipt and takes the session file with it, so
+    // `share ls` describes what is running rather than what once ran.
+    bridge.write_receipt();
+    session::clear(&req.env_dir);
+    outcome
+}
+
+/// The orderly half: tell the connections, then the transport, then wait.
+async fn teardown(bridge: &Arc<Bridge>, started: &mut Setup) {
     // Tell the connections first, tear the transport down second. `iroh`'s
     // `Endpoint::close` closes every connection with code `0` and an empty
     // reason, so a connection that wanted to close with an explanation has to
@@ -229,11 +272,6 @@ async fn serve_async(
     // every peer still mid-copy — the half of a share a reviewer most wants.
     started.shutdown().await;
     bridge.quiesce(QUIESCE).await;
-    // Every path out writes the receipt and takes the session file with it, so
-    // `share ls` describes what is running rather than what once ran.
-    bridge.write_receipt();
-    session::clear(&req.env_dir);
-    outcome
 }
 
 /// Resolves when the operator asks this process to stop.
@@ -750,6 +788,61 @@ mod tests {
         session::write(dir.path(), &s).expect("write");
         let err = grant(dir.path(), None, Duration::from_secs(600)).expect_err("dead share");
         assert!(format!("{err}").contains("gone"));
+    }
+
+    #[tokio::test]
+    async fn interrupting_the_teardown_skips_the_waiting_and_keeps_the_receipt() {
+        // The regression this exists for: arming the hard-exit watcher after
+        // the select meant that on the three exits where no signal had been
+        // delivered yet — `share stop` elsewhere, the box going away, the
+        // transport ending — the operator's *first* Ctrl-C hit a watcher built
+        // for their second. It printed "interrupted again", threw the receipt
+        // away and exited. One press, to get a prompt back, destroyed the one
+        // artifact the feature exists to produce.
+        //
+        // What replaced it is a `select!` whose other branch abandons the
+        // teardown mid-flight. So the claim to pin is that abandoning it
+        // mid-flight still leaves a bridge that can write its receipt.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bridge = std::sync::Arc::new(crate::bridge::Bridge::new(
+            dir.path().to_path_buf(),
+            "env/a/demo".into(),
+            "digest".into(),
+            "demo".into(),
+            Transport::Tunnel,
+            "https://x".into(),
+            crate::dialer::Dialer::spawn_local(1).expect("dialer"),
+        ));
+        // A connection that never finishes, so the quiesce inside `teardown`
+        // really would sit there for its full five seconds.
+        let held = bridge.admit().expect("a slot");
+        let mut setup = Setup::Tunnel {
+            tunnel: crate::tunnel::Tunnel::already_gone_for_tests(),
+            listener: None,
+        };
+
+        let started = std::time::Instant::now();
+        {
+            let mut running = std::pin::pin!(teardown(&bridge, &mut setup));
+            let cut = tokio::time::timeout(Duration::from_millis(50), &mut running).await;
+            assert!(
+                cut.is_err(),
+                "the teardown finished before it could be cut short"
+            );
+            // And here the future is dropped, which is what the `select!` does.
+        }
+        assert!(
+            started.elapsed() < QUIESCE,
+            "abandoning the teardown still waited it out: {:?}",
+            started.elapsed()
+        );
+        drop(held);
+
+        // The receipt is written after it, on every path. That is the thing an
+        // interrupt must not skip.
+        bridge.write_receipt();
+        let log = std::fs::read_to_string(dir.path().join("receipt.jsonl")).expect("receipt");
+        assert!(log.contains(r#""source":"share""#), "{log}");
     }
 
     #[test]

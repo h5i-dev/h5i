@@ -413,7 +413,9 @@ pub fn already_shared(existing: &ShareSession, name: &str) -> H5iError {
     if existing.winding_up {
         return H5iError::Metadata(format!(
             "this box's share is shutting down (pid {}) — it is writing its receipt and will be \
-             gone in a moment. Run `h5i box share {name}` again then.",
+             gone in a moment. Run `h5i box share {name}` again then. (If it is still saying \
+             this in a minute, that pid belongs to something else now: \
+             `h5i box share stop {name} --force`.)",
             existing.pid
         ));
     }
@@ -513,6 +515,20 @@ pub fn update<T>(
 /// already read the table can write it back *after* this deletes it, and the
 /// share record outlives the process that owned it — a confusing `share ls`
 /// rather than a security failure, but the fix is one line.
+/// Is the record on disk the one *this* process wrote?
+///
+/// The premise every unconditional delete rested on, now actually checked. It
+/// is reachable without it: `share stop --force` removes a live share's record,
+/// a second `h5i box share` legitimately claims the box and prints its ticket
+/// to somebody, and then the first process finishes its teardown and deletes
+/// the *second* share's table — whose ticket has already been sent to a human
+/// and now works for nobody.
+fn record_is_ours(env_dir: &Path) -> bool {
+    read(env_dir)
+        .map(|s| s.pid == std::process::id())
+        .unwrap_or(false)
+}
+
 pub fn clear(env_dir: &Path) {
     // `let _ = …` would drop the guard at the end of *this statement*, which is
     // to say before the removal it is guarding. It was written that way once,
@@ -522,7 +538,9 @@ pub fn clear(env_dir: &Path) {
     // is a record for a process that is exiting anyway, which is the state
     // every "GONE share nobody can clear" report starts from.
     let _lock = Lock::acquire(env_dir);
-    let _ = std::fs::remove_file(session_path(env_dir));
+    if record_is_ours(env_dir) {
+        let _ = std::fs::remove_file(session_path(env_dir));
+    }
 }
 
 /// Remove the record without waiting for the lock.
@@ -534,7 +552,9 @@ pub fn clear(env_dir: &Path) {
 /// serialise against: this is an unconditional delete of our own share's record
 /// by the process that wrote it, not a read-modify-write of the grant table.
 pub fn clear_now(env_dir: &Path) {
-    let _ = std::fs::remove_file(session_path(env_dir));
+    if record_is_ours(env_dir) {
+        let _ = std::fs::remove_file(session_path(env_dir));
+    }
 }
 
 /// Is the process that wrote this session still alive?

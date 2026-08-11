@@ -29,7 +29,13 @@
 /// Application-layer protocol negotiation. Both ends must agree on this exact
 /// string or QUIC drops the connection before either speaks, which is a free
 //  first filter against anything that wandered onto the endpoint.
-pub const ALPN: &[u8] = b"h5i/share/1";
+/// Bumped when the greeting changed. The `H5IP` spelling below is a frame an
+/// older sharer reads as junk and answers `REPLY_DENIED` to — which the joiner
+/// would render as "the sharer refused this ticket … ask for a new one", and
+/// the new ticket would fail identically, forever. ALPN is the one place where
+/// two versions can fail to agree *before* either says anything, so a skew ends
+/// as a connection that will not open rather than as advice nobody can act on.
+pub const ALPN: &[u8] = b"h5i/share/2";
 
 const MAGIC: &[u8; 4] = b"H5IS";
 /// The same greeting, asking only whether the ticket is good.
@@ -141,6 +147,17 @@ mod tests {
             decode_hello(&probe),
             Some((Intent::Probe, secret().to_string()))
         );
+    }
+
+    #[test]
+    fn a_probe_with_the_wrong_version_is_junk_too() {
+        // The version check is shared by both magics, which is easy to say and
+        // worth a test: the whole enumeration of what an unauthenticated peer
+        // can send lives in this module, and a branch nobody exercises is a
+        // branch that gets refactored apart.
+        let mut probe = encode_probe(&secret()).expect("encode");
+        probe[4] = VERSION.wrapping_add(1);
+        assert_eq!(decode_hello(&probe), None);
     }
 
     #[test]

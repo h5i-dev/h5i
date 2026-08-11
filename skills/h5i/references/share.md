@@ -39,7 +39,7 @@ h5i box share ls --json              # the same, with `name` and `live` per row
 h5i box share grant <name> --label sam   # a second ticket (--tunnel shares only)
 h5i box share revoke <name> <grant>  # cut off one peer
 h5i box share stop <name>            # end it
-h5i box share stop <name> --force    # delete the record; nothing is asked to stop
+h5i box share stop <name> --force    # delete the record, whatever it says
 ```
 
 `grant` also takes `--expire`, so a second peer can get a shorter ticket than
@@ -59,9 +59,11 @@ It also ends on its own, and in each case it writes its receipt on the way out:
 when the last ticket expires, when the box stops having a running session, and —
 on `--tunnel` — if `cloudflared` exits. So a share is not normally something you
 have to remember to clean up, and it is also not something you can start and
-assume is still up an hour later. The exception is a second Ctrl-C, which exits
-at once: that skips the receipt on purpose, and if the share record survives it
-`h5i box share stop <name>` clears it.
+assume is still up an hour later.
+
+Ctrl-C during that ending skips the *waiting* — connections still mid-copy lose
+their closing byte counts — and still writes the receipt. Only a second one
+exits without it.
 
 ## What it needs, and what it refuses
 

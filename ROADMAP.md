@@ -693,7 +693,7 @@ h5i join <ticket> [--port N]                     # the other machine
 
 #### 5.11.1 What shipped, and what it cost to be honest about
 
-`crates/h5i-share/`, ~9.2k lines with 157 tests, behind a default-on `share`
+`crates/h5i-share/`, ~9.5k lines with 162 tests, behind a default-on `share`
 feature on the binary and a default-on `p2p` feature inside the crate (iroh 1.0,
 `tls-ring` only). A `--no-default-features` build has no `share` verb rather
 than a broken one, and `--no-default-features` on the crate alone keeps the
@@ -2016,13 +2016,33 @@ share that could be neither stopped nor restarted by any verb; and Ctrl-C being
 swallowed for the whole six-second teardown on three of the four ways a share
 ends.
 
-The pattern across all fourteen rounds is worth recording, because it is the
+**Round 15, and the fix that was worse than the bug.** Making Ctrl-C responsive
+during the teardown was done by arming the hard-exit watcher after the select —
+and on the three exits where no signal had been delivered yet, that meant the
+operator's *first* Ctrl-C hit a watcher built for their second: it printed
+"interrupted again", threw the receipt away and exited. Pressing Ctrl-C once to
+get a prompt back destroyed the one artifact this feature exists to produce, and
+said they had done it twice. An interrupt during the ending now means "stop
+waiting", not "stop recording"; only a second one exits without a receipt.
+Verified live three times out of three.
+
+The same round found that the join-time ticket check — itself a fix from the
+previous round — went the whole way into the box, costing a connection to the
+dev server and one of the share's 64 slots per join; that a new joiner against
+an un-updated sharer would be told its ticket was revoked, forever, because the
+greeting changed without the ALPN changing; and that `clear`, `clear_now` and
+`forget` deleted whatever record was on disk without checking whose it was,
+which a `stop --force` followed by a fresh `share` turns into one process
+deleting another's grant table after its ticket has been given to a human.
+
+The pattern across all fifteen rounds is worth recording, because it is the
 argument for having run them: **every round found real defects in the previous
-round's fixes**, and four of the sharpest were fixes that did nothing at all — a
+round's fixes**, and five of the sharpest were fixes that did nothing at all — a
 `Connection: close` the box could ignore, a shutdown signal that was sent after
 the shutdown, a flag that recorded truncation for the rarest of the four ways a
 response gets cut short, and a linger drain whose two dedicated tests both
-passed with it deleted. That last one is now documented as what it is: bounded,
+passed with it deleted, and a signal handler armed for a second Ctrl-C that
+caught the first. That linger drain is now documented as what it is: bounded,
 kept for the sake of the intermediary on a tunnel share, and not a thing we can
 show changes what a visitor receives on Linux.
 

@@ -209,6 +209,10 @@ async fn serve_connection(
     // The first stream that authorizes registers the peer; every later stream
     // on the same connection is counted against the same record.
     let peer_id: Arc<std::sync::Mutex<Option<crate::bridge::PeerId>>> = Default::default();
+    // The grant a *probe* presented. A probe opens no stream to watch, so
+    // without this a joiner that has connected and not yet been visited sits
+    // outside revocation entirely.
+    let last_grant: Arc<std::sync::Mutex<Option<String>>> = Default::default();
 
     // Two jobs this connection's watchdog keeps doing for its whole life, and
     // one it used to do that has moved.
@@ -227,6 +231,7 @@ async fn serve_connection(
         let bridge = bridge.clone();
         let conn = conn.clone();
         let peer_id = peer_id.clone();
+        let last_grant = last_grant.clone();
         tokio::spawn(async move {
             let deadline = tokio::time::Instant::now() + UNAUTHENTICATED_GRACE;
             // The share winding up is a close with a reason, said here rather
@@ -255,6 +260,19 @@ async fn serve_connection(
                 if seen.is_none() && tokio::time::Instant::now() >= deadline {
                     conn.close(4u32.into(), b"h5i: no ticket was presented");
                     return;
+                }
+
+                // A connection that has only ever checked its ticket. Nothing
+                // per-stream is watching it, so this is the only place a revoke
+                // can reach an `h5i join` that is sitting waiting for its first
+                // visitor — and a joiner told nothing would keep its "joined"
+                // banner up for a share it had been cut off from.
+                let probed = last_grant.lock().expect("last grant").clone();
+                if let Some(id) = probed {
+                    if !bridge.grant_is_live(&id) {
+                        conn.close(6u32.into(), b"h5i: this ticket was revoked or has expired");
+                        return;
+                    }
                 }
 
                 if let (Some(id), Some(p)) = (seen, observed_path(&conn)) {
@@ -300,11 +318,18 @@ async fn serve_connection(
         let bridge = bridge.clone();
         let who = who.clone();
         let peer_id = peer_id.clone();
+        let last_grant = last_grant.clone();
         let path = observed_path(&conn);
         let conn_for_stream = conn.clone();
         streams.spawn(async move {
-            if let Err(e) =
-                serve_stream(&bridge, send, recv, &who, path, &peer_id, &conn_for_stream).await
+            let on = OnThisConnection {
+                who: &who,
+                path,
+                peer_id: &peer_id,
+                last_grant: &last_grant,
+                conn: &conn_for_stream,
+            };
+            if let Err(e) = serve_stream(&bridge, send, recv, &on).await
             {
                 eprintln!("share: {e}");
             }
@@ -341,15 +366,36 @@ async fn serve_connection(
     Ok(())
 }
 
+/// What every stream on one connection shares.
+///
+/// A struct rather than six more parameters: these are all facts about the
+/// *connection*, and threading them individually is how the two mutexes ended
+/// up being passed to a function that only reads one of them.
+struct OnThisConnection<'a> {
+    who: &'a str,
+    path: Option<Path>,
+    /// Set by the first stream that authorizes; every later one is counted
+    /// against the same record.
+    peer_id: &'a std::sync::Mutex<Option<crate::bridge::PeerId>>,
+    /// The grant a ticket *check* presented, for a connection carrying no
+    /// streams for revocation to act on.
+    last_grant: &'a std::sync::Mutex<Option<String>>,
+    conn: &'a Connection,
+}
+
 async fn serve_stream(
     bridge: &Arc<Bridge>,
     mut send: iroh::endpoint::SendStream,
     mut recv: iroh::endpoint::RecvStream,
-    who: &str,
-    path: Option<Path>,
-    peer_id: &std::sync::Mutex<Option<crate::bridge::PeerId>>,
-    conn: &Connection,
+    on: &OnThisConnection<'_>,
 ) -> Result<(), H5iError> {
+    let OnThisConnection {
+        who,
+        path,
+        peer_id,
+        last_grant,
+        conn,
+    } = *on;
     let mut hello = [0u8; wire::HELLO_LEN];
     // Deadlined, because this is the one read an unauthenticated peer gets to
     // make us wait on. Sixty-eight of sixty-nine bytes and then silence would
@@ -400,6 +446,12 @@ async fn serve_stream(
     // share; that they then never loaded the page is a fact the receipt should
     // show rather than hide, and it shows as a peer with no connections.
     if intent == wire::Intent::Probe {
+        // Remembered so a revoke reaches a joiner who has connected and not yet
+        // opened the page. Revocation is per stream, so a connection carrying
+        // none was outside it entirely: `h5i join` would sit there with its
+        // "joined" banner after the sharer had cut it off, and find out at the
+        // next page load.
+        *last_grant.lock().expect("last grant") = Some(grant.id.clone());
         let _ = send.write_all(&[wire::REPLY_OK]).await;
         let _ = send.finish();
         return Ok(());
@@ -910,8 +962,16 @@ mod tests {
         // that they never loaded the page is a fact, not a reason to hide them.
         assert_eq!(bridge.peer_count(), 1);
 
-        // And none of the eight checks took a slot: a real stream still gets
-        // through afterwards.
+        // And none of them took a slot. Asserting that "a stream still works"
+        // would not show it: eight leaked permits out of sixty-four leaves that
+        // true. So check the count the permits come from.
+        assert_eq!(
+            bridge.free_slots(),
+            Bridge::MAX_CONNECTIONS,
+            "a ticket check held one of the share's slots"
+        );
+
+        // A real stream still gets through afterwards.
         let (mut send, _recv) = open_stream(&conn, &secret).await.expect("still admitted");
         send.write_all(b"hello").await.expect("write");
         tokio::time::sleep(Duration::from_millis(200)).await;

@@ -1016,6 +1016,11 @@ where
     // The peer has stopped *sending*. Not the same as the peer going away, and
     // the difference is a truncated download — see the discard branch below.
     let mut peer_said_all_it_will = false;
+    // Whether a clock, rather than either end, is what ended this. Only matters
+    // once the peer has half-closed: from then on nothing can tell us it left,
+    // so a timer firing is as consistent with a client that died as with a box
+    // that went quiet.
+    let mut a_timer_ended_it = false;
     // Which side ended the relay. Truncation is a claim about the *box*, and
     // the visitor closing a tab mid-download is the commonest way this loop
     // ends — reporting that as the box cutting a response short libels it in
@@ -1044,6 +1049,7 @@ where
         if tokio::time::Instant::now() >= hard_deadline {
             box_ended_it = true;
             cut_short = true;
+            a_timer_ended_it = true;
             break;
         }
         tokio::select! {
@@ -1072,6 +1078,7 @@ where
                     Err(_) => {
                         box_ended_it = true;
                         cut_short = true;
+                        a_timer_ended_it = true;
                         break;
                     }
                     Ok(Ok(n)) => n,
@@ -1130,7 +1137,16 @@ where
         // timer or a stream error — leaves one short.
         None => cut_short,
     };
-    if box_ended_it && short {
+    // And a third question, for the one case where the first cannot be answered.
+    // Once the peer has half-closed there is nothing left that could tell us it
+    // went away — the discard branch is disabled and only a failed write would
+    // notice, and an idle box writes nothing. So a *timer* ending a half-closed
+    // connection is exactly as consistent with a client that died as with a box
+    // that went quiet, and recording it as the box's doing puts a claim in the
+    // evidence that this code cannot support. The arithmetic cases are still
+    // recorded: a declared length the box closed short of is unambiguous.
+    let attributable = !(peer_said_all_it_will && a_timer_ended_it);
+    if box_ended_it && short && attributable {
         truncated.store(true, Ordering::Relaxed);
     }
     finish_with(peer_r, peer_w).await;
@@ -1285,11 +1301,17 @@ const LINGER_DRAIN: Duration = Duration::from_secs(2);
 /// empty *now*, and an empty receive queue is the whole condition for closing
 /// without a reset. So the common case — a peer that sent one request, got its
 /// answer and is waiting for the close — costs this and not [`LINGER_DRAIN`].
+///
+/// Short, because anything already queued is returned by the first `read`
+/// immediately; the wait only buys bytes that are still in flight. A peer that
+/// neither closes nor sends pays it in full, and on a tunnel share that peer is
+/// `cloudflared`, which pools connections — so this is per request, on the only
+/// transport where the drain has a stated purpose.
 /// Without the split every request held one of the share's 64 slots for two
 /// seconds past its response, and a page of fifty subresources through a client
 /// that does not close first would have started answering `503 This share is
 /// busy` on a share nobody else was using.
-const LINGER_PROBE: Duration = Duration::from_millis(150);
+const LINGER_PROBE: Duration = Duration::from_millis(40);
 
 /// And how much to swallow once there is something. Plenty for a form post that
 /// was refused; nowhere near a file upload nobody is going to look at.

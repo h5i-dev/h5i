@@ -240,8 +240,9 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
                 if h5i_share::session::forget(&dir)? {
                     println!("{} deleted the share record for {name}", SUCCESS);
                     println!(
-                        "   Nothing was asked to stop and no receipt was written. If a process \
-                         really was serving it, it will notice and exit."
+                        "   Nothing was asked to stop. A process that really was serving it \
+                         notices within a second and exits, writing its receipt on the way — \
+                         so use this only when you believe nothing is."
                     );
                 } else {
                     println!(
@@ -266,6 +267,10 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
                     println!("{} stopping the share on {name}", SUCCESS);
                     println!(
                         "   The serving process writes its receipt and exits within a second."
+                    );
+                    println!(
+                        "   If it is still listed a minute from now, nothing was really there: \
+                         `h5i box share stop {name} --force` deletes the record."
                     );
                 }
                 h5i_share::run::Stopped::Stale => {

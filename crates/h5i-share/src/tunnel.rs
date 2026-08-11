@@ -55,6 +55,22 @@ pub struct Tunnel {
 }
 
 impl Tunnel {
+    /// A tunnel whose `cloudflared` has already exited, for tests that need a
+    /// `Setup` and not a network. Spawning `true` rather than faking the field
+    /// keeps `stop()` on its real path — killing a child that is already gone
+    /// is exactly what a tunnel teardown does when `cloudflared` died first.
+    #[cfg(test)]
+    pub fn already_gone_for_tests() -> Tunnel {
+        let child = tokio::process::Command::new("true")
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn true");
+        Tunnel {
+            child,
+            url: "https://test.trycloudflare.com".into(),
+        }
+    }
+
     /// The origin a visitor opens, with no token in it.
     pub fn origin(&self) -> &str {
         &self.url

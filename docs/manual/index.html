@@ -565,7 +565,7 @@ h5i box share ls
 h5i box share grant &lt;name&gt; [--label sam] [--expire 30m]   # a second ticket (--tunnel only)
 h5i box share revoke &lt;name&gt; &lt;grant&gt;
 h5i box share stop &lt;name&gt;
-h5i box share stop &lt;name&gt; --force            # delete a record whose process is gone
+h5i box share stop &lt;name&gt; --force            # delete the record, whatever it says
 </code></pre>
 <p>The other side runs:</p>
 <pre><code class="language-bash">h5i join h5i1_eyJ2IjoxLCJib3hf…
@@ -583,12 +583,12 @@ the life of the share and answers "connect me", pinned to the one port you named
 Nothing on the wire, from a peer or from the shared page, can move where it
 connects.</p>
 <p><strong>A share needs Linux, and a box with a network of its own.</strong> All of the above
-rests on the box having a network namespace this machine can enter; macOS boxes
-bind the host's loopback, so <code>h5i box share</code> refuses there and says so.</p>
-<p><strong>A box with a network of its own.</strong> Only then is "the box's port
-3000" a distinct thing from this machine's port 3000; otherwise sharing it would
-publish whatever happened to be listening on the host, so <code>h5i box share</code>
-refuses rather than guessing. A box has one when it is running and either at the
+rests on the box having a network namespace this machine can enter, and only
+then is "the box's port 3000" a distinct thing from this machine's port 3000;
+otherwise sharing it would publish whatever happened to be listening on the
+host, so <code>h5i box share</code> refuses rather than guessing. macOS boxes bind the
+host's loopback, so it refuses there too, and says which reason it is.</p>
+<p>A box has a network of its own when it is running and either at the
 <code>supervised</code> or <code>container</code> tier, or at <code>process</code> with a profile that denies
 egress. It does not at <code>workspace</code>, or at <code>process</code> with a profile that grants
 egress, because both share the host's network.</p>
