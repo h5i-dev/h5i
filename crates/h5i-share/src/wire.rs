@@ -7,6 +7,15 @@
 //! sharer → joiner   status                            (1 byte)
 //! ```
 //!
+//! The magic has a second spelling, `H5IP`, which means "I am only checking
+//! this ticket". Same size, same version, same secret; what differs is what the
+//! sharer does with it. A `H5IS` greeting ends with a socket into the box; a
+//! `H5IP` one is answered from the grant table alone and touches nothing. That
+//! distinction is why it is a separate frame rather than a convention: without
+//! it the check cost a connection to the dev server, a slot out of the share's
+//! 64, and — if that dev server did not close on end-of-input — a pump parked
+//! for the life of the joiner, holding the slot.
+//!
 //! Fixed size on purpose. A length prefix is a number an attacker chooses, and
 //! this frame is the very first thing an unauthenticated peer sends — the
 //! cheapest way not to have a length-handling bug is not to have a length. The
@@ -23,7 +32,18 @@
 pub const ALPN: &[u8] = b"h5i/share/1";
 
 const MAGIC: &[u8; 4] = b"H5IS";
+/// The same greeting, asking only whether the ticket is good.
+const MAGIC_PROBE: &[u8; 4] = b"H5IP";
 const VERSION: u8 = 1;
+
+/// What a greeting is asking for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Intent {
+    /// Give me a socket into the box.
+    Stream,
+    /// Only tell me whether this ticket is good.
+    Probe,
+}
 
 /// Hex characters in a share secret ([`crate::ticket::SECRET_BYTES`] bytes).
 const SECRET_HEX: usize = crate::ticket::SECRET_BYTES * 2;
@@ -50,11 +70,23 @@ pub const REPLY_UNREACHABLE: u8 = 3;
 
 /// Build the greeting a joiner sends.
 pub fn encode_hello(secret: &str) -> Option<[u8; HELLO_LEN]> {
+    encode(secret, Intent::Stream)
+}
+
+/// Build the greeting that only asks whether the ticket is good.
+pub fn encode_probe(secret: &str) -> Option<[u8; HELLO_LEN]> {
+    encode(secret, Intent::Probe)
+}
+
+fn encode(secret: &str, intent: Intent) -> Option<[u8; HELLO_LEN]> {
     if secret.len() != SECRET_HEX || !secret.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let mut buf = [0u8; HELLO_LEN];
-    buf[..4].copy_from_slice(MAGIC);
+    buf[..4].copy_from_slice(match intent {
+        Intent::Stream => MAGIC,
+        Intent::Probe => MAGIC_PROBE,
+    });
     buf[4] = VERSION;
     buf[5..].copy_from_slice(secret.as_bytes());
     Some(buf)
@@ -62,8 +94,15 @@ pub fn encode_hello(secret: &str) -> Option<[u8; HELLO_LEN]> {
 
 /// Read a greeting. `None` for anything that is not one — which is the only
 /// answer a caller needs, since every rejection here ends the stream.
-pub fn decode_hello(buf: &[u8; HELLO_LEN]) -> Option<String> {
-    if &buf[..4] != MAGIC || buf[4] != VERSION {
+pub fn decode_hello(buf: &[u8; HELLO_LEN]) -> Option<(Intent, String)> {
+    let intent = if &buf[..4] == MAGIC {
+        Intent::Stream
+    } else if &buf[..4] == MAGIC_PROBE {
+        Intent::Probe
+    } else {
+        return None;
+    };
+    if buf[4] != VERSION {
         return None;
     }
     let secret = std::str::from_utf8(&buf[5..]).ok()?;
@@ -73,7 +112,7 @@ pub fn decode_hello(buf: &[u8; HELLO_LEN]) -> Option<String> {
     if !secret.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    Some(secret.to_string())
+    Some((intent, secret.to_string()))
 }
 
 #[cfg(test)]
@@ -88,7 +127,20 @@ mod tests {
     fn a_greeting_survives_the_round_trip() {
         let hello = encode_hello(&secret()).expect("encode");
         assert_eq!(hello.len(), 69);
-        assert_eq!(decode_hello(&hello).as_deref(), Some(secret().as_str()));
+        assert_eq!(
+            decode_hello(&hello),
+            Some((Intent::Stream, secret().to_string()))
+        );
+
+        // And the probe spelling, which differs only in what the sharer does
+        // with it: same length, same version, same secret.
+        let probe = encode_probe(&secret()).expect("encode");
+        assert_eq!(probe.len(), HELLO_LEN);
+        assert_eq!(probe[4..], hello[4..], "only the magic may differ");
+        assert_eq!(
+            decode_hello(&probe),
+            Some((Intent::Probe, secret().to_string()))
+        );
     }
 
     #[test]

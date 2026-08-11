@@ -359,7 +359,7 @@ async fn serve_stream(
     if !matches!(greeted, Ok(Ok(()))) {
         return Ok(());
     }
-    let Some(secret) = wire::decode_hello(&hello) else {
+    let Some((intent, secret)) = wire::decode_hello(&hello) else {
         let _ = send.write_all(&[wire::REPLY_DENIED]).await;
         return Ok(());
     };
@@ -387,6 +387,22 @@ async fn serve_stream(
     // the thing that flag exists to prevent.
     if let Some(p) = path {
         bridge.peer_path(id, p);
+    }
+
+    // A ticket check and nothing else. Answered from the grant table, without a
+    // slot and without touching the box: `h5i join` does this once at startup,
+    // and if it went the whole way it would open a connection to the dev server
+    // per join, spend one of the share's 64 slots on it, and — for any dev
+    // server that does not close when its client stops writing — leave a pump
+    // parked on that slot until the joiner went away.
+    //
+    // The peer is still recorded. Somebody presented a valid ticket for this
+    // share; that they then never loaded the page is a fact the receipt should
+    // show rather than hide, and it shows as a peer with no connections.
+    if intent == wire::Intent::Probe {
+        let _ = send.write_all(&[wire::REPLY_OK]).await;
+        let _ = send.finish();
+        return Ok(());
     }
 
     // Authorized, but the share may already be carrying all it will. Checked
@@ -610,12 +626,26 @@ pub async fn open_stream(
 /// client was the one being cut off, thirty seconds in, with "closed by peer:
 /// h5i: no ticket was presented".
 pub async fn verify_ticket(conn: &Connection, secret: &str) -> Result<(), OpenError> {
-    let (mut send, recv) = open_stream(conn, secret).await?;
-    // Nothing is sent over it. The sharer has a socket into the box open for
-    // this stream and closing it at once is what tells it to let that go.
+    let hello = wire::encode_probe(secret)
+        .ok_or_else(|| OpenError::Transport("this ticket's secret is malformed".into()))?;
+    let (mut send, mut recv) = conn
+        .open_bi()
+        .await
+        .map_err(|e| OpenError::Transport(format!("the sharer closed the connection: {e}")))?;
+    send.write_all(&hello)
+        .await
+        .map_err(|e| OpenError::Transport(format!("could not greet the sharer: {e}")))?;
+    let mut reply = [0u8; 1];
+    recv.read_exact(&mut reply).await.map_err(|e| {
+        OpenError::Transport(format!("the sharer did not answer the handshake: {e}"))
+    })?;
     let _ = send.finish();
-    drop(recv);
-    Ok(())
+    match reply[0] {
+        wire::REPLY_OK => Ok(()),
+        wire::REPLY_BUSY => Err(OpenError::Busy),
+        wire::REPLY_UNREACHABLE => Err(OpenError::Unreachable),
+        _ => Err(OpenError::Refused),
+    }
 }
 
 /// Report how a joined connection is actually carried, for the joiner's own
@@ -817,6 +847,78 @@ mod tests {
             format!("{:?}", quiet.close_reason()).contains("no ticket"),
             "a connection that never presented a ticket was left alone: {:?}",
             quiet.close_reason()
+        );
+
+        serving.abort();
+        drop(conn);
+    }
+
+    /// Counts connections and never answers, so a stream that reaches it stays
+    /// reached: the shape that made the first version of the join-time probe
+    /// hold one of the share's slots for the life of the joiner.
+    fn counting_deaf_server() -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        let counter = seen.clone();
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for conn in l.incoming() {
+                let Ok(c) = conn else { continue };
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                held.push(c);
+            }
+        });
+        (port, seen)
+    }
+
+    #[tokio::test]
+    async fn checking_a_ticket_does_not_touch_the_box() {
+        // The first version of this check opened a normal stream, so every
+        // `h5i join` cost a connection to the dev server, one of the share's 64
+        // slots, and — against a dev server that does not close when its client
+        // stops writing, which is what this one imitates — a pump parked on
+        // that slot until the joiner went away.
+        use std::sync::atomic::Ordering as O;
+        let (port, seen) = counting_deaf_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret) = test_bridge(dir.path(), port);
+
+        let sharer = local_endpoint(true).await;
+        let addr = dialable(&sharer).await;
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, sharer, false).await }
+        });
+
+        let joiner = local_endpoint(false).await;
+        let conn = joiner
+            .connect(addr, wire::ALPN)
+            .await
+            .expect("connect to the sharer");
+
+        for _ in 0..8 {
+            verify_ticket(&conn, &secret)
+                .await
+                .expect("the ticket works");
+        }
+        // Give anything that was going to dial time to have done so.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(seen.load(O::SeqCst), 0, "a ticket check reached the box");
+
+        // The peer is recorded even so: somebody presented a valid ticket, and
+        // that they never loaded the page is a fact, not a reason to hide them.
+        assert_eq!(bridge.peer_count(), 1);
+
+        // And none of the eight checks took a slot: a real stream still gets
+        // through afterwards.
+        let (mut send, _recv) = open_stream(&conn, &secret).await.expect("still admitted");
+        send.write_all(b"hello").await.expect("write");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            seen.load(O::SeqCst),
+            1,
+            "the real stream did not reach the box"
         );
 
         serving.abort();
