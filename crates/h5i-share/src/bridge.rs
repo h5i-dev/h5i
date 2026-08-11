@@ -1423,6 +1423,12 @@ mod tests {
 
     /// A bridge over a temp directory, for the accounting tests. Uses the
     /// no-namespace dialer: nothing here opens a connection.
+    ///
+    /// Linux-only, with every test that uses it, because the dialer forks a
+    /// helper into a network namespace and neither exists elsewhere. The tests
+    /// that render a receipt or reason about clocks are platform-independent
+    /// and stay that way — those are what a second platform in CI is for.
+    #[cfg(target_os = "linux")]
     fn test_bridge(dir: &std::path::Path) -> Bridge {
         Bridge::new(
             dir.to_path_buf(),
@@ -1584,6 +1590,7 @@ mod tests {
         assert!(!quiet.contains("separate peers"), "{quiet}");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_stopped_share_is_the_most_ended_a_share_gets() {
         // Written first as `session::read(..).map(|s| s.winding_up)
@@ -1810,6 +1817,7 @@ mod tests {
         assert!(body.contains("Nothing jumped"), "{body}");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_grant_table_this_share_cannot_read_is_not_the_visitors_fault() {
         // Every I/O failure reading `share.json` — a full disk, no descriptors
@@ -1849,6 +1857,7 @@ mod tests {
         assert!(!render_receipt(&quiet).contains("could not read its own"));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_share_that_has_been_stopped_is_not_a_broken_machine() {
         // The fix above was itself too wide. `share stop --force` removes
@@ -1885,6 +1894,7 @@ mod tests {
         assert_ne!(crate::wire::REPLY_SHARER_FAULT, crate::wire::REPLY_DENIED);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_missing_grant_table_authorizes_nobody_and_ends_the_share() {
         // The two fail-closed branches, which nothing touched. If either
@@ -1926,6 +1936,7 @@ mod tests {
         assert!(b.is_spent(), "a corrupt grant table left the share serving");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn more_peers_than_the_list_holds_are_counted_not_dropped() {
         // The overflow path. A share past the peer cap must still say how many
@@ -2068,6 +2079,7 @@ mod tests {
         assert!(!out.contains("0m"), "{out}");
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn winding_up_is_told_to_the_connections_before_anything_waits_on_them() {
         // The order is the whole point, and it was wrong for a round: the flag
@@ -2316,6 +2328,7 @@ mod tests {
         assert!(out.contains("alex"));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_peer_past_the_record_cap_changes_nothing_rather_than_the_last_one() {
         // The overflow handle used to be the *last* record's, so peer 257's
@@ -2348,6 +2361,7 @@ mod tests {
         assert!(after.closed.is_none());
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_path_nobody_has_seen_yet_is_replaced_by_the_first_one_that_is() {
         // The guess made at join time used to be permanent in the optimistic

@@ -770,7 +770,9 @@ pub fn stop(env_dir: &std::path::Path) -> Result<Stopped, H5iError> {
     })
 }
 
-#[cfg(test)]
+// Same: these drive `run::serve` and its session handling through a real
+// dialer.
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 

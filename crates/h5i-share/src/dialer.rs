@@ -23,13 +23,20 @@
 //! shared page went looking.
 
 use std::net::TcpStream;
+#[cfg(target_os = "linux")]
 use std::sync::Mutex;
 
 use h5i_error::H5iError;
 
 /// The child's answer to a connect request, and its startup report. Numbers
 /// rather than messages because a forked child has no safe way to format one.
+///
+/// All of it Linux-only, like the helper it describes. Left ungated, these
+/// were nine `-D warnings` errors in a build for any other platform — which is
+/// how far the platform story had actually been taken.
+#[cfg(target_os = "linux")]
 const STATUS_OK: u8 = 0;
+#[cfg(target_os = "linux")]
 const STATUS_CONNECT_FAILED: u8 = 1;
 /// The connect did not fail — it never finished. A dev server whose accept
 /// queue is full *is* listening, and reporting that as "nothing is listening on
@@ -37,13 +44,17 @@ const STATUS_CONNECT_FAILED: u8 = 1;
 /// for anything that is not a refusal: the timeout, and h5i's own resource
 /// failures inside the helper (`EMFILE`, `ENETDOWN`), which are not facts about
 /// the user's dev server at all.
+#[cfg(target_os = "linux")]
 const STATUS_CONNECT_STUCK: u8 = 2;
 /// There is no route to `127.0.0.1` at all — the box's network namespace has no
 /// loopback interface up. Nothing inside such a box can reach itself, so a
 /// share of it can never work, and it is worth its own status because the
 /// answer is not "start your dev server" but "this box cannot be shared".
+#[cfg(target_os = "linux")]
 const STATUS_NO_LOOPBACK: u8 = 3;
+#[cfg(target_os = "linux")]
 const STATUS_NO_NS: u8 = 2;
+#[cfg(target_os = "linux")]
 const STATUS_SETNS: u8 = 3;
 /// The parent's request. One value, so there is nothing to parse.
 #[cfg(target_os = "linux")]
@@ -54,19 +65,21 @@ const REQUEST: u8 = 0x01;
 /// Loopback inside the box, so a working server answers in microseconds and a
 /// dead port refuses immediately. This bounds the one case in between: a server
 /// that is up but not accepting.
+#[cfg(target_os = "linux")]
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// A live route into one port of one box.
 #[derive(Debug)]
 pub struct Dialer {
+    #[cfg(target_os = "linux")]
     inner: Inner,
     port: u16,
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug)]
 enum Inner {
-    /// Linux: a helper process living in the box's namespaces.
-    #[cfg(target_os = "linux")]
+    /// A helper process living in the box's namespaces.
     Helper {
         /// Serialized: one request and one reply at a time on a shared socket.
         ///
@@ -79,19 +92,6 @@ enum Inner {
         sock: Mutex<(std::os::fd::OwnedFd, bool)>,
         child: libc::pid_t,
     },
-    /// Everywhere else: no route, and the constructor says so.
-    ///
-    /// macOS used to have an arm of its own that connected to
-    /// `127.0.0.1:<port>` on the *host*, because a macOS box binds host
-    /// loopback. That is not a route into a box, it is the host's own port —
-    /// and on Linux this feature refuses exactly that shape, because a
-    /// `workspace`-tier box shares the host's network and sharing it would
-    /// publish whatever happened to be listening. The macOS arm was the same
-    /// situation with the refusal missing, and it was unreachable anyway:
-    /// `view::box_pid` returns `None` there, so the CLI declines before a
-    /// `Dialer` exists.
-    #[cfg(not(target_os = "linux"))]
-    Unsupported,
 }
 
 impl Dialer {
@@ -115,12 +115,17 @@ impl Dialer {
     /// reply produced a receipt confidently asserting hundreds of times that
     /// somebody's dev server was down when it was running the whole time.
     pub fn connect(&self) -> Result<TcpStream, DialError> {
-        match &self.inner {
-            #[cfg(target_os = "linux")]
-            Inner::Helper { sock, child } => self.request(sock, *child),
-            #[cfg(not(target_os = "linux"))]
-            Inner::Unsupported => Err(DialError::Broken(unsupported())),
+        #[cfg(target_os = "linux")]
+        {
+            let Inner::Helper { sock, child } = &self.inner;
+            self.request(sock, *child)
         }
+        // Unreachable in practice — `spawn` refuses on this platform, so no
+        // `Dialer` exists to call this on — and an answer rather than a
+        // `todo!()`, because "the route into the box is broken" is exactly
+        // what a platform with no namespace to enter amounts to.
+        #[cfg(not(target_os = "linux"))]
+        Err(DialError::Broken(unsupported()))
     }
 }
 
