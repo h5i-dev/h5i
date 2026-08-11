@@ -161,16 +161,7 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
                 // running share from one left by a crash — the human view says
                 // "GONE" for that and the JSON said nothing — and could not map
                 // a row back to a name to act on it.
-                let out: Vec<_> = rows
-                    .iter()
-                    .map(|(m, s)| {
-                        serde_json::json!({
-                            "name": m.slug,
-                            "live": h5i_share::session::is_live(s),
-                            "share": s,
-                        })
-                    })
-                    .collect();
+                let out: Vec<_> = rows.iter().map(|(m, s)| envelope(&m.slug, s)).collect();
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else if rows.is_empty() {
                 println!("No box on this clone is being shared.");
@@ -191,7 +182,13 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
                 );
             };
             if json {
-                println!("{}", serde_json::to_string_pretty(&s)?);
+                // The same envelope `ls --json` uses. This printed the bare
+                // record, so the one consumer that asks about a single box got
+                // strictly less than the one that lists them all: no name to
+                // act on, and no way to tell a serving share from a record a
+                // crashed process left behind — which is the exact gap `ls`
+                // had fixed for it two rounds earlier.
+                println!("{}", serde_json::to_string_pretty(&envelope(&name, &s))?);
             } else {
                 print!(
                     "{}",
@@ -488,6 +485,27 @@ fn announce(name: &str, args: &ShareArgs, s: &h5i_share::run::Started) {
 // ─── the other machine ──────────────────────────────────────────────────────
 
 /// `h5i join <ticket>`.
+/// One JSON shape for every command that hands back a share record.
+///
+/// `live` is "a process holds this record" and `admitting` is "somebody could
+/// still get in", which are different questions with different answers: a
+/// share winding up, or one whose grants are all revoked or expired, is live
+/// and admits nobody. Everything below `h5i-share` already distinguishes them
+/// — `box rm` and `box apply` ask the second — and a consumer of this JSON
+/// could only ask the first.
+fn envelope(name: &str, s: &h5i_share::session::ShareSession) -> serde_json::Value {
+    let now = chrono::Utc::now().timestamp();
+    let live = h5i_share::session::is_live(s);
+    serde_json::json!({
+        "name": name,
+        "live": live,
+        "admitting": live && !s.winding_up && !s.is_spent(now),
+        "winding_up": s.winding_up,
+        "live_grants": s.live_grants(now),
+        "share": s,
+    })
+}
+
 /// The ticket, from the argument or from stdin.
 ///
 /// `-` is not a convenience. A ticket is the entire authorization, this
@@ -591,6 +609,51 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_json_answers_both_questions_a_consumer_has() {
+        let now = chrono::Utc::now().timestamp();
+        let mut s = h5i_share::session::ShareSession::new(
+            "env/human/demo",
+            3000,
+            h5i_share::session::Transport::Tunnel,
+            "https://x.example",
+            chrono::Utc::now(),
+        );
+        let (g, _secret) = h5i_share::session::mint_grant(None, now + 600).expect("mint");
+        s.grants.push(g);
+        // `is_live` is `kill(pid, 0)`, so a record naming this process is the
+        // only portable way to write "a live share" in a test.
+        s.pid = std::process::id();
+
+        let v = envelope("demo", &s);
+        assert_eq!(v["name"], "demo");
+        assert_eq!(v["live"], true);
+        assert_eq!(v["admitting"], true);
+        assert_eq!(v["live_grants"], 1);
+
+        // Winding up: alive, and admitting nobody. A consumer reading only
+        // `live` would have shown this as a share somebody can still reach,
+        // for the whole of a teardown.
+        s.winding_up = true;
+        let v = envelope("demo", &s);
+        assert_eq!(v["live"], true);
+        assert_eq!(v["admitting"], false);
+        assert_eq!(v["winding_up"], true);
+
+        // Every grant revoked is the same answer by a different route.
+        s.winding_up = false;
+        for g in &mut s.grants {
+            g.revoked = true;
+        }
+        let v = envelope("demo", &s);
+        assert_eq!(v["live"], true);
+        assert_eq!(v["admitting"], false);
+        assert_eq!(v["live_grants"], 0);
+
+        // And the record itself is still there for anything that wants it.
+        assert_eq!(v["share"]["port"], 3000);
+    }
 
     #[test]
     fn a_ticket_can_arrive_without_going_through_the_process_table() {
