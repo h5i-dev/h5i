@@ -962,9 +962,10 @@ where
     // ends — reporting that as the box cutting a response short libels it in
     // the one artifact that is supposed to be evidence.
     let mut box_ended_it = false;
-    // Specifically: a timer, rather than the box closing. For an unframed
-    // response the close *is* the end, so only a timer leaves it short.
-    let mut timed_out = false;
+    // The box's side stopped without ending: a timer fired, or the stream
+    // errored. For an unframed response a clean close *is* the ending, so this
+    // is the only thing that can make one short.
+    let mut cut_short = false;
     // An absolute cap as well as an idle one. The idle timeout is rebuilt every
     // time round the loop, including when the *client* says something — so a
     // peer dribbling a byte a minute could hold an unframed response open for
@@ -983,7 +984,7 @@ where
         // when their body does" is a promise agent-written code never made.
         if tokio::time::Instant::now() >= hard_deadline {
             box_ended_it = true;
-            timed_out = true;
+            cut_short = true;
             break;
         }
         tokio::select! {
@@ -993,8 +994,17 @@ where
                     // minutes of silence. Whether that leaves the response
                     // short is decided below; that it was the box's doing is
                     // decided here.
-                    Ok(Ok(0)) | Ok(Err(_)) => {
+                    // A clean end of stream. For an until-close response that
+                    // *is* the ending; for a declared length it is short.
+                    Ok(Ok(0)) => {
                         box_ended_it = true;
+                        break;
+                    }
+                    // A read error is not an ending, it is an interruption —
+                    // the box's side went away mid-stream. Short either way.
+                    Ok(Err(_)) => {
+                        box_ended_it = true;
+                        cut_short = true;
                         break;
                     }
                     // The idle timeout: the box went quiet without ever
@@ -1002,7 +1012,7 @@ where
                     // to know it was cut short.
                     Err(_) => {
                         box_ended_it = true;
-                        timed_out = true;
+                        cut_short = true;
                         break;
                     }
                     Ok(Ok(n)) => n,
@@ -1043,9 +1053,9 @@ where
     // is still owed the end of.
     let short = match body_len {
         Some(n) => sent_body < n,
-        // Unframed: an `Ok(0)` is the box closing, which *is* the end of an
-        // until-close response. A timer firing is not.
-        None => timed_out,
+        // Unframed: a clean close is the ending, so only an interruption — a
+        // timer or a stream error — leaves one short.
+        None => cut_short,
     };
     if box_ended_it && short {
         truncated.store(true, Ordering::Relaxed);
