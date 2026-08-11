@@ -821,6 +821,15 @@ where
         return refuse_the_response(&mut peer_w, malformed_head_response(), to_peer).await;
     }
 
+    if !complete && head.is_empty() {
+        // The box closed without saying anything at all. That is a different
+        // fact from starting a reply and not finishing it, and it is what
+        // happens when a dev server rejects a request by hanging up — so the
+        // sharer is told the box answered nothing rather than sent to look for
+        // a truncation.
+        return refuse_the_response(&mut peer_w, unreachable_box_response(), to_peer).await;
+    }
+
     if !complete {
         // A head the box never finished is not a response, and relaying the
         // bytes verbatim — which is what this did, to avoid "silently deleting
