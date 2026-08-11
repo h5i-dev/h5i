@@ -720,13 +720,43 @@ pub fn short(id: &str) -> String {
 /// Dial the sharer named by a ticket.
 pub async fn dial(endpoint: &Endpoint, addr: &serde_json::Value) -> Result<Connection, H5iError> {
     let addr = parse_addr(addr)?;
-    endpoint.connect(addr, wire::ALPN).await.map_err(|e| {
-        H5iError::Metadata(format!(
-            "could not reach the sharer: {}. They may have stopped sharing, or the ticket \
-                 may have been minted by a machine that has since moved networks.",
-            h5i_core::redact::sanitize_display(&e.to_string())
-        ))
-    })
+    endpoint
+        .connect(addr, wire::ALPN)
+        .await
+        .map_err(|e| dial_failure(&h5i_core::redact::sanitize_display(&e.to_string())))
+}
+
+/// What a failed dial means, in words.
+///
+/// Its own function so it can be tested in microseconds. Testing it through
+/// `connect` costs thirty seconds of real handshake timeout, which is the sort
+/// of thing that gets a test deleted rather than kept.
+fn dial_failure(said: &str) -> H5iError {
+    // A protocol disagreement is not a network problem, and telling somebody
+    // the sharer "may have stopped sharing" sends them to check two things
+    // that are both fine. The ALPN was bumped precisely so version skew fails
+    // at the transport rather than as a refused ticket; this is the half that
+    // says which it was. QUIC reports it as "peer doesn't support any known
+    // protocol", which is true and means nothing to anyone who has not read
+    // the RFC.
+    if said.contains("known protocol") || said.contains("no application protocol") {
+        return H5iError::Metadata(format!(
+            "this ticket was minted by a different version of h5i than the one you are \
+             running, and the two do not speak the same protocol. Whoever shared it needs to \
+             update, or you do. ({said})"
+        ));
+    }
+    // Three causes, because this case cannot tell them apart and naming two of
+    // them sends people to check the wrong thing. A sharer running an *older*
+    // h5i does not reject the newer protocol — it simply never completes the
+    // handshake — so that skew arrives here as a timeout, indistinguishable
+    // from a peer that is not there. Measured: thirty seconds of waiting and
+    // then a sentence about the network.
+    H5iError::Metadata(format!(
+        "could not reach the sharer: {said}. They may have stopped sharing; the ticket may \
+         have been minted by a machine that has since moved networks; or the two of you may \
+         be running versions of h5i that do not speak the same protocol."
+    ))
 }
 
 /// Why a joiner could not get a stream.
@@ -1044,6 +1074,34 @@ mod tests {
     }
 
     /// A joiner that has connected but whose browser has not been opened yet.
+    #[test]
+    fn a_version_skew_is_not_reported_as_a_network_problem() {
+        // The ALPN was bumped to `h5i/share/2` so two h5i versions fail to
+        // agree *before* either speaks, rather than the newer joiner's probe
+        // being read as junk by the older sharer and answered "your ticket was
+        // refused — ask for a new one" forever. What this pins is the half
+        // that was still wrong: what the person is then told.
+        //
+        // Both directions, because they do not look the same on the wire.
+        // A joiner older than the sharer gets a rejection the transport names:
+        let said = format!(
+            "{}",
+            dial_failure("aborted by peer: the cryptographic handshake failed: error 120: peer doesn't support any known protocol")
+        );
+        assert!(said.contains("different version of h5i"), "{said}");
+        assert!(!said.contains("moved networks"), "{said}");
+
+        // A joiner *newer* than the sharer gets nothing at all: the old
+        // endpoint does not reject the protocol it has never heard of, it just
+        // never finishes the handshake. Measured through a real `connect`:
+        // thirty seconds, then a timeout. That is indistinguishable from a
+        // peer who is not there, so the message must not name only the two
+        // causes that are not it.
+        let said = format!("{}", dial_failure("timed out"));
+        assert!(said.contains("do not speak the same protocol"), "{said}");
+        assert!(said.contains("may have stopped sharing"), "{said}");
+    }
+
     #[tokio::test]
     async fn a_ticket_presented_once_keeps_an_idle_joiner_alive() {
         // The sharer hangs up on a connection that never authorizes a stream,
