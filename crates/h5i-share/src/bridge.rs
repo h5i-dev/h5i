@@ -110,9 +110,10 @@ struct Tally {
     /// box. Without this a share where the dev server was down reads as one
     /// nobody ever tried to use.
     unreachable: u64,
-    /// Responses cut off by the wall clock rather than by finishing. A
-    /// truncated download reads to the visitor as the app being broken, so the
-    /// receipt says which it was.
+    /// Responses that stopped short of the `Content-Length` they promised —
+    /// the box went quiet, closed, reset, or ran out the clock. A truncated
+    /// download reads to the visitor as the app being broken, so the receipt
+    /// says which it was.
     truncated: u64,
 }
 
@@ -411,7 +412,7 @@ impl Bridge {
         self.record_denied(Denied::Unknown);
     }
 
-    /// A response was cut off by the wall clock rather than by finishing.
+    /// A response stopped short of the length it promised.
     pub fn record_truncated(&self) {
         self.tally().truncated += 1;
     }
@@ -571,7 +572,7 @@ pub struct Summary {
     pub front_refused: u64,
     /// Authorized peers who found nothing listening inside the box.
     pub unreachable: u64,
-    /// Responses cut off by the wall clock rather than by finishing.
+    /// Responses that stopped short of the length they promised.
     pub truncated: u64,
 }
 
@@ -675,8 +676,8 @@ pub fn render_receipt(s: &Summary) -> String {
 
     if s.truncated > 0 {
         out.push_str(&format!(
-            "truncated {} response(s) were cut off after taking too long, so what the visitor \
-             got was incomplete\n",
+            "truncated {} response(s) stopped short of the length they promised, so what the \
+             visitor got was incomplete\n",
             s.truncated
         ));
     }
@@ -859,7 +860,7 @@ mod tests {
             "capacity 5 connection(s) refused",
             "flooded  900000 connection(s) refused at the front door",
             "unreached 2 connection(s) were authorized",
-            "truncated 1 response(s) were cut off",
+            "truncated 1 response(s) stopped short",
             "refused  2 attempt(s)",
             "and 12 more not recorded individually",
         ] {

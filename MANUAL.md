@@ -547,9 +547,10 @@ nothing is a peer with zero. Lines appear for what a share left out — attempts
 refused, connections turned away because the box was already carrying its limit,
 connections refused at the front door before a credential was asked for, peers
 past the 256 the receipt lists individually, authorized peers who found nothing
-listening, and responses cut off for taking too long — because a cap that stops
+listening, and responses that stopped short of the length they promised — because a cap that stops
 counting silently makes a busy share read as a quiet one, and a truncated
-download reads to the visitor as the app being broken.
+download reads to the visitor as the app being broken rather than as a share
+that gave up.
 
 The two refusal-for-load lines are separate on purpose: the front-door one costs
 an anonymous flooder a TCP connect and can be driven into the millions, and a

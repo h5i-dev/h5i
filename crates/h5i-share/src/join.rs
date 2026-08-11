@@ -201,7 +201,10 @@ async fn handle(
     if counts.was_truncated() {
         // The joiner has no receipt of its own, so this is the only place a
         // person learns their download was cut off rather than finished.
-        eprintln!("join: a response was cut off after taking too long; it is incomplete");
+        eprintln!(
+            "join: a response stopped short of the length it promised; what arrived is \
+             incomplete"
+        );
     }
     Ok(())
 }

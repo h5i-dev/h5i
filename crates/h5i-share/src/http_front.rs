@@ -279,9 +279,9 @@ pub struct Forwarded<'a> {
 pub struct Counters {
     pub to_box: std::sync::atomic::AtomicU64,
     pub to_peer: std::sync::atomic::AtomicU64,
-    /// Set when a response was cut off by the wall clock rather than by
-    /// finishing. Silent truncation is the part a visitor cannot debug and the
-    /// sharer cannot see, so it is carried back out to the receipt.
+    /// Set when a response stopped short of the length it promised. Silent
+    /// truncation is the part a visitor cannot debug and the sharer cannot see,
+    /// so it is carried back out to the receipt.
     pub truncated: std::sync::atomic::AtomicBool,
 }
 
