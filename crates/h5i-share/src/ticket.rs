@@ -86,6 +86,21 @@ impl Ticket {
         // Quotes come along when somebody copies out of a chat client, and
         // the refusal read as a lie: they can see `h5i1_` on their screen.
         let s = s.trim_matches(|c| c == '"' || c == '\'' || c == '`');
+        // And so do line breaks. A ticket is one long line; email clients hard
+        // wrap at 72 or 78 columns, terminals wrap on copy, and chat clients
+        // insert breaks of their own — after which this said "probably
+        // truncated or line-wrapped", which is an accurate diagnosis and a
+        // dead end for somebody holding the whole ticket in two pieces. The
+        // base64 alphabet contains no whitespace, so removing it cannot change
+        // which ticket this is; it can only turn a refusal into the ticket the
+        // sender meant. Allocates only when there is something to remove.
+        let rejoined: String;
+        let s = if s.contains(char::is_whitespace) {
+            rejoined = s.chars().filter(|c| !c.is_whitespace()).collect();
+            rejoined.as_str()
+        } else {
+            s
+        };
         let body = s.strip_prefix(PREFIX).ok_or_else(|| {
             if s.starts_with("http://") || s.starts_with("https://") {
                 return H5iError::Metadata(
@@ -166,6 +181,56 @@ mod tests {
             secret: "ab".repeat(SECRET_BYTES),
             addr: serde_json::json!({"id": "whatever", "addrs": []}),
         }
+    }
+
+    #[test]
+    fn a_ticket_a_mail_client_wrapped_is_still_that_ticket() {
+        // A ticket is one long line and the world is full of things that break
+        // long lines: mail clients hard wrap at 72 or 78 columns, terminals
+        // wrap on copy, chat clients insert their own. The refusal for that
+        // was accurate — "probably truncated or line-wrapped" — and a dead end
+        // for somebody holding the whole ticket in two pieces. Whitespace is
+        // not in the base64 alphabet, so removing it cannot turn one ticket
+        // into another; it can only turn a refusal into the ticket the sender
+        // meant.
+        let one_line = sample().encode().expect("encode");
+        let mid = one_line.len() / 2;
+        let wrapped = format!("{}\n{}", &one_line[..mid], &one_line[mid..]);
+        assert_eq!(
+            Ticket::decode(&wrapped).expect("a wrapped ticket").secret,
+            sample().secret
+        );
+
+        // Every shape of the same accident: CRLF from a Windows mail client,
+        // several breaks from a narrow column, a space where a terminal broke
+        // it, and quotes around the lot from a chat client.
+        let crlf = one_line
+            .as_bytes()
+            .chunks(40)
+            .map(|c| String::from_utf8_lossy(c).into_owned())
+            .collect::<Vec<_>>()
+            .join("\r\n");
+        assert_eq!(
+            Ticket::decode(&crlf).expect("a hard-wrapped ticket").port,
+            3000
+        );
+        assert_eq!(
+            Ticket::decode(&format!("\"{wrapped}\""))
+                .expect("quoted and wrapped")
+                .port,
+            3000
+        );
+        assert_eq!(
+            Ticket::decode(&format!("{}  {}", &one_line[..mid], &one_line[mid..]))
+                .expect("a space where the break was")
+                .grant,
+            "a1b2c3d4"
+        );
+
+        // What must not change: two tickets pasted one after another are still
+        // two tickets, not one long one that happens to decode.
+        let two = format!("{one_line}\n{one_line}");
+        assert!(Ticket::decode(&two).is_err(), "two tickets decoded as one");
     }
 
     #[test]
