@@ -630,6 +630,14 @@ the bytes travel:
   receipt the export already carries. A share session that left no record
   would be the one part of a box's life the receipt is silent about, which is
   exactly the kind of gap this document exists to refuse.
+- **Measure time with a clock nobody can move.** Ticket expiry and the
+  session length are elapsed time, not wall-clock subtraction. A backward NTP
+  step was measured putting an hour back onto every live grant and writing a
+  receipt that read `0s` for a two-minute session with `closed` before
+  `opened`. The timestamps in a receipt are still clock readings and can be
+  wrong; the receipt says so on a `clock` line when they are, because an
+  evidence artifact that quietly clamps an absurdity to a plausible number is
+  worse than one that admits it.
 
 **Transport one: iroh.** Peer-to-peer QUIC, end-to-end encrypted, NAT
 traversal with public relays as fallback for the hard cases; the relay sees
