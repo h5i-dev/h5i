@@ -486,9 +486,14 @@ impl Bridge {
     pub fn write_receipt(&self) {
         let ended = Utc::now();
         let seconds = (ended - self.started).num_seconds().max(0);
-        let t = self.tally();
-        let body = render_receipt(
-            &Summary {
+        // Snapshotted, and the lock let go before anything is written. Held
+        // across `receipt::append` — a file write plus a redaction scan over
+        // the whole body — it blocks any connection still trying to record what
+        // it moved, which is the last thing that should be losing a race with
+        // the receipt.
+        let summary = {
+            let t = self.tally();
+            Summary {
                 transport: self.transport,
                 endpoint: self.endpoint.clone(),
                 port: self.dialer.port(),
@@ -502,8 +507,10 @@ impl Bridge {
                 front_refused: t.front_refused,
                 unreachable: t.unreachable,
                 truncated: t.truncated,
-            },
-        );
+            }
+        };
+        let peers_seen = summary.peers.len() as u64 + summary.peers_overflow;
+        let body = render_receipt(&summary);
         let input = h5i_core::receipt::RecordInput {
             env_id: self.env_id.clone(),
             policy_digest: Some(self.policy_digest.clone()),
@@ -521,7 +528,7 @@ impl Bridge {
                 // Plus the ones past the record cap. The body learned to say
                 // so a round ago; this line, which is what a receipt listing
                 // shows, did not.
-                t.peers.len() as u64 + t.peers_overflow
+                peers_seen
             )),
             wall_ms: u64::try_from(seconds * 1000).ok(),
             // A share ends when it is asked to. Left unset, the receipt viewer
