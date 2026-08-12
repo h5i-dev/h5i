@@ -187,6 +187,62 @@ const MAX_PEER_RECORDS: usize = 256;
 pub struct PeerId(usize);
 
 /// The live share.
+/// Which `share.json` a serving process is the server of.
+///
+/// A bridge reads that file on every connection — to authorize, to check a
+/// grant, to notice the share ending — and it was reading whatever file was at
+/// that path, not the one it wrote. `share stop --force` exists precisely to
+/// delete a live record without stopping its process, relying on that process
+/// to notice within a second, and a new `h5i box share` may legitimately claim
+/// the now-empty path inside that second.
+///
+/// What the old bridge did next: read the *replacement* record, find a live
+/// grant in it, and keep serving — a second transport into the old box, on the
+/// old port, for the whole life of the new share, admitting the new share's
+/// tickets. And when it eventually did exit, its unconditional
+/// `begin_winding_up` marked the *new* share as winding up. `session::clear`
+/// checks the pid, so it stopped the final delete and nothing else.
+///
+/// Identity is the pid plus the recorded start: a pid alone is reusable, and
+/// two shares of one box a second apart are exactly the case that has to be
+/// told apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimedRecord {
+    pub pid: u32,
+    pub started_at: String,
+}
+
+impl ClaimedRecord {
+    /// Is this the record we claimed?
+    pub fn matches(&self, s: &session::ShareSession) -> bool {
+        s.pid == self.pid && s.started_at == self.started_at
+    }
+
+    /// The identity of a record this process is about to serve.
+    pub fn of(s: &session::ShareSession) -> ClaimedRecord {
+        ClaimedRecord {
+            pid: s.pid,
+            started_at: s.started_at.clone(),
+        }
+    }
+
+    /// The identity of whatever record is on disk right now.
+    ///
+    /// For a bridge built over a record it did not write — which is every test
+    /// helper, and nothing in production, where `serve_async` claims first and
+    /// pins what it claimed. A directory with no record yields an identity
+    /// that matches nothing, which is the correct answer for a bridge with no
+    /// share behind it.
+    pub fn on_disk(env_dir: &std::path::Path) -> ClaimedRecord {
+        session::read(env_dir)
+            .map(|s| ClaimedRecord::of(&s))
+            .unwrap_or(ClaimedRecord {
+                pid: 0,
+                started_at: String::new(),
+            })
+    }
+}
+
 pub struct Bridge {
     env_dir: std::path::PathBuf,
     env_id: String,
@@ -195,6 +251,9 @@ pub struct Bridge {
     transport: Transport,
     endpoint: String,
     dialer: Dialer,
+    /// The record this process claimed. Every read of `share.json` is checked
+    /// against it; see [`ClaimedRecord`].
+    claimed: ClaimedRecord,
     started: DateTime<Utc>,
     /// The same instant on a clock nothing can move. Every expiry decision in
     /// this process is floored against it; see [`Bridge::now`].
@@ -210,6 +269,7 @@ pub struct Bridge {
 }
 
 impl Bridge {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         env_dir: std::path::PathBuf,
         env_id: String,
@@ -218,6 +278,7 @@ impl Bridge {
         transport: Transport,
         endpoint: String,
         dialer: Dialer,
+        claimed: ClaimedRecord,
     ) -> Bridge {
         Bridge {
             env_dir,
@@ -227,6 +288,7 @@ impl Bridge {
             transport,
             endpoint,
             dialer,
+            claimed,
             started: Utc::now(),
             started_mono: std::time::Instant::now(),
             clock: Mutex::new(SeenClock::default()),
@@ -383,7 +445,7 @@ impl Bridge {
     /// nothing next to opening a TCP connection into a namespace.
     pub fn authorize(&self, secret: &str) -> Result<AuthorizedGrant, Denied> {
         let now = self.now().timestamp();
-        let s = match session::read_state(&self.env_dir) {
+        let s = match self.our_record() {
             session::ReadState::Present(s) => s,
             // Gone, not broken. `share stop --force` removes the file and the
             // serving process only notices on its next poll, so every request
@@ -427,13 +489,14 @@ impl Bridge {
     /// advertised as per person; this is what makes it so.
     pub fn grant_is_live(&self, grant_id: &str) -> bool {
         let now = self.now().timestamp();
-        match session::read(&self.env_dir) {
-            Some(s) => s
+        match self.our_record() {
+            session::ReadState::Present(s) => s
                 .grants
                 .iter()
                 .any(|g| g.id == grant_id && !g.revoked && g.expires_at > now),
-            // The file is gone, so nothing authorizes anything. Fail closed.
-            None => false,
+            // The file is gone, unreadable, or belongs to a different share.
+            // Nothing authorizes anything. Fail closed.
+            _ => false,
         }
     }
 
@@ -446,7 +509,7 @@ impl Bridge {
     /// telling the visitor their invite had run out, when what happened is
     /// that the person sharing pressed stop. Measured 3 times out of 3.
     pub fn share_is_ending(&self) -> bool {
-        match session::read_state(&self.env_dir) {
+        match self.our_record() {
             session::ReadState::Present(s) => s.winding_up,
             // No record at all is the *most* ended a share gets: that is what
             // `share stop --force` leaves. Written as `unwrap_or(false)` this
@@ -466,11 +529,45 @@ impl Bridge {
     /// the peer gets bored.
     pub fn is_spent(&self) -> bool {
         let now = self.now().timestamp();
-        match session::read(&self.env_dir) {
-            Some(s) => s.is_spent(now),
-            // The file is gone, so nothing authorizes anything. Fail closed.
-            None => true,
+        match self.our_record() {
+            session::ReadState::Present(s) => s.is_spent(now),
+            // Gone, unreadable, or somebody else's. All three mean this
+            // process has nothing left to serve. Fail closed.
+            _ => true,
         }
+    }
+
+    /// The record on disk, if it is still the one this process claimed.
+    ///
+    /// A replacement reads as [`session::ReadState::Gone`], which is the
+    /// honest answer to every question a bridge asks: *this* share is over.
+    /// Reading it as present is what let a force-stopped bridge keep serving
+    /// the old port under the new share's tickets — see [`ClaimedRecord`].
+    fn our_record(&self) -> session::ReadState {
+        match session::read_state(&self.env_dir) {
+            session::ReadState::Present(s) if self.claimed.matches(&s) => {
+                session::ReadState::Present(s)
+            }
+            session::ReadState::Present(_) => session::ReadState::Gone,
+            other => other,
+        }
+    }
+
+    /// The identity this bridge claimed, for the teardown to check before it
+    /// mutates anything.
+    pub fn claimed(&self) -> &ClaimedRecord {
+        &self.claimed
+    }
+
+    /// Adopt whatever record is on disk as this bridge's own.
+    ///
+    /// Tests only, and it exists because a test helper builds the bridge and
+    /// then writes the record, where `serve_async` does it the other way
+    /// round. Production has no use for it: a bridge that adopts a record it
+    /// did not claim is the defect [`ClaimedRecord`] exists to close.
+    #[cfg(test)]
+    pub(crate) fn repin_for_test(&mut self) {
+        self.claimed = ClaimedRecord::on_disk(&self.env_dir);
     }
 
     /// Open a fresh connection into the box.
@@ -1365,17 +1462,17 @@ pub fn render_status(s: &ShareSession, now: i64) -> String {
     // backward step the door closes earlier than the countdown below says, and
     // without this the only symptom is a ticket that "still had time left"
     // being refused.
-    if let Ok(started) = chrono::DateTime::parse_from_rfc3339(&s.started_at) {
-        let ahead = started.timestamp() - now;
-        if ahead > 5 {
-            out.push_str(&format!(
-                "            NOTE: this share reports starting {} in the future by this \
-                 machine's clock. The clock moved; the times below are this clock's opinion, \
-                 and the share itself goes by elapsed time, so it will close sooner than they \
-                 say.\n",
-                session::humanise(ahead)
-            ));
-        }
+    // One rule, shared with `run::grant`, which refuses to mint under the same
+    // condition — so the countdown and the minting cannot disagree about
+    // whether the clocks have moved apart.
+    if let Some(ahead) = session::started_in_the_future(s, now) {
+        out.push_str(&format!(
+            "            NOTE: this share reports starting {} in the future by this \
+             machine's clock. The clock moved; the times below are this clock's opinion, \
+             and the share itself goes by elapsed time, so it will close sooner than they \
+             say. `h5i box share grant` is refused while that is true.\n",
+            session::humanise(ahead)
+        ));
     }
     out.push_str(&format!(
         "  process   pid {}{}\n",
@@ -1453,7 +1550,93 @@ mod tests {
             Transport::P2p,
             "local".into(),
             crate::dialer::Dialer::spawn_local(1).expect("dialer"),
+            ClaimedRecord::on_disk(dir),
         )
+    }
+
+    /// A force-stopped bridge does not adopt the share that replaces it.
+    ///
+    /// `share stop --force` deletes a live record without stopping its process
+    /// and relies on that process noticing within a second. A new
+    /// `h5i box share` may legitimately claim the empty path inside that
+    /// second — and the old bridge, reading whatever file was at the path,
+    /// found the replacement's live grant and carried on: a second transport
+    /// into the old box, on the old port, admitting the new share's tickets,
+    /// for the whole life of the new share. Its own eventual exit then marked
+    /// the *new* share as winding up.
+    #[test]
+    fn a_bridge_whose_record_was_replaced_is_spent_rather_than_adopted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut a = crate::session::ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::P2p,
+            "abc",
+            Utc::now(),
+        );
+        let (g, _secret) = crate::session::mint_grant(None, 4_000_000_000).expect("mint");
+        let a_grant = g.id.clone();
+        a.grants.push(g);
+        session::write(dir.path(), &a).expect("write");
+
+        let mut bridge = test_bridge(dir.path());
+        bridge.repin_for_test();
+        assert!(bridge.grant_is_live(&a_grant));
+        assert!(!bridge.is_spent());
+        assert!(!bridge.share_is_ending());
+
+        // `share stop --force`, then a fresh share claims the box. Same pid
+        // (one test process), different start — which is what distinguishes
+        // two shares of one box a moment apart.
+        std::fs::remove_file(crate::session::session_path(dir.path())).expect("force stop");
+        let mut b = crate::session::ShareSession::new(
+            "env/a/demo",
+            9999,
+            Transport::P2p,
+            "def",
+            Utc::now() + chrono::Duration::seconds(1),
+        );
+        let (g, b_secret) = crate::session::mint_grant(None, 4_000_000_000).expect("mint");
+        let b_grant = g.id.clone();
+        b.grants.push(g);
+        session::write(dir.path(), &b).expect("write");
+
+        // The old bridge is over, and knows it.
+        assert!(
+            bridge.is_spent(),
+            "a replaced record kept the old bridge alive"
+        );
+        assert!(
+            bridge.share_is_ending(),
+            "the old bridge did not treat a replacement as its own ending"
+        );
+        assert!(
+            !bridge.grant_is_live(&b_grant),
+            "the old bridge watched the new share's grant"
+        );
+        assert!(
+            !bridge.grant_is_live(&a_grant),
+            "the old bridge still admitted its own dead grant"
+        );
+        assert!(
+            matches!(
+                bridge.authorize(&b_secret),
+                Err(crate::session::Denied::ShareOver)
+            ),
+            "the old bridge admitted a ticket minted for the new share"
+        );
+
+        // And its teardown leaves the new share alone.
+        crate::session::begin_winding_up(dir.path(), &a.started_at).expect("winding up");
+        assert!(
+            !crate::session::read(dir.path()).expect("read").winding_up,
+            "a force-stopped bridge marked the replacement share as winding up"
+        );
+        crate::session::clear(dir.path(), &a.started_at);
+        assert!(
+            crate::session::read(dir.path()).is_some(),
+            "a force-stopped bridge deleted the replacement share's record"
+        );
     }
 
     pub(super) fn at(s: &str) -> DateTime<Utc> {
@@ -1531,6 +1714,7 @@ mod tests {
             Transport::P2p,
             "local".into(),
             crate::dialer::Dialer::spawn_local(1).expect("dialer"),
+            ClaimedRecord::on_disk(&gone),
         );
 
         b.write_receipt();
@@ -1615,7 +1799,7 @@ mod tests {
         // that tells the visitor their ticket was revoked. That sentence is
         // the one this method was added to stop saying.
         let dir = tempfile::tempdir().expect("tempdir");
-        let b = test_bridge(dir.path());
+        let mut b = test_bridge(dir.path());
 
         let mut s = crate::session::ShareSession::new(
             "env/a/demo",
@@ -1625,6 +1809,9 @@ mod tests {
             Utc::now(),
         );
         session::write(dir.path(), &s).expect("write");
+        // The helper builds the bridge before the record exists; `serve_async`
+        // claims first and pins what it claimed.
+        b.repin_for_test();
         assert!(!b.share_is_ending(), "a serving share is not ending");
 
         s.winding_up = true;
@@ -1915,7 +2102,7 @@ mod tests {
         // everybody with no way to revoke — and `share stop --force`, which
         // deletes exactly that file, is a documented verb.
         let dir = tempfile::tempdir().expect("tempdir");
-        let b = test_bridge(dir.path());
+        let mut b = test_bridge(dir.path());
 
         let mut sess = crate::session::ShareSession::new(
             "env/a/demo",
@@ -1928,6 +2115,7 @@ mod tests {
         let id = g.id.clone();
         sess.grants.push(g);
         crate::session::write(dir.path(), &sess).expect("write");
+        b.repin_for_test();
         assert!(b.grant_is_live(&id), "a live grant read as dead");
         assert!(!b.is_spent(), "a live share read as spent");
 

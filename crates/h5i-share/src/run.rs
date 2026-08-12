@@ -224,6 +224,12 @@ async fn serve_async(
         }
     }
 
+    // The identity of the record just claimed, held here so every teardown
+    // mutation below can name the share it is ending. Without it, a bridge
+    // whose record was force-deleted and replaced marked the *new* share as
+    // winding up on its way out.
+    let claimed_at = sess.started_at.clone();
+
     let bridge = Arc::new(Bridge::new(
         req.env_dir.clone(),
         req.env_id.clone(),
@@ -232,6 +238,15 @@ async fn serve_async(
         req.transport,
         started.endpoint().to_string(),
         dialer,
+        // Pinned to the record just claimed, so every later read of
+        // `share.json` is a read of *ours*. `share stop --force` deletes a
+        // live record without stopping its process and a fresh `box share` may
+        // legitimately claim the path a moment later; without this the old
+        // bridge kept serving the old port under the new share's grants.
+        crate::bridge::ClaimedRecord {
+            pid: sess.pid,
+            started_at: sess.started_at.clone(),
+        },
     ));
 
     announce(&Started {
@@ -249,7 +264,7 @@ async fn serve_async(
     // promised — and the teardown below must not also race for it.
     let (outcome, already_signalled) = tokio::select! {
         r = started.serve(bridge.clone(), req.direct_only) => (r, false),
-        _ = interrupted(&req.env_dir) => (Ok(()), true),
+        _ = interrupted(&req.env_dir, &claimed_at) => (Ok(()), true),
         reason = stopped_elsewhere(bridge.clone()) => {
             eprintln!("share: {reason}");
             (Ok(()), false)
@@ -265,7 +280,18 @@ async fn serve_async(
     // still very much alive — so `share grant` in that window minted a ticket,
     // printed the one copy of its secret, and then watched this function delete
     // the table it went into.
-    session::begin_winding_up(&req.env_dir);
+    // Reported when it fails, not swallowed. This write is the only thing
+    // stopping a `grant` in another process from minting a capability into a
+    // table this function is about to delete, and it fails for exactly the case
+    // it exists for — a `share.lock` held past the retry window. The operator
+    // is the only one who can act on that, and the peer holding the doomed
+    // ticket cannot.
+    if let Err(e) = session::begin_winding_up(&req.env_dir, &bridge.claimed().started_at) {
+        eprintln!(
+            "share: could not mark this share as shutting down ({e}). If `h5i box share grant` \
+             ran in the last few seconds, the ticket it printed may already be dead."
+        );
+    }
 
     // The teardown, and a way out of the *waiting* part of it.
     //
@@ -294,7 +320,7 @@ async fn serve_async(
     } else {
         tokio::select! {
             _ = teardown(&bridge, &mut started) => true,
-            _ = interrupted(&req.env_dir) => {
+            _ = interrupted(&req.env_dir, &claimed_at) => {
                 eprintln!(
                     "share: not waiting for connections to finish — the receipt is still written"
                 );
@@ -325,7 +351,7 @@ async fn serve_async(
         // a successful share's, and quick tunnels drop routinely.
         Err(e) => bridge.write_receipt_failed(&e.to_string()),
     }
-    session::clear(&req.env_dir);
+    session::clear(&req.env_dir, &bridge.claimed().started_at);
     outcome
 }
 
@@ -362,7 +388,7 @@ async fn teardown(bridge: &Arc<Bridge>, started: &mut Setup) {
 /// process supervisor tidying up are all ordinary ways a foreground command
 /// ends — and handling only the interrupt means the ingress receipt is lost in
 /// exactly those cases, which are the ones nobody planned for.
-async fn interrupted(env_dir: &std::path::Path) {
+async fn interrupted(env_dir: &std::path::Path, started_at: &str) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
@@ -370,7 +396,7 @@ async fn interrupted(env_dir: &std::path::Path) {
             Ok(s) => s,
             Err(_) => {
                 let _ = tokio::signal::ctrl_c().await;
-                arm_second_signal(env_dir);
+                arm_second_signal(env_dir, started_at);
                 return;
             }
         };
@@ -378,7 +404,7 @@ async fn interrupted(env_dir: &std::path::Path) {
             _ = tokio::signal::ctrl_c() => {}
             _ = term.recv() => {}
         }
-        arm_second_signal(env_dir);
+        arm_second_signal(env_dir, started_at);
     }
     #[cfg(not(unix))]
     {
@@ -396,7 +422,8 @@ async fn interrupted(env_dir: &std::path::Path) {
 /// operator pressing Ctrl-C twice is asking for it to stop now. They lose the
 /// receipt, which is the trade they just made.
 #[cfg(unix)]
-fn arm_second_signal(env_dir: &std::path::Path) {
+fn arm_second_signal(env_dir: &std::path::Path, started_at: &str) {
+    let started_at = started_at.to_string();
     // Armed at most once. The normal shutdown path calls this too, so on a
     // Ctrl-C both calls happen and a second watcher would race the first to
     // `exit(130)` — harmless, but it also means two handlers for one signal.
@@ -431,7 +458,7 @@ fn arm_second_signal(env_dir: &std::path::Path) {
         // Unlocked, because the lock this would wait on is most likely held by
         // this process's own orderly shutdown — the one being abandoned — and
         // five seconds of retrying is not what "stop now" means.
-        session::clear_now(&env_dir);
+        session::clear_now(&env_dir, &started_at);
         std::process::exit(130);
     });
 }
@@ -693,10 +720,21 @@ pub fn grant(
     label: Option<String>,
     expire: Duration,
 ) -> Result<Minted, H5iError> {
-    let expires_at =
-        (chrono::Utc::now() + chrono::Duration::from_std(expire).unwrap_or_default()).timestamp();
-    let (g, secret) = session::mint_grant(label, expires_at)?;
-    let id = g.id.clone();
+    // Everything about the grant is decided *inside* the closure, which runs
+    // with `share.lock` held. Two things were wrong with deciding them first.
+    //
+    // **The lifetime started too early.** `session::update` spends up to five
+    // seconds acquiring the lock (a hundred retries at 50 ms), and the CLI
+    // accepts `--expire 1s`. A contended or preempted lock holder could
+    // therefore make a grant expire before it was ever appended: the command
+    // still succeeded and printed an already-dead invite. The comment on
+    // `Minted` says the requested duration should be usable after handoff.
+    //
+    // **The id was chosen without looking at the table.** Eight hex characters
+    // is thirty-two bits, and `revoke` finds the first matching row — see
+    // `session::mint_grant_unlike` for what a collision costs. Under the lock,
+    // "no existing grant uses this id" stays true through the write.
+    let minted = std::cell::RefCell::new(None);
     let sess = session::update(env_dir, |s| {
         if !session::is_live(s) {
             return Err(H5iError::Metadata(
@@ -735,9 +773,41 @@ pub fn grant(
                     .into(),
             ));
         }
+        // Anchored here, with the lock held: from this instant the peer really
+        // does get the duration they were promised.
+        let now = chrono::Utc::now();
+        // …by *this* process's clock, which is not the one that will judge it.
+        // The serving process floors every expiry decision against elapsed
+        // monotonic time (`Bridge::now`), precisely so a backward wall-clock
+        // step cannot extend a live ticket. This process has no monotonic
+        // reference to the share's start and cannot reproduce that floor — so
+        // after a one-hour backward correction, a grant minted here for an
+        // hour has an expiry the bridge already considers past, and it is
+        // refused on its first use while the CLI and `share status` both show
+        // an hour remaining.
+        //
+        // The disagreement is detectable from the record alone: a share cannot
+        // have started after now. Refused rather than guessed at, because the
+        // amount to correct by is exactly what this process cannot know.
+        if let Some(skew) = session::started_in_the_future(s, now.timestamp()) {
+            return Err(H5iError::Metadata(format!(
+                "this shell's clock is {} behind the one this share started on, and the \
+                 serving process measures expiry against elapsed time — so a ticket minted \
+                 now would be refused the moment it was used, while everything here showed \
+                 time left. Put this machine's clock right, or stop the share and start a \
+                 fresh one.",
+                session::humanise(skew)
+            )));
+        }
+        let expires_at = (now + chrono::Duration::from_std(expire).unwrap_or_default()).timestamp();
+        let (g, secret) = session::mint_grant_unlike(&s.grants, label.clone(), expires_at)?;
+        *minted.borrow_mut() = Some((g.id.clone(), secret, expires_at));
         s.grants.push(g);
         Ok(s.clone())
     })?;
+    let (id, secret, expires_at) = minted
+        .into_inner()
+        .expect("update ran its closure to completion");
     Ok(Minted {
         id,
         invite: crate::tunnel::invite_url(&sess.endpoint, &secret),
@@ -996,6 +1066,7 @@ mod tests {
             Transport::Tunnel,
             "https://x".into(),
             crate::dialer::Dialer::spawn_local(1).expect("dialer"),
+            crate::bridge::ClaimedRecord::on_disk(dir.path()),
         ));
         // A connection that never finishes, so the quiesce inside `teardown`
         // really would sit there for its full five seconds.
@@ -1048,7 +1119,7 @@ mod tests {
         session::write(dir.path(), &s).expect("write");
 
         grant(dir.path(), None, Duration::from_secs(600)).expect("a live share mints");
-        session::begin_winding_up(dir.path());
+        session::begin_winding_up(dir.path(), &s.started_at).expect("mark winding up");
         let err = grant(dir.path(), None, Duration::from_secs(600)).expect_err("winding up");
         assert!(format!("{err}").contains("shutting down"), "{err}");
         assert_eq!(

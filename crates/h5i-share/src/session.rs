@@ -257,10 +257,49 @@ pub fn humanise(seconds: i64) -> String {
 
 /// Mint a grant, returning it and the secret that must be printed **now**.
 pub fn mint_grant(label: Option<String>, expires_at: i64) -> Result<(Grant, String), H5iError> {
+    mint_grant_unlike(&[], label, expires_at)
+}
+
+/// Mint a grant whose id no grant in `existing` already uses.
+///
+/// The id is eight hex characters — a handle to type, not a secret — and it
+/// was chosen without looking at the table at all. That is a correctness
+/// property rather than a secrecy one, and thirty-two bits is not many for it:
+/// the birthday bound puts a collision at about one per cent by nine thousand
+/// grants, which a long-lived tunnel share reaches.
+///
+/// What a collision costs, once it happens: `revoke` always finds the *first*
+/// matching row, so the second grant can never be revoked individually — and
+/// worse, a connection admitted by the first survives revoking it, because
+/// `grant_is_live` still finds the colliding row alive. The tunnel's
+/// accounting coalesces them in one `HashMap` entry too, so the receipt
+/// describes two visitors as one.
+///
+/// Callers hold the session lock across this and the write that follows, so
+/// "unused" stays true.
+pub fn mint_grant_unlike(
+    existing: &[Grant],
+    label: Option<String>,
+    expires_at: i64,
+) -> Result<(Grant, String), H5iError> {
     let secret = crate::ticket::mint_secret()?;
-    // Eight hex characters is a handle to type, not a secret: it identifies a
-    // grant in `share ls` and `share revoke` and authorizes nothing.
-    let id = h5i_core::token::hex(4)?;
+    let mut id = h5i_core::token::hex(4)?;
+    // Bounded, because an unbounded retry against a table that somehow holds
+    // every id would spin forever. Sixty-four attempts against even a hundred
+    // thousand grants is a certainty many times over.
+    for _ in 0..64 {
+        if !existing.iter().any(|g| g.id == id) {
+            break;
+        }
+        id = h5i_core::token::hex(4)?;
+    }
+    if existing.iter().any(|g| g.id == id) {
+        return Err(H5iError::Metadata(
+            "could not mint a grant id this share is not already using. Stop the share and \
+             start a fresh one."
+                .into(),
+        ));
+    }
     Ok((
         Grant {
             id,
@@ -477,6 +516,13 @@ pub enum ReadState {
     Unreadable,
 }
 
+impl ReadState {
+    /// No file at all: the share is over, or is being stopped right now.
+    pub fn is_gone(&self) -> bool {
+        matches!(self, ReadState::Gone)
+    }
+}
+
 pub fn read_state(env_dir: &Path) -> ReadState {
     let raw = match std::fs::read(session_path(env_dir)) {
         Ok(raw) => raw,
@@ -554,11 +600,35 @@ pub fn write(env_dir: &Path, s: &ShareSession) -> Result<(), H5iError> {
 pub fn claim(env_dir: &Path, s: &ShareSession, name: &str) -> Result<Option<u32>, H5iError> {
     let _lock = Lock::acquire(env_dir)?;
     let mut cleared = None;
-    if let Some(existing) = read(env_dir) {
-        if is_live(&existing) {
-            return Err(already_shared(&existing, name));
+    // On `read_state`, not on `read`. `read` maps *both* `Gone` and
+    // `Unreadable` to `None`, and this treated `None` as permission to write a
+    // fresh table — so a share that was still serving, whose record had become
+    // malformed or unreadable, was silently replaced while its endpoint stayed
+    // alive.
+    //
+    // That is not a cosmetic loss. Every bridge rereads the shared table on
+    // every connection, so share A's still-running bridge would then authorize
+    // share B's grant secrets while continuing to dial the port A pinned:
+    // somebody holding A's endpoint and a ticket minted for B reaches the port
+    // B never advertised.
+    match read_state(env_dir) {
+        ReadState::Present(existing) => {
+            if is_live(&existing) {
+                return Err(already_shared(&existing, name));
+            }
+            cleared = Some(existing.pid);
         }
-        cleared = Some(existing.pid);
+        ReadState::Gone => {}
+        ReadState::Unreadable => {
+            return Err(H5iError::Metadata(format!(
+                "{} exists and this h5i cannot read it. It may belong to a share that is still \
+                 serving — a bridge rereads this table on every connection, so replacing it \
+                 would hand that bridge the new share's tickets while it kept dialling the old \
+                 share's port. Nothing is written. Check whether anything is serving this box, \
+                 then `h5i box share stop {name} --force` to remove the record.",
+                session_path(env_dir).display()
+            )));
+        }
     }
     write(env_dir, s)?;
     Ok(cleared)
@@ -600,6 +670,40 @@ pub fn already_shared(existing: &ShareSession, name: &str) -> H5iError {
     ))
 }
 
+/// How far a share's recorded start may be in this shell's future before the
+/// two clocks are treated as disagreeing.
+///
+/// Not zero, because `started_at` is written to whole seconds and read back by
+/// a different process; five seconds is well below any real clock step and
+/// well above that rounding.
+const CLOCK_SKEW_TOLERANCE: i64 = 5;
+
+/// How far this shell's clock is *behind* the one the share started on, if it
+/// is behind at all.
+///
+/// A share cannot have started after now, so a positive answer means the wall
+/// clock moved backwards between the two readings. That matters to more than
+/// display: the serving process floors every expiry against elapsed monotonic
+/// time and a management process cannot reproduce that floor, so a grant
+/// minted against the raw clock can be born already expired in the bridge's
+/// view — refused on first use while `share status` shows time left.
+///
+/// One function for both readers, so the countdown and the minting cannot end
+/// up disagreeing about whether there is a problem.
+pub fn started_in_the_future(s: &ShareSession, now: i64) -> Option<i64> {
+    let started = chrono::DateTime::parse_from_rfc3339(&s.started_at).ok()?;
+    let ahead = started.timestamp() - now;
+    (ahead > CLOCK_SKEW_TOLERANCE).then_some(ahead)
+}
+
+/// How many times [`begin_winding_up`] will try before giving up.
+///
+/// This write is the only thing standing between a teardown and a `grant` in
+/// another process minting a capability into a table that is about to be
+/// deleted, so it gets more patience than an ordinary mutation: a transiently
+/// held `share.lock` is exactly the case it must survive.
+const WINDING_UP_ATTEMPTS: usize = 6;
+
 /// Mark the share as winding up, so the other verbs stop pretending it serves.
 ///
 /// The gap this closes: between the serving process deciding to stop and the
@@ -607,11 +711,54 @@ pub fn already_shared(existing: &ShareSession, name: &str) -> H5iError {
 /// there. So `share grant` in that window minted a ticket, printed a secret
 /// that by contract is printed once, and then the serving process deleted the
 /// table it was written into. The peer got a URL that never worked.
-pub fn begin_winding_up(env_dir: &Path) {
-    let _ = update(env_dir, |s| {
-        s.winding_up = true;
-        Ok(())
-    });
+///
+/// **The error is returned.** It was discarded, and `update` fails for exactly
+/// the case this guard exists for: a live `share.lock` held past the five-second
+/// retry window. `begin_winding_up` then returned having changed nothing, the
+/// lock was released a moment later, and a concurrent `grant` saw a live pid
+/// and `winding_up == false`, succeeded, and printed a link that teardown
+/// deleted seconds afterwards. A full disk or a failed rename lost the shutdown
+/// state the same silent way.
+///
+/// Retried before it is reported, because the transient lock is the common
+/// case and giving up on it is what went wrong; and reported when the retries
+/// run out, because a shutdown that could not close the door is not a shutdown
+/// the operator should believe happened quietly.
+/// `started_at` identifies *which* share this process is winding up. Without
+/// it, a bridge whose record had been force-deleted and replaced marked the
+/// *new* share as winding up on its way out — `clear` checks the pid and so
+/// stopped the final delete, and nothing stopped this.
+pub fn begin_winding_up(env_dir: &Path, started_at: &str) -> Result<(), H5iError> {
+    let mut last = None;
+    for attempt in 0..WINDING_UP_ATTEMPTS {
+        match update(env_dir, |s| {
+            if s.pid != std::process::id() || s.started_at != started_at {
+                // Not ours any more. Someone force-stopped this share and
+                // another has claimed the box; marking it winding-up would
+                // shut a door that is not this process's to shut.
+                return Ok(());
+            }
+            s.winding_up = true;
+            Ok(())
+        }) {
+            Ok(()) => return Ok(()),
+            // Nothing to mark. The record is already gone — `share stop
+            // --force`, or a teardown that got there first — which is the
+            // state this was trying to reach.
+            Err(e) if read_state(env_dir).is_gone() => {
+                let _ = e;
+                return Ok(());
+            }
+            Err(e) => {
+                last = Some(e);
+                if attempt + 1 < WINDING_UP_ATTEMPTS {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+            }
+        }
+    }
+    Err(last
+        .unwrap_or_else(|| H5iError::Metadata("could not mark this share as winding up".into())))
 }
 
 /// Remove the record outright, whatever it says.
@@ -724,13 +871,17 @@ pub fn update<T>(
 /// to somebody, and then the first process finishes its teardown and deletes
 /// the *second* share's table — whose ticket has already been sent to a human
 /// and now works for nobody.
-fn record_is_ours(env_dir: &Path) -> bool {
+/// `started_at` as well as the pid. A pid is reusable and, more to the point,
+/// two shares of the same box a second apart have the same pid only by
+/// accident — but a bridge whose record was force-deleted and replaced by a
+/// share started from the *same* wrapper process would match on pid alone.
+fn record_is_ours(env_dir: &Path, started_at: &str) -> bool {
     read(env_dir)
-        .map(|s| s.pid == std::process::id())
+        .map(|s| s.pid == std::process::id() && s.started_at == started_at)
         .unwrap_or(false)
 }
 
-pub fn clear(env_dir: &Path) {
+pub fn clear(env_dir: &Path, started_at: &str) {
     // `let _ = …` would drop the guard at the end of *this statement*, which is
     // to say before the removal it is guarding. It was written that way once,
     // under a comment explaining the race it was closing.
@@ -739,7 +890,7 @@ pub fn clear(env_dir: &Path) {
     // is a record for a process that is exiting anyway, which is the state
     // every "GONE share nobody can clear" report starts from.
     let _lock = Lock::acquire(env_dir);
-    if record_is_ours(env_dir) {
+    if record_is_ours(env_dir, started_at) {
         let _ = std::fs::remove_file(session_path(env_dir));
     }
 }
@@ -752,8 +903,8 @@ pub fn clear(env_dir: &Path) {
 /// own orderly shutdown, which is the thing being abandoned. There is nothing to
 /// serialise against: this is an unconditional delete of our own share's record
 /// by the process that wrote it, not a read-modify-write of the grant table.
-pub fn clear_now(env_dir: &Path) {
-    if record_is_ours(env_dir) {
+pub fn clear_now(env_dir: &Path, started_at: &str) {
+    if record_is_ours(env_dir, started_at) {
         let _ = std::fs::remove_file(session_path(env_dir));
     }
 }
@@ -779,11 +930,12 @@ mod tests {
         // shutdown being abandoned — so the exit that is supposed to be instant
         // was not.
         let dir = tempfile::tempdir().expect("tempdir");
-        write(dir.path(), &session_with(vec![])).expect("write");
+        let s = session_with(vec![]);
+        write(dir.path(), &s).expect("write");
         let held = Lock::acquire(dir.path()).expect("hold the lock");
 
         let started = std::time::Instant::now();
-        clear_now(dir.path());
+        clear_now(dir.path(), &s.started_at);
         assert!(
             started.elapsed() < std::time::Duration::from_millis(500),
             "clearing waited for a lock it should not have: {:?}",
@@ -1121,6 +1273,59 @@ mod tests {
         assert!(!s.winding_up);
     }
 
+    /// A table this h5i cannot read is not a table it may replace.
+    ///
+    /// `read` maps both `Gone` and `Unreadable` to `None`, and `claim` read
+    /// `None` as permission to write a fresh record. So a share that was still
+    /// serving, whose table had become malformed, was overwritten while its
+    /// endpoint stayed alive — and since every bridge rereads that table on
+    /// every connection, the old bridge would then authorize the *new* share's
+    /// tickets while still dialling the port the old share pinned.
+    #[test]
+    fn an_unreadable_table_is_not_claimed_over() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let junk = b"{ not a record";
+        std::fs::write(session_path(dir.path()), junk).expect("write junk");
+
+        let fresh = session_with(vec![]);
+        let err = claim(dir.path(), &fresh, "demo").expect_err("claimed over an unreadable table");
+        assert!(format!("{err}").contains("cannot read"), "{err}");
+        assert!(format!("{err}").contains("--force"), "{err}");
+        assert_eq!(
+            std::fs::read(session_path(dir.path())).expect("read"),
+            junk,
+            "the unreadable record was replaced anyway"
+        );
+
+        // And with it out of the way, claiming works.
+        std::fs::remove_file(session_path(dir.path())).expect("remove");
+        claim(dir.path(), &fresh, "demo").expect("a clear path claims");
+    }
+
+    /// Two grants in one table never share a handle.
+    ///
+    /// Eight hex characters is thirty-two bits and the id was chosen without
+    /// looking at the table. `revoke` finds the first matching row, so on a
+    /// collision the second grant can never be revoked individually — and a
+    /// connection admitted by the first survives revoking it, because
+    /// `grant_is_live` still finds the colliding row alive.
+    #[test]
+    fn a_minted_grant_never_reuses_a_handle_the_table_has() {
+        let (taken, _) = mint_grant(None, 4_000_000_000).expect("mint");
+        let existing = vec![taken.clone()];
+        for _ in 0..64 {
+            let (g, _) = mint_grant_unlike(&existing, None, 4_000_000_000).expect("mint");
+            assert_ne!(
+                g.id, taken.id,
+                "a grant reused a handle already in the table"
+            );
+        }
+
+        // And an id that is free is used as it is.
+        let (g, _) = mint_grant_unlike(&[], None, 4_000_000_000).expect("mint");
+        assert_eq!(g.id.len(), 8);
+    }
+
     #[test]
     fn a_pid_kill_would_treat_as_a_wildcard_is_not_a_live_process() {
         // `pid_t` is signed. `4294967295` fits the `u32` this record stores and
@@ -1254,7 +1459,7 @@ mod tests {
         write(dir.path(), &s).expect("write");
         assert_eq!(read(dir.path()).expect("read"), s);
         assert!(read(dir.path()).unwrap().authorize(&secret, 0).is_ok());
-        clear(dir.path());
+        clear(dir.path(), &s.started_at);
         assert!(read(dir.path()).is_none());
     }
 

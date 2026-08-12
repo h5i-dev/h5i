@@ -1552,6 +1552,7 @@ mod tests {
             crate::session::Transport::Tunnel,
             "https://test.trycloudflare.com".into(),
             dialer,
+            crate::bridge::ClaimedRecord::on_disk(dir),
         ));
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
@@ -1675,6 +1676,11 @@ mod tests {
         .await;
         assert!(ok.contains("SAW<"), "{ok}");
 
+        // Kept for the last step, which needs *this* bridge's record rather
+        // than a look-alike: a record with a different identity is a different
+        // share, which the bridge reads as "my share is over".
+        let claimed = session::read(dir.path()).expect("the record this bridge claimed");
+
         // The share is stopped out from under the serving process, which is
         // what `share stop --force` does and what the last moment of every
         // ordinary stop looks like.
@@ -1707,13 +1713,10 @@ mod tests {
         // The refusals that *are* about the ticket keep the one `401` they
         // have always had: this must not become an oracle for which of
         // unknown, expired and revoked a probe hit.
-        let sess = crate::session::ShareSession::new(
-            "env/test/demo",
-            port,
-            crate::session::Transport::Tunnel,
-            "https://test.trycloudflare.com",
-            chrono::Utc::now(),
-        );
+        // The *same* record with its grants taken out. See
+        // `bridge::ClaimedRecord`.
+        let mut sess = claimed;
+        sess.grants.clear();
         session::write(dir.path(), &sess).expect("empty table");
         let unknown = request(
             addr,

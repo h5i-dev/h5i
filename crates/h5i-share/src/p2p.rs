@@ -1311,6 +1311,7 @@ mod tests {
                 Transport::P2p,
                 "local".into(),
                 dialer,
+                crate::bridge::ClaimedRecord::on_disk(dir),
             )),
             secret,
         )
