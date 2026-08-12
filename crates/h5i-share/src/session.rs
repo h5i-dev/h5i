@@ -334,136 +334,125 @@ pub fn mint_grant_unlike(
 
 // ─── the file ───────────────────────────────────────────────────────────────
 
-/// An exclusive lock over the grant table, released on drop.
+/// An exclusive lock over the grant table, held for as long as this value is.
 ///
-/// `create_new` is the whole mechanism: it is atomic on every filesystem we
-/// care about, and it needs no daemon. A stale lock from a killed process is
-/// broken after [`LOCK_STALE_SECS`], because the alternative is a share nobody
-/// can revoke.
+/// **`flock` on an open descriptor, not a file somebody has to remember to
+/// remove.** The mechanism was `create_new` plus a pid stamp plus an age
+/// heuristic, and it could not be made race free: any "is the holder gone?"
+/// test is separated from the break that follows it by a window, and there is
+/// no portable primitive that says *remove this inode*. Two rounds tried.
+/// Breaking by `remove_file` deleted whatever was at the path rather than the
+/// file just examined, so two processes both removed and both created; breaking
+/// by `rename` has exactly the same property — it moves whatever is at the path
+/// *now* — so the winner's fresh, live lock was renamed aside by the loser and
+/// deleted, and both walked away holding it. Measured with the harness in this
+/// file's `concurrency` module: eight processes, twelve rounds each, **twelve
+/// runs out of twelve**, with the losing worker naming a sibling that was still
+/// alive.
+///
+/// `flock` has no staleness to reason about. The kernel releases it when the
+/// holder's last descriptor closes, which includes every way a process can die
+/// — `SIGKILL` and a panic among them — so there is nothing to break and no
+/// heuristic to be wrong about. It is also already this repository's answer to
+/// the same question one layer down: `h5i_core::share_record::share_gate`
+/// guards the very decisions this lock guards, in this very directory, with a
+/// non-blocking `flock` in a deadline loop. Two spellings of one idea was the
+/// thing to remove.
+///
+/// **The file is never unlinked**, and that is load bearing rather than
+/// laziness. Unlinking under `flock` restores the whole defect: a waiter holds
+/// a descriptor to an inode that no longer has a name, a newcomer creates a
+/// fresh file at the path and locks *that*, and there are two holders again.
+/// A zero-byte `share.lock` left in the box's directory is the correct
+/// end state, and it is what `share-gate.lock` beside it has always done.
 pub struct Lock {
-    path: PathBuf,
-    /// The pid we stamped into the file. Checked again on the way out.
-    owner: String,
+    /// Held only to keep the descriptor open: closing it is what unlocks, so
+    /// the field is the lock.
+    #[allow(dead_code)]
+    file: std::fs::File,
 }
 
-const LOCK_STALE_SECS: u64 = 30;
+/// How long a caller waits for the grant table before giving up.
+///
+/// The same five seconds the retry loop it replaces added up to (a hundred
+/// attempts at fifty milliseconds), because several call sites' comments quote
+/// that number to the operator.
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl Lock {
     pub fn acquire(env_dir: &Path) -> Result<Lock, H5iError> {
         let path = env_dir.join(LOCK_FILE);
-        let mine = std::process::id().to_string();
-        for _ in 0..100 {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(mut f) => {
-                    // Stamped with who holds it. Both halves of the stale-break
-                    // need this: deciding whether the holder is really gone, and
-                    // making sure the loser of a break race cannot remove the
-                    // winner's lock on its way out.
-                    //
-                    // A stamp that cannot be written is a lock nobody can
-                    // reason about, so it is not held. On a full disk the
-                    // `create_new` succeeds and the write does not, and `Drop`
-                    // then saw content that was not its own and left the file:
-                    // every later verb waited five seconds and blamed a holder
-                    // that had never existed, leaking another one on the way
-                    // out. Measured at 3.8s, 5.2s, 5.6s for three verbs in a
-                    // row after one ENOSPC.
-                    use std::io::Write as _;
-                    if let Err(e) = f.write_all(mine.as_bytes()) {
-                        drop(f);
-                        // Removed only if it is still the empty file this call
-                        // made. `remove_file` deletes whatever is at the path
-                        // *now* — the anti-pattern the stale break fourteen
-                        // lines below was rewritten to avoid — so a lock some
-                        // other process had since created and stamped would
-                        // have been unlinked by this cleanup.
-                        if std::fs::read(&path).map(|c| c.is_empty()).unwrap_or(false) {
-                            let _ = std::fs::remove_file(&path);
-                        }
-                        return Err(H5iError::with_path(e, &path));
-                    }
-                    return Ok(Lock { path, owner: mine });
+        // `create(true).truncate(false)`: the file is a handle to lock, never a
+        // place to put anything, and truncating it would be one process
+        // rewriting another's open file for no reason.
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|e| H5iError::with_path(e, &path))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            // Non-blocking in a deadline loop rather than a blocking `flock`,
+            // for the reason `share_gate` gives: a blocking one cannot be given
+            // a deadline, and a verb that waits forever on a wedged share is
+            // the thing operators file bugs about.
+            let deadline = std::time::Instant::now() + LOCK_WAIT;
+            let mut attempt: u32 = 0;
+            loop {
+                let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+                if rc == 0 {
+                    return Ok(Lock { file });
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    // Broken by *renaming it aside*, not by unlinking it.
-                    // `remove_file` deletes whatever is at the path now rather
-                    // than the file that was just stat'd, so two processes that
-                    // both decided "stale" both removed and both created, and
-                    // both walked away believing they held it. Measured with
-                    // the real code in a fork-synchronised harness: 8 of 20
-                    // runs broke mutual exclusion with no jitter at all, and 6
-                    // of 6 with a single 30 ms preemption injected between the
-                    // stat and the remove — which is one page fault.
-                    //
-                    // A rename is atomic and single-winner: the process that
-                    // renames the stale file away is the only one that can then
-                    // create in its place, and a process that renames nothing
-                    // has already lost.
-                    if lock_is_stale(&path) {
-                        let aside = path.with_extension("lock.stale");
-                        if std::fs::rename(&path, &aside).is_ok() {
-                            let _ = std::fs::remove_file(&aside);
-                            continue;
-                        }
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() != Some(libc::EWOULDBLOCK) {
+                    return Err(H5iError::with_path(err, &path));
                 }
-                Err(e) => return Err(H5iError::with_path(e, &path)),
+                if std::time::Instant::now() >= deadline {
+                    return Err(H5iError::Metadata(format!(
+                        "another h5i is holding this box's share lock and has held it for {}s. \
+                         Try again in a moment. (The lock is released by the kernel when its \
+                         holder exits, so there is never a file to delete by hand.)",
+                        LOCK_WAIT.as_secs()
+                    )));
+                }
+                // Backed off from a millisecond, not a flat fifty.
+                //
+                // Two things wanted this. A grant table is held for well under
+                // a millisecond — a read, an edit, a write, a rename — so a
+                // waiter that sleeps fifty spends almost all of its wait on a
+                // lock that is free, and `h5i box share grant` paid that
+                // latency for nothing every time it just missed. And the
+                // throughput of a poll is one acquisition per interval per
+                // waiter, which is what the harness below runs out of at
+                // thirty-two processes: no overlap, no lost write, just waiters
+                // that never got a turn inside the deadline.
+                //
+                // Jittered as well as backed off, because `flock` promises no
+                // fairness and waiters sleeping the same interval keep
+                // colliding on the same instants. The spread comes from the pid
+                // and the attempt rather than from a random source, which this
+                // path should not need.
+                attempt = attempt.wrapping_add(1);
+                let step = 1u64 << attempt.min(4); // 2, 4, 8, 16, 16 ms
+                let spread = (u64::from(std::process::id()).wrapping_mul(2_654_435_761)
+                    ^ u64::from(attempt).wrapping_mul(40_503))
+                    % step.max(1);
+                std::thread::sleep(std::time::Duration::from_micros(
+                    (step * 1_000 / 2) + spread * 500,
+                ));
             }
         }
-        Err(H5iError::Metadata(format!(
-            "another h5i is holding this box's share lock ({}). If nothing else is running, \
-             remove that file.",
-            path.display()
-        )))
-    }
-}
-
-/// Is this lock file one whose holder is gone?
-///
-/// Age alone was the whole test, which is a guess: a process that took thirty
-/// seconds under the lock would have had it broken underneath it. The pid the
-/// holder stamped is the actual question, and age is kept only as the fallback
-/// for a file written before this existed or by a pid we cannot read.
-fn lock_is_stale(path: &Path) -> bool {
-    // The pid first. Asking about age before asking whose it is meant a lock
-    // naming a provably dead process was honoured for thirty seconds: measured
-    // at four to five seconds of retries and then "another h5i is holding this
-    // box's share lock", for a holder that did not exist. Age is the fallback
-    // for a file with no readable pid, not the gate in front of the question.
-    if let Ok(text) = std::fs::read_to_string(path) {
-        // Stamped: the pid is the question.
-        if let Ok(pid) = text.trim().parse::<u32>() {
-            return !pid_alive(pid);
+        #[cfg(not(unix))]
+        {
+            // No advisory lock here, exactly as `share_gate` does on this
+            // branch. `h5i box share` refuses to start on a platform with
+            // neither a namespace to enter nor a process tree to attribute a
+            // socket to, so nothing reaches this with a share to protect.
+            Ok(Lock { file })
         }
-        // An empty file is *also* the shape of a lock that is one instruction
-        // from being stamped. Between `create_new` returning and the stamp
-        // landing it is zero bytes, and calling that stale on sight let a
-        // second process break a lock the first was about to hold — both then
-        // returned `Ok(Lock)` and the grant table took two concurrent
-        // read-modify-writes. Measured at 3.4 µs mean and 362 µs worst here,
-        // and deterministic with a preemption injected at that point; and the
-        // window widens under exactly the full-or-slow disk this was added
-        // for, because that is what makes the stamp write block.
-        //
-        // So an unstamped lock still falls through to the age test below: the
-        // orphan it was meant to clear is cleared after thirty seconds
-        // instead of instantly, which is the price of not breaking a live one.
     }
-    let old_enough = std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .map(|t| {
-            t.elapsed()
-                .map(|d| d.as_secs() > LOCK_STALE_SECS)
-                .unwrap_or(false)
-        })
-        .unwrap_or(false);
-    // No pid to read, so age is all there is to go on.
-    old_enough
 }
 
 /// A pid that `kill` will treat as one process, or nothing.
@@ -493,21 +482,6 @@ fn pid_alive(pid: u32) -> bool {
 #[cfg(not(unix))]
 fn pid_alive(pid: u32) -> bool {
     as_pid(pid).is_some()
-}
-
-impl Drop for Lock {
-    fn drop(&mut self) {
-        // Only if it is still ours. Two processes breaking the same stale lock
-        // both create one, and only one of them wins — without this check the
-        // loser removed the winner's lock on its way out, and the grant table
-        // was then edited by two processes at once.
-        let still_mine = std::fs::read_to_string(&self.path)
-            .map(|c| c.trim() == self.owner)
-            .unwrap_or(false);
-        if still_mine {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
 }
 
 /// Read the session, if this box has one. A malformed file reads as absent
@@ -1116,85 +1090,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unstamped_lock_is_not_broken_on_sight() {
-        // Two failures on opposite sides of one line, both real.
-        //
-        // On a full disk `create_new` succeeds and the stamp write does not,
-        // so `Drop` saw content that was not its own and left the file: every
-        // later verb waited five seconds and blamed a holder that had never
-        // existed. The fix for that — "an empty file is stale on sight" — then
-        // broke mutual exclusion, because a lock is *also* empty for the
-        // microseconds between being created and being stamped. Measured at
-        // 3.4 µs mean and 362 µs worst, deterministic under a preemption, and
-        // widening under exactly the slow disk it was written for.
-        //
-        // So: an unstamped lock is left alone, and the orphan is cleared by
-        // age. The failed stamp now cleans up after itself instead.
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("share.lock");
-        std::fs::write(&path, "").expect("write an unstamped lock");
-        assert!(
-            !lock_is_stale(&path),
-            "an unstamped lock was broken on sight, which is a lock two processes can hold"
-        );
-
-        // Nor is one holding something that is not a pid.
-        std::fs::write(&path, "not-a-pid").expect("write");
-        assert!(!lock_is_stale(&path));
-
-        // And the cleanup that replaced it removes only its own empty file: a
-        // lock somebody else has since created and stamped is left alone,
-        // which is the anti-pattern the stale break was rewritten to avoid.
-        std::fs::write(&path, "4194301").expect("another holder, stamped");
-        let held = Lock::acquire(dir.path()).expect("break a dead holder's lock");
-        assert_eq!(
-            std::fs::read_to_string(&path).expect("read").trim(),
-            std::process::id().to_string(),
-            "the lock on disk is not the one we hold"
-        );
-        drop(held);
-    }
-
-    #[test]
-    fn a_lock_whose_holder_is_dead_is_stale_immediately() {
-        // Age used to be asked before ownership, so a lock naming a provably
-        // dead process was honoured for thirty seconds: measured at four to
-        // five seconds of retries and then "another h5i is holding this box's
-        // share lock" — for a holder that did not exist.
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("share.lock");
-
-        // A pid well above any `pid_max`, so it cannot be alive.
-        std::fs::write(&path, "4194301").expect("write");
-        assert!(
-            lock_is_stale(&path),
-            "a dead holder's lock is not stale until it ages"
-        );
-
-        // And a live one is not stale, however long it has been held: a
-        // process that takes a while under the lock must not have it broken
-        // underneath it.
-        std::fs::write(&path, std::process::id().to_string()).expect("write");
-        assert!(!lock_is_stale(&path));
-
-        // Acquiring past a dead holder is prompt rather than a five-second
-        // wait, and leaves no rubbish behind.
-        std::fs::write(&path, "4194301").expect("write");
-        let started = std::time::Instant::now();
-        let held = Lock::acquire(dir.path()).expect("acquire past a dead holder");
-        assert!(
-            started.elapsed() < std::time::Duration::from_millis(500),
-            "waited {:?} for a lock nobody held",
-            started.elapsed()
-        );
-        drop(held);
-        assert!(
-            !dir.path().join("share.lock.stale").exists(),
-            "the break left rubbish"
-        );
-    }
-
-    #[test]
     fn two_writers_do_not_share_one_temp_file() {
         // A fixed `share.json.tmp` meant two processes that both held the lock
         // wrote into the same file and one renamed the other's partial bytes
@@ -1561,44 +1456,24 @@ mod tests {
         std::fs::remove_file(dir.path().join(LOCK_FILE)).expect("tidy");
     }
 
+    /// Dropping releases the lock, and deliberately leaves the file.
+    ///
+    /// The file used to be unlinked on the way out, and under `flock` that
+    /// would restore the whole defect this lock was rewritten for: a waiter
+    /// holds a descriptor to an inode with no name left, a newcomer creates a
+    /// fresh file at the path and locks *that*, and there are two holders
+    /// again. A zero-byte `share.lock` in the box's directory is the correct
+    /// end state — `share-gate.lock` beside it has always worked this way.
     #[test]
-    fn a_lock_held_by_a_living_process_is_not_broken_for_being_old() {
-        // Age alone was the whole test, so a process that took thirty seconds
-        // under the lock had it broken underneath it.
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join(LOCK_FILE);
-        std::fs::write(&path, std::process::id().to_string()).expect("write");
-        // Make it look ancient.
-        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
-        let f = std::fs::File::options()
-            .write(true)
-            .open(&path)
-            .expect("open");
-        f.set_modified(old).expect("backdate");
-        assert!(
-            !lock_is_stale(&path),
-            "a live holder's lock was called stale"
-        );
-
-        std::fs::write(&path, "999999").expect("write");
-        let f = std::fs::File::options()
-            .write(true)
-            .open(&path)
-            .expect("open");
-        f.set_modified(old).expect("backdate");
-        assert!(
-            lock_is_stale(&path),
-            "a dead holder's lock was not called stale"
-        );
-    }
-
-    #[test]
-    fn the_lock_is_exclusive_and_released_on_drop() {
+    fn the_lock_is_released_on_drop_and_its_file_is_left_alone() {
         let dir = tempfile::tempdir().expect("tempdir");
         let held = Lock::acquire(dir.path()).expect("first");
         assert!(dir.path().join(LOCK_FILE).exists());
         drop(held);
-        assert!(!dir.path().join(LOCK_FILE).exists());
+        assert!(
+            dir.path().join(LOCK_FILE).exists(),
+            "the lock file was unlinked, which is how two processes come to hold it"
+        );
         let _again = Lock::acquire(dir.path()).expect("second");
     }
 
@@ -1607,5 +1482,530 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let err = update(dir.path(), |_| Ok(())).expect_err("no session");
         assert!(format!("{err}").contains("not being shared"));
+    }
+}
+
+/// Concurrency, tested with concurrency: real processes, racing on purpose.
+///
+/// Everything this module protects is guarded **across processes**, and none of
+/// the tests above run more than one. `h5i box share grant`, `revoke`, `stop`
+/// and the serving process are four programs, and the lock they take is a file
+/// whose whole mechanism is `create_new` plus a pid stamp — so a thread would
+/// not be testing the thing: two threads share a pid, which is exactly what the
+/// stale break keys on, and they share an address space, which is exactly what
+/// the temp-file-per-writer fix does not assume.
+///
+/// This file's own comments record the last real defect here — "8 of 20 runs
+/// broke mutual exclusion with no jitter at all, and 6 of 6 with a single 30 ms
+/// preemption injected between the stat and the remove" — measured with a
+/// harness that was never committed. So the code has a history of races and no
+/// standing test for one. This is that test.
+///
+/// **How a child is made.** The test binary re-executes itself with a filter
+/// naming [`worker`] and a job in the environment; `worker` is inert without it,
+/// so an ordinary run costs nothing. That is a new idiom for this repository —
+/// the existing multi-process tests spawn `/bin/sleep` and `/bin/sh`, which
+/// cannot call into this crate — and it is what buys genuinely distinct pids
+/// running the real code.
+///
+/// **Why they start together.** Contention is the point, and processes that
+/// drift apart by a scheduler quantum test nothing. Every child spins until a
+/// shared wall-clock instant the parent picks a few hundred milliseconds out.
+///
+/// `H5I_SHARE_CONCURRENCY_WORKERS` and `_ROUNDS` turn any of these into a soak.
+#[cfg(all(test, unix))]
+mod concurrency {
+    use super::*;
+    use std::path::PathBuf;
+    use std::process::{Child, Command, Stdio};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    /// What a re-executed child should do. Its absence is what makes [`worker`]
+    /// inert in an ordinary run.
+    const JOB: &str = "H5I_SHARE_CONCURRENCY_JOB";
+    const DIR: &str = "H5I_SHARE_CONCURRENCY_DIR";
+    const START: &str = "H5I_SHARE_CONCURRENCY_START";
+
+    /// Exit codes a child uses to report what happened, since a child cannot
+    /// assert. Anything else — 101 above all, which is a panic — is a failure
+    /// the parent prints the child's stderr for.
+    const EXIT_OK: i32 = 0;
+    const EXIT_FAILED: i32 = 2;
+    /// The claim was refused *because somebody else holds the box*, which is the
+    /// right answer for every loser of that race. Distinct from `EXIT_FAILED` so
+    /// a refusal for some other reason cannot be counted as the expected one.
+    const EXIT_ALREADY_SHARED: i32 = 3;
+    /// Two holders were inside the lock at once.
+    const EXIT_OVERLAPPED: i32 = 4;
+
+    fn workers() -> usize {
+        std::env::var("H5I_SHARE_CONCURRENCY_WORKERS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(8)
+    }
+
+    fn rounds_each() -> usize {
+        std::env::var("H5I_SHARE_CONCURRENCY_ROUNDS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(12)
+    }
+
+    fn now_ms() -> u128 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("a clock after 1970")
+            .as_millis()
+    }
+
+    /// Spin until the instant the parent chose.
+    ///
+    /// A spin rather than a sleep, and only for the last few hundred
+    /// milliseconds: `sleep` returns when the scheduler feels like it, and the
+    /// window these tests are trying to hit is microseconds wide.
+    fn wait_for_start() {
+        let Some(at) = std::env::var(START)
+            .ok()
+            .and_then(|v| v.parse::<u128>().ok())
+        else {
+            return;
+        };
+        while now_ms() < at {
+            std::hint::spin_loop();
+        }
+    }
+
+    /// The child half. Inert unless [`JOB`] is set, so a normal `cargo test`
+    /// runs it, does nothing, and passes.
+    #[test]
+    fn worker() {
+        let Ok(job) = std::env::var(JOB) else {
+            return;
+        };
+        let dir = PathBuf::from(std::env::var(DIR).expect("a directory to work in"));
+        wait_for_start();
+        let code = match job.as_str() {
+            "append" => append(&dir),
+            "hold" => hold(&dir),
+            "claim" => claim_one(&dir),
+            "grab" => grab(&dir),
+            other => panic!("no such job: {other}"),
+        };
+        // Before libtest gets a chance to report success on its own terms: the
+        // parent reads the exit code, and it has to be ours.
+        std::process::exit(code);
+    }
+
+    /// Append one grant per round through the real read-modify-write.
+    fn append(dir: &Path) -> i32 {
+        for i in 0..rounds_each() {
+            let label = format!("{}-{i}", std::process::id());
+            let r = update(dir, |s| {
+                let (g, _secret) =
+                    mint_grant_unlike(&s.grants, Some(label.clone()), 4_000_000_000)?;
+                s.grants.push(g);
+                Ok(())
+            });
+            if let Err(e) = r {
+                eprintln!("append {i} failed: {e}");
+                return EXIT_FAILED;
+            }
+        }
+        EXIT_OK
+    }
+
+    /// Take the lock, prove nobody else is inside it, let it go. Repeat.
+    ///
+    /// The proof is a file created with `create_new` while the lock is held and
+    /// removed before it is released — so a second holder's create fails, and
+    /// that failure is the violation. It cannot report a false one: the sentinel
+    /// is always removed before the guard drops, so a process that acquires
+    /// after us finds nothing there.
+    fn hold(dir: &Path) -> i32 {
+        let sentinel = dir.join("held-by");
+        let mut overlaps = 0usize;
+        for _ in 0..rounds_each() {
+            let Ok(_lock) = Lock::acquire(dir) else {
+                eprintln!("could not acquire the lock at all");
+                return EXIT_FAILED;
+            };
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&sentinel)
+            {
+                Ok(mut f) => {
+                    use std::io::Write as _;
+                    // Written, not synced. Another process reading this file
+                    // sees it through the page cache, so `sync_all` bought no
+                    // visibility here and cost a real fsync per acquisition —
+                    // milliseconds on APFS, which at high worker counts was the
+                    // whole reason a run ran out of deadline. The harness was
+                    // measuring its own durability call.
+                    let _ = write!(f, "{}", std::process::id());
+                    // Wide enough that an overlapping holder has time to see
+                    // it. Without this the two could pass through in sequence
+                    // and the harness would report nothing.
+                    std::thread::sleep(Duration::from_micros(300));
+                    let _ = std::fs::remove_file(&sentinel);
+                }
+                // Somebody else is inside the lock. Deliberately *not* removed:
+                // it is theirs, and taking it would hide the next overlap.
+                //
+                // Whose it is decides whether this is a real overlap or a
+                // harness artifact: a *live sibling* means two holders, and
+                // anything else means a sentinel somebody failed to clean up.
+                Err(_) => {
+                    let held_by = std::fs::read_to_string(&sentinel).unwrap_or_default();
+                    let other: i32 = held_by.trim().parse().unwrap_or(-1);
+                    let alive = other > 0 && unsafe { libc::kill(other, 0) } == 0;
+                    eprintln!(
+                        "overlap: pid {} is inside the lock and pid {} claims it too \
+                         (that one is {})",
+                        std::process::id(),
+                        other,
+                        if alive { "alive" } else { "gone" }
+                    );
+                    overlaps += 1;
+                }
+            }
+        }
+        if overlaps > 0 {
+            eprintln!("{overlaps} overlapping holders");
+            return EXIT_OVERLAPPED;
+        }
+        EXIT_OK
+    }
+
+    /// Take the lock, say so, and never let go — to be killed.
+    fn grab(dir: &Path) -> i32 {
+        let Ok(lock) = Lock::acquire(dir) else {
+            eprintln!("could not take the lock");
+            return EXIT_FAILED;
+        };
+        if std::fs::write(dir.join("grabbed"), "held").is_err() {
+            return EXIT_FAILED;
+        }
+        std::thread::sleep(Duration::from_secs(60));
+        drop(lock);
+        EXIT_OK
+    }
+
+    /// Claim the box, then stay alive.
+    ///
+    /// Staying alive is load bearing: `claim` takes over a record whose process
+    /// is gone, and rightly — that is a crash. A claimer that exited the moment
+    /// it won would be taken over by the next one, and the race would report
+    /// every process as a winner.
+    fn claim_one(dir: &Path) -> i32 {
+        let s = ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::Tunnel,
+            "endpoint",
+            chrono::Utc::now(),
+        );
+        let outcome = claim(dir, &s, "demo");
+        std::thread::sleep(Duration::from_millis(900));
+        match outcome {
+            Ok(_) => EXIT_OK,
+            Err(e) if format!("{e}").contains("already being shared") => EXIT_ALREADY_SHARED,
+            Err(e) => {
+                eprintln!("refused for the wrong reason: {e}");
+                EXIT_FAILED
+            }
+        }
+    }
+
+    // ─── the parent half ────────────────────────────────────────────────────
+
+    fn spawn(job: &str, dir: &Path, start_ms: u128) -> Child {
+        let exe = std::env::current_exe().expect("the test binary's own path");
+        Command::new(exe)
+            // libtest takes the filter positionally; `--exact` stops it from
+            // matching every test whose name contains this one.
+            .arg("session::concurrency::worker")
+            .arg("--exact")
+            .arg("--test-threads=1")
+            // Without this a worker's `eprintln!` goes into libtest's capture
+            // buffer, and the worker calls `exit` before libtest ever prints
+            // it — so every complaint a child made was discarded, and the
+            // parent's panic said only that something had gone wrong.
+            .arg("--nocapture")
+            .env(JOB, job)
+            .env(DIR, dir)
+            .env(START, start_ms.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("re-execute the test binary as a worker")
+    }
+
+    /// Wait for every child and return its exit code, printing the stderr of
+    /// any that ended unexpectedly — a child cannot assert, so this is the only
+    /// place its complaint can be read.
+    fn collect(kids: Vec<Child>, expected: &[i32]) -> Vec<(i32, String)> {
+        let mut codes = Vec::new();
+        for kid in kids {
+            let out = kid.wait_with_output().expect("wait for a worker");
+            let code = out.status.code().unwrap_or(-1);
+            // A worker's own account of what it saw, kept for every exit and
+            // not only the unexpected ones: the interesting failures here are
+            // the *expected* codes, and the reason is on stderr.
+            let said = String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .filter(|l| !l.starts_with("running ") && !l.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !expected.contains(&code) {
+                panic!("a worker exited {code}, which is not one of {expected:?}:\n{said}");
+            }
+            codes.push((code, said));
+        }
+        codes
+    }
+
+    /// Far enough out that every child has been forked, executed and reached
+    /// its spin before the first one starts.
+    fn in_a_moment() -> u128 {
+        now_ms() + 400
+    }
+
+    /// Every append lands, and nothing reading alongside them sees a table that
+    /// is neither the old one nor the new one.
+    ///
+    /// Two defects this file records would show here and nowhere else. A
+    /// read-modify-write that is not serialised loses appends, and the count
+    /// comes out short. And a shared temp file — "two processes that both held
+    /// the lock wrote into the same temp file and one renamed the other's
+    /// partial bytes into place" — makes a reader see a truncated `share.json`,
+    /// which reads as *absent*, which is every verb answering "this box is not
+    /// being shared" while it is.
+    ///
+    /// **What limits a soak of this one is arithmetic, not the lock.** Every
+    /// mutation rewrites the whole grant table, so N appends cost O(N²) of
+    /// serialising and renaming, and past about a thousand a worker runs out of
+    /// the five-second deadline. Measured: 640 appends in 2.0s, 960 in 3.7s,
+    /// 1920 over the deadline — and 960 costs the same 3.7s whether it is
+    /// sixteen workers or forty-eight, which is what says the cost tracks the
+    /// table and not the contention. Raise `_WORKERS` freely; raise `_ROUNDS`
+    /// knowing it squares the work. A real share has a handful of grants.
+    #[test]
+    fn concurrent_grants_all_land_and_a_reader_never_sees_a_half_written_table() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let seed = ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::Tunnel,
+            "endpoint",
+            chrono::Utc::now(),
+        );
+        write(dir.path(), &seed).expect("seed the table");
+
+        let (n, k) = (workers(), rounds_each());
+        let start = in_a_moment();
+        let mut kids: Vec<Child> = (0..n).map(|_| spawn("append", dir.path(), start)).collect();
+
+        // Read the whole time they are writing. This is a different process
+        // from all of them, which is the only way the question is the real one.
+        let mut unreadable = 0usize;
+        let mut gone = 0usize;
+        let mut reads = 0usize;
+        loop {
+            match read_state(dir.path()) {
+                ReadState::Present(_) => {}
+                ReadState::Unreadable => unreadable += 1,
+                ReadState::Gone => gone += 1,
+            }
+            reads += 1;
+            if kids.iter_mut().all(|c| matches!(c.try_wait(), Ok(Some(_)))) {
+                break;
+            }
+        }
+
+        let codes = collect(kids, &[EXIT_OK]);
+        assert_eq!(codes.len(), n);
+        assert!(reads > 0);
+        assert_eq!(
+            unreadable, 0,
+            "a reader saw a table that was neither the old one nor the new one, \
+             {unreadable} times in {reads} reads"
+        );
+        assert_eq!(
+            gone, 0,
+            "a reader saw the record vanish while it was only being rewritten, \
+             {gone} times in {reads} reads"
+        );
+
+        let table = read(dir.path()).expect("the table survived");
+        assert_eq!(
+            table.grants.len(),
+            n * k,
+            "{} of {} appends were lost to a race",
+            n * k - table.grants.len(),
+            n * k
+        );
+        // And every one is its own grant: `mint_grant_unlike` only sees the
+        // table it was handed, so a collision here is two writers having been
+        // handed the same one.
+        let mut ids: Vec<&str> = table.grants.iter().map(|g| g.id.as_str()).collect();
+        ids.sort_unstable();
+        let before = ids.len();
+        ids.dedup();
+        assert_eq!(before, ids.len(), "two grants were minted with one id");
+    }
+
+    /// A lock left behind by a dead holder, and every process piling onto it in
+    /// the same instant, and still only one holder.
+    ///
+    /// The shape this file records losing to twice. A lock whose holder is gone
+    /// used to be *stale to everybody at once*, so every process decided to
+    /// break it with no jitter at all — and the break removed whatever was at
+    /// the path rather than the file it had judged. Unlinking lost it; renaming
+    /// aside lost it too, for the identical reason, because a rename also moves
+    /// whatever is there *now*: the winner's fresh live lock, created in the
+    /// microseconds since the loser looked.
+    ///
+    /// This harness measured that at **twelve failures in twelve runs** with
+    /// eight processes and twelve rounds each, the losing worker naming a
+    /// sibling that was still alive. Under `flock` there is nothing to break —
+    /// the kernel released the dead holder's lock when its last descriptor
+    /// closed — so the whole race has no state to happen in.
+    #[test]
+    fn a_stampede_onto_a_dead_holders_lock_leaves_a_single_holder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // A lock file with no live holder, which is what a `kill -9` leaves.
+        // Its *contents* are now beside the point — that they used to decide
+        // who could break it is what this test exists about — so it is written
+        // with the old pid stamp precisely to show it decides nothing.
+        std::fs::write(dir.path().join(LOCK_FILE), "4194301").expect("plant a dead holder's lock");
+
+        let start = in_a_moment();
+        let kids: Vec<Child> = (0..workers())
+            .map(|_| spawn("hold", dir.path(), start))
+            .collect();
+        let codes = collect(kids, &[EXIT_OK, EXIT_OVERLAPPED, EXIT_FAILED]);
+        // The two failures are different facts and must never be reported as
+        // each other. An overlap is the lock being wrong; a worker that could
+        // not acquire within the deadline is the lock being *right* and this
+        // machine being busier than the deadline allows for, and an assertion
+        // that blamed the first for the second sent the last reader of this
+        // file looking for a race that was not there.
+        let said = |want: i32| -> Vec<&str> {
+            codes
+                .iter()
+                .filter(|(c, _)| *c == want)
+                .map(|(_, said)| said.as_str())
+                .collect()
+        };
+        let overlaps = said(EXIT_OVERLAPPED);
+        assert!(
+            overlaps.is_empty(),
+            "two processes were inside the lock at once:\n{}",
+            overlaps.join("\n")
+        );
+        let timed_out = said(EXIT_FAILED);
+        assert!(
+            timed_out.is_empty(),
+            "a worker never got the lock inside its {}s deadline — no overlap, so this is \
+             contention past what the deadline allows rather than a lock that is wrong:\n{}",
+            LOCK_WAIT.as_secs(),
+            timed_out.join("\n")
+        );
+
+        // The lock file stays, on purpose: unlinking it under `flock` is how a
+        // waiter and a newcomer end up on two different inodes, both locked.
+        assert!(
+            dir.path().join(LOCK_FILE).exists(),
+            "the lock file was unlinked, which is how two processes come to hold it"
+        );
+        // And nothing from the apparatus that used to break it.
+        assert!(
+            !dir.path().join("share.lock.stale").exists(),
+            "a break left rubbish behind"
+        );
+        assert!(
+            !dir.path().join("held-by").exists(),
+            "a holder left its sentinel behind"
+        );
+    }
+
+    /// A killed holder wedges nothing, and no heuristic is consulted to decide
+    /// it.
+    ///
+    /// This is the property the pid stamp, the age fallback and the break all
+    /// existed to provide: "a stale lock from a killed process is broken,
+    /// because the alternative is a share nobody can revoke". None of them
+    /// provided it safely, and the kernel provides it for nothing — an `flock`
+    /// is released when the holder's last descriptor closes, and `SIGKILL`
+    /// closes them all.
+    #[test]
+    fn a_killed_holder_leaves_a_lock_anyone_can_take() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut holder = spawn("grab", dir.path(), now_ms());
+        let ready = dir.path().join("grabbed");
+        for _ in 0..400 {
+            if ready.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ready.exists(), "the holder never took the lock");
+
+        // The bluntest way a holder can go: no destructor runs, nothing is
+        // cleaned up, and the lock file is left exactly where it was.
+        holder.kill().expect("kill the holder");
+        holder.wait().expect("reap the holder");
+        assert!(dir.path().join(LOCK_FILE).exists(), "nothing to inherit");
+
+        let started = std::time::Instant::now();
+        let taken = Lock::acquire(dir.path()).expect("a killed holder's lock is free");
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "waited {:?} for a lock whose holder had been killed",
+            started.elapsed()
+        );
+        drop(taken);
+    }
+
+    /// Many `h5i box share` starts, one box, one winner.
+    ///
+    /// The check and the write have to be one step, and this is the only test
+    /// that can say so: done apart, two starts both pass the check and the
+    /// second overwrites the first's grant table — which means the first
+    /// share's ticket, already sent to somebody, stops working with no
+    /// explanation. It exercises the share gate and the session lock together,
+    /// in the order `claim` takes them.
+    #[test]
+    fn only_one_of_many_simultaneous_starts_claims_the_box() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let start = in_a_moment();
+        let kids: Vec<Child> = (0..workers())
+            .map(|_| spawn("claim", dir.path(), start))
+            .collect();
+        let codes = collect(kids, &[EXIT_OK, EXIT_ALREADY_SHARED, EXIT_FAILED]);
+
+        let won = codes.iter().filter(|(c, _)| *c == EXIT_OK).count();
+        let refused = codes
+            .iter()
+            .filter(|(c, _)| *c == EXIT_ALREADY_SHARED)
+            .count();
+        assert_eq!(
+            won,
+            1,
+            "{won} of {} starts claimed the same box (refused {refused})",
+            codes.len()
+        );
+        assert_eq!(
+            won + refused,
+            codes.len(),
+            "a start was refused for a reason that is not 'already shared': {codes:?}"
+        );
+
+        // And what is on disk is a claim, not a collision.
+        let table = read(dir.path()).expect("the winner's record");
+        assert_eq!(table.port, 3000);
+        assert!(!table.starting);
     }
 }
