@@ -202,6 +202,7 @@ do_share() {
   H5I=$(find_h5i) || { say "no h5i binary: build one (cargo build) or put it on PATH"; exit 2; }
   need python3
   WORKLOG=$(mktemp -t h5i-share-XXXXXX)
+  SERVELOG=$(mktemp -t h5i-serve-XXXXXX)
 
   cleanup_share() {
     say ""
@@ -215,7 +216,7 @@ do_share() {
     else
       say "box $BOX kept, as asked"
     fi
-    rm -f "$WORKLOG"
+    rm -f "$WORKLOG" "$SERVELOG"
   }
   trap cleanup_share EXIT INT TERM
 
@@ -246,7 +247,12 @@ for r in rows:
 
   write_server "$WORK/serve.py"
   "$H5I" box run "$BOX" -- pwd >/dev/null 2>&1
-  ( "$H5I" box run "$BOX" -- python3 serve.py "$PORT" >/dev/null 2>&1 & )
+  # Keep what the box says. When this server does not come up, its stderr is
+  # the whole diagnosis — most of the ways it fails (the port already taken on
+  # the host's loopback, a profile that will not run python3) say so in one
+  # line, and discarding it leaves only "it never bound", which reads like the
+  # box or the share is at fault.
+  ( "$H5I" box run "$BOX" -- python3 serve.py "$PORT" >"$SERVELOG" 2>&1 & )
 
   printf '  waiting for the dev server'
   i=0
@@ -257,6 +263,13 @@ for r in rows:
   printf '\n'
   if [ ! -f "$WORK/bound.flag" ]; then
     say "the dev server never bound port $PORT inside the box"
+    if [ -s "$SERVELOG" ]; then
+      say "what it said:"
+      sed 's/^/    /' "$SERVELOG" | tail -15
+    else
+      say "and it said nothing at all — try it by hand:"
+      say "    $H5I box run $BOX -- python3 serve.py $PORT"
+    fi
     exit 1
   fi
   ok "dev server up inside the box on port $PORT"
