@@ -28,7 +28,9 @@ h5i gives you:
 - **Isolated browsers** that agents can securely control from inside the sandbox
   - **Chromium** for broad compatibility with modern web applications
   - **h5i-browser-light**, a pure-Rust, single-process engine using 7.4× less peak memory than Chromium
-- **Securely share dev servers running inside local sandboxes over the internet**
+- **Securely share dev servers** running inside local sandboxes over the internet
+  - **End-to-end encrypted P2P sharing** when both sides use h5i
+  - **Browser-ready demo links** for everyone else, with expiring grants, revocation, and ingress receipts
 - **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
 
 **Local-first. No hosted sandbox. No SaaS account required.**
