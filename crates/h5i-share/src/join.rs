@@ -251,7 +251,7 @@ async fn handle(
         false,
     );
     let (head, req) = match next {
-        Next::Respond(body) => {
+        Next::Respond(body, _why) => {
             http_front::respond(&mut sock, &body).await;
             return Ok(());
         }

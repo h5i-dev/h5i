@@ -503,8 +503,17 @@ pub async fn serve(bridge: Arc<Bridge>, listener: tokio::net::TcpListener) -> Re
         };
         let bridge = bridge.clone();
         let peers = peers.clone();
+        // Taken before the head is read and held until the handler returns, so
+        // teardown can wait for connections that have been accepted and not
+        // yet authorized. `None` means the share is already winding up: the
+        // socket is dropped rather than served, which is what makes quiescence
+        // a barrier. See `Bridge::enter_front`.
+        let Some(front) = bridge.enter_front() else {
+            continue;
+        };
         tokio::spawn(async move {
             let _slot = slot;
+            let _front = front;
             if let Err(e) = handle(bridge, peers, sock).await {
                 eprintln!("share: {e}");
             }
@@ -596,7 +605,7 @@ async fn handle(
     );
 
     let (head, req) = match next {
-        Next::Respond(mut body) => {
+        Next::Respond(mut body, refusal) => {
             // Substituted after the fact rather than threaded through `decide`,
             // which takes a `bool` and is shared with the joiner's front. Only
             // the `401` is rewritten: a `400` is about the request's bytes and
@@ -630,13 +639,27 @@ async fn handle(
             if !presented && body.starts_with("HTTP/1.1 401") {
                 bridge.record_refused();
             }
-            // The `400`s: everything `gate::parse` refuses — obs-folds, bare
-            // LF, two `Content-Length`s, `Content-Length\u{0c}`. These were
-            // answered and forgotten, which left the one lane whose job is
-            // "who was turned away" silent about the entire attack class this
-            // crate spent fifteen rounds hardening against.
-            if body.starts_with("HTTP/1.1 400") {
-                bridge.record_turned_away(crate::bridge::TurnedAwayReason::Unparseable);
+            // Every refusal that is not about a credential, by its own typed
+            // reason rather than by reading the status back out of the bytes
+            // we just rendered. The status test reached the `400`s and left
+            // both `403`s counted nowhere — so a session consisting entirely
+            // of foreign-origin requests carrying the share cookie, or of
+            // service-worker registrations, reported no turned-away activity
+            // at all, in the one lane whose job is to say who was turned away
+            // before a ticket was weighed.
+            match refusal {
+                Some(crate::gate::Refusal::Malformed) => {
+                    bridge.record_turned_away(crate::bridge::TurnedAwayReason::Unparseable)
+                }
+                Some(crate::gate::Refusal::ForeignOrigin) => {
+                    bridge.record_turned_away(crate::bridge::TurnedAwayReason::ForeignOrigin)
+                }
+                Some(crate::gate::Refusal::ServiceWorker) => {
+                    bridge.record_turned_away(crate::bridge::TurnedAwayReason::ServiceWorker)
+                }
+                // A `401` is about a credential, and `record_refused` above
+                // is its lane. `None` is the invite redirect.
+                Some(crate::gate::Refusal::NotAuthorized) | None => {}
             }
             // A redirect is not a refusal: it is a visitor following the invite
             // link, authorized, on the first request every visitor makes. A
@@ -1724,6 +1747,124 @@ mod tests {
         )
         .await;
         assert!(unknown.starts_with("HTTP/1.1 401 "), "{unknown}");
+
+        serving.abort();
+    }
+
+    /// A handler that has been accepted and not yet authorized is work the
+    /// teardown waits for.
+    ///
+    /// Quiescence was defined by the sixty-four `Bridge::admit` permits, and a
+    /// handler paused in `read_head`, in parsing, or in authorization holds
+    /// none of them — so `quiesce` acquired all sixty-four immediately, marked
+    /// the receipt settled, and returned while such a handler was still live.
+    /// On Ctrl-C or a transport failure the record is merely `winding_up` and
+    /// its grants are still there, so the handler could then resume,
+    /// authorize, take a now-free permit, dial the box, and change something
+    /// inside it *after* the receipt had snapshotted its tally. An orderly stop
+    /// was neither a barrier on access nor a complete account of it.
+    #[tokio::test]
+    async fn a_connection_accepted_before_the_stop_cannot_reach_the_box_after_it() {
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        // Accepted, with its head not yet sent: the handler is parked in
+        // `read_head`, holding no `admit` permit.
+        use tokio::io::AsyncWriteExt;
+        let mut paused = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // The share is stopped, and quiescence finishes.
+        bridge.begin_shutdown();
+        bridge.quiesce(Duration::from_secs(2)).await;
+
+        // Now the paused visitor sends a perfectly good, authorized request.
+        paused
+            .write_all(
+                format!("GET /late HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .expect("write");
+        let mut out = Vec::new();
+        use tokio::io::AsyncReadExt;
+        let _ = tokio::time::timeout(Duration::from_secs(3), paused.read_to_end(&mut out)).await;
+        let got = String::from_utf8_lossy(&out).to_string();
+        assert!(
+            !got.contains("SAW<"),
+            "a request accepted before the stop reached the box after it: {got}"
+        );
+
+        serving.abort();
+    }
+
+    /// Every refusal that is not about a credential lands in the receipt.
+    ///
+    /// The reason was being recovered by testing the rendered response for
+    /// `HTTP/1.1 400`, which reached the malformed-request refusals and left
+    /// both `403`s counted nowhere. Those two are the gate refusing a
+    /// foreign-origin browser request that arrived with the share cookie
+    /// attached, and refusing a service worker registration that would keep
+    /// control of the joiner's loopback origin after the share ended — at
+    /// least as relevant to an ingress receipt as an unparsable head. A
+    /// session made entirely of them reported no turned-away activity at all,
+    /// under a heading that describes itself as the account of connections
+    /// rejected before a ticket was weighed.
+    #[tokio::test]
+    async fn the_refusals_that_are_not_about_a_ticket_reach_the_receipt() {
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        // A page on another site, navigating the visitor's browser at this
+        // share with the cookie the browser attaches on its own.
+        let foreign = request(
+            addr,
+            &format!(
+                "GET /reset HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
+                 Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: navigate\r\n\
+                 Sec-Fetch-Dest: document\r\n\r\n"
+            ),
+        )
+        .await;
+        assert!(foreign.starts_with("HTTP/1.1 403 "), "{foreign}");
+
+        // And a service worker registration.
+        let worker = request(
+            addr,
+            &format!(
+                "GET /sw.js HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
+                 Service-Worker: script\r\n\r\n"
+            ),
+        )
+        .await;
+        assert!(worker.starts_with("HTTP/1.1 403 "), "{worker}");
+
+        // A malformed head, which was the one that already counted.
+        let bad = request(addr, "GET / HTTP/1.1\r\nHost: t\rX: y\r\n\r\n").await;
+        assert!(bad.starts_with("HTTP/1.1 400 "), "{bad}");
+
+        let body = crate::bridge::render_receipt(&bridge.snapshot());
+        assert!(
+            body.contains("came from another page"),
+            "a foreign-origin refusal left no trace: {body}"
+        );
+        assert!(
+            body.contains("service worker"),
+            "a service-worker refusal left no trace: {body}"
+        );
+        assert!(body.contains("would not parse"), "{body}");
 
         serving.abort();
     }

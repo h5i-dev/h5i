@@ -95,6 +95,13 @@ pub enum TurnedAwayReason {
     /// A request the gate would not parse: the smuggling shapes it exists to
     /// refuse.
     Unparseable,
+    /// A browser request that came from a page that is not this share, carrying
+    /// the share cookie the browser attached on its own. The gate refuses it
+    /// because the page had no business making it.
+    ForeignOrigin,
+    /// An attempt to register a service worker, which would keep control of
+    /// the joiner's loopback origin after the share ended.
+    ServiceWorker,
 }
 
 impl TurnedAwayReason {
@@ -103,6 +110,12 @@ impl TurnedAwayReason {
             TurnedAwayReason::NoDirectPath => "no direct path was available",
             TurnedAwayReason::NeverGreeted => "connected but never presented a ticket",
             TurnedAwayReason::Unparseable => "sent something this share would not parse",
+            TurnedAwayReason::ForeignOrigin => {
+                "came from another page, with this share's cookie attached"
+            }
+            TurnedAwayReason::ServiceWorker => {
+                "tried to register a service worker, which would outlive the share"
+            }
         }
     }
 }
@@ -150,6 +163,11 @@ struct Tally {
     /// overflow, because a receipt that stops at 256 and says nothing is a
     /// receipt that reports a share nobody could read as a share nobody used.
     peers_overflow: u64,
+    /// Connections and bytes belonging to peers past the record cap. See
+    /// [`Bridge::peer_connection`].
+    overflow_connections: u64,
+    overflow_bytes_to_peer: u64,
+    overflow_bytes_from_peer: u64,
     /// Peers who presented a good ticket and found nothing listening inside the
     /// box. Without this a share where the dev server was down reads as one
     /// nobody ever tried to use.
@@ -174,6 +192,12 @@ struct Tally {
 /// connections per origin, so this is roughly ten simultaneous viewers, and a
 /// share is for one person. Reaching it is a signal, and it is recorded.
 const MAX_CONNECTIONS: usize = 64;
+
+/// Ceiling on accepted-but-not-yet-authorized handlers, across both
+/// transports. Above either transport's own front-door limit (256 each), so it
+/// never becomes the binding constraint — it exists to be *waited on*, not to
+/// refuse anybody. See [`Bridge::enter_front`].
+const MAX_FRONT: usize = 4096;
 
 /// How many distinct peers the receipt will describe individually.
 ///
@@ -263,6 +287,9 @@ pub struct Bridge {
     tally: Mutex<Tally>,
     /// One permit per live connection into the box, held for its lifetime.
     capacity: Arc<tokio::sync::Semaphore>,
+    /// One permit per *accepted* connection, from before it has a credential
+    /// until its handler returns. See [`Bridge::enter_front`].
+    front: Arc<tokio::sync::Semaphore>,
     /// Flipped when the share is winding up, so connections end promptly
     /// instead of being waited on.
     shutdown: tokio::sync::watch::Sender<bool>,
@@ -294,6 +321,7 @@ impl Bridge {
             clock: Mutex::new(SeenClock::default()),
             tally: Mutex::new(Tally::default()),
             capacity: Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)),
+            front: Arc::new(tokio::sync::Semaphore::new(MAX_FRONT)),
             shutdown: tokio::sync::watch::Sender::new(false),
         }
     }
@@ -356,6 +384,9 @@ impl Bridge {
             ended,
             peers: t.peers.clone(),
             peers_overflow: t.peers_overflow,
+            overflow_connections: t.overflow_connections,
+            overflow_bytes_to_peer: t.overflow_bytes_to_peer,
+            overflow_bytes_from_peer: t.overflow_bytes_from_peer,
             denied: t.denied.clone(),
             denied_overflow: t.denied_overflow,
             over_capacity: t.over_capacity,
@@ -444,6 +475,16 @@ impl Bridge {
     /// did nothing. The cost is one small file read per connection, which is
     /// nothing next to opening a TCP connection into a namespace.
     pub fn authorize(&self, secret: &str) -> Result<AuthorizedGrant, Denied> {
+        // Closed as soon as shutdown begins, not when the record catches up.
+        // `winding_up` reaches disk and the grants stay live until teardown
+        // finishes, so a handler that was already accepted when the share
+        // began stopping could authorize, dial the box and change something
+        // after the receipt had been written. The in-process flag flips first
+        // and this is the one place a connection turns into access.
+        if *self.shutdown.borrow() {
+            self.record_denied(Denied::ShareOver);
+            return Err(Denied::ShareOver);
+        }
         let now = self.now().timestamp();
         let s = match self.our_record() {
             session::ReadState::Present(s) => s,
@@ -712,16 +753,37 @@ impl Bridge {
         }
     }
 
+    /// Counted against a peer's record, or — for a peer past the record cap —
+    /// against the aggregate.
+    ///
+    /// Every one of these was a silent no-op for an overflow handle, and byte
+    /// accounting is a stated purpose of this receipt, so that made the
+    /// evidence deliberately evadable: fill the record list with 256
+    /// probe-only connections, which cost nothing and record nothing, then do
+    /// the real transfer on connection 257. The receipt said overflow peers
+    /// existed and reported zero of their connections and zero of their bytes.
+    ///
+    /// The individual-record cap stays — a record carries a `String` and
+    /// becomes a line — but the totals no longer have a hole in them.
     pub fn peer_connection(&self, id: PeerId) {
-        if let Some(p) = self.tally().peers.get_mut(id.0) {
-            p.connections += 1;
+        let mut t = self.tally();
+        match t.peers.get_mut(id.0) {
+            Some(p) => p.connections += 1,
+            None => t.overflow_connections += 1,
         }
     }
 
     pub fn peer_bytes(&self, id: PeerId, to_peer: u64, from_peer: u64) {
-        if let Some(p) = self.tally().peers.get_mut(id.0) {
-            p.bytes_to_peer += to_peer;
-            p.bytes_from_peer += from_peer;
+        let mut t = self.tally();
+        match t.peers.get_mut(id.0) {
+            Some(p) => {
+                p.bytes_to_peer += to_peer;
+                p.bytes_from_peer += from_peer;
+            }
+            None => {
+                t.overflow_bytes_to_peer += to_peer;
+                t.overflow_bytes_from_peer += from_peer;
+            }
         }
     }
 
@@ -769,6 +831,31 @@ impl Bridge {
         let _ = self.shutdown.send_replace(true);
     }
 
+    /// Mark a connection as accepted and being handled.
+    ///
+    /// The permit is held from before the head is read until the handler
+    /// returns, which is the span [`Self::quiesce`] could not see. Quiescence
+    /// waited only on [`Self::admit`] permits, and a handler paused in
+    /// `read_head`, in parsing, or in authorization holds none of those — so
+    /// `quiesce` acquired all sixty-four immediately, marked the receipt
+    /// settled and returned while such a handler was still live. On Ctrl-C or
+    /// a transport failure the record is merely `winding_up` and its grants
+    /// are still there, so that handler could then resume, authorize, take a
+    /// now-free permit, dial the box and send a state-changing request *after*
+    /// the receipt had snapshotted its tally. Killing `cloudflared` does not
+    /// help: a complete request may already be buffered on an accepted
+    /// loopback socket.
+    ///
+    /// `None` once the share is winding up: a connection accepted after that
+    /// point is not owed a handler, and refusing it here is what makes
+    /// quiescence a barrier rather than a hope.
+    pub fn enter_front(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        if *self.shutdown.borrow() {
+            return None;
+        }
+        self.front.clone().try_acquire_owned().ok()
+    }
+
     pub async fn quiesce(&self, within: std::time::Duration) {
         // Tell them to stop *before* waiting for them to. A connection carrying
         // a response with no declared length waits up to five minutes for the
@@ -786,9 +873,16 @@ impl Bridge {
         // entirely — and in both the byte counts are short and the peers render
         // as still connected. The stderr line saying so is gone by the time
         // anybody reads the artifact, so the artifact has to say it itself.
-        let settled = tokio::time::timeout(within, self.capacity.acquire_many(all))
-            .await
-            .is_ok();
+        // Both, and the front door first: an accepted handler that has not yet
+        // taken an `admit` permit will take one, so waiting on `capacity`
+        // alone is waiting for a number that can still go back up.
+        let front = u32::try_from(MAX_FRONT).unwrap_or(u32::MAX);
+        let settled = tokio::time::timeout(within, async {
+            let _pre = self.front.acquire_many(front).await;
+            let _live = self.capacity.acquire_many(all).await;
+        })
+        .await
+        .is_ok();
         self.tally().settled = settled;
     }
 
@@ -955,6 +1049,13 @@ pub struct Summary {
     pub peers: Vec<PeerRecord>,
     /// Peers past what the record list holds.
     pub peers_overflow: u64,
+    /// What those peers did, in aggregate: their connections and their bytes.
+    /// Individually unrecorded — the record list is capped — but never
+    /// uncounted, because a byte total with a hole in it is a byte total
+    /// anybody can walk through.
+    pub overflow_connections: u64,
+    pub overflow_bytes_to_peer: u64,
+    pub overflow_bytes_from_peer: u64,
     pub denied: Vec<DeniedAttempt>,
     /// Refusals past what the list holds.
     pub denied_overflow: u64,
@@ -1193,10 +1294,19 @@ pub fn render_receipt(s: &Summary) -> String {
             ));
         }
         if s.peers_overflow > 0 {
+            // With their traffic, which used to be the sentence's other half:
+            // "not counted above" was true of the rows *and* of the totals, so
+            // filling this list with 256 probe-only connections and moving the
+            // real data on the 257th produced a receipt that mentioned the
+            // overflow and reported nothing it did.
             out.push_str(&format!(
                 "  and {} more peer(s), past the {MAX_PEER_RECORDS} this receipt lists \
-                 individually — their traffic is not counted above\n",
-                s.peers_overflow
+                 individually — not shown above by peer, but counted: {} connection(s), \
+                 {} in / {} out\n",
+                s.peers_overflow,
+                s.overflow_connections,
+                bytes(s.overflow_bytes_from_peer),
+                bytes(s.overflow_bytes_to_peer),
             ));
         }
         // A ticket is a bearer capability: forwarding the text admits everyone
@@ -1669,6 +1779,9 @@ mod tests {
             clock_moved: 0,
             peers,
             peers_overflow: 0,
+            overflow_connections: 0,
+            overflow_bytes_to_peer: 0,
+            overflow_bytes_from_peer: 0,
             denied,
             denied_overflow: 0,
             over_capacity: 0,
@@ -2428,9 +2541,60 @@ mod tests {
         // stops counting makes a busy share read as a quiet one.
         let mut s = summary(vec![peer("kbcd…", Path::Direct)], vec![]);
         s.peers_overflow = 41;
+        s.overflow_connections = 7;
+        s.overflow_bytes_from_peer = 900;
+        s.overflow_bytes_to_peer = 5000;
         let body = render_receipt(&s);
         assert!(body.contains("and 41 more peer(s)"), "{body}");
-        assert!(body.contains("not counted above"), "{body}");
+        // What they *did*, not only that they existed. The line used to say
+        // "their traffic is not counted above", and that was true of the
+        // totals as well as of the rows — which made this receipt evadable by
+        // design: fill the record list with probe-only connections, then move
+        // the real data on the next one.
+        assert!(body.contains("7 connection(s)"), "{body}");
+        assert!(body.contains("900 B in"), "{body}");
+        assert!(body.contains("4.9 KiB out"), "{body}");
+        assert!(!body.contains("not counted above"), "{body}");
+    }
+
+    /// A peer past the record cap is counted even though it is not listed.
+    ///
+    /// `peer_joined` returns a handle that names no record once the list is
+    /// full, and every mutation through that handle was a silent no-op — so a
+    /// holder of one ticket could open and close 256 probe-only connections to
+    /// fill the list and then do the real transfer on connection 257, with the
+    /// receipt reporting zero connections and zero bytes for all of it. Byte
+    /// accounting is a stated purpose of this artifact.
+    #[test]
+    fn a_peer_past_the_record_cap_still_lands_in_the_totals() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let b = test_bridge(dir.path());
+        let grant = AuthorizedGrant {
+            id: "a1b2c3d4".into(),
+            label: None,
+            expires_at: 4_000_000_000,
+        };
+
+        for i in 0..MAX_PEER_RECORDS {
+            let id = b.peer_joined(format!("peer{i}"), &grant, None);
+            b.peer_connection(id);
+        }
+        let overflow = b.peer_joined("the real one".into(), &grant, None);
+        b.peer_connection(overflow);
+        b.peer_bytes(overflow, 4_000, 1_000);
+
+        let s = b.snapshot();
+        assert_eq!(s.peers.len(), MAX_PEER_RECORDS);
+        assert_eq!(s.peers_overflow, 1);
+        assert_eq!(s.overflow_connections, 1);
+        assert_eq!(s.overflow_bytes_to_peer, 4_000);
+        assert_eq!(s.overflow_bytes_from_peer, 1_000);
+        // And nothing landed on the last listed peer, which is the other way
+        // this used to go wrong.
+        let last = s.peers.last().expect("a record");
+        assert_eq!(last.connections, 1);
+        assert_eq!(last.bytes_to_peer, 0);
+        assert_eq!(last.bytes_from_peer, 0);
     }
 
     #[test]
@@ -2674,6 +2838,9 @@ mod receipt_fuzz {
             ended: at("2026-08-10T10:10:00Z"),
             peers,
             peers_overflow: rng.next() % 500,
+            overflow_connections: rng.next() % 5_000,
+            overflow_bytes_to_peer: rng.next() % 1_000_000,
+            overflow_bytes_from_peer: rng.next() % 1_000_000,
             denied,
             denied_overflow: rng.next() % 100_000,
             over_capacity: rng.next() % 100,

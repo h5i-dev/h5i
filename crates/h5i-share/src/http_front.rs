@@ -104,7 +104,17 @@ const MAX_INTERIM_RESPONSES: usize = 8;
 pub enum Next {
     /// Write these bytes and close. The redirect that sets the cookie, or a
     /// refusal.
-    Respond(String),
+    ///
+    /// The second field is the refusal's own reason, when there is one — the
+    /// redirect has none. Carried rather than recovered, because the caller
+    /// was recovering it by testing the rendered bytes for `HTTP/1.1 400`:
+    /// that reached the `400`s and left both `403`s counted nowhere. Those are
+    /// the gate refusing a foreign-origin browser request carrying the share
+    /// cookie, and refusing a service worker registration that would keep
+    /// control of the joiner's loopback origin after the share ends — at least
+    /// as relevant to an ingress receipt as an unparsable head, and a session
+    /// made entirely of them reported no turned-away activity at all.
+    Respond(String, Option<gate::Refusal>),
     /// Authorized: open the upstream, send this head, then move bytes.
     Proxy {
         /// The head as it should reach the box: share credential removed.
@@ -230,26 +240,27 @@ pub fn decide(
     authorize: impl FnOnce(&str) -> bool,
     secure: bool,
 ) -> Next {
+    let refuse = |r: gate::Refusal| Next::Respond(gate::refusal_response(r), Some(r));
     let Some(req) = gate::parse(head, cookie) else {
-        return Next::Respond(gate::refusal_response(gate::Refusal::Malformed));
+        return refuse(gate::Refusal::Malformed);
     };
     // Refused before the credential is even weighed: this is not about who is
     // asking, it is about what a registration would leave behind on the
     // joiner's machine once the share is over.
     if req.service_worker {
-        return Next::Respond(gate::refusal_response(gate::Refusal::ServiceWorker));
+        return refuse(gate::Refusal::ServiceWorker);
     }
     // Also before the credential: the cookie is exactly what makes this worth
     // refusing, because the browser attaches it to a request the page had no
     // business making.
     if req.cross_origin {
-        return Next::Respond(gate::refusal_response(gate::Refusal::ForeignOrigin));
+        return refuse(gate::Refusal::ForeignOrigin);
     }
     let Some(token) = req.token.clone() else {
-        return Next::Respond(gate::refusal_response(gate::Refusal::NotAuthorized));
+        return refuse(gate::Refusal::NotAuthorized);
     };
     if !authorize(&token) {
-        return Next::Respond(gate::refusal_response(gate::Refusal::NotAuthorized));
+        return refuse(gate::Refusal::NotAuthorized);
     }
     if req.from_query {
         // Authorized, but the token is in the URL. Set the cookie and send the
@@ -260,12 +271,17 @@ pub fn decide(
         // An upgrade is the one thing that cannot be redirected — a WebSocket
         // handshake follows no 302 — but a browser never opens one before the
         // page that opens it, so by then the cookie is set.
-        return Next::Respond(gate::set_cookie_redirect(
-            cookie,
-            &token,
-            &gate::safe_location(&req.clean_target),
-            secure,
-        ));
+        // Not a refusal: this is a visitor following the invite link and being
+        // sent on to the same page without the token in it.
+        return Next::Respond(
+            gate::set_cookie_redirect(
+                cookie,
+                &token,
+                &gate::safe_location(&req.clean_target),
+                secure,
+            ),
+            None,
+        );
     }
     Next::Proxy {
         head: gate::rewrite_for_upstream(head, &req, cookie),
@@ -2658,7 +2674,7 @@ mod tests {
     #[test]
     fn the_first_visit_is_bounced_so_the_token_leaves_the_url() {
         let head = "GET /dash?h5i=abc123&tab=2 HTTP/1.1\r\nHost: x\r\n\r\n";
-        let Next::Respond(r) = decide(head, gate::COOKIE, yes, true) else {
+        let Next::Respond(r, _) = decide(head, gate::COOKIE, yes, true) else {
             panic!("a token in the URL must be redirected, not proxied");
         };
         assert!(r.contains("302"));
@@ -2681,7 +2697,7 @@ mod tests {
     fn no_credential_and_a_wrong_credential_get_the_same_answer() {
         let none = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
         let wrong = "GET / HTTP/1.1\r\nHost: x\r\nCookie: h5i_share=nope\r\n\r\n";
-        let (Next::Respond(a), Next::Respond(b)) = (
+        let (Next::Respond(a, _), Next::Respond(b, _)) = (
             decide(none, gate::COOKIE, yes, true),
             decide(wrong, gate::COOKIE, yes, true),
         ) else {
@@ -2717,14 +2733,14 @@ mod tests {
             },
             true,
         );
-        assert!(matches!(out, Next::Respond(_)));
+        assert!(matches!(out, Next::Respond(..)));
         assert!(!called, "malformed input must not reach the grant table");
     }
 
     #[test]
     fn loopback_gets_a_cookie_a_loopback_browser_will_actually_store() {
         let head = "GET /?h5i=abc123 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
-        let Next::Respond(r) = decide(head, gate::COOKIE, yes, false) else {
+        let Next::Respond(r, _) = decide(head, gate::COOKIE, yes, false) else {
             panic!("redirect expected");
         };
         assert!(!r.contains("Secure"));

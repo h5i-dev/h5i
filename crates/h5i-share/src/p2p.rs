@@ -452,9 +452,16 @@ pub async fn serve(
             bridge.record_front_refusal();
             continue;
         };
+        // The same barrier the tunnel front takes, for the same reason: a
+        // connection accepted and not yet authorized is work teardown has to
+        // wait for. See `Bridge::enter_front`.
+        let Some(front) = bridge.enter_front() else {
+            continue;
+        };
         let bridge = bridge.clone();
         tokio::spawn(async move {
             let _slot = slot;
+            let _front = front;
             let conn = match incoming.await {
                 Ok(c) => c,
                 // A half-open connection from a scanner is ordinary noise on a
