@@ -57,6 +57,20 @@
 //! assumes it either way; the limit is recorded as a limit rather than argued
 //! away.
 //!
+//! # What is left, and cannot be closed here
+//!
+//! The answer is a snapshot, and the connection comes after it. Between
+//! [`decide`] returning `Box` and the `connect` that follows, a same-uid
+//! process can add a *more specific* bind — `SO_REUSEPORT` permits it between
+//! processes of one user — and take the connection h5i just attributed. Nothing
+//! short of a kernel handle on "the socket I resolved" closes that, and Darwin
+//! offers none for TCP.
+//!
+//! What bounds it is that nothing is cached: the scan runs per dial ([`crate::
+//! dialer::Dialer::resolve`], ~1.4 ms), so the window is one connection wide
+//! rather than one share long, and a stranger that wins one connection does not
+//! thereby win the share. It is recorded as a residual rather than argued away.
+//!
 //! The policy below ([`decide`]) is pure and compiled everywhere, so the rule
 //! that decides what gets published is unit-tested on both CI platforms rather
 //! than only on the one that can run it. Everything that asks Darwin a question
@@ -275,6 +289,33 @@ pub fn decide(listeners: &[Listener], port: u16, is_box: impl Fn(u32) -> bool) -
     })
 }
 
+/// Is the box's root still the process h5i pinned, or has its pid changed
+/// hands?
+///
+/// The rule, kept pure so it is compiled and tested on both CI platforms — the
+/// Darwin reading it compares is one line either side of it.
+///
+/// **Why the root needs this at all.** `is_descendant(pid, root)` returns true
+/// the instant `pid == root`, and [`process_tree`] seeds its set with `root`.
+/// So whoever holds the root pid is the box *wholesale*, along with everything
+/// beneath it. h5i verifies that pid's identity when it resolves it
+/// (`view::session_pid_verified`) and again on its three-second poll, but the
+/// dialer held a bare number in between and every dial trusted it.
+///
+/// A same-user process can end the box's session and race for its pid — Darwin
+/// hands them out sequentially and wraps, so a fork loop lands a chosen one —
+/// and until the next poll its listener on the shared port is attributed to the
+/// box and published. It does not even need an attacker: an unrelated process
+/// that inherits the pid and happens to listen on the same port is the same
+/// outcome. This is the hazard [`is_descendant`] closes for a *listener's* pid,
+/// at the one level that was left.
+///
+/// Fails closed on `None`: a root whose start time cannot be read is a root
+/// that is gone, and "cannot tell" is not "unchanged".
+pub fn root_unchanged(pinned: u64, now: Option<u64>) -> bool {
+    now == Some(pinned)
+}
+
 // ─── asking the kernel ──────────────────────────────────────────────────────
 
 /// Every listening TCP socket this user can see, with the pid that holds it.
@@ -475,6 +516,22 @@ pub fn is_descendant(pid: u32, root: u32) -> bool {
 /// stranger holding the shared port becomes invisible and the box looks like
 /// the only listener. Processes are cheaper to create than descriptors, so
 /// staying ahead of a fixed slack is easier here, not harder.
+///
+/// **A unit this gets away with.** `proc_listallpids` returns a count of
+/// *bytes*, as `proc_listpids` does throughout `proc_info` — which is why
+/// [`fds_of`] divides its answer by the element size and this does not. The
+/// arithmetic below therefore treats four bytes as four pids: the buffer comes
+/// out four times larger than it needs to be, and `n < count` compares a byte
+/// count against a slot count.
+///
+/// It is correct anyway, and only by that oversizing: the buffer is never the
+/// binding constraint, so the answer is never truncated, and the comparison
+/// errs towards growing rather than towards accepting a short list. It is
+/// recorded because it is a trap for the next person: making the allocation
+/// "right" by dividing by four, without also fixing the comparison, turns a
+/// harmless overshoot into the silent truncation this whole function exists to
+/// prevent. Verifying the unit needs a Darwin machine, which is where that
+/// change belongs.
 #[cfg(target_os = "macos")]
 fn all_pids() -> Vec<u32> {
     /// Far past any attainable process count (`kern.maxproc` is in the
@@ -627,9 +684,21 @@ fn fds_of(pid: u32) -> Vec<libc::proc_fdinfo> {
 ///   uint32_t rfu_1;                         +28
 ///   union {…} insi_faddr;                   +32    16 bytes
 ///   union {…} insi_laddr;                   +48    16 bytes
-/// };
+///   struct { u_char in4_tos; } insi_v4;     +64
+///   struct { uint8_t in6_hlim; int in6_cksum;
+///            u_short in6_ifindex;
+///            short in6_hops; } insi_v6;     +68    12 bytes
+/// };                                        = 80, 8-aligned
 /// struct tcp_sockinfo { struct in_sockinfo tcpsi_ini; int tcpsi_state; … };
 /// ```
+///
+/// The last two rows are easy to leave out and were: `insi_laddr` is the last
+/// field anything here reads, so a table that stops there looks complete. It
+/// puts `in_sockinfo` at 64 bytes and `tcpsi_state` at `PROTO + 64`, which is
+/// 16 short of where it is — so the one constant a reader would most want to
+/// check against this table is the one the table disagrees with. The code is
+/// right and the omission was in the derivation; both are stated now, and
+/// `the_offsets_find_a_socket_we_bound_ourselves` is what actually settles it.
 #[cfg(target_os = "macos")]
 fn listening_addr(pid: u32, fd: i32) -> Option<SocketAddr> {
     /// `PROC_PIDFDSOCKETINFO`. Not in libc, and its value is part of the
@@ -751,6 +820,33 @@ mod tests {
             pid,
             addr: addr.parse().expect("test address"),
         }
+    }
+
+    /// A root whose pid has changed hands is not the box.
+    ///
+    /// `is_descendant(pid, root)` is true the instant `pid == root`, and
+    /// `process_tree` seeds its set with `root` — so whoever holds that pid is
+    /// the box wholesale. h5i verifies it when it resolves it and again on its
+    /// three-second poll; between those, the dialer held a bare number and
+    /// every dial trusted it. A same-user process can end the session and race
+    /// for the pid, and until the next poll its listener is published under the
+    /// share's own URL.
+    #[test]
+    fn a_root_pid_that_changed_hands_is_not_the_box() {
+        assert!(root_unchanged(1234, Some(1234)), "the same process");
+        assert!(
+            !root_unchanged(1234, Some(9999)),
+            "a later tenant of the pid was taken for the box"
+        );
+        // Gone reads as changed, not as unchanged: "cannot tell" is not the
+        // same answer as "still ours", and this is the direction that decides
+        // whether a stranger gets published.
+        assert!(
+            !root_unchanged(1234, None),
+            "a root that could not be read was taken for the box"
+        );
+        // Zero is a start time like any other, not a sentinel.
+        assert!(root_unchanged(0, Some(0)));
     }
 
     /// The box, as the predicate `decide` now asks rather than the set it used

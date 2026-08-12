@@ -88,6 +88,9 @@ struct Mac {
     /// The process whose descendants are the box — the session `h5i` started.
     /// Its children are the shell, the agent and the dev server.
     root: u32,
+    /// When that process started, so the pid can be told from a later tenant of
+    /// the same number. See [`crate::owner::root_unchanged`].
+    root_started: u64,
 }
 
 #[cfg(target_os = "linux")]
@@ -345,8 +348,21 @@ impl Dialer {
     /// into a warning. A port held by a **stranger** is a refusal, because
     /// there is nothing to wait for — it is already the wrong process.
     pub fn spawn(box_pid: u32, port: u16) -> Result<Dialer, H5iError> {
+        // Pinned with its start time, not as a bare number: everything below
+        // treats the root pid as the box itself, so a pid that changes hands
+        // hands the box over with it. See [`crate::owner::root_unchanged`].
+        let Some(root_started) = h5i_core::env::proc_start_ticks(box_pid) else {
+            return Err(H5iError::Metadata(format!(
+                "the box's session process (pid {box_pid}) is gone — h5i could not read when it \
+                 started, so it cannot tell that pid from whatever the kernel gives the number \
+                 to next. Start a session and share again."
+            )));
+        };
         let d = Dialer {
-            mac: Mac { root: box_pid },
+            mac: Mac {
+                root: box_pid,
+                root_started,
+            },
             port,
         };
         match d.resolve() {
@@ -378,6 +394,22 @@ impl Dialer {
     /// process to claim the port.
     fn resolve(&self) -> Result<std::net::SocketAddr, DialError> {
         use crate::owner::{self, Ownership};
+
+        // Before anything is attributed. `is_descendant` answers true for the
+        // root itself and `process_tree` seeds its set with it, so a root pid
+        // that changed hands makes its new tenant the box entire — and every
+        // check below would then be measuring the wrong tree.
+        if !owner::root_unchanged(
+            self.mac.root_started,
+            h5i_core::env::proc_start_ticks(self.mac.root),
+        ) {
+            return Err(DialError::NotTheBox(H5iError::Metadata(format!(
+                "the box's session process (pid {}) is gone, and that pid now belongs to \
+                 something else — so h5i cannot tell which processes are this box's and will \
+                 not connect to any of them. Start a fresh session and a fresh share.",
+                self.mac.root
+            ))));
+        }
 
         let pids = owner::process_tree(self.mac.root);
         // Only sockets whose owner still exists. A pid that has exited holds
