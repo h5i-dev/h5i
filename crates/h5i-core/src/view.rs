@@ -133,7 +133,9 @@ pub fn stream_port(env_dir: &Path) -> Option<u16> {
 /// succeeds, and the forward then finds nothing listening — so it is worth
 /// doing by observation rather than by assuming which pid means what.
 pub fn box_pid(env_dir: &Path) -> Option<u32> {
-    let session = session_pid(env_dir)?;
+    // Verified, because this pid decides which network namespace a share
+    // publishes a port out of. See [`session_pid_verified`].
+    let session = session_pid_verified(env_dir, true)?;
     let own_netns = std::fs::read_link("/proc/self/ns/net").ok()?;
     let children = child_map();
 
@@ -187,30 +189,58 @@ fn child_map() -> std::collections::HashMap<u32, Vec<u32>> {
 }
 
 /// The host-side `h5i` pid holding this box's session, from the live registry.
-fn session_pid(env_dir: &Path) -> Option<u32> {
+///
+/// Public because it is what "the box" *means* on a platform with no
+/// namespaces. [`box_pid`] answers "which pid is inside the box's network
+/// namespace", which is a question only Linux has; on macOS a box is the
+/// process tree under this pid, and `h5i box share` identifies it that way
+/// (`h5i_share::owner`).
+pub fn session_pid(env_dir: &Path) -> Option<u32> {
+    session_pid_verified(env_dir, false)
+}
+
+/// [`session_pid`], optionally insisting the record proves whose pid it is.
+///
+/// `verified` is for `h5i box share`, and only for it. Every other reader
+/// tolerates the pid-identity staleness the registry has always had: a crashed
+/// session leaves its record, the kernel reissues its pid, `kill(pid, 0)` says
+/// yes, and the next scan heals it. Cosmetic, for a listing.
+///
+/// Sharing cannot tolerate it. `box_pid` walks this pid's descendants looking
+/// for a network namespace and the share dials `127.0.0.1:<port>` from
+/// whichever one it finds — so an unrelated same-user process that inherited a
+/// crashed session's pid, with a namespace of its own or a child that has one,
+/// makes `h5i box share` publish a port out of a box nobody offered. That is
+/// exactly the wrong-port exposure the namespace requirement exists to refuse,
+/// arriving through the check rather than around it.
+///
+/// With `verified`, a record must carry `started_ticks` *and* match. A record
+/// written by an older h5i therefore stops being usable for sharing until the
+/// session is restarted, which is the safe direction: the alternative is a
+/// check that passes because there was nothing to check.
+pub fn session_pid_verified(env_dir: &Path, verified: bool) -> Option<u32> {
     let mut best: Option<(String, u32)> = None;
     for e in std::fs::read_dir(env_dir.join("live")).ok()?.flatten() {
         let Ok(text) = std::fs::read_to_string(e.path()) else {
             continue;
         };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        let Ok(rec) = serde_json::from_str::<crate::env::LiveSession>(&text) else {
             continue;
         };
-        let (Some(pid), Some(kind)) = (
-            v["pid"].as_u64().and_then(|p| u32::try_from(p).ok()),
-            v["kind"].as_str(),
-        ) else {
-            continue;
-        };
-        if !crate::env::live_is_writer(kind) {
+        if !crate::env::live_is_writer(&rec.kind) {
             continue;
         }
-        if !pid_alive(pid) {
+        if !pid_alive(rec.pid) {
             continue;
         }
-        let started = v["started_at"].as_str().unwrap_or("").to_string();
-        if best.as_ref().is_none_or(|(s, _)| *s <= started) {
-            best = Some((started, pid));
+        if verified && rec.started_ticks.is_none() {
+            continue;
+        }
+        if !crate::env::live_identity_holds(&rec) {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(s, _)| *s <= rec.started_at) {
+            best = Some((rec.started_at.clone(), rec.pid));
         }
     }
     best.map(|(_, pid)| pid)
@@ -247,7 +277,10 @@ fn pid_alive(pid: u32) -> bool {
 /// The user namespace comes first and is not optional: the box's netns was
 /// created by an unprivileged `unshare`, so it is owned by that userns and
 /// joining it requires being in it.
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub fn connect_in_netns(pid: u32, port: u16) -> Result<TcpStream, H5iError> {
     use h5i_sandbox::seccomp_notify::recv_fd;
     use std::os::fd::FromRawFd;
@@ -328,16 +361,28 @@ pub fn connect_in_netns(pid: u32, port: u16) -> Result<TcpStream, H5iError> {
 /// Gated with the code that uses them: everything here is `setns`-specific, so
 /// on a non-Linux target they are dead code, and `-D warnings` in CI is right
 /// to say so.
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 const EXIT_NO_NS: i32 = 2;
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 const EXIT_SETNS: i32 = 3;
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 const EXIT_CONNECT: i32 = 4;
 
 /// The child half of [`connect_in_netns`]. Returns the exit code the parent
 /// turns back into a message, since a forked child cannot safely format one.
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn enter_and_connect(pid: u32, port: u16, sock: i32) -> i32 {
     use h5i_sandbox::seccomp_notify::send_fd;
     use std::os::fd::AsRawFd;
@@ -393,7 +438,10 @@ pub fn connect_in_netns(pid: u32, port: u16) -> Result<TcpStream, H5iError> {
 }
 
 #[cfg(not(any(
-    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ),
     target_os = "macos"
 )))]
 pub fn connect_in_netns(_pid: u32, _port: u16) -> Result<TcpStream, H5iError> {
@@ -683,11 +731,7 @@ const MAX_FRAME: u64 = 1 << 20;
 /// returning rather than inferring: comparing who held the lock at open and at
 /// close misses the ordinary case of someone taking control, doing the thing,
 /// and handing it straight back.
-pub fn pump_input(
-    mut from_client: impl Read,
-    mut to_box: impl Write,
-    env_dir: &Path,
-) -> Pump {
+pub fn pump_input(mut from_client: impl Read, mut to_box: impl Write, env_dir: &Path) -> Pump {
     let mut pump = Pump::default();
     // Whether a fragmented message is currently being forwarded.
     //
@@ -719,8 +763,7 @@ pub fn pump_input(
                     (true, Some(decided)) => decided,
                     _ => {
                         !is_input
-                            || crate::control::read(env_dir).holder
-                                == crate::control::Holder::Human
+                            || crate::control::read(env_dir).holder == crate::control::Holder::Human
                     }
                 };
                 if !control_frame {
@@ -970,11 +1013,8 @@ pub fn record_session(
     pumped: &Pump,
 ) {
     {
-        let (env_dir, env_id, policy_digest) = (
-            &session.env_dir,
-            &session.env_id,
-            &session.policy_digest,
-        );
+        let (env_dir, env_id, policy_digest) =
+            (&session.env_dir, &session.env_id, &session.policy_digest);
         let input_frames = pumped.input_frames;
         let closed = chrono::Utc::now();
         let holder_at_close = crate::control::read(env_dir).holder;
@@ -1003,7 +1043,9 @@ pub fn record_session(
                 ""
             }
         ));
-        body.push_str(&format!("frames   {bytes_out} bytes streamed to the viewer\n"));
+        body.push_str(&format!(
+            "frames   {bytes_out} bytes streamed to the viewer\n"
+        ));
         body.push_str(&format!(
             "input    {input_frames} frame(s) forwarded to the page\n"
         ));
@@ -1160,14 +1202,21 @@ mod tests {
 
     #[test]
     fn a_request_without_the_right_token_does_not_get_through() {
-        let req = |q: &str| parse_request(&format!("GET /{q} HTTP/1.1\r\nHost: x\r\n\r\n")).unwrap();
+        let req =
+            |q: &str| parse_request(&format!("GET /{q} HTTP/1.1\r\nHost: x\r\n\r\n")).unwrap();
         let origin = "http://127.0.0.1:9000";
 
         assert_eq!(gate(&req("?token=good"), "good", origin), Ok(()));
         assert_eq!(gate(&req(""), "good", origin), Err(Refusal::BadToken));
-        assert_eq!(gate(&req("?token=bad"), "good", origin), Err(Refusal::BadToken));
+        assert_eq!(
+            gate(&req("?token=bad"), "good", origin),
+            Err(Refusal::BadToken)
+        );
         // A prefix must not pass: the comparison is length-checked first.
-        assert_eq!(gate(&req("?token=goo"), "good", origin), Err(Refusal::BadToken));
+        assert_eq!(
+            gate(&req("?token=goo"), "good", origin),
+            Err(Refusal::BadToken)
+        );
     }
 
     #[test]
@@ -1249,7 +1298,7 @@ mod tests {
         assert_eq!(classify_opcode(0x1), FrameVerdict::Input); // text
         assert_eq!(classify_opcode(0x2), FrameVerdict::Input); // binary
         assert_eq!(classify_opcode(0x0), FrameVerdict::Input); // continuation
-        // An opcode we do not recognize is input, not "probably harmless".
+                                                               // An opcode we do not recognize is input, not "probably harmless".
         assert_eq!(classify_opcode(0x3), FrameVerdict::Input);
         assert_eq!(classify_opcode(0xB), FrameVerdict::Input);
     }
@@ -1292,12 +1341,18 @@ mod tests {
     #[test]
     fn the_pacing_allowlist_is_two_exact_names_and_nothing_near_them() {
         let whole = |p: &[u8]| classify(0x1, true, p);
-        assert_eq!(whole(br#"{"type":"config","maxFps":10}"#), FrameVerdict::Pacing);
+        assert_eq!(
+            whole(br#"{"type":"config","maxFps":10}"#),
+            FrameVerdict::Pacing
+        );
         assert_eq!(whole(br#"{"type":"ack","seq":1}"#), FrameVerdict::Pacing);
 
         // Everything else is input, including things that merely mention the
         // allowed names. An allowlist that matches substrings is not one.
-        assert_eq!(whole(br#"{"type":"input_keyboard","key":"config"}"#), FrameVerdict::Input);
+        assert_eq!(
+            whole(br#"{"type":"input_keyboard","key":"config"}"#),
+            FrameVerdict::Input
+        );
         assert_eq!(whole(br#"{"type":"configure"}"#), FrameVerdict::Input);
         assert_eq!(whole(br#"{"type":"input_mouse"}"#), FrameVerdict::Input);
         assert_eq!(whole(b"not json"), FrameVerdict::Input);
@@ -1308,11 +1363,20 @@ mod tests {
         assert_eq!(whole(br#"{"type":7}"#), FrameVerdict::Input);
 
         // Binary is never pacing, whatever it contains.
-        assert_eq!(classify(0x2, true, br#"{"type":"ack"}"#), FrameVerdict::Input);
+        assert_eq!(
+            classify(0x2, true, br#"{"type":"ack"}"#),
+            FrameVerdict::Input
+        );
         // Nor is a fragment: the rest of the message has not been seen, and a
         // judgement on a prefix is a judgement on nothing.
-        assert_eq!(classify(0x1, false, br#"{"type":"ack"}"#), FrameVerdict::Input);
-        assert_eq!(classify(0x0, true, br#"{"type":"ack"}"#), FrameVerdict::Input);
+        assert_eq!(
+            classify(0x1, false, br#"{"type":"ack"}"#),
+            FrameVerdict::Input
+        );
+        assert_eq!(
+            classify(0x0, true, br#"{"type":"ack"}"#),
+            FrameVerdict::Input
+        );
 
         // A payload too large to be a pacing message is not parsed at all.
         let mut fat = br#"{"type":"ack","pad":""#.to_vec();
@@ -1350,7 +1414,10 @@ mod tests {
     fn a_fragmented_message_is_forwarded_or_dropped_whole() {
         // Non-final text frame, then a final continuation (opcode 0).
         let frag = |opcode: u8, payload: &[u8], fin: bool| -> Vec<u8> {
-            let mut f = vec![if fin { 0x80 | opcode } else { opcode }, 0x80 | payload.len() as u8];
+            let mut f = vec![
+                if fin { 0x80 | opcode } else { opcode },
+                0x80 | payload.len() as u8,
+            ];
             let key = [0xAA, 0xBB, 0xCC, 0xDD];
             f.extend_from_slice(&key);
             f.extend(payload.iter().enumerate().map(|(i, b)| b ^ key[i % 4]));
@@ -1381,7 +1448,10 @@ mod tests {
         let td = TempDir::new().unwrap();
         crate::control::take(td.path()).unwrap();
         let frag = |opcode: u8, payload: &[u8], fin: bool| -> Vec<u8> {
-            let mut f = vec![if fin { 0x80 | opcode } else { opcode }, 0x80 | payload.len() as u8];
+            let mut f = vec![
+                if fin { 0x80 | opcode } else { opcode },
+                0x80 | payload.len() as u8,
+            ];
             let key = [0xAA, 0xBB, 0xCC, 0xDD];
             f.extend_from_slice(&key);
             f.extend(payload.iter().enumerate().map(|(i, b)| b ^ key[i % 4]));
@@ -1393,7 +1463,10 @@ mod tests {
         input.extend_from_slice(&frag(0x0, b"ck", true));
         let mut forwarded = Vec::new();
         pump_input(&input[..], &mut forwarded, td.path());
-        assert_eq!(forwarded, input, "everything goes when the human holds control");
+        assert_eq!(
+            forwarded, input,
+            "everything goes when the human holds control"
+        );
     }
 
     #[test]
@@ -1404,7 +1477,10 @@ mod tests {
         let input = client_frame(0x1, b"click");
         let mut forwarded = Vec::new();
         let pumped = pump_input(&input[..], &mut forwarded, td.path());
-        assert_eq!(forwarded, input, "the holder's input passes through byte-identical");
+        assert_eq!(
+            forwarded, input,
+            "the holder's input passes through byte-identical"
+        );
         // Counted, because this is how the export learns a human drove.
         assert_eq!(pumped.input_frames, 1);
 
@@ -1413,7 +1489,10 @@ mod tests {
         // a take-then-release is still reported as a human having driven.
         crate::control::release(td.path()).unwrap();
         let mut after = Vec::new();
-        assert_eq!(pump_input(&input[..], &mut after, td.path()).input_frames, 0);
+        assert_eq!(
+            pump_input(&input[..], &mut after, td.path()).input_frames,
+            0
+        );
         assert!(after.is_empty());
     }
 
@@ -1431,7 +1510,10 @@ mod tests {
         let td = TempDir::new().unwrap();
         crate::control::take(td.path()).unwrap();
         let mut forwarded = Vec::new();
-        assert_eq!(pump_input(&f[..], &mut forwarded, td.path()).input_frames, 1);
+        assert_eq!(
+            pump_input(&f[..], &mut forwarded, td.path()).input_frames,
+            1
+        );
         assert_eq!(forwarded, f);
 
         // A 64-bit length beyond the cap must not become an allocation.
@@ -1456,8 +1538,14 @@ mod tests {
 
         let mut forwarded = Vec::new();
         let pumped = pump_input(&stream[..], &mut forwarded, td.path());
-        assert_eq!(pumped.input_frames, 2, "the two complete frames still count");
-        assert!(pumped.error.is_some(), "and the untidy end is still reported");
+        assert_eq!(
+            pumped.input_frames, 2,
+            "the two complete frames still count"
+        );
+        assert!(
+            pumped.error.is_some(),
+            "and the untidy end is still reported"
+        );
     }
 
     #[test]
@@ -1480,9 +1568,21 @@ mod tests {
         // forwarded, and the page never moves. A human taking control saw a
         // working viewer that ignored them.
         let page = viewer_page(crate::control::Holder::Agent);
-        assert!(page.contains("input_mouse"), "the mouse path must use input_mouse");
-        assert!(page.contains("input_keyboard"), "the key path must use input_keyboard");
-        for dom_name in ["\"mousedown\"", "\"mouseup\"", "\"keydown\"", "\"keyup\"", "\"wheel\""] {
+        assert!(
+            page.contains("input_mouse"),
+            "the mouse path must use input_mouse"
+        );
+        assert!(
+            page.contains("input_keyboard"),
+            "the key path must use input_keyboard"
+        );
+        for dom_name in [
+            "\"mousedown\"",
+            "\"mouseup\"",
+            "\"keydown\"",
+            "\"keyup\"",
+            "\"wheel\"",
+        ] {
             assert!(
                 !page.contains(&format!("type: {dom_name}")),
                 "a DOM event name is being sent as a message type: {dom_name}"
@@ -1490,7 +1590,11 @@ mod tests {
         }
         // The fields CDP will not do without: a *named* button, and a click
         // count, because a press with zero is not a click.
-        assert!(page.contains("clickCount"), "{}", "a press needs a click count");
+        assert!(
+            page.contains("clickCount"),
+            "{}",
+            "a press needs a click count"
+        );
         assert!(page.contains("mousePressed") && page.contains("mouseReleased"));
         assert!(page.contains("windowsVirtualKeyCode"));
     }
@@ -1503,8 +1607,14 @@ mod tests {
         // decode on the main thread for every frame; painting on arrival queued
         // frames a slow tab could never catch up with.
         let page = viewer_page(crate::control::Holder::Agent);
-        assert!(page.contains("createImageBitmap"), "frames must decode off the main thread");
-        assert!(page.contains("requestAnimationFrame"), "frames must paint on a frame boundary");
+        assert!(
+            page.contains("createImageBitmap"),
+            "frames must decode off the main thread"
+        );
+        assert!(
+            page.contains("requestAnimationFrame"),
+            "frames must paint on a frame boundary"
+        );
         assert!(
             !page.contains("data:image/jpeg;base64,"),
             "a data URL per frame is the shape this replaced"
@@ -1530,12 +1640,18 @@ mod tests {
         // stamped at serve time and the page says so. A display that silently
         // never changed would read as "taking the lock did not work".
         let agent = viewer_page(crate::control::Holder::Agent);
-        assert!(!agent.contains("__H5I_HOLDER__"), "the placeholder survived");
+        assert!(
+            !agent.contains("__H5I_HOLDER__"),
+            "the placeholder survived"
+        );
         assert!(agent.contains(">agent</span>"), "holder not stamped");
 
         let human = viewer_page(crate::control::Holder::Human);
         assert!(human.contains(">human</span>"));
-        assert!(human.contains("control at page load"), "and it says what it knows");
+        assert!(
+            human.contains("control at page load"),
+            "and it says what it knows"
+        );
     }
 
     #[test]

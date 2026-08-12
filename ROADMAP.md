@@ -588,6 +588,243 @@ failed. There is no channel to push updates on — the stream is a straight rela
 — so the holder is stamped into the page at serve time and the page says that
 is what it is.
 
+### 5.11 Share: the first inbound path (built, 2026-08-10)
+
+Everything else in this document is about what leaves the box. Share is about
+what comes in: a second person, on their own machine, trying the web app the
+agent built while it still runs inside the box. The demand is the ngrok use
+case — "here, click around" — without the part where a tunnel URL quietly
+exposes a dev server that was never meant to face the internet, and without
+standing up an account, a domain, or a server of ours.
+
+**Port sharing, not viewer sharing, and that is a use-case decision.** Two
+shapes were on the table. Sharing the *viewer* — the agent-browser stream of
+5.9, carried over the network instead of loopback — reuses the forward and the
+terminal viewer almost whole, but it ships pixels: one viewport, one control
+lock, no independent navigation, no devtools on the other end, no feel for the
+app's own latency. Sharing the *port* puts the real app in the other person's
+own browser, which is what "try it" means. The viewer share is a different
+feature (a joint review session), not a cheaper version of this one, so it is
+not a prerequisite and does not gate this; if it lands later, it lands on the
+same bridge.
+
+**The bridge is the feature; transports are plugins under it.** `h5i box
+share` starts a host-side process with three jobs, none of which depend on how
+the bytes travel:
+
+- **Reach the dev server.** The box's port is never published. The bridge
+  enters the box's network namespace by pid and dials loopback per connection,
+  exactly the seam the viewer forward and the terminal viewer already use
+  (5.9, 5.10). Nothing inside the box learns *who* is visiting — a quick tunnel
+  hands its origin `Cf-Connecting-Ip`, `Cf-Ipcountry` and `X-Forwarded-For`,
+  and the gate drops every one of them before the box sees a byte, because a
+  person who clicked a link agreed to look at a page and not to identify
+  themselves to somebody else's agent. What the box can tell is that it is
+  behind a proxy: `Host` and `X-Forwarded-Proto` stay, because a dev server
+  builds its URLs out of them and a share that broke every link on the page
+  would not get used. The netns
+  gains no hole, and the box's egress policy is untouched — the bridge is a
+  host process, outside the boundary, like the CONNECT proxy.
+- **Hold the capability.** A ticket minted at share time is the whole access
+  model: it names the box, the port, an expiry, and a secret; possession is
+  authorization, and possession is all of it: a ticket is a bearer capability,
+  so forwarding the text admits everyone it reaches under the one grant.
+  Measured, because this line used to claim the opposite: two `h5i join`
+  processes on one ticket both reached the dev server and both appear in the
+  receipt against the same grant. Mint one ticket per person if you want
+  `h5i box share revoke` to cut off one person rather than all of them; `stop`
+  ends the session for everyone. No account on either side. (As shipped, minting a
+  second ticket works on `--tunnel` shares only; see 5.11.1.)
+- **Write the ingress receipt.** Every lane in 5.7 observes egress. This is
+  the first inbound evidence: peer, connection times, requests proxied, bytes,
+  and the transport actually used (direct, relayed, tunnel), in the same
+  receipt the export already carries. A share session that left no record
+  would be the one part of a box's life the receipt is silent about, which is
+  exactly the kind of gap this document exists to refuse.
+- **Measure time with a clock nobody can move.** Ticket expiry and the
+  session length are elapsed time, not wall-clock subtraction. A backward NTP
+  step was measured putting an hour back onto every live grant and writing a
+  receipt that read `0s` for a two-minute session with `closed` before
+  `opened`. The timestamps in a receipt are still clock readings and can be
+  wrong; the receipt says so on a `clock` line when they are, because an
+  evidence artifact that quietly clamps an absurdity to a plausible number is
+  worse than one that admits it.
+
+**Transport one: iroh.** Peer-to-peer QUIC, end-to-end encrypted, NAT
+traversal with public relays as fallback for the hard cases; the relay sees
+addresses and volume, never plaintext. The ticket carries the node addressing,
+so there is nothing to configure. `--direct-only` refuses to move application
+bytes over a relay: a peer that cannot get a direct path is turned away, and the
+share stays up for anyone who can.
+The other end runs `h5i join <ticket>`, which terminates the QUIC connection
+and serves the app on the joiner's loopback — and that listener repeats 5.9's
+lesson on someone else's machine: a bare local port is reachable by every page
+and process the joiner has open, so the local URL carries a token and the
+proxy refuses without it. iroh is a real dependency tree (QUIC, TLS), so it
+is a cargo feature in the `web` pattern: default on, and a build without it
+loses `share`/`join` and nothing else.
+
+**Transport two: Cloudflare quick tunnel, because the joiner may not be a
+developer.** P2P requires `h5i` on both ends, and the person you most want
+clicking the prototype — a designer, a PM, a customer — will not install a
+CLI. `h5i box share --tunnel` shells out to `cloudflared` and hands back a
+plain URL any browser opens. The same bridge still fronts it: the URL embeds
+the ticket token, the bridge checks it and the expiry on every request, and
+revocation still works mid-session — the capability degrades from "hold the
+secret" to "hold the link", not to nothing. The honest costs, which the docs
+must state rather than blur: TLS terminates at Cloudflare, so this mode is
+not end-to-end and Cloudflare can read the traffic; `cloudflared` is an
+external binary we neither pin nor ship; and quick tunnels are explicitly not
+a production service (concurrency caps, no SSE). It is the no-install mode,
+not the default mode.
+
+**What the joiner is exposed to, stated up front.** The app being shared is
+agent-written, untrusted code, and port sharing renders it in the joiner's own
+browser — that is the point, and it is also the exposure, the same one as
+clicking any link a colleague sends. One asymmetry is worth writing down: in
+P2P mode the app is served from the joiner's loopback, and a loopback origin
+is exempt from the browser's private-network protections, so a hostile page
+has an easier path at the joiner's own local services than the same page on a
+public origin would. Tunnel mode, ironically, keeps those protections, because
+the origin is public. `h5i join --isolated`, opening the proxy in a box of the
+joiner's own, is the strong answer for a joiner who has h5i anyway; it should
+exist, and it should not be pretended that the no-install audience will use
+it.
+
+**What this is not.** Not a deployment path: sessions are bounded by the
+ticket's expiry and die with the bridge. Not a relay business: the public iroh
+relays are someone else's rate-limited infrastructure, fine for fallback and
+for measuring how often fallback actually happens, and running or selling
+relay capacity is a SaaS with an abuse desk attached — out of scope by the
+same decision that says no server (10.). And not the old `share`: 3.2 deleted
+a `push`/`pull`/`share` that moved git notes between repositories; this one is
+`h5i box share`, on the box noun, and the collision ends there.
+
+The surface, as built:
+
+```
+h5i box share <name> [--port 3000] [--expire 60m] [--label alex]
+h5i box share <name> --direct-only               # refuse relayed app bytes
+h5i box share <name> --tunnel                    # cloudflared; plain URL
+h5i box share ls|status|grant|revoke|stop
+h5i join <ticket> [--port N]                     # the other machine
+```
+
+#### 5.11.1 What shipped, and what it cost to be honest about
+
+`crates/h5i-share/`, ~12k lines with 187 tests, behind a default-on `share`
+feature on the binary and a default-on `p2p` feature inside the crate (iroh 1.0,
+`tls-ring` only). A `--no-default-features` build has no `share` verb rather
+than a broken one, and `--no-default-features` on the crate alone keeps the
+tunnel transport with no QUIC stack compiled in.
+
+Four decisions made during the build that the proposal above did not contain:
+
+- **The fork into the box happens once, at startup, and the helper stays.** The
+  viewer forward forks per connection, which is fine for one WebSocket and wrong
+  for a share: a share runs an async runtime, and `fork()` in a process with a
+  thread pool inherits one thread plus whatever locks the others held. So
+  `Dialer::spawn` runs while the process is still single-threaded and keeps a
+  helper alive in the box's namespaces, answering a one-byte "connect me" over a
+  socketpair. Belt and braces on top: everything below the fork is
+  allocation-free (stack-built `/proc/<pid>/ns/…`, `SocketAddr` rather than
+  `(&str, u16)`), so a caller who ignores the ordering rule gets a helper that
+  cannot deadlock rather than one that does so occasionally.
+- **A box with no network of its own is refused, not shared.** Without one,
+  "the box's port 3000" and "this machine's port 3000" are the same port, and
+  sharing it would publish whatever happened to be listening. This is the one
+  refusal in the feature that exists purely because the alternative is a silent
+  wrong answer. The condition checked is "is there a process of this box in a
+  network namespace of its own", not a list of tiers — a `process`-tier box gets
+  one when its profile denies egress and shares the host's when it does not, so
+  a tier list would be advice that is wrong half the time. The message names
+  which of the two things is missing: no session, or no network.
+- **Authorization is per connection, read from disk, and revocation has a
+  watchdog.** `share revoke` runs in a different process, so a cached grant table
+  would be a revoke that appeared to work. On the P2P path it is per *stream*,
+  which means one TCP connection into the box: a revoke stops the next one. For
+  the connections already open, a one-second watchdog closes them. Without that
+  second half, revoking would work on everyone except the person actually there.
+- **A share carries at most 64 connections into the box.** Refused rather than
+  queued, because a queue turns a flood into latency for the person who is
+  legitimately using the share and hides that anything happened; and answered
+  with a `503`, not a `401`, because "your link is bad" is the wrong thing to
+  tell someone whose link is fine. The count goes in the receipt on its own
+  line, so load and credential failures never read as each other.
+- **One connection carries one request, because connection pools are shared.**
+  Both HTTP fronts gate a connection when its first request arrives, which is
+  equivalent to gating every request only if a connection cannot carry a second
+  one. It can: `cloudflared` pools connections to the origin and reuses them for
+  the next request from *any* visitor, and browsers pool per origin the same
+  way, so an unauthorized request could ride in on a connection someone else's
+  credential opened.
+
+  The first version of this sent `Connection: close` upstream and called it
+  enforcement. It was not — the box runs agent-written code, and a dev server
+  that answers keep-alive leaves the front holding an ungated pipe. The second
+  review caught exactly that, so the front now reads the head plus the declared
+  body and then **stops reading the client**, which needs nothing from the box.
+  Two things fall out. A chunked request body has to be *parsed* rather than
+  just copied, because forwarding one request means knowing where it ends and a
+  chunk stream only says so in its own framing — it was refused with a `501`
+  for two rounds, which meant no streamed upload worked at all. And an upgrade
+  earns its two-way pipe only after the box answers `101`,
+  with the request required to carry both `Upgrade` and `Connection: upgrade` —
+  a lone `Upgrade:` header is something any client can attach to a request that
+  will never upgrade, and it was an opt-out from the whole rule.
+
+  A third round found the other half: the *response* was relayed untouched, so a
+  box answering keep-alive told the visitor's browser to reuse a connection this
+  proxy would never read again — an intermittent hang, and a `502` for every
+  POST a client will not retry. The response head is rewritten to `close` now
+  and framed by its `Content-Length`. Security intact throughout; liveness had
+  been traded away silently.
+
+  All three rounds are worth recording together: nothing in the suite would have
+  caught any of them, because nothing in the suite pools connections. The tests
+  that pin them run against a dev server written specifically to ignore
+  `Connection: close`.
+
+- **Per-port cookies fixed one leak and opened another.** Naming the joiner's
+  cookie after its port stopped two `h5i join` sessions logging each other out.
+  It also meant a *second* share's credential was, from any given front's point
+  of view, just another cookie — and cookies ignore the port, so the browser
+  sent both to both, and each front dutifully forwarded the other's to
+  agent-written code. Reading our own cookie by exact name and dropping every
+  cookie whose name starts with the share prefix are two different rules, and
+  the difference was the one property the gate exists for. The test that had
+  been written for the first fix asserted the leak as correct behaviour, which
+  is the more useful lesson: a test can pin a bug as a feature.
+- **Revocation is per grant all the way down.** The watchdogs first asked
+  whether the *share* was spent, which is true only when no grant admits
+  anybody — so revoking one peer while another was still connected left the
+  revoked peer's open streams running, and the CLI printed "any connection that
+  peer had is dropped within a second" while that was false. Each connection now
+  watches the grant that admitted it. Same class of thing as `--direct-only`,
+  which was checked once at setup and never again: a direct path can die and
+  iroh will fall back to a relay, so a promise checked once is a preference.
+  Both are polled for the life of the connection now.
+- **Streams are served concurrently, and that was a real bug first.** The first
+  cut awaited each stream to completion before accepting the next, which
+  serialises every share behind whichever connection is longest-lived — for a
+  dev server, the hot-reload socket that never ends. Found by the in-process
+  end-to-end test hanging, which is the argument for having written it.
+
+**Not built, deliberately.** `h5i join --isolated` (opening the shared page in a
+box of the joiner's own) is designed in this section and has no implementation;
+the warning at join time is what stands in for it today. Viewer sharing is not
+built and was never in this milestone.
+
+**Not built, and it is a gap rather than a choice.** `h5i box share grant` mints
+a second ticket for a *tunnel* share only. A P2P ticket needs the running
+endpoint's addressing, and only the serving process has it — so the verb refuses
+rather than handing out a ticket that names nowhere. The procedure that works is
+to stop the share and start a fresh one, reissuing tickets to everybody
+including the peer already connected; a *second concurrent* share is refused by
+`session::claim`, so it is not a way round this. Closing it needs
+the serving process to answer a request from another process, which is a channel
+this feature does not otherwise need, so it waits for someone to want it.
+
 ## 6. Distribution: the CLI is the product, the skill is the interface
 
 `h5i` is a single Rust binary with no server, no daemon, and no SaaS. That makes
@@ -1687,6 +1924,333 @@ chase pane parity with M11a: the investment moves to the web view, and the
 TUI's job is to watch, take the lock when a login wall demands it, and prove
 the event model has two independent readers. Nothing shipped is discarded.
 
+**M12. Share — built, 2026-08-10 (5.11, 5.11.1).** The bridge first, because it
+is the part both transports share and the part that touches the boundary:
+netns dial-in, the grant table with mint / verify / expire / revoke, the HTTP
+gate, and the ingress receipt lane. Then iroh and `h5i join`. Then the quick
+tunnel on the same bridge. Viewer sharing was explicitly not in this milestone
+and is not built.
+
+**What is demonstrated, and by what.** The suite covers the whole P2P chain
+end to end in-process — QUIC handshake, greeting, grant table, the dialer's fd
+handoff, the byte pump — with a wrong ticket refused on the same connection and
+a revoke written by another process stopping the next one. The tunnel front is
+driven exactly as `cloudflared` drives it, including against a dev server
+written to ignore `Connection: close`, which is what pins the one-request rule.
+The gate's promise that the share credential never reaches the box is pinned by
+reading the rewritten head.
+
+**Run for real on 2026-08-10, and this is the part that was open.** A live
+`supervised` box with a dev server inside it, shared over iroh, joined from a
+second `h5i` process, and fetched with `curl`:
+
+- the invite bounced to a cookie (`h5i_share_40959`, port-scoped as designed)
+  and the box's HTML came back through the joiner's loopback proxy;
+- the path was **direct** — hole punching, not a relay — with the endpoint's
+  real addresses in the ticket;
+- a request with no cookie and one with a wrong cookie both got `401`, and
+  neither reached the box;
+- `h5i box share revoke` from a third process cut the peer off; the joiner
+  printed the sharer's own close reason rather than a transport error;
+- the export's receipt named the peer, the grant and its label, the window, the
+  connection count, the byte counts and the path:
+  `08e03775419e… via direct — grant 38bd63e2 (reviewer), 14s, 1 connection,
+  97 in / 412 out`. The connection count is *one*, because the redirect and
+  both refusals were answered by the joiner's own proxy and never crossed —
+  which is the gate working, visible in the evidence.
+
+**Re-run on 2026-08-10 after the third round of fixes**, because that round
+rewrote the response path: seven sequential requests each on their own
+connection (the receipt says so), `Connection: close` in every answer, and a
+`HEAD` returning in five milliseconds where the version before it would have
+waited three hundred seconds for a body that a `HEAD` never has.
+
+**The tunnel, run for real on 2026-08-10.** `cloudflared` was installed and a
+quick tunnel carried live traffic over the internet: the invite link bounced
+into a `Secure` cookie, `GET`, `HEAD` and a 300 KB `POST` all came back from the
+box, an anonymous request and one with a wrong token both got `401`, and the
+receipt named the transport, the grant, six connections, 678 KB in and 676 KB
+out, one refusal, and the "not end-to-end encrypted" note.
+
+Two things the live run found that no test would have. A `POST` answered `501`
+and the first diagnosis — that `cloudflared` chunks every body and the proxy
+refused chunked — was **wrong**: the `501` came from the box's own
+`python -m http.server`, which has no `do_POST`. (Chunked request bodies are
+forwarded now rather than refused, which is a real improvement and was reachable
+from a direct client; it was not what that `501` was.) And killing the box's
+session left the share answering `502` forever with nothing said, because the
+dialer's helper lives *inside* the box's network namespace and keeps it alive
+after everything else in it has gone — so a box restarted afterwards gets a new
+namespace the share can never reach. The share now notices and ends.
+
+**The whole response matrix, run over both transports on 2026-08-10.** A dev
+server in a box answering a page, a `304`, a `HEAD`, a chunked response, a form
+`POST`, a chunked `POST` and an `Expect: 100-continue` upload — every shape the
+framing code had to be rewritten twice to get right — with an anonymous request
+refused alongside them. All of it in single-digit milliseconds on the P2P path.
+The two receipts record seven and six connections, which is one per request,
+which is the one-request rule visible in the evidence.
+
+**Hot reload, run for real on 2026-08-10, over both transports.** A dev server
+in a box answering a `Sec-WebSocket-Key` handshake with a genuine `101`, driven
+from a client that speaks the frame format: `echo:reload-please` came back
+through a Cloudflare quick tunnel, and again over a direct P2P path. Both
+receipts record it as two connections, which is what a page plus a socket is.
+
+**Two peers and a per-person revoke, run for real on 2026-08-10.** A tunnel
+share with two grants: both admitted, `share revoke` on one, and the other kept
+working — `200` and `401` from the same URL a second apart. The receipt lists
+them separately by grant and label, with the revoked one's traffic still counted
+and the refusal recorded as revoked rather than unknown. That is the property
+the whole grant model exists for and it had never been exercised outside a test.
+
+Also verified live, and worth recording because it was a defect this branch
+introduced and fixed: two `h5i join` sessions on one machine, a browser holding
+both of their cookies, and the box seeing neither — only the app's own `sid=9`.
+
+**Rounds 8 to 10, and what live running kept finding.** A ticket expiring on
+its own — not revoked, not interrupted — ends the share, writes the receipt,
+clears the record, and now tells the joiner why; that path was verified twice
+because the first fix for it was inert. A dev server that rejects a request
+before reading its body has its own answer relayed rather than replaced. And a
+`--tunnel` share with two grants had one of them revoked while the other kept
+working.
+
+**Rounds 11 to 14, and the two that would have bitten a real user.** A client
+that sends its request and then shuts down its write side — legal HTTP/1.1, and
+what anything built out of one write and one read does — had that EOF read as
+"the visitor left", so the relay stopped on the spot: a 2 MB download arrived as
+63 bytes, with a clean close and nothing recorded anywhere. And `h5i join` was
+hung up on by the sharer thirty seconds after connecting, because the sharer
+drops a connection that has never authorized a stream and the joiner did not
+open one until somebody visited the page — so the ordinary sequence (send a
+ticket, they join, *then* they open the browser) killed itself. The joiner now
+presents its ticket once at connect time, which fixes that and makes "joined" a
+statement about the ticket rather than about the network: a revoked ticket fails
+at `join` instead of at the first page load.
+
+The same rounds found `share status` rendering every share as `0m left` for its
+final minute, one column away from `expired`; `share grant` racing `share stop`
+closely enough to bring a stopped share back to life; a `revoke` on a crashed
+share reporting that connections had been dropped; a reused pid producing a
+share that could be neither stopped nor restarted by any verb; and Ctrl-C being
+swallowed for the whole six-second teardown on three of the four ways a share
+ends.
+
+**Round 15, and the fix that was worse than the bug.** Making Ctrl-C responsive
+during the teardown was done by arming the hard-exit watcher after the select —
+and on the three exits where no signal had been delivered yet, that meant the
+operator's *first* Ctrl-C hit a watcher built for their second: it printed
+"interrupted again", threw the receipt away and exited. Pressing Ctrl-C once to
+get a prompt back destroyed the one artifact this feature exists to produce, and
+said they had done it twice. An interrupt during the ending now means "stop
+waiting", not "stop recording"; only a second one exits without a receipt.
+Verified live three times out of three.
+
+The same round found that the join-time ticket check — itself a fix from the
+previous round — went the whole way into the box, costing a connection to the
+dev server and one of the share's 64 slots per join; that a new joiner against
+an un-updated sharer would be told its ticket was revoked, forever, because the
+greeting changed without the ALPN changing; and that `clear`, `clear_now` and
+`forget` deleted whatever record was on disk without checking whose it was,
+which a `stop --force` followed by a fresh `share` turns into one process
+deleting another's grant table after its ticket has been given to a human.
+
+**Round 16 was a fuzzer rather than a reader**, on the argument that fifteen
+rounds of adversarial reading had started mostly finding the previous round's
+work. `crates/h5i-share/src/fuzz.rs` generates request and response heads from a
+grammar seeded with every awkward token the earlier rounds turned up, mutates
+them, and asserts the properties the rest of the crate is entitled to assume:
+the credential never reaches the box, a redirect never leaves the origin, one
+framing and one `Connection` on the way out, line discipline in both
+directions. It is deterministic, prints the seed for any failure, and
+`H5I_FUZZ_ROUNDS` turns it into a soak.
+
+Twenty million heads found two defects a person had not: `split_cookie` applied
+its "nothing named like ours goes upstream" rule on the branch where a cookie
+has an `=` and not on the branch where it does not, and a response head with no
+status line at all was relayed with a *header* promoted into the status line's
+place, which a browser reports as a protocol error and nobody can trace. Two of
+the four failures it reported were the invariants being wrong rather than the
+code, which is its own kind of useful: `007` is a legal `Content-Length` and a
+cookie named `999h5i_share` is somebody else's.
+
+**Rounds 16 to 26 changed the kind of reader**, on the argument that fifteen
+rounds of adversarial reading had started mostly finding the previous round's
+work. A fuzzer, an end-to-end script that automates the live checks that had
+been done by hand for five rounds, a leak hunt, a flake hunt, the two capacity
+ceilings nothing had ever driven, an accounting sweep of every counter, and —
+the one that found most — a review from the **joiner's** side, asking what a
+hostile *sharer* can do to the person who pasted their ticket.
+
+That last direction had never been examined. It found that the joiner's
+handshake had no deadline on any of its three steps, so a sharer who simply
+never answered left `h5i join` hung with nothing printed at all; that a page
+served on the joiner's loopback could register a service worker, which outlives
+the share and keeps control of that address afterwards; that a ticket's
+addressing went to iroh unexamined, so one naming `127.0.0.1:2375` made the
+joiner dial a service on its own machine; and that the QUIC close reason, which
+the sharer chooses, was printed to the joiner's terminal unsanitised — the same
+escape-injection the `box_id` fix had just closed, through the field next to it.
+
+The fuzzer needed a round of its own, too. Measured against the real parser,
+1.9% of its heads were parseable, **none** of two million carried both framings,
+and about one per run carried a credential — so "twenty million heads pass" was
+true and meant almost nothing. Sampling the line ending once per head rather
+than once per line, and leaving two thirds of heads unmutated, took those to
+18%, 0.8% and 0.8%; the test now asserts floors on all three, so a generator
+that stops reaching the code fails instead of passing.
+
+**Rounds 27 to 36** kept changing the lens. Two more directions had never been
+looked at, and both paid: a review from the **joiner's** side (what a hostile
+*sharer* can do to the person who pasted the ticket) and one of **how a live
+share interacts with the rest of h5i** — the lifecycle verbs, the export, the
+console, and the fact that a share holds a box's namespace open.
+
+The worst thing either found: **a share of a box at the `process` tier with a
+profile that denies egress can never work, and the docs recommended exactly
+that configuration.** Such a box gets a network namespace of its own with no
+loopback brought up in it, so nothing inside can reach even itself. The share
+started, printed a ticket, and left both people reading messages about a dev
+server that was running the whole time. It is refused now, by name, and the
+MANUAL and the skill no longer name that tier as an option.
+
+Second: **a share pins one namespace at startup and only asked whether the box
+had *any* session.** Every session gets a new namespace, so somebody who exits
+a shell and starts another — or who has a read-only observer attached while
+they restart — left the share serving a namespace nothing was in, with
+`share ls` reporting it healthy. It compares the namespace now.
+
+Third, and the same argument for the third time: the wire had four reply codes
+and no way to say "h5i cannot reach the box". The receipt learned to tell that
+apart from "your dev server is down" in round 19; the joiner's browser was
+still being told to go and ask the sharer to start a server that was running.
+
+**The three findings rounds 27-36 recorded and did not fix** are fixed now, and
+each was verified by reproducing it first.
+
+`cloudflared` outlived a `SIGKILL` of the share by more than twenty seconds,
+with its public `trycloudflare.com` hostname still registered and still
+pointing at a loopback port that had just been freed — so for that window
+anything on the machine that bound it was on the public internet under a
+hostname h5i minted. `kill_on_drop` is a destructor and `SIGKILL` skips
+destructors; `PR_SET_PDEATHSIG` is the kernel doing it instead. Measured: gone
+in one second, against twenty-plus with the change removed.
+
+macOS carried that hazard in full until it was closed the only way Darwin
+allows. `PR_SET_PDEATHSIG` is something a process asks *for itself*, so Linux
+sets it in the child between fork and exec; nothing can ask it on behalf of a
+binary h5i does not compile. So a watchdog process waits on `kqueue` for either
+the share or `cloudflared` to exit, and kills the tunnel if the share went
+first — a separate process precisely because a `SIGKILL` cannot skip what is
+not running the share's code. Both pids are watched, not just the share's: a
+watchdog armed on one pid alone would outlive the tunnel it was guarding and
+eventually `SIGKILL` whatever inherited the recycled number. Measured on macOS
+the same way: the public hostname survived the full ten-second observation
+window before, and the tunnel is gone within 250 ms after.
+
+`h5i box rm` did not know what a share was. A shared box is almost always also
+`running`, so the operator was told to abort the box and never that somebody
+outside was connected to it — and the check has to sit *above* the status guard
+or it is unreachable. Worse, a share that outlived the removal wrote its
+receipt afterwards, and `receipt::append` creates the directory it writes into:
+the box came back as a receipt log and a payload under a path with no manifest,
+which every tool answers "no environment named that" for and only `rm -rf`
+clears. The receipt is skipped when the box is gone, which loses it — the right
+trade, since it is evidence about something that no longer exists.
+
+And the console showed nothing at all while a box was open to somebody. The
+receipt lands when the share *ends*, so the one lane that lets somebody **in**
+was the one lane the console could not see while it was open. `shared_now` is
+on the box row now.
+
+The pattern across all fifteen rounds is worth recording, because it is the
+argument for having run them: **every round found real defects in the previous
+round's fixes**, and five of the sharpest were fixes that did nothing at all — a
+`Connection: close` the box could ignore, a shutdown signal that was sent after
+the shutdown, a flag that recorded truncation for the rarest of the four ways a
+response gets cut short, and a linger drain whose two dedicated tests both
+passed with it deleted, and a signal handler armed for a second Ctrl-C that
+caught the first. That linger drain is now documented as what it is: bounded,
+kept for the sake of the intermediary on a tunnel share, and not a thing we can
+show changes what a visitor receives on Linux.
+
+`--direct-only` has been run, and it does what it says on the half that can be
+run here: the share starts, the peer gets a direct path, traffic flows, and the
+receipt records `via direct`.
+
+**macOS now has a route, and it is a different argument rather than the same
+one ported.** A Seatbelt box has no namespace to enter and binds the host's
+loopback, so "the box's port 3000" and "this machine's port 3000" are one port
+— which is why an earlier macOS arm, deleted in round 51, was wrong to connect
+to it and call whatever answered the box. What replaces it (`share::owner`)
+asks Darwin which process holds the listening socket and shares it only when
+that process is in the box's tree; a stranger, or a second process sharing the
+address, is refused and named. The check is redone on every dial, so a dev
+server that exits cannot have its share inherited by whatever claims the port
+next.
+
+That this is not a theoretical hazard was demonstrated by the machine it was
+written on: port 3000 was held by the box's `python3 -m http.server` on `::`
+*and* by an unrelated `serve.py` on `127.0.0.1`, and a plain loopback connect
+reached the stranger. Run end to end on macOS — share, `h5i join`, a direct
+QUIC path, and the visitor receiving the box's directory listing rather than
+the stranger's page. The three outcomes were each exercised: the box's port
+shared, a stranger's port refused by name, and an empty port warned about
+rather than refused. Boxes at the `container` and `microvm` tiers on macOS live
+inside a VM where no host process holds the port; they are refused with that
+reason rather than "nothing is listening".
+
+**Nine review rounds over that route (36–44) found six defects, and the shape
+of them is the point.** Only one was in the reasoning; the rest were in what
+the code could *see*.
+
+- The pid-identity hardening added for `session_pid` turned `h5i box share`
+  **off** on macOS entirely: `proc_start_ticks` read `/proc`, answered `None`
+  everywhere else, and the verified reader skips records that cannot prove
+  themselves. Both halves were individually correct and tested; no test held
+  the three together, and the platform where it broke was the one CI cannot
+  run the command on.
+- A pid that changed hands between the tree snapshot and the socket scan was
+  vouched for by the snapshot. Re-asked upwards from the winner now.
+- Both kernel scans sized their buffer once and added fixed slack. The kernel
+  never says "there was more", and both lists are ordered — so a process that
+  opens descriptors faster than the guess can push its own listening socket off
+  the end of the scan, and a listener h5i cannot see is one it cannot refuse.
+  Both grow until the answer provably fits.
+- The refusal named the offending process, and that name is the executable's
+  file name — chosen by whoever started it. A binary named with a literal `ESC`
+  wrote escape sequences into the sentence an operator reads while deciding
+  whether their port has been taken. Sanitised through the same helper the rest
+  of the repository already used.
+- A newborn child inherits its parent's descriptors across `fork`, so between
+  `fork` and `exec` it really does hold the dev server's listening socket —
+  and judged against a snapshot taken microseconds earlier it is a *stranger*
+  co-holding the box's address, which is a refusal. A busy box therefore
+  refused its own visitors in proportion to how busy it was. Found by a
+  concurrency test on its first run, with `/usr/bin/true` reported as
+  co-holding a port.
+- And the module's own note claimed a refusal it could not make: a listener
+  belonging to another user is never *attributed* to the box, which is safe,
+  but neither can it be counted as a competitor — so "unambiguous" rested in
+  part on not having seen what this process may not see. Recorded as a limit
+  rather than argued away.
+
+The through-line: on Linux the namespace makes the guarantee true by
+construction, and there is nothing to observe. Here it is established by
+observation, and every defect but one was the observation being incomplete —
+which is the failure mode this approach has and the namespace does not, and is
+worth stating plainly wherever the two are compared.
+
+**Still not demonstrated.** The two h5i processes were on one machine: a real
+direct QUIC path through the host's network stack, but not two machines on two
+networks. On macOS the two-machine half is likewise untried, and `SO_REUSEPORT`
+contention is covered by unit tests over the decision rule rather than by two
+real processes racing for one address. And `--direct-only` has never been
+exercised against a hole punch that actually *fails* — the refusal is the half
+that matters and it needs two hostile NATs to reach. Those are what remains of
+the exit criteria.
+
 ## 9. Limits we state up front
 
 Being explicit about these is a feature, since the claim is a security claim.
@@ -1729,6 +2293,19 @@ Being explicit about these is a feature, since the claim is a security claim.
   full-desktop tier lands.
 - **A dependency on the critical path.** agent-browser is someone else's
   release cadence. Pinned, CLI-boundary, forkable, but not ours.
+- **A share is a door, and `--tunnel` is a wider one.** `h5i box share` is the
+  only path that lets traffic *into* a box, and it is opt-in, expiring and
+  revocable per peer. The peer-to-peer transport is end-to-end encrypted and a
+  relay, if one is needed, moves sealed packets. `--tunnel` is not end to end:
+  Cloudflare terminates TLS and can read the traffic. That is a reasonable trade
+  for a prototype and it is never ours to assume, so it is printed when the
+  share starts and written into the box's receipt, not just documented here.
+  Two smaller edges: authorization is checked when a connection is established
+  and live connections are dropped within about a second of a revoke rather than
+  instantly; and the page a joiner opens is agent-written code running in their
+  browser, on a loopback origin that browsers exempt from private-network
+  protections — which is the one place `--tunnel`, on a public origin, is
+  actually the safer of the two.
 - **Browser mediation is enforcement, not containment.** The socket mediator
   (M8) decides every verb the agent's CLI sends, which is the threat the
   control lock was written for: an agent that does not know a human took the

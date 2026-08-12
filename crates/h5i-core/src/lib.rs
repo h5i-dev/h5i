@@ -18,6 +18,10 @@ pub mod refstore;
 // bundle, and the build script's dependency on Node.
 #[cfg(feature = "web")]
 pub mod server;
+// Reading `share.json` for everything below `h5i-share`. See the module note:
+// there were three hand-rolled probes here and they did not agree with the
+// crate that writes the file.
+pub mod share_record;
 pub mod skill;
 pub mod source;
 pub mod storage;

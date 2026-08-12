@@ -290,8 +290,18 @@ async fn asset(Path(path): Path<String>) -> Response {
 /// box's own account and is counted as such.
 // The browser mediator is host-observed like the viewer: the records are
 // written by an h5i process sitting on the socket, not claimed by the box.
-const HOST_OBSERVED_LANES: [&str; 4] =
-    ["host-env-run", "shell-egress", "viewer", "browser-proxy"];
+// `share` is on this list because h5i owns both ends of the share bridge, the
+// box supplies none of it, and the box cannot suppress it. Leaving it off
+// inverted the badge: a box whose only receipt was a share read as having no
+// host-observed evidence at all — the grey "the box told us this" badge — for
+// the one lane the box cannot touch.
+const HOST_OBSERVED_LANES: [&str; 5] = [
+    "host-env-run",
+    "shell-egress",
+    "viewer",
+    "browser-proxy",
+    "share",
+];
 
 #[derive(Serialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct Signals {
@@ -414,6 +424,45 @@ pub struct BoxRow {
     pub deletions: usize,
     pub last_event: Option<EnvEvent>,
     pub signals: Signals,
+    /// A share serving this box **right now**, if one is.
+    ///
+    /// The receipt lands when the share ends, so until this the console showed
+    /// nothing at all while a box was open to somebody on another machine —
+    /// and the console's whole job is saying what is pressing on a boundary.
+    /// The one lane that lets somebody *in* was the one it could not see while
+    /// it was open.
+    pub shared_now: Option<SharedNow>,
+}
+
+/// What the console needs to say about a share that is open.
+///
+/// Read off `<env>/share.json`, which is where the share keeps it, rather than
+/// through `h5i-share`: that crate is above this one. No secret is in the file
+/// and none is read here — the grant table stores digests, and this takes the
+/// transport, the port and the number of grants that can still admit anybody.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct SharedNow {
+    pub transport: String,
+    pub port: u64,
+    pub grants: usize,
+}
+
+fn shared_now(env_dir: &std::path::Path) -> Option<SharedNow> {
+    // Only when somebody can actually reach in. A share that is winding up, or
+    // whose grants have all been revoked, has a live pid and admits nobody —
+    // and the badge said "somebody outside can reach port 3000 right now" of
+    // it, for as long as that process took to exit. On a screen whose job is
+    // saying what is pressing on a boundary, overclaiming toward alarm is the
+    // failure that costs it its credibility.
+    let r = crate::share_record::read_live(env_dir)?;
+    if !r.is_admitting() {
+        return None;
+    }
+    Some(SharedNow {
+        transport: r.transport,
+        port: r.port as u64,
+        grants: r.live_grants,
+    })
 }
 
 fn build_row(
@@ -440,6 +489,7 @@ fn build_row(
         deletions,
         last_event: events.last().cloned(),
         signals: signals(m, receipts),
+        shared_now: shared_now(&m.dir(h5i_root)),
         manifest: m.clone(),
     }
 }
@@ -955,6 +1005,7 @@ mod tests {
             files: vec![],
             egress: None,
             browser: None,
+            share: None,
             redactions: vec![],
             raw_oid: "d".repeat(64),
             raw_size: 0,
@@ -966,6 +1017,68 @@ mod tests {
     /// The box writes `inbox-capture` records into its own spool. Counting any
     /// unknown source as host-observed let it clear the grey "box-claimed"
     /// badge — the one distinction this screen is built on.
+    #[test]
+    fn a_box_being_shared_right_now_says_so() {
+        // The receipt lands when the share *ends*, so until this the console
+        // showed nothing at all while a box was open to somebody on another
+        // machine — for the one lane that lets somebody in, on a screen whose
+        // job is saying what is pressing on a boundary.
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(shared_now(dir.path()).is_none(), "no file, nothing to say");
+
+        let now = chrono::Utc::now().timestamp();
+        let record = |extra: &str, revoked: bool| {
+            serde_json::json!({
+                "v": 1,
+                "box_id": "env/a/demo",
+                "port": 3000,
+                "transport": "tunnel",
+                "endpoint": "https://x",
+                "started_at": "2026-01-01T00:00:00Z",
+                "pid": std::process::id(),
+                "winding_up": extra == "winding",
+                "grants": [
+                    {"id": "a", "secret_sha256": "ff", "revoked": revoked, "expires_at": now + 600},
+                    {"id": "b", "secret_sha256": "ff", "revoked": true,    "expires_at": now + 600},
+                    {"id": "c", "secret_sha256": "ff", "revoked": false,   "expires_at": now - 1},
+                ],
+            })
+            .to_string()
+        };
+
+        std::fs::write(dir.path().join("share.json"), record("", false)).expect("write");
+        let got = shared_now(dir.path()).expect("a live share");
+        assert_eq!(got.transport, "tunnel");
+        assert_eq!(got.port, 3000);
+        // Only the grants that can still admit somebody: one revoked and one
+        // expired are two tickets that let nobody in.
+        assert_eq!(got.grants, 1);
+
+        // A share that is winding up has a live pid and admits nobody. The
+        // badge used to say "somebody outside can reach port 3000 right now"
+        // of it, for as long as that process took to write its receipt.
+        std::fs::write(dir.path().join("share.json"), record("winding", false)).expect("write");
+        assert!(shared_now(dir.path()).is_none(), "a winding-up share is not admitting anyone");
+
+        // And so does one whose every grant has been revoked.
+        std::fs::write(dir.path().join("share.json"), record("", true)).expect("write");
+        assert!(shared_now(dir.path()).is_none(), "no live grant is nobody admitted");
+
+        // A record left by a process that is gone is not a share.
+        std::fs::write(dir.path().join("share.json"), "{\"pid\":0}").expect("write");
+        assert!(shared_now(dir.path()).is_none());
+    }
+
+    #[test]
+    fn a_share_is_host_observed_evidence() {
+        // h5i owns both ends of the share bridge and the box supplies none of
+        // it, so leaving the lane off the list inverted the badge: a box whose
+        // only receipt was a share read as having no host-observed evidence at
+        // all, which is the grey "the box told us this" badge — for the one
+        // lane the box cannot touch.
+        assert!(HOST_OBSERVED_LANES.contains(&"share"));
+    }
+
     #[test]
     fn box_written_lanes_are_never_counted_as_host_observed() {
         let m = manifest("container");

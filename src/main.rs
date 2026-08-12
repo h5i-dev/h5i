@@ -63,6 +63,46 @@ enum Commands {
         action: cli::browser::BrowserCommands,
     },
 
+    /// Open a box someone else is sharing, from a ticket they sent you.
+    ///
+    /// Connects peer to peer, end-to-end encrypted, and serves their dev server
+    /// on this machine's loopback. The local URL carries its own token, minted
+    /// here — the ticket's secret is never handed to a browser.
+    ///
+    /// What you are opening is somebody else's agent's code. Treat it like any
+    /// link a colleague sends you.
+    #[cfg(feature = "share")]
+    Join {
+        /// The `h5i1_…` ticket you were sent, or `-` to read it from stdin.
+        ///
+        /// `/proc/<pid>/cmdline` is world-readable on an ordinary Linux box
+        /// and this process runs for the whole session, so a ticket passed as
+        /// an argument is legible to every other user on the machine for as
+        /// long as you are joined — and a ticket is the whole authorization.
+        /// `pbpaste | h5i join -` keeps it out of the process table and out
+        /// of your shell history.
+        #[arg(value_name = "TICKET")]
+        ticket: String,
+        /// Local port to serve it on. 0 picks a free one and prints it.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Join even when the only address left is `127.0.0.1`.
+        ///
+        /// Each join normally gets a loopback address of its own, because a
+        /// browser's cookie jar is scoped by host and ignores the port. On
+        /// `127.0.0.1` the jar is shared with every local service you run, so
+        /// the token this proxy sets is sent to any of them you visit while
+        /// joined — and that token reaches the box. macOS configures only
+        /// `127.0.0.1` on `lo0`, so this is the macOS answer unless you add an
+        /// address yourself (`sudo ifconfig lo0 alias 127.0.0.2`).
+        ///
+        /// Your own cookies are not the other half of this: they are filtered
+        /// on a shared jar whether or not you pass this, and only cookies the
+        /// box set itself are ever sent back to it.
+        #[arg(long)]
+        shared_jar: bool,
+    },
+
     /// Write or print the agent skill this binary carries.
     Skill {
         #[command(subcommand)]
@@ -225,6 +265,12 @@ fn main() -> anyhow::Result<()> {
         #[cfg(feature = "web")]
         Commands::Ui { port, open } => cli::ui::run(port, open)?,
         Commands::Browser { action } => cli::browser::run(action)?,
+        #[cfg(feature = "share")]
+        Commands::Join {
+            ticket,
+            port,
+            shared_jar,
+        } => cli::share::join(&ticket, port, shared_jar)?,
         Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,
         Commands::Man => cli::man::run()?,
@@ -288,6 +334,13 @@ fn compiled_features() -> Vec<&'static str> {
     let mut features: Vec<&str> = Vec::new();
     #[cfg(feature = "web")]
     features.push("web");
+    // Both switches, because they are separately selectable and a consumer
+    // deciding whether to offer a share UI needs to know which half is here:
+    // `share-tunnel` alone means `box share --tunnel` and no `join`.
+    #[cfg(feature = "share-tunnel")]
+    features.push("share-tunnel");
+    #[cfg(feature = "share")]
+    features.push("share");
     features.sort_unstable();
     features
 }
@@ -396,7 +449,31 @@ mod tests {
         #[cfg(feature = "web")]
         assert!(features.contains(&"web"));
         #[cfg(not(feature = "web"))]
-        assert!(features.is_empty());
+        assert!(!features.contains(&"web"));
+        // `share` implies `share-tunnel`, so the p2p build reports both and a
+        // tunnel-only build reports exactly one. This output is what an
+        // installer or a wrapper reads to decide whether the share workflow
+        // exists at all; a default build that omitted it read as one without
+        // sharing compiled in.
+        #[cfg(feature = "share")]
+        {
+            assert!(features.contains(&"share"));
+            assert!(features.contains(&"share-tunnel"));
+        }
+        #[cfg(all(feature = "share-tunnel", not(feature = "share")))]
+        {
+            assert!(features.contains(&"share-tunnel"));
+            assert!(!features.contains(&"share"));
+        }
+        #[cfg(not(feature = "share-tunnel"))]
+        {
+            assert!(!features.contains(&"share"));
+            assert!(!features.contains(&"share-tunnel"));
+        }
+        // Sorted, because the JSON is diffable output.
+        let mut sorted = features.clone();
+        sorted.sort_unstable();
+        assert_eq!(features, sorted);
     }
 
     /// Route `argv` through clap and the short-form fold, exactly as `main`
@@ -419,7 +496,11 @@ mod tests {
     fn create_parts(argv: &[&str]) -> (String, Option<String>, Option<String>, bool) {
         match dispatch(argv) {
             Ok(cli::boxes::BoxCommands::Create {
-                name, pr, clone, new, ..
+                name,
+                pr,
+                clone,
+                new,
+                ..
             }) => (name, pr, clone, new),
             Ok(_) => panic!("expected Create"),
             Err(e) => panic!("dispatch failed: {e}"),
@@ -447,7 +528,9 @@ mod tests {
         // it, so it has to point at the flag rather than read as "h5i cannot
         // do this".
         for spec in ["1234", "#7", "https://github.com/o/r/pull/42"] {
-            let err = dispatch(&["h5i", "box", spec]).err().expect("must be refused");
+            let err = dispatch(&["h5i", "box", spec])
+                .err()
+                .expect("must be refused");
             assert!(err.contains("--pr"), "{spec}: {err}");
             assert!(err.contains("pull request"), "{spec}: {err}");
         }
@@ -457,20 +540,17 @@ mod tests {
     fn a_repository_url_is_still_a_positional_and_still_clones() {
         // The PR check runs first, and this is what must survive it: a plain
         // repository URL has no `/pull/<n>`, so it is unaffected.
-        let (_, pr, clone, _) = create_parts(&[
-            "h5i",
-            "box",
-            "https://github.com/o/r.git",
-            "--name",
-            "r",
-        ]);
+        let (_, pr, clone, _) =
+            create_parts(&["h5i", "box", "https://github.com/o/r.git", "--name", "r"]);
         assert_eq!(pr, None);
         assert_eq!(clone.as_deref(), Some("https://github.com/o/r.git"));
     }
 
     #[test]
     fn an_unrecognized_source_names_every_way_in() {
-        let err = dispatch(&["h5i", "box", "wat"]).err().expect("must be refused");
+        let err = dispatch(&["h5i", "box", "wat"])
+            .err()
+            .expect("must be refused");
         for hint in ["--pr", "--new", "repository URL"] {
             assert!(err.contains(hint), "{err}");
         }

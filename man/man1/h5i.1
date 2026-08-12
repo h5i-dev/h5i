@@ -25,6 +25,9 @@ Open the box console in a browser: one read\-only screen over the whole fleet \(
 h5i\-browser(1)
 The browser control lock: who is driving the browser in a box
 .TP
+h5i\-join(1)
+Open a box someone else is sharing, from a ticket they sent you
+.TP
 h5i\-skill(1)
 Write or print the agent skill this binary carries
 .TP
@@ -280,6 +283,132 @@ Frame\-rate ceiling asked of the box, for `\-\-term`
 .TP
 \fB\-\-assume\-graphics\fR
 Skip the graphics probe and render anyway, for `\-\-term`. Frames are then sent uncompressed (about six times the bytes), because the probe is also what asks whether this terminal accepts deflated ones
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX SHARE"
+Let one other person try this box's web app, from their own machine
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshare\fR [\fB\-\-port\fR] [\fB\-\-expire\fR] [\fB\-\-label\fR] [\fB\-\-tunnel\fR] [\fB\-\-direct\-only\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fINAME\fR] [\fIsubcommands\fR]
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 3000]
+The port inside the box \(em whatever the dev server in there binds.
+
+Not `0`: that is not a port a server can be listening on, and the same spelling means "pick a free one" on `h5i join`, which is the opposite.
+.TP
+\fB\-\-expire\fR \fI<EXPIRE>\fR [default: 60m]
+How long the ticket lasts: `30m`, `2h`, `90s`, or bare seconds. 24h max
+.TP
+\fB\-\-label\fR \fI<LABEL>\fR
+A name for the peer you are sending this to, for `status` and the receipt
+.TP
+\fB\-\-tunnel\fR
+Publish through a Cloudflare quick tunnel instead of peer to peer, so the other side needs no h5i \(em just a browser.
+
+The trade is real and is recorded in the receipt: Cloudflare terminates TLS, so this path is not end\-to\-end encrypted.
+.TP
+\fB\-\-direct\-only\fR
+Refuse to move any application byte over a relay. If a direct peer\-to\-peer path cannot be established, the share fails instead
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fINAME\fR]
+The box whose dev server you want someone else to try
+.SH "H5I BOX SHARE STATUS"
+Show a share: its endpoint, its grants, and how long each has left
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstatus\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the share record as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX SHARE LIST"
+List this clone's share records, live ones and any left by a crash
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BOX SHARE GRANT"
+Mint another ticket for a running share, so a second person can join
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBgrant\fR [\fB\-\-label\fR] [\fB\-\-expire\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-label\fR \fI<LABEL>\fR
+A name for this peer, to make `status` and the receipt readable
+.TP
+\fB\-\-expire\fR \fI<EXPIRE>\fR [default: 60m]
+How long this ticket lasts: `30m`, `2h`, `90s`, or bare seconds. 24h max
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX SHARE REVOKE"
+Revoke one peer's ticket. The share keeps serving everyone else, and any connection that peer already has is dropped within a second
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrevoke\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> <\fIGRANT\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.TP
+<\fIGRANT\fR>
+
+.SH "H5I BOX SHARE STOP"
+Stop a share running in another terminal
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstop\fR [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-force\fR
+Delete the share record instead of asking its process to stop.
+
+For a record whose pid has been taken over by an unrelated process: h5i then believes the share is serving forever, and no other verb gets out of that. No receipt is written, because the process that would have written one is gone.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
@@ -796,6 +925,33 @@ Print help
 .TP
 <\fINAME\fR>
 
+.SH "H5I JOIN"
+Open a box someone else is sharing, from a ticket they sent you
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBjoin\fR [\fB\-\-port\fR] [\fB\-\-shared\-jar\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITICKET\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 0]
+Local port to serve it on. 0 picks a free one and prints it
+.TP
+\fB\-\-shared\-jar\fR
+Join even when the only address left is `127.0.0.1`.
+
+Each join normally gets a loopback address of its own, because a browser\*(Aqs cookie jar is scoped by host and ignores the port. On `127.0.0.1` the jar is shared with every local service you run, so the token this proxy sets is sent to any of them you visit while joined \(em and that token reaches the box. macOS configures only `127.0.0.1` on `lo0`, so this is the macOS answer unless you add an address yourself (`sudo ifconfig lo0 alias 127.0.0.2`).
+
+Your own cookies are not the other half of this: they are filtered on a shared jar whether or not you pass this, and only cookies the box set itself are ever sent back to it.
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fITICKET\fR>
+The `h5i1_...` ticket you were sent, or `\-` to read it from stdin.
+
+`/proc/<pid>/cmdline` is world\-readable on an ordinary Linux box and this process runs for the whole session, so a ticket passed as an argument is legible to every other user on the machine for as long as you are joined \(em and a ticket is the whole authorization. `pbpaste | h5i join \-` keeps it out of the process table and out of your shell history.
 .SH "H5I SKILL"
 Write or print the agent skill this binary carries
 .ie \n(.g .ds Aq \(aq

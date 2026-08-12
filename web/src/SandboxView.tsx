@@ -502,6 +502,14 @@ function FleetPane(props: {
                           {b.drift}
                         </span>
                       ) : null}
+                      {b.shared_now ? (
+                        <span
+                          className="sbx-drift"
+                          title={`somebody outside can reach port ${b.shared_now.port} inside this box right now, over ${b.shared_now.transport} (${b.shared_now.grants} live ticket(s)). The receipt for it lands when the share ends.`}
+                        >
+                          {" · shared now"}
+                        </span>
+                      ) : null}
                       {b.stale_running ? (
                         <span
                           className="sbx-drift"

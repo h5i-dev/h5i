@@ -178,7 +178,12 @@ impl RunLock {
     /// Exclusive writer lock on `run.lock` — serializes mutating sessions/ops
     /// against each other. Does **not** exclude read-only observers.
     fn acquire(env_dir: &Path) -> Result<RunLock, H5iError> {
-        Self::flock(env_dir, RUN_LOCK_FILE, LockMode::Exclusive, LockRole::Writer)
+        Self::flock(
+            env_dir,
+            RUN_LOCK_FILE,
+            LockMode::Exclusive,
+            LockRole::Writer,
+        )
     }
 
     /// Shared observer-presence lock on `observers.lock` — coexists with other
@@ -230,15 +235,21 @@ impl RunLock {
                 let msg = match role {
                     // Another writer (or a teardown's `run.lock` hold) is live.
                     // Observers never take `run.lock`, so they can't cause this.
-                    LockRole::Writer => "environment is busy — another `h5i box run`/`shell` \
-                         or lifecycle op (propose/apply/rebase/abort) holds it",
+                    LockRole::Writer => {
+                        "environment is busy — another `h5i box run`/`shell` \
+                         or lifecycle op (propose/apply/rebase/abort) holds it"
+                    }
                     // A teardown holds `observers.lock` exclusively.
-                    LockRole::Observer => "environment is being torn down (gc/rm) — a \
-                         `--readonly` observer can attach only once that completes",
+                    LockRole::Observer => {
+                        "environment is being torn down (gc/rm) — a \
+                         `--readonly` observer can attach only once that completes"
+                    }
                     // Live read-only observers hold `observers.lock` shared.
-                    LockRole::Teardown => "environment is busy — it has live `--readonly` \
+                    LockRole::Teardown => {
+                        "environment is busy — it has live `--readonly` \
                          observer session(s); this op removes the worktree and can proceed only \
-                         once every observer exits",
+                         once every observer exits"
+                    }
                 };
                 return Err(H5iError::Metadata(msg.into()));
             }
@@ -565,8 +576,8 @@ pub fn append_env_commit(
         };
         let base_tree = parent.as_ref().and_then(|c| c.tree().ok());
 
-        let mut log =
-            crate::refstore::read_blob_from_tree(repo, base_tree.as_ref(), EVENTS_FILE).unwrap_or_default();
+        let mut log = crate::refstore::read_blob_from_tree(repo, base_tree.as_ref(), EVENTS_FILE)
+            .unwrap_or_default();
         if !log.is_empty() && !log.ends_with('\n') {
             log.push('\n');
         }
@@ -575,13 +586,15 @@ pub fn append_env_commit(
 
         let mut files: Vec<(&str, String)> = vec![(EVENTS_FILE, log)];
         if let (Some(m), Some(line)) = (manifest, &manifest_line) {
-            let existing = crate::refstore::read_blob_from_tree(repo, base_tree.as_ref(), MANIFESTS_FILE)
-                .unwrap_or_default();
+            let existing =
+                crate::refstore::read_blob_from_tree(repo, base_tree.as_ref(), MANIFESTS_FILE)
+                    .unwrap_or_default();
             files.push((MANIFESTS_FILE, upsert_jsonl_by_id(&existing, &m.id, line)));
         }
         if let (Some(m), Some(toml)) = (manifest, policy_toml) {
-            let existing = crate::refstore::read_blob_from_tree(repo, base_tree.as_ref(), POLICIES_FILE)
-                .unwrap_or_default();
+            let existing =
+                crate::refstore::read_blob_from_tree(repo, base_tree.as_ref(), POLICIES_FILE)
+                    .unwrap_or_default();
             // Only write a policy once (it is immutable after create).
             if !existing.lines().any(|l| {
                 serde_json::from_str::<serde_json::Value>(l)
@@ -643,8 +656,8 @@ fn append_removed_and_strip(repo: &Repository, ev: &EnvEvent) -> Result<(), H5iE
         };
         let base_tree = parent.as_ref().and_then(|c| c.tree().ok());
 
-        let mut log =
-            crate::refstore::read_blob_from_tree(repo, base_tree.as_ref(), EVENTS_FILE).unwrap_or_default();
+        let mut log = crate::refstore::read_blob_from_tree(repo, base_tree.as_ref(), EVENTS_FILE)
+            .unwrap_or_default();
         if !log.is_empty() && !log.ends_with('\n') {
             log.push('\n');
         }
@@ -837,8 +850,8 @@ pub fn union_merge_commits(
 
     for oid in [local_oid, incoming_oid] {
         let tree = repo.find_commit(oid)?.tree().ok();
-        let raw =
-            crate::refstore::read_blob_from_tree(repo, tree.as_ref(), EVENTS_FILE).unwrap_or_default();
+        let raw = crate::refstore::read_blob_from_tree(repo, tree.as_ref(), EVENTS_FILE)
+            .unwrap_or_default();
         for line in raw.lines() {
             if line.trim().is_empty() {
                 continue;
@@ -850,8 +863,8 @@ pub fn union_merge_commits(
                 }
             }
         }
-        let mraw =
-            crate::refstore::read_blob_from_tree(repo, tree.as_ref(), MANIFESTS_FILE).unwrap_or_default();
+        let mraw = crate::refstore::read_blob_from_tree(repo, tree.as_ref(), MANIFESTS_FILE)
+            .unwrap_or_default();
         for line in mraw.lines() {
             if let Ok(m) = serde_json::from_str::<EnvManifest>(line) {
                 match manifests.get(&m.id) {
@@ -862,8 +875,8 @@ pub fn union_merge_commits(
                 }
             }
         }
-        let praw =
-            crate::refstore::read_blob_from_tree(repo, tree.as_ref(), POLICIES_FILE).unwrap_or_default();
+        let praw = crate::refstore::read_blob_from_tree(repo, tree.as_ref(), POLICIES_FILE)
+            .unwrap_or_default();
         for line in praw.lines() {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
                 if let (Some(id), Some(toml)) = (
@@ -1135,7 +1148,10 @@ pub fn build_branch_scoped_merge(
 pub fn save_manifest(h5i_root: &Path, m: &EnvManifest) -> Result<(), H5iError> {
     let dir = m.dir(h5i_root);
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
-    atomic_write(&dir.join(MANIFEST_FILE), serde_json::to_string_pretty(m)?.as_bytes())?;
+    atomic_write(
+        &dir.join(MANIFEST_FILE),
+        serde_json::to_string_pretty(m)?.as_bytes(),
+    )?;
     atomic_write(&dir.join(STATUS_FILE), format!("{}\n", m.status).as_bytes())?;
     Ok(())
 }
@@ -1403,10 +1419,7 @@ fn init_detached_workspace(
             Ok((oid, tree_oid))
         }
         BoxSource::Clone { url } => {
-            let hooks = work
-                .parent()
-                .unwrap_or(work)
-                .join("clone-hooks-disabled");
+            let hooks = work.parent().unwrap_or(work).join("clone-hooks-disabled");
             std::fs::create_dir_all(&hooks).map_err(|e| H5iError::with_path(e, &hooks))?;
             let out = std::process::Command::new("git")
                 .arg("-c")
@@ -1536,7 +1549,12 @@ pub fn create(
             let agent_runnable = (|| -> Result<(), H5iError> {
                 let claim = match opts.isolation {
                     Some(sandbox::IsolationRequest::Claim(c)) => c,
-                    _ => sandbox::effective_auto(workdir, agent_profile, false, opts.image.as_deref())?,
+                    _ => sandbox::effective_auto(
+                        workdir,
+                        agent_profile,
+                        false,
+                        opts.image.as_deref(),
+                    )?,
                 };
                 let mut prof = sandbox::load_profile(workdir, agent_profile, Some(claim))?;
                 if let Some(img) = &opts.image {
@@ -1639,7 +1657,9 @@ pub fn create(
         let base_commit = repo
             .revparse_single(rev)
             .and_then(|o| o.peel_to_commit())
-            .map_err(|e| H5iError::Metadata(format!("cannot resolve base revision '{rev}': {e}")))?;
+            .map_err(|e| {
+                H5iError::Metadata(format!("cannot resolve base revision '{rev}': {e}"))
+            })?;
         let base_tree = base_commit.tree()?.id();
         let parent_branch = opts.parent_branch.clone().unwrap_or_else(|| {
             repo.head()
@@ -1656,7 +1676,9 @@ pub fn create(
             wt_opts.reference(Some(&branch_ref));
             let wt = repo
                 .worktree(&wt_name, &work_path, Some(&wt_opts))
-                .map_err(|e| H5iError::Metadata(format!("worktree creation failed for {id}: {e}")))?;
+                .map_err(|e| {
+                    H5iError::Metadata(format!("worktree creation failed for {id}: {e}"))
+                })?;
             // Lock the worktree for the env's whole life so a stray
             // `git worktree prune` can't reclaim a live env out from under it;
             // `h5i box gc` is the only thing that unlocks+prunes it (and only
@@ -2287,7 +2309,9 @@ fn reset_private_tmp(backing: &Path) -> Result<(), H5iError> {
         use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
         // `symlink_metadata`: a symlink planted here must never be followed.
         if let Ok(md) = std::fs::symlink_metadata(backing) {
-            let ours = md.is_dir() && !md.file_type().is_symlink() && md.uid() == unsafe { libc::getuid() };
+            let ours = md.is_dir()
+                && !md.file_type().is_symlink()
+                && md.uid() == unsafe { libc::getuid() };
             if !ours {
                 return Err(H5iError::Metadata(format!(
                     "{} exists and is not a directory this user owns — refusing to use it as a \
@@ -3530,7 +3554,10 @@ fn browser_env_inner(policy: &ResolvedPolicy, shimmed: bool) -> Vec<(String, Str
     // add a layer. The tier's egress enforcement is unchanged either way; what
     // is lost is agent-browser's own in-process check. See `browser_shim_source`.
     if !shimmed {
-        v.push(("AGENT_BROWSER_ALLOWED_DOMAINS".to_string(), allowed.join(",")));
+        v.push((
+            "AGENT_BROWSER_ALLOWED_DOMAINS".to_string(),
+            allowed.join(","),
+        ));
     }
     v.extend(vec![
         // Headless. There is no `AGENT_BROWSER_HEADLESS` — agent-browser reads
@@ -3595,10 +3622,7 @@ fn browser_env_inner(policy: &ResolvedPolicy, shimmed: bool) -> Vec<(String, Str
     // this one (verified: it selects lightpanda and writes it to `.engine`),
     // which is the bar every variable here has to clear.
     if let Some(sandbox::BrowserEngine::Lightpanda) = engine {
-        v.push((
-            "AGENT_BROWSER_ENGINE".to_string(),
-            "lightpanda".to_string(),
-        ));
+        v.push(("AGENT_BROWSER_ENGINE".to_string(), "lightpanda".to_string()));
     }
 
     v
@@ -3668,7 +3692,8 @@ mod browser_engine_env_tests {
     // What they are about (which variables a browser box is handed) is a pure
     // function of the profile, and `resolve` returns this same value.
     fn policy_for(engine: BrowserEngine) -> ResolvedPolicy {
-        let mut profile = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
+        let mut profile =
+            Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
         profile.engine = Some(engine);
         ResolvedPolicy::new(IsolationClaim::Supervised, profile)
     }
@@ -3714,7 +3739,9 @@ mod browser_engine_env_tests {
         // With no redirect there is no *private* /tmp, and mediating on the
         // host's shared one would let two boxes steal each other's socket.
         let mut plain = policy.clone();
-        plain.home_binds.retain(|b| b.target != std::path::Path::new("/tmp"));
+        plain
+            .home_binds
+            .retain(|b| b.target != std::path::Path::new("/tmp"));
         assert_eq!(
             host_tmp_root(&plain, env_dir),
             None,
@@ -3727,8 +3754,7 @@ mod browser_engine_env_tests {
         // A container's /tmp is in the image, so there is no host path to bind.
         // Returning a path anyway is what produces a mediator nobody connects
         // to, which reads as enforcement and is not.
-        let mut profile =
-            Profile::builtin_browser(IsolationClaim::Container, AgentRuntime::Claude);
+        let mut profile = Profile::builtin_browser(IsolationClaim::Container, AgentRuntime::Claude);
         profile.engine = Some(BrowserEngine::Chromium);
         profile.image = Some("example:latest".to_string());
         // Same reason as `policy_for`: resolving the container claim needs
@@ -3748,7 +3774,11 @@ mod browser_engine_env_tests {
         assert!(names(&env).contains(&"H5I_BROWSER_ALLOW"));
         assert!(names(&env).contains(&"H5I_BROWSER_RECEIPTS"));
         // The daemon dir is agent-browser's and means nothing here.
-        assert!(!names(&env).contains(&"H5I_BROWSER_DAEMON_DIR"), "{:?}", names(&env));
+        assert!(
+            !names(&env).contains(&"H5I_BROWSER_DAEMON_DIR"),
+            "{:?}",
+            names(&env)
+        );
     }
 
     #[test]
@@ -3766,7 +3796,9 @@ mod browser_engine_env_tests {
             .expect("the in-process allowlist must survive the engine switch");
         assert!(allowed.contains("localhost"), "{allowed}");
         assert_eq!(
-            env.iter().find(|(k, _)| k == "AGENT_BROWSER_HEADED").map(|(_, v)| v.as_str()),
+            env.iter()
+                .find(|(k, _)| k == "AGENT_BROWSER_HEADED")
+                .map(|(_, v)| v.as_str()),
             Some("0"),
             "headless must stay pinned too"
         );
@@ -3790,7 +3822,11 @@ mod browser_engine_env_tests {
         // Upstream: "Custom Chrome arguments (--args) are not supported with
         // Lightpanda" — setting it breaks every command rather than hardening.
         let env = browser_env_inner(&policy_for(BrowserEngine::Lightpanda), false);
-        assert!(!names(&env).contains(&"AGENT_BROWSER_ARGS"), "{:?}", names(&env));
+        assert!(
+            !names(&env).contains(&"AGENT_BROWSER_ARGS"),
+            "{:?}",
+            names(&env)
+        );
         assert_eq!(
             env.iter()
                 .find(|(k, _)| k == "AGENT_BROWSER_ENGINE")
@@ -3802,13 +3838,16 @@ mod browser_engine_env_tests {
     #[test]
     fn chromium_keeps_the_no_sandbox_arguments_and_names_no_engine() {
         let env = browser_env_inner(&policy_for(BrowserEngine::Chromium), false);
-        assert!(names(&env).contains(&"AGENT_BROWSER_ARGS"), "{:?}", names(&env));
+        assert!(
+            names(&env).contains(&"AGENT_BROWSER_ARGS"),
+            "{:?}",
+            names(&env)
+        );
         // The default needs no naming, and naming it would be one more string
         // to keep in step with upstream's own default.
         assert!(!names(&env).contains(&"AGENT_BROWSER_ENGINE"));
     }
 }
-
 
 /// The **host-side** path of the box's `/tmp`, or `None` when the box's `/tmp`
 /// is not reachable from the host at all.
@@ -4108,10 +4147,7 @@ pub struct TeamReplySpool {
     pub body: String,
 }
 
-pub fn write_team_reply_spool(
-    spool: &Path,
-    request: &TeamReplySpool,
-) -> Result<String, H5iError> {
+pub fn write_team_reply_spool(spool: &Path, request: &TeamReplySpool) -> Result<String, H5iError> {
     std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -4146,12 +4182,7 @@ impl ProtectedHookConfigGuard {
         let mut files = Vec::new();
         for rel in PROTECTED_HOOK_CONFIGS {
             let path = work.join(rel);
-            push_protected_hook_config(
-                &mut files,
-                rel.to_string(),
-                path,
-                claim,
-            )?;
+            push_protected_hook_config(&mut files, rel.to_string(), path, claim)?;
         }
         // Deliberately NOT the host's own `~/.claude` / `~/.codex`.
         //
@@ -4227,9 +4258,7 @@ fn push_protected_hook_config(
     let original = std::fs::read(&path).ok();
     let mut sentinel_created = false;
     let mut parent_created = false;
-    if claim.image_backed()
-        && original.is_none()
-    {
+    if claim.image_backed() && original.is_none() {
         if let Some(parent) = path.parent() {
             parent_created = !parent.exists();
             std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
@@ -4320,8 +4349,11 @@ fn user_allow_list_at(path: Option<&Path>) -> Vec<String> {
 /// enforcing parser is lenient.
 pub fn validate_egress_rule(raw: &str) -> Result<String, H5iError> {
     let rule = raw.trim().to_ascii_lowercase();
-    let bad =
-        |why: &str| Err(H5iError::Metadata(format!("invalid egress rule '{raw}': {why}")));
+    let bad = |why: &str| {
+        Err(H5iError::Metadata(format!(
+            "invalid egress rule '{raw}': {why}"
+        )))
+    };
     if rule.is_empty() {
         return bad("empty rule");
     }
@@ -4619,7 +4651,9 @@ fn run_inner(
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
     prepare_private_tmp(h5i_root, m, &mut policy, None)?;
     let browser_shim = prepare_browser_shim(h5i_root, m, &mut policy)?;
-    policy.loopback_ports.extend(live_service_ports(h5i_root, m));
+    policy
+        .loopback_ports
+        .extend(live_service_ports(h5i_root, m));
     // Declared in the profile (`[profile.X.net] loopback`), so a dev server the
     // box runs itself is reachable from the box's own browser.
     let declared = policy.profile.loopback_ports.clone();
@@ -4784,8 +4818,8 @@ fn run_inner(
                 .unwrap_or(false)
         })
         .map(|verb| {
-            let tmp_root = host_tmp_root(&policy, &env_dir_path)
-                .unwrap_or_else(|| env_dir_path.join("tmp"));
+            let tmp_root =
+                host_tmp_root(&policy, &env_dir_path).unwrap_or_else(|| env_dir_path.join("tmp"));
             crate::browser::collect(&env_dir_path, &tmp_root, &verb, |drain_argv| {
                 let out = sandbox::run_with_env(&policy, &work, drain_argv, &injected_env).ok()?;
                 // A non-zero drain is a browser that is gone or wedged. Report
@@ -4830,6 +4864,9 @@ fn run_inner(
         // workspace/process. Host observed: the box never supplies this.
         egress: outcome.egress.clone(),
         browser: browser_evidence,
+        // Not a share. That lane is written by `h5i-share`, which sits above
+        // this crate.
+        share: None,
     };
     let captured = crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, &raw)?;
     let capture_id = captured.id.clone();
@@ -4989,7 +5026,10 @@ pub fn shell(
     // (SessionScratchGuard, on every return path). Read-write runs use the
     // persistent per-env dirs unchanged.
     let session_root = if readonly {
-        let root = m.dir(h5i_root).join("ro").join(std::process::id().to_string());
+        let root = m
+            .dir(h5i_root)
+            .join("ro")
+            .join(std::process::id().to_string());
         let _ = std::fs::remove_dir_all(&root); // clear any stale (pid-reuse) leftovers
         std::fs::create_dir_all(&root).map_err(|e| H5iError::with_path(e, &root))?;
         Some(root)
@@ -5014,7 +5054,9 @@ pub fn shell(
         session_root.as_deref().map(|r| r.join("tmp")).as_deref(),
     )?;
     let browser_shim = prepare_browser_shim(h5i_root, m, &mut policy)?;
-    policy.loopback_ports.extend(live_service_ports(h5i_root, m));
+    policy
+        .loopback_ports
+        .extend(live_service_ports(h5i_root, m));
     // Declared in the profile (`[profile.X.net] loopback`), so a dev server the
     // box runs itself is reachable from the box's own browser.
     let declared = policy.profile.loopback_ports.clone();
@@ -5324,9 +5366,7 @@ fn capture_shell_egress(
         egress: Some(eg.clone()),
         ..Default::default()
     };
-    Ok(
-        crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, raw.as_bytes())?.id,
-    )
+    Ok(crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, raw.as_bytes())?.id)
 }
 
 // ─── interactive shell rc ────────────────────────────────────────────────────
@@ -6254,8 +6294,8 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
         );
         // One footnote beats a caveat on every number, and it names the reason
         // rather than leaving the reader to infer it from a marker.
-        let declared_unenforced = (!limits.mem && p.mem_bytes.is_some())
-            || (!limits.procs && p.max_procs.is_some());
+        let declared_unenforced =
+            (!limits.mem && p.mem_bytes.is_some()) || (!limits.procs && p.max_procs.is_some());
         if declared_unenforced {
             out.push_str(&format!(
                 "             * declared, NOT enforced at the {} tier on this host{}\n",
@@ -6288,7 +6328,11 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
             if policy.claim.enforces_egress_allowlist() {
                 let extras: Vec<String> = user_allow_list()
                     .into_iter()
-                    .filter(|u| !p.net_egress.iter().any(|e| e.trim().eq_ignore_ascii_case(u)))
+                    .filter(|u| {
+                        !p.net_egress
+                            .iter()
+                            .any(|e| e.trim().eq_ignore_ascii_case(u))
+                    })
                     .collect();
                 if !extras.is_empty() {
                     out.push_str(&format!("  (+ h5i box allow: {})", extras.join(", ")));
@@ -6658,6 +6702,100 @@ pub struct LiveSession {
     /// What the session is executing (secret-redacted), when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// The kernel's own start time for this pid, in clock ticks since boot
+    /// (field 22 of `/proc/<pid>/stat`).
+    ///
+    /// A pid alone is not an identity. A crashed session leaves its record
+    /// behind, the kernel hands that number to something else, and `kill(pid,
+    /// 0)` says yes — so the registry reports a live session belonging to an
+    /// unrelated process of the same user. For most readers that is a cosmetic
+    /// staleness that the next scan heals. For `h5i box share` it is not:
+    /// `box_pid` walks that pid's descendants looking for a network namespace,
+    /// and if the impostor or one of its children has one, the share enters
+    /// *that* namespace and publishes `127.0.0.1:<port>` from it — precisely
+    /// the wrong-port exposure the namespace check exists to refuse.
+    ///
+    /// Start time closes it: the pair (pid, start time) is unique for as long
+    /// as the process lives, and the kernel cannot reissue it. `None` for a
+    /// record written by an older h5i, which reads as "cannot verify" — see
+    /// [`live_identity_holds`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_ticks: Option<u64>,
+}
+
+/// The kernel's start time for a pid, in clock ticks since boot.
+///
+/// Field 22 of `/proc/<pid>/stat`, parsed from the *end* of the line: field 2
+/// is the executable name in parentheses and may itself contain spaces and
+/// parentheses, so splitting the whole line on whitespace is how this gets
+/// read wrong.
+#[cfg(target_os = "linux")]
+pub fn proc_start_ticks(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let after_comm = stat.rsplit_once(')')?.1;
+    // Fields 3.. follow the closing parenthesis, so field 22 is the 20th here.
+    after_comm.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// The same identity, from Darwin's process table.
+///
+/// `PROC_PIDTBSDINFO` carries `pbi_start_tvsec`/`pbi_start_tvusec`, the wall
+/// time the process began, which serves the purpose the Linux tick count serves
+/// — the pair (pid, start time) is unique for as long as the process lives and
+/// the kernel cannot reissue it. The unit differs and nothing compares across
+/// platforms: a record is only ever checked against a pid on the machine that
+/// wrote it.
+///
+/// Answering `None` here was not neutral, and that is why this exists. macOS
+/// wrote `started_ticks: None` into every live record, `session_pid_verified`
+/// skips records without one, and `h5i box share` asks for the verified
+/// answer — so the pid-reuse hardening turned into a total refusal on macOS,
+/// with `h5i box share` reporting "has no session running" for boxes whose
+/// session was running the whole time. A platform that cannot verify identity
+/// fails a check written to be strict; the fix is to let it verify.
+#[cfg(target_os = "macos")]
+pub fn proc_start_ticks(pid: u32) -> Option<u64> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: `proc_pidinfo` writes at most `size` bytes into `info`, and the
+    // return value is checked to be exactly that before anything is read.
+    let got = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        )
+    };
+    if got != size {
+        return None;
+    }
+    // Microseconds since the epoch, which is monotone enough for an identity:
+    // it is compared only against itself, never used as a duration.
+    Some(
+        info.pbi_start_tvsec
+            .saturating_mul(1_000_000)
+            .saturating_add(info.pbi_start_tvusec),
+    )
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn proc_start_ticks(_pid: u32) -> Option<u64> {
+    None
+}
+
+/// Is this record still about the process it was written for?
+///
+/// `true` when the recorded start time matches the pid's, and `true` when
+/// there is nothing to compare — an older record, or a platform with no
+/// `/proc`. Callers that cannot tolerate the unverifiable case check
+/// `started_ticks.is_some()` themselves; `h5i box share` does.
+pub fn live_identity_holds(rec: &LiveSession) -> bool {
+    match (rec.started_ticks, proc_start_ticks(rec.pid)) {
+        (Some(recorded), Some(now)) => recorded == now,
+        _ => true,
+    }
 }
 
 /// Kinds that hold the exclusive writer lock (a live one of these means the
@@ -6684,6 +6822,10 @@ impl LiveGuard {
             kind: kind.to_string(),
             started_at: now_ts(),
             command,
+            // Written so a later reader can tell this process from whatever
+            // inherits its pid after a crash. See the field's own comment for
+            // what that costs `h5i box share`.
+            started_ticks: proc_start_ticks(pid),
         };
         if let Ok(json) = serde_json::to_string(&rec) {
             // Atomic: `live_sessions` unlinks anything it cannot parse, so a
@@ -7421,9 +7563,10 @@ pub fn compare(
         let m = find(h5i_root, name)?;
         let (files_changed, insertions, deletions) =
             diffstat_numbers(repo, h5i_root, &m).unwrap_or((0, 0, 0));
-        let latest = m.captures.last().and_then(|cap| {
-            crate::receipt::find(&env_dir(h5i_root, &m.agent, &m.slug), cap).ok()
-        });
+        let latest = m
+            .captures
+            .last()
+            .and_then(|cap| crate::receipt::find(&env_dir(h5i_root, &m.agent, &m.slug), cap).ok());
         rows.push(CompareRow {
             id: m.id,
             status: m.status,
@@ -7434,7 +7577,10 @@ pub fn compare(
             last_exit: latest.as_ref().and_then(|r| r.exit_code),
             last_cmd: latest.as_ref().and_then(|r| r.cmd.clone()),
             last_source: latest.as_ref().map(|r| r.source.clone()),
-            last_egress_denied: latest.as_ref().and_then(|r| r.egress.as_ref()).map(|e| e.denied),
+            last_egress_denied: latest
+                .as_ref()
+                .and_then(|r| r.egress.as_ref())
+                .map(|e| e.denied),
         });
     }
     Ok(rows)
@@ -7502,7 +7648,10 @@ pub fn render_compare(rows: &[CompareRow]) -> String {
 
 /// Single-line, length-capped rendering of a command for a table cell.
 fn truncate_cmd(cmd: &str, max: usize) -> String {
-    let flat: String = crate::redact::sanitize_display(cmd).chars().take(max).collect();
+    let flat: String = crate::redact::sanitize_display(cmd)
+        .chars()
+        .take(max)
+        .collect();
     if cmd.chars().count() > max {
         format!("{flat}…")
     } else {
@@ -7559,8 +7708,11 @@ fn delta_is_private(d: &git2::DiffDelta<'_>, rels: &[String]) -> bool {
 fn is_under_private_path(path: &Path, rels: &[String]) -> bool {
     let p = path.to_string_lossy();
     let p = p.trim_end_matches('/');
-    rels.iter()
-        .any(|r| p == r.as_str() || p.strip_prefix(r.as_str()).is_some_and(|t| t.starts_with('/')))
+    rels.iter().any(|r| {
+        p == r.as_str()
+            || p.strip_prefix(r.as_str())
+                .is_some_and(|t| t.starts_with('/'))
+    })
 }
 
 // ─── mediated commit (§4 — the critical security boundary) ─────────────────
@@ -7648,10 +7800,7 @@ pub fn mediated_commit(
         // not of anything stated here, and the update pass re-stages tracked
         // paths on its own terms. An invariant enforced on one of two staging
         // paths is an invariant that depends on the other one never changing.
-        index.update_all(
-            ["*"].iter(),
-            Some(&mut cb as &mut git2::IndexMatchedPath),
-        )?;
+        index.update_all(["*"].iter(), Some(&mut cb as &mut git2::IndexMatchedPath))?;
     }
 
     // Post-stage sweep: reject submodule gitlink entries (mode 160000) that
@@ -8048,6 +8197,95 @@ fn conflict_runbook(m: &EnvManifest) -> String {
     )
 }
 
+/// Refuse a lifecycle operation on a box somebody is connected to.
+///
+/// `rm` learned this first, and the other verbs did not: `abort`, `apply` and
+/// `rebase` all took `run.lock` and none of them took any notice of a share, so
+/// with no writer session holding the lock they ran straight through. `abort`
+/// printed success and `box ls` said `aborted` while a public tunnel URL and a
+/// valid ticket kept pointing at the box. `rebase` is the sharpest of the
+/// three: it force-checks-out the worktree, which changes the files under the
+/// dev server a visitor is looking at.
+///
+/// There is no `--force` on these the way there is on `rm`, and none is added
+/// here: `h5i box share stop <name>` is a documented verb that always works,
+/// and `--force` on it clears even a wedged record — so the way out is never
+/// more than one command, and it is the command that tells the other person
+/// their access has ended rather than pulling it out from under them.
+/// Take the share gate and refuse if this box is being shared.
+///
+/// The two together, because separately they are a check and then a gap. See
+/// [`crate::share_record::ShareGate`]. The returned guard must be held for the
+/// whole operation: dropping it early puts the gap back.
+fn hold_gate_unless_shared(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    verb: &str,
+) -> Result<crate::share_record::ShareGate, H5iError> {
+    let gate = crate::share_record::share_gate(&m.dir(h5i_root))?;
+    refuse_if_shared(h5i_root, m, verb)?;
+    Ok(gate)
+}
+
+fn refuse_if_shared(h5i_root: &Path, m: &EnvManifest, verb: &str) -> Result<(), H5iError> {
+    let Some(s) = crate::share_record::read_live(&m.dir(h5i_root)) else {
+        return Ok(());
+    };
+    // **Any live share process**, not only one that could admit somebody new.
+    //
+    // `is_admitting` answers "could a fresh connection get in", and that was
+    // the wrong question by exactly the width of a drain. A connection already
+    // authorized stays up until its per-connection revocation poll runs — up
+    // to a second — and teardown happens after that; and the serving process
+    // does not even notice its writer session has gone until `BOX_POLL`, three
+    // seconds later. So with the writer just exited (`run.lock` free) and the
+    // last grant just expired, `abort`/`rebase`/`apply` walked through this
+    // guard and changed the box while a visitor was still uploading. That is
+    // the outcome the guard exists to prevent, arriving through it.
+    //
+    // A live share process is therefore exclusionary until it has cleared its
+    // record, which it does only after its transport is down and `quiesce` has
+    // returned. The cost is a teardown the user might not have needed; the
+    // remedy is one documented command, named below.
+    if s.winding_up {
+        return Err(H5iError::Metadata(format!(
+            "{} is being shared by pid {} and that share is already shutting down — it will be \
+             gone in a moment. Run `h5i box {verb} {}` again then.",
+            m.id, s.pid, m.slug
+        )));
+    }
+    if s.starting {
+        return Err(H5iError::Metadata(format!(
+            "{} is about to be shared: pid {} has claimed it and is setting up its transport. \
+             `{verb}` now would change the box out from under whoever is sent the invite. \
+             Wait for it, or stop it: `h5i box share stop {}`.",
+            m.id, s.pid, m.slug
+        )));
+    }
+    // Naming `--force` as well, because the two verbs read the file with
+    // different rules: this one goes through `share_record`, which requires
+    // every field it knows about, and `share stop` goes through `h5i-share`.
+    // A record one accepts and the other does not leaves two refusals pointing
+    // at each other — the verb says stop the share, and `share stop` says the
+    // box is not being shared — and `--force` is the way out of that.
+    //
+    // Which way `share_record` fails is worth being exact about, because an
+    // earlier version of this comment had it backwards: a file it cannot fully
+    // parse reads as *no share at all*, so this returns `Ok` and the verb goes
+    // ahead. That is deliberate (see the module docs: a malformed file must not
+    // wedge `box rm` forever) and it is not the cautious direction. It is
+    // defensible only because a record the share itself cannot read admits
+    // nobody either — the bridge denies every ticket against it — so the box is
+    // not gaining visitors while this decision is made. Connections already
+    // open are the gap, and they are the reason this is written down.
+    Err(H5iError::Metadata(format!(
+        "{} is being shared right now by pid {} — somebody outside may be connected to it, and \
+         `{verb}` would change the box under them. Stop the share first: \
+         `h5i box share stop {}` (or `--force` on that, if nothing really is).",
+        m.id, s.pid, m.slug
+    )))
+}
+
 /// Apply a proposed env onto its parent branch. Explicit, reviewer-driven:
 /// requires the parent branch checked out and a clean tracked working tree.
 /// `--patch` squashes the env's diff into one commit; the default `--merge`
@@ -8063,6 +8301,19 @@ pub fn apply(
     }
     // Serialize the PROPOSED→APPLIED transition (reads the env state, mutates
     // the manifest) against any concurrent run/shell on the same env.
+    // Above the lock. Below it this was unreachable: a live share implies a
+    // live writer session, so `run.lock` is held and "environment is busy"
+    // fired first — the same mistake `rm`'s first version made, one function
+    // away from the comment explaining it.
+    //
+    // Above the *status* guards too, and deliberately left there: moving it
+    // below them would put it behind `run.lock` again for `apply`, whose own
+    // ordering ("busy" wins over "wrong status") is pinned by a test and is
+    // not this change's to alter.
+    // Held for the whole operation, not checked and let go: see
+    // `hold_gate_unless_shared`. A share cannot claim this box while this
+    // guard is alive, so "no share when we looked" stays true while we act.
+    let _share_gate = hold_gate_unless_shared(h5i_root, m, "apply")?;
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status != ST_PROPOSED {
@@ -8241,6 +8492,10 @@ pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result
     }
     // Rebase force-checks-out the worktree and re-pins the base in the manifest;
     // serialize against a concurrent `env run`/`shell` exactly like propose.
+    // Held for the whole operation, not checked and let go: see
+    // `hold_gate_unless_shared`. A share cannot claim this box while this
+    // guard is alive, so "no share when we looked" stays true while we act.
+    let _share_gate = hold_gate_unless_shared(h5i_root, m, "rebase")?;
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     match m.status.as_str() {
@@ -8363,6 +8618,10 @@ pub fn abort(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result<
     // Mutates the manifest status; serialize against a concurrent run/shell so
     // a run's terminal IDLE write can't clobber the ABORTED set here (a live run
     // holds the lock → abort waits/fails "busy" until it ends or is killed).
+    // Held for the whole operation, not checked and let go: see
+    // `hold_gate_unless_shared`. A share cannot claim this box while this
+    // guard is alive, so "no share when we looked" stays true while we act.
+    let _share_gate = hold_gate_unless_shared(h5i_root, m, "abort")?;
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status == ST_APPLIED {
@@ -8436,6 +8695,14 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
             Ok(g) => g,
             Err(_) => continue,
         };
+        // Skipped rather than refused, because this is a bulk sweep: one box
+        // being shared is no reason to stop reclaiming the others. Same shape
+        // as the observer case above. A share of an already-applied or aborted
+        // box is unusual, and pruning its worktree out from under a visitor is
+        // not something to do quietly.
+        if crate::share_record::read_live(&m.dir(h5i_root)).is_some() {
+            continue;
+        }
         // A failed prune leaves this env for a later sweep rather than aborting
         // the whole gc; skip it and keep going.
         if prune_workspace(repo, h5i_root, &m).is_err() {
@@ -8482,6 +8749,40 @@ pub fn rm(
     m: &EnvManifest,
     force: bool,
 ) -> Result<(), H5iError> {
+    // Checked *before* the status guard below. A box being shared is almost
+    // always also `running`, so behind that guard this message was
+    // unreachable — the operator was told to abort the box and never that
+    // somebody outside was connected to it, which is the more surprising fact
+    // and the one that changes what they do next.
+    //
+    // A share is not a session, so neither that guard nor the two locks
+    // further down see it. `--force` still removes the box, because that is
+    // what `--force` is for, but it says what it is doing.
+    //
+    // Held across the removal, and that is not tidiness. A share's claim
+    // happens after its transport setup, so a `box share` can be forty-five
+    // seconds into waiting for a tunnel URL with nothing on disk to see. `rm`
+    // then found no record, deleted the environment directory — the share's
+    // own lock file with it — and the delayed claim, arriving afterwards,
+    // called `create_dir_all` on the parent it had just erased and wrote
+    // `share.json` into a recreated tree. The share announced a public
+    // endpoint for a box that no longer existed, shut down three seconds later
+    // on its next writer poll, and left a directory with a receipt in it and
+    // no manifest, which `box ls`, `share ls` and `gc` all answer "no
+    // environment named that" for and only `rm -rf` can clear.
+    let _share_gate = crate::share_record::share_gate(&m.dir(h5i_root))?;
+    let shared = crate::share_record::read_live(&m.dir(h5i_root));
+    if let Some(s) = &shared {
+        if !force {
+            return Err(H5iError::Metadata(format!(
+                "{} is being shared right now by pid {} — somebody outside may be connected \
+                 to it. Stop the share first (`h5i box share stop {}`), or pass --force to \
+                 remove the box anyway.",
+                m.id, s.pid, m.slug
+            )));
+        }
+    }
+
     let live = matches!(
         m.status.as_str(),
         ST_CREATED | ST_RUNNING | ST_IDLE | ST_PROPOSED
@@ -8506,6 +8807,19 @@ pub fn rm(
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     #[cfg(unix)]
     let _teardown = RunLock::acquire_teardown(&m.dir(h5i_root))?;
+
+    // Said here, not beside the check above. Up there it printed and *then*
+    // `rm` failed on a busy lock, so the operator was told a share would end
+    // itself in a few seconds while nothing had been removed and the share was
+    // still serving — and a shared box normally does have a live session, so
+    // that was the ordinary case rather than a corner.
+    if let Some(s) = &shared {
+        eprintln!(
+            "box rm: {} was being shared by pid {}; that share will notice within a few \
+             seconds and end itself.",
+            m.id, s.pid
+        );
+    }
 
     // 1. Reclaim the workspace. Must precede the branch delete: git refuses to
     //    delete a branch still checked out in a registered worktree.
@@ -8571,13 +8885,93 @@ pub fn rm(
 mod tests {
     use super::*;
 
+    /// Every supported platform must be able to prove whose pid a record is.
+    ///
+    /// This is not a property of the identity check, it is a property of the
+    /// *platform support*, and it is asserted here because answering `None` is
+    /// silently catastrophic rather than merely unhelpful: `h5i box share` asks
+    /// `session_pid_verified` for the strict answer, that call skips any record
+    /// whose `started_ticks` is absent, and a platform where this function
+    /// cannot answer therefore has no shareable box at all. macOS shipped in
+    /// exactly that state — every live record written with `started_ticks:
+    /// None`, and `h5i box share` reporting "has no session running" for boxes
+    /// whose session was running the whole time.
+    ///
+    /// A platform added later with no implementation fails here rather than in
+    /// somebody's terminal.
+    #[test]
+    fn this_platform_can_tell_a_pid_from_its_reuse() {
+        let me = std::process::id();
+        let mine = proc_start_ticks(me);
+        assert!(
+            mine.is_some(),
+            "this platform cannot prove a live record's identity, so `h5i box share` will \
+             refuse every box on it"
+        );
+        // Stable for the life of the process: an identity that changed between
+        // two reads would fail `live_identity_holds` against its own record.
+        assert_eq!(mine, proc_start_ticks(me), "an identity must not drift");
+
+        // And it distinguishes. A different process started later must not
+        // share our value, or the check cannot catch pid reuse at all.
+        let mut child = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn a child to compare against");
+        let theirs = proc_start_ticks(child.id());
+        assert!(theirs.is_some(), "a live child has a start time");
+        assert_ne!(
+            mine, theirs,
+            "two processes shared an identity, so pid reuse would go unnoticed"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    /// The record a running session writes must satisfy the strict reader.
+    ///
+    /// The two halves are written and checked in different modules, and the
+    /// regression that motivated this passed every test in both: `register`
+    /// wrote `None` happily, `live_identity_holds` tolerated `None` happily,
+    /// and only the caller that demanded `Some` — in another crate — broke.
+    #[test]
+    fn a_registered_session_satisfies_the_check_that_sharing_makes() {
+        let rec = LiveSession {
+            pid: std::process::id(),
+            kind: "run".into(),
+            started_at: now_ts(),
+            command: None,
+            started_ticks: proc_start_ticks(std::process::id()),
+        };
+        assert!(
+            rec.started_ticks.is_some(),
+            "a session registering itself must record an identity, or sharing refuses it"
+        );
+        assert!(
+            live_identity_holds(&rec),
+            "a record written for this very process must match it"
+        );
+    }
+
     #[test]
     fn egress_rule_validation_accepts_proxy_forms_only() {
         // The three forms the proxy's AllowList understands, normalized.
-        assert_eq!(validate_egress_rule(" API.Example.com ").unwrap(), "api.example.com");
-        assert_eq!(validate_egress_rule(".example.com").unwrap(), ".example.com");
-        assert_eq!(validate_egress_rule("*.example.com").unwrap(), "*.example.com");
-        assert_eq!(validate_egress_rule("github.com:443").unwrap(), "github.com:443");
+        assert_eq!(
+            validate_egress_rule(" API.Example.com ").unwrap(),
+            "api.example.com"
+        );
+        assert_eq!(
+            validate_egress_rule(".example.com").unwrap(),
+            ".example.com"
+        );
+        assert_eq!(
+            validate_egress_rule("*.example.com").unwrap(),
+            "*.example.com"
+        );
+        assert_eq!(
+            validate_egress_rule("github.com:443").unwrap(),
+            "github.com:443"
+        );
         // Strict intake: URLs, paths, whitespace, malformed hosts, bad ports.
         for bad in [
             "",
@@ -8623,6 +9017,7 @@ mod tests {
             kind: "run".into(),
             started_at: now_ts(),
             command: None,
+            started_ticks: None,
         };
         std::fs::write(
             live_dir.join("2147483646.json"),
@@ -8651,7 +9046,10 @@ mod tests {
             "# comment\n\npypi.org\nPYPI.ORG\nhttps://not-a-host\npypi.org\n",
         )
         .unwrap();
-        assert_eq!(user_allow_list_at(Some(&path)), vec!["pypi.org".to_string()]);
+        assert_eq!(
+            user_allow_list_at(Some(&path)),
+            vec!["pypi.org".to_string()]
+        );
         // Missing file → empty, not an error.
         assert!(user_allow_list_at(Some(&dir.path().join("absent"))).is_empty());
     }
@@ -8846,7 +9244,10 @@ mod tests {
         let z = write_plain_zshrc(h5i_root.path(), &m, None).unwrap();
         let rc = Path::new(&z.zdotdir).join(".zshrc");
         let body = std::fs::read_to_string(&rc).unwrap();
-        assert!(body.contains("\nunsetopt bgnice\n"), "the rc must disable bgnice:\n{body}");
+        assert!(
+            body.contains("\nunsetopt bgnice\n"),
+            "the rc must disable bgnice:\n{body}"
+        );
 
         // `-f` so the host's own zsh startup cannot decide the answer; the rc
         // under test is sourced explicitly.
@@ -9010,7 +9411,10 @@ mod tests {
         // propose-style ops refuse under contention; snapshot_for_submit defers.
         let got = snapshot_for_submit(&repo, h5i_root, &m)
             .expect("submit snapshot must not fail when the box holds the lock");
-        assert!(got.is_none(), "contended snapshot falls back to the branch tip");
+        assert!(
+            got.is_none(),
+            "contended snapshot falls back to the branch tip"
+        );
     }
 
     #[test]
@@ -9023,8 +9427,11 @@ mod tests {
         let base = commit_file(&repo, "README.md", "hello\n");
 
         // Untracked file, exactly like codex's `?? quick_sort.py`.
-        std::fs::write(dir.path().join("quick_sort.py"), "def quick_sort():\n    pass\n")
-            .unwrap();
+        std::fs::write(
+            dir.path().join("quick_sort.py"),
+            "def quick_sort():\n    pass\n",
+        )
+        .unwrap();
 
         let oid = commit_worktree_at(dir.path())
             .expect("commit must not error")
@@ -9136,8 +9543,12 @@ mod tests {
         assert_eq!(p, PathBuf::from("/tmp/spool").join(SPOOL_PENDING_CONTEXT));
 
         // Any missing marker → None (host uses the normal .git/.h5i path).
-        assert!(inbox_pending_context_path_from(None, Some(dig.clone()), Some(spool.clone())).is_none());
-        assert!(inbox_pending_context_path_from(Some(id.clone()), None, Some(spool.clone())).is_none());
+        assert!(
+            inbox_pending_context_path_from(None, Some(dig.clone()), Some(spool.clone())).is_none()
+        );
+        assert!(
+            inbox_pending_context_path_from(Some(id.clone()), None, Some(spool.clone())).is_none()
+        );
         // Env id + digest present but no spool dir → None (nowhere box-writable).
         assert!(inbox_pending_context_path_from(Some(id), Some(dig), None).is_none());
     }
@@ -9489,7 +9900,10 @@ mod tests {
         std::fs::write(fresh.join("stale"), b"x").unwrap();
         std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755)).unwrap();
         reset_private_tmp(&fresh).unwrap();
-        assert!(!fresh.join("stale").exists(), "leftovers survived the reset");
+        assert!(
+            !fresh.join("stale").exists(),
+            "leftovers survived the reset"
+        );
         assert_eq!(
             std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777,
             0o700
@@ -9504,7 +9918,10 @@ mod tests {
         let planted = td.path().join("planted");
         std::os::unix::fs::symlink(&victim, &planted).unwrap();
         assert!(reset_private_tmp(&planted).is_err(), "followed a symlink");
-        assert!(victim.join("keep").exists(), "the symlink target was cleared");
+        assert!(
+            victim.join("keep").exists(),
+            "the symlink target was cleared"
+        );
     }
 
     #[cfg(unix)]
@@ -9836,7 +10253,9 @@ mod tests {
             "the large projects/ tree must be pruned from the per-env seed"
         );
         // The real HOME still has its transcripts (only ever read, never touched).
-        assert!(home.join(".claude/projects/some-proj/session.jsonl").exists());
+        assert!(home
+            .join(".claude/projects/some-proj/session.jsonl")
+            .exists());
     }
 
     #[cfg(unix)]
@@ -10460,7 +10879,10 @@ mod tests {
         // Policy hosts carry over, with any :port stripped.
         assert!(allowed.contains("api.anthropic.com"), "{allowed}");
         assert!(allowed.contains("example.com"), "{allowed}");
-        assert!(!allowed.contains("8443"), "ports are not domains: {allowed}");
+        assert!(
+            !allowed.contains("8443"),
+            "ports are not domains: {allowed}"
+        );
         // Nothing else.
         assert!(!allowed.contains("github.com"), "{allowed}");
     }
@@ -10484,7 +10906,10 @@ mod tests {
         assert!(!env.iter().any(|(k, _)| k == "AGENT_BROWSER_DISABLE_CHAT"));
         // Headless is spelled by pinning the variable agent-browser actually
         // reads to a falsey value — there is no `AGENT_BROWSER_HEADLESS`.
-        assert_eq!(env.get("AGENT_BROWSER_HEADED").map(String::as_str), Some("0"));
+        assert_eq!(
+            env.get("AGENT_BROWSER_HEADED").map(String::as_str),
+            Some("0")
+        );
         assert!(!env.iter().any(|(k, _)| k == "AGENT_BROWSER_HEADLESS"));
         // The daemon socket must land somewhere the box can write; its default
         // ($XDG_RUNTIME_DIR) is not granted on any tier. The literal `/tmp` is
@@ -10500,7 +10925,11 @@ mod tests {
         // than the literal `/tmp`, which is denied there. Conditional because a
         // policy without the redirect legitimately falls back to `/tmp` — that
         // is [`box_tmp_root`]'s documented default, not a bug to assert against.
-        if policy.home_binds.iter().any(|b| b.target == Path::new("/tmp")) {
+        if policy
+            .home_binds
+            .iter()
+            .any(|b| b.target == Path::new("/tmp"))
+        {
             assert!(
                 !cfg!(target_os = "macos") || !expected.starts_with("/tmp/agent-browser"),
                 "macOS must not point the socket at the denied literal /tmp: {expected}"
@@ -10738,6 +11167,153 @@ mod tests {
 
     // ── build_branch_scoped_merge / scoped_code_branch_refs ─────────────────
 
+    #[test]
+    fn a_lifecycle_verb_will_not_change_a_box_somebody_is_connected_to() {
+        // `rm` learned to check this first and the other verbs did not: they
+        // all take `run.lock` and none took any notice of a share, so with the
+        // writer session gone they ran straight through. `abort` printed
+        // success and `box ls` said `aborted` while a public tunnel URL and a
+        // valid ticket kept pointing at the box; `rebase` force-checks-out the
+        // worktree, which changes the files under the dev server a visitor is
+        // looking at.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let m = canonical_manifest("human", "shared");
+        let dir = m.dir(root);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+
+        // No share record: every verb proceeds.
+        for verb in ["abort", "apply", "rebase"] {
+            assert!(
+                refuse_if_shared(root, &m, verb).is_ok(),
+                "{verb} refused an unshared box"
+            );
+        }
+
+        let record = |winding: bool| {
+            serde_json::json!({
+                "v": 1,
+                "box_id": m.id,
+                "port": 3000,
+                "transport": "tunnel",
+                "endpoint": "https://x",
+                "started_at": "2026-01-01T00:00:00Z",
+                "pid": std::process::id(),
+                "winding_up": winding,
+                "grants": [{
+                    "id": "a1b2c3d4",
+                    "secret_sha256": "ff",
+                    "revoked": false,
+                    "expires_at": 4_000_000_000i64,
+                }],
+            })
+            .to_string()
+        };
+
+        std::fs::write(dir.join("share.json"), record(false)).expect("write");
+        for verb in ["abort", "apply", "rebase"] {
+            let err = refuse_if_shared(root, &m, verb)
+                .expect_err("a live share must stop a lifecycle verb");
+            let said = format!("{err}");
+            assert!(said.contains("being shared right now"), "{verb}: {said}");
+            // With a command that works, and it is the one that tells the other
+            // person their access has ended rather than pulling it out from
+            // under them.
+            assert!(said.contains("h5i box share stop shared"), "{verb}: {said}");
+        }
+
+        // A share already on its way out says so, and says to try again — it
+        // will be gone in seconds, so refusing outright would be advice to
+        // wait without saying so.
+        std::fs::write(dir.join("share.json"), record(true)).expect("write");
+        let err = refuse_if_shared(root, &m, "abort").expect_err("winding up");
+        let said = format!("{err}");
+        assert!(said.contains("already shutting down"), "{said}");
+        assert!(said.contains("h5i box abort shared"), "{said}");
+
+        // And a record whose process is gone is not a share.
+        std::fs::write(
+            dir.join("share.json"),
+            r#"{"v":1,"box_id":"x","port":1,
+            "transport":"p2p","endpoint":"e","started_at":"t","pid":0,"grants":[]}"#,
+        )
+        .expect("write");
+        assert!(
+            refuse_if_shared(root, &m, "abort").is_ok(),
+            "a dead record blocked abort"
+        );
+    }
+
+    /// A share is exclusionary for as long as its process is, not only while
+    /// it could admit somebody new.
+    ///
+    /// `is_admitting` was the test, and it answers "could a fresh connection
+    /// get in" — which is the wrong question by exactly the width of a drain.
+    /// A connection already authorized stays up until its revocation poll runs,
+    /// and teardown follows that; the serving process does not even notice its
+    /// writer has gone until three seconds later. So with the writer just
+    /// exited and the last grant just expired, a lifecycle verb walked through
+    /// this guard and changed the box while a visitor was still connected.
+    ///
+    /// The two states this covers — every grant revoked, and every grant
+    /// expired — are exactly the ones that used to read as "nothing is
+    /// holding this box".
+    #[test]
+    fn a_share_still_draining_is_not_a_box_free_to_change() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let m = canonical_manifest("human", "draining");
+        let dir = m.dir(root);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+
+        let record = |grant: serde_json::Value, starting: bool| {
+            serde_json::json!({
+                "v": 1,
+                "box_id": m.id,
+                "port": 3000,
+                "transport": "tunnel",
+                "endpoint": "https://x",
+                "started_at": "2026-01-01T00:00:00Z",
+                "pid": std::process::id(),
+                "starting": starting,
+                "grants": if grant.is_null() { serde_json::json!([]) } else { serde_json::json!([grant]) },
+            })
+            .to_string()
+        };
+        let revoked = serde_json::json!({
+            "id": "a1b2c3d4", "secret_sha256": "ff",
+            "revoked": true, "expires_at": 4_000_000_000i64,
+        });
+        let expired = serde_json::json!({
+            "id": "a1b2c3d4", "secret_sha256": "ff",
+            "revoked": false, "expires_at": 1i64,
+        });
+
+        for (what, g) in [("revoked", revoked), ("expired", expired)] {
+            std::fs::write(dir.join("share.json"), record(g, false)).expect("write");
+            let err = refuse_if_shared(root, &m, "rebase").expect_err(what);
+            assert!(
+                format!("{err}").contains("being shared right now"),
+                "{what}: {err}"
+            );
+        }
+
+        // And the window before a transport exists at all: the record is
+        // written before `Setup::start`, which for `--tunnel` waits up to
+        // forty-five seconds. Nothing was on disk during it, so every verb
+        // here saw an unshared box and proceeded — and the start then
+        // announced a public endpoint on top of what they had done.
+        std::fs::write(
+            dir.join("share.json"),
+            record(serde_json::Value::Null, true),
+        )
+        .expect("write");
+        let err = refuse_if_shared(root, &m, "abort").expect_err("a starting share");
+        let said = format!("{err}");
+        assert!(said.contains("about to be shared"), "{said}");
+        assert!(said.contains("h5i box share stop draining"), "{said}");
+    }
+
     fn manifest_on_branch(agent: &str, slug: &str, parent_branch: &str) -> EnvManifest {
         let mut m = canonical_manifest(agent, slug);
         m.parent_branch = parent_branch.into();
@@ -10763,8 +11339,8 @@ mod tests {
 
     fn manifest_ids_in(repo: &Repository, oid: git2::Oid) -> Vec<String> {
         let tree = repo.find_commit(oid).unwrap().tree().unwrap();
-        let raw =
-            crate::refstore::read_blob_from_tree(repo, Some(&tree), MANIFESTS_FILE).unwrap_or_default();
+        let raw = crate::refstore::read_blob_from_tree(repo, Some(&tree), MANIFESTS_FILE)
+            .unwrap_or_default();
         let mut ids: Vec<String> = raw
             .lines()
             .filter(|l| !l.trim().is_empty())
@@ -10836,7 +11412,11 @@ mod tests {
         let work = dir.path();
         git2::Repository::init(work).unwrap();
         std::fs::create_dir_all(work.join("plugin/persona")).unwrap();
-        std::fs::write(work.join("plugin/persona/architect.md"), "# Architect\nThink first.\n").unwrap();
+        std::fs::write(
+            work.join("plugin/persona/architect.md"),
+            "# Architect\nThink first.\n",
+        )
+        .unwrap();
         std::fs::write(work.join("plugin/persona/careful.md"), "Be careful.\n").unwrap();
 
         // Empty list → no file, no digest.
@@ -10848,7 +11428,9 @@ mod tests {
             "plugin/persona/architect.md".to_string(),
             "plugin/persona/careful.md".to_string(),
         ];
-        let digest = materialize_persona(work, &sources).unwrap().expect("a digest");
+        let digest = materialize_persona(work, &sources)
+            .unwrap()
+            .expect("a digest");
         let body = std::fs::read_to_string(work.join(PERSONA_FILE)).unwrap();
         assert!(body.contains("<!-- persona: plugin/persona/architect.md -->"));
         assert!(body.contains("# Architect"));
@@ -10857,8 +11439,7 @@ mod tests {
         assert_eq!(digest, crate::refstore::sha256_hex(body.as_bytes()));
 
         // PERSONA.md is git-excluded so it never shows as a worktree change.
-        let exclude =
-            std::fs::read_to_string(work.join(".git/info/exclude")).unwrap_or_default();
+        let exclude = std::fs::read_to_string(work.join(".git/info/exclude")).unwrap_or_default();
         assert!(exclude.lines().any(|l| l.trim() == "/PERSONA.md"));
         let wt = Repository::open(work).unwrap();
         assert!(wt.status_should_ignore(Path::new(PERSONA_FILE)).unwrap());
@@ -10904,7 +11485,10 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .filter(|n| n.contains("tmp"))
             .collect();
-        assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {leftovers:?}"
+        );
     }
 
     /// `live_sessions` unlinks what it cannot parse. A record whose pid is still
@@ -10945,7 +11529,9 @@ mod tests {
         let guard = ProtectedHookConfigGuard::prepare(&work, IsolationClaim::Process).unwrap();
         // The operator edits their own config during the session.
         std::fs::write(&host_cfg, b"{\"after\":2}").unwrap();
-        guard.finish().expect("a host-side edit is not a sandbox violation");
+        guard
+            .finish()
+            .expect("a host-side edit is not a sandbox violation");
         assert_eq!(
             std::fs::read(&host_cfg).unwrap(),
             b"{\"after\":2}",
@@ -11038,8 +11624,11 @@ mod tests {
         std::fs::create_dir_all(&host).unwrap();
         let repo = Repository::init(&host).unwrap();
         let sig = git2::Signature::now("t", "t@example.com").unwrap();
-        let tree = repo.find_tree(repo.treebuilder(None).unwrap().write().unwrap()).unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "base", &tree, &[]).unwrap();
+        let tree = repo
+            .find_tree(repo.treebuilder(None).unwrap().write().unwrap())
+            .unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "base", &tree, &[])
+            .unwrap();
 
         let m = wt_manifest("human", "t");
         let h5i_root = repo.commondir().join(".h5i");
@@ -11053,7 +11642,11 @@ mod tests {
             .arg("HEAD")
             .output()
             .unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         (dir, h5i_root, m)
     }
 
@@ -11073,11 +11666,20 @@ mod tests {
         let (_d, h5i_root, m) = worktree_fixture();
         let work = m.work_dir(&h5i_root);
         let host_git = h5i_root.parent().unwrap().to_path_buf();
-        std::fs::write(work.join(".git"), format!("gitdir: {}\n", host_git.display())).unwrap();
+        std::fs::write(
+            work.join(".git"),
+            format!("gitdir: {}\n", host_git.display()),
+        )
+        .unwrap();
 
-        let err = open_env_worktree(&h5i_root, &m).map(|_| ()).expect_err("must fail closed");
+        let err = open_env_worktree(&h5i_root, &m)
+            .map(|_| ())
+            .expect_err("must fail closed");
         let msg = err.to_string();
-        assert!(msg.contains(&m.branch), "should name the branch it owns: {msg}");
+        assert!(
+            msg.contains(&m.branch),
+            "should name the branch it owns: {msg}"
+        );
         assert!(msg.contains("fail-closed"), "{msg}");
     }
 
@@ -11090,8 +11692,12 @@ mod tests {
         std::fs::create_dir_all(&other).unwrap();
         let orepo = Repository::init(&other).unwrap();
         let sig = git2::Signature::now("t", "t@example.com").unwrap();
-        let tree = orepo.find_tree(orepo.treebuilder(None).unwrap().write().unwrap()).unwrap();
-        orepo.commit(Some("HEAD"), &sig, &sig, "other", &tree, &[]).unwrap();
+        let tree = orepo
+            .find_tree(orepo.treebuilder(None).unwrap().write().unwrap())
+            .unwrap();
+        orepo
+            .commit(Some("HEAD"), &sig, &sig, "other", &tree, &[])
+            .unwrap();
         // Give the foreign repo the same branch name, so only the object-store
         // check can distinguish it.
         let head = orepo.head().unwrap().peel_to_commit().unwrap();
@@ -11105,7 +11711,9 @@ mod tests {
         )
         .unwrap();
 
-        let err = open_env_worktree(&h5i_root, &m).map(|_| ()).expect_err("must fail closed");
+        let err = open_env_worktree(&h5i_root, &m)
+            .map(|_| ())
+            .expect_err("must fail closed");
         assert!(err.to_string().contains("not this box's"), "{err}");
     }
 }

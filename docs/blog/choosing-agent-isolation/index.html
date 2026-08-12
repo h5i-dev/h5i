@@ -1,0 +1,170 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How to choose isolation for a coding agent | h5i</title><meta name="description" content="Choose coding-agent isolation by threat model: checkout separation, process confinement, L3/L4 egress control, portable containers, or a separate kernel.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/blog/choosing-agent-isolation/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="How to choose isolation for a coding agent | h5i"><meta property="og:description" content="Choose coding-agent isolation by threat model: checkout separation, process confinement, L3/L4 egress control, portable containers, or a separate kernel.">
+<meta property="og:url" content="https://h5i.dev/blog/choosing-agent-isolation/"><meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="How to choose isolation for a coding agent | h5i">
+<meta name="twitter:description" content="Choose coding-agent isolation by threat model: checkout separation, process confinement, L3/L4 egress control, portable containers, or a separate kernel."><meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Five tiers, five different promises",
+      "description": "Choose coding-agent isolation by threat model: checkout separation, process confinement, L3/L4 egress control, portable containers, or a separate kernel.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-08-10",
+      "dateModified": "2026-08-10",
+      "mainEntityOfPage": "https://h5i.dev/blog/choosing-agent-isolation/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Blog",
+          "item": "https://h5i.dev/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Five tiers, five different promises",
+          "item": "https://h5i.dev/blog/choosing-agent-isolation/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is microVM always the best tier?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. It gives the strongest kernel boundary, but costs more to start and currently provides thinner denied-egress evidence. Choose it when a separate kernel is the property the task requires."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is a container stronger than process isolation?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not in every dimension. It improves image portability. In h5i, its L7 proxy allowlist is weaker against raw sockets than the supervised tier's L3/L4 enforcement."
+          }
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css"><link rel="stylesheet" href="/_static/highlight.css">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Essay / Threat model &middot; 2026-08-10</div>
+<h1>Five tiers, five different promises</h1><p class="post-deck">Isolation is not a single strength meter. A container can improve portability while weakening network control; a microVM can strengthen the kernel boundary while producing thinner egress evidence.</p>
+<div class="post-meta"><span>13 min read</span><span>Landlock &middot; Containers &middot; MicroVMs</span></div></header>
+
+<div class="callout"><strong>The short answer.</strong> Use <code>process</code> for fast local confinement, <code>supervised</code> when off-list network access must fail at L3/L4, <code>container</code> when the image matters, and <code>microvm</code> when sharing the host kernel is unacceptable. <code>workspace</code> is separation, not confinement.</div>
+<figure class="feature-figure"><img src="/_static/microvm-sandbox.svg" alt="The h5i microVM tier places the agent and workspace behind a guest kernel and virtual network stack"><figcaption>A microVM changes the kernel trust boundary. It does not automatically win every other dimension: startup, credential routing, and evidence all have separate tradeoffs.</figcaption></figure>
+<p>The tempting diagram is a staircase: worktree at the bottom, VM at the top, and one word—“security”—rising with every step. That diagram is easy to sell and bad at helping anyone choose.</p>
+<p>Imagine two runs. The first builds ordinary code from your own repository but must start in a fraction of a second. The second opens a stranger's pull request containing native build scripts. The third must reproduce exactly in CI. The fourth is allowed to contact one package registry and absolutely nothing else. Those tasks want different properties. Giving all four the same “strongest” tier either wastes time or quietly misses the control that mattered.</p>
+<h2 id="not-ladder">Why “stronger” is not one dimension</h2>
+<p>Sandbox comparisons often collapse everything into a ladder. That hides the decision you actually have to make. Filesystem reach, network enforcement, kernel sharing, portability, startup time, and observability move independently.</p>
+<p>A rootless container has a clean image and dropped capabilities, but an HTTP proxy cannot bind a program that ignores proxy variables. A supervised host process shares the kernel, but nftables in a private network namespace can stop that same program at the packet layer. Neither sentence fits a single score.</p>
+<h2 id="tiers">What each tier changes</h2>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Tier</th><th>What becomes true</th><th>What stays false</th></tr></thead><tbody>
+<tr><th>workspace</th><td>The agent edits a separate Git worktree.</td><td>Nothing confines the process.</td></tr>
+<tr><th>process</th><td>Filesystem allowlists, syscall denials, namespaces, and limits constrain a process tree.</td><td>The host kernel is shared; destination allowlisting is not L3/L4.</td></tr>
+<tr><th>supervised</th><td>A private network namespace, pinned DNS, nftables, and a socket gate enforce destination policy.</td><td>The host kernel is still shared.</td></tr>
+<tr><th>container</th><td>A rootless, read-only, image-based environment improves portability.</td><td>Its proxy allowlist binds only proxy-respecting traffic.</td></tr>
+<tr><th>microvm</th><td>The guest has its own kernel and evaluates egress in its network stack.</td><td>Startup is heavier and per-request egress evidence is thinner.</td></tr>
+</tbody></table></div>
+<h2 id="process">The everyday default</h2>
+<p>The process tier is aimed at the common failure: an agent or dependency script reads or writes somewhere it should not, spawns too much work, or calls a dangerous syscall. On Linux, Landlock and seccomp do most of the work. The important property is inheritance: the policy follows the process tree.</p>
+<p>This is not a claim against a targeted kernel exploit. The kernel enforcing the rule is the same kernel the confined process attacks.</p>
+<h2 id="supervised">When network destination matters</h2>
+<p>Use supervised isolation when “only these destinations” must describe packets, not cooperative application behavior. The box receives a private network namespace. DNS answers are pinned. nftables admits resolved addresses from the policy. A seccomp notification gate controls socket creation.</p>
+<p>That design closes the obvious proxy escape: clear <code>HTTPS_PROXY</code>, open a raw socket, and dial the address directly. At supervised, the packet still meets the boundary.</p>
+<h2 id="container">What a container is actually for</h2>
+<p>The container tier is for repeatable images and filesystem portability. That is valuable. It is simply a different value from stronger egress.</p>
+<p>Because its allowlist is an HTTP/HTTPS proxy, a compliant package manager is constrained and a program that bypasses the proxy is not. Call this L7 scoping. Do not describe it as general network isolation.</p>
+<h2 id="microvm">When the kernel must move inside</h2>
+<p>A microVM changes the deepest assumption. The untrusted process attacks a guest kernel; the hypervisor remains between it and the host kernel. Choose it for hostile code or environments where shared-kernel containment is outside the risk budget.</p>
+<p>The trade is visible. Booting a kernel costs more. Hardware virtualization must exist. And an in-guest packet filter may drop denied traffic without producing the request-by-request summary a proxy can record. Stronger enforcement can mean thinner evidence.</p>
+<h2 id="fail-closed">Why capability checks must execute</h2>
+<p>A binary, kernel feature, or device node can exist while policy still prevents it from working. A useful probe runs a minimal confined action and reports whether the claim is satisfiable. Then an explicit request must fail closed. Silently replacing <code>microvm</code> with <code>process</code> would keep the command running by changing the security claim underneath it.</p>
+<p>The honest interface is boring: probe, choose, create, inspect the resolved policy.</p>
+<h2 id="workspace-detail">Workspace is useful precisely because it makes no security claim</h2>
+<p>The workspace tier gives the agent a separate Git worktree, branch, index, and pinned base. That prevents ordinary checkout collisions and makes comparison clean. It is excellent hygiene for a trusted tool and the wrong answer for untrusted code.</p>
+<p>Calling it a sandbox would make every later decision worse. The process still runs as you. It sees the host filesystem, environment, sockets, network, and kernel. h5i keeps the rung because checkout isolation is sometimes the only requested property, and labels it as unconstrained because names should not smuggle guarantees.</p>
+<h2 id="process-detail">Process confinement is the fast, inherited boundary</h2>
+<p>At <code>process</code>, the session receives filesystem allowlists, syscall restrictions, namespaces, and resource controls where the host can enforce them. On Linux, Landlock makes the allowed filesystem tree explicit and seccomp removes dangerous syscall families. The important part is not any one primitive. It is that the restrictions inherit across the session's descendants.</p>
+<p>This tier works well for the daily loop: edit, compile, test, repeat. It does not provide an L3/L4 destination allowlist. Network policy here is coarse—deny it or let it use the host network—and the host kernel remains shared.</p>
+<h2 id="container-detail">Container is a reproducibility choice with a security boundary attached</h2>
+<p>Rootless Podman lets the repository name an OCI image. h5i runs it with all capabilities dropped, no-new-privileges, a read-only root filesystem, private IPC, a bounded tmpfs, and only the intended mounts. Runs never pull: <code>--pull=never</code> makes the environment depend on the image you prepared, not on what a registry served at session start.</p>
+<p>That makes the container tier compelling when “same toolchain everywhere” is the requirement. It also gives real memory and process ceilings on platforms where the host kernel tiers cannot. But its egress allowlist is a CONNECT proxy. Most package managers and HTTP clients respect it. A program opening its own raw socket does not. Portability is the primary reason to choose this rung.</p>
+<h2 id="microvm-detail">MicroVM moves the shared-kernel line</h2>
+<p>The microVM adapter boots a guest from the same class of OCI image, through microsandbox. The agent's process, filesystem view, and network stack sit behind a guest kernel. A kernel exploit inside the workload therefore meets the hypervisor rather than continuing directly in the host kernel it attacked.</p>
+<p>That property has three concrete prerequisites: a compatible <code>msb</code> binary, usable hardware virtualization, and a pre-pulled image. If any is absent, an explicit <code>microvm</code> request refuses. The command does not “helpfully” fall back to a shared-kernel tier.</p>
+<p>The cost is not only startup. Host-loopback credential grants do not currently cross into the guest, so profiles declaring them are refused. The guest network stack enforces destination rules but does not yet return a per-request deny tally, so the boundary can be stronger while the report is less detailed.</p>
+<h2 id="probe-detail">What a trustworthy probe has to prove</h2>
+<p>Feature detection is full of false positives. A kernel can expose Landlock while a policy prevents the final exec. A <code>/dev/kvm</code> node can exist but be unreadable. Podman can be installed and configured rootful when the tier requires rootless operation.</p>
+<p><code>h5i box probe</code> separates facts from claims. It identifies mechanisms, checks prerequisites, and runs a minimal confined action for the lightweight tier. Then <code>box status</code> answers a different question: what did this particular box actually receive? Finally, <code>box doctor</code> asks whether the stored box can still keep that claim on this host today.</p>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">three questions</span></div><div class="terminal-body"><pre><code>$ h5i box probe
+# What can this host enforce?
+$ h5i box status review-1234
+# What policy was resolved for this box?
+$ h5i box doctor review-1234
+# Can that box still uphold the stored claim?</code></pre></div></div>
+<h2 id="decision">Choose by the first unacceptable failure</h2>
+<ul><li>If host checkout collisions are the only concern, use <code>workspace</code>.</li><li>If a runaway agent or dependency must not roam the filesystem, start at <code>process</code>.</li><li>If off-list raw network traffic must fail, use <code>supervised</code>.</li><li>If a pinned image and portable toolchain matter most, use <code>container</code> and accept its L7 egress scope.</li><li>If the workload must not share the host kernel, use <code>microvm</code> and accept the heavier prerequisites.</li></ul>
+<p>This is not a score. It is a threat model stated as an operational choice.</p>
+<h2 id="examples">Four runs, four defensible choices</h2>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Run</th><th>First unacceptable failure</th><th>Tier</th><th>Why</th></tr></thead><tbody>
+<tr><th>Rename an internal function</th><td>Agent edits the developer's checkout</td><td><code>workspace</code></td><td>Trusted code and toolchain; only tree separation is required</td></tr>
+<tr><th>Update dependencies in your app</th><td>Lifecycle script reads outside the worktree</td><td><code>process</code></td><td>Fast inherited filesystem and syscall confinement</td></tr>
+<tr><th>Execute a stranger's pull request</th><td>Raw connection reaches an off-list host</td><td><code>supervised</code></td><td>Detached source plus packet-layer egress enforcement</td></tr>
+<tr><th>Compile a hostile native fixture</th><td>Guest code exploits a shared kernel</td><td><code>microvm</code></td><td>The guest kernel and hypervisor change the trust boundary</td></tr>
+</tbody></table></div>
+<p>A fifth case—reproducing a precise Linux toolchain across laptops and CI—may choose <code>container</code> even though supervised has stronger network enforcement. The image is the requirement. This is exactly why a single strength score obscures more than it reveals.</p>
+<h2 id="platform">The same tier name can have platform-specific limits</h2>
+<p>Linux supplies Landlock, seccomp, namespaces, nftables, and cgroups. macOS uses Seatbelt for filesystem and process policy and does not have a per-box equivalent to every cgroup control. Pretending the rows are identical would turn portability into fiction.</p>
+<p>h5i reports unenforced memory and process values at the macOS kernel tiers instead of listing them as active. The image tiers can supply runtime-level ceilings there. The right workflow is to inspect <code>status</code> on the machine that ran the box, not infer enforcement from the profile alone.</p>
+<h2 id="sources">Sources and further reading</h2>
+<ul><li><a href="/manual/#isolation-tiers">The manual's isolation-tier reference</a>, including platform-specific limits.</li><li><a href="/manual/#h5i-box">The box lifecycle</a>, including probe, capabilities, status, and doctor.</li><li><a href="/guides/write-a-box-policy/">Write a box policy</a>, for turning the choice into a checked-in profile.</li><li><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-sandbox">The h5i-sandbox source</a>, where the tier adapters and enforcement mechanisms live.</li></ul>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Is microVM always the best tier?</summary><div class="faq-answer">No. It gives the strongest kernel boundary, but costs more to start and currently provides thinner denied-egress evidence. Choose it when a separate kernel is the property the task requires.</div></details><details class="faq-item"><summary>Is a container stronger than process isolation?</summary><div class="faq-answer">Not in every dimension. It improves image portability. In h5i, its L7 proxy allowlist is weaker against raw sockets than the supervised tier's L3/L4 enforcement.</div></details></div>
+<a class="next-up" href="/guides/write-a-box-policy/"><span class="label">Put it into practice</span><h3>Write a box policy</h3><p>Turn the threat model into a profile the repository can review.</p></a>
+<div class="post-cta"><h3>Ask the host what it can enforce</h3><p>Run the functional probe before choosing a tier by name.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/manual/#isolation-tiers">Compare the tiers</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js" defer></script><script src="/_static/highlight.js" defer></script></body></html>

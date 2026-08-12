@@ -29,14 +29,31 @@ path = "src/main.rs"
 # `web` adds the `h5i ui` box console and, through h5i-core, the axum server
 # and the embedded React bundle it serves. On by default; drop it with
 # `--no-default-features` for a build that needs no Node toolchain.
-default = ["web"]
+default = ["web", "share"]
 web = ["h5i-core/web"]
+# `share` adds `h5i box share` / `h5i join` and, through h5i-share, the iroh
+# QUIC stack. Drop it for a build with no sharing in it at all;
+# `share-tunnel` is the narrower switch that keeps `--tunnel` and drops iroh.
+#
+# The two are layered rather than parallel because the dependency below is
+# declared `default-features = false`: `share-tunnel` buys the crate and its
+# loopback/`cloudflared` half, and `share` adds `h5i-share/p2p` on top. Written
+# the other way round — an optional dependency carrying its own defaults —
+# `--no-default-features --features share-tunnel` still resolved to
+# `h5i-share/default`, so the tunnel-only build this comment described could
+# not actually be selected.
+share = ["share-tunnel", "h5i-share/p2p"]
+share-tunnel = ["dep:h5i-share", "dep:tokio"]
 
 [dependencies]
 # `default-features = false` so this package's own `web` flag is the single
 # switch: without it, h5i-core is built lean rather than pulling axum in
 # through its own defaults.
 h5i-core = { path = "crates/h5i-core", default-features = false }
+# `default-features = false` for the same reason as h5i-core above: the root
+# feature list is the single switch. With the dependency's own defaults left
+# on, `--features share-tunnel` would still pull iroh in.
+h5i-share = { path = "crates/h5i-share", default-features = false, optional = true }
 git2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -47,6 +64,9 @@ clap_complete = "4.5"
 clap_mangen = "0.2"
 console = "0.16.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+# Only to drive `h5i-share`'s async transports from a blocking CLI handler.
+# Optional with it, so a `--no-default-features` build pulls in no runtime.
+tokio = { version = "1.0", features = ["rt-multi-thread"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.8"

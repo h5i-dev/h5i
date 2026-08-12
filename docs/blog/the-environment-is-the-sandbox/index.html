@@ -1,0 +1,159 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The environment is the sandbox | h5i</title><meta name="description" content="Coding agents do not execute one risky command. They operate a development environment, so that whole environment must become the security boundary.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/blog/the-environment-is-the-sandbox/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="The environment is the sandbox | h5i"><meta property="og:description" content="Coding agents do not execute one risky command. They operate a development environment, so that whole environment must become the security boundary.">
+<meta property="og:url" content="https://h5i.dev/blog/the-environment-is-the-sandbox/"><meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="The environment is the sandbox | h5i">
+<meta name="twitter:description" content="Coding agents do not execute one risky command. They operate a development environment, so that whole environment must become the security boundary."><meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "The environment is the sandbox",
+      "description": "Coding agents do not execute one risky command. They operate a development environment, so that whole environment must become the security boundary.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-08-10",
+      "dateModified": "2026-08-10",
+      "mainEntityOfPage": "https://h5i.dev/blog/the-environment-is-the-sandbox/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Blog",
+          "item": "https://h5i.dev/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "The environment is the sandbox",
+          "item": "https://h5i.dev/blog/the-environment-is-the-sandbox/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is a Git worktree an agent sandbox?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. A worktree separates checkouts and branches. It does not constrain the process tree, filesystem reads, credentials, sockets, network destinations, or browser state."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why does the browser need to be inside?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The browser executes untrusted page code and holds session state. Keeping it beside the dev server gives both the same isolated localhost while preventing the agent from inheriting a user's normal browser profile."
+          }
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css"><link rel="stylesheet" href="/_static/highlight.css">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Essay / Architecture &middot; 2026-08-10</div>
+<h1>The environment is the sandbox</h1><p class="post-deck">Sandboxing one shell command was the right idea at the wrong scale. A coding agent operates a repository, package manager, compiler, dev server, and browser. Leave one outside and the boundary has a door in it.</p>
+<div class="post-meta"><span>12 min read</span><span>Sandbox &middot; Agent loop &middot; Browser</span></div></header>
+
+<div class="callout"><strong>The claim.</strong> The unit of isolation for a coding agent is the complete development environment—not the model process, not the shell command, and not the Git checkout.</div>
+<figure class="feature-figure"><img src="/_static/fast-supervised-sandbox.svg" alt="A developer starts one h5i box containing the agent, workspace, process controls, network gate, and resource limits"><figcaption>The fast path is still a complete boundary. The agent and every process it starts inherit the same filesystem, syscall, network, and resource policy.</figcaption></figure>
+<p>Consider the apparently harmless task “upgrade the date library and fix the failing tests.” The agent edits one manifest and runs the package manager. The package manager resolves forty transitive dependencies. One of them executes a post-install script. The script reads the environment, probes the home directory, opens a socket, and exits successfully. The final diff contains a version bump and a lockfile. Nothing in those two files records the interesting part.</p>
+<p>That is the scale mismatch. We tend to draw the risky object as the agent's shell command, while the work actually fans out into a temporary software supply chain. The command is only the first edge.</p>
+<p>Command wrappers fit the world they were designed for. A program receives input, performs one bounded action, and returns output. You can put a wall around that moment.</p>
+<p>A coding agent does not live in that world. It reads a repository, edits several files, invokes a package manager, starts a compiler, watches tests, launches a server, opens a browser, reads the console, and tries again. The work is a loop. Its children are part of the work.</p>
+<p>If the agent is confined but its package scripts are not, the scripts own the machine. If the shell is confined but the browser uses your normal profile, the page inherits your sessions. If the repository is a worktree but the process still sees your home directory, checkout separation has been mistaken for authority separation.</p>
+<h2 id="wrong-units">Three boundaries that are too small</h2>
+<h3>The model process</h3>
+<p>Watching only the agent executable assumes all consequential actions pass through its tool protocol. They do not. A build tool can spawn a compiler, which can invoke a linker, which can execute a helper. An install hook may run before the agent sees its next prompt. The process tree, not the first process, is the relevant object.</p>
+<h3>The command</h3>
+<p>Wrapping <code>npm test</code> helps only if every route to <code>npm test</code> uses the wrapper. An autonomous session makes hundreds of calls. Security that depends on the agent remembering the prefix is a convention, not a boundary.</p>
+<h3>The checkout</h3>
+<p>A Git worktree answers where edits land. It says nothing about <code>~/.ssh</code>, cloud credentials, Unix sockets, the host network, or a browser profile. Git separates trees. It does not separate authority.</p>
+<h2 id="complete">What belongs inside?</h2>
+<p>Put every component that can execute code or carry session state on the same side:</p>
+<ul><li><strong>Workspace:</strong> a disposable checkout with a pinned base.</li><li><strong>Agent and shell:</strong> one supervised process tree, including every child.</li><li><strong>Toolchain and dependencies:</strong> compilers, package managers, hooks, and caches.</li><li><strong>Dev server:</strong> reachable on the box's loopback, not accidentally published.</li><li><strong>Browser:</strong> a fresh profile that shares the box's network view.</li></ul>
+<p>That turns a scattered list of dangerous operations into one object with a lifecycle: create, work, inspect, export, remove.</p>
+<h2 id="output">A boundary needs an output gate</h2>
+<p>Containment is incomplete if the agent can write directly back to the repository you care about. The useful asymmetry is broad freedom inside and a narrow, human-operated path out.</p>
+<p>h5i exports three artifacts: a path-validated patch, a human-readable report, and an execution receipt. The box cannot decide that its own result is acceptable. It can propose. A person chooses whether to carry the patch across.</p>
+<blockquote><p>Autonomy inside. Judgment at the boundary.</p></blockquote>
+<h2 id="cheap">The boundary has to be cheap</h2>
+<p>If creating a box is a ceremony reserved for obviously dangerous work, ordinary work remains uncontained. That is why lightweight tiers matter. Under 200 milliseconds changes the decision from “is this risky enough?” to “why would this run anywhere else?”</p>
+<p>Stronger boundaries still have a place. A container buys a portable filesystem. A microVM buys a separate kernel. The everyday path and the hostile-code path need not pay the same startup cost, but they should share the same lifecycle and output gate.</p>
+<h2 id="test">A practical test</h2>
+<p>Ask five questions of any agent sandbox:</p>
+<ol><li>Where do package scripts execute?</li><li>Which home directory and credentials can they see?</li><li>Where does the dev server listen?</li><li>Which browser profile opens the page?</li><li>Can the agent write the accepted result directly?</li></ol>
+<p>If those answers cross the boundary in different directions, the sandbox is smaller than the work.</p>
+<h2 id="inheritance">The boundary has to follow the process tree</h2>
+<p>A useful sandbox does not ask whether the current executable is called Claude, Codex, npm, cargo, or bash. Names are not security properties. It constrains the process tree that begins with the session.</p>
+<p>That distinction matters the moment a tool delegates. A test runner starts workers. A compiler launches a linker. A package manager runs lifecycle hooks. A dev server invokes a bundler, which may invoke a native addon build. If confinement is implemented as a polite wrapper around the top-level command, the first child that does not use the wrapper has left the model.</p>
+<p>h5i makes <code>box shell</code> and <code>box run</code> the entry points into a resolved policy. At the kernel tiers, filesystem and syscall restrictions are inherited. At <code>supervised</code>, the session also lives in a private network namespace with its own destination rules. At the image tiers, the whole tree starts inside the container or guest. The agent does not decide which child deserves the boundary. Children get it because they are children.</p>
+<h2 id="failure-matrix">What escapes when one component stays outside</h2>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Component left outside</th><th>What crosses the boundary</th><th>Why the diff stays quiet</th></tr></thead><tbody>
+<tr><th>Package manager</th><td>Install scripts execute as the host user</td><td>Reads, failed probes, and network attempts need not edit the tree</td></tr>
+<tr><th>Dev server</th><td>Generated code and plugins run on the host</td><td>The server may only serve or transmit data</td></tr>
+<tr><th>Browser</th><td>Host cookies, extensions, downloads, and loopback become reachable</td><td>Browser state lives outside Git</td></tr>
+<tr><th>Agent configuration</th><td>Ambient credentials and privileged tool routes enter the session</td><td>Authority is configuration, not source</td></tr>
+<tr><th>Output step</th><td>The subject of review can approve its own result</td><td>A direct write looks like any other edit</td></tr>
+</tbody></table></div>
+<p>The table is why “the agent itself is sandboxed” is not enough information. Ask where the work's other interpreters run. Every package hook, compiler plugin, test fixture, web page, and browser extension is another interpreter for input you may not control.</p>
+<h2 id="lifecycle">One object gives the work a reviewable lifecycle</h2>
+<p>Once the environment is the object, the workflow becomes easier to reason about:</p>
+<ol><li><strong>Create:</strong> freeze the Git base, resolve the profile, and hash the policy before writable state exists.</li><li><strong>Work:</strong> let the agent edit, build, run services, and use the browser within that policy.</li><li><strong>Observe:</strong> record process exits and boundary decisions outside the agent's write path.</li><li><strong>Review:</strong> compare the final tree with the pinned base and read execution evidence beside it.</li><li><strong>Export or apply:</strong> move one reviewed result across a human-operated gate.</li><li><strong>Remove:</strong> discard the workspace without turning it into a permanent pet environment.</li></ol>
+<p>The frozen base and policy digest are more than metadata. They prevent the meaning of “this run” from drifting. If the parent branch moves or the policy file changes later, the box still names the code and rules it actually started with.</p>
+<h2 id="not-claim">What this design does not claim</h2>
+<p>A complete boundary can still have a weak tier. <code>workspace</code> gives checkout hygiene and no process confinement. Every tier below <code>microvm</code> shares the host kernel. A container's HTTP proxy cannot constrain a raw socket that ignores it. The boundary is one object; its strength still depends on the mechanism chosen for that object.</p>
+<p>Containment also does not certify the patch. A malicious or simply wrong agent can produce code that passes the tests it chose to run. The output gate creates a place for judgment; it does not automate judgment away.</p>
+<p>And no local sandbox can stop source from entering a model request that policy legitimately permits. If source must not leave, the answer is a self-hosted model or no model egress—not stronger language around the same allowed API call.</p>
+<h2 id="economics">Security becomes normal only when disposal is economical</h2>
+<p>There is an operational reason integrated environments beat a checklist of wrappers. Developers stop using expensive safety mechanisms for ordinary work. If every agent session requires building an image, negotiating a remote worker, and waiting minutes for dependencies, the box is reserved for code already known to be dangerous. Most supply-chain surprises arrive in code nobody preclassified that way.</p>
+<p>The lightweight tiers attack startup cost. Warm caches attack dependency cost without creating a writable rendezvous between boxes: cache content is keyed by lockfile state, populated by a dedicated refresh job, and mounted read-only into agent work. The browser and dev server start inside the already-created boundary, so testing a web change does not require publishing a host port or attaching to a daily browser.</p>
+<p>Disposal matters at the other end. A long-lived development container accumulates credentials, caches, debugging exceptions, and manual fixes until nobody can state its boundary. A box has a frozen base, one resolved policy, one purpose, and an expected end. Export what deserves to survive. Remove the rest.</p>
+<p>This gives containment a property security tooling rarely gets: the safer workflow is also easier to reason about. One name identifies the workspace, policy, process tree, browser, receipts, and cleanup target. There are fewer ambient pieces for both the agent and the reviewer to misunderstand.</p>
+<h2 id="sources">Sources and further reading</h2>
+<ul><li><a href="/manual/#the-loop">The h5i manual: the loop</a>, for the command-level lifecycle.</li><li><a href="/manual/#isolation-tiers">Isolation tiers</a>, for the enforcement and limits of each boundary.</li><li><a href="/guides/first-box/">The first-box guide</a>, for running the complete loop on a real repository.</li><li><a href="https://github.com/h5i-dev/h5i/blob/main/README.md">The project README</a>, for the current product claim and explicit non-claims.</li></ul>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Is a Git worktree an agent sandbox?</summary><div class="faq-answer">No. A worktree separates checkouts and branches. It does not constrain the process tree, filesystem reads, credentials, sockets, network destinations, or browser state.</div></details><details class="faq-item"><summary>Why does the browser need to be inside?</summary><div class="faq-answer">The browser executes untrusted page code and holds session state. Keeping it beside the dev server gives both the same isolated localhost while preventing the agent from inheriting a user's normal browser profile.</div></details></div>
+<a class="next-up" href="/blog/choosing-agent-isolation/"><span class="label">Read next</span><h3>Five tiers, five promises</h3><p>Choose an isolation mechanism by the threat it changes.</p></a>
+<div class="post-cta"><h3>Try the whole loop once</h3><p>Create a box, do one real task, and review the patch beside the execution record.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/guides/first-box/">Follow the first-box guide</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js" defer></script><script src="/_static/highlight.js" defer></script></body></html>

@@ -113,6 +113,18 @@ where you want it (`git apply --3way patch.diff`).
 `h5i box apply <name>` still lands a proposed box onto its parent branch in this
 repository, for the local case where that is what you want.
 
+## Showing a box to someone else
+
+`h5i box share <name>` opens the box's dev server to one other person, either
+peer to peer (they run `h5i join <ticket>`) or through a Cloudflare quick tunnel
+(`--tunnel`: any browser, no h5i, but Cloudflare can read the traffic).
+
+This is the only path that lets traffic *into* a box, and it exposes
+agent-written code to another human. **Do it when asked, not on your own
+initiative**, and name the tunnel's cost out loud if you suggest it. To check
+your own work, use the browser in the box or `h5i box view` instead.
+`references/share.md` has the verbs, the refusals and what reaches the receipt.
+
 ## Know what is actually enforced
 
 Never assume a tier. Ask:
@@ -149,4 +161,5 @@ around the boundary. Report what was denied and why you needed it.
 - [references/browser.md](references/browser.md) — driving the browser, the control lock, the viewer
 - [references/policy.md](references/policy.md) — profiles, tiers, egress, secrets
 - [references/export.md](references/export.md) — the gate and reading a receipt
+- [references/share.md](references/share.md) — letting one other person try the box's app
 - [references/troubleshooting.md](references/troubleshooting.md) — probe output, common denials
