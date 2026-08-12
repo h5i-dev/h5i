@@ -366,26 +366,42 @@ pub fn is_descendant(pid: u32, root: u32) -> bool {
     false
 }
 
+/// Every pid on the machine, grown until the answer provably fits.
+///
+/// The same truncation as [`fds_of`] and the same consequence: a process that
+/// falls off the end of this list has all of its sockets go unseen, so a
+/// stranger holding the shared port becomes invisible and the box looks like
+/// the only listener. Processes are cheaper to create than descriptors, so
+/// staying ahead of a fixed slack is easier here, not harder.
 #[cfg(target_os = "macos")]
 fn all_pids() -> Vec<u32> {
-    // Sized from the kernel's own answer, then re-read: the count can grow
-    // between the two calls, which shows up as a truncated list rather than an
-    // error, so the buffer gets slack.
+    /// Far past any attainable process count (`kern.maxproc` is in the
+    /// thousands); the loop is bounded by construction, not by trust.
+    const CEILING: usize = 1 << 20;
+
     let n = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
     if n <= 0 {
         return Vec::new();
     }
-    let mut buf = vec![0i32; n as usize + 64];
-    let bytes = (buf.len() * std::mem::size_of::<i32>()) as libc::c_int;
-    let got = unsafe { libc::proc_listallpids(buf.as_mut_ptr() as *mut libc::c_void, bytes) };
-    if got <= 0 {
-        return Vec::new();
+    let mut count = (n as usize).saturating_add(64).max(256);
+    loop {
+        let mut buf = vec![0i32; count];
+        let bytes = (count * std::mem::size_of::<i32>()) as libc::c_int;
+        let got = unsafe { libc::proc_listallpids(buf.as_mut_ptr() as *mut libc::c_void, bytes) };
+        if got <= 0 {
+            return Vec::new();
+        }
+        let n = got as usize;
+        if n < count || count >= CEILING {
+            buf.truncate(n.min(count));
+            return buf
+                .into_iter()
+                .filter(|&p| p > 0)
+                .map(|p| p as u32)
+                .collect();
+        }
+        count = count.saturating_mul(2).min(CEILING);
     }
-    buf.truncate(got as usize);
-    buf.into_iter()
-        .filter(|&p| p > 0)
-        .map(|p| p as u32)
-        .collect()
 }
 
 #[cfg(target_os = "macos")]
@@ -404,8 +420,33 @@ fn parent_of(pid: u32) -> Option<u32> {
     (got == size).then_some(info.pbi_ppid)
 }
 
+/// Every descriptor a process holds — **all** of them, or none.
+///
+/// The kernel fills the buffer it is given and reports how much it wrote; it
+/// does not say "there was more". So a buffer that comes back exactly full is
+/// indistinguishable from a complete answer, and the list is ordered by
+/// descriptor number, so what a full buffer drops is the *highest* fds.
+///
+/// Sizing once and adding fixed slack made that a hole rather than a rough
+/// edge. A process can open descriptors between the sizing call and the fetch,
+/// and one that wants to can do it deliberately: open past the slack, bind the
+/// shared port late so its listening socket has a high number, and keep opening
+/// so the count stays ahead. Its listener then falls off the end of the scan —
+/// and a listener h5i cannot see is a listener [`decide`] cannot refuse. With
+/// the box holding `0.0.0.0:P` and the hidden stranger holding `127.0.0.1:P`,
+/// h5i sees only the box, calls it unambiguous, and dials straight into the
+/// stranger.
+///
+/// So the buffer grows until the answer provably fits: strictly fewer entries
+/// than the room offered means nothing was left behind.
 #[cfg(target_os = "macos")]
 fn fds_of(pid: u32) -> Vec<libc::proc_fdinfo> {
+    /// Far past any attainable descriptor limit (`proc_fdinfo` is 8 bytes, so
+    /// this is 8 MiB), and present only so the loop is bounded by construction
+    /// rather than by trust in a process's `RLIMIT_NOFILE`.
+    const CEILING: usize = 1 << 20;
+
+    let each = std::mem::size_of::<libc::proc_fdinfo>();
     let size = unsafe {
         libc::proc_pidinfo(
             pid as libc::c_int,
@@ -418,24 +459,29 @@ fn fds_of(pid: u32) -> Vec<libc::proc_fdinfo> {
     if size <= 0 {
         return Vec::new();
     }
-    let each = std::mem::size_of::<libc::proc_fdinfo>();
-    // Slack for descriptors opened between the sizing call and this one.
-    let count = size as usize / each + 32;
-    let mut buf: Vec<libc::proc_fdinfo> = vec![unsafe { std::mem::zeroed() }; count];
-    let got = unsafe {
-        libc::proc_pidinfo(
-            pid as libc::c_int,
-            libc::PROC_PIDLISTFDS,
-            0,
-            buf.as_mut_ptr() as *mut libc::c_void,
-            (count * each) as libc::c_int,
-        )
-    };
-    if got <= 0 {
-        return Vec::new();
+    let mut count = (size as usize / each).saturating_add(32).max(64);
+    loop {
+        let mut buf: Vec<libc::proc_fdinfo> = vec![unsafe { std::mem::zeroed() }; count];
+        let got = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDLISTFDS,
+                0,
+                buf.as_mut_ptr() as *mut libc::c_void,
+                (count * each) as libc::c_int,
+            )
+        };
+        if got <= 0 {
+            return Vec::new();
+        }
+        let n = got as usize / each;
+        if n < count || count >= CEILING {
+            buf.truncate(n.min(count));
+            return buf;
+        }
+        // Came back full, so the tail may have been cut. Ask again with room.
+        count = count.saturating_mul(2).min(CEILING);
     }
-    buf.truncate(got as usize / each);
-    buf
 }
 
 /// `PROC_PIDFDSOCKETINFO`, read by offset.
@@ -918,6 +964,53 @@ mod tests {
                  and read back as {found:?}"
             );
         }
+    }
+
+    /// A listener behind a great many descriptors is still found.
+    ///
+    /// The hole this guards is that the kernel does not say "there was more":
+    /// a buffer that comes back full is indistinguishable from a complete
+    /// answer, and the fd list is ordered, so what a full buffer drops is the
+    /// highest descriptors — where a process that wants to hide a socket puts
+    /// it. The race itself (opening descriptors *during* the scan) cannot be
+    /// staged deterministically in a test; what can be staged is the scale, and
+    /// a scan that silently stopped at its first guess fails this.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_listener_past_the_first_guess_at_a_buffer_is_still_found() {
+        use std::net::TcpListener;
+
+        // Well past the old fixed slack of 32, and past the usual 256-fd soft
+        // limit, so the first sizing guess cannot happen to be enough.
+        let mut held = Vec::new();
+        for _ in 0..600 {
+            match std::fs::File::open("/dev/null") {
+                Ok(f) => held.push(f),
+                // A low `RLIMIT_NOFILE` is not a failure of the thing under
+                // test; whatever we did open still exercises it.
+                Err(_) => break,
+            }
+        }
+        assert!(
+            held.len() > 100,
+            "could not open enough descriptors to make this meaningful ({})",
+            held.len()
+        );
+
+        // Bound *after* the flood, so it takes a high descriptor number — the
+        // end of the list, which is what truncation removes.
+        let late = TcpListener::bind("127.0.0.1:0").expect("bind behind the flood");
+        let port = late.local_addr().expect("addr").port();
+        let me = std::process::id();
+
+        assert!(
+            listening_sockets()
+                .iter()
+                .any(|l| l.pid == me && l.addr.port() == port),
+            "a listener opened behind {} descriptors was not found — the scan stopped short",
+            held.len()
+        );
+        drop(held);
     }
 
     /// The upward check, which is what the dialer trusts at the last moment.
