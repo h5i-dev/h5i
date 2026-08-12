@@ -347,6 +347,137 @@ fn box_dir(h5i_root: &std::path::Path, name: &str) -> anyhow::Result<std::path::
     Ok(h5i_core::env::env_dir(h5i_root, &m.agent, &m.slug))
 }
 
+/// The box must have a network namespace of its own, and a live process to
+/// borrow it from. Without one, "the box's port 3000" and "this machine's
+/// port 3000" are the same port, and a share would publish whatever happened
+/// to be listening on the host — which is the one outcome nobody would
+/// forgive. So this refuses rather than guessing.
+///
+/// The condition is deliberately "does this box have a netns of its own",
+/// not a list of tiers. A `process`-tier box gets one when its profile
+/// denies egress and shares the host's when it does not, so naming tiers
+/// here would be advice that is wrong half the time.
+///
+/// One function per platform rather than one function with three `cfg` blocks
+/// inside it. The unsupported branch used to be written as
+/// `let box_pid: u32 = anyhow::bail!(…)`, and `bail!` expands to a `return`:
+/// on any other target that binding diverged, which made every binding above
+/// it unused and every statement below it unreachable. With `-D warnings` in
+/// the cross-check that is four hard errors, and it has been red since the
+/// platform work landed. A function that returns the pid has nothing for
+/// either lint to catch.
+#[cfg(target_os = "linux")]
+fn box_process(
+    dir: &std::path::Path,
+    name: &str,
+    m: &h5i_core::env::EnvManifest,
+    port: u16,
+) -> anyhow::Result<u32> {
+    let Some(pid) = h5i_core::view::box_pid(dir) else {
+        // A *writer*, which is the same filter `box_pid` applies. Asking
+        // whether the registry is non-empty counts `box shell --readonly`
+        // observers too — so with only an observer alive, and in the state a
+        // writer exiting while an observer stays leaves behind, this branch
+        // told the operator their box shares the host's network and that they
+        // needed a different tier or profile. Neither was true: `box_pid`
+        // rejected it because there is no writer session, not because the
+        // isolation is weak, and a process- or supervised-tier observer can
+        // have a namespace of its own. The remedy it needed was the other one.
+        let running = h5i_core::env::live_sessions(dir)
+            .iter()
+            .any(|s| h5i_core::env::live_is_writer(&s.kind));
+        anyhow::bail!(
+            "h5i cannot find a process of `{name}` in a network namespace of its own, so it \
+             cannot tell the box's port {} from any other port on this machine — and sharing \
+             the wrong one would publish something you did not choose.\n   {}",
+            port,
+            if running {
+                format!(
+                    "The box is running, but at the `{}` tier with this profile it shares the \
+                     host's network. A box only gets a network of its own at `supervised` or \
+                     `container`, or at `process` with a profile that denies egress.",
+                    m.isolation_claim
+                )
+            } else {
+                format!("Start a session first: `h5i box shell {name}`.")
+            }
+        );
+    };
+    Ok(pid)
+}
+
+#[cfg(target_os = "macos")]
+fn box_process(
+    dir: &std::path::Path,
+    name: &str,
+    m: &h5i_core::env::EnvManifest,
+    port: u16,
+) -> anyhow::Result<u32> {
+    // macOS identifies a box by its **process tree**, not by a namespace, and
+    // the safety that a namespace gives Linux for free is established here by
+    // attribution instead: `h5i_share::owner` asks Darwin which process holds
+    // the listening socket and refuses unless it is one of this box's. The
+    // dialer does that on every connection, so what this function needs is only
+    // the root of the tree — the session process itself.
+    let pid = {
+        // A box inside a VM has no host process holding its port, so
+        // attribution would find nothing and report "nothing is listening",
+        // which is both untrue and unactionable. Said plainly instead.
+        //
+        // Keyed on the resolved claim rather than on probing for a VM: these
+        // are exactly the tiers whose boxes do not run as host processes, and a
+        // box that asked for one and did not get it has a different claim
+        // recorded here.
+        if matches!(
+            m.isolation_claim.as_str(),
+            "container" | "hardened-container" | "microvm"
+        ) {
+            anyhow::bail!(
+                "`{name}` runs at the `{}` tier, which on macOS means it runs inside a virtual \
+                 machine — a Podman machine or a microVM guest — and its port {} lives in that \
+                 machine's network, not on this one.\n   h5i shares a macOS box by identifying \
+                 the process that holds the port, and there is no such process here to \
+                 identify. Sharing it would need a route through the VM that h5i does not \
+                 have.\n   A box at the `workspace`, `process` or `supervised` tier runs as \
+                 processes on this Mac and can be shared.",
+                m.isolation_claim,
+                port
+            );
+        }
+        // Verified for the same reason `box_pid` verifies on Linux: this pid
+        // is the root of the tree the dialer attributes a listening socket to,
+        // and a pid a crashed session left behind can belong to anything.
+        match h5i_core::view::session_pid_verified(dir, true) {
+            Some(pid) => pid,
+            None => anyhow::bail!(
+                "`{name}` has no session running, so h5i has no box to attribute port {} to. \
+                 A box is only a set of processes while a session is running.\n   Start one \
+                 first: `h5i box shell {name}`.",
+                port
+            ),
+        }
+    };
+    Ok(pid)
+}
+
+/// Neither a namespace to enter nor a process tree to attribute a socket to.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn box_process(
+    _dir: &std::path::Path,
+    _name: &str,
+    _m: &h5i_core::env::EnvManifest,
+    _port: u16,
+) -> anyhow::Result<u32> {
+    // `Err(..)` rather than `bail!`, because this is the one branch that cannot
+    // be compiled on the machine it was written on: an explicit return value
+    // needs no reasoning about what the macro expands to in tail position.
+    Err(anyhow::anyhow!(
+        "`h5i box share` needs either a network namespace to enter (Linux) or a way to \
+         attribute a listening socket to the box's processes (macOS). It is not available on \
+         this platform."
+    ))
+}
+
 fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
     let Some(name) = args.name.clone() else {
         anyhow::bail!("which box? `h5i box share <name>` — `h5i box ls` lists them");
@@ -369,100 +500,7 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
     let m = h5i_core::env::find(h5i_root, &name)?;
     let dir = h5i_core::env::env_dir(h5i_root, &m.agent, &m.slug);
 
-    // The box must have a network namespace of its own, and a live process to
-    // borrow it from. Without one, "the box's port 3000" and "this machine's
-    // port 3000" are the same port, and a share would publish whatever happened
-    // to be listening on the host — which is the one outcome nobody would
-    // forgive. So this refuses rather than guessing.
-    //
-    // The condition is deliberately "does this box have a netns of its own",
-    // not a list of tiers. A `process`-tier box gets one when its profile
-    // denies egress and shares the host's when it does not, so naming tiers
-    // here would be advice that is wrong half the time.
-    #[cfg(target_os = "linux")]
-    let Some(box_pid) = h5i_core::view::box_pid(&dir) else {
-        // A *writer*, which is the same filter `box_pid` applies. Asking
-        // whether the registry is non-empty counts `box shell --readonly`
-        // observers too — so with only an observer alive, and in the state a
-        // writer exiting while an observer stays leaves behind, this branch
-        // told the operator their box shares the host's network and that they
-        // needed a different tier or profile. Neither was true: `box_pid`
-        // rejected it because there is no writer session, not because the
-        // isolation is weak, and a process- or supervised-tier observer can
-        // have a namespace of its own. The remedy it needed was the other one.
-        let running = h5i_core::env::live_sessions(&dir)
-            .iter()
-            .any(|s| h5i_core::env::live_is_writer(&s.kind));
-        anyhow::bail!(
-            "h5i cannot find a process of `{name}` in a network namespace of its own, so it \
-             cannot tell the box's port {} from any other port on this machine — and sharing \
-             the wrong one would publish something you did not choose.\n   {}",
-            args.port,
-            if running {
-                format!(
-                    "The box is running, but at the `{}` tier with this profile it shares the \
-                     host's network. A box only gets a network of its own at `supervised` or \
-                     `container`, or at `process` with a profile that denies egress.",
-                    m.isolation_claim
-                )
-            } else {
-                format!("Start a session first: `h5i box shell {name}`.")
-            }
-        );
-    };
-
-    // macOS identifies a box by its **process tree**, not by a namespace, and
-    // the safety that a namespace gives Linux for free is established here by
-    // attribution instead: `h5i_share::owner` asks Darwin which process holds
-    // the listening socket and refuses unless it is one of this box's. The
-    // dialer does that on every connection, so what this function needs is only
-    // the root of the tree — the session process itself.
-    #[cfg(target_os = "macos")]
-    let box_pid = {
-        // A box inside a VM has no host process holding its port, so
-        // attribution would find nothing and report "nothing is listening",
-        // which is both untrue and unactionable. Said plainly instead.
-        //
-        // Keyed on the resolved claim rather than on probing for a VM: these
-        // are exactly the tiers whose boxes do not run as host processes, and a
-        // box that asked for one and did not get it has a different claim
-        // recorded here.
-        if matches!(
-            m.isolation_claim.as_str(),
-            "container" | "hardened-container" | "microvm"
-        ) {
-            anyhow::bail!(
-                "`{name}` runs at the `{}` tier, which on macOS means it runs inside a virtual \
-                 machine — a Podman machine or a microVM guest — and its port {} lives in that \
-                 machine's network, not on this one.\n   h5i shares a macOS box by identifying \
-                 the process that holds the port, and there is no such process here to \
-                 identify. Sharing it would need a route through the VM that h5i does not \
-                 have.\n   A box at the `workspace`, `process` or `supervised` tier runs as \
-                 processes on this Mac and can be shared.",
-                m.isolation_claim,
-                args.port
-            );
-        }
-        // Verified for the same reason `box_pid` verifies on Linux: this pid
-        // is the root of the tree the dialer attributes a listening socket to,
-        // and a pid a crashed session left behind can belong to anything.
-        match h5i_core::view::session_pid_verified(&dir, true) {
-            Some(pid) => pid,
-            None => anyhow::bail!(
-                "`{name}` has no session running, so h5i has no box to attribute port {} to. \
-                 A box is only a set of processes while a session is running.\n   Start one \
-                 first: `h5i box shell {name}`.",
-                args.port
-            ),
-        }
-    };
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    let box_pid: u32 = anyhow::bail!(
-        "`h5i box share` needs either a network namespace to enter (Linux) or a way to \
-         attribute a listening socket to the box's processes (macOS). It is not available on \
-         this platform."
-    );
+    let box_pid = box_process(&dir, &name, &m, args.port)?;
 
     let transport = if args.tunnel {
         Transport::Tunnel
