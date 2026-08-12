@@ -6737,7 +6737,50 @@ pub fn proc_start_ticks(pid: u32) -> Option<u64> {
     after_comm.split_whitespace().nth(19)?.parse().ok()
 }
 
-#[cfg(not(target_os = "linux"))]
+/// The same identity, from Darwin's process table.
+///
+/// `PROC_PIDTBSDINFO` carries `pbi_start_tvsec`/`pbi_start_tvusec`, the wall
+/// time the process began, which serves the purpose the Linux tick count serves
+/// — the pair (pid, start time) is unique for as long as the process lives and
+/// the kernel cannot reissue it. The unit differs and nothing compares across
+/// platforms: a record is only ever checked against a pid on the machine that
+/// wrote it.
+///
+/// Answering `None` here was not neutral, and that is why this exists. macOS
+/// wrote `started_ticks: None` into every live record, `session_pid_verified`
+/// skips records without one, and `h5i box share` asks for the verified
+/// answer — so the pid-reuse hardening turned into a total refusal on macOS,
+/// with `h5i box share` reporting "has no session running" for boxes whose
+/// session was running the whole time. A platform that cannot verify identity
+/// fails a check written to be strict; the fix is to let it verify.
+#[cfg(target_os = "macos")]
+pub fn proc_start_ticks(pid: u32) -> Option<u64> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: `proc_pidinfo` writes at most `size` bytes into `info`, and the
+    // return value is checked to be exactly that before anything is read.
+    let got = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        )
+    };
+    if got != size {
+        return None;
+    }
+    // Microseconds since the epoch, which is monotone enough for an identity:
+    // it is compared only against itself, never used as a duration.
+    Some(
+        info.pbi_start_tvsec
+            .saturating_mul(1_000_000)
+            .saturating_add(info.pbi_start_tvusec),
+    )
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn proc_start_ticks(_pid: u32) -> Option<u64> {
     None
 }
@@ -8841,6 +8884,74 @@ pub fn rm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every supported platform must be able to prove whose pid a record is.
+    ///
+    /// This is not a property of the identity check, it is a property of the
+    /// *platform support*, and it is asserted here because answering `None` is
+    /// silently catastrophic rather than merely unhelpful: `h5i box share` asks
+    /// `session_pid_verified` for the strict answer, that call skips any record
+    /// whose `started_ticks` is absent, and a platform where this function
+    /// cannot answer therefore has no shareable box at all. macOS shipped in
+    /// exactly that state — every live record written with `started_ticks:
+    /// None`, and `h5i box share` reporting "has no session running" for boxes
+    /// whose session was running the whole time.
+    ///
+    /// A platform added later with no implementation fails here rather than in
+    /// somebody's terminal.
+    #[test]
+    fn this_platform_can_tell_a_pid_from_its_reuse() {
+        let me = std::process::id();
+        let mine = proc_start_ticks(me);
+        assert!(
+            mine.is_some(),
+            "this platform cannot prove a live record's identity, so `h5i box share` will \
+             refuse every box on it"
+        );
+        // Stable for the life of the process: an identity that changed between
+        // two reads would fail `live_identity_holds` against its own record.
+        assert_eq!(mine, proc_start_ticks(me), "an identity must not drift");
+
+        // And it distinguishes. A different process started later must not
+        // share our value, or the check cannot catch pid reuse at all.
+        let mut child = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn a child to compare against");
+        let theirs = proc_start_ticks(child.id());
+        assert!(theirs.is_some(), "a live child has a start time");
+        assert_ne!(
+            mine, theirs,
+            "two processes shared an identity, so pid reuse would go unnoticed"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    /// The record a running session writes must satisfy the strict reader.
+    ///
+    /// The two halves are written and checked in different modules, and the
+    /// regression that motivated this passed every test in both: `register`
+    /// wrote `None` happily, `live_identity_holds` tolerated `None` happily,
+    /// and only the caller that demanded `Some` — in another crate — broke.
+    #[test]
+    fn a_registered_session_satisfies_the_check_that_sharing_makes() {
+        let rec = LiveSession {
+            pid: std::process::id(),
+            kind: "run".into(),
+            started_at: now_ts(),
+            command: None,
+            started_ticks: proc_start_ticks(std::process::id()),
+        };
+        assert!(
+            rec.started_ticks.is_some(),
+            "a session registering itself must record an identity, or sharing refuses it"
+        );
+        assert!(
+            live_identity_holds(&rec),
+            "a record written for this very process must match it"
+        );
+    }
 
     #[test]
     fn egress_rule_validation_accepts_proxy_forms_only() {
