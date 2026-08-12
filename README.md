@@ -34,15 +34,13 @@ h5i gives you:
   - **Browser-ready demo links** for everyone else, with expiring grants, revocation, and ingress receipts
 - **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
 
-**Use h5i to**
-
-<table>
+<table align="center">
 <tr>
 <td>🛡️ Run coding agents in secure sandboxes</td>
 <td>🌐 Test web apps in isolated browsers</td>
 </tr>
 <tr>
-<td>🔗 Share dev servers securely with others</td>
+<td>🔗 Share demo services securely with others</td>
 <td>🧾 Review agent changes and activity</td>
 </tr>
 </table>
