@@ -421,8 +421,15 @@ impl Bridge {
     /// one-hour ticket died at fifty-seven minutes and a day-long one would
     /// lose over an hour, which is a promise broken in the other direction.
     /// [`SeenClock`] tells the two apart.
+    /// Recovered rather than unwrapped, for the reason [`Self::tally`] gives and
+    /// with more at stake: this is on the path of *every* authorization, so an
+    /// `expect` here turns one panic anywhere under this lock into a share that
+    /// answers nothing for the rest of its life — every connection task dying in
+    /// the same place, with no receipt line to say why. A `SeenClock` is four
+    /// integers and a flag, and the worst a recovered one can be is one
+    /// observation out of date.
     fn now(&self) -> DateTime<Utc> {
-        let mut seen = self.clock.lock().expect("clock");
+        let mut seen = self.clock.lock().unwrap_or_else(|p| p.into_inner());
         seen.observe(Utc::now(), self.started_mono.elapsed())
     }
 
@@ -434,7 +441,7 @@ impl Bridge {
     /// elapsed time says" is a fact a reader needs in order to weigh the rest
     /// of it.
     fn clock_stepped_by(&self) -> i64 {
-        self.clock.lock().expect("clock").stepped
+        self.clock.lock().unwrap_or_else(|p| p.into_inner()).stepped
     }
 
     pub fn free_slots(&self) -> usize {
@@ -1284,9 +1291,17 @@ pub fn render_receipt(s: &Summary) -> String {
                     .map(|x| x.as_str())
                     .unwrap_or("a path nothing observed"),
                 p.grant,
+                // Sanitised, like `failed_because` twelve lines up and like
+                // every other string this repository renders that it did not
+                // author. A label is `--label` from a command line, so it is
+                // the operator's own — but "the operator typed it" and "the
+                // operator authored it" are different claims once it comes from
+                // an automation, a ticket title or a paste, and a receipt is
+                // read in a terminal by somebody who was not there. An `\r` in
+                // it rewrites the line above.
                 p.label
                     .as_ref()
-                    .map(|l| format!(" ({l})"))
+                    .map(|l| format!(" ({})", h5i_core::redact::sanitize_display(l)))
                     .unwrap_or_default(),
                 plural(p.connections, "connection", "connections"),
                 bytes(p.bytes_from_peer),
@@ -1627,9 +1642,13 @@ pub fn render_status(s: &ShareSession, now: i64) -> String {
             "    {}  {:<10}{}\n",
             g.id,
             state,
+            // Sanitised for the reason the receipt's copy is: this is a string
+            // rendered straight into a terminal, and `share ls` renders it for
+            // every box on the clone at once — so one label decides how the
+            // rows around it read.
             g.label
                 .as_ref()
-                .map(|l| format!("  {l}"))
+                .map(|l| format!("  {}", h5i_core::redact::sanitize_display(l)))
                 .unwrap_or_default()
         ));
     }
@@ -2754,6 +2773,75 @@ mod tests {
         p.path = Some(Path::Relayed);
         let body = render_receipt(&summary(vec![p], vec![]));
         assert!(body.contains("relayed"));
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    use crate::session::{mint_grant, ShareSession};
+
+    /// A label reaches a terminal through two renderers, and neither may let it
+    /// rewrite the lines around it.
+    ///
+    /// `failed_because` is sanitised in the receipt and the label beside it was
+    /// not, which is the same asymmetry `owner::display_name` was fixed for.
+    /// The label is the operator's own `--label`, so this is not somebody
+    /// else's string — until it comes from an automation, a ticket title or a
+    /// paste, and `share ls` renders every box on the clone in one go, so one
+    /// label decides how its neighbours read.
+    #[test]
+    fn a_label_cannot_rewrite_the_lines_around_it() {
+        let nasty = "alex\r\u{1b}[2Kadmin\u{202e}";
+        let clean = |s: &str, what: &str| {
+            assert!(!s.contains('\r'), "{what}: {s:?}");
+            assert!(!s.contains('\u{1b}'), "{what}: {s:?}");
+            assert!(!s.contains('\u{202e}'), "{what}: {s:?}");
+            assert!(s.contains("alex"), "{what} lost the label: {s:?}");
+        };
+
+        let mut s = ShareSession::new("env/a/demo", 3000, Transport::P2p, "abc", Utc::now());
+        let (g, _secret) = mint_grant(Some(nasty.into()), 4_000_000_000).expect("mint");
+        s.grants.push(g);
+        clean(&render_status(&s, 1), "share status");
+
+        let summary = Summary {
+            transport: Transport::P2p,
+            endpoint: "abc".into(),
+            port: 3000,
+            started: Utc::now(),
+            ended: Utc::now(),
+            seconds: 1,
+            clock_moved: 0,
+            peers: vec![PeerRecord {
+                peer: "peer".into(),
+                grant: "g1".into(),
+                label: Some(nasty.into()),
+                path: Some(Path::Direct),
+                opened: Utc::now(),
+                closed: None,
+                last_seen: None,
+                connections: 1,
+                bytes_to_peer: 1,
+                bytes_from_peer: 1,
+            }],
+            peers_overflow: 0,
+            overflow_connections: 0,
+            overflow_bytes_to_peer: 0,
+            overflow_bytes_from_peer: 0,
+            denied: Vec::new(),
+            denied_overflow: 0,
+            over_capacity: 0,
+            front_refused: 0,
+            unreachable: 0,
+            route_broken: 0,
+            settled: true,
+            turned_away: Vec::new(),
+            turned_away_overflow: 0,
+            failed_because: None,
+            truncated: 0,
+        };
+        clean(&render_receipt(&summary), "the receipt");
     }
 }
 

@@ -526,12 +526,20 @@ pub async fn serve(bridge: Arc<Bridge>, listener: tokio::net::TcpListener) -> Re
 ///
 /// One entry per grant, because a tunnel genuinely cannot tell two browsers
 /// apart — the peers it sees are Cloudflare's.
+///
+/// The map is taken with a poison recovery, not an `expect`, and the reason is
+/// the one `Bridge::tally` gives: `peer_joined` runs while this lock is held, so
+/// an `expect` would turn a single panic under it into a front where *every
+/// later connection* dies at the same line — a share that answers resets and
+/// says nothing about why. The map is a `grant id → PeerId` lookup with no
+/// invariant across entries; a recovered one is at worst missing a row, which
+/// costs a receipt line and no access.
 fn register(
     bridge: &Arc<Bridge>,
     peers: &Arc<Mutex<HashMap<String, crate::bridge::PeerId>>>,
     grant: &crate::bridge::AuthorizedGrant,
 ) -> crate::bridge::PeerId {
-    let mut map = peers.lock().expect("peer map");
+    let mut map = peers.lock().unwrap_or_else(|p| p.into_inner());
     *map.entry(grant.id.clone()).or_insert_with(|| {
         bridge.peer_joined(
             "a browser (the tunnel cannot tell two apart)".into(),
@@ -562,8 +570,20 @@ async fn handle(
     peers: Arc<Mutex<HashMap<String, crate::bridge::PeerId>>>,
     mut sock: tokio::net::TcpStream,
 ) -> Result<(), H5iError> {
-    let Some((head, rest)) = http_front::read_head(&mut sock).await else {
-        return Ok(());
+    let (head, rest) = match http_front::read_head(&mut sock).await {
+        Ok(pair) => pair,
+        // A head this share would not read is the same fact as a head the gate
+        // refuses, one step earlier — and it used to be the one thing a receipt
+        // could not mention. A 32 KB header block, or a TLS hello sent to the
+        // plaintext front, left no trace at all.
+        Err(http_front::NoHead::Refused) => {
+            bridge.record_turned_away(crate::bridge::TurnedAwayReason::Unparseable);
+            return Ok(());
+        }
+        // And a peer that said nothing still leaves none, deliberately: a
+        // browser's preconnect is this shape, so recording it would bury every
+        // row that means something under noise anybody can generate.
+        Err(http_front::NoHead::Silent) => return Ok(()),
     };
 
     // Resolved once, here, so the decision and the accounting agree about which
@@ -617,7 +637,19 @@ async fn handle(
             // the `401` is rewritten: a `400` is about the request's bytes and
             // a `403` about where it came from, and neither becomes truer for
             // the share having stopped.
-            if body.starts_with("HTTP/1.1 401") {
+            //
+            // Keyed on the typed reason, not on the rendered status text. The
+            // block below already learned that lesson — "by its own typed
+            // reason rather than by reading the status back out of the bytes we
+            // just rendered" — and these two were left testing
+            // `starts_with("HTTP/1.1 401")`, which is the same recovery by a
+            // different spelling. It is correct today and it is correct by
+            // coincidence: `Refusal::status` and `refusal_response`'s format
+            // string are both free to change, and either would silently stop a
+            // stopped share from telling its visitors so and stop the receipt
+            // counting the commonest event a public URL has.
+            let unauthorized = refusal == Some(crate::gate::Refusal::NotAuthorized);
+            if unauthorized {
                 match why {
                     Some(crate::session::Denied::ShareOver) => {
                         body = plain_response(
@@ -642,7 +674,7 @@ async fn handle(
             // A `401` here is somebody knocking with nothing, which `authorize`
             // never sees and so never counted. On a public tunnel URL that is
             // the commonest thing that happens to a share.
-            if !presented && body.starts_with("HTTP/1.1 401") {
+            if !presented && unauthorized {
                 bridge.record_refused();
             }
             // Every refusal that is not about a credential, by its own typed
@@ -1871,6 +1903,87 @@ mod tests {
             "a service-worker refusal left no trace: {body}"
         );
         assert!(body.contains("would not parse"), "{body}");
+
+        // And the two answers that are still keyed off the refusal rather than
+        // off the rendered status: a stopped share tells its visitors so, and
+        // somebody knocking with nothing is counted. Both used to be recovered
+        // by `starts_with("HTTP/1.1 401")` on bytes this file had just
+        // rendered, which is the recovery the block above was rewritten to
+        // stop doing.
+        let anonymous = request(addr, "GET / HTTP/1.1\r\nHost: t\r\n\r\n").await;
+        assert!(anonymous.starts_with("HTTP/1.1 401 "), "{anonymous}");
+        let body = crate::bridge::render_receipt(&bridge.snapshot());
+        assert!(
+            body.contains("presented no invite"),
+            "a visitor knocking with nothing was not counted: {body}"
+        );
+
+        serving.abort();
+    }
+
+    /// A head the *reader* refuses reaches the receipt too.
+    ///
+    /// `turned_away` counted only heads that were read and then refused by the
+    /// gate, and the head reader refuses several shapes before the gate ever
+    /// sees them: a header block past `MAX_HEAD`, bytes that are not UTF-8, a
+    /// head the peer stops feeding. Every one of them was dropped with no
+    /// response and no line anywhere — so the largest smuggling-shaped probe a
+    /// public share can be sent was the one its receipt could not mention.
+    ///
+    /// And the other half, which is why this is two answers and not one: a peer
+    /// that opens a socket and says nothing still leaves no trace. That is a
+    /// browser's speculative preconnect, and recording it would bury every row
+    /// that means something under noise anybody can generate for free.
+    #[tokio::test]
+    async fn a_head_the_reader_would_not_take_is_still_somebody_turned_away() {
+        use tokio::io::AsyncWriteExt;
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, _secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        // Thirty-two kilobytes of header and no end to it.
+        let mut flood = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let oversize = format!(
+            "GET / HTTP/1.1\r\nHost: t\r\nX: {}\r\n",
+            "a".repeat(crate::gate::MAX_HEAD + 64)
+        );
+        let _ = flood.write_all(oversize.as_bytes()).await;
+        let _ = flood.shutdown().await;
+
+        // And a TLS hello aimed at the plaintext front.
+        let mut tls = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let _ = tls
+            .write_all(b"\x16\x03\x01\x00\x2a\x01\x00\x00\x26\r\n\r\n")
+            .await;
+        let _ = tls.shutdown().await;
+
+        // Both are recorded, and the count is two.
+        for _ in 0..50 {
+            if bridge.snapshot().turned_away.len() >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let body = crate::bridge::render_receipt(&bridge.snapshot());
+        assert!(
+            body.contains("2 sent something this share would not parse"),
+            "a head the reader refused left no trace: {body}"
+        );
+
+        // A peer that says nothing adds nothing.
+        let quiet = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        drop(quiet);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let body = crate::bridge::render_receipt(&bridge.snapshot());
+        assert!(
+            body.contains("2 sent something this share would not parse"),
+            "a preconnect was recorded as somebody being turned away: {body}"
+        );
 
         serving.abort();
     }

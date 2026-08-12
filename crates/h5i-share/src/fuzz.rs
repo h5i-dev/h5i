@@ -79,6 +79,18 @@ const NAMES: &[&str] = &[
     "Cookie",
     "cookie",
     "Set-Cookie",
+    // The decisions the generator never offered a single input to. `Origin`
+    // and the fetch metadata are what `gate::is_cross_origin` reads, and
+    // `Service-Worker` is the whole of the registration refusal — three of the
+    // four newest branches in the gate, exercised until now only by the cases
+    // somebody thought of.
+    "Origin",
+    "origin",
+    "Sec-Fetch-Site",
+    "sec-fetch-site",
+    "Sec-Fetch-Mode",
+    "Sec-Fetch-Dest",
+    "Service-Worker",
     "Upgrade",
     "Expect",
     "Referer",
@@ -134,6 +146,29 @@ const VALUES: &[&str] = &[
     "/ok?h5i=deadbeef",
     "\u{85}",
     "value with spaces",
+    // Fetch metadata, and the `Host`/`Origin` pairs the origin check compares.
+    // `share.test` is the host every hand-written head in this crate uses, so
+    // these produce genuine matches as well as genuine mismatches.
+    "same-origin",
+    "same-site",
+    "cross-site",
+    "none",
+    "Same-Origin",
+    "navigate",
+    "document",
+    "iframe",
+    "image",
+    "empty",
+    "no-cors",
+    "cors",
+    "script",
+    "Script",
+    "share.test",
+    "http://share.test",
+    "https://share.test",
+    "http://share.test:8080",
+    "http://evil.example",
+    "null",
 ];
 
 const TARGETS: &[&str] = &[
@@ -144,6 +179,17 @@ const TARGETS: &[&str] = &[
     "/a?b=2&h5i=x",
     "/a?h5i=",
     "/a?h5ix=1",
+    // The parameter name as a framework reads it rather than as h5i writes
+    // it. `%68%35%69` is `h5i` after decoding, and the strip compared the raw
+    // text — so this spelling carried the credential into the box untouched.
+    "/a?%68%35%69=deadbeefdeadbeefdeadbeefdeadbeef",
+    "/a?h%35i=deadbeefdeadbeefdeadbeefdeadbeef&b=2",
+    "/a?%68%35%69",
+    // Escapes that are not escapes. Decoding by slicing the `&str` panics on
+    // the third of these.
+    "/a?%=1",
+    "/a?%6=1",
+    "/a?%a\u{e9}=1",
     "//evil.example/",
     "///evil.example/",
     "/\\evil.example/",
@@ -270,6 +316,105 @@ pub fn response_head(rng: &mut Rng) -> Vec<u8> {
         return mutate(rng, out).into_bytes();
     }
     out.into_bytes()
+}
+
+/// Chunk-size lines, including every shape that means one thing to a strict
+/// parser and another to a lenient one.
+const CHUNK_SIZES: &[&str] = &[
+    "0",
+    "00",
+    "1",
+    "5",
+    "a",
+    "A",
+    "ff",
+    "10",
+    "0000000000000005",
+    "0;ext",
+    "5;a=b",
+    "5;a=\"b;c\"",
+    " 5",
+    "5 ",
+    "\t5",
+    "5\t",
+    "zz",
+    "",
+    "0x5",
+    "-1",
+    "+5",
+    "ffffffffffffffff",
+    "fffffffffffffffe",
+    "10000000000000000",
+    "5;",
+    ";5",
+    "5;;",
+    "0;a=b",
+];
+
+/// Trailer lines after the terminating chunk, and the blank line that ends them.
+const TRAILERS: &[&str] = &[
+    "",
+    "X: y",
+    "X:y",
+    "X:",
+    ": y",
+    " folded",
+    "\tfolded",
+    "Content-Length: 5",
+    "Transfer-Encoding: chunked",
+    "X-\u{0c}Weird: y",
+    "Trailer with spaces: y",
+];
+
+/// Build something chunked-body-shaped, with a pipelined request stuck on the
+/// end.
+///
+/// The tail is the whole point: a chunked body is the one thing that tells this
+/// proxy where a *request* ends, so what must never happen is bytes past its end
+/// reaching the box. Everything after `PIPELINED` in the returned string is
+/// exactly that, and it is marked so an assertion can look for it.
+pub const PIPELINED: &str = "GET /SMUGGLED HTTP/1.1\r\nX-Smuggled: yes\r\n\r\n";
+
+pub fn chunked_body(rng: &mut Rng) -> String {
+    let mut out = String::new();
+    // A whole body in one line ending, like the head generator and for the same
+    // reason: sampled per line, four endings in five illegal, almost nothing
+    // reaches the code under test.
+    let eol = rng.pick(EOLS);
+    for _ in 0..rng.below(5) {
+        let size = rng.pick(CHUNK_SIZES);
+        out.push_str(size);
+        out.push_str(eol);
+        // Data of whatever length the generator felt like, which is usually
+        // *not* the declared size — a body whose framing lies is the case that
+        // matters, and h5i must stop where the framing says rather than where
+        // the data does.
+        let n = if rng.chance(3) {
+            usize::from_str_radix(size.split(';').next().unwrap_or("0"), 16).unwrap_or(0)
+        } else {
+            rng.below(12)
+        };
+        for i in 0..n.min(64) {
+            out.push((b'a' + (i % 26) as u8) as char);
+        }
+        out.push_str(eol);
+        if rng.chance(4) {
+            break;
+        }
+    }
+    // The terminating chunk, usually. A body that never terminates is the other
+    // half of the property.
+    if rng.chance(4) {
+        out.push('0');
+        out.push_str(eol);
+        for _ in 0..rng.below(3) {
+            out.push_str(rng.pick(TRAILERS));
+            out.push_str(eol);
+        }
+        out.push_str(eol);
+    }
+    out.push_str(PIPELINED);
+    out
 }
 
 /// Corrupt a head the way a hostile client would: splice, truncate, and inject

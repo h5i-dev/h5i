@@ -1354,3 +1354,175 @@ mod tests {
         unsafe { libc::kill(grandchild as libc::pid_t, libc::SIGKILL) };
     }
 }
+
+#[cfg(test)]
+mod ownership_fuzz {
+    use super::*;
+    use crate::fuzz::{rounds, Rng};
+
+    /// The addresses a listener on a shared machine can hold, including every
+    /// spelling of "the same place" that `specificity` has to tell apart.
+    const ADDRS: &[&str] = &[
+        "127.0.0.1",
+        "0.0.0.0",
+        "[::1]",
+        "[::]",
+        "127.0.0.2",
+        "192.168.1.5",
+        "[fe80::1]",
+        "[2001:db8::1]",
+    ];
+
+    /// Which listener the kernel hands a connection to `dial`.
+    ///
+    /// Written from the rule rather than from `decide`: the most specific bind
+    /// wins, an exact address beats a wildcard of the same family, a
+    /// dual-stack `[::]` can answer an IPv4 connection, and anything else on
+    /// the port is not in the running. `None` means nothing would answer.
+    ///
+    /// Ties are the interesting part and they are returned as ties, because a
+    /// tie is the one shape where the kernel — not h5i — picks, and h5i must
+    /// therefore refuse rather than name a winner.
+    ///
+    /// Written out longhand rather than calling [`specificity`]: an oracle that
+    /// shares the function under test agrees with its bugs, and the dual-stack
+    /// row is exactly the one a reader gets wrong twice.
+    fn who_answers<'a>(on_port: &[&'a Listener], dial: IpAddr) -> Vec<&'a Listener> {
+        let rank_of = |listen: IpAddr| -> Option<u8> {
+            match (listen, dial) {
+                // The exact address, whichever family.
+                (a, b) if a == b => Some(2),
+                // `0.0.0.0` answers any IPv4 connection.
+                (IpAddr::V4(a), IpAddr::V4(_)) if a.is_unspecified() => Some(1),
+                // `::` answers any IPv6 connection, and any IPv4 one too when
+                // `IPV6_V6ONLY` is off — which libproc does not report, so it
+                // has to be treated as possible.
+                (IpAddr::V6(a), _) if a.is_unspecified() => Some(1),
+                _ => None,
+            }
+        };
+        let mut best: Vec<&Listener> = Vec::new();
+        let mut rank = 0u8;
+        for l in on_port {
+            let Some(s) = rank_of(l.addr.ip()) else {
+                continue;
+            };
+            if s > rank {
+                rank = s;
+                best.clear();
+            }
+            if s == rank {
+                best.push(l);
+            }
+        }
+        best
+    }
+
+    /// Whatever h5i decides to dial, a stranger cannot be the one that answers.
+    ///
+    /// This is the whole macOS safety argument — Linux gets it from a namespace
+    /// and here it is established by observation — and it had only the cases
+    /// somebody wrote down. The generator makes the shapes nobody would:
+    /// wildcards against exact binds, both families at once, `SO_REUSEPORT`
+    /// ties, a box that holds three sockets and a stranger that holds one.
+    #[test]
+    fn the_box_is_never_named_for_an_address_a_stranger_could_answer() {
+        let mut rng = Rng::new(0x0BADCAFE);
+        let mut named = 0usize;
+        let mut refused = 0usize;
+        for i in 0..rounds() {
+            let seed = rng.next();
+            let mut one = Rng::new(seed);
+
+            // A handful of listeners over two pid families, on two ports so
+            // that "the wrong port" is in the corpus too.
+            let mut listeners: Vec<Listener> = Vec::new();
+            for _ in 0..one.below(6) {
+                let pid = if one.chance(2) {
+                    10 + one.below(3) as u32
+                } else {
+                    90 + one.below(3) as u32
+                };
+                let port = if one.chance(4) { 5173 } else { 3000 };
+                let addr = format!("{}:{port}", one.pick(ADDRS));
+                listeners.push(Listener {
+                    pid,
+                    addr: addr.parse().expect("address"),
+                });
+            }
+            // The box is the 10s. Everything else is a stranger.
+            let is_box = |pid: u32| (10..13).contains(&pid);
+            let ctx = || format!("round {i}, seed {seed:#x}, listeners {listeners:?}");
+
+            match decide(&listeners, 3000, is_box) {
+                Ownership::Box { pid, addr } => {
+                    named += 1;
+                    assert!(is_box(pid), "a stranger was named as the box: {}", ctx());
+                    assert_eq!(addr.port(), 3000, "{}", ctx());
+                    // The property. Everything that could answer a connection
+                    // to the address h5i is about to dial has to be the box's —
+                    // not merely the best of them, because a tie is decided by
+                    // the kernel and h5i cannot promise which way.
+                    let on_port: Vec<&Listener> =
+                        listeners.iter().filter(|l| l.addr.port() == 3000).collect();
+                    let answering = who_answers(&on_port, addr.ip());
+                    assert!(
+                        !answering.is_empty(),
+                        "h5i would dial an address nothing answers: {} -> {addr}",
+                        ctx()
+                    );
+                    for l in &answering {
+                        assert!(
+                            is_box(l.pid),
+                            "a stranger could answer the address h5i named ({addr}): {} -> {l:?}",
+                            ctx()
+                        );
+                    }
+                }
+                Ownership::Nobody => {
+                    // Only when no candidate address the box wins outright —
+                    // never while the box is the sole answerer of one.
+                    for dial in DIAL_CANDIDATES {
+                        let on_port: Vec<&Listener> =
+                            listeners.iter().filter(|l| l.addr.port() == 3000).collect();
+                        let answering = who_answers(&on_port, dial);
+                        assert!(
+                            answering.is_empty() || answering.iter().any(|l| !is_box(l.pid)),
+                            "the box owned {dial} outright and h5i said nothing was there: {}",
+                            ctx()
+                        );
+                    }
+                }
+                Ownership::Stranger { pid, .. } => {
+                    refused += 1;
+                    assert!(
+                        !is_box(pid),
+                        "the box was reported as a stranger: {}",
+                        ctx()
+                    );
+                }
+                Ownership::Contested { others, .. } => {
+                    refused += 1;
+                    assert!(!others.is_empty(), "a contest with nobody in it: {}", ctx());
+                    for pid in &others {
+                        assert!(!is_box(*pid), "the box contested itself: {}", ctx());
+                    }
+                }
+            }
+        }
+
+        let n = rounds();
+        if n < 1_000 {
+            return;
+        }
+        assert!(
+            named * 20 > n,
+            "the generator almost never produced a box h5i would dial: {named} of {n}"
+        );
+        assert!(
+            refused * 50 > n,
+            "the generator almost never produced a port h5i must refuse, so the half of \
+             this that keeps a stranger off the internet was barely exercised: {refused} of {n}"
+        );
+    }
+}

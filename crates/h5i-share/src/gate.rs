@@ -196,6 +196,16 @@ pub struct Request {
 /// requiring the schemes to agree would refuse the app's own requests. An
 /// absent `Origin` is allowed — that is an ordinary navigation, which is how
 /// every visitor arrives.
+/// Every value of these headers is read, not the first, and that is the same
+/// rule the framing checks follow: a second copy is a disagreement, and a
+/// disagreement about *where a request came from* is resolved against the
+/// request. `header()` was used here and `headers_named()` everywhere else in
+/// this file, so a head carrying `Sec-Fetch-Site: same-origin` followed by
+/// anything at all was read as the share's own page — found by the fuzzer at
+/// round 9,931. No browser sends two, and `Sec-Fetch-Site` is a forbidden
+/// header name so no page can add one; what makes it worth closing is that
+/// `cloudflared` bridges HTTP/2 to HTTP/1.1 and a repeated h2 field arrives
+/// here as two lines.
 fn is_cross_origin(headers: &[&str], host: Option<&str>, carries_invite: bool) -> bool {
     // `Sec-Fetch-Site` first, because `Origin` is not sent at all on a
     // subresource GET — which is the shape the check was written for and did
@@ -203,8 +213,12 @@ fn is_cross_origin(headers: &[&str], host: Option<&str>, carries_invite: bool) -
     // by the share next door puts the credential on the wire with no `Origin`
     // header anywhere, and it was served. Every browser that has service
     // workers has this header too, so the two arrived together.
-    if let Some(site) = header(headers, "sec-fetch-site") {
-        return match site.trim() {
+    let sites = headers_named(headers, "sec-fetch-site");
+    if !sites.is_empty() {
+        // Foreign if *any* reading of the head says so. One value is the
+        // ordinary case and answers for itself; two that disagree are a head
+        // no browser produced.
+        return sites.iter().any(|site| match site.trim() {
             // The share's own page, or a user-initiated load: typed, clicked
             // from a bookmark, or opened from the address bar.
             "same-origin" | "none" => false,
@@ -237,22 +251,24 @@ fn is_cross_origin(headers: &[&str], host: Option<&str>, carries_invite: bool) -
             // through with B's cookie attached. The invite link is never
             // same-site.
             _ => true,
+        });
+    }
+    // Same rule for `Origin`, and the same reason: all of them, and foreign if
+    // any of them is.
+    headers_named(headers, "origin").iter().any(|origin| {
+        // `null` is what a sandboxed context sends. It cannot be this share,
+        // and a page that wants to demonstrate itself has no reason to send it.
+        let Some(rest) = origin.split_once("://").map(|(_, r)| r) else {
+            return true;
         };
-    }
-    let Some(origin) = header(headers, "origin") else {
-        return false;
-    };
-    // `null` is what a sandboxed context sends. It cannot be this share, and a
-    // page that wants to demonstrate itself has no reason to send it.
-    let Some(rest) = origin.split_once("://").map(|(_, r)| r) else {
-        return true;
-    };
-    let origin_host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-    match host {
-        Some(h) => !origin_host.eq_ignore_ascii_case(h.trim()),
-        // No `Host` to compare against is itself a request no browser makes.
-        None => true,
-    }
+        let origin_host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+        match host {
+            Some(h) => !origin_host.eq_ignore_ascii_case(h.trim()),
+            // No `Host` to compare against is itself a request no browser
+            // makes.
+            None => true,
+        }
+    })
 }
 
 /// A top-level navigation, as the fetch metadata describes it.
@@ -262,10 +278,15 @@ fn is_cross_origin(headers: &[&str], host: Option<&str>, carries_invite: bool) -
 /// is what narrows it to the address bar. An `<iframe>` of this share from
 /// another page is `dest: iframe`, and is refused — a framed share is not
 /// something a visitor can see the address of.
+/// Both halves are also required to be *unambiguous*: this is the one thing
+/// that opens the cross-site carve-out, so a head that says two things about
+/// its own shape does not get to pick the generous one.
 fn is_a_navigation(headers: &[&str]) -> bool {
-    let mode = header(headers, "sec-fetch-mode").map(str::trim);
-    let dest = header(headers, "sec-fetch-dest").map(str::trim);
-    mode == Some("navigate") && dest == Some("document")
+    let all = |name: &str, want: &str| {
+        let vs = headers_named(headers, name);
+        vs.len() == 1 && vs[0].trim() == want
+    };
+    all("sec-fetch-mode", "navigate") && all("sec-fetch-dest", "document")
 }
 
 /// Is this request trying to register a service worker?
@@ -280,8 +301,13 @@ fn is_a_navigation(headers: &[&str]) -> bool {
 /// The joiner is the person who did not choose this risk. A demo does not need
 /// a service worker, so the registration request is refused by name; browsers
 /// send `Service-Worker: script` on exactly that fetch and on nothing else.
+/// Any copy of the header, for the reason `is_cross_origin` reads all of its
+/// own: a refusal is the fail-closed answer, so "one of them says `script`" is
+/// the reading to take.
 fn registers_a_service_worker(headers: &[&str]) -> bool {
-    header(headers, "service-worker").is_some_and(|v| v.eq_ignore_ascii_case("script"))
+    headers_named(headers, "service-worker")
+        .iter()
+        .any(|v| v.eq_ignore_ascii_case("script"))
 }
 
 /// Why a request was refused.
@@ -353,8 +379,83 @@ fn plausible(token: &str) -> bool {
     !token.is_empty() && token.len() <= 128 && token.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
+/// Is this query-parameter name ours, as the box will read it?
+///
+/// Compared after percent-decoding, because that is what the thing on the other
+/// end does. `%68%35%69` is `h5i` to every web framework that decodes its
+/// parameter names — which is all of them — and a literal comparison passed it
+/// through untouched, carrying whatever value it named into the app's logs and
+/// into `Referer` on every link out of the page. That is the one thing this
+/// module exists to prevent, arriving in the one spelling the strip did not
+/// know about.
+///
+/// Decoded **by byte**, never by slicing the `&str`: a name may hold any UTF-8
+/// the client chose, and `&raw[i + 1..i + 3]` after a `%` lands inside a
+/// multi-byte character for an input as ordinary as `%aé` — a panic on the
+/// request path, reachable by anyone who can send this share a URL.
+///
+/// The decoding is deliberately partial and exact: only a well-formed escape
+/// turns into its byte, a malformed one stays as itself, and the comparison is
+/// case-sensitive because query parameter names are. This is a *name
+/// comparison*, not a URL parser — the target is forwarded byte for byte and
+/// nothing here rewrites it.
+fn is_share_param_name(raw: &str) -> bool {
+    if raw == QUERY_PARAM {
+        return true;
+    }
+    let b = raw.as_bytes();
+    // Bounded before it decodes: a name is as long as the client made it, and
+    // three characters cannot hide in more than nine bytes of escapes.
+    if b.len() > QUERY_PARAM.len() * 3 {
+        return false;
+    }
+    // Compared as it decodes, against no buffer at all. A target may carry
+    // thousands of parameters and this runs on every one of them, for every
+    // request from the open internet — so it allocates nothing and stops at the
+    // first byte that is not ours, which for an app's own parameter is the
+    // first byte.
+    let want = QUERY_PARAM.as_bytes();
+    let hex = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+    let mut matched = 0usize;
+    let mut i = 0;
+    while i < b.len() {
+        let (byte, step) = match (
+            b[i],
+            b.get(i + 1).copied().and_then(hex),
+            b.get(i + 2).copied().and_then(hex),
+        ) {
+            (b'%', Some(hi), Some(lo)) => (hi * 16 + lo, 3),
+            (c, _, _) => (c, 1),
+        };
+        if matched >= want.len() || byte != want[matched] {
+            return false;
+        }
+        matched += 1;
+        i += step;
+    }
+    matched == want.len()
+}
+
 /// Remove the share parameter from a request target, leaving the rest of the
 /// query alone. The app's own parameters are its business.
+///
+/// **Every occurrence, whatever the value.** Narrowing this to values
+/// [`plausible`] accepts is the obvious tidy-up and it is wrong: the box reads
+/// the query after percent-decoding, so `?h5i=<secret>%20` is a value this
+/// module refuses as a credential and the app resolves back into one. The
+/// removal is therefore a superset of the read, and it has to stay that way —
+/// the fuzz invariant on this is `k != h5i` for every parameter reaching the
+/// box, not `not a credential`.
+///
+/// The cost is an app that uses a parameter of this exact name losing it
+/// through a share. Unlike the cookie side — where a *prefix* rule was
+/// swallowing names like `h5i_shared_theme` and had to be narrowed — this is an
+/// exact match on the tool's own name, so the collision is one nobody has.
+///
+/// **The name is compared decoded, for the same reason the value is not
+/// narrowed.** `?%68%35%69=<secret>` is `h5i=<secret>` to every framework that
+/// decodes its parameter names, and it was passed straight through: the one
+/// spelling of the credential that survived the strip.
 fn strip_param(target: &str) -> (String, Option<String>) {
     let Some((path, query)) = target.split_once('?') else {
         return (target.to_string(), None);
@@ -364,7 +465,7 @@ fn strip_param(target: &str) -> (String, Option<String>) {
         .split('&')
         .filter(|pair| {
             let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-            if k == QUERY_PARAM {
+            if is_share_param_name(k) {
                 found = Some(v.to_string());
                 false
             } else {
@@ -547,6 +648,16 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
     if !version.starts_with("HTTP/") || parts.next().is_some() {
         return None;
     }
+    // One `Host`, or none of this reasons about the right request. RFC 7230
+    // §5.4 says a server must reject a message with more than one, and here it
+    // is load bearing twice over: the origin check compares against it, and the
+    // box picks its own from the same head — so two of them is this gate
+    // deciding a request is the share's own while the box serves a different
+    // virtual host. The framing checks below refuse duplicates for exactly this
+    // reason; `Host` was the one that did not.
+    if headers_named(&headers, "host").len() > 1 {
+        return None;
+    }
     let (clean_target, query_token) = strip_param(&target);
     // Every `Cookie` header, not just the first. A client is allowed to send
     // more than one, and reading only the first turned a legitimate visitor's
@@ -561,6 +672,11 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
     // used to shadow a perfectly good cookie and produce a `401` on a page the
     // visitor was entitled to — and an app with its own parameter called `h5i`
     // does exactly that.
+    //
+    // Note the asymmetry, which is deliberate and is the safe direction:
+    // `strip_param` removes *every* occurrence of the parameter and this
+    // accepts only the values that could be a credential. Removal is a superset
+    // of reading, so a value refused here has still left the target.
     let query_token = query_token.filter(|t| plausible(t));
     let from_query = query_token.is_some();
     let token = query_token.or(cookie_token).filter(|t| plausible(t));
@@ -1180,6 +1296,116 @@ mod origin_tests {
         );
     }
 
+    /// A head that says two things about where it came from is not read as the
+    /// generous one.
+    ///
+    /// Found by the fuzzer at round 9,931. Every framing check in this file
+    /// reads *every* copy of its header, because a second copy is a
+    /// disagreement rather than a curiosity — and the origin check, the newest
+    /// of them, read the first. `Sec-Fetch-Site: same-origin` followed by
+    /// anything at all was therefore this share's own page.
+    ///
+    /// No browser sends two and no page can add one — `Sec-Fetch-Site` is a
+    /// forbidden header name. What makes it worth closing is the hop in
+    /// between: `cloudflared` bridges HTTP/2 to HTTP/1.1, and a field repeated
+    /// in h2 arrives at this listener as two lines.
+    #[test]
+    fn a_second_answer_about_where_a_request_came_from_is_not_the_generous_one() {
+        let two = |a: &str, b: &str| {
+            parse(
+                &format!(
+                    "GET /a HTTP/1.1\r\nHost: 127.0.0.1:8899\r\nCookie: h5i_share=abc\r\n\
+                     {a}\r\n{b}\r\n\r\n"
+                ),
+                "h5i_share",
+            )
+            .expect("parses")
+        };
+        for (a, b) in [
+            ("Sec-Fetch-Site: same-origin", "Sec-Fetch-Site: cross-site"),
+            ("Sec-Fetch-Site: cross-site", "Sec-Fetch-Site: same-origin"),
+            ("Sec-Fetch-Site: none", "Sec-Fetch-Site: same-site"),
+            (
+                "Origin: http://127.0.0.1:8899",
+                "Origin: http://evil.example",
+            ),
+            (
+                "Origin: http://evil.example",
+                "Origin: http://127.0.0.1:8899",
+            ),
+        ] {
+            assert!(
+                two(a, b).cross_origin,
+                "a head carrying two answers was read as the share's own: {a} / {b}"
+            );
+        }
+
+        // And one answer, twice, is still that answer: a repeat is only a
+        // disagreement when the values differ.
+        assert!(!two("Sec-Fetch-Site: same-origin", "Sec-Fetch-Site: same-origin").cross_origin);
+
+        // The carve-out closes the same way. `Sec-Fetch-Mode`/`-Dest` are what
+        // let a cross-site request through when it carries the invite, so a
+        // second value there must not open it either.
+        let invited = |extra: &str| {
+            parse(
+                &format!(
+                    "GET /?h5i={} HTTP/1.1\r\nHost: h\r\nSec-Fetch-Site: cross-site\r\n{extra}\r\n\r\n",
+                    "a".repeat(64)
+                ),
+                "h5i_share",
+            )
+            .expect("parses")
+        };
+        assert!(
+            !invited("Sec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: document").cross_origin,
+            "the invite link stopped working"
+        );
+        assert!(
+            invited(
+                "Sec-Fetch-Mode: navigate\r\nSec-Fetch-Mode: no-cors\r\nSec-Fetch-Dest: document"
+            )
+            .cross_origin,
+            "two modes opened the carve-out"
+        );
+        assert!(
+            invited(
+                "Sec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: document\r\nSec-Fetch-Dest: image"
+            )
+            .cross_origin,
+            "two destinations opened the carve-out"
+        );
+
+        // A second `Service-Worker` is read the fail-closed way too.
+        let sw = parse(
+            "GET /sw.js HTTP/1.1\r\nHost: h\r\nCookie: h5i_share=abc\r\n\
+             Service-Worker: no\r\nService-Worker: script\r\n\r\n",
+            "h5i_share",
+        )
+        .expect("parses");
+        assert!(sw.service_worker);
+    }
+
+    /// Two `Host` headers are a request this share will not reason about.
+    ///
+    /// The origin check compares against one of them and the box picks its own
+    /// from the same head, so a head with two is this gate deciding a request
+    /// belongs to the share while the box serves a different virtual host.
+    /// RFC 7230 §5.4 requires rejecting it, and every other duplicate that
+    /// decides something here is already refused.
+    #[test]
+    fn a_request_with_two_hosts_is_refused() {
+        assert!(parse(
+            "GET / HTTP/1.1\r\nHost: share.test\r\nHost: evil.example\r\nCookie: h5i_share=abc\r\n\r\n",
+            COOKIE
+        )
+        .is_none());
+        // One is fine, and so is none — an HTTP/1.0 client sends none, and the
+        // origin rule already answers for that.
+        assert!(parse("GET / HTTP/1.1\r\nHost: share.test\r\n\r\n", COOKIE).is_some());
+        assert!(parse("GET / HTTP/1.0\r\n\r\n", COOKIE).is_some());
+    }
+
     #[test]
     fn a_tunnel_share_is_not_foreign_to_itself() {
         // Cloudflare terminates TLS, so the app's own requests arrive with an
@@ -1411,8 +1637,12 @@ mod fuzz_tests {
             // of proxying.
             let target = out.split_whitespace().nth(1).unwrap_or("");
             for (k, v) in query_params(target) {
+                // The name as the *box* reads it. A framework decodes its
+                // parameter names, so `%68%35%69` is `h5i` on the other end,
+                // and an oracle that compares the raw text is agreeing with
+                // the bug rather than checking for it.
                 assert!(
-                    k != QUERY_PARAM || v.is_empty(),
+                    !is_share_param_name(&k) || v.is_empty(),
                     "a share token reached the box in the URL: {} -> {target:?}",
                     ctx()
                 );
@@ -1484,6 +1714,130 @@ mod fuzz_tests {
             with_cookie * 500 > n,
             "almost nothing carried a credential, so the property this test is named for \
              was barely checked: {counts}"
+        );
+    }
+
+    /// A request the gate would proxy came from this share, or brought the
+    /// capability with it.
+    ///
+    /// The property `is_cross_origin` exists for, checked against generated
+    /// heads rather than against the handful somebody wrote down — it was the
+    /// newest decision in this file and the only one the corpus never offered a
+    /// single input to.
+    ///
+    /// The oracle is deliberately re-derived from the head rather than from
+    /// `Request`: it reads *every* value of each header, where the gate reads
+    /// the first, so a head that carries two answers is a disagreement this
+    /// finds rather than a coin the gate flips.
+    #[test]
+    fn nothing_a_foreign_page_sent_is_proxied() {
+        let mut rng = Rng::new(0xF0E1);
+        let mut foreign = 0usize;
+        let mut invited = 0usize;
+        for i in 0..rounds() {
+            let seed = rng.next();
+            let mut one = Rng::new(seed);
+            let head = request_head(&mut one);
+            let Some(req) = parse(&head, COOKIE) else {
+                continue;
+            };
+            let ctx = || format!("round {i}, seed {seed:#x}, head {head:?}");
+
+            let values = |name: &str| -> Vec<String> {
+                head.split("\r\n")
+                    .skip(1)
+                    .filter_map(|l| {
+                        let (k, v) = l.split_once(':')?;
+                        k.trim()
+                            .eq_ignore_ascii_case(name)
+                            .then(|| v.trim().to_string())
+                    })
+                    .collect()
+            };
+
+            // What the browser said about where this came from, reading all of
+            // it. `None` means it said nothing.
+            let sites = values("sec-fetch-site");
+            let origins = values("origin");
+            let hosts = values("host");
+            let target = head.split_whitespace().nth(1).unwrap_or("");
+            let brought_the_invite = target
+                .split_once('?')
+                .map(|(_, q)| {
+                    q.split('&').any(|p| {
+                        let (k, v) = p.split_once('=').unwrap_or((p, ""));
+                        is_share_param_name(k) && plausible(v)
+                    })
+                })
+                .unwrap_or(false);
+            if brought_the_invite {
+                invited += 1;
+            }
+
+            // Is this, on any reading, a request from somewhere that is not
+            // this share?
+            let a_navigation = values("sec-fetch-mode").iter().any(|m| m == "navigate")
+                && values("sec-fetch-dest").iter().any(|d| d == "document");
+            let says_foreign = if !sites.is_empty() {
+                sites.iter().any(|s| match s.as_str() {
+                    "same-origin" | "none" => false,
+                    "cross-site" => !(a_navigation && brought_the_invite),
+                    _ => true,
+                })
+            } else {
+                origins.iter().any(|o| match o.split_once("://") {
+                    None => true,
+                    Some((_, rest)) => {
+                        let h = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+                        !hosts.iter().any(|want| h.eq_ignore_ascii_case(want.trim()))
+                    }
+                })
+            };
+            if says_foreign {
+                foreign += 1;
+                assert!(
+                    req.cross_origin,
+                    "a request from somewhere that is not this share was not flagged: {}",
+                    ctx()
+                );
+                // And the decision made on it is a refusal, whatever else the
+                // head says: this runs before the credential is weighed.
+                assert!(
+                    matches!(
+                        crate::http_front::decide(&head, COOKIE, |_| true, false, None),
+                        crate::http_front::Next::Respond(_, Some(Refusal::ForeignOrigin))
+                            | crate::http_front::Next::Respond(_, Some(Refusal::ServiceWorker))
+                    ),
+                    "a foreign-origin request was not refused: {}",
+                    ctx()
+                );
+            }
+
+            // A service worker registration is refused before anything else,
+            // for the same reason and by the same route.
+            if values("service-worker")
+                .iter()
+                .any(|v| v.eq_ignore_ascii_case("script"))
+            {
+                assert!(req.service_worker, "a registration was not seen: {}", ctx());
+            }
+        }
+
+        let n = rounds();
+        if n < 1_000 {
+            return;
+        }
+        // Floors, so a generator that stops offering these shapes says so
+        // rather than reading as coverage. Both are well under what it reaches.
+        assert!(
+            foreign * 100 > n,
+            "almost nothing arrived from a foreign origin, so the check this test is named \
+             for was barely exercised: {foreign} of {n}"
+        );
+        assert!(
+            invited * 2000 > n,
+            "almost nothing carried an invite in its query, so the one carve-out in the \
+             rule was never taken: {invited} of {n}"
         );
     }
 
@@ -2014,6 +2368,79 @@ mod tests {
             assert_eq!(r.token.as_deref(), Some("goodtoken"), "target {target}");
             assert!(!r.from_query, "target {target}");
         }
+    }
+
+    /// The parameter is removed in the spelling the *box* will read, not only
+    /// in the one h5i writes.
+    ///
+    /// `?%68%35%69=<secret>` is `h5i=<secret>` to every web framework that
+    /// decodes its parameter names, and a literal comparison forwarded it
+    /// untouched — so the credential reached the app's logs and rode out on
+    /// `Referer` with every link on the page, which is the one thing this
+    /// module exists to prevent. The narrowing that would have caught it on the
+    /// *value* side does not exist for the opposite reason: `?h5i=<secret>%20`
+    /// is not a credential to this parser and is one to the app, so the removal
+    /// stays a superset of the read.
+    #[test]
+    fn the_parameter_is_stripped_however_it_is_spelled() {
+        let real = "a".repeat(64);
+        for name in ["h5i", "%68%35%69", "h%35i", "%685i", "h5%69"] {
+            let raw = head(&format!("GET /x?{name}={real}&b=1 HTTP/1.1"), &[]);
+            let r = parse_default(&raw).expect("parse");
+            assert!(
+                !r.clean_target.contains(&real),
+                "a credential stayed in the target as `{name}`: {}",
+                r.clean_target
+            );
+            let up = rewrite_for_upstream(&raw, &r, COOKIE, None);
+            assert!(
+                !up.contains(&real),
+                "a credential reached the box as `{name}`: {up}"
+            );
+            // And the app's own parameter beside it is untouched.
+            assert!(up.contains("b=1"), "{up}");
+        }
+
+        // Only ours. A name that merely contains an escape, or decodes to
+        // something else, belongs to the app — query parameter names are
+        // case-sensitive, and nothing here lowercases them.
+        for name in ["H5I", "%48%35%49", "h5ix", "xh5i", "%25h5i", "h%255i"] {
+            let raw = head(&format!("GET /x?{name}=v HTTP/1.1"), &[]);
+            let r = parse_default(&raw).expect("parse");
+            assert!(
+                r.clean_target.contains(name),
+                "the app's own `{name}` was deleted: {}",
+                r.clean_target
+            );
+        }
+    }
+
+    /// A percent escape at the end of a name, and a multi-byte character after
+    /// one, do not panic.
+    ///
+    /// The decode is byte-wise for this reason: `&raw[i + 1..i + 3]` after a
+    /// `%` lands inside a multi-byte character for an input as ordinary as
+    /// `%aé`, which is a panic on the request path reachable by anybody who can
+    /// send this share a URL.
+    #[test]
+    fn a_half_written_escape_in_a_parameter_name_is_not_a_crash() {
+        for name in [
+            "%",
+            "%6",
+            "%zz",
+            "%aé",
+            "é%",
+            "%68%3",
+            "%%%%%%%%%",
+            "%68%35%69%",
+        ] {
+            let raw = head(&format!("GET /x?{name}=v HTTP/1.1"), &[]);
+            assert!(parse_default(&raw).is_some(), "name {name:?}");
+            assert!(!is_share_param_name(name) || name == "h5i", "name {name:?}");
+        }
+        // And the bound is on the encoded length, so a long name is refused
+        // before it is walked.
+        assert!(!is_share_param_name(&"%68".repeat(100)));
     }
 
     #[test]
