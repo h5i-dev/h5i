@@ -2,7 +2,7 @@
 """Compare a WPT run against the committed baseline and fail on a regression.
 
 Why a gate at all: a coverage number with nothing defending it decays. Every
-number in ROADMAP_BROWSER §12 was paid for by a specific change, and any of them
+number in ROADMAP.md §B12 was paid for by a specific change, and any of them
 can be given back silently by an unrelated one — the settle-loop rewrite in this
 branch cost 3,142 subtests in `html` before anyone looked.
 
