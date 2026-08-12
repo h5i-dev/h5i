@@ -1386,6 +1386,58 @@ mod origin_tests {
         assert!(sw.service_worker);
     }
 
+    /// The shape the bridge above actually produces for `Origin`: one line,
+    /// with the values joined by a comma.
+    ///
+    /// The test above pins two *lines*, which is what `cloudflared` hands over
+    /// for `Sec-Fetch-Site`, `Sec-Fetch-Mode`, `Sec-Fetch-Dest` and
+    /// `Service-Worker` — checked against a live quick tunnel, with an HTTP/2
+    /// client repeating each of them. `Origin` came through the same hop
+    /// folded into `Origin: http://a.example, http://b.example`, so the one
+    /// header the `headers_named` fix was reaching for is the one header that
+    /// never arrives as two lines. Nothing here had that shape.
+    ///
+    /// It falls the right way, and for a reason worth stating rather than
+    /// leaving to arithmetic: an origin is a single value with no list form,
+    /// so a comma in one is already a head no browser produced, and the host
+    /// comparison cannot match a value carrying two of them. Both halves being
+    /// this share does not rescue it — that is still not an origin, and
+    /// treating it as one would mean parsing a list the grammar does not have.
+    #[test]
+    fn an_origin_the_bridge_folded_into_one_line_is_not_this_share() {
+        for origin in [
+            "http://127.0.0.1:8899, http://evil.example",
+            "http://evil.example, http://127.0.0.1:8899",
+            // Ours twice. Still not an origin.
+            "http://127.0.0.1:8899, http://127.0.0.1:8899",
+        ] {
+            assert!(
+                req(&format!("Origin: {origin}\r\n"))
+                    .expect("parses")
+                    .cross_origin,
+                "a folded origin was read as the share's own: {origin}"
+            );
+        }
+
+        // And the unfolded one still works, which is the whole visitor
+        // population: a fold is a second answer, not an ordinary request.
+        assert!(
+            !req("Origin: http://127.0.0.1:8899\r\n")
+                .expect("parses")
+                .cross_origin
+        );
+
+        // `Sec-Fetch-Site` is read before `Origin` and answers for itself, so
+        // an intermediary that folds *it* has to fall the same way. This hop
+        // does not, but the value is compared whole and matches neither the
+        // `same-origin` nor the `none` arm, which is the fail-closed default.
+        assert!(
+            req("Sec-Fetch-Site: same-origin, cross-site\r\n")
+                .expect("parses")
+                .cross_origin
+        );
+    }
+
     /// Two `Host` headers are a request this share will not reason about.
     ///
     /// The origin check compares against one of them and the box picks its own
