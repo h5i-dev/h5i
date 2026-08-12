@@ -275,7 +275,13 @@ ticket=$(grep -ao 'h5i1_[A-Za-z0-9_-]*' "$WORK/share.log" | head -1)
 pass "the box's port is shared even with a stranger on the same port number"
 
 JOIN=$(free_port)
-"$H5I" join "$ticket" --port "$JOIN" >"$WORK/join.log" 2>&1 &
+# `--shared-jar` because this script is macOS-only and macOS gives `lo0` one
+# address. The join therefore always lands on `127.0.0.1`, always shares its
+# cookie jar with every other local service, and is always refused unless it is
+# asked for — so without the flag every run of this harness stops here, on a
+# refusal about the joiner's machine rather than anything about attribution.
+# The visit below fetches from nothing but the share under test.
+"$H5I" join "$ticket" --port "$JOIN" --shared-jar >"$WORK/join.log" 2>&1 &
 sleep 12
 url=$(grep -ao "http://127\.[0-9.]*:$JOIN/?h5i=[a-f0-9]*" "$WORK/join.log" | head -1)
 [ -n "$url" ] || fail "the joiner never came up: $(tail -2 "$WORK/join.log")"
@@ -327,7 +333,7 @@ ticket=$(grep -ao 'h5i1_[A-Za-z0-9_-]*' "$WORK/share5.log" | head -1)
 [ -n "$ticket" ] || fail "could not share the box's own port: $(grep -am1 Error "$WORK/share5.log")"
 
 JOIN2=$(free_port)
-"$H5I" join "$ticket" --port "$JOIN2" >"$WORK/join5.log" 2>&1 &
+"$H5I" join "$ticket" --port "$JOIN2" --shared-jar >"$WORK/join5.log" 2>&1 &   # as above
 disown 2>/dev/null || true
 sleep 12
 url=$(grep -ao "http://127\.[0-9.]*:$JOIN2/?h5i=[a-f0-9]*" "$WORK/join5.log" | head -1)

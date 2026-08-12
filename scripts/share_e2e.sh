@@ -373,7 +373,10 @@ if [ "$WITH_LEAK" = "1" ]; then
   sleep 12
   SP=$(share_pid)
   LT=$(grep -o 'h5i1_[A-Za-z0-9_-]*' "$WORK/leak.log" | head -1)
-  "$H5I" join "$LT" --port 8941 > "$WORK/leakjoin.log" 2>&1 &
+  # `--shared-jar` for the reason given at the first join above; this one was
+  # missed because `--leak` is opt-in and reads its counts out of `/proc`, so
+  # nobody had run it on the platform where the refusal fires.
+  "$H5I" join "$LT" --port 8941 --shared-jar > "$WORK/leakjoin.log" 2>&1 &
   LJ=$!
   sleep 8
   LTOK=$(grep -o 'h5i=[a-f0-9]*' "$WORK/leakjoin.log" | head -1 | cut -d= -f2)
