@@ -45,3 +45,8 @@ iroh = { version = "1.0.3", default-features = false, features = [
 
 [dev-dependencies]
 tempfile = "3.8"
+# `test-util` for `#[tokio::test(start_paused = true)]`. Declared here rather
+# than relied on: it arrived transitively through iroh's dependency tree, so
+# `--no-default-features` — the tunnel-only build — failed to compile its own
+# tests while the default build passed.
+tokio = { version = "1.0", features = ["test-util"] }
