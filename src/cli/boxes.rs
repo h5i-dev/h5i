@@ -204,8 +204,27 @@ pub enum BoxCommands {
 
     /// Let one other person try this box's web app, from their own machine.
     ///
-    /// The box's port is never published. h5i enters the box's network
-    /// namespace, dials the dev server from inside, and carries the traffic
+    // The middle sentence is the one that differs, because the guarantee
+    // differs. Saying "h5i enters the box's network namespace" on a platform
+    // with no namespaces is not a small inaccuracy: it is the sentence a reader
+    // uses to decide how exposed the port is, and on macOS it claims an
+    // isolation that is exactly what macOS does not have. The short summary
+    // above — the only part that reaches the man page and the published manual,
+    // both generated on Linux — is deliberately left alone.
+    #[cfg_attr(
+        not(target_os = "macos"),
+        doc = "The box's port is never published. h5i enters the box's network namespace, dials \
+               the dev server from inside, and carries the traffic"
+    )]
+    #[cfg_attr(
+        target_os = "macos",
+        doc = "h5i never publishes the box's port — but on macOS a box has no network of its \
+               own, so its dev server binds this machine's loopback and anything local can \
+               already reach it. What h5i promises here is that it shares *that box's* server \
+               and nobody else's: it asks which process holds the port, refuses unless that \
+               process belongs to this box, and re-checks on every connection. It carries the \
+               traffic"
+    )]
     /// either peer to peer (they run `h5i join`, end-to-end encrypted) or
     /// through a Cloudflare quick tunnel (`--tunnel`: any browser, no h5i, but
     /// Cloudflare terminates TLS). Either way the invite is a capability with an
