@@ -447,13 +447,31 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
     // a `Content-Length` beside a `Transfer-Encoding`, are the two shapes that
     // let two parsers disagree about that.
     let lengths = headers_named(&headers, "content-length");
-    // Only `chunked` frames a body. `identity` is legal, deprecated, and means
-    // "no encoding" — the response side learned this a round ago and this side
-    // did not, so `Transfer-Encoding: identity` was refused as ambiguous.
-    let chunked = headers_named(&headers, "transfer-encoding")
+    // Every transfer coding, in order, with `identity` dropped: it is legal,
+    // deprecated, and means "no encoding", so counting it as a coding would
+    // refuse a perfectly ordinary request as ambiguous.
+    let codings: Vec<String> = headers_named(&headers, "transfer-encoding")
         .iter()
-        .any(|v| lists_token(v, "chunked"));
-    if lengths.len() > 1 || (chunked && !lengths.is_empty()) {
+        .flat_map(|v| v.split(','))
+        .map(|t| t.trim().to_ascii_lowercase())
+        .filter(|t| !t.is_empty() && t != "identity")
+        .collect();
+    // A transfer coding beside a length is ambiguous whatever the coding is,
+    // and only `chunked` was being counted. `Transfer-Encoding: gzip` plus
+    // `Content-Length: 4` therefore passed this gate and was forwarded with
+    // both headers intact, while h5i sent exactly four bytes — an origin, for
+    // which the transfer coding is authoritative, no longer agrees with this
+    // proxy about where the request ends. That is precisely the disagreement
+    // the duplicate-length check exists to remove.
+    if lengths.len() > 1 || (!codings.is_empty() && !lengths.is_empty()) {
+        return None;
+    }
+    // And a coding this proxy cannot follow is one it will not forward a body
+    // under. `chunked` has to be final — `chunked, gzip` is invalid and means
+    // the octets are not chunk-framed, so `forward_chunked` would be reading
+    // compressed bytes as chunk headers.
+    let chunked = codings.last().is_some_and(|c| c == "chunked");
+    if !codings.is_empty() && !chunked {
         return None;
     }
     let content_length = match lengths.first() {
@@ -1291,6 +1309,51 @@ mod tests {
         ))
         .is_none());
         assert!(parse_default(&head("POST / HTTP/1.1", &["Content-Length: nonsense"])).is_none());
+
+        // Any transfer coding beside a length, not only `chunked`. Only
+        // `chunked` was counted, so this passed the gate and was forwarded
+        // with *both* headers while h5i sent exactly four bytes — an origin,
+        // for which a transfer coding is authoritative, then disagrees with
+        // this proxy about where the request ended, which is the whole shape
+        // the duplicate-length check exists to remove.
+        assert!(parse_default(&head(
+            "POST / HTTP/1.1",
+            &["Transfer-Encoding: gzip", "Content-Length: 4"]
+        ))
+        .is_none());
+        assert!(parse_default(&head(
+            "POST / HTTP/1.1",
+            &["Transfer-Encoding: gzip, chunked", "Content-Length: 4"]
+        ))
+        .is_none());
+
+        // A coding this proxy cannot follow, with no length at all: there is
+        // no way to know where the body ends, so it is not forwarded.
+        assert!(parse_default(&head("POST / HTTP/1.1", &["Transfer-Encoding: gzip"])).is_none());
+        // `chunked` has to be final. `chunked, gzip` is invalid, and it means
+        // the octets on the wire are not chunk-framed — reading them as chunk
+        // headers is reading compressed data as framing.
+        assert!(parse_default(&head(
+            "POST / HTTP/1.1",
+            &["Transfer-Encoding: chunked, gzip"]
+        ))
+        .is_none());
+
+        // And the two that must still work: `chunked` last, and `identity`,
+        // which is legal, deprecated, and means "no encoding".
+        let r = parse_default(&head(
+            "POST / HTTP/1.1",
+            &["Transfer-Encoding: gzip, chunked"],
+        ))
+        .expect("gzip then chunked is a body this proxy can find the end of");
+        assert!(r.chunked);
+        let r = parse_default(&head(
+            "POST / HTTP/1.1",
+            &["Transfer-Encoding: identity", "Content-Length: 4"],
+        ))
+        .expect("identity is not a coding");
+        assert_eq!(r.content_length, Some(4));
+        assert!(!r.chunked);
     }
 
     #[test]

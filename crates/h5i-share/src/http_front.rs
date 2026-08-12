@@ -379,6 +379,24 @@ where
     // The declared body, and only the declared body. Anything past it on this
     // connection is a pipelined second request, and dropping it on the floor is
     // the point rather than an oversight.
+    //
+    // **Watched while it is forwarded, not after.** The box's answer is read
+    // only once the whole body has gone across, and the one way an early
+    // rejection used to reach the visitor was the box *closing* its read side —
+    // which is what the test server does and is not what a real HTTP server has
+    // to do. A server that writes `413`, `401` or `417` after the head and
+    // leaves its read side open, in front of a client that declared a large
+    // body and then paused, left h5i waiting out `BODY_IDLE` and then replacing
+    // that already-delivered answer with its own `408`. `Expect: 100-continue`
+    // makes it likelier still: h5i synthesises the `100` itself and takes the
+    // header out, so the box never gets the chance to refuse at the one point
+    // the mechanism exists for.
+    //
+    // So the two run together, and a final answer (anything `>= 200`) stops the
+    // body. Interim heads are left alone — they are the response phase's
+    // business, and the bytes carry over into it.
+    let mut early = Vec::new();
+    let mut up_r = up_r;
     let from_rest;
     if req.chunked {
         // Parsed rather than refused, and the refusal was not a small cost: a
@@ -391,7 +409,14 @@ where
         // Forwarded verbatim, chunk framing and all — the box speaks HTTP and
         // this proxy does not need to change the encoding, only to know where
         // the request ends.
-        if let Err(e) = forward_chunked(&mut peer_r, &mut up_w, rest_from_client, to_box).await {
+        let forwarded = tokio::select! {
+            r = forward_chunked(&mut peer_r, &mut up_w, rest_from_client, to_box) => Some(r),
+            // The box answered before the upload finished. Abandoning the
+            // forward mid-chunk truncates what the box receives, which is what
+            // it asked for by answering: it has already decided.
+            _ = watch_for_final_response(&mut up_r, &mut early) => None,
+        };
+        if let Some(Err(e)) = forwarded {
             // Answered rather than dropped, and answered with the right thing.
             // "Your request is malformed" and "your upload was too slow" are
             // different sentences, and on a tunnel share — where `cloudflared`
@@ -482,7 +507,16 @@ where
             // Deadlined per read. Declaring a megabyte, sending one byte and
             // going quiet used to hold a connection into the box, and one of
             // the share's slots, for as long as the peer felt like it.
-            let n = match tokio::time::timeout(BODY_IDLE, peer_r.read(&mut buf[..take])).await {
+            let read = tokio::select! {
+                r = tokio::time::timeout(BODY_IDLE, peer_r.read(&mut buf[..take])) => r,
+                // The box answered while the client was still uploading. Same
+                // ending as the box closing its read side below: stop sending
+                // and go and read what it said. Without this arm, a client that
+                // paused mid-body had the box's `413` replaced by our `408`
+                // thirty seconds later.
+                _ = watch_for_final_response(&mut up_r, &mut early) => break,
+            };
+            let n = match read {
                 Ok(r) => r?,
                 // The stall a real mobile client actually hits, and it used to
                 // be a bare connection reset. The once-an-hour cap above got an
@@ -525,15 +559,16 @@ where
         }
     }
 
-    let mut up_r = up_r;
-
     // An informational response is a head that is not *the* response: `100
     // Continue` when the client said `Expect: 100-continue` (curl does, for a
     // body over a kilobyte), `103 Early Hints` from a server that sends them.
     // Each is relayed exactly as it came — rewriting `Connection` on a `100`
     // would be telling the client the connection is over before the answer has
     // started — and then the real head is read behind it.
-    let mut rest = Vec::new();
+    // Seeded with whatever the early-answer watch already read off the box.
+    // Those bytes are the front of its response head; dropping them would
+    // leave `read_response` parsing from the middle of one.
+    let mut rest = early;
     let mut interim = 0;
     // One deadline for the whole head phase, not one per head. `read_response`
     // computes its own from whenever it is called, so a box that dribbles a
@@ -661,8 +696,29 @@ fn is_informational(head: &[u8]) -> bool {
 }
 
 /// The status code from a response head.
+///
+/// Reads the first *non-empty* line, which is the line
+/// [`head_is_well_formed`] accepts as the status line and `rebuild_head`
+/// absorbs the blanks before. Taking the bytes up to the first `\r` instead
+/// meant that for the one shape both of those deliberately tolerate — a
+/// leading CRLF — this returned `None`, and every caller then read that as
+/// "not that status":
+///
+/// * an accepted `100 Continue` was not informational, so an interim answer
+///   was treated as the final one;
+/// * an accepted `101` was not a switch, so the connection never entered the
+///   upgraded duplex path and the WebSocket died;
+/// * an accepted `204` or `304` was not bodyless, so the relay waited for a
+///   body that is never sent until the idle timeout fired — and `304` is what
+///   a dev server answers for every asset the browser already has.
+///
+/// The existing leading-blank test only used a `200`, whose behaviour is the
+/// same either way, so none of these branches were covered.
 fn status_code(head: &[u8]) -> Option<u16> {
-    let line = head.split(|&b| b == b'\r').next()?;
+    let line = head
+        .split(|&b| b == b'\n')
+        .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
+        .find(|l| !l.is_empty())?;
     let code = line.split(|&b| b == b' ').nth(1)?;
     std::str::from_utf8(code).ok()?.parse().ok()
 }
@@ -851,6 +907,61 @@ fn is_trailer(line: &[u8]) -> bool {
 /// the caller relays the bytes verbatim rather than discarding them, because a
 /// truncated response is something a person can debug and a silently empty one
 /// is not.
+/// Resolve when the box has written a **final** response head.
+///
+/// Run beside the request-body forward, so an answer that arrives before the
+/// upload finishes is the thing that ends the upload rather than something
+/// discovered thirty seconds later. Everything it reads is accumulated into
+/// `buf`, which the caller passes on as `read_response`'s pending bytes — this
+/// consumes from the socket, so dropping what it read would leave the response
+/// phase parsing from the middle of a head.
+///
+/// Interim heads (`1xx`, including `101`) do not count: `100 Continue` is a
+/// permission to keep sending, `103 Early Hints` is not an answer at all, and a
+/// `101` belongs to the upgrade path, which has no request body to race. Only
+/// `>= 200` is a decision.
+///
+/// Never resolves if the box says nothing, which is the ordinary case: this is
+/// always one arm of a `select!` and the other arm is what makes progress.
+async fn watch_for_final_response<R: tokio::io::AsyncRead + Unpin>(r: &mut R, buf: &mut Vec<u8>) {
+    let mut chunk = [0u8; 4096];
+    loop {
+        // Bounded by the same cap the response reader uses. A box dribbling a
+        // head that never ends must not grow this without limit; leaving the
+        // loop hands the oversized head to `read_response`, which refuses it
+        // for the same reason.
+        if buf.len() > MAX_RESPONSE_HEAD {
+            break;
+        }
+        // Look before reading, so bytes already carried in are enough on their
+        // own.
+        let mut scanned = 0;
+        while let Some(end) = find_head_end(&buf[scanned..]) {
+            let head = &buf[scanned..scanned + end];
+            match status_code(head) {
+                Some(c) if c >= 200 => return,
+                // An interim head. Step over it and look at what follows: a
+                // `100 Continue` and the real answer often arrive together.
+                _ => scanned += end,
+            }
+            if scanned >= buf.len() {
+                break;
+            }
+        }
+        match r.read(&mut chunk).await {
+            // The box closed or errored. Not this function's business — the
+            // body forward will notice, or `read_response` will — and
+            // resolving here would race a legitimate "the box hung up"
+            // ending into looking like an answer.
+            Ok(0) | Err(_) => break,
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+        }
+    }
+    // Nothing more to watch for. Park rather than resolve: resolving would tell
+    // the caller a final answer had arrived when none had.
+    std::future::pending::<()>().await
+}
+
 async fn read_response<R: tokio::io::AsyncRead + Unpin>(
     r: &mut R,
     pending: &mut Vec<u8>,
@@ -959,29 +1070,29 @@ where
         return refuse_the_response(&mut peer_r, &mut peer_w, unfinished_response(), to_peer).await;
     }
 
-    let (out, body_len) = {
+    let (out, body_len, body_kind) = {
         let framing = response_framing(&head);
         let rewritten = close_the_connection(&head);
         // The head is sanitised on its own terms, and the body length is a
         // separate question. Deciding both at once put "no body" and "framing
         // we refuse to trust" through the same branch, which is how an
         // ambiguous *page* ended up delivered with no content at all.
-        let out = match framing {
-            // Not passed on. Handing the visitor two `Content-Length` headers
-            // is a response-smuggling shape the request side refuses outright,
-            // and a client that reads it either errors or picks one — which is
-            // the disagreement all over again, one hop further out. Stripped
-            // even when the answer carries no body: a `304` is the commonest
-            // response a dev server produces, and "this branch has no body so
-            // the headers cannot hurt" is how an invariant ends up holding on
-            // one path and not the other.
-            //
-            // What the visitor is left with is one framing rather than two:
-            // the chunk stream if a `Transfer-Encoding` was the other half of
-            // the contradiction, and the connection closing if it was a second
-            // length.
-            Framing::Ambiguous => strip_lengths(&rewritten),
-            _ => rewritten,
+        // Not passed on. Handing the visitor two `Content-Length` headers is a
+        // response-smuggling shape the request side refuses outright, and a
+        // client that reads it either errors or picks one — which is the
+        // disagreement all over again, one hop further out. Stripped even when
+        // the answer carries no body: a `304` is the commonest response a dev
+        // server produces, and "this branch has no body so the headers cannot
+        // hurt" is how an invariant ends up holding on one path and not the
+        // other.
+        //
+        // What the visitor is left with is one framing rather than two: the
+        // chunk stream if a `Transfer-Encoding` was the other half of the
+        // contradiction, and the connection closing otherwise.
+        let out = if framing.strip_lengths {
+            strip_lengths(&rewritten)
+        } else {
+            rewritten
         };
         // A `HEAD`, a `204` or a `304` declares a length and sends nothing.
         // Waiting for that body would hold the connection until the idle
@@ -990,15 +1101,19 @@ where
         let body_len = if bodyless {
             Some(0)
         } else {
-            match framing {
-                Framing::Length(n) => Some(n),
-                // Nothing to frame on, so the connection closing is the
-                // framing — which is exactly what the stripped head now says.
-                Framing::UntilClose | Framing::Ambiguous => None,
+            match framing.body {
+                Body::Length(n) => Some(n),
+                // Nothing this proxy can count, so the ending is either the
+                // terminating chunk (watched for below) or the connection
+                // closing — which is exactly what the head now says.
+                Body::Chunked | Body::UntilClose => None,
             }
         };
-        (out, body_len)
+        (out, body_len, framing.body)
     };
+    // Only for a body whose framing says where it stops. A `HEAD`/`204`/`304`
+    // carries no chunk stream to scan even if the head claims one.
+    let mut scan = (body_kind == Body::Chunked && !bodyless).then(Scan::new);
     if !out.is_empty() {
         write_timed(&mut peer_w, &out).await?;
         to_peer.fetch_add(out.len() as u64, Ordering::Relaxed);
@@ -1012,9 +1127,12 @@ where
         write_timed(&mut peer_w, &rest[..take]).await?;
         to_peer.fetch_add(take as u64, Ordering::Relaxed);
         sent_body += take as u64;
+        if let Some(s) = scan.as_mut() {
+            s.feed(&rest[..take]);
+        }
     }
 
-    if body_len == Some(sent_body) {
+    if body_len == Some(sent_body) || scan.as_ref().is_some_and(Scan::is_done) {
         // The response is complete. Do not just drop the socket: the peer's own
         // request body may still be unread — a dev server that answers before
         // reading it is the ordinary case — and closing on unread bytes resets
@@ -1104,7 +1222,13 @@ where
                 }
                 to_peer.fetch_add(take as u64, Ordering::Relaxed);
                 sent_body += take as u64;
-                if body_len == Some(sent_body) {
+                if let Some(s) = scan.as_mut() {
+                    s.feed(&buf[..take]);
+                }
+                // The declared length was reached, or the terminating chunk
+                // went by. Either way the visitor has a complete response and
+                // this connection's permit belongs to the next one.
+                if body_len == Some(sent_body) || scan.as_ref().is_some_and(Scan::is_done) {
                     break;
                 }
             }
@@ -1145,9 +1269,18 @@ where
     // is still owed the end of.
     let short = match body_len {
         Some(n) => sent_body < n,
-        // Unframed: a clean close is the ending, so only an interruption — a
-        // timer or a stream error — leaves one short.
-        None => cut_short,
+        // Chunked: the terminating chunk is the ending, so a stream that
+        // stopped without one is short however it stopped — including the
+        // clean close that would be a complete answer for a response with no
+        // framing at all. A body whose framing this could not follow
+        // (`Scan::Lost`) falls back to the unframed rule rather than accusing
+        // the box of a truncation on the strength of a parse this proxy gave
+        // up on.
+        None => match &scan {
+            Some(Scan::Done) => false,
+            Some(Scan::Lost) | None => cut_short,
+            Some(_) => true,
+        },
     };
     // And a third question, for the one case where the first cannot be answered.
     // Once the peer has half-closed there is nothing left that could tell us it
@@ -1184,20 +1317,38 @@ fn strip_lengths(head: &[u8]) -> Vec<u8> {
     rebuild_head(head, |line| header_name(line) == "content-length", b"")
 }
 
-/// How a response's body is framed, as far as this proxy will commit to it.
+/// Where a response's body ends, as far as this proxy will commit to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Framing {
+enum Body {
     /// Exactly this many bytes.
     Length(u64),
-    /// Until the box closes. `Transfer-Encoding` says so, and this proxy does
-    /// not parse chunks — it relays them, and the forced `Connection: close`
-    /// is what ends the response.
+    /// At the terminating zero-length chunk, which this proxy watches for as
+    /// it relays. It does not *parse* the body — the bytes go through
+    /// untouched — it only tracks where the framing says the message stops.
+    ///
+    /// It used to be folded into [`Body::UntilClose`], and the cost of that was
+    /// a slot held for five minutes per request. This code already treats "an
+    /// agent-written server that ignores `Connection: close`" as a supported
+    /// case; against one, the browser had a complete response in hand while
+    /// h5i sat waiting for a close that was not coming, until `RESPONSE_IDLE`
+    /// fired. Sixty-four requests and the share answered `busy` for the rest of
+    /// that interval, and a steady trickle kept it there.
+    Chunked,
+    /// The connection closing is the framing, and there is nothing else to go
+    /// on.
     UntilClose,
-    /// The head said two contradictory things. Nothing is framed **and** the
-    /// contradiction is not passed on: `strip_lengths` takes the lengths out on
-    /// the way to the client, so the response the visitor gets is framed by the
-    /// connection closing and by nothing else.
-    Ambiguous,
+}
+
+/// How a response's body is framed, and whether its head can be passed on as
+/// it stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Framing {
+    body: Body,
+    /// Drop every `Content-Length` on the way out. Set whenever the head said
+    /// two things about where the body ends: the visitor gets one framing
+    /// rather than two, because a client that has to pick between them is the
+    /// same disagreement one hop further out.
+    strip_lengths: bool,
 }
 
 /// Read the response's framing out of its head.
@@ -1205,12 +1356,25 @@ enum Framing {
 /// `Transfer-Encoding` beats `Content-Length` for every HTTP client, so framing
 /// on the length when both are present sends the client a prefix of the *chunk
 /// framing* and closes — a truncated stream that reads as the app being broken.
-/// The request side has refused that combination since round three; the
-/// response side was still trusting it.
+///
+/// **Any** transfer coding does that, not only `chunked`, and that was the hole:
+/// a response carrying `Transfer-Encoding: gzip` *and* `Content-Length: 4` was
+/// graded `Length(4)` here, so both headers reached the visitor and h5i stopped
+/// after four bytes — while the recipient, for which a transfer coding is
+/// authoritative, was reading a stream that ends when the connection does. Same
+/// arithmetic, opposite direction, and the result is a hang or a truncation
+/// depending on whose parser you ask. A coding this proxy cannot follow means
+/// the connection closing is the only framing it will commit to, and the length
+/// does not travel.
+///
+/// `chunked` has to be the *final* coding to be worth anything: `chunked, gzip`
+/// is invalid and, more to the point, means the octets on the wire are not
+/// chunk-framed, so watching for a terminating chunk in them would be watching
+/// for a byte pattern in compressed data.
 fn response_framing(head: &[u8]) -> Framing {
     let mut length = None;
     let mut lengths = 0;
-    let mut chunked = false;
+    let mut codings: Vec<String> = Vec::new();
     for line in head.split(|&b| b == b'\n') {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         let Some(colon) = line.iter().position(|&b| b == b':') else {
@@ -1223,18 +1387,20 @@ fn response_framing(head: &[u8]) -> Framing {
             .trim()
             .to_string();
         match name.as_str() {
-            // Only `chunked` frames a body. `identity` is legal, deprecated,
-            // and means "no encoding" — grading it as chunked stripped a
-            // perfectly good `Content-Length`.
-            // Token-wise, not substring: `contains` would read a value like
-            // `x-chunked-foo` as chunked, and the whole point of this branch is
-            // to agree with what the box is actually going to do.
-            "transfer-encoding"
-                if value
-                    .split(',')
-                    .any(|t| t.trim().eq_ignore_ascii_case("chunked")) =>
-            {
-                chunked = true;
+            "transfer-encoding" => {
+                // Token-wise, not substring: `contains` would read a value like
+                // `x-chunked-foo` as chunked, and the whole point of this is to
+                // agree with what the box is actually going to send.
+                //
+                // `identity` is legal, deprecated, and means "no encoding", so
+                // it is dropped here rather than counted as a coding — grading
+                // it as one would strip a perfectly good `Content-Length`.
+                codings.extend(
+                    value
+                        .split(',')
+                        .map(|t| t.trim().to_ascii_lowercase())
+                        .filter(|t| !t.is_empty() && t != "identity"),
+                );
             }
             "content-length" => {
                 lengths += 1;
@@ -1247,17 +1413,133 @@ fn response_framing(head: &[u8]) -> Framing {
             _ => {}
         }
     }
-    if chunked {
-        return if lengths > 0 {
-            Framing::Ambiguous
-        } else {
-            Framing::UntilClose
+    if !codings.is_empty() {
+        return Framing {
+            body: if codings.last().is_some_and(|c| c == "chunked") {
+                Body::Chunked
+            } else {
+                Body::UntilClose
+            },
+            strip_lengths: lengths > 0,
         };
     }
     match (lengths, length) {
-        (1, Some(n)) => Framing::Length(n),
-        (0, _) => Framing::UntilClose,
-        _ => Framing::Ambiguous,
+        (1, Some(n)) => Framing {
+            body: Body::Length(n),
+            strip_lengths: false,
+        },
+        (0, _) => Framing {
+            body: Body::UntilClose,
+            strip_lengths: false,
+        },
+        _ => Framing {
+            body: Body::UntilClose,
+            strip_lengths: true,
+        },
+    }
+}
+
+/// Longest chunk-size or trailer line the response scanner will buffer.
+const MAX_SCAN_LINE: usize = 16 * 1024;
+
+/// Where a relayed chunked body has got to.
+///
+/// Fed the same bytes that go to the visitor, in the same order, and asked
+/// after each write whether the message has ended. It reads only the framing —
+/// the size lines, the trailers and the blank line that closes them — and skips
+/// the data, so a body is never buffered and never inspected.
+///
+/// A body it cannot follow ends up [`Scan::Lost`], which is not an error: the
+/// relay falls back to the old behaviour of waiting for the close, which is
+/// what it did for every chunked response before this existed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Scan {
+    /// Reading a size line, or a trailer line once the zero chunk has been seen.
+    Line { after_zero: bool, line: Vec<u8> },
+    /// Passing chunk data, plus the CRLF that closes it.
+    Data(u64),
+    /// The terminating chunk and its trailers have gone by.
+    Done,
+    /// The framing did not parse. Nothing is refused on this basis; the
+    /// response simply goes back to being framed by the connection closing.
+    Lost,
+}
+
+impl Scan {
+    fn new() -> Scan {
+        Scan::Line {
+            after_zero: false,
+            line: Vec::new(),
+        }
+    }
+
+    fn is_done(&self) -> bool {
+        matches!(self, Scan::Done)
+    }
+
+    /// Advance over bytes that have just been relayed.
+    fn feed(&mut self, mut bytes: &[u8]) {
+        while !bytes.is_empty() {
+            match self {
+                Scan::Done | Scan::Lost => return,
+                Scan::Data(left) => {
+                    let take = (*left).min(bytes.len() as u64) as usize;
+                    *left -= take as u64;
+                    bytes = &bytes[take..];
+                    if *left == 0 {
+                        *self = Scan::Line {
+                            after_zero: false,
+                            line: Vec::new(),
+                        };
+                    }
+                }
+                Scan::Line { after_zero, line } => match bytes.iter().position(|&b| b == b'\n') {
+                    Some(i) => {
+                        line.extend_from_slice(&bytes[..=i]);
+                        bytes = &bytes[i + 1..];
+                        let complete = std::mem::take(line);
+                        let after = *after_zero;
+                        *self = Scan::after_line(&complete, after);
+                    }
+                    None => {
+                        line.extend_from_slice(bytes);
+                        if line.len() > MAX_SCAN_LINE {
+                            *self = Scan::Lost;
+                        }
+                        return;
+                    }
+                },
+            }
+        }
+    }
+
+    fn after_line(line: &[u8], after_zero: bool) -> Scan {
+        if after_zero {
+            // Trailers, then the blank line that ends them.
+            return if line == b"\r\n" || line == b"\n" {
+                Scan::Done
+            } else if is_trailer(line) {
+                Scan::Line {
+                    after_zero: true,
+                    line: Vec::new(),
+                }
+            } else {
+                Scan::Lost
+            };
+        }
+        match chunk_size(line) {
+            // The data plus its closing CRLF. `checked_add` because `size` came
+            // off the wire as hex and `u64::MAX` is a well-formed chunk header.
+            Some(0) => Scan::Line {
+                after_zero: true,
+                line: Vec::new(),
+            },
+            Some(n) => match n.checked_add(2) {
+                Some(left) => Scan::Data(left),
+                None => Scan::Lost,
+            },
+            None => Scan::Lost,
+        }
     }
 }
 
@@ -1609,6 +1891,92 @@ mod status_line_tests {
         let out = close_the_connection(b"\r\nHTTP/1.1 200 OK\r\nConnection: keep-alive\r\n\r\n");
         assert_eq!(&out, b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
     }
+
+    /// The head this file accepts is the head it reads the status from.
+    ///
+    /// `head_is_well_formed` and `rebuild_head` both tolerate a leading CRLF
+    /// and `status_code` did not, so for that one accepted shape every caller
+    /// got `None` and read it as "not that status". The test above only ever
+    /// used a `200`, whose behaviour is the same either way, so all three
+    /// consequences went uncovered: an interim answer treated as final, an
+    /// upgrade that never enters the duplex path, and a bodyless response the
+    /// relay waits out an idle timeout for.
+    #[test]
+    fn a_status_line_after_a_blank_line_is_still_a_status_line() {
+        for (head, code) in [
+            (&b"\r\nHTTP/1.1 100 Continue\r\n\r\n"[..], 100u16),
+            (&b"\r\nHTTP/1.1 101 Switching Protocols\r\n\r\n"[..], 101),
+            (&b"\r\nHTTP/1.1 204 No Content\r\n\r\n"[..], 204),
+            (&b"\r\nHTTP/1.1 304 Not Modified\r\n\r\n"[..], 304),
+            // And more than one, since `rebuild_head` drops them all.
+            (&b"\r\n\r\nHTTP/1.1 304 Not Modified\r\n\r\n"[..], 304),
+        ] {
+            assert!(
+                head_is_well_formed(head),
+                "{:?}",
+                String::from_utf8_lossy(head)
+            );
+            assert_eq!(
+                status_code(head),
+                Some(code),
+                "the status of an accepted head was unreadable: {:?}",
+                String::from_utf8_lossy(head)
+            );
+        }
+
+        // The three decisions that were wrong as a result.
+        assert!(is_informational(b"\r\nHTTP/1.1 100 Continue\r\n\r\n"));
+        assert!(is_switching(
+            b"\r\nHTTP/1.1 101 Switching Protocols\r\n\r\n"
+        ));
+        assert!(has_no_body("GET", b"\r\nHTTP/1.1 304 Not Modified\r\n\r\n"));
+        assert!(has_no_body("GET", b"\r\nHTTP/1.1 204 No Content\r\n\r\n"));
+        // And a `101` is still not an interim answer.
+        assert!(!is_informational(
+            b"\r\nHTTP/1.1 101 Switching Protocols\r\n\r\n"
+        ));
+    }
+
+    /// A chunked body ends where its framing says, and a body this cannot
+    /// follow is not claimed to have ended anywhere.
+    #[test]
+    fn the_terminating_chunk_is_found_however_the_bytes_arrive() {
+        let body = b"2\r\nhi\r\n3\r\n th\r\n0\r\n\r\n";
+
+        // All at once.
+        let mut s = Scan::new();
+        s.feed(body);
+        assert!(s.is_done());
+
+        // And one byte at a time, which is what a slow origin produces.
+        let mut s = Scan::new();
+        for b in body {
+            assert!(!s.is_done(), "the scanner finished early");
+            s.feed(&[*b]);
+        }
+        assert!(s.is_done());
+
+        // Trailers between the zero chunk and the blank line.
+        let mut s = Scan::new();
+        s.feed(b"0\r\nExpires: never\r\n\r\n");
+        assert!(s.is_done());
+
+        // Short of the end is not the end.
+        let mut s = Scan::new();
+        s.feed(b"2\r\nhi\r\n");
+        assert!(!s.is_done());
+        let mut s = Scan::new();
+        s.feed(b"0\r\n");
+        assert!(!s.is_done(), "the trailer section had not been closed");
+
+        // Framing this cannot follow becomes `Lost`, not `Done`: the relay
+        // falls back to waiting for the close, which is what it did for every
+        // chunked response before the scanner existed.
+        let mut s = Scan::new();
+        s.feed(b"not a chunk size\r\n");
+        assert_eq!(s, Scan::Lost);
+        assert!(!s.is_done());
+    }
 }
 
 #[cfg(test)]
@@ -1643,9 +2011,10 @@ mod response_fuzz {
 
             let framing = response_framing(&head);
             let rewritten = close_the_connection(&head);
-            let out = match framing {
-                Framing::Ambiguous => strip_lengths(&rewritten),
-                _ => rewritten,
+            let out = if framing.strip_lengths {
+                strip_lengths(&rewritten)
+            } else {
+                rewritten
             };
 
             // One `Connection`, and it says the connection ends here. This is
@@ -1674,28 +2043,32 @@ mod response_fuzz {
                 );
             }
 
-            // One framing on the way out. Two lengths, or a length beside a
-            // chunked encoding, is a response-smuggling shape: the visitor's
-            // client picks one and we picked the other.
+            // One framing on the way out. Two lengths, or a length beside
+            // *any* transfer coding, is a response-smuggling shape: the
+            // visitor's client picks one and we picked the other. Not only
+            // `chunked` — a recipient treats `Transfer-Encoding: gzip` as
+            // authoritative over a length just the same.
             let lengths = header_values(&out, "content-length").len();
-            let chunked = header_values(&out, "transfer-encoding").iter().any(|v| {
-                v.split(',')
-                    .any(|t| t.trim().eq_ignore_ascii_case("chunked"))
+            let encoded = header_values(&out, "transfer-encoding").iter().any(|v| {
+                v.split(',').any(|t| {
+                    let t = t.trim();
+                    !t.is_empty() && !t.eq_ignore_ascii_case("identity")
+                })
             });
             assert!(
-                lengths <= 1 && !(chunked && lengths > 0),
-                "two framings reached the visitor ({lengths} lengths, chunked={chunked}): {} -> {out:?}",
+                lengths <= 1 && !(encoded && lengths > 0),
+                "two framings reached the visitor ({lengths} lengths, encoded={encoded}): {} -> {out:?}",
                 ctx()
             );
 
             // And whatever we decided about the body has to be a decision the
             // sanitised head still supports.
-            match framing {
+            match framing.body {
                 // By value, not by spelling. `007` is a legal length and
                 // every parser reads it as 7, so requiring the text to match
                 // would be asserting about formatting rather than about
                 // whether two parsers can disagree.
-                Framing::Length(n) => {
+                Body::Length(n) => {
                     let declared: Vec<Option<u64>> = header_values(&out, "content-length")
                         .iter()
                         .map(|v| v.parse::<u64>().ok())
@@ -1707,13 +2080,13 @@ mod response_fuzz {
                         ctx()
                     );
                 }
-                Framing::Ambiguous => assert_eq!(
-                    lengths,
-                    0,
-                    "an ambiguous head kept a length: {} -> {out:?}",
+                // Anything else is framed by the chunk stream or by the close,
+                // and a length beside either is one framing too many.
+                Body::Chunked | Body::UntilClose => assert!(
+                    !framing.strip_lengths || lengths == 0,
+                    "a head we refused to trust kept a length: {} -> {out:?}",
                     ctx()
                 ),
-                Framing::UntilClose => {}
             }
 
             // Line discipline, out as well as in.
@@ -2025,13 +2398,21 @@ mod response_tests {
         assert!(!text.contains("Connection: close"), "{text}");
     }
 
+    /// Shorthand for the two-field framing, so a test reads as one assertion.
+    fn framed(body: Body, strip_lengths: bool) -> Framing {
+        Framing {
+            body,
+            strip_lengths,
+        }
+    }
+
     #[test]
     fn a_bodyless_answer_with_ambiguous_lengths_is_still_sanitised() {
         // A `304` is the commonest response a dev server makes, and "this
         // branch has no body so the headers cannot hurt" is how an invariant
         // ends up holding on one path and not the other.
         let head = b"HTTP/1.1 304 Not Modified\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n";
-        assert_eq!(response_framing(head), Framing::Ambiguous);
+        assert_eq!(response_framing(head), framed(Body::UntilClose, true));
         let text = String::from_utf8(strip_lengths(&close_the_connection(head))).expect("utf8");
         assert!(!text.to_lowercase().contains("content-length"), "{text}");
     }
@@ -2044,12 +2425,15 @@ mod response_tests {
             response_framing(
                 b"HTTP/1.1 200 OK\r\nTransfer-Encoding: x-chunked-foo\r\nContent-Length: 4\r\n\r\n"
             ),
-            Framing::Length(4)
+            // Not chunked — but it *is* a transfer coding, and a recipient
+            // honours one over a length whatever it is called. The length does
+            // not travel and the close is the framing.
+            framed(Body::UntilClose, true)
         );
-        // And a real list still is.
+        // And a real list still is, with `chunked` last where it must be.
         assert_eq!(
             response_framing(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n"),
-            Framing::UntilClose
+            framed(Body::Chunked, false)
         );
     }
 
@@ -2059,7 +2443,7 @@ mod response_tests {
             response_framing(
                 b"HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nContent-Length: 4\r\n\r\n"
             ),
-            Framing::Length(4)
+            framed(Body::Length(4), false)
         );
     }
 
@@ -2097,15 +2481,15 @@ mod response_tests {
     fn a_length_is_read_only_when_it_is_unambiguous() {
         assert_eq!(
             response_framing(b"HTTP/1.1 200 OK\r\nContent-Length: 17\r\n\r\n"),
-            Framing::Length(17)
+            framed(Body::Length(17), false)
         );
         assert_eq!(
             response_framing(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"),
-            Framing::UntilClose
+            framed(Body::Chunked, false)
         );
         assert_eq!(
             response_framing(b"HTTP/1.1 200 OK\r\n\r\n"),
-            Framing::UntilClose
+            framed(Body::UntilClose, false)
         );
         // A length beside a `Transfer-Encoding` is the shape that truncated a
         // chunked body to five bytes of its own framing: every client honours
@@ -2114,15 +2498,31 @@ mod response_tests {
             response_framing(
                 b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n"
             ),
-            Framing::Ambiguous
+            framed(Body::Chunked, true)
         );
         assert_eq!(
             response_framing(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n"),
-            Framing::Ambiguous
+            framed(Body::UntilClose, true)
         );
         assert_eq!(
             response_framing(b"HTTP/1.1 200 OK\r\nContent-Length: +5\r\n\r\n"),
-            Framing::Ambiguous
+            framed(Body::UntilClose, true)
+        );
+        // A transfer coding that is not `chunked`, beside a length. Both
+        // headers used to reach the visitor with h5i framing on the length —
+        // so h5i stopped after four bytes and the client, for which the coding
+        // is authoritative, waited for a stream that had already stopped.
+        assert_eq!(
+            response_framing(
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\nContent-Length: 4\r\n\r\n"
+            ),
+            framed(Body::UntilClose, true)
+        );
+        // `chunked` not last: the octets on the wire are not chunk-framed, so
+        // there is no terminating chunk to watch for.
+        assert_eq!(
+            response_framing(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, gzip\r\n\r\n"),
+            framed(Body::UntilClose, false)
         );
     }
 
@@ -2179,7 +2579,7 @@ mod response_tests {
         assert!(complete);
         assert_eq!(rest, b"hi");
         assert!(head.windows(3).any(|w| w == b"caf"));
-        assert_eq!(response_framing(&head), Framing::Length(2));
+        assert_eq!(response_framing(&head), framed(Body::Length(2), false));
     }
 }
 

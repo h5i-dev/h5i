@@ -1755,6 +1755,84 @@ mod tests {
         (port, seen)
     }
 
+    /// The same server, answering with a chunked body instead of a length.
+    fn stubborn_chunked_server() -> u16 {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                std::thread::spawn(move || loop {
+                    let mut buf = [0u8; 4096];
+                    match c.read(&mut buf) {
+                        Ok(0) | Err(_) => return,
+                        Ok(_) => {}
+                    }
+                    // A complete chunked response: two chunks, the
+                    // terminating zero chunk, and the blank line that closes
+                    // the (empty) trailer section. Then it keeps the socket
+                    // open and says nothing more.
+                    let _ = c.write_all(
+                        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\
+                          Connection: keep-alive\r\n\r\n\
+                          2\r\nhi\r\n3\r\n th\r\n0\r\n\r\n",
+                    );
+                });
+            }
+        });
+        port
+    }
+
+    /// A chunked response ends at its terminating chunk, not at the close.
+    ///
+    /// `Transfer-Encoding: chunked` was classified as "until the box closes",
+    /// and this file already treats a server that ignores `Connection: close`
+    /// as a supported case. Against one, the browser had a complete response
+    /// in hand while the relay waited out `RESPONSE_IDLE` — five minutes with
+    /// the `Bridge::admit` permit still held. Sixty-four requests and the share
+    /// answers `busy` for that whole interval; a steady trickle keeps it there.
+    /// The existing stubborn-keepalive coverage used a `Content-Length`, whose
+    /// arithmetic released the permit, so none of this was exercised.
+    #[tokio::test]
+    async fn a_chunked_response_releases_its_slot_at_the_terminating_chunk() {
+        let port = stubborn_chunked_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        let req = format!("GET /a HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\r\n");
+        // The assertion is the *timing*, not just the bytes. Without the
+        // terminator scan the relay waits for a close this server will never
+        // send, so the visitor's connection stays open until `RESPONSE_IDLE`
+        // five minutes later — the test client's own five-second read timeout
+        // is what would end it, which is why this measures rather than trusts.
+        let started = std::time::Instant::now();
+        let got = request_strict(addr, &req).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "the relay held the connection open after the terminating chunk: {:?}",
+            started.elapsed()
+        );
+        assert!(got.contains("0\r\n\r\n"), "the body was not relayed: {got}");
+
+        // And the permit came back: the share is not carrying anything.
+        assert_eq!(
+            bridge.snapshot().over_capacity,
+            0,
+            "a completed chunked response left the share at capacity"
+        );
+        // Not recorded as a truncation, either: the box said everything it
+        // meant to say.
+        assert_eq!(bridge.snapshot().truncated, 0);
+
+        serving.abort();
+    }
+
     #[tokio::test]
     async fn a_second_request_cannot_ride_in_on_an_authorized_connection() {
         // The control this feature rests on, tested against the case that
@@ -2026,6 +2104,94 @@ mod tests {
             "the box's own answer did not reach the visitor: {got}"
         );
         assert!(got.contains("too big"), "{got}");
+
+        serving.abort();
+    }
+
+    /// The same rejection, from a server that does **not** hang up.
+    ///
+    /// The existing coverage uses a server that closes, which is the one shape
+    /// the old code could notice: a failed write into the box was the signal.
+    /// Nothing in HTTP requires that. This one answers and keeps reading
+    /// nothing, which is what a framework with a body-size limit does.
+    fn polite_early_rejecting_server() -> u16 {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut c) = conn else { continue };
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 1024];
+                    let _ = c.read(&mut buf);
+                    let body = b"too big";
+                    let _ = c.write_all(
+                        format!(
+                            "HTTP/1.1 413 Content Too Large\r\nContent-Length: {}\r\n\r\n",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                    let _ = c.write_all(body);
+                    // And then it sits there, socket open, reading nothing.
+                    // Held so the connection is not closed by the drop.
+                    std::thread::sleep(Duration::from_secs(120));
+                    drop(c);
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_arrives_mid_upload_is_relayed_rather_than_waited_out() {
+        // The client declares a large body and sends only a prefix, which is
+        // what a paused upload looks like. The box has already answered `413`.
+        //
+        // The body was forwarded to completion before anything read the box, so
+        // the only thing that ended this was `BODY_IDLE` thirty seconds later —
+        // and it ended it by *replacing* the box's answer with h5i's own `408`.
+        // The visitor was told their upload timed out for a request the app had
+        // already refused, and the app's reason never reached them.
+        let port = polite_early_rejecting_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, secret, listener) = tunnel_bridge(dir.path(), port).await;
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, listener).await }
+        });
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut c = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        c.write_all(
+            format!(
+                "POST /upload HTTP/1.1\r\nHost: t\r\nCookie: h5i_share={secret}\r\n\
+                 Content-Length: 400000\r\n\r\n{}",
+                "x".repeat(1024)
+            )
+            .as_bytes(),
+        )
+        .await
+        .expect("write the head and a prefix of the body");
+
+        // Promptly: well inside `BODY_IDLE`, which is what used to end it.
+        let mut out = Vec::new();
+        let started = std::time::Instant::now();
+        let read = tokio::time::timeout(Duration::from_secs(10), c.read_to_end(&mut out)).await;
+        assert!(read.is_ok(), "the answer never arrived");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the box's answer waited out the body timeout: {:?}",
+            started.elapsed()
+        );
+        let got = String::from_utf8_lossy(&out).to_string();
+        assert!(
+            got.contains("413"),
+            "the box's own answer was replaced: {got}"
+        );
+        assert!(got.contains("too big"), "{got}");
+        assert!(!got.contains("408"), "{got}");
 
         serving.abort();
     }
