@@ -131,8 +131,32 @@ pub fn decide(listeners: &[Listener], port: u16, box_pids: &HashSet<u32>) -> Own
         return Ownership::Nobody;
     }
 
+    // Dial in the family the box actually binds, and try that one first.
+    //
+    // This is not a preference, it is a correctness fix, and the case that
+    // forces it cannot be seen in `insi_vflag` at all: a socket bound `[::]`
+    // with `IPV6_V6ONLY` **on** and one with it **off** are both reported as
+    // `[::]`, and only the second answers a connection to `127.0.0.1`.
+    // Measured, not assumed. So a box whose only listener is `[::]` must be
+    // dialled at `[::1]` — which is right for both — and dialling it at
+    // `127.0.0.1` on the strength of the dual-stack ranking below gets
+    // `ECONNREFUSED` from a v6-only server that is running perfectly well, and
+    // reports it to its owner as "nothing is listening".
+    //
+    // A box that binds a real IPv4 socket keeps the IPv4 dial: it is what a
+    // browser resolving `localhost` most often reaches, and there is no
+    // ambiguity about whether that socket serves it.
+    let box_binds_v4 = on_port
+        .iter()
+        .any(|l| box_pids.contains(&l.pid) && l.addr.is_ipv4());
+    let candidates: [IpAddr; 2] = if box_binds_v4 {
+        DIAL_CANDIDATES
+    } else {
+        [DIAL_CANDIDATES[1], DIAL_CANDIDATES[0]]
+    };
+
     let mut fallback: Option<Ownership> = None;
-    for dial in DIAL_CANDIDATES {
+    for dial in candidates {
         // Everything that could answer a connection to this address, best match
         // first.
         let mut reachable: Vec<(u8, &Listener)> = on_port
@@ -480,22 +504,34 @@ fn listening_addr(pid: u32, fd: i32) -> Option<SocketAddr> {
         return None;
     }
 
-    // `soi_family` decides how to read the address, and `insi_vflag` does not.
+    // `insi_vflag` decides how to read the address — **which union arm the
+    // kernel filled in** — and `soi_family` does not, because the family says
+    // how the socket was created rather than which address space it ended up
+    // in. The five shapes, measured on Darwin rather than reasoned about:
     //
-    // That is not a stylistic preference; it was measured. A socket bound to
-    // `::` with `IPV6_V6ONLY` off — which is what Rust's
-    // `TcpListener::bind("[::]:0")` and a great many dev servers produce — has
-    // the **IPv4** bit set in `insi_vflag` as well as the IPv6 one, because it
-    // really does serve both families. Reading the v4 arm for it reports
-    // `0.0.0.0`, which loses the fact that the socket also answers on `::1`,
-    // and the share then refuses a box it could have reached (fail-closed, but
-    // wrong). Worse in the other direction: reading the v6 arm of a genuine
-    // AF_INET socket reinterprets `in4in6_addr`'s padding as address bytes and
-    // reports `127.0.0.1` as `::7f00:1`.
+    // ```text
+    //   bind                    soi_family   insi_vflag   insi_laddr
+    //   127.0.0.1               AF_INET (2)  0x01         ..00 7f 00 00 01
+    //   0.0.0.0                 AF_INET      0x01         all zero
+    //   [::1]                   AF_INET6(30) 0x02         ..00 00 00 00 01
+    //   [::]  (dual-stack)      AF_INET6     0x03         all zero
+    //   [::ffff:127.0.0.1]      AF_INET6     0x01         ..00 7f 00 00 01
+    // ```
     //
-    // The socket's domain has no such ambiguity, so it is what is read, and
-    // `insi_vflag` is left as the fallback for a kernel that does not set one.
-    let family = i32_at(SOI_FAMILY);
+    // The last row is why this is not a matter of taste. A v4-mapped bind is an
+    // AF_INET6 socket holding an **IPv4** address, in `in4in6_addr` form and
+    // without the `ffff` — so reading the v6 arm for it (which keying on
+    // `soi_family` does) reports `::7f00:1`, an address that exists nowhere.
+    // `decide` then ranks it unreachable and cannot see it at all, and an
+    // invisible listener is the dangerous kind: a stranger bound
+    // `[::ffff:127.0.0.1]:P` really does take connections to `127.0.0.1:P`,
+    // beating a box on the wildcard, while h5i believed only the box was there
+    // and dialled straight into it.
+    //
+    // Keying on `insi_vflag` gets all five right, and the order matters: the
+    // dual-stack row has *both* bits, and it is the v6 arm that describes it
+    // (`::`, which serves both) rather than the v4 arm (`0.0.0.0`, which loses
+    // the `::1` route). So IPv6 is tested first and IPv4 is the remainder.
     let vflag = buf[INSI_VFLAG];
     let v6 = || -> Option<IpAddr> {
         let b: [u8; 16] = buf[INSI_LADDR..INSI_LADDR + 16].try_into().ok()?;
@@ -506,16 +542,18 @@ fn listening_addr(pid: u32, fd: i32) -> Option<SocketAddr> {
         let b: [u8; 4] = buf[INSI_LADDR + 12..INSI_LADDR + 16].try_into().ok()?;
         Some(IpAddr::V4(Ipv4Addr::from(b)))
     };
-    let ip = if family == libc::AF_INET6 {
-        v6()?
-    } else if family == libc::AF_INET {
-        v4()?
-    } else if vflag & INI_IPV6 != 0 {
+    let ip = if vflag & INI_IPV6 != 0 {
         v6()?
     } else if vflag & INI_IPV4 != 0 {
         v4()?
     } else {
-        return None;
+        // No flag set at all. Fall back to the socket's domain rather than
+        // guessing an arm, and give up if that says nothing either.
+        match i32_at(SOI_FAMILY) {
+            libc::AF_INET6 => v6()?,
+            libc::AF_INET => v4()?,
+            _ => return None,
+        }
     };
     Some(SocketAddr::new(ip, port))
 }
@@ -636,6 +674,22 @@ mod tests {
             }
             other => panic!("a shared address must be refused, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_box_on_the_v6_wildcard_alone_is_dialled_on_v6() {
+        // `[::]` covers IPv4 too *if* `IPV6_V6ONLY` is off, and nothing h5i can
+        // read says which it is. Dialling `127.0.0.1` is therefore a guess that
+        // is wrong half the time and fails as `ECONNREFUSED` — reported to the
+        // owner of a perfectly good server as "nothing is listening". `[::1]`
+        // is right either way.
+        assert_eq!(
+            decide(&[l(10, "[::]:3000")], 3000, &boxed(&[10])),
+            Ownership::Box {
+                pid: 10,
+                addr: "[::1]:3000".parse().unwrap()
+            }
+        );
     }
 
     #[test]
@@ -783,15 +837,86 @@ mod tests {
         );
     }
 
-    /// The tree walk, against a process we actually fork.
+    /// Every bind shape Darwin can report, and the address h5i must read back.
+    ///
+    /// The table in [`listening_addr`] as a test, because getting it wrong is
+    /// not a cosmetic error: a listener h5i reads as the wrong address is a
+    /// listener [`decide`] cannot rank, and one it cannot rank is one it cannot
+    /// refuse. The v4-mapped row is the one that was wrong — reported as
+    /// `::7f00:1`, an address that exists nowhere, while the socket really
+    /// answers connections to `127.0.0.1`.
     #[cfg(target_os = "macos")]
     #[test]
-    fn the_process_tree_finds_a_child_and_stops_at_the_root() {
-        let mut child = std::process::Command::new("/bin/sleep")
-            .arg("30")
+    fn every_bind_shape_reads_back_as_the_address_it_serves() {
+        use std::net::TcpListener;
+
+        let me = std::process::id();
+        // `[::ffff:…]` is last: it is the one that binds into the v4 space, so
+        // it would collide with the first row's port if they shared one.
+        let cases: [(&str, &dyn Fn(std::net::SocketAddr) -> String); 5] = [
+            ("127.0.0.1:0", &|a| format!("127.0.0.1:{}", a.port())),
+            ("0.0.0.0:0", &|a| format!("0.0.0.0:{}", a.port())),
+            ("[::1]:0", &|a| format!("[::1]:{}", a.port())),
+            ("[::]:0", &|a| format!("[::]:{}", a.port())),
+            // An AF_INET6 socket holding an IPv4 address: what it serves is
+            // `127.0.0.1`, and that is what h5i has to see.
+            ("[::ffff:127.0.0.1]:0", &|a| {
+                format!("127.0.0.1:{}", a.port())
+            }),
+        ];
+
+        for (spec, want) in cases {
+            let Ok(l) = TcpListener::bind(spec) else {
+                panic!("could not bind {spec} to check how it reads back");
+            };
+            let bound = l.local_addr().expect("local addr");
+            let expected: SocketAddr = want(bound).parse().expect("expected address");
+            let found: Vec<SocketAddr> = listening_sockets()
+                .into_iter()
+                .filter(|x| x.pid == me && x.addr.port() == bound.port())
+                .map(|x| x.addr)
+                .collect();
+            assert!(
+                found.contains(&expected),
+                "a socket bound {spec} (kernel says {bound}) must read back as {expected}, \
+                 and read back as {found:?}"
+            );
+        }
+    }
+
+    /// The tree walk, against processes we actually fork — two deep.
+    ///
+    /// Depth is the point, not decoration. A box is `h5i box shell` running a
+    /// shell running a dev server, so the listener h5i has to attribute is
+    /// typically a **grandchild** of the session it is rooted at; a walk that
+    /// only found direct children would refuse every real share while passing
+    /// a one-level test. `sh -c 'sleep … & wait'` is written that way on
+    /// purpose: `sh -c 'sleep …'` alone execs into `sleep` and leaves one level
+    /// behind, which is how the first version of this test proved nothing.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_process_tree_reaches_a_grandchild_and_stops_at_the_root() {
+        let mut child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("sleep 30 & wait")
             .spawn()
             .expect("spawn a child");
         let me = std::process::id();
+        // The grandchild has to exist before the tree is walked.
+        let mut grandchild = None;
+        for _ in 0..100 {
+            let found: Vec<u32> = all_pids()
+                .into_iter()
+                .filter(|p| parent_of(*p) == Some(child.id()))
+                .collect();
+            if let Some(g) = found.first() {
+                grandchild = Some(*g);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let grandchild = grandchild.expect("the shell never started its background `sleep`");
+
         let tree = process_tree(me);
         assert!(tree.contains(&me), "the root itself is in its own tree");
         assert!(
@@ -799,10 +924,15 @@ mod tests {
             "a child of this process must be in its tree"
         );
         assert!(
+            tree.contains(&grandchild),
+            "a grandchild must be in the tree — this is where a box's dev server lives"
+        );
+        assert!(
             !tree.contains(&1),
             "launchd is not a descendant of this test"
         );
         let _ = child.kill();
         let _ = child.wait();
+        unsafe { libc::kill(grandchild as libc::pid_t, libc::SIGKILL) };
     }
 }

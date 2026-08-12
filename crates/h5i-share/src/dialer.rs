@@ -896,6 +896,67 @@ mod mac_tests {
         t.join().expect("server thread");
     }
 
+    /// A dev server bound `[::]` with `IPV6_V6ONLY` on — and the dialer has to
+    /// reach it.
+    ///
+    /// The end of the chain the `owner` tests start: libproc reports this
+    /// socket and a dual-stack one identically, so the only safe address to
+    /// dial is `[::1]`, and this is what proves the dialer actually gets a
+    /// connection rather than `ECONNREFUSED` from `127.0.0.1`. Written with a
+    /// raw socket because Rust's `TcpListener` gives no way to ask for
+    /// `IPV6_V6ONLY`, and it is exactly that option under test.
+    #[test]
+    fn a_v6only_server_is_reached_rather_than_reported_missing() {
+        use std::os::fd::{FromRawFd, OwnedFd};
+
+        let (fd, port) = unsafe {
+            let s = libc::socket(libc::AF_INET6, libc::SOCK_STREAM, 0);
+            assert!(s >= 0, "socket");
+            let on: libc::c_int = 1;
+            assert_eq!(
+                libc::setsockopt(
+                    s,
+                    libc::IPPROTO_IPV6,
+                    libc::IPV6_V6ONLY,
+                    &on as *const _ as *const libc::c_void,
+                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                ),
+                0,
+                "IPV6_V6ONLY"
+            );
+            let mut a: libc::sockaddr_in6 = std::mem::zeroed();
+            a.sin6_family = libc::AF_INET6 as u8;
+            a.sin6_len = std::mem::size_of::<libc::sockaddr_in6>() as u8;
+            assert_eq!(
+                libc::bind(
+                    s,
+                    &a as *const _ as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+                ),
+                0,
+                "bind [::]"
+            );
+            assert_eq!(libc::listen(s, 8), 0, "listen");
+            let mut got: libc::sockaddr_in6 = std::mem::zeroed();
+            let mut len = std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t;
+            libc::getsockname(s, &mut got as *mut _ as *mut libc::sockaddr, &mut len);
+            (OwnedFd::from_raw_fd(s), u16::from_be(got.sin6_port))
+        };
+
+        // The premise: this socket really does refuse IPv4.
+        assert!(
+            TcpStream::connect(("127.0.0.1", port)).is_err(),
+            "a v6-only socket must not answer 127.0.0.1, or this test proves nothing"
+        );
+
+        let dialer = Dialer::spawn_local(port).expect("a v6-only server is still a server");
+        let sock = dialer
+            .connect()
+            .expect("the dialer must reach a v6-only server rather than report it missing");
+        assert!(sock.peer_addr().expect("peer").is_ipv6());
+        drop(fd);
+    }
+
     #[test]
     fn a_dead_port_is_reported_as_a_dead_port() {
         // Port 1, for the reason the Linux test gives: an ephemeral port that
