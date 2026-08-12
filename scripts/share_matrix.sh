@@ -152,7 +152,13 @@ except Exception as e:
       continue
     fi
     tok=$(grep -o 'h5i=[a-f0-9]*' "$WORK/join.log" | head -1 | cut -d= -f2)
-    got=$(curl -s -b "h5i_share_$PORT=$tok" --max-time 25 "http://127.0.0.1:$PORT/" 2>/dev/null)
+    # The address the join bound, not an assumed one: each join takes a
+    # loopback address of its own so its cookie jar is not shared with every
+    # other local service, and falls back to `127.0.0.1` only where that bind
+    # is refused (macOS assigns just the one to `lo0`).
+    jh=$(grep -ao 'http://127\.[0-9.]*:[0-9]*/' "$WORK/join.log" | head -1 |
+         sed 's|^http://||; s|/$||; s|:[0-9]*$||')
+    got=$(curl -s -b "h5i_share_$PORT=$tok" --max-time 25 "http://${jh:-127.0.0.1}:$PORT/" 2>/dev/null)
     kill "$jp" 2>/dev/null
     wait "$jp" 2>/dev/null
 

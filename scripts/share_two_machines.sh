@@ -402,7 +402,13 @@ do_join() {
     i=0
     LOCAL=""
     while [ $i -lt 45 ]; do
-      LOCAL=$(grep -ao 'http://127.0.0.1:[0-9]*/?h5i=[a-f0-9]*' "$JOINLOG" 2>/dev/null | head -1)
+      # Whatever address the join actually bound, not an assumed one. Each
+      # join takes a loopback address of its own (`127.<x>.<y>.<z>`) so its
+      # cookie jar is not shared with every other local service; only where
+      # that bind is refused — macOS assigns just `127.0.0.1` to `lo0` — does
+      # it fall back to the address this used to hard-code. Reading the
+      # printed URL is also what a person does.
+      LOCAL=$(grep -ao 'http://127\.[0-9.]*:[0-9]*/?h5i=[a-f0-9]*' "$JOINLOG" 2>/dev/null | head -1)
       [ -n "$LOCAL" ] && break
       if ! kill -0 "$JOIN_PID" 2>/dev/null; then break; fi
       sleep 1; i=$((i + 1))
@@ -413,9 +419,10 @@ do_join() {
       exit 1
     fi
     ok "joined"
-    PORT=$(printf '%s' "$LOCAL" | sed 's|.*127.0.0.1:\([0-9]*\)/.*|\1|')
+    HOSTPORT=$(printf '%s' "$LOCAL" | sed 's|^http://||; s|/.*||')
+    PORT=$(printf '%s' "$HOSTPORT" | sed 's|.*:||')
     TOK=$(printf '%s' "$LOCAL" | sed 's|.*h5i=||')
-    BASE="http://127.0.0.1:$PORT"
+    BASE="http://$HOSTPORT"
     FETCH="curl -s -H Cookie:h5i_share_${PORT}=${TOK} --max-time 120"
     # The one line `h5i join` prints about the transport, read exactly rather
     # than by looking for the word anywhere: the banner around it discusses

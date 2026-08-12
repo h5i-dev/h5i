@@ -277,7 +277,7 @@ pass "the box's port is shared even with a stranger on the same port number"
 JOIN=$(free_port)
 "$H5I" join "$ticket" --port "$JOIN" >"$WORK/join.log" 2>&1 &
 sleep 12
-url=$(grep -ao "http://127.0.0.1:$JOIN/?h5i=[a-f0-9]*" "$WORK/join.log" | head -1)
+url=$(grep -ao "http://127\.[0-9.]*:$JOIN/?h5i=[a-f0-9]*" "$WORK/join.log" | head -1)
 [ -n "$url" ] || fail "the joiner never came up: $(tail -2 "$WORK/join.log")"
 
 body=$(curl -s -L -c "$WORK/jar" -b "$WORK/jar" -m 20 "$url")
@@ -330,7 +330,7 @@ JOIN2=$(free_port)
 "$H5I" join "$ticket" --port "$JOIN2" >"$WORK/join5.log" 2>&1 &
 disown 2>/dev/null || true
 sleep 12
-url=$(grep -ao "http://127.0.0.1:$JOIN2/?h5i=[a-f0-9]*" "$WORK/join5.log" | head -1)
+url=$(grep -ao "http://127\.[0-9.]*:$JOIN2/?h5i=[a-f0-9]*" "$WORK/join5.log" | head -1)
 [ -n "$url" ] || fail "the joiner never came up: $(tail -2 "$WORK/join5.log")"
 body=$(curl -s -L -c "$WORK/jar5" -b "$WORK/jar5" -m 20 "$url")
 case "$body" in

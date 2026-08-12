@@ -108,6 +108,19 @@ PY
 # else's process is alive is worse than no check.
 joiner_alive() { kill -0 "$JOIN_PID" 2>/dev/null; }
 
+# The host a join actually bound, read from what it printed.
+#
+# Not `127.0.0.1`, which this used to assume everywhere. A join takes a
+# loopback address of its own — `127.<x>.<y>.<z>`, so its cookie jar is not
+# shared with every other local service on this machine — and falls back to
+# `127.0.0.1` only where that bind is refused, which is macOS. The port is
+# still whatever `--port` asked for; the address is not ours to predict.
+join_host() {
+  grep -ao 'http://127\.[0-9.]*:[0-9]*/' "$1" 2>/dev/null | head -1 |
+    sed 's|^http://||; s|/$||; s|:[0-9]*$||'
+}
+
+
 last_receipt() {
   python3 - "$ENV_DIR" <<'PY'
 import json, os, sys
@@ -151,6 +164,7 @@ JOIN_PID=$!
 sleep 8
 grep -q "joined" "$WORK/join.log" && pass "the joiner joined" || fail "the joiner did not join"
 TOKEN="$(grep -o 'h5i=[a-f0-9]*' "$WORK/join.log" | head -1 | cut -d= -f2)"
+JHOST="$(join_host "$WORK/join.log")"; JHOST="${JHOST:-127.0.0.1}"
 
 # The joiner must survive with nobody visiting it. It presents its ticket once
 # at connect time for exactly this reason; without that the sharer hangs up
@@ -162,18 +176,18 @@ joiner_alive && pass "still connected past the unauthenticated grace" || fail "t
 say "a whole response, and a client that half-closes"
 # `-c`, because the first request is answered with a redirect that sets the
 # cookie; without a jar the followed request arrives anonymous and gets a 401.
-GOT=$(curl -sL -c "$WORK/jar" -o /dev/null -w '%{size_download}' --max-time 90 "http://127.0.0.1:8899/?h5i=$TOKEN")
+GOT=$(curl -sL -c "$WORK/jar" -o /dev/null -w '%{size_download}' --max-time 90 "http://$JHOST:8899/?h5i=$TOKEN")
 check "$GOT" "4194304" "4 MiB over p2p"
 
 # `nc -q` shuts down its write side after sending. That is legal HTTP/1.1 and
 # is what anything built out of one write and one read does; it used to be read
 # as "the visitor left" and the download stopped after the first read.
 HALF=$(printf "GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share_8899=$TOKEN\r\n\r\n" \
-       | timeout 90 nc -q 60 127.0.0.1 8899 | wc -c)
+       | timeout 90 nc -q 60 "$JHOST" 8899 | wc -c)
 if [ "$HALF" -gt 4194304 ]; then pass "a half-closing client got the whole body ($HALF bytes)"; else fail "half-close truncated the response ($HALF bytes)"; fi
 
 say "an anonymous request is refused without killing anything"
-CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "http://127.0.0.1:8899/")
+CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "http://$JHOST:8899/")
 check "$CODE" "401" "no credential gets a 401"
 joiner_alive && pass "the joiner survived it" || fail "an anonymous request ended the join"
 
@@ -183,7 +197,7 @@ joiner_alive && pass "the joiner survived it" || fail "an anonymous request ende
 # Cloudflare's edge dropped it: the bytes never reached h5i at all, so the
 # counter it was written for had no coverage whatsoever.
 SMUG=$(printf 'GET / HTTP/1.1\r\nHost: t\r\nCookie: h5i_share_8899=%s\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n' "$TOKEN" \
-  | timeout 30 nc -q 2 127.0.0.1 8899 | head -1)
+  | timeout 30 nc -q 2 "$JHOST" 8899 | head -1)
 case "$SMUG" in
   HTTP/1.1\ 400*) pass "two Content-Lengths are refused" ;;
   *) fail "a smuggling shape was not refused: $SMUG" ;;
@@ -192,7 +206,7 @@ esac
 # And a service worker registration, which would outlive the share and keep
 # control of this address afterwards.
 SW=$(printf 'GET /sw.js HTTP/1.1\r\nHost: t\r\nCookie: h5i_share_8899=%s\r\nService-Worker: script\r\n\r\n' "$TOKEN" \
-  | timeout 30 nc -q 2 127.0.0.1 8899 | head -1)
+  | timeout 30 nc -q 2 "$JHOST" 8899 | head -1)
 case "$SW" in
   HTTP/1.1\ 403*) pass "a service worker registration is refused" ;;
   *) fail "a service worker registration was allowed: $SW" ;;
@@ -201,16 +215,16 @@ esac
 # A request from a page on another loopback port. Two `h5i join` proxies are
 # the same *site* to a browser, so `SameSite` does not hold the cookie back
 # between them — the credential is attached and the request used to arrive.
-FOREIGN=$(printf 'GET / HTTP/1.1\r\nHost: 127.0.0.1:8899\r\nCookie: h5i_share_8899=%s\r\nOrigin: http://127.0.0.1:8900\r\n\r\n' "$TOKEN" \
-  | timeout 30 nc -q 2 127.0.0.1 8899 | head -1)
+FOREIGN=$(printf 'GET / HTTP/1.1\r\nHost: %s:8899\r\nCookie: h5i_share_8899=%s\r\nOrigin: http://%s:8900\r\n\r\n' "$JHOST" "$TOKEN" "$JHOST" \
+  | timeout 30 nc -q 2 "$JHOST" 8899 | head -1)
 case "$FOREIGN" in
   HTTP/1.1\ 403*) pass "a page on another loopback port is refused" ;;
   *) fail "a cross-origin request was served: $FOREIGN" ;;
 esac
 
 # And the share's own page is not foreign to itself.
-OWN=$(printf 'GET / HTTP/1.1\r\nHost: 127.0.0.1:8899\r\nCookie: h5i_share_8899=%s\r\nOrigin: http://127.0.0.1:8899\r\n\r\n' "$TOKEN" \
-  | timeout 60 nc -q 5 127.0.0.1 8899 | head -1)
+OWN=$(printf 'GET / HTTP/1.1\r\nHost: %s:8899\r\nCookie: h5i_share_8899=%s\r\nOrigin: http://%s:8899\r\n\r\n' "$JHOST" "$TOKEN" "$JHOST" \
+  | timeout 60 nc -q 5 "$JHOST" 8899 | head -1)
 case "$OWN" in
   HTTP/1.1\ 200*) pass "the shared page can still call itself" ;;
   *) fail "the origin check refused the share's own page: $OWN" ;;
@@ -289,10 +303,11 @@ VT=$(grep -o 'h5i1_[A-Za-z0-9_-]*' "$WORK/v.log" | head -1)
 VJ=$!
 sleep 8
 VTOK=$(grep -o 'h5i=[a-f0-9]*' "$WORK/vjoin.log" | head -1 | cut -d= -f2)
+VHOST="$(join_host "$WORK/vjoin.log")"; VHOST="${VHOST:-127.0.0.1}"
 VP=$(share_pid)
 
 # A download slow enough that the kill lands in the middle of it.
-( curl -s -b "h5i_share_8951=$VTOK" --limit-rate 60k -o "$WORK/partial.bin"     --max-time 120 "http://127.0.0.1:8951/" ; echo "curl=$?" > "$WORK/curl.rc" ) &
+( curl -s -b "h5i_share_8951=$VTOK" --limit-rate 60k -o "$WORK/partial.bin"     --max-time 120 "http://$VHOST:8951/" ; echo "curl=$?" > "$WORK/curl.rc" ) &
 sleep 4
 kill -9 "$VP" 2>/dev/null
 
@@ -352,17 +367,18 @@ if [ "$WITH_LEAK" = "1" ]; then
   LJ=$!
   sleep 8
   LTOK=$(grep -o 'h5i=[a-f0-9]*' "$WORK/leakjoin.log" | head -1 | cut -d= -f2)
+  LHOST="$(join_host "$WORK/leakjoin.log")"; LHOST="${LHOST:-127.0.0.1}"
 
   fds() { ls "/proc/$1/fd" 2>/dev/null | wc -l; }
-  curl -s -b "h5i_share_8941=$LTOK" -o /dev/null --max-time 20 "http://127.0.0.1:8941/" >/dev/null
+  curl -s -b "h5i_share_8941=$LTOK" -o /dev/null --max-time 20 "http://$LHOST:8941/" >/dev/null
   sleep 1
   BASE_S=$(fds "$SP"); BASE_J=$(fds "$LJ")
   for _ in $(seq 1 400); do
-    curl -s -b "h5i_share_8941=$LTOK" -o /dev/null --max-time 20 "http://127.0.0.1:8941/" >/dev/null 2>&1
+    curl -s -b "h5i_share_8941=$LTOK" -o /dev/null --max-time 20 "http://$LHOST:8941/" >/dev/null 2>&1
   done
   # And a hundred refused ones, which leave by a different door.
   for _ in $(seq 1 100); do
-    curl -s -o /dev/null --max-time 10 "http://127.0.0.1:8941/" >/dev/null 2>&1
+    curl -s -o /dev/null --max-time 10 "http://$LHOST:8941/" >/dev/null 2>&1
   done
   sleep 3
   END_S=$(fds "$SP"); END_J=$(fds "$LJ")
