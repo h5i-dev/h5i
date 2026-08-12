@@ -20,6 +20,17 @@ inside the sandbox, while your host files and credentials stay outside.
 You can securely share web apps running inside the sandbox with others over
 an end-to-end encrypted P2P connection or a browser-ready demo link.
 
+<table align="center">
+<tr>
+<td>🛡️ Run coding agents in secure sandboxes</td>
+<td>🌐 Test web apps in isolated browsers</td>
+</tr>
+<tr>
+<td>🔗 Share demo services securely with others</td>
+<td>🧾 Review agent changes and activity</td>
+</tr>
+</table>
+
 h5i gives you:
 
 - **A self-contained sandbox with multiple isolation tiers** for the agent, toolchain, dependencies, and browser
@@ -33,17 +44,6 @@ h5i gives you:
   - **End-to-end encrypted P2P sharing** when both sides use h5i
   - **Browser-ready demo links** for everyone else, with expiring grants, revocation, and ingress receipts
 - **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
-
-<table align="center">
-<tr>
-<td>🛡️ Run coding agents in secure sandboxes</td>
-<td>🌐 Test web apps in isolated browsers</td>
-</tr>
-<tr>
-<td>🔗 Share demo services securely with others</td>
-<td>🧾 Review agent changes and activity</td>
-</tr>
-</table>
 
 **Local-first. No hosted sandbox. No SaaS account required.**
 
