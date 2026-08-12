@@ -380,7 +380,15 @@ impl Dialer {
         use crate::owner::{self, Ownership};
 
         let pids = owner::process_tree(self.mac.root);
-        let listeners = owner::listening_sockets();
+        // Only sockets whose owner still exists. A pid that has exited holds
+        // nothing, so it cannot take a connection — but its ancestry can no
+        // longer be resolved either, which makes it read as a *stranger* on the
+        // box's own address, which is a refusal. A busy box's short-lived
+        // children are exactly that shape. See [`owner::is_alive`].
+        let listeners: Vec<owner::Listener> = owner::listening_sockets()
+            .into_iter()
+            .filter(|l| owner::is_alive(l.pid))
+            .collect();
         let named = |pid: u32| match owner::process_name(pid) {
             Some(n) => format!("`{n}` (pid {pid})"),
             None => format!("pid {pid}"),
@@ -966,52 +974,99 @@ mod mac_tests {
     fn a_v6only_server_is_reached_rather_than_reported_missing() {
         use std::os::fd::{FromRawFd, OwnedFd};
 
-        let (fd, port) = unsafe {
-            let s = libc::socket(libc::AF_INET6, libc::SOCK_STREAM, 0);
-            assert!(s >= 0, "socket");
-            let on: libc::c_int = 1;
-            assert_eq!(
-                libc::setsockopt(
-                    s,
-                    libc::IPPROTO_IPV6,
-                    libc::IPV6_V6ONLY,
-                    &on as *const _ as *const libc::c_void,
-                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-                ),
-                0,
-                "IPV6_V6ONLY"
-            );
-            let mut a: libc::sockaddr_in6 = std::mem::zeroed();
-            a.sin6_family = libc::AF_INET6 as u8;
-            a.sin6_len = std::mem::size_of::<libc::sockaddr_in6>() as u8;
-            assert_eq!(
-                libc::bind(
-                    s,
-                    &a as *const _ as *const libc::sockaddr,
-                    std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
-                ),
-                0,
-                "bind [::]"
-            );
-            assert_eq!(libc::listen(s, 8), 0, "listen");
-            let mut got: libc::sockaddr_in6 = std::mem::zeroed();
-            let mut len = std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t;
-            libc::getsockname(s, &mut got as *mut _ as *mut libc::sockaddr, &mut len);
-            (OwnedFd::from_raw_fd(s), u16::from_be(got.sin6_port))
-        };
+        // Attempted a few times, and that is about this *binary*, not about the
+        // code under test. Every test here runs in one process and
+        // `spawn_local` roots the box at that process — so every socket any
+        // other test holds is, correctly, one of the box's. The v4 and v6
+        // ephemeral ranges are allocated independently, so another test can be
+        // handed the same *number* in the v4 space at any moment, including
+        // between this test's check and its dial. `decide` then legitimately
+        // prefers that v4 socket, which belongs to a test that may close it a
+        // millisecond later, and the dial fails for a reason that has nothing
+        // to do with v6-only servers. The kernel picks a different port next
+        // attempt.
+        for attempt in 0..8 {
+            let (fd, port) = unsafe {
+                let s = libc::socket(libc::AF_INET6, libc::SOCK_STREAM, 0);
+                assert!(s >= 0, "socket");
+                let on: libc::c_int = 1;
+                assert_eq!(
+                    libc::setsockopt(
+                        s,
+                        libc::IPPROTO_IPV6,
+                        libc::IPV6_V6ONLY,
+                        &on as *const _ as *const libc::c_void,
+                        std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                    ),
+                    0,
+                    "IPV6_V6ONLY"
+                );
+                let mut a: libc::sockaddr_in6 = std::mem::zeroed();
+                a.sin6_family = libc::AF_INET6 as u8;
+                a.sin6_len = std::mem::size_of::<libc::sockaddr_in6>() as u8;
+                assert_eq!(
+                    libc::bind(
+                        s,
+                        &a as *const _ as *const libc::sockaddr,
+                        std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+                    ),
+                    0,
+                    "bind [::]"
+                );
+                assert_eq!(libc::listen(s, 8), 0, "listen");
+                let mut got: libc::sockaddr_in6 = std::mem::zeroed();
+                let mut len = std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t;
+                libc::getsockname(s, &mut got as *mut _ as *mut libc::sockaddr, &mut len);
+                (OwnedFd::from_raw_fd(s), u16::from_be(got.sin6_port))
+            };
 
-        // The premise: this socket really does refuse IPv4.
-        assert!(
-            TcpStream::connect(("127.0.0.1", port)).is_err(),
-            "a v6-only socket must not answer 127.0.0.1, or this test proves nothing"
-        );
+            // Someone else already holds the v4 twin of this number.
+            if crate::owner::listening_sockets()
+                .into_iter()
+                .any(|l| l.addr.port() == port && l.addr.is_ipv4())
+            {
+                continue;
+            }
+            // The premise: this socket really does refuse IPv4. If it answers,
+            // the number was taken between the check above and here.
+            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                continue;
+            }
 
-        let dialer = Dialer::spawn_local(port).expect("a v6-only server is still a server");
-        let sock = dialer
-            .connect()
-            .expect("the dialer must reach a v6-only server rather than report it missing");
-        assert!(sock.peer_addr().expect("peer").is_ipv6());
-        drop(fd);
+            // Retryable for the same reason the two checks above are: the
+            // number can be held in the v4 space by something outside this
+            // process entirely — a box or a server left behind by an
+            // end-to-end run — which makes this a real `Stranger` or
+            // `Contested`. Correct behaviour, and nothing to do with what this
+            // test is asking.
+            let Ok(dialer) = Dialer::spawn_local(port) else {
+                drop(fd);
+                continue;
+            };
+            match dialer.connect() {
+                Ok(sock) => {
+                    // The whole point: reached, and reached over v6, because
+                    // `127.0.0.1` is not an address this server answers on.
+                    assert!(
+                        sock.peer_addr().expect("peer").is_ipv6(),
+                        "the dialer reached a v6-only server over something other than v6"
+                    );
+                    drop(fd);
+                    return;
+                }
+                // A v4 twin appeared after both checks above and vanished
+                // again; nothing to conclude, so take a fresh port.
+                Err(e) if attempt < 7 => {
+                    drop(fd);
+                    let _ = e;
+                    continue;
+                }
+                Err(e) => panic!(
+                    "the dialer must reach a v6-only server rather than report it missing: {e}"
+                ),
+            }
+        }
+        panic!("never got an uncontended port in eight attempts, which is itself suspicious");
     }
 
     /// Many visitors at once, which is the only way this route is ever used.

@@ -2201,6 +2201,47 @@ rather than refused. Boxes at the `container` and `microvm` tiers on macOS live
 inside a VM where no host process holds the port; they are refused with that
 reason rather than "nothing is listening".
 
+**Nine review rounds over that route (36–44) found six defects, and the shape
+of them is the point.** Only one was in the reasoning; the rest were in what
+the code could *see*.
+
+- The pid-identity hardening added for `session_pid` turned `h5i box share`
+  **off** on macOS entirely: `proc_start_ticks` read `/proc`, answered `None`
+  everywhere else, and the verified reader skips records that cannot prove
+  themselves. Both halves were individually correct and tested; no test held
+  the three together, and the platform where it broke was the one CI cannot
+  run the command on.
+- A pid that changed hands between the tree snapshot and the socket scan was
+  vouched for by the snapshot. Re-asked upwards from the winner now.
+- Both kernel scans sized their buffer once and added fixed slack. The kernel
+  never says "there was more", and both lists are ordered — so a process that
+  opens descriptors faster than the guess can push its own listening socket off
+  the end of the scan, and a listener h5i cannot see is one it cannot refuse.
+  Both grow until the answer provably fits.
+- The refusal named the offending process, and that name is the executable's
+  file name — chosen by whoever started it. A binary named with a literal `ESC`
+  wrote escape sequences into the sentence an operator reads while deciding
+  whether their port has been taken. Sanitised through the same helper the rest
+  of the repository already used.
+- A newborn child inherits its parent's descriptors across `fork`, so between
+  `fork` and `exec` it really does hold the dev server's listening socket —
+  and judged against a snapshot taken microseconds earlier it is a *stranger*
+  co-holding the box's address, which is a refusal. A busy box therefore
+  refused its own visitors in proportion to how busy it was. Found by a
+  concurrency test on its first run, with `/usr/bin/true` reported as
+  co-holding a port.
+- And the module's own note claimed a refusal it could not make: a listener
+  belonging to another user is never *attributed* to the box, which is safe,
+  but neither can it be counted as a competitor — so "unambiguous" rested in
+  part on not having seen what this process may not see. Recorded as a limit
+  rather than argued away.
+
+The through-line: on Linux the namespace makes the guarantee true by
+construction, and there is nothing to observe. Here it is established by
+observation, and every defect but one was the observation being incomplete —
+which is the failure mode this approach has and the namespace does not, and is
+worth stating plainly wherever the two are compared.
+
 **Still not demonstrated.** The two h5i processes were on one machine: a real
 direct QUIC path through the host's network stack, but not two machines on two
 networks. On macOS the two-machine half is likewise untried, and `SO_REUSEPORT`

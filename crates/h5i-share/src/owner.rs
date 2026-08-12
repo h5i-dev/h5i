@@ -396,6 +396,31 @@ fn display_name(raw: &str) -> Option<String> {
     (!clean.is_empty()).then_some(clean)
 }
 
+/// Does this process still exist?
+///
+/// Asked about the *owner of a listening socket*, and the answer decides
+/// whether that socket is a competitor at all. A pid that has exited holds
+/// nothing — the kernel closed its descriptors — so a scan that caught it a
+/// moment ago is describing something that is already gone.
+///
+/// Without this, such a listener is worse than stale, it is **hostile**:
+/// [`is_descendant`] cannot resolve the ancestry of a process that no longer
+/// exists, so it answers "not the box", and [`decide`] reads a listener that is
+/// not the box's on the box's own address as a stranger — which is a refusal.
+/// A busy box's transient children are exactly this shape, and they inherit the
+/// dev server's socket on the way past, so a share would intermittently refuse
+/// its own visitors on account of a process that had already finished. The
+/// sibling of what round 44 found on the spawn side.
+///
+/// `kill(pid, 0)` rather than a table walk: one syscall, and it answers the
+/// only question being asked.
+#[cfg(target_os = "macos")]
+pub fn is_alive(pid: u32) -> bool {
+    // SAFETY: signal 0 performs the permission and existence checks and sends
+    // nothing.
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
 /// Is `pid` still under `root`, asked *now* and walked upwards?
 ///
 /// [`process_tree`] answers the same question downwards, and the two differ in
