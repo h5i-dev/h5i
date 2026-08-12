@@ -377,6 +377,13 @@ pub struct Lock {
 /// The same five seconds the retry loop it replaces added up to (a hundred
 /// attempts at fifty milliseconds), because several call sites' comments quote
 /// that number to the operator.
+///
+/// Unix only, like the `flock` it bounds and like `share_gate`'s `GATE_WAIT`
+/// one layer down: the other branch takes no lock, so there is nothing there
+/// to wait for. Without the gate it is dead code on Windows, which
+/// `cargo check --target x86_64-pc-windows-msvc` under `-D warnings` refuses —
+/// the one build no machine in this repository's development loop runs.
+#[cfg(unix)]
 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl Lock {
