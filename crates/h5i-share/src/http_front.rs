@@ -125,32 +125,76 @@ pub enum Next {
     },
 }
 
+/// Why there is no head to work with.
+///
+/// Two answers, not one, because they are different facts about the connection
+/// and only one of them belongs in an ingress receipt.
+///
+/// The head reader refuses several shapes before [`gate::parse`] ever sees
+/// them — a header block past [`gate::MAX_HEAD`], bytes that are not UTF-8 (a
+/// TLS `ClientHello` sent to a plaintext front is the everyday one), an
+/// incomplete head the peer stops feeding — and the caller had no way to tell
+/// those from a peer that opened a socket and said nothing. So it dropped all of
+/// them silently, and the largest smuggling-shaped probe a share can be sent was
+/// the one thing its receipt could not mention: `turned_away` counts only heads
+/// that were *read* and then refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoHead {
+    /// Nothing arrived, or the peer went away before saying anything. A
+    /// browser's speculative preconnect is exactly this shape and so is every
+    /// port scan, so it is not worth a line — recording it would bury the rows
+    /// that mean something under noise anybody can generate.
+    Silent,
+    /// Bytes arrived and they are not a head this share will read. Worth
+    /// recording: it is the same fact as a head the gate refuses, arriving one
+    /// step earlier.
+    Refused,
+}
+
 /// Read up to the end of the headers.
 ///
 /// Returns the head and whatever arrived after it — a request body usually
 /// follows in the same packet, and a proxy that read it and threw it away would
 /// break every form on the shared app.
-pub async fn read_head<R: tokio::io::AsyncRead + Unpin>(r: &mut R) -> Option<(String, Vec<u8>)> {
+pub async fn read_head<R: tokio::io::AsyncRead + Unpin>(
+    r: &mut R,
+) -> Result<(String, Vec<u8>), NoHead> {
     let mut buf = Vec::with_capacity(2048);
     let mut chunk = [0u8; 2048];
     let deadline = tokio::time::Instant::now() + HEAD_TIMEOUT;
+    // "Did this peer ever say anything" is the whole distinction, so it is read
+    // off the buffer rather than guessed at from which arm ended the loop.
+    let said_something = |buf: &Vec<u8>| {
+        if buf.is_empty() {
+            NoHead::Silent
+        } else {
+            NoHead::Refused
+        }
+    };
     loop {
-        let n = tokio::time::timeout_at(deadline, r.read(&mut chunk))
-            .await
-            .ok()?
-            .ok()?;
+        let n = match tokio::time::timeout_at(deadline, r.read(&mut chunk)).await {
+            Ok(Ok(n)) => n,
+            // A deadline or a read error part-way through a head is a peer that
+            // started a request and did not finish it; before any of it, it is
+            // a peer that never made one.
+            _ => return Err(said_something(&buf)),
+        };
         if n == 0 {
-            return None;
+            return Err(said_something(&buf));
         }
         buf.extend_from_slice(&chunk[..n]);
         if let Some(end) = find_head_end(&buf) {
-            let head = String::from_utf8(buf[..end].to_vec()).ok()?;
-            return Some((head, buf[end..].to_vec()));
+            return match String::from_utf8(buf[..end].to_vec()) {
+                Ok(head) => Ok((head, buf[end..].to_vec())),
+                // A complete head that is not text. `Refused` unconditionally:
+                // it arrived in full, so there is nothing silent about it.
+                Err(_) => Err(NoHead::Refused),
+            };
         }
         // Bounded before it is parsed. A peer that sends headers forever must
         // not be able to make this allocate forever.
         if buf.len() > gate::MAX_HEAD {
-            return None;
+            return Err(NoHead::Refused);
         }
     }
 }
@@ -822,15 +866,24 @@ where
             }
         }
 
-        // The data, plus the CRLF that closes it.
+        // The declared data, then the CRLF that closes it — **checked**, not
+        // counted.
         //
-        // `checked_add` because `size` came off the wire as hex and `u64::MAX`
-        // is a perfectly well-formed chunk header: `size + 2` would panic in a
-        // debug build and wrap to one in a release one, which would forward two
-        // bytes and then read the rest of the peer's body as chunk headers.
-        let Some(mut left) = size.checked_add(2) else {
-            return Err(std::io::Error::other("chunk size out of range"));
-        };
+        // This used to consume `size + 2` bytes and forward them without
+        // looking at the last two, so `1\r\nAXX0\r\n\r\n` was a complete
+        // request: one byte of data, `XX` where its CRLF should be, and the
+        // `0` chunk read out of the middle of the stream. Every conforming
+        // server rejects that, which means h5i had declared a request finished
+        // at a point nothing else agrees is a boundary — and the chunk framing
+        // is the only thing telling this proxy where the request ends, which is
+        // the last place to be relaxed. Found by the chunked fuzz, which reads
+        // the same stream leniently and could not find an end where this
+        // claimed one.
+        //
+        // No `checked_add` is needed now that the two are separate: `size` is
+        // consumed as itself, so `u64::MAX` is a body this streams until the
+        // peer stops rather than an overflow.
+        let mut left = size;
         while left > 0 {
             if buf.is_empty() {
                 fill(r, &mut buf).await?;
@@ -841,6 +894,15 @@ where
             buf.drain(..take);
             left -= take as u64;
         }
+        while buf.len() < 2 {
+            fill(r, &mut buf).await?;
+        }
+        if &buf[..2] != b"\r\n" {
+            return Err(std::io::Error::other("a chunk not closed by CRLF"));
+        }
+        write_to_box(w, &buf[..2]).await?;
+        to_box.fetch_add(2, Ordering::Relaxed);
+        buf.drain(..2);
     }
 }
 
@@ -1152,12 +1214,16 @@ where
             Some(n) => rest.len().min((n - sent_body) as usize),
             None => rest.len(),
         };
+        // Fed *before* the write, not after, because the answer is how much of
+        // this belongs to the response. A declared length clamps by arithmetic;
+        // this is the same clamp for the framing that has no arithmetic.
+        let take = match scan.as_mut() {
+            Some(s) => s.feed(&rest[..take]),
+            None => take,
+        };
         write_timed(&mut peer_w, &rest[..take]).await?;
         to_peer.fetch_add(take as u64, Ordering::Relaxed);
         sent_body += take as u64;
-        if let Some(s) = scan.as_mut() {
-            s.feed(&rest[..take]);
-        }
     }
 
     if body_len == Some(sent_body) || scan.as_ref().is_some_and(Scan::is_done) {
@@ -1245,14 +1311,17 @@ where
                     Some(total) => n.min((total - sent_body) as usize),
                     None => n,
                 };
+                // Same clamp as the first block above: nothing past the
+                // terminating chunk is this response's.
+                let take = match scan.as_mut() {
+                    Some(s) => s.feed(&buf[..take]),
+                    None => take,
+                };
                 if write_timed(&mut peer_w, &buf[..take]).await.is_err() {
                     break;
                 }
                 to_peer.fetch_add(take as u64, Ordering::Relaxed);
                 sent_body += take as u64;
-                if let Some(s) = scan.as_mut() {
-                    s.feed(&buf[..take]);
-                }
                 // The declared length was reached, or the terminating chunk
                 // went by. Either way the visitor has a complete response and
                 // this connection's permit belongs to the next one.
@@ -1484,8 +1553,20 @@ const MAX_SCAN_LINE: usize = 16 * 1024;
 enum Scan {
     /// Reading a size line, or a trailer line once the zero chunk has been seen.
     Line { after_zero: bool, line: Vec<u8> },
-    /// Passing chunk data, plus the CRLF that closes it.
+    /// Passing the declared chunk data.
     Data(u64),
+    /// The CRLF that closes a chunk's data, as much of it as has gone by.
+    ///
+    /// Its own state rather than two extra bytes on [`Scan::Data`], and the
+    /// difference is whether those bytes are *checked*. Counted, the scanner
+    /// found the end of `1\r\nAXX0\r\n\r\n` — one byte of data, `XX` where its
+    /// CRLF belongs — at a boundary no client recognises, and since the relay
+    /// clamps at whatever the scanner calls the end, that turned a malformed
+    /// response into one h5i truncated on the box's behalf. Checked, the same
+    /// stream is [`Scan::Lost`], which falls back to being framed by the
+    /// connection closing: the visitor gets every byte the box sent and their
+    /// own client decides, which is what happened before this scanner existed.
+    Closing(u8),
     /// The terminating chunk and its trailers have gone by.
     Done,
     /// The framing did not parse. Nothing is refused on this basis; the
@@ -1505,36 +1586,72 @@ impl Scan {
         matches!(self, Scan::Done)
     }
 
-    /// Advance over bytes that have just been relayed.
-    fn feed(&mut self, mut bytes: &[u8]) {
-        while !bytes.is_empty() {
+    /// Advance over bytes about to be relayed, and answer **how many of them
+    /// belong to this response**.
+    ///
+    /// The count is what makes the chunked path enforce the same rule the
+    /// `Content-Length` path gets from arithmetic. Without it everything the box
+    /// wrote past the terminating chunk went to the visitor: a second status
+    /// line, its own `Set-Cookie`, its own `Connection` — a head that reached
+    /// the visitor's client having skipped `close_the_connection` and
+    /// `strip_share_cookies` entirely. Conforming clients discard it, because
+    /// the head they did parse says `Connection: close`; the objection is that
+    /// whether the sanitiser applies was the box's choice, which is the same
+    /// door the unfinished-head path was closed for.
+    ///
+    /// `Lost` answers "all of them": a body whose framing this could not follow
+    /// falls back to being framed by the connection closing, which is what
+    /// every chunked response did before the scanner existed.
+    fn feed(&mut self, bytes: &[u8]) -> usize {
+        let total = bytes.len();
+        let mut rest = bytes;
+        loop {
             match self {
-                Scan::Done | Scan::Lost => return,
+                // Nothing after the terminating chunk is part of this message.
+                Scan::Done => return total - rest.len(),
+                // The framing is not something to clamp on.
+                Scan::Lost => return total,
+                _ if rest.is_empty() => return total,
                 Scan::Data(left) => {
-                    let take = (*left).min(bytes.len() as u64) as usize;
+                    let take = (*left).min(rest.len() as u64) as usize;
                     *left -= take as u64;
-                    bytes = &bytes[take..];
+                    rest = &rest[take..];
                     if *left == 0 {
-                        *self = Scan::Line {
-                            after_zero: false,
-                            line: Vec::new(),
-                        };
+                        *self = Scan::Closing(0);
                     }
                 }
-                Scan::Line { after_zero, line } => match bytes.iter().position(|&b| b == b'\n') {
+                // The two bytes after the data, one at a time because they can
+                // arrive in separate reads.
+                Scan::Closing(seen) => {
+                    let want = if *seen == 0 { b'\r' } else { b'\n' };
+                    if rest[0] != want {
+                        *self = Scan::Lost;
+                        continue;
+                    }
+                    rest = &rest[1..];
+                    *self = if *seen == 0 {
+                        Scan::Closing(1)
+                    } else {
+                        Scan::Line {
+                            after_zero: false,
+                            line: Vec::new(),
+                        }
+                    };
+                }
+                Scan::Line { after_zero, line } => match rest.iter().position(|&b| b == b'\n') {
                     Some(i) => {
-                        line.extend_from_slice(&bytes[..=i]);
-                        bytes = &bytes[i + 1..];
+                        line.extend_from_slice(&rest[..=i]);
+                        rest = &rest[i + 1..];
                         let complete = std::mem::take(line);
                         let after = *after_zero;
                         *self = Scan::after_line(&complete, after);
                     }
                     None => {
-                        line.extend_from_slice(bytes);
+                        line.extend_from_slice(rest);
                         if line.len() > MAX_SCAN_LINE {
                             *self = Scan::Lost;
                         }
-                        return;
+                        return total;
                     }
                 },
             }
@@ -1543,8 +1660,13 @@ impl Scan {
 
     fn after_line(line: &[u8], after_zero: bool) -> Scan {
         if after_zero {
-            // Trailers, then the blank line that ends them.
-            return if line == b"\r\n" || line == b"\n" {
+            // Trailers, then the blank line that ends them. CRLF only: a bare
+            // LF was accepted here while `is_trailer` refused one on the line
+            // above, so a response framed with bare LFs had its end found by
+            // the terminator and its trailers rejected — two readings of the
+            // same stream, in the one place that decides where a message stops.
+            // Now it is `Lost`, which means framed by the close.
+            return if line == b"\r\n" {
                 Scan::Done
             } else if is_trailer(line) {
                 Scan::Line {
@@ -1556,16 +1678,15 @@ impl Scan {
             };
         }
         match chunk_size(line) {
-            // The data plus its closing CRLF. `checked_add` because `size` came
-            // off the wire as hex and `u64::MAX` is a well-formed chunk header.
             Some(0) => Scan::Line {
                 after_zero: true,
                 line: Vec::new(),
             },
-            Some(n) => match n.checked_add(2) {
-                Some(left) => Scan::Data(left),
-                None => Scan::Lost,
-            },
+            // The data, and then its closing CRLF as a state of its own —
+            // checked rather than counted. No `checked_add` is needed for that
+            // reason: `u64::MAX` is a chunk this streams rather than an
+            // overflow.
+            Some(n) => Scan::Data(n),
             None => Scan::Lost,
         }
     }
@@ -1860,11 +1981,44 @@ fn strip_share_cookies(head: &[u8]) -> Vec<u8> {
 }
 
 /// The name a `Set-Cookie` line sets, or `None` for any other header.
+///
+/// **Not `set_cookie_pair().map(name)`, which is how it was written.** That
+/// requires an `=`, so `Set-Cookie: h5i_share` — a header with a name and no
+/// value — was not a `Set-Cookie` for one of ours and travelled to the visitor
+/// untouched. Found by the response fuzzer at 147,554 rounds.
+///
+/// It is not a leak on its own: RFC 6265 §5.2 says a set-cookie-string whose
+/// name-value pair lacks an `=` is ignored entirely, so a conforming browser
+/// stores nothing. It is the same rule applied on one branch and not the other,
+/// which is the exact defect `split_cookie` records having had on the *request*
+/// side — and its comment there gives the answer this one now matches:
+/// whatever is named like ours does not travel, however it is spelled.
 fn set_cookie_name(line: &[u8]) -> Option<String> {
-    set_cookie_pair(line).map(|(name, _)| name)
+    if header_name(line) != "set-cookie" {
+        return None;
+    }
+    let colon = line.iter().position(|&b| b == b':')?;
+    let value = String::from_utf8_lossy(&line[colon + 1..]);
+    let first = value.trim_start().split(';').next().unwrap_or("");
+    // The name is what precedes the `=`, and the whole segment when there is
+    // none. A browser ignores the second shape; this does not have to.
+    Some(
+        first
+            .split_once('=')
+            .map(|(name, _)| name)
+            .unwrap_or(first)
+            .trim()
+            .to_string(),
+    )
 }
 
-/// The name **and value** a `Set-Cookie` line assigns.
+/// The name **and value** a `Set-Cookie` line assigns, for the allowlist.
+///
+/// Still requires an `=`, unlike [`set_cookie_name`], and the asymmetry is the
+/// point: this feeds [`gate::AppCookies`], which decides what may be sent *to*
+/// the box, and a cookie with no value is one no browser stores and therefore
+/// one no browser sends back. Learning a name from it would put an entry on the
+/// allowlist that only somebody else's cookie could ever match.
 ///
 /// Both, because a name on its own is not enough to tell one cookie from
 /// another in a jar this proxy shares with the rest of the machine: two
@@ -2049,6 +2203,56 @@ mod status_line_tests {
         s.feed(b"not a chunk size\r\n");
         assert_eq!(s, Scan::Lost);
         assert!(!s.is_done());
+
+        // And the answer is where the body ends, not where the buffer does:
+        // this is what the relay clamps on, so a scanner that consumed the
+        // whole buffer would relay a second response the box appended.
+        let mut s = Scan::new();
+        assert_eq!(s.feed(b"0\r\n\r\nHTTP/1.1 200 OK\r\n\r\n"), 5);
+        assert!(s.is_done());
+        // Past the end nothing more belongs to it.
+        assert_eq!(s.feed(b"more"), 0);
+    }
+
+    /// A chunk whose data is not closed by CRLF is framing this will not
+    /// follow, not framing it follows to a made-up end.
+    ///
+    /// The mirror of the request side's bug, and the relay's clamp is what made
+    /// it consequential: the closing two bytes were *counted* with the data
+    /// rather than checked, so the scanner found the end of `1\r\nAXX0\r\n\r\n`
+    /// — one byte of data and `XX` where its CRLF belongs — and h5i truncated
+    /// the response there and closed, on behalf of a box that had sent
+    /// something no client would parse. `Lost` is the honest answer: relay it
+    /// all and let the visitor's own client refuse it.
+    #[test]
+    fn a_chunk_the_box_did_not_close_is_framing_this_will_not_follow() {
+        for body in [
+            &b"1\r\nAXX0\r\n\r\n"[..],
+            &b"2\r\nabXX0\r\n\r\n"[..],
+            // A bare LF where the closing CRLF belongs, and a bare-LF
+            // terminator: the second used to end the body while a bare-LF
+            // *trailer* was refused one line above it — two readings of the one
+            // stream that decides where a message stops.
+            &b"1\r\nA\n0\r\n\r\n"[..],
+            &b"0\n\n"[..],
+        ] {
+            let mut s = Scan::new();
+            s.feed(body);
+            assert_eq!(
+                s,
+                Scan::Lost,
+                "followed framing to a made-up end: {:?}",
+                String::from_utf8_lossy(body)
+            );
+            assert!(!s.is_done());
+        }
+
+        // The well-formed ones still end where they end, including a chunk
+        // whose closing CRLF is split across two reads.
+        let mut s = Scan::new();
+        assert_eq!(s.feed(b"1\r\nA\r"), 5);
+        assert_eq!(s.feed(b"\n0\r\n\r\n"), 6);
+        assert!(s.is_done());
     }
 }
 
@@ -2180,6 +2384,55 @@ mod response_fuzz {
         }
     }
 
+    /// A `Set-Cookie` with a name and no value is still one of ours.
+    ///
+    /// Found by the soak above at 147,554 rounds. `set_cookie_name` was
+    /// `set_cookie_pair().map(name)`, which requires an `=`, so the box could
+    /// emit `Set-Cookie: h5i_share` and have it relayed. A conforming browser
+    /// ignores that header (RFC 6265 §5.2), so this was a rule with a hole
+    /// rather than a leak — and the request side had already closed the same
+    /// hole, in the same words, on the way in.
+    #[test]
+    fn a_set_cookie_with_no_value_is_still_not_the_boxs_to_send() {
+        for line in [
+            &b"Set-Cookie: h5i_share"[..],
+            &b"Set-Cookie: h5i_share_8899"[..],
+            &b"Set-Cookie:  h5i_share ; Path=/"[..],
+            &b"set-cookie: h5i_share"[..],
+        ] {
+            assert!(
+                sets_a_share_cookie(line),
+                "not recognised as ours: {:?}",
+                String::from_utf8_lossy(line)
+            );
+        }
+        // And the app's own, valueless or not, still travels.
+        for line in [
+            &b"Set-Cookie: sid"[..],
+            &b"Set-Cookie: h5i_shared_theme"[..],
+            &b"Set-Cookie: h5i_share_0"[..],
+        ] {
+            assert!(
+                !sets_a_share_cookie(line),
+                "the app's own was deleted: {:?}",
+                String::from_utf8_lossy(line)
+            );
+        }
+
+        // End to end through the sanitiser both paths use.
+        let head = b"HTTP/1.1 200 OK\r\nSet-Cookie: h5i_share\r\nSet-Cookie: sid=9\r\n\r\n";
+        let out = strip_share_cookies(head);
+        assert!(!String::from_utf8_lossy(&out).contains("h5i_share"));
+        assert!(String::from_utf8_lossy(&out).contains("sid=9"));
+
+        // The allowlist still refuses to learn from a valueless header: a
+        // cookie a browser never stores is one it never sends back, so an
+        // entry for it could only ever match somebody else's.
+        let jar = crate::gate::AppCookies::default();
+        learn_app_cookies(b"HTTP/1.1 200 OK\r\nSet-Cookie: sid\r\n\r\n", Some(&jar));
+        assert!(!jar.knows("sid", ""));
+    }
+
     /// Every value for a header name, as a downstream parser would read them.
     fn header_values(head: &[u8], name: &str) -> Vec<String> {
         head.split(|&b| b == b'\n')
@@ -2197,11 +2450,332 @@ mod response_fuzz {
 }
 
 #[cfg(test)]
+mod chunked_fuzz {
+    use super::*;
+    use crate::fuzz::{chunked_body, rounds, Rng, PIPELINED};
+
+    /// Nothing past the end of a chunked request body reaches the box.
+    ///
+    /// This is the one place h5i and the box can disagree about where a
+    /// *request* ends, which is the definition of request smuggling: the front
+    /// authorizes one request and forwards exactly its bytes, and anything it
+    /// forwards past the body's end is a second request that never passed the
+    /// gate. It had three hand-written cases.
+    ///
+    /// The oracle is an independent reader, deliberately more permissive than
+    /// `chunk_size` — it accepts the bare-LF and whitespace-padded size lines
+    /// h5i refuses — because a *lenient* box is the dangerous counterparty. If
+    /// h5i forwards bytes this reader places after the end of the body, they are
+    /// bytes some server would read as a new request.
+    #[tokio::test]
+    async fn a_chunked_body_never_carries_a_second_request_into_the_box() {
+        let mut rng = Rng::new(0xC4A4);
+        let mut accepted = 0usize;
+        let mut refused = 0usize;
+        for i in 0..rounds() {
+            let seed = rng.next();
+            let mut one = Rng::new(seed);
+            let body = chunked_body(&mut one);
+            let ctx = || format!("round {i}, seed {seed:#x}, body {body:?}");
+
+            let mut peer = body.as_bytes();
+            let mut out: Vec<u8> = Vec::new();
+            let counted = std::sync::atomic::AtomicU64::new(0);
+            let r = forward_chunked(&mut peer, &mut out, &[], &counted).await;
+
+            // Whatever happened, what reached the box is a prefix of what the
+            // client sent — this proxy forwards, it does not rewrite.
+            assert!(
+                body.as_bytes().starts_with(&out),
+                "the box received bytes the client did not send: {} -> {:?}",
+                ctx(),
+                String::from_utf8_lossy(&out)
+            );
+            // And the counter describes those bytes rather than some others.
+            assert_eq!(
+                counted.load(std::sync::atomic::Ordering::Relaxed) as usize,
+                out.len(),
+                "the byte count and the bytes disagree: {}",
+                ctx()
+            );
+
+            // The property, and it is about the *boundary* rather than about a
+            // string: bytes past where the body ends are a second request, and
+            // bytes before it are this request's, however they read. A client
+            // that declares a chunk long enough to cover the tail has made
+            // those bytes its own body, and the box's parser agrees — so
+            // "SMUGGLED must never appear" is the wrong assertion and this is
+            // the right one.
+            let end = body_end(body.as_bytes());
+            if let Some(end) = end {
+                assert!(
+                    out.len() <= end,
+                    "the box was given bytes from past the end of the body ({} of {end}): {}",
+                    out.len(),
+                    ctx()
+                );
+            }
+
+            match r {
+                Ok(()) => {
+                    accepted += 1;
+                    // A completed forward stopped exactly where an independent
+                    // — and deliberately *more permissive* — reader places the
+                    // end. Accepting a body this reader cannot end is h5i
+                    // calling a request complete at a boundary no server
+                    // recognises, which is how the missing CRLF check showed up.
+                    let end = end.unwrap_or_else(|| {
+                        panic!(
+                            "h5i accepted a body this reader cannot find the end of: {}",
+                            ctx()
+                        )
+                    });
+                    assert_eq!(
+                        out.len(),
+                        end,
+                        "h5i stopped somewhere other than the end of the body: {}",
+                        ctx()
+                    );
+                    // And the tail really was left behind.
+                    assert!(
+                        !String::from_utf8_lossy(&out).contains("SMUGGLED"),
+                        "a completed body carried the pipelined request: {} -> {:?}",
+                        ctx(),
+                        String::from_utf8_lossy(&out)
+                    );
+                }
+                Err(_) => refused += 1,
+            }
+        }
+
+        let n = rounds();
+        if n < 1_000 {
+            return;
+        }
+        assert!(
+            accepted * 20 > n,
+            "almost nothing was accepted, so the assertion about where an accepted body \
+             stops ran on nothing: {accepted} of {n}"
+        );
+        assert!(
+            refused * 20 > n,
+            "almost nothing was refused, so the half of this that keeps a malformed body \
+             out of the box was barely exercised: {refused} of {n}"
+        );
+    }
+
+    /// Where a chunked body ends, read leniently.
+    ///
+    /// Independent of `chunk_size` on purpose, and *more* permissive than it:
+    /// bare LF endings, whitespace around the size, and a hex value with any
+    /// number of digits are all accepted here and refused there. A lenient box
+    /// is the dangerous counterparty, so the oracle has to be the lenient one.
+    ///
+    /// `None` means this reader cannot find an end either — in which case h5i
+    /// must not have claimed to.
+    fn body_end(b: &[u8]) -> Option<usize> {
+        let mut at = 0usize;
+        loop {
+            let (line, next) = line_at(b, at)?;
+            let hex: String = String::from_utf8_lossy(line)
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if hex.is_empty() || !hex.bytes().all(|c| c.is_ascii_hexdigit()) {
+                return None;
+            }
+            let size = u64::from_str_radix(&hex, 16).ok()?;
+            at = next;
+            if size == 0 {
+                // Trailers, then the blank line that closes them.
+                loop {
+                    let (t, next) = line_at(b, at)?;
+                    at = next;
+                    if t.is_empty() {
+                        return Some(at);
+                    }
+                }
+            }
+            at = at.checked_add(usize::try_from(size).ok()?)?;
+            // The CRLF (or LF) that closes the data.
+            let (closing, next) = line_at(b, at)?;
+            if !closing.is_empty() {
+                return None;
+            }
+            at = next;
+        }
+    }
+
+    /// One line and the offset past its ending, accepting CRLF or a bare LF.
+    fn line_at(b: &[u8], at: usize) -> Option<(&[u8], usize)> {
+        let rest = b.get(at..)?;
+        let nl = rest.iter().position(|&c| c == b'\n')?;
+        let line = rest[..nl].strip_suffix(b"\r").unwrap_or(&rest[..nl]);
+        Some((line, at + nl + 1))
+    }
+
+    /// The two chunk readers in this file agree about where a body ends.
+    ///
+    /// `forward_chunked` decides it for a *request* and `Scan` for a
+    /// *response*, they are written separately, and both were loose about the
+    /// same two bytes — which is what two copies of a parser do. Nothing forces
+    /// them to agree except this.
+    #[test]
+    fn the_request_and_response_readers_end_a_body_in_the_same_place() {
+        let mut rng = Rng::new(0x5CA7);
+        let mut agreed = 0usize;
+        for i in 0..rounds() {
+            let seed = rng.next();
+            let mut one = Rng::new(seed);
+            let body = chunked_body(&mut one);
+            let ctx = || format!("round {i}, seed {seed:#x}, body {body:?}");
+
+            let mut s = Scan::new();
+            let consumed = s.feed(body.as_bytes());
+            let scan_end = s.is_done().then_some(consumed);
+
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            let forwarded = rt.block_on(async {
+                let mut peer = body.as_bytes();
+                let mut out: Vec<u8> = Vec::new();
+                let counted = std::sync::atomic::AtomicU64::new(0);
+                forward_chunked(&mut peer, &mut out, &[], &counted)
+                    .await
+                    .ok()
+                    .map(|()| out.len())
+            });
+
+            assert_eq!(
+                scan_end,
+                forwarded,
+                "the two chunk readers disagree about where this body ends: {}",
+                ctx()
+            );
+            if scan_end.is_some() {
+                agreed += 1;
+            }
+        }
+        let n = rounds();
+        if n >= 1_000 {
+            assert!(
+                agreed * 20 > n,
+                "almost no body was followed to its end by either reader, so this compared \
+                 two `None`s: {agreed} of {n}"
+            );
+        }
+    }
+
+    /// The generator really does put a pipelined request on every body, so the
+    /// assertion above has something to look for.
+    #[test]
+    fn the_generator_offers_a_second_request_to_smuggle() {
+        let mut rng = Rng::new(1);
+        for _ in 0..50 {
+            assert!(chunked_body(&mut rng).contains(PIPELINED));
+        }
+    }
+}
+
+#[cfg(test)]
 mod response_tests {
     use super::*;
 
     fn soon() -> tokio::time::Instant {
         tokio::time::Instant::now() + Duration::from_secs(5)
+    }
+
+    /// A chunked response ends at its terminating chunk, and what the box
+    /// wrote after it does not reach the visitor.
+    ///
+    /// The `Content-Length` path has always clamped — it is arithmetic — and
+    /// the chunked path relayed the lot: a second status line, a `Set-Cookie`
+    /// of the box's choosing, a `Connection` of its choosing, all of it having
+    /// skipped `close_the_connection` and `strip_share_cookies`. A conforming
+    /// client discards it, because the head it parsed says `Connection: close`;
+    /// what is wrong with it is that whether the sanitiser applied was the
+    /// box's decision, which is the same door the unfinished-head refusal was
+    /// written to shut.
+    #[tokio::test]
+    async fn nothing_the_box_wrote_after_the_terminating_chunk_reaches_the_visitor() {
+        let head = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+        let tail =
+            "HTTP/1.1 200 OK\r\nSet-Cookie: h5i_share=x\r\nConnection: keep-alive\r\n\r\nEXTRA";
+
+        // Arriving with the head, and arriving later off the box's socket:
+        // both go through the same clamp, and both used to relay the tail.
+        for (rest, upstream) in [
+            (format!("5\r\nhello\r\n0\r\n\r\n{tail}"), String::new()),
+            (String::new(), format!("5\r\nhello\r\n0\r\n\r\n{tail}")),
+            ("5\r\nhello\r\n".to_string(), format!("0\r\n\r\n{tail}")),
+        ] {
+            let mut out: Vec<u8> = Vec::new();
+            let to_peer = std::sync::atomic::AtomicU64::new(0);
+            let truncated = std::sync::atomic::AtomicBool::new(false);
+            relay_response(
+                tokio::io::empty(),
+                &mut out,
+                std::io::Cursor::new(upstream.into_bytes()),
+                head.clone(),
+                rest.clone().into_bytes(),
+                true,
+                false,
+                &to_peer,
+                &truncated,
+            )
+            .await
+            .expect("relay");
+            let text = String::from_utf8_lossy(&out).into_owned();
+            assert!(text.ends_with("0\r\n\r\n"), "{text:?}");
+            assert!(
+                !text.contains("EXTRA"),
+                "a second response reached the visitor: {text:?}"
+            );
+            assert!(
+                !text.contains("h5i_share"),
+                "an unsanitised head reached the visitor: {text:?}"
+            );
+            // The body it *was* owed is intact, and the count matches the
+            // bytes: a clamp that lied about either would be a truncation.
+            assert!(text.contains("5\r\nhello\r\n"), "{text:?}");
+            assert_eq!(
+                to_peer.load(std::sync::atomic::Ordering::Relaxed) as usize,
+                out.len(),
+                "the byte count and the bytes disagree"
+            );
+            assert!(
+                !truncated.load(std::sync::atomic::Ordering::Relaxed),
+                "a complete response was recorded as truncated"
+            );
+        }
+
+        // And a body whose framing the scanner cannot follow still falls back
+        // to being framed by the close, which is what it did before the
+        // scanner existed. Nothing is clamped away on a guess.
+        let mut out: Vec<u8> = Vec::new();
+        let to_peer = std::sync::atomic::AtomicU64::new(0);
+        let truncated = std::sync::atomic::AtomicBool::new(false);
+        relay_response(
+            tokio::io::empty(),
+            &mut out,
+            tokio::io::empty(),
+            head,
+            b"not chunk framing at all".to_vec(),
+            true,
+            false,
+            &to_peer,
+            &truncated,
+        )
+        .await
+        .expect("relay");
+        assert!(
+            String::from_utf8_lossy(&out).contains("not chunk framing at all"),
+            "a body this could not follow was thrown away"
+        );
     }
 
     #[tokio::test]
@@ -2226,6 +2800,63 @@ mod response_tests {
             !text.contains("SMUGGLED"),
             "a pipelined request was forwarded: {text}"
         );
+    }
+
+    /// A chunk whose data is not closed by CRLF is not a chunk.
+    ///
+    /// The size and the two bytes after it used to be one count — `size + 2`
+    /// bytes consumed and forwarded without looking — so `1\r\nAXX0\r\n\r\n`
+    /// was a *complete request*: one byte of data, `XX` where its CRLF belongs,
+    /// and the terminating `0` read out of the middle of the stream. Every
+    /// conforming server rejects that, so h5i was declaring a request finished
+    /// at a boundary nothing else recognises — and the chunk framing is the only
+    /// thing telling this proxy where a request ends.
+    ///
+    /// Found by the chunked fuzz, which reads the same stream more leniently
+    /// than h5i does and could not find an end where h5i claimed one.
+    #[tokio::test]
+    async fn a_chunk_the_client_did_not_close_is_not_a_finished_request() {
+        for body in [
+            &b"1\r\nAXX0\r\n\r\n"[..],
+            &b"1\r\nAX\r\n0\r\n\r\n"[..],
+            &b"2\r\nabXX0\r\n\r\n"[..],
+            // A bare LF where the closing CRLF belongs: one byte to a parser
+            // splitting on CRLF and a line ending to almost everything else,
+            // which is the disagreement the head reader refuses by name.
+            &b"1\r\nA\n0\r\n\r\n"[..],
+        ] {
+            let mut peer = body;
+            let mut out: Vec<u8> = Vec::new();
+            let counted = std::sync::atomic::AtomicU64::new(0);
+            assert!(
+                forward_chunked(&mut peer, &mut out, &[], &counted)
+                    .await
+                    .is_err(),
+                "accepted a chunk that is not closed by CRLF: {:?}",
+                String::from_utf8_lossy(body)
+            );
+        }
+
+        // And the well-formed ones still work, including a chunk of zero
+        // length inside the body and an extension on the size line.
+        for body in [
+            &b"1\r\nA\r\n0\r\n\r\n"[..],
+            &b"5;a=b\r\nhello\r\n0\r\n\r\n"[..],
+            &b"0\r\n\r\n"[..],
+        ] {
+            let mut peer = body;
+            let mut out: Vec<u8> = Vec::new();
+            let counted = std::sync::atomic::AtomicU64::new(0);
+            forward_chunked(&mut peer, &mut out, &[], &counted)
+                .await
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "refused a well-formed body {:?}: {e}",
+                        String::from_utf8_lossy(body)
+                    )
+                });
+            assert_eq!(out, body, "a well-formed body was not forwarded verbatim");
+        }
     }
 
     #[tokio::test]
@@ -2757,7 +3388,38 @@ mod tests {
             "a".repeat(gate::MAX_HEAD + 10)
         );
         let mut r = raw.as_bytes();
-        assert!(read_head(&mut r).await.is_none());
+        // `Refused`, not `Silent`, and the distinction is what the receipt is
+        // owed: this is a peer that sent 32 KB of headers, which is the shape
+        // the gate exists to refuse — and every one of them used to be dropped
+        // with no line anywhere. A peer that said nothing still gets none.
+        assert_eq!(read_head(&mut r).await, Err(NoHead::Refused));
+    }
+
+    /// The reader tells "nothing arrived" from "that is not a head".
+    ///
+    /// Only the second belongs in an ingress receipt, and before this the
+    /// caller could not tell them apart, so it recorded neither: a 32 KB header
+    /// block and a TLS `ClientHello` sent to the plaintext front were both as
+    /// invisible as a browser's speculative preconnect.
+    #[tokio::test]
+    async fn a_peer_that_said_nothing_is_not_a_peer_that_was_refused() {
+        // Silent: opened and closed, saying nothing at all.
+        let mut nothing = &b""[..];
+        assert_eq!(read_head(&mut nothing).await, Err(NoHead::Silent));
+
+        // Refused: started a head and stopped. The peer made a request; it did
+        // not finish it.
+        let mut partial = &b"GET / HTTP/1.1\r\nHost: x\r\n"[..];
+        assert_eq!(read_head(&mut partial).await, Err(NoHead::Refused));
+
+        // Refused: a complete head that is not text. A TLS hello aimed at a
+        // plaintext listener is the ordinary way this happens.
+        let mut tls = &b"\x16\x03\x01\x00\xff\x01\xff\xff\r\n\r\n"[..];
+        assert_eq!(read_head(&mut tls).await, Err(NoHead::Refused));
+
+        // And a head that is a head is still one.
+        let mut good = &b"GET / HTTP/1.1\r\nHost: x\r\n\r\n"[..];
+        assert!(read_head(&mut good).await.is_ok());
     }
 
     #[test]

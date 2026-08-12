@@ -675,10 +675,15 @@ pub fn join(ticket: &str, port: u16, shared_jar: bool) -> anyhow::Result<()> {
             WARN
         );
         println!(
-            "             It shares an origin with anything else you run on this address and \
-             port, so what it leaves behind — cookies, cached responses, stored data, any \
-             permission you grant it — outlives this share and belongs to whatever you run \
-             there next."
+            // "this address and port" is right for an *origin* and wrong for
+            // the thing people care about: cookies are scoped by host and
+            // ignore the port, so they are shared more widely than storage and
+            // permissions are. Said as one sentence it read as a single scope,
+            // which is the scope the next paragraph then has to contradict.
+            "             What it leaves behind outlives this share: storage and permissions \
+             belong to whatever you next run on this address *and port*, and cookies are \
+             wider still — they ignore the port, so they are shared with everything on this \
+             address."
         );
         // The cookie jar is per *host*, and this join has a host of its own —
         // unless the bind for one failed, which is the case worth a sentence.
@@ -691,13 +696,24 @@ pub fn join(ticket: &str, port: u16, shared_jar: bool) -> anyhow::Result<()> {
                  open in it.",
                 WARN
             );
-            // The half that *is* handled, said here because it is the reason
-            // the app being shared may behave differently on this platform —
-            // and a person debugging that should not have to guess at us.
+            // The half that *is* handled, and the half that is not. Saying only
+            // the first read as "your local credentials are safe", which is a
+            // claim about the proxy being made about the situation: this front
+            // forwards only what the box set, and the page it serves is on
+            // `127.0.0.1` where cookies ignore the port — so script on it can
+            // read any non-HttpOnly cookie in that jar and send it to the box
+            // itself. The filter stops the proxy handing them over; nothing
+            // stops the page. The person reading this is the one who did not
+            // choose the risk, so they get both halves.
             println!(
-                "             Your own cookies are not forwarded the other way: on this jar \
-                 only cookies the box set itself are sent back to it, so anything the app \
-                 stored from JavaScript will not reach it."
+                "             This proxy forwards only cookies the box itself set, so nothing \
+                 of yours travels there automatically — but the page runs on 127.0.0.1 and \
+                 cookies ignore the port, so script on it can read any non-HttpOnly cookie in \
+                 that jar and send it wherever it likes."
+            );
+            println!(
+                "             The same rule is why the app may behave differently here: \
+                 anything it stored from JavaScript is not sent back to it either."
             );
         }
         println!(

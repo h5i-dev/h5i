@@ -595,10 +595,16 @@ have set would be forwarded to the box. An address of its own gives this share a
 jar nothing else has written to.</p>
 <p>macOS configures only <code>127.0.0.1</code> on <code>lo0</code>, so there the bind falls back — and
 the two directions get different answers, because only one of them can be
-answered. Your cookies going <em>into</em> somebody else's box is closed outright: on a
-shared jar only cookies the box itself set are ever sent back to it, learned
-from its own <code>Set-Cookie</code> headers, so a <code>session=</code> belonging to your own local
-app stays here. (The cost is that a cookie the app wrote from JavaScript never
+answered. Your cookies going <em>into</em> somebody else's box is narrowed, though not
+closed: on a shared jar only cookies the box itself set are ever sent back to
+it, learned from its own <code>Set-Cookie</code> headers, so a <code>session=</code> belonging to your
+own local app is never forwarded by this proxy. What that cannot reach is the
+page itself. It is served on <code>127.0.0.1</code>, cookies ignore the port, and script on
+that page can therefore read any non-HttpOnly cookie in the jar and send it to
+the box under its own steam — the filter governs what h5i hands over, not what
+the page does. A private window with nothing else open in it is the answer to
+that half, and it is why <code>h5i join</code> refuses this jar unless you ask for it.
+(The cost of the filter is that a cookie the app wrote from JavaScript never
 reaches the box either — nothing in a <code>Set-Cookie</code> says so, and <code>h5i join</code> tells
 you when it applies.) The token going <em>out</em> to your other local services has no
 fix that does not need a cookie host of h5i's own, so it is not fixed, it is

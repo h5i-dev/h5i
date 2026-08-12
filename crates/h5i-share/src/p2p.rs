@@ -410,6 +410,36 @@ fn observed_path(conn: &Connection) -> Option<Path> {
     None
 }
 
+/// Is a **relay** carrying this connection right now?
+///
+/// The one question `--direct-only` asks, in the one place both of its
+/// enforcement points can read it — and they did not agree. The watchdog polls
+/// `observed_path` and acts only on `Some(Path::Relayed)`, deliberately: a
+/// connection has no selected path for an instant after a NAT rebinding or a
+/// local address change, and treating that as a relay closed healthy
+/// connections and put a false relay claim in the receipt. The per-write gate
+/// added later to close the one-second window between polls asked the opposite
+/// question — `== Some(Path::Direct)` — so the same instant barred the write,
+/// ended that direction of the pump, and took the connection with it. Silently:
+/// nothing on that path records a turned-away connection, so a `--direct-only`
+/// share dropped streams during ordinary rebinding and its receipt said nothing
+/// at all.
+///
+/// "No path selected" is not a relay carrying traffic; it is nothing carrying
+/// traffic, which is what makes barring on it both wrong and unnecessary.
+fn a_relay_is_carrying_it(conn: &Connection) -> bool {
+    relay_is_carrying(observed_path(conn))
+}
+
+/// The rule itself, over the three answers [`observed_path`] can give.
+///
+/// Split from the `Connection` so it can be stated in a test: a live iroh
+/// connection cannot be built in a unit test, and what was wrong here was never
+/// the transport but which of those three answers maps to which decision.
+fn relay_is_carrying(path: Option<Path>) -> bool {
+    path == Some(Path::Relayed)
+}
+
 /// Block until a direct path is carrying this connection, or give up.
 async fn wait_for_direct(conn: &Connection) -> bool {
     let deadline = tokio::time::Instant::now() + DIRECT_WAIT;
@@ -549,7 +579,7 @@ async fn serve_connection(
             let _guard = AbortOnDrop(winding_up);
             loop {
                 tokio::time::sleep(REVOKE_POLL).await;
-                let seen = *peer_id.lock().expect("peer id");
+                let seen = *peer_id.lock().unwrap_or_else(|p| p.into_inner());
 
                 // A connection that completes the QUIC handshake and then never
                 // opens a stream costs a task and a poll per second for as long
@@ -567,7 +597,7 @@ async fn serve_connection(
                 // place a revoke can reach it — it has no stream open — and
                 // without it `h5i join` kept its "joined" banner up for a
                 // share it had been cut off from.
-                let probed = grant_id.lock().expect("grant id").clone();
+                let probed = grant_id.lock().unwrap_or_else(|p| p.into_inner()).clone();
                 if let Some(id) = probed {
                     if !bridge.grant_is_live(&id) {
                         // Which of the two endings this is. `share stop`
@@ -588,23 +618,20 @@ async fn serve_connection(
                 if let (Some(id), Some(p)) = (seen, observed_path(&conn)) {
                     bridge.peer_path(id, p);
                 }
-                match observed_path(&conn) {
-                    // Only a *selected relay path* is evidence of relaying.
-                    // "Nothing selected" happens for an instant after a NAT
-                    // rebinding, and treating it as a relay closed healthy
-                    // connections and libelled honest ones in the receipt.
-                    Some(Path::Relayed) => {
-                        if direct_only {
-                            bridge
-                                .record_turned_away(crate::bridge::TurnedAwayReason::NoDirectPath);
-                            conn.close(
-                                3u32.into(),
-                                b"h5i: --direct-only, and the direct path was lost",
-                            );
-                            return;
-                        }
-                    }
-                    Some(Path::Direct) | Some(Path::Tunnel) | None => {}
+                // Only a *selected relay path* is evidence of relaying.
+                // "Nothing selected" happens for an instant after a NAT
+                // rebinding, and treating it as a relay closed healthy
+                // connections and libelled honest ones in the receipt. One
+                // predicate, shared with the per-write gate in `serve_stream`,
+                // because the two asked opposite questions about exactly that
+                // instant — see [`a_relay_is_carrying_it`].
+                if direct_only && a_relay_is_carrying_it(&conn) {
+                    bridge.record_turned_away(crate::bridge::TurnedAwayReason::NoDirectPath);
+                    conn.close(
+                        3u32.into(),
+                        b"h5i: --direct-only, and the direct path was lost",
+                    );
+                    return;
                 }
             }
         })
@@ -658,7 +685,7 @@ async fn serve_connection(
     // `accept_bi` stops answering; noting it afterwards meant the shutdown path
     // — the only path where it matters — almost always finished first and every
     // peer's closing time came out as "still connected at the end".
-    let id = *peer_id.lock().expect("peer id");
+    let id = *peer_id.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(id) = id {
         bridge.peer_left(id);
     }
@@ -688,6 +715,17 @@ struct OnThisConnection<'a> {
     path: Option<Path>,
     /// Set by the first stream that authorizes; every later one is counted
     /// against the same record.
+    ///
+    /// Both of these mutexes are taken with a poison recovery rather than an
+    /// `expect`, which is the discipline `Bridge::tally` states and the reason
+    /// matters here: `peer_joined` is called while the first is held, and the
+    /// *watchdog* reads both once a second. An `expect` therefore turned one
+    /// panic under either lock into a connection whose watchdog was dead —
+    /// which is the task that closes it on a revoke. The share would keep
+    /// carrying that peer's open streams with nothing left to cut them off.
+    /// Neither value has an invariant across fields for a recovery to break:
+    /// worst case the grant is unclaimed again, and a stream presenting a
+    /// second grant is refused by `Bridge::authorize` regardless.
     peer_id: &'a std::sync::Mutex<Option<crate::bridge::PeerId>>,
     /// The grant this connection belongs to, set by whichever stream
     /// authorized first. See [`serve_stream`] for why a second grant on the
@@ -757,7 +795,7 @@ async fn serve_stream(
     // second grant here is not a case anybody has, and refusing it is a
     // sentence rather than a second bookkeeping path nothing exercises.
     let mismatch = {
-        let mut owner = grant_id.lock().expect("grant id");
+        let mut owner = grant_id.lock().unwrap_or_else(|p| p.into_inner());
         match &*owner {
             Some(first) if *first != grant.id => Some(first.clone()),
             Some(_) => None,
@@ -785,7 +823,7 @@ async fn serve_stream(
     // down reading as one nobody ever tried to use, which is the tunnel front's
     // behaviour inverted for no reason.
     let id = {
-        let mut slot = peer_id.lock().expect("peer id");
+        let mut slot = peer_id.lock().unwrap_or_else(|p| p.into_inner());
         *slot.get_or_insert_with(|| bridge.peer_joined(short(who), &grant, path))
     };
     // Recorded only when something actually observed it. Feeding the join-time
@@ -917,9 +955,16 @@ async fn serve_stream(
     // every write, the residue is what QUIC had already accepted at the
     // instant the path changed — which nothing above the transport can
     // recall — and not a second's worth of fresh reads.
+    //
+    // The question is "is a relay carrying this", not "is a direct path
+    // carrying this", and they are not complements: between them sits the
+    // instant with no selected path at all, which the watchdog has always
+    // tolerated and this gate used to bar — ending the pump, and the
+    // connection, on an ordinary NAT rebinding. One predicate now answers for
+    // both. See [`a_relay_is_carrying_it`].
     let barred: Option<Box<crate::pump::Gate>> = direct_only.then(|| {
         let conn = conn.clone();
-        Box::new(move || observed_path(&conn) == Some(Path::Direct)) as Box<crate::pump::Gate>
+        Box::new(move || !a_relay_is_carrying_it(&conn)) as Box<crate::pump::Gate>
     });
     tokio::select! {
         _ = crate::pump::duplex_gated(
@@ -1258,6 +1303,54 @@ mod tests {
     use std::time::Duration;
 
     use crate::session::{self, ShareSession, Transport};
+
+    /// `--direct-only`'s two enforcement points answer the same question.
+    ///
+    /// The watchdog polls once a second and the pump's gate is consulted before
+    /// every write, and they were written to opposite predicates: the watchdog
+    /// acted on "a relay is carrying it" and the gate on "a direct path is
+    /// carrying it". Those are not complements — between them is the instant
+    /// with no selected path at all, which happens after a NAT rebinding or a
+    /// local address change. The watchdog tolerates it *by name*, with a
+    /// comment saying that treating it as a relay closed healthy connections;
+    /// the gate barred it, which ends that direction of the pump and takes the
+    /// connection with it. Silently, too: nothing on that path records a
+    /// turned-away connection, so the flag h5i advertises as its strongest
+    /// guarantee dropped streams during ordinary rebinding and the receipt said
+    /// nothing.
+    ///
+    /// Stated over the three answers `observed_path` can give, because the
+    /// middle one is the whole defect and a test using a real relay could not
+    /// produce it.
+    #[test]
+    fn the_two_halves_of_direct_only_agree_about_a_path_that_is_settling() {
+        // The gate bars exactly when the watchdog would close, and no oftener.
+        // Written as a table over the answers rather than against a live
+        // connection: `Connection` cannot be constructed in a unit test, and
+        // the thing that was wrong is which answers map to which decision.
+        for (path, should_bar) in [
+            (Some(Path::Relayed), true),
+            (Some(Path::Direct), false),
+            (Some(Path::Tunnel), false),
+            // The one that mattered. Not a relay carrying traffic — nothing
+            // carrying traffic.
+            (None, false),
+        ] {
+            assert_eq!(
+                relay_is_carrying(path),
+                should_bar,
+                "the watchdog's rule is wrong about {path:?}"
+            );
+            // The pump's gate is the negation of the same call — "may bytes
+            // move" — so asserting it here is what stops the two drifting back
+            // apart.
+            assert_eq!(
+                !relay_is_carrying(path),
+                !should_bar,
+                "the write gate disagrees with the watchdog about {path:?}"
+            );
+        }
+    }
 
     /// Two endpoints in one process, with no relay and no discovery service.
     ///

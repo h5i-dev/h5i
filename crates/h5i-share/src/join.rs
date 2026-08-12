@@ -296,7 +296,10 @@ async fn handle(
     cookie: &str,
     app: Option<&crate::gate::AppCookies>,
 ) -> Result<(), H5iError> {
-    let Some((head, rest)) = http_front::read_head(&mut sock).await else {
+    // No receipt on this side — the joiner has none — so both answers end the
+    // same way, and the distinction the sharer's front makes is not one this
+    // half has anywhere to put.
+    let Ok((head, rest)) = http_front::read_head(&mut sock).await else {
         return Ok(());
     };
     let next = http_front::decide(
@@ -395,8 +398,11 @@ fn shared_jar_refusal() -> String {
          and share one cookie jar with every other local service you run. Cookies are scoped \
          by host and ignore the port, so the token this proxy sets would be sent to any local \
          service you visit while you are joined, and that is enough for it to reach the box. \
-         (The other direction — your own local cookies being forwarded into somebody else's \
-         box — is filtered either way: only cookies the box itself set are sent back to it.)\n\
+         (The other direction is narrowed, not closed: this proxy forwards only cookies the \
+         box itself set, so nothing of yours travels automatically — but the page is served \
+         on 127.0.0.1 and cookies ignore the port, so script on it can read any non-HttpOnly \
+         cookie in that jar and send it wherever it likes. The filter stops the proxy handing \
+         them over; it cannot stop the page.)\n\
          \n    {}: join anyway, ideally in a private window with nothing else open in it.\
          \n    Or give h5i an address of its own first: `sudo ifconfig lo0 alias 127.0.0.2`, \
          which is a macOS-only step and lasts until you reboot.",
