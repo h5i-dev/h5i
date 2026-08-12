@@ -439,10 +439,14 @@ the only way out, and it is deliberately a human step.</p>
 <td><code>receipt.json</code></td>
 <td>Every observed execution, with the policy digest that was enforced.</td>
 </tr>
+<tr>
+<td><code>receipts/&lt;id&gt;.raw</code></td>
+<td>The full account of each ingress session: who connected, over what path, for how long, how much moved, what was refused. Present when the box was shared.</td>
+</tr>
 </tbody>
 </table>
 <p>It refuses rather than overwrites an existing non-empty directory (<code>--force</code> to
-replace). Secret redaction and size caps apply to all three.</p>
+replace). Secret redaction and size caps apply to all of it.</p>
 <p>Read <code>report.md</code> before applying. It surfaces, in this order:</p>
 <ul>
 <li><strong>denied egress attempts</strong>: the box tried to reach hosts the policy refused</li>
@@ -581,9 +585,14 @@ come up in the session that is already there.</p>
 <p><strong>What the joining side is trusting.</strong> A ticket names a machine to dial and h5i
 will dial it, so a ticket is worth the same care as any link: h5i refuses one
 that names your <em>own</em> loopback or link-local addresses, but a ticket from a
-stranger is still a stranger's. The page then arrives on <code>http://127.0.0.1:&lt;port&gt;</code>,
-which browsers treat as a trustworthy origin — it shares that origin with every
-other local service you run, so cookies it sets reach them. Service worker
+stranger is still a stranger's. The page then arrives on
+<code>http://127.&lt;x&gt;.&lt;y&gt;.&lt;z&gt;:&lt;port&gt;</code> — a loopback address picked at random for this
+join, because a cookie jar is scoped by <em>host</em> and ignores the port. On
+<code>127.0.0.1</code> that jar is shared with every local service you run, in both
+directions: the token this proxy sets would reach them, and every cookie they
+have set would be forwarded to the box. An address of its own gives this share a
+jar nothing else has written to. macOS configures only <code>127.0.0.1</code> on <code>lo0</code>, so
+there the bind falls back and <code>h5i join</code> says so. Service worker
 registration is refused outright, because one would keep control of that address
 after the share ended, and a request that fetch metadata says came from another
 page is refused too — including one from another <code>h5i join</code> on the next port,
@@ -591,10 +600,9 @@ which is a <em>different origin</em> but the <em>same site</em>, so nothing in t
 holds the credential back between them — two <code>h5i join</code> proxies on one machine are the same
 <em>site</em> to a browser, so one share's page could otherwise drive another's box
 with the credential attached. Nothing else the page does is sandboxed by h5i, and some of it outlives the
-share: cookies (which ignore the port, so they reach your other local
-services), cached responses, <code>localStorage</code>, any permission you grant, and
+share: cookies, cached responses, <code>localStorage</code>, any permission you grant, and
 anything it persuades the browser to download. All of that belongs to whatever
-you next run on that port — which is why <code>h5i join</code> binds an ephemeral one
+you next run on that address and port — which is why <code>h5i join</code> binds an ephemeral one
 unless you ask for a fixed one. A private window is the simple way to keep none
 of it.</p>
 <p><strong>The box's port is never published.</strong> h5i enters the box's network namespace by
@@ -667,7 +675,11 @@ is otherwise something a reader has to spot for themselves in a list that can
 run to 256 entries. <code>share grant</code> mints a second one, but
 only for a <code>--tunnel</code> share today: a peer-to-peer ticket needs the running
 endpoint's addressing and only the serving process has it, so <code>grant</code> refuses on
-a P2P share and says to start a second one instead.</p>
+a P2P share. Adding a second peer to a P2P share means <strong>stopping it and
+starting a fresh one</strong>, which invalidates the first person's ticket too: mint
+new tickets for everybody, including whoever was already connected. Starting a
+second share alongside the first is refused — a box carries one share at a
+time — so it is not a way round this.</p>
 <p>Authorization is re-read from disk on every connection, so a revoke from another
 terminal takes effect on the next one; connections already open are dropped
 within about a second, by a watchdog that asks about <em>that peer's own grant</em> —
@@ -691,9 +703,13 @@ any application byte crosses</strong> — and the share stays up for anyone who 
 which is the useful behaviour when one peer is behind a hostile NAT and another
 is not. It keeps checking afterwards,
 because a hole-punched path can die and the transport will slide onto a relay.
-Be precise about the second half: that check runs once a second, so a path that
-fails mid-session can carry up to about a second of traffic over a relay before
-the connection is closed. Setup is a guarantee; staying direct is a short leash.
+Be precise about the second half. Two things enforce it: a watchdog that closes
+the connection within a second of seeing a relay path, and — because a second
+of traffic is not nothing — a check immediately before every write, so no byte
+h5i has not already handed to QUIC is handed to it after the path changed. What
+remains is what the transport had already accepted and may retransmit on the
+new path, which nothing above QUIC can recall. Setup is a guarantee; staying
+direct is a very short leash.
 A flag that merely preferred a direct path would be worse than none, because it
 would let you believe nothing was in the middle when something was.</p>
 <p><strong>Quick tunnel (<code>--tunnel</code>).</strong> A browser cannot speak QUIC to an endpoint id, so
