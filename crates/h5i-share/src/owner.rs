@@ -62,6 +62,9 @@
 //! than only on the one that can run it. Everything that asks Darwin a question
 //! is gated to macOS, where the question exists.
 
+// Only `process_tree` needs it, and that is a Darwin syscall walk — so on any
+// other target this import is unused, which `-D warnings` makes fatal.
+#[cfg(target_os = "macos")]
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
@@ -390,6 +393,14 @@ pub fn process_name(pid: u32) -> Option<String> {
 /// reason. Applied here at the boundary rather than at each format site, since
 /// rendering is all this value is for and a second caller would otherwise have
 /// to remember.
+///
+/// Compiled everywhere, though its only caller is Darwin's `process_name`.
+/// Nothing in it is platform-specific — it takes a `&str` and returns a
+/// `String` — and the property it holds is a security one, so the test below
+/// runs on every platform rather than only on the one where a hostile process
+/// name can currently reach it. The `allow` is what that costs: off macOS the
+/// function has no non-test caller, and `-D warnings` treats that as an error.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn display_name(raw: &str) -> Option<String> {
     let clean = h5i_core::redact::sanitize_display(raw);
     let clean = clean.trim().to_string();
@@ -1068,7 +1079,12 @@ mod tests {
     /// they are trying to understand a security refusal. Darwin reports such a
     /// name verbatim; this was confirmed against a real binary named with a
     /// literal `ESC`, which `process_name` returned intact.
-    #[cfg(target_os = "macos")]
+    ///
+    /// Not gated to macOS, though the path that feeds it is. `display_name`
+    /// takes a `&str` and returns a `String`; the escape, the bidi override and
+    /// the forged newline are all properties of that function and of nothing
+    /// else. Gated, this — the security test of the pair — ran on neither the
+    /// machine most of this is written on nor the Linux CI job.
     #[test]
     fn a_process_name_cannot_carry_escapes_into_the_refusal() {
         // The exact bytes measured from the kernel for the compiled probe.
