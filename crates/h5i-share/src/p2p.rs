@@ -976,11 +976,24 @@ impl Drop for AbortOnDrop {
 
 /// Endpoint ids are 52 characters of base32 and nobody reads them whole. The
 /// receipt and the terminal show enough to tell two peers apart.
+///
+/// Cut on a character boundary, not on byte 12. Every caller today passes an
+/// `iroh` node id, which is base32 and therefore ASCII, so `&id[..12]` is
+/// correct for all of them — and panics for the first one that is not. This is
+/// a `pub` helper called from the connection-accept path, where a panic is the
+/// share going down, and "no caller does that yet" is a property of the callers
+/// rather than of this function. Making it true here costs one line.
 pub fn short(id: &str) -> String {
     if id.len() <= 12 {
         return id.to_string();
     }
-    format!("{}…", &id[..12])
+    // The last boundary at or before byte 12; `floor_char_boundary` is not
+    // stable, so this is the same thing spelled out.
+    let cut = (0..=12)
+        .rev()
+        .find(|&i| id.is_char_boundary(i))
+        .unwrap_or(0);
+    format!("{}…", &id[..cut])
 }
 
 // ─── the joining side ───────────────────────────────────────────────────────
@@ -2016,6 +2029,18 @@ mod tests {
     fn an_endpoint_id_is_shortened_for_people_to_read() {
         assert_eq!(short("abc"), "abc");
         assert_eq!(short("0123456789abcdefghij"), "0123456789ab…");
+
+        // And it cuts on a character, not on a byte. Byte 12 lands inside the
+        // sixth two-byte character here, which `&id[..12]` panics on — in a
+        // function called from the connection-accept path, where that is the
+        // share going down. No caller passes this today; that is a fact about
+        // the callers, and this is the function.
+        assert_eq!(short("aααααααααααα"), "aααααα…");
+        // The boundary case just below: an exact cut is still taken whole.
+        assert_eq!(short("αααααα0123456789"), "αααααα…");
+        // A single character wider than the budget leaves nothing to show
+        // rather than splitting it.
+        assert_eq!(short("👍👍👍👍"), "👍👍👍…");
     }
 
     #[test]
