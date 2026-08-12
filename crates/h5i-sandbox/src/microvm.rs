@@ -185,11 +185,7 @@ pub fn virtualization_detail() -> Option<String> {
         // The gate is not "does the file exist" but "can this user open it":
         // a host with KVM compiled in but the caller outside the `kvm` group
         // fails at boot, and finding that out here yields the actionable message.
-        match std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/kvm")
-        {
+        match std::fs::OpenOptions::new().read(true).write(true).open("/dev/kvm") {
             Ok(_) => None,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(
                 "/dev/kvm is absent — this kernel has no KVM (common on WSL2 without nested \
@@ -323,10 +319,7 @@ pub fn preload_script(env: &[(String, String)]) -> String {
          # Values live here rather than in `msb run`'s argv, which /proc publishes.\n",
     );
     for (key, value) in env {
-        s.push_str(&format!(
-            "export {key}='{}'\n",
-            value.replace('\'', r"'\''")
-        ));
+        s.push_str(&format!("export {key}='{}'\n", value.replace('\'', r"'\''")));
     }
     s.push_str("exec \"$@\"\n");
     s
@@ -428,12 +421,7 @@ pub struct RunPlan<'a> {
 /// `:` by [`run`]/[`run_interactive`]; this function assumes that and emits the
 /// mounts unconditionally, because silently dropping one would weaken the box
 /// exactly where the caller believes it was hardened.
-pub fn build_run_argv(
-    rt: &Runtime,
-    policy: &ResolvedPolicy,
-    work: &Path,
-    plan: &RunPlan,
-) -> Vec<String> {
+pub fn build_run_argv(rt: &Runtime, policy: &ResolvedPolicy, work: &Path, plan: &RunPlan) -> Vec<String> {
     let p = &policy.profile;
     let mut a: Vec<String> = vec![
         rt.bin.clone(),
@@ -489,11 +477,7 @@ pub fn build_run_argv(
     // because the worktree's `gitdir`/`commondir` pointer files contain
     // host-absolute paths and must resolve unchanged inside the box.
     for b in &policy.box_git {
-        let flag = if b.host.is_dir() {
-            "--mount-dir"
-        } else {
-            "--mount-file"
-        };
+        let flag = if b.host.is_dir() { "--mount-dir" } else { "--mount-file" };
         a.push(flag.into());
         a.push(format!(
             "{p}:{p}:{mode}",
@@ -650,8 +634,10 @@ fn image_or_refuse(p: &Profile) -> Result<String, H5iError> {
 /// deny-all profile ignores the extras (it can never be widened from outside the
 /// digested policy).
 fn net_plan(policy: &ResolvedPolicy) -> Result<NetPlan, H5iError> {
-    let rules =
-        crate::container::effective_egress(&policy.profile.net_egress, &policy.user_egress_allow);
+    let rules = crate::container::effective_egress(
+        &policy.profile.net_egress,
+        &policy.user_egress_allow,
+    );
     if !rules.is_empty() {
         return Ok(NetPlan::Allow(egress_rule_tokens(&rules)?));
     }
@@ -947,9 +933,7 @@ fn wait_vm(
 ) -> Result<ExecOutcome, H5iError> {
     use std::io::Read;
     use std::process::Stdio;
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd
         .spawn()
         .map_err(|e| H5iError::Metadata(format!("failed to run `{}`: {e}", full.join(" "))))?;
@@ -1108,15 +1092,9 @@ mod tests {
         // The mode must be 0600 as observed, and — the actual point — it must
         // never have been anything else, so it has to be set at creation rather
         // than chmod'd afterwards.
-        let mode = std::fs::metadata(&script.path)
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777;
+        let mode = std::fs::metadata(&script.path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "preload script is {mode:o}, not 0600");
-        assert!(std::fs::read_to_string(&script.path)
-            .unwrap()
-            .contains(secret));
+        assert!(std::fs::read_to_string(&script.path).unwrap().contains(secret));
 
         // Writing again (same process, next run) must not inherit a wider mode
         // from a leftover file.
@@ -1136,12 +1114,7 @@ mod tests {
         for entry in ["example.com:99999", "example.com:65536", "example.com:0x1"] {
             let out = egress_rule_tokens(&[entry.to_string()]);
             assert!(
-                out.is_err()
-                    || !out
-                        .as_ref()
-                        .unwrap()
-                        .iter()
-                        .any(|t| t == "allow@example.com"),
+                out.is_err() || !out.as_ref().unwrap().iter().any(|t| t == "allow@example.com"),
                 "{entry} widened to an any-port rule: {out:?}"
             );
         }
@@ -1215,8 +1188,7 @@ mod tests {
     #[test]
     fn duplicate_entries_collapse_and_order_is_stable() {
         let tokens =
-            egress_rule_tokens(&["pypi.org".into(), "PyPI.org".into(), "crates.io".into()])
-                .unwrap();
+            egress_rule_tokens(&["pypi.org".into(), "PyPI.org".into(), "crates.io".into()]).unwrap();
         assert_eq!(tokens, vec!["allow@pypi.org", "allow@crates.io"]);
     }
 
@@ -1230,9 +1202,7 @@ mod tests {
 
     #[test]
     fn a_single_label_wildcard_is_refused_rather_than_allowing_a_whole_tld() {
-        let err = egress_rule_tokens(&["*.com".into()])
-            .unwrap_err()
-            .to_string();
+        let err = egress_rule_tokens(&["*.com".into()]).unwrap_err().to_string();
         assert!(err.contains("at least two"), "{err}");
     }
 
@@ -1260,10 +1230,7 @@ mod tests {
         // start a command. A credential with a quote in it must not become code.
         let s = preload_script(&[("T".into(), "a'; rm -rf /; echo '".into())]);
         assert!(s.contains(r"export T='a'\''; rm -rf /; echo '\'''"), "{s}");
-        assert!(
-            !s.contains("\nrm -rf"),
-            "value escaped into command position: {s}"
-        );
+        assert!(!s.contains("\nrm -rf"), "value escaped into command position: {s}");
     }
 
     #[test]
@@ -1316,10 +1283,7 @@ mod tests {
         // stale HTTP_PROXY would make the box look filtered when it is not.
         assert!(!a.iter().any(|x| x.contains("HTTP_PROXY")), "{a:?}");
         // And never microsandbox's rebind-protection escape hatch.
-        assert!(
-            !a.iter().any(|x| x == "--no-dns-rebind-protection"),
-            "{a:?}"
-        );
+        assert!(!a.iter().any(|x| x == "--no-dns-rebind-protection"), "{a:?}");
     }
 
     #[test]
@@ -1375,10 +1339,7 @@ mod tests {
         });
         let a = argv_for(&pol, &NetPlan::None, None);
         let dirs = window(&a, "--mount-dir");
-        assert!(
-            dirs.contains(&"/host/cache/cargo:/root/.cargo/registry:ro"),
-            "{dirs:?}"
-        );
+        assert!(dirs.contains(&"/host/cache/cargo:/root/.cargo/registry:ro"), "{dirs:?}");
         assert!(dirs.contains(&"/host/cache/npm:/root/.npm:rw"), "{dirs:?}");
     }
 
@@ -1389,14 +1350,8 @@ mod tests {
         pol.env_inbox = Some(PathBuf::from("/h5i/envs/e1/inbox"));
         let a = argv_for(&pol, &NetPlan::None, None);
         let dirs = window(&a, "--mount-dir");
-        assert!(
-            dirs.contains(&"/h5i/envs/e1/spool:/.h5i/spool:rw"),
-            "{dirs:?}"
-        );
-        assert!(
-            dirs.contains(&"/h5i/envs/e1/inbox:/.h5i/inbox:ro"),
-            "{dirs:?}"
-        );
+        assert!(dirs.contains(&"/h5i/envs/e1/spool:/.h5i/spool:rw"), "{dirs:?}");
+        assert!(dirs.contains(&"/h5i/envs/e1/inbox:/.h5i/inbox:ro"), "{dirs:?}");
     }
 
     #[test]
@@ -1441,19 +1396,13 @@ mod tests {
         let files = window(&a, "--mount-file");
         assert!(
             files.contains(
-                &format!(
-                    "{}:/work/.claude/settings.json:ro",
-                    work.join(".claude/settings.json").display()
-                )
-                .as_str()
+                &format!("{}:/work/.claude/settings.json:ro", work.join(".claude/settings.json").display())
+                    .as_str()
             ),
             "{files:?}"
         );
         // The config that is not there is not invented.
-        assert!(
-            !files.iter().any(|f| f.contains(".codex/config.toml")),
-            "{files:?}"
-        );
+        assert!(!files.iter().any(|f| f.contains(".codex/config.toml")), "{files:?}");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1508,10 +1457,7 @@ mod tests {
             panic!("expected an allowlist plan");
         };
         assert!(rules.contains(&"allow@pypi.org".to_string()), "{rules:?}");
-        assert!(
-            rules.contains(&"allow@evil.example".to_string()),
-            "{rules:?}"
-        );
+        assert!(rules.contains(&"allow@evil.example".to_string()), "{rules:?}");
     }
 
     #[test]

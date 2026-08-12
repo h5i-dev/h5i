@@ -3,8 +3,8 @@ use crate::*;
 
 pub fn run() -> anyhow::Result<()> {
     {
-        let mut out = std::io::stdout().lock();
-        render_man_page(&mut out)?;
-    }
+            let mut out = std::io::stdout().lock();
+            render_man_page(&mut out)?;
+        }
     Ok(())
 }

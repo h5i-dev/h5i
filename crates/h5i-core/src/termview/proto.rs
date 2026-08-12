@@ -226,11 +226,7 @@ pub fn parse(text: &str) -> Option<ServerMessage> {
     Some(match ty {
         "frame" => ServerMessage::Frame {
             seq: v.get("seq").and_then(Value::as_u64),
-            data: v
-                .get("data")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
+            data: v.get("data").and_then(Value::as_str).unwrap_or("").to_string(),
         },
         "status" => ServerMessage::Status {
             connected: v.get("connected").and_then(Value::as_bool).unwrap_or(false),

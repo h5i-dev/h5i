@@ -271,9 +271,7 @@ fn children(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     let host = host(context)?;
     let ids: Vec<usize> = {
         let doc = host.dom.borrow();
-        doc.get_node(id)
-            .map(|n| n.children.clone())
-            .unwrap_or_default()
+        doc.get_node(id).map(|n| n.children.clone()).unwrap_or_default()
     };
     let array = boa_engine::object::builtins::JsArray::new(context)?;
     for child in ids {
@@ -506,11 +504,7 @@ fn insert_before(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         // only in the prelude because a panic is not a DOM error: it takes the
         // page, the snapshot and the receipts with it, and WPT reaches this
         // path on purpose (`ChildNode-after`, `-before`, `-replaceWith`).
-        if doc
-            .get_node(anchor)
-            .map(|node| node.parent.is_none())
-            .unwrap_or(true)
-        {
+        if doc.get_node(anchor).map(|node| node.parent.is_none()).unwrap_or(true) {
             return Err(boa_engine::JsNativeError::error()
                 .with_message(
                     "insertBefore: the reference node has no parent, so there is \
@@ -700,11 +694,7 @@ fn unsupported(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
 /// script. The hit lands on whatever box is topmost — often a text run inside
 /// the element rather than the element — so it walks up to the nearest element,
 /// which is what `elementFromPoint` is defined to return.
-fn element_from_point(
-    _this: &JsValue,
-    args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
+fn element_from_point(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let x = args
         .first()
         .unwrap_or(&JsValue::undefined())
@@ -1057,7 +1047,10 @@ fn fetch_pending(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> J
 }
 
 /// The shape script sees for one finished request.
-fn reply_value(outcome: crate::net::FetchOutcome, context: &mut Context) -> JsResult<JsValue> {
+fn reply_value(
+    outcome: crate::net::FetchOutcome,
+    context: &mut Context,
+) -> JsResult<JsValue> {
     if let Some(error) = outcome.error {
         // A refusal is an answer. The promise rejects and the page sees it,
         // rather than the engine pretending the request never happened.
@@ -1067,19 +1060,9 @@ fn reply_value(outcome: crate::net::FetchOutcome, context: &mut Context) -> JsRe
     let status = outcome.status.unwrap_or(0);
     let text = String::from_utf8_lossy(&outcome.body).into_owned();
     let reply = boa_engine::object::ObjectInitializer::new(context).build();
-    reply.set(
-        js_string!("ok"),
-        (200..300).contains(&status),
-        false,
-        context,
-    )?;
+    reply.set(js_string!("ok"), (200..300).contains(&status), false, context)?;
     reply.set(js_string!("status"), status as f64, false, context)?;
-    reply.set(
-        js_string!("url"),
-        js_string!(outcome.final_url.to_string()),
-        false,
-        context,
-    )?;
+    reply.set(js_string!("url"), js_string!(outcome.final_url.to_string()), false, context)?;
     reply.set(js_string!("text"), js_string!(text), false, context)?;
 
     let headers = boa_engine::object::builtins::JsArray::new(context)?;
@@ -1098,6 +1081,7 @@ fn reply_error(message: &str, context: &mut Context) -> JsResult<JsValue> {
     reply.set(js_string!("error"), js_string!(message), false, context)?;
     Ok(reply.into())
 }
+
 
 /// The serialised markup *inside* a node.
 ///
@@ -1121,8 +1105,8 @@ fn inner_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
 
 /// Elements that never have children or a closing tag.
 const VOID_ELEMENTS: [&str; 14] = [
-    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
-    "track", "wbr",
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+    "source", "track", "wbr",
 ];
 
 /// Serialise one node and its subtree.
@@ -1256,9 +1240,7 @@ fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     let mut current = Some(id);
     for _ in 0..256 {
         let Some(node_id) = current else { break };
-        let Some(node) = doc.get_node(node_id) else {
-            break;
-        };
+        let Some(node) = doc.get_node(node_id) else { break };
         y += node.final_layout.location.y;
         current = node.parent;
     }
@@ -1288,9 +1270,7 @@ fn rect(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
     let mut current = Some(id);
     for _ in 0..256 {
         let Some(node_id) = current else { break };
-        let Some(node) = doc.get_node(node_id) else {
-            break;
-        };
+        let Some(node) = doc.get_node(node_id) else { break };
         x += node.final_layout.location.x;
         y += node.final_layout.location.y;
         current = node.parent;
@@ -1393,9 +1373,9 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         // value is its longhands re-serialised, and getting that subtly wrong is
         // worse than not answering, because a caller comparing two `border`
         // strings would be told two different borders match.
-        Ok(PropertyId::NonCustom(id)) => id.as_longhand().map(|longhand| {
-            styles.computed_value_to_string(PropertyDeclarationId::Longhand(longhand))
-        }),
+        Ok(PropertyId::NonCustom(id)) => id
+            .as_longhand()
+            .map(|longhand| styles.computed_value_to_string(PropertyDeclarationId::Longhand(longhand))),
         // `--custom-property`, which is how real pages theme themselves, so
         // this was a live gap rather than an obscure one.
         //
@@ -1411,10 +1391,7 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
             let mut index = 0usize;
             while let Some((key, value)) = customs.property_at(index) {
                 if *key == name {
-                    answer = value
-                        .as_ref()
-                        .map(|v| v.to_css_string())
-                        .unwrap_or_default();
+                    answer = value.as_ref().map(|v| v.to_css_string()).unwrap_or_default();
                     break;
                 }
                 index += 1;
@@ -1478,9 +1455,7 @@ fn inner_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
 fn collect_rendered_text(doc: &blitz_dom::BaseDocument, id: usize, out: &mut String) {
     let Some(node) = doc.get_node(id) else { return };
     for child in node.children.iter() {
-        let Some(kid) = doc.get_node(*child) else {
-            continue;
-        };
+        let Some(kid) = doc.get_node(*child) else { continue };
         match &kid.data {
             blitz_dom::NodeData::Text(text) => out.push_str(&text.content),
             blitz_dom::NodeData::Element(el) | blitz_dom::NodeData::AnonymousBlock(el) => {
@@ -1532,12 +1507,10 @@ fn collect_rendered_text(doc: &blitz_dom::BaseDocument, id: usize, out: &mut Str
 /// rather than a list of our own that would drift from it.
 fn encoding_for(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let label = arg_string(args, 0, context)?;
-    Ok(
-        match encoding_rs::Encoding::for_label(label.trim().as_bytes()) {
-            Some(encoding) => js_string!(encoding.name().to_ascii_lowercase()).into(),
-            None => JsValue::null(),
-        },
-    )
+    Ok(match encoding_rs::Encoding::for_label(label.trim().as_bytes()) {
+        Some(encoding) => js_string!(encoding.name().to_ascii_lowercase()).into(),
+        None => JsValue::null(),
+    })
 }
 
 /// Decode bytes as the named encoding.
@@ -1606,11 +1579,7 @@ fn rewrite_query(href: &str, encoding: &'static encoding_rs::Encoding) -> String
 }
 
 /// What the document is written in, as the canonical label.
-fn document_encoding(
-    _this: &JsValue,
-    _args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
+fn document_encoding(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let host = host(context)?;
     let name = host.encoding.borrow().name().to_string();
     Ok(js_string!(name).into())
@@ -1640,14 +1609,11 @@ fn guard_mutation(host: &HostHandle, what: &str, body: impl FnOnce()) {
         let first = detail.lines().next().unwrap_or("").to_string();
         super::host::push_console(
             &mut host.console.borrow_mut(),
-            ConsoleLine::engine(
-                "error",
-                format!("{what} was refused by the layout engine: {first}"),
-            ),
+            ConsoleLine::engine("error", format!("{what} was refused by the layout engine: {first}")),
         );
-        host.unsupported.borrow_mut().record(&format!(
-            "{what} on content the layout engine cannot resolve"
-        ));
+        host.unsupported
+            .borrow_mut()
+            .record(&format!("{what} on content the layout engine cannot resolve"));
     }
 }
 
@@ -1791,34 +1757,20 @@ fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     let fields: [(&str, String); 8] = [
         ("href", url.to_string()),
         ("protocol", format!("{}:", url.scheme())),
-        (
-            "host",
-            url.host_str()
-                .map(|h| match url.port() {
-                    Some(port) => format!("{h}:{port}"),
-                    None => h.to_string(),
-                })
-                .unwrap_or_default(),
-        ),
+        ("host", url.host_str().map(|h| match url.port() {
+            Some(port) => format!("{h}:{port}"),
+            None => h.to_string(),
+        }).unwrap_or_default()),
         ("hostname", url.host_str().unwrap_or_default().to_string()),
-        (
-            "port",
-            url.port().map(|p| p.to_string()).unwrap_or_default(),
-        ),
+        ("port", url.port().map(|p| p.to_string()).unwrap_or_default()),
         ("pathname", url.path().to_string()),
         // Empty is not the same as absent to a URL, but it is to `search`:
         // `https://e.com/?` reports "" in a browser, not "?".
-        (
-            "search",
-            match url.query() {
-                Some(q) if !q.is_empty() => format!("?{q}"),
-                _ => String::new(),
-            },
-        ),
-        (
-            "hash",
-            url.fragment().map(|f| format!("#{f}")).unwrap_or_default(),
-        ),
+        ("search", match url.query() {
+            Some(q) if !q.is_empty() => format!("?{q}"),
+            _ => String::new(),
+        }),
+        ("hash", url.fragment().map(|f| format!("#{f}")).unwrap_or_default()),
     ];
     for (name, value) in fields {
         out.set(js_string!(name), js_string!(value), false, context)?;
@@ -1848,12 +1800,7 @@ fn viewport(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResu
     out.set(js_string!("height"), size.1 as f64, false, context)?;
     // The engine renders with `ColorScheme::Light`; saying so is what lets a
     // page pick the palette it will actually be screenshotted in.
-    out.set(
-        js_string!("colorScheme"),
-        js_string!("light"),
-        false,
-        context,
-    )?;
+    out.set(js_string!("colorScheme"), js_string!("light"), false, context)?;
     Ok(out.into())
 }
 

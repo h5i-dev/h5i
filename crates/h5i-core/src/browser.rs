@@ -80,11 +80,7 @@ pub(crate) fn session_id(tmp_root: &Path) -> Option<String> {
     let mut ids: Vec<String> = std::fs::read_dir(daemon_dir(tmp_root))
         .into_iter()
         .flatten()
-        .chain(
-            std::fs::read_dir(socket_dir(tmp_root))
-                .into_iter()
-                .flatten(),
-        )
+        .chain(std::fs::read_dir(socket_dir(tmp_root)).into_iter().flatten())
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().ends_with(".pid"))
         .filter_map(|e| {
@@ -212,10 +208,7 @@ pub fn command_verb(argv: &[String]) -> Option<String> {
         if let Some(flag) = a.strip_prefix("--") {
             // The global flags that take a value; skip the value with them so
             // `--session probe open` reports `open`, not `probe`.
-            if matches!(
-                flag,
-                "session" | "profile" | "state" | "engine" | "provider"
-            ) {
+            if matches!(flag, "session" | "profile" | "state" | "engine" | "provider") {
                 rest.next();
             }
             continue;
@@ -334,8 +327,7 @@ fn parse_batch(out: &[u8], cursor: &mut Cursor) -> BrowserEvidence {
                 let shown = status
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "no response".into());
-                ev.failed_requests
-                    .push(clip(&format!("{shown} {method} {url}")));
+                ev.failed_requests.push(clip(&format!("{shown} {method} {url}")));
             }
         }
     }
@@ -424,10 +416,7 @@ mod tests {
 
     #[test]
     fn only_agent_browser_invocations_are_browser_commands() {
-        assert_eq!(
-            command_verb(&argv(&["agent-browser", "open", "u"])).as_deref(),
-            Some("open")
-        );
+        assert_eq!(command_verb(&argv(&["agent-browser", "open", "u"])).as_deref(), Some("open"));
         // Absolute path still counts — the box may not resolve it through PATH.
         assert_eq!(
             command_verb(&argv(&["/usr/local/bin/agent-browser", "snapshot"])).as_deref(),
@@ -455,8 +444,7 @@ mod tests {
         // string, not at argv[0]. Missing these would leave the common case
         // with no evidence at all.
         assert_eq!(
-            run_touched_browser(&argv(&["sh", "-c", "npm run dev & agent-browser open /"]))
-                .as_deref(),
+            run_touched_browser(&argv(&["sh", "-c", "npm run dev & agent-browser open /"])).as_deref(),
             Some("shell")
         );
         // A direct invocation still reports its real verb, which is more useful
@@ -478,15 +466,9 @@ mod tests {
 
         let sockets = td.path().join("tmp").join("agent-browser");
         std::fs::create_dir_all(&sockets).unwrap();
-        assert!(
-            !browser_is_live(&td.path().join("tmp")),
-            "an empty socket dir is not a session"
-        );
+        assert!(!browser_is_live(&td.path().join("tmp")), "an empty socket dir is not a session");
         std::fs::write(sockets.join("default.pid"), "123").unwrap();
-        assert!(
-            !browser_is_live(&td.path().join("tmp")),
-            "a stale pid file is not a socket"
-        );
+        assert!(!browser_is_live(&td.path().join("tmp")), "a stale pid file is not a socket");
         std::fs::write(sockets.join("default.sock"), "").unwrap();
         assert!(browser_is_live(&td.path().join("tmp")));
     }
@@ -529,10 +511,7 @@ mod tests {
         // a response at all — which in a box usually means the egress allowlist.
         assert_eq!(
             ev.failed_requests,
-            vec![
-                "500 POST /api/save",
-                "no response GET https://blocked.example"
-            ]
+            vec!["500 POST /api/save", "no response GET https://blocked.example"]
         );
         assert!(!ev.is_clean());
     }
@@ -585,16 +564,9 @@ mod tests {
         // Third-party JSON on the path of a run that already succeeded. A shape
         // we do not know must not turn a green run red.
         let mut c = Cursor::default();
-        assert_eq!(
-            parse_batch(b"not json at all", &mut c),
-            BrowserEvidence::default()
-        );
+        assert_eq!(parse_batch(b"not json at all", &mut c), BrowserEvidence::default());
         assert_eq!(parse_batch(b"{}", &mut c), BrowserEvidence::default());
-        assert_eq!(
-            c,
-            Cursor::default(),
-            "a failed parse must not move the cursor"
-        );
+        assert_eq!(c, Cursor::default(), "a failed parse must not move the cursor");
     }
 
     #[test]
@@ -618,20 +590,13 @@ mod tests {
 
         let out = batch_json(r#"{"type":"error","text":"boom"}"#, "", "");
         assert_eq!(
-            collect(td.path(), &td.path().join("tmp"), "open", |_| Some(
-                out.clone()
-            ))
-            .console,
+            collect(td.path(), &td.path().join("tmp"), "open", |_| Some(out.clone())).console,
             vec!["[error] boom"]
         );
         // Same session, same buffer: already reported.
-        assert!(
-            collect(td.path(), &td.path().join("tmp"), "click", |_| Some(
-                out.clone()
-            ))
+        assert!(collect(td.path(), &td.path().join("tmp"), "click", |_| Some(out.clone()))
             .console
-            .is_empty()
-        );
+            .is_empty());
 
         // New run at the supervised tier means a new netns and a new daemon.
         // The buffer is a *different* buffer that happens to be the same
@@ -639,10 +604,7 @@ mod tests {
         // exactly the failure this identity exists to prevent.
         std::fs::write(sockets.join("default.pid"), "2002").unwrap();
         assert_eq!(
-            collect(td.path(), &td.path().join("tmp"), "open", |_| Some(
-                out.clone()
-            ))
-            .console,
+            collect(td.path(), &td.path().join("tmp"), "open", |_| Some(out.clone())).console,
             vec!["[error] boom"]
         );
     }
@@ -651,15 +613,11 @@ mod tests {
     fn the_cursor_persists_across_runs_and_lives_outside_the_spool() {
         let td = tempfile::tempdir().unwrap();
         let out = batch_json(r#"{"type":"error","text":"one"}"#, "", "");
-        let first = collect(td.path(), &td.path().join("tmp"), "open", |_| {
-            Some(out.clone())
-        });
+        let first = collect(td.path(), &td.path().join("tmp"), "open", |_| Some(out.clone()));
         assert_eq!(first.console, vec!["[error] one"]);
 
         // Same buffer, new run: already recorded, so nothing new.
-        let second = collect(td.path(), &td.path().join("tmp"), "click", |_| {
-            Some(out.clone())
-        });
+        let second = collect(td.path(), &td.path().join("tmp"), "click", |_| Some(out.clone()));
         assert!(second.console.is_empty());
 
         // And the cursor is a sibling of the spool, never inside it — the box's

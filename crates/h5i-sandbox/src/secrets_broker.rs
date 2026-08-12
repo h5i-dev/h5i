@@ -39,14 +39,8 @@ pub struct Brokered {
 impl std::fmt::Debug for Brokered {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Brokered")
-            .field(
-                "grants",
-                &self.records.iter().map(|r| &r.name).collect::<Vec<_>>(),
-            )
-            .field(
-                "env_vars",
-                &self.env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
-            )
+            .field("grants", &self.records.iter().map(|r| &r.name).collect::<Vec<_>>())
+            .field("env_vars", &self.env.iter().map(|(k, _)| k).collect::<Vec<_>>())
             .field("redaction_count", &self.redactions.len())
             .finish()
     }
@@ -66,11 +60,7 @@ pub struct GrantRecord {
 impl GrantRecord {
     /// The `secret` event detail line (secret-free).
     pub fn detail(&self) -> String {
-        let ttl = self
-            .ttl
-            .as_deref()
-            .map(|t| format!(" ttl={t}"))
-            .unwrap_or_default();
+        let ttl = self.ttl.as_deref().map(|t| format!(" ttl={t}")).unwrap_or_default();
         format!(
             "grant={} source={} inject={}{} fp={}",
             self.name, self.source, self.inject, ttl, self.fingerprint
@@ -122,15 +112,8 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
         ipad[i] ^= k[i];
         opad[i] ^= k[i];
     }
-    let inner = Sha256::new()
-        .chain_update(ipad)
-        .chain_update(msg)
-        .finalize();
-    Sha256::new()
-        .chain_update(opad)
-        .chain_update(inner)
-        .finalize()
-        .into()
+    let inner = Sha256::new().chain_update(ipad).chain_update(msg).finalize();
+    Sha256::new().chain_update(opad).chain_update(inner).finalize().into()
 }
 
 /// Load (or mint) the per-repository fingerprint key at
@@ -165,8 +148,7 @@ pub fn fingerprint_key(h5i_root: &Path) -> Result<Vec<u8>, H5iError> {
             .mode(0o600)
             .open(&path)
             .map_err(|e| H5iError::with_path(e, &path))?;
-        f.write_all(&raw)
-            .map_err(|e| H5iError::with_path(e, &path))?;
+        f.write_all(&raw).map_err(|e| H5iError::with_path(e, &path))?;
     }
     #[cfg(not(unix))]
     std::fs::write(&path, raw).map_err(|e| H5iError::with_path(e, &path))?;
@@ -288,10 +270,7 @@ fn run_command_bounded(
     if !status.success() {
         return Err(H5iError::Metadata(format!(
             "secret grant '{name}': command extractor exited {} (fail-closed)",
-            status
-                .code()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "signal".into())
+            status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into())
         )));
     }
     Ok(String::from_utf8_lossy(&buf)
@@ -408,12 +387,7 @@ pub fn broker(
         redactions.push(value);
     }
 
-    Ok(Brokered {
-        env,
-        redactions,
-        records,
-        _temp: TempFiles(temp),
-    })
+    Ok(Brokered { env, redactions, records, _temp: TempFiles(temp) })
 }
 
 /// Write a secret to `secret_dir/<name>` with mode `0600` (dir `0700`).
@@ -467,8 +441,7 @@ fn write_secret_file(secret_dir: &Path, name: &str, value: &str) -> Result<PathB
             .custom_flags(libc::O_NOFOLLOW)
             .open(&path)
             .map_err(|e| H5iError::with_path(e, &path))?;
-        f.write_all(value.as_bytes())
-            .map_err(|e| H5iError::with_path(e, &path))?;
+        f.write_all(value.as_bytes()).map_err(|e| H5iError::with_path(e, &path))?;
     }
     #[cfg(not(unix))]
     {
@@ -556,11 +529,7 @@ mod tests {
 
     #[test]
     fn missing_source_fails_closed() {
-        let g = grant(
-            "NOPE",
-            Some("env:H5I_DEFINITELY_UNSET_VAR_XYZ"),
-            Some("env"),
-        );
+        let g = grant("NOPE", Some("env:H5I_DEFINITELY_UNSET_VAR_XYZ"), Some("env"));
         assert!(resolve_value(&g, false).is_err());
     }
 
@@ -594,10 +563,7 @@ mod tests {
         assert!(detail.contains("grant=API_KEY"));
         assert!(detail.contains("inject=env"));
         assert!(detail.starts_with("grant=API_KEY"));
-        assert!(
-            !detail.contains("tok-B"),
-            "value must never appear in the record"
-        );
+        assert!(!detail.contains("tok-B"), "value must never appear in the record");
         std::env::remove_var("H5I_TEST_TOKEN_B");
     }
 
@@ -623,10 +589,7 @@ mod tests {
         // Drop unlinks it.
         let p2 = path.to_path_buf();
         drop(b);
-        assert!(
-            !p2.exists(),
-            "file-injected secret must be unlinked on drop"
-        );
+        assert!(!p2.exists(), "file-injected secret must be unlinked on drop");
         std::env::remove_var("H5I_TEST_TOKEN_C");
     }
 
@@ -649,14 +612,7 @@ mod tests {
             grant("TOK_B", Some("env:H5I_TEST_M2"), Some("env")),
         ];
         let dir = tempfile::tempdir().unwrap();
-        let b = broker(
-            &grants,
-            &dir.path().join("secrets"),
-            false,
-            false,
-            b"test-key",
-        )
-        .unwrap();
+        let b = broker(&grants, &dir.path().join("secrets"), false, false, b"test-key").unwrap();
         assert_eq!(b.env.len(), 2);
         assert!(b.env.contains(&("TOK_A".into(), "val-one".into())));
         assert!(b.env.contains(&("TOK_B".into(), "val-two".into())));
@@ -680,14 +636,7 @@ mod tests {
             grant("MISSING", Some("env:H5I_TEST_ABSENT_ZZZ"), Some("env")),
         ];
         let dir = tempfile::tempdir().unwrap();
-        assert!(broker(
-            &grants,
-            &dir.path().join("secrets"),
-            false,
-            false,
-            b"test-key"
-        )
-        .is_err());
+        assert!(broker(&grants, &dir.path().join("secrets"), false, false, b"test-key").is_err());
         std::env::remove_var("H5I_TEST_PRESENT");
     }
 
@@ -771,16 +720,26 @@ mod tests {
 
     #[test]
     fn command_extractor_under_limits_ok() {
-        let v =
-            run_command_bounded("printf hi", "T", std::time::Duration::from_secs(5), 1024).unwrap();
+        let v = run_command_bounded(
+            "printf hi",
+            "T",
+            std::time::Duration::from_secs(5),
+            1024,
+        )
+        .unwrap();
         assert_eq!(v, "hi");
     }
 
     #[test]
     fn command_extractor_times_out_fail_closed() {
         // A hanging extractor must not block forever — killed at the deadline.
-        let err = run_command_bounded("sleep 30", "T", std::time::Duration::from_millis(300), 1024)
-            .unwrap_err();
+        let err = run_command_bounded(
+            "sleep 30",
+            "T",
+            std::time::Duration::from_millis(300),
+            1024,
+        )
+        .unwrap_err();
         assert!(format!("{err}").contains("exceeded"), "{err}");
     }
 

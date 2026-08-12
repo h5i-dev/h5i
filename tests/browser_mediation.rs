@@ -76,11 +76,8 @@ fn the_real_cli_is_mediated_and_refused_through_an_h5i_socket() {
     // A page to look at, so `read` has something real to return.
     let page = daemon_dir.join("page.html");
     let mut file = std::fs::File::create(&page).expect("page");
-    write!(
-        file,
-        "<!doctype html><title>Mediated</title><h1>Hello from the daemon</h1>"
-    )
-    .expect("write page");
+    write!(file, "<!doctype html><title>Mediated</title><h1>Hello from the daemon</h1>")
+        .expect("write page");
 
     // 1. Start the real daemon on the private path.
     let (out, ok) = run_cli(
@@ -111,10 +108,7 @@ fn the_real_cli_is_mediated_and_refused_through_an_h5i_socket() {
 
     // 4. A read passes through and comes back from the real browser.
     let (read_out, read_ok) = run_cli(&cli, &front_dir, &["read"]);
-    assert!(
-        read_ok,
-        "read should succeed through the mediator: {read_out}"
-    );
+    assert!(read_ok, "read should succeed through the mediator: {read_out}");
     assert!(
         read_out.contains("Hello from the daemon"),
         "the mediated read must return the real page: {read_out}"
@@ -198,7 +192,8 @@ fn a_human_takeover_stops_the_real_cli_from_clicking() {
 
     let (click_out, _) = run_cli(&cli, &front_dir, &["click", "#b"]);
     assert!(
-        click_out.to_lowercase().contains("human") || click_out.to_lowercase().contains("control"),
+        click_out.to_lowercase().contains("human")
+            || click_out.to_lowercase().contains("control"),
         "the agent must be told the human holds control: {click_out}"
     );
 
@@ -212,7 +207,9 @@ fn a_human_takeover_stops_the_real_cli_from_clicking() {
     std::thread::sleep(std::time::Duration::from_millis(200));
     let actions = mediator.actions();
     assert!(
-        actions.iter().any(|a| a.action == "click" && !a.forwarded),
+        actions
+            .iter()
+            .any(|a| a.action == "click" && !a.forwarded),
         "the click must be recorded as refused: {actions:?}"
     );
 

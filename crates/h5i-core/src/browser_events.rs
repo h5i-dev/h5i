@@ -422,10 +422,7 @@ pub fn ingest_request_log_with(
         let Some(seq) = v.get("seq").and_then(serde_json::Value::as_u64) else {
             continue;
         };
-        let phase = v
-            .get("phase")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
+        let phase = v.get("phase").and_then(serde_json::Value::as_str).unwrap_or("");
 
         match phase {
             "request" => {
@@ -443,14 +440,10 @@ pub fn ingest_request_log_with(
                     EventKind::Request {
                         seq,
                         method: clean(
-                            v.get("method")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("GET"),
+                            v.get("method").and_then(serde_json::Value::as_str).unwrap_or("GET"),
                         ),
                         url: clean(
-                            v.get("url")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or(""),
+                            v.get("url").and_then(serde_json::Value::as_str).unwrap_or(""),
                         ),
                         initiator: Initiator::parse(
                             v.get("initiator")
@@ -478,9 +471,7 @@ pub fn ingest_request_log_with(
                     let mut verdict = Draft::new(
                         EventKind::PolicyVerdict {
                             subject: clean(
-                                v.get("url")
-                                    .and_then(serde_json::Value::as_str)
-                                    .unwrap_or(""),
+                                v.get("url").and_then(serde_json::Value::as_str).unwrap_or(""),
                             ),
                             reason: denied_reason
                                 .unwrap_or_else(|| "denied by the engine's policy".to_string()),
@@ -502,10 +493,7 @@ pub fn ingest_request_log_with(
                             .and_then(|s| u16::try_from(s).ok()),
                         bytes: v.get("bytes").and_then(serde_json::Value::as_u64),
                         duration_ms: v.get("duration_ms").and_then(serde_json::Value::as_u64),
-                        error: v
-                            .get("error")
-                            .and_then(serde_json::Value::as_str)
-                            .map(clean),
+                        error: v.get("error").and_then(serde_json::Value::as_str).map(clean),
                     },
                     Lane::BoxClaimed,
                     Grade::FailClosed,
@@ -650,21 +638,14 @@ pub fn ingest_light_actions_with(
         if v.get("phase").and_then(serde_json::Value::as_str) != Some("result") {
             continue;
         }
-        let verb = clean(
-            v.get("verb")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or(""),
-        );
+        let verb = clean(v.get("verb").and_then(serde_json::Value::as_str).unwrap_or(""));
         if verb.is_empty() {
             continue;
         }
         // A row whose outcome cannot be read is not evidence that the verb
         // worked, the same way an unreadable request row is not evidence of
         // permission.
-        let ok = v
-            .get("ok")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
+        let ok = v.get("ok").and_then(serde_json::Value::as_bool).unwrap_or(false);
 
         let mut action = verb;
         if let Some(target) = v.get("target").and_then(serde_json::Value::as_str) {
@@ -800,7 +781,7 @@ impl BoxStream {
                 if growth.restarted {
                     self.log.extend(reset_draft("the engine's action log"), &at);
                 }
-                self.log
+                    self.log
                     .extend(ingest_light_actions_with(&growth.text, &mut caused), &at);
             }
         }
@@ -808,8 +789,7 @@ impl BoxStream {
         if let Some(path) = crate::env::browser_request_log(h5i_root, m) {
             if let Some(growth) = grown(&path, &mut self.requests_at) {
                 if growth.restarted {
-                    self.log
-                        .extend(reset_draft("the engine's request log"), &at);
+                    self.log.extend(reset_draft("the engine's request log"), &at);
                 }
                 self.log
                     .extend(ingest_request_log_with(&growth.text, &caused), &at);
@@ -1003,11 +983,7 @@ mod tests {
             refused_because: None,
         }]));
         let a = mediated.since(0)[0];
-        assert_eq!(
-            a.lane,
-            Lane::HostObserved,
-            "the mediator watched this itself"
-        );
+        assert_eq!(a.lane, Lane::HostObserved, "the mediator watched this itself");
         assert_eq!(a.grade, Grade::BestEffort, "and it is not containment");
     }
 
@@ -1075,24 +1051,18 @@ mod tests {
     #[test]
     fn a_cursor_returns_only_what_the_viewer_has_not_seen() {
         let mut log = EventLog::new(64);
-        log.extend(
-            ingest_evidence(&crate::receipt::BrowserEvidence {
-                errors: vec!["TypeError at App.tsx:42".into()],
-                ..Default::default()
-            }),
-            TS,
-        );
+        log.extend(ingest_evidence(&crate::receipt::BrowserEvidence {
+            errors: vec!["TypeError at App.tsx:42".into()],
+            ..Default::default()
+        }), TS);
         let first = log.cursor();
         assert!(first > 0);
         assert!(log.since(first).is_empty(), "nothing new yet");
 
-        log.extend(
-            ingest_evidence(&crate::receipt::BrowserEvidence {
-                errors: vec!["second".into()],
-                ..Default::default()
-            }),
-            TS,
-        );
+        log.extend(ingest_evidence(&crate::receipt::BrowserEvidence {
+            errors: vec!["second".into()],
+            ..Default::default()
+        }), TS);
         let fresh = log.since(first);
         assert_eq!(fresh.len(), 1, "only the new one");
     }
@@ -1138,7 +1108,8 @@ mod tests {
         ];
         crate::browser_proxy::record_actions(td.path(), "env/human/b", "digest", &written);
 
-        let text = std::fs::read_to_string(crate::browser_proxy::actions_log(td.path())).unwrap();
+        let text =
+            std::fs::read_to_string(crate::browser_proxy::actions_log(td.path())).unwrap();
         let log = log_with(ingest_actions_log(&text));
         let events = log.since(0);
 
@@ -1251,9 +1222,7 @@ mod tests {
 
         let fresh = log.since(after_first);
         assert!(
-            fresh
-                .iter()
-                .any(|e| matches!(e.kind, EventKind::SessionReset { .. })),
+            fresh.iter().any(|e| matches!(e.kind, EventKind::SessionReset { .. })),
             "the restart is visible: {fresh:?}"
         );
         assert!(
@@ -1364,16 +1333,13 @@ mod tests {
         let drafts = ingest_light_actions(
             "not json\n{\"seq\":2,\"phase\":\"result\",\"verb\":\"scroll\"}\n{\"phase\":\"result\"}",
         );
-        assert_eq!(
-            drafts.len(),
-            1,
-            "the unparseable and the nameless are skipped"
-        );
+        assert_eq!(drafts.len(), 1, "the unparseable and the nameless are skipped");
         match &drafts[0].kind {
             EventKind::AgentAction { forwarded, .. } => assert!(!forwarded),
             other => panic!("expected an agent action, got {other:?}"),
         }
     }
+
 }
 
 #[cfg(test)]

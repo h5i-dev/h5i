@@ -93,8 +93,7 @@ fn write(env_dir: &Path, c: &Control) -> Result<(), H5iError> {
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
     let tmp = p.with_extension(format!("tmp-{}", std::process::id()));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(c)?)
-        .map_err(|e| H5iError::with_path(e, &tmp))?;
+    std::fs::write(&tmp, serde_json::to_vec_pretty(c)?).map_err(|e| H5iError::with_path(e, &tmp))?;
     std::fs::rename(&tmp, &p).map_err(|e| H5iError::with_path(e, &p))
 }
 

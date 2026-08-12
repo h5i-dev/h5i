@@ -183,12 +183,7 @@ mod tests {
 
     fn solid(w: u32, h: u32, px: [u8; 3]) -> Rgb {
         Rgb {
-            data: px
-                .iter()
-                .cycle()
-                .take((w * h * 3) as usize)
-                .copied()
-                .collect(),
+            data: px.iter().cycle().take((w * h * 3) as usize).copied().collect(),
             width: w,
             height: h,
         }
@@ -202,27 +197,18 @@ mod tests {
         // columns are left over.
         let wide = fit(1280, 800, 200, 60, 8, 16);
         assert_eq!(wide.rows, 60);
-        assert!(
-            wide.cols < 200,
-            "a height-bound fit must not claim every column: {wide:?}"
-        );
+        assert!(wide.cols < 200, "a height-bound fit must not claim every column: {wide:?}");
 
         // A narrow pane inverts it: width binds, and rows are left over.
         let tall = fit(1280, 800, 40, 60, 8, 16);
         assert_eq!(tall.cols, 40);
-        assert!(
-            tall.rows < 60,
-            "a width-bound fit must not claim every row: {tall:?}"
-        );
+        assert!(tall.rows < 60, "a width-bound fit must not claim every row: {tall:?}");
 
         // The pixel box handed to the terminal must keep the frame's aspect
         // ratio to within a cell, or the page renders stretched.
         for (cols, rows) in [(200u16, 60u16), (40, 60), (80, 24), (300, 100)] {
             let f = fit(1280, 800, cols, rows, 8, 16);
-            assert!(
-                f.cols <= cols && f.rows <= rows,
-                "{f:?} overflows {cols}×{rows}"
-            );
+            assert!(f.cols <= cols && f.rows <= rows, "{f:?} overflows {cols}×{rows}");
             let want = 1280.0 / 800.0;
             let got = (f.cols as f64 * 8.0) / (f.rows as f64 * 16.0);
             assert!(
@@ -276,14 +262,8 @@ mod tests {
     fn a_frame_that_needs_no_scaling_is_not_copied() {
         let src = solid(4, 4, [1, 2, 3]);
         // Borrowed, so the common small-viewport case costs nothing.
-        assert!(matches!(
-            downscale(&src, 4, 4),
-            std::borrow::Cow::Borrowed(_)
-        ));
-        assert!(matches!(
-            downscale(&src, 8, 8),
-            std::borrow::Cow::Borrowed(_)
-        ));
+        assert!(matches!(downscale(&src, 4, 4), std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(downscale(&src, 8, 8), std::borrow::Cow::Borrowed(_)));
         assert!(matches!(downscale(&src, 2, 2), std::borrow::Cow::Owned(_)));
     }
 

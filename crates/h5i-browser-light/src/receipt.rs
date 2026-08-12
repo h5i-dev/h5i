@@ -123,10 +123,7 @@ impl RequestRecord {
             (Some(status), None) => {
                 let bytes = self.bytes.unwrap_or(0);
                 let ms = self.duration_ms.unwrap_or(0);
-                format!(
-                    "{status:>6} {} {} ({bytes} bytes, {ms}ms)",
-                    self.method, self.url
-                )
+                format!("{status:>6} {} {} ({bytes} bytes, {ms}ms)", self.method, self.url)
             }
             (None, None) => format!("       {} {}", self.method, self.url),
         }
@@ -243,9 +240,8 @@ mod tests {
 
     #[test]
     fn denial_is_carried_on_the_record_not_inferred_from_a_missing_status() {
-        let rec =
-            RequestRecord::request(1, Initiator::Subresource, "GET", "https://tracker.test/p")
-                .denied("origin `https://tracker.test` is not in the allowlist");
+        let rec = RequestRecord::request(1, Initiator::Subresource, "GET", "https://tracker.test/p")
+            .denied("origin `https://tracker.test` is not in the allowlist");
         assert!(!rec.allowed);
         assert!(rec.render().starts_with("DENIED"));
         assert!(rec.render().contains("not in the allowlist"));

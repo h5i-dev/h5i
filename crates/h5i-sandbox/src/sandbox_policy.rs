@@ -274,11 +274,9 @@ impl AgentRuntime {
     /// hosts are reachable at all.
     pub(crate) fn egress(self) -> &'static [&'static str] {
         match self {
-            AgentRuntime::Claude => &[
-                "api.anthropic.com",
-                "platform.claude.com",
-                "statsig.anthropic.com",
-            ],
+            AgentRuntime::Claude => {
+                &["api.anthropic.com", "platform.claude.com", "statsig.anthropic.com"]
+            }
             AgentRuntime::Codex => &["api.openai.com", "auth.openai.com", "chatgpt.com"],
         }
     }
@@ -713,9 +711,7 @@ pub fn validate_browser_deny(entry: &str) -> Result<(), String> {
     let lowered = name.to_ascii_lowercase();
     let hint = BROWSER_DENYABLE_ACTIONS
         .iter()
-        .find(|known| {
-            **known == lowered || known.starts_with(&lowered) || lowered.starts_with(*known)
-        })
+        .find(|known| **known == lowered || known.starts_with(&lowered) || lowered.starts_with(*known))
         .map(|known| format!(" — did you mean `{known}`?"))
         .unwrap_or_default();
 
@@ -785,24 +781,10 @@ impl BrowserEngine {
 /// Read-only system paths granted by default at the `process` tier — enough to
 /// exec interpreters and link against system libraries, nothing under `$HOME`.
 fn default_fs_read() -> Vec<String> {
-    [
-        "/usr",
-        "/lib",
-        "/lib64",
-        "/bin",
-        "/sbin",
-        "/etc",
-        "/nix",
-        "/opt",
-        "/tmp",
-        "/dev/null",
-        "/dev/zero",
-        "/dev/urandom",
-        "/proc",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
+    ["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", "/nix", "/opt", "/tmp", "/dev/null", "/dev/zero", "/dev/urandom", "/proc"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn default_fs_deny() -> Vec<String> {
@@ -818,28 +800,16 @@ impl Profile {
         Profile {
             name: name.to_string(),
             isolation,
-            fs_read: if confined {
-                default_fs_read()
-            } else {
-                Vec::new()
-            },
+            fs_read: if confined { default_fs_read() } else { Vec::new() },
             // /dev/null and /dev/zero are write-granted sinks: every shell
             // pipeline redirects to them, and granting write reveals nothing.
             fs_write: if confined {
-                vec![
-                    "$WORK".to_string(),
-                    "/dev/null".to_string(),
-                    "/dev/zero".to_string(),
-                ]
+                vec!["$WORK".to_string(), "/dev/null".to_string(), "/dev/zero".to_string()]
             } else {
                 Vec::new()
             },
             fs_deny: default_fs_deny(),
-            net_mode: if confined {
-                NetMode::Deny
-            } else {
-                NetMode::Host
-            },
+            net_mode: if confined { NetMode::Deny } else { NetMode::Host },
             net_egress: Vec::new(),
             secrets: Vec::new(),
             secret_grants: Vec::new(),
@@ -940,10 +910,8 @@ impl Profile {
         // launcher resolving into `~/.local/share/claude/versions/...`).
         p.fs_read.push(runtime.share_read().to_string());
         // Read-write: this runtime's own state only, plus shared caches.
-        p.fs_write
-            .extend(runtime.state_write().iter().map(|s| s.to_string()));
-        p.fs_write
-            .extend(["~/.cache", "~/.npm", "/tmp"].map(String::from));
+        p.fs_write.extend(runtime.state_write().iter().map(|s| s.to_string()));
+        p.fs_write.extend(["~/.cache", "~/.npm", "/tmp"].map(String::from));
         // The agent's own controlling terminal (TUIs re-open /dev/tty for raw
         // input). Deliberately NOT /dev/pts — that subtree includes the user's
         // *other* host terminals (same-uid writable → injection channel).
@@ -1043,6 +1011,7 @@ impl Profile {
         Duration::from_secs(self.wall_secs)
     }
 }
+
 
 /// The per-user temp directory macOS hands out through
 /// `confstr(_CS_DARWIN_USER_TEMP_DIR)` — `/var/folders/<xx>/<yy>/T`.
@@ -1328,9 +1297,7 @@ fn glob_paths(pattern: &std::path::Path) -> Vec<std::path::PathBuf> {
         for parent in &out {
             // An unreadable or absent directory contributes nothing, exactly as
             // a non-matching literal segment would.
-            let Ok(entries) = std::fs::read_dir(parent) else {
-                continue;
-            };
+            let Ok(entries) = std::fs::read_dir(parent) else { continue };
             let mut hits: Vec<PathBuf> = entries
                 .flatten()
                 .filter(|e| {
@@ -1354,9 +1321,7 @@ fn glob_paths(pattern: &std::path::Path) -> Vec<std::path::PathBuf> {
 }
 
 fn is_executable_file(path: &std::path::Path) -> bool {
-    let Ok(md) = std::fs::metadata(path) else {
-        return false;
-    };
+    let Ok(md) = std::fs::metadata(path) else { return false };
     if !md.is_file() {
         return false;
     }
@@ -1471,14 +1436,7 @@ mod browser_discovery_tests {
 
     #[test]
     fn real_actions_and_families_are_accepted() {
-        for good in [
-            "evaluate",
-            "click",
-            "state",
-            "credentials",
-            "cookies",
-            "screenshot",
-        ] {
+        for good in ["evaluate", "click", "state", "credentials", "cookies", "screenshot"] {
             validate_browser_deny(good)
                 .unwrap_or_else(|e| panic!("`{good}` should be a valid deny entry: {e}"));
         }
@@ -1514,9 +1472,8 @@ mod browser_discovery_tests {
             "url",
             "title",
         ] {
-            validate_browser_deny(action).unwrap_or_else(|e| {
-                panic!("`{action}` is a real action and must be deniable: {e}")
-            });
+            validate_browser_deny(action)
+                .unwrap_or_else(|e| panic!("`{action}` is a real action and must be deniable: {e}"));
         }
     }
 
@@ -1559,21 +1516,12 @@ mod browser_discovery_tests {
     fn an_unknown_engine_is_refused_by_name_with_the_accepted_set() {
         let err = BrowserEngine::parse("firefox").expect_err("must refuse");
         assert!(err.contains("firefox"), "{err}");
-        assert!(
-            err.contains("chromium"),
-            "the message must list what works: {err}"
-        );
+        assert!(err.contains("chromium"), "the message must list what works: {err}");
         assert!(err.contains("fail-closed"), "{err}");
 
         // Spellings a person actually types.
-        assert_eq!(
-            BrowserEngine::parse("chrome").unwrap(),
-            BrowserEngine::Chromium
-        );
-        assert_eq!(
-            BrowserEngine::parse(" h5i-light ").unwrap(),
-            BrowserEngine::H5iLight
-        );
+        assert_eq!(BrowserEngine::parse("chrome").unwrap(), BrowserEngine::Chromium);
+        assert_eq!(BrowserEngine::parse(" h5i-light ").unwrap(), BrowserEngine::H5iLight);
     }
 
     #[test]
@@ -1694,10 +1642,7 @@ mod browser_discovery_tests {
             0o755,
         );
 
-        assert_eq!(
-            found_in(&root).as_deref(),
-            Some(chrome.display().to_string().as_str())
-        );
+        assert_eq!(found_in(&root).as_deref(), Some(chrome.display().to_string().as_str()));
     }
 
     #[test]
@@ -1734,10 +1679,7 @@ mod browser_discovery_tests {
         let root = tempfile::tempdir().expect("tempdir");
         let chrome = plant(root.path(), "/usr/bin/google-chrome", 0o755);
 
-        assert_eq!(
-            found_in(&root).as_deref(),
-            Some(chrome.display().to_string().as_str())
-        );
+        assert_eq!(found_in(&root).as_deref(), Some(chrome.display().to_string().as_str()));
         // The same fixture, searched from an empty root: nothing.
         let empty = tempfile::tempdir().expect("tempdir");
         assert_eq!(found_in(&empty), None);
@@ -1825,15 +1767,11 @@ mod browser_profile_tests {
         // The agent-browser daemon's control socket is a filesystem-bound
         // AF_UNIX listener, and the supervised tier's socket() gate denies that
         // family by default — so the daemon exits at startup without this.
-        assert!(
-            Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude).unix_sockets
-        );
+        assert!(Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude).unix_sockets);
         // Nothing else asks for it. SCM_RIGHTS passes file descriptors, so the
         // grant widens a box by the IPC endpoints its filesystem grants can
         // reach, and it stays opt-in for that reason.
-        assert!(
-            !Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude).unix_sockets
-        );
+        assert!(!Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude).unix_sockets);
         assert!(!Profile::builtin("default", IsolationClaim::Supervised).unix_sockets);
     }
 
@@ -1846,9 +1784,7 @@ mod browser_profile_tests {
         assert!(!toml::to_string(&plain).unwrap().contains("unix_sockets"));
         // And a profile that does ask for it says so where a reviewer looks.
         let browser = Profile::builtin_browser(IsolationClaim::Supervised, AgentRuntime::Claude);
-        assert!(toml::to_string(&browser)
-            .unwrap()
-            .contains("unix_sockets = true"));
+        assert!(toml::to_string(&browser).unwrap().contains("unix_sockets = true"));
     }
 
     #[test]
@@ -2077,8 +2013,7 @@ impl ResolvedPolicy {
     }
 
     pub fn to_toml(&self) -> Result<String, H5iError> {
-        toml::to_string(self)
-            .map_err(|e| H5iError::Metadata(format!("policy serialization failed: {e}")))
+        toml::to_string(self).map_err(|e| H5iError::Metadata(format!("policy serialization failed: {e}")))
     }
 
     /// Parse a stored `policy.resolved.toml` back. Callers MUST verify
@@ -2170,17 +2105,11 @@ mod tests {
         assert_eq!(decoded.profile.isolation, IsolationClaim::Process);
         assert_eq!(decoded.profile.tools, ["cargo", "rustc"]);
         assert_eq!(decoded.profile.net_egress, ["crates.io"]);
-        assert_eq!(
-            decoded.profile.secret_grants[0].source_or_default(),
-            "env:GITHUB_TOKEN"
-        );
+        assert_eq!(decoded.profile.secret_grants[0].source_or_default(), "env:GITHUB_TOKEN");
         assert_eq!(decoded.profile.private_paths[0].path, "target");
         assert_eq!(decoded.audit.capture, AuditCapture::Signal);
         assert_eq!(decoded.to_toml().expect("re-serializes"), encoded);
-        assert_eq!(
-            decoded.digest().expect("digest"),
-            policy.digest().expect("digest")
-        );
+        assert_eq!(decoded.digest().expect("digest"), policy.digest().expect("digest"));
     }
 
     #[test]

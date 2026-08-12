@@ -73,10 +73,7 @@ mod tests {
 
     #[test]
     fn leaves_ordinary_text_alone() {
-        assert_eq!(
-            sanitize_display("env/claude/fix-auth"),
-            "env/claude/fix-auth"
-        );
+        assert_eq!(sanitize_display("env/claude/fix-auth"), "env/claude/fix-auth");
     }
 
     #[test]
@@ -89,13 +86,8 @@ mod tests {
         let safe = sanitize_display(spoof);
         assert!(!safe.contains('\u{202E}'), "{safe:?}");
         assert!(safe.starts_with("http://evil.example/"), "{safe:?}");
-        for c in [
-            '\u{200E}', '\u{200F}', '\u{202A}', '\u{202D}', '\u{2066}', '\u{2069}',
-        ] {
-            assert!(
-                !sanitize_display(&format!("a{c}b")).contains(c),
-                "{c:?} survived"
-            );
+        for c in ['\u{200E}', '\u{200F}', '\u{202A}', '\u{202D}', '\u{2066}', '\u{2069}'] {
+            assert!(!sanitize_display(&format!("a{c}b")).contains(c), "{c:?} survived");
         }
     }
 

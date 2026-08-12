@@ -394,8 +394,7 @@ fn agent_identity() -> String {
         .filter(|s| {
             !s.is_empty()
                 && s.len() <= 64
-                && s.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         })
         .unwrap_or_else(|| "human".to_string())
 }
@@ -639,280 +638,280 @@ fn run_cache(
 
 pub fn run(action: BoxCommands) -> anyhow::Result<()> {
     {
-        let git_repo = git2::Repository::discover(".")?;
-        let h5i_root = h5i_core::storage::h5i_root_for_repo(&git_repo)?;
-        h5i_core::storage::ensure_layout(&h5i_root)?;
-        let git = &git_repo;
-        let workdir = git
-            .workdir()
-            .ok_or_else(|| anyhow::anyhow!("h5i box requires a non-bare repository"))?
-            .to_path_buf();
+            let git_repo = git2::Repository::discover(".")?;
+            let h5i_root = h5i_core::storage::h5i_root_for_repo(&git_repo)?;
+            h5i_core::storage::ensure_layout(&h5i_root)?;
+            let git = &git_repo;
+            let workdir = git
+                .workdir()
+                .ok_or_else(|| anyhow::anyhow!("h5i box requires a non-bare repository"))?
+                .to_path_buf();
 
-        // Surface environments pulled from other clones: materialize any
-        // manifests/policies present in refs/h5i/env but absent (or older)
-        // on disk, so `list`/`status`/`diff`/`apply` see them.
-        // Sync the shared env roster to disk — but never in a sealed box,
-        // where the host-owned env manifests are read-only (the write only
-        // fails with EACCES and spams a warning). The box already has its
-        // own env materialized; the shared roster is the host's concern.
-        //
-        // `env shell` is on the interactive hot path and operates on a single
-        // named env that is almost always already materialized locally, so it
-        // skips the eager sync and materializes lazily (only on a `find` miss)
-        // below — trimming a `refs/h5i/env/meta` read + disk writes off every
-        // shell start.
-        let in_env_box = std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok();
-        let lazy_materialize_env_ref = matches!(&action, BoxCommands::Shell { .. });
-        if !in_env_box && !lazy_materialize_env_ref {
-            if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
-                eprintln!(
-                    "{} could not sync shared env manifests: {e}",
-                    style("warning:").yellow()
-                );
+            // Surface environments pulled from other clones: materialize any
+            // manifests/policies present in refs/h5i/env but absent (or older)
+            // on disk, so `list`/`status`/`diff`/`apply` see them.
+            // Sync the shared env roster to disk — but never in a sealed box,
+            // where the host-owned env manifests are read-only (the write only
+            // fails with EACCES and spams a warning). The box already has its
+            // own env materialized; the shared roster is the host's concern.
+            //
+            // `env shell` is on the interactive hot path and operates on a single
+            // named env that is almost always already materialized locally, so it
+            // skips the eager sync and materializes lazily (only on a `find` miss)
+            // below — trimming a `refs/h5i/env/meta` read + disk writes off every
+            // shell start.
+            let in_env_box = std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok();
+            let lazy_materialize_env_ref = matches!(&action, BoxCommands::Shell { .. });
+            if !in_env_box && !lazy_materialize_env_ref {
+                if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
+                    eprintln!(
+                        "{} could not sync shared env manifests: {e}",
+                        style("warning:").yellow()
+                    );
+                }
             }
-        }
 
-        match action {
-            BoxCommands::Create {
-                name,
-                from,
-                pr,
-                engine,
-                clone,
-                new,
-                remote,
-                profile,
-                isolation,
-                image,
-                backend,
-                audit,
-                json,
-            } => {
-                let agent = agent_identity();
-                use h5i_core::sandbox::{IsolationClaim, IsolationRequest};
-                let isolation = match isolation.as_deref() {
-                    None => None,
-                    Some(s) if s.eq_ignore_ascii_case("auto") => Some(IsolationRequest::Auto),
-                    Some(s) => Some(IsolationRequest::Claim(IsolationClaim::parse(s)?)),
-                };
-                // Did we auto-pick (vs. the user pinning a tier)? Used below to
-                // surface the container tier when the host lacks Podman.
-                let auto_picked = matches!(isolation, None | Some(IsolationRequest::Auto));
-                let profile_auto = profile.is_none();
-                // A PR base is resolved host-side BEFORE create: fetch the PR
-                // head, pin the local pr/<n> tracking branch, then create pins
-                // the immutable base from it like any other rev.
-                let pr_base = match &pr {
-                    Some(spec) => Some(h5i_core::source::resolve_pr_base(&workdir, spec, &remote)?),
-                    None => None,
-                };
-                let source = match (&clone, new) {
-                    (Some(url), _) => h5i_core::env::BoxSource::Clone { url: url.clone() },
-                    (None, true) => h5i_core::env::BoxSource::New,
-                    (None, false) => h5i_core::env::BoxSource::Repo,
-                };
-                let engine = match &engine {
-                    Some(name) => Some(
-                        h5i_core::sandbox::BrowserEngine::parse(name)
-                            .map_err(h5i_core::error::H5iError::Metadata)?,
-                    ),
-                    None => None,
-                };
-                let opts = h5i_core::env::CreateOpts {
-                    source,
-                    from: pr_base.as_ref().map(|b| b.oid.clone()).or(from),
+            match action {
+                BoxCommands::Create {
+                    name,
+                    from,
+                    pr,
+                    engine,
+                    clone,
+                    new,
+                    remote,
                     profile,
                     isolation,
                     image,
-                    engine,
                     backend,
-                    audit_capture: h5i_core::sandbox::AuditCapture::parse(&audit)?,
-                    parent_branch: pr_base.as_ref().map(|b| b.local_branch.clone()),
-                    pr: pr_base.as_ref().map(|b| b.number),
-                    pr_head_ref: pr_base.as_ref().and_then(|b| b.head_ref.clone()),
-                };
-                let m = h5i_core::env::create(git, &h5i_root, &workdir, &agent, &name, opts)?;
-                if json {
-                    // The manifest is the contract (same shape as
-                    // `status --json`); the workspace path is the one fact
-                    // it cannot carry, so it is injected like `list` does
-                    // with drift.
-                    let mut v = serde_json::to_value(&m)?;
-                    if let serde_json::Value::Object(ref mut map) = v {
-                        map.insert(
-                            "work_dir".into(),
-                            serde_json::Value::String(m.work_dir(&h5i_root).display().to_string()),
-                        );
-                    }
-                    println!("{}", serde_json::to_string_pretty(&v)?);
-                    if profile_auto && m.profile == "default" {
-                        eprintln!(
-                            "note: this host cannot enforce the built-in 'agent' profile, so \
+                    audit,
+                    json,
+                } => {
+                    let agent = agent_identity();
+                    use h5i_core::sandbox::{IsolationClaim, IsolationRequest};
+                    let isolation = match isolation.as_deref() {
+                        None => None,
+                        Some(s) if s.eq_ignore_ascii_case("auto") => Some(IsolationRequest::Auto),
+                        Some(s) => Some(IsolationRequest::Claim(IsolationClaim::parse(s)?)),
+                    };
+                    // Did we auto-pick (vs. the user pinning a tier)? Used below to
+                    // surface the container tier when the host lacks Podman.
+                    let auto_picked = matches!(isolation, None | Some(IsolationRequest::Auto));
+                    let profile_auto = profile.is_none();
+                    // A PR base is resolved host-side BEFORE create: fetch the PR
+                    // head, pin the local pr/<n> tracking branch, then create pins
+                    // the immutable base from it like any other rev.
+                    let pr_base = match &pr {
+                        Some(spec) => Some(h5i_core::source::resolve_pr_base(&workdir, spec, &remote)?),
+                        None => None,
+                    };
+                    let source = match (&clone, new) {
+                        (Some(url), _) => h5i_core::env::BoxSource::Clone { url: url.clone() },
+                        (None, true) => h5i_core::env::BoxSource::New,
+                        (None, false) => h5i_core::env::BoxSource::Repo,
+                    };
+                    let engine = match &engine {
+                        Some(name) => Some(
+                            h5i_core::sandbox::BrowserEngine::parse(name)
+                                .map_err(h5i_core::error::H5iError::Metadata)?,
+                        ),
+                        None => None,
+                    };
+                    let opts = h5i_core::env::CreateOpts {
+                        source,
+                        from: pr_base.as_ref().map(|b| b.oid.clone()).or(from),
+                        profile,
+                        isolation,
+                        image,
+                        engine,
+                        backend,
+                        audit_capture: h5i_core::sandbox::AuditCapture::parse(&audit)?,
+                        parent_branch: pr_base.as_ref().map(|b| b.local_branch.clone()),
+                        pr: pr_base.as_ref().map(|b| b.number),
+                        pr_head_ref: pr_base.as_ref().and_then(|b| b.head_ref.clone()),
+                    };
+                    let m = h5i_core::env::create(git, &h5i_root, &workdir, &agent, &name, opts)?;
+                    if json {
+                        // The manifest is the contract (same shape as
+                        // `status --json`); the workspace path is the one fact
+                        // it cannot carry, so it is injected like `list` does
+                        // with drift.
+                        let mut v = serde_json::to_value(&m)?;
+                        if let serde_json::Value::Object(ref mut map) = v {
+                            map.insert(
+                                "work_dir".into(),
+                                serde_json::Value::String(
+                                    m.work_dir(&h5i_root).display().to_string(),
+                                ),
+                            );
+                        }
+                        println!("{}", serde_json::to_string_pretty(&v)?);
+                        if profile_auto && m.profile == "default" {
+                            eprintln!(
+                                "note: this host cannot enforce the built-in 'agent' profile, so \
                                  the fail-closed 'default' was used — coding agents won't run in \
                                  this box"
+                            );
+                        }
+                        return Ok(());
+                    }
+                    println!(
+                        "{} Created environment {} (isolation: {}, profile: {})",
+                        SUCCESS,
+                        style(&m.id).magenta().bold(),
+                        style(&m.isolation_claim).cyan(),
+                        m.profile
+                    );
+                    if let Some(b) = &pr_base {
+                        println!(
+                            "   pr       #{} head {} pinned to local branch {}{}",
+                            b.number,
+                            &b.oid[..12.min(b.oid.len())],
+                            style(&b.local_branch).cyan(),
+                            match b.cross_repo {
+                                Some(true) => "  (cross-repo PR — push-back needs the fork remote)",
+                                _ => "",
+                            }
                         );
                     }
-                    return Ok(());
-                }
-                println!(
-                    "{} Created environment {} (isolation: {}, profile: {})",
-                    SUCCESS,
-                    style(&m.id).magenta().bold(),
-                    style(&m.isolation_claim).cyan(),
-                    m.profile
-                );
-                if let Some(b) = &pr_base {
-                    println!(
-                        "   pr       #{} head {} pinned to local branch {}{}",
-                        b.number,
-                        &b.oid[..12.min(b.oid.len())],
-                        style(&b.local_branch).cyan(),
-                        match b.cross_repo {
-                            Some(true) => "  (cross-repo PR — push-back needs the fork remote)",
-                            _ => "",
-                        }
-                    );
-                }
-                if profile_auto && m.profile == "default" {
-                    println!(
+                    if profile_auto && m.profile == "default" {
+                        println!(
                             "   {}      this host cannot enforce the built-in 'agent' profile (its \
                              API egress needs the supervised or container tier), so the fail-closed \
                              'default' was used — coding agents won't run in this box",
                             style("note").yellow()
                         );
-                }
-                println!(
-                    "   base     {}  (from {})",
-                    &m.base_commit[..12],
-                    m.parent_branch
-                );
-                println!("   branch   {}", m.branch);
-                println!("   work     {}", m.work_dir(&h5i_root).display());
-                // Discoverability: when we auto-picked a kernel tier and the host
-                // has no rootless Podman, tell the user the `container` tier
-                // (the one with a network egress allowlist) exists and what it
-                // needs — otherwise they would never learn Podman unlocks it.
-                if auto_picked
-                    && matches!(
-                        m.isolation_claim.as_str(),
-                        "workspace" | "process" | "supervised"
-                    )
-                    && !h5i_core::sandbox::podman_present()
-                {
+                    }
                     println!(
+                        "   base     {}  (from {})",
+                        &m.base_commit[..12],
+                        m.parent_branch
+                    );
+                    println!("   branch   {}", m.branch);
+                    println!("   work     {}", m.work_dir(&h5i_root).display());
+                    // Discoverability: when we auto-picked a kernel tier and the host
+                    // has no rootless Podman, tell the user the `container` tier
+                    // (the one with a network egress allowlist) exists and what it
+                    // needs — otherwise they would never learn Podman unlocks it.
+                    if auto_picked
+                        && matches!(
+                            m.isolation_claim.as_str(),
+                            "workspace" | "process" | "supervised"
+                        )
+                        && !h5i_core::sandbox::podman_present()
+                    {
+                        println!(
                             "   {}      the 'container' tier (adds a network egress allowlist) needs \
                              rootless Podman, which isn't installed — install it, then pass --image \
                              or set `[container] image` in .h5i/env.toml. See: h5i box probe",
                             style("tip").yellow()
                         );
-                }
-                println!(
+                    }
+                    println!(
                         "   next     h5i box run {} -- <cmd>   ·   h5i box shell {}   ·   h5i box export {}",
                         m.slug, m.slug, m.slug
                     );
-            }
-
-            BoxCommands::Run {
-                name,
-                json,
-                command,
-            } => {
-                if command.is_empty() {
-                    anyhow::bail!("usage: h5i box run [--json] <name> -- <command> [args…]");
                 }
-                let mut m = h5i_core::env::find(&h5i_root, &name)?;
-                let outcome = h5i_core::env::run(git, &h5i_root, &mut m, &command)?;
-                // The command's own output, as recorded (secret-redacted).
-                let dir = h5i_core::env::env_dir(&h5i_root, &m.agent, &m.slug);
-                if json {
-                    let raw =
-                        h5i_core::receipt::raw_bytes(&dir, &outcome.receipt.id).unwrap_or_default();
-                    let envelope = serde_json::json!({
-                        "box": m.id,
-                        "policy_digest": m.policy_digest,
-                        "capture": outcome.capture_id,
-                        "exit_code": outcome.exit_code,
-                        "timed_out": outcome.timed_out,
-                        "wall_ms": outcome.wall_ms as u64,
-                        "cpu_ms": outcome.cpu_ms as u64,
-                        "max_rss_kb": outcome.max_rss_kb,
-                        "output": String::from_utf8_lossy(&raw),
-                        "record": outcome.receipt,
-                    });
-                    println!("{}", serde_json::to_string_pretty(&envelope)?);
-                } else {
-                    if let Ok(raw) = h5i_core::receipt::raw_bytes(&dir, &outcome.receipt.id) {
-                        print!("{}", String::from_utf8_lossy(&raw));
+
+                BoxCommands::Run { name, json, command } => {
+                    if command.is_empty() {
+                        anyhow::bail!("usage: h5i box run [--json] <name> -- <command> [args…]");
                     }
-                    if outcome.timed_out {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let outcome = h5i_core::env::run(git, &h5i_root, &mut m, &command)?;
+                    // The command's own output, as recorded (secret-redacted).
+                    let dir = h5i_core::env::env_dir(&h5i_root, &m.agent, &m.slug);
+                    if json {
+                        let raw = h5i_core::receipt::raw_bytes(&dir, &outcome.receipt.id)
+                            .unwrap_or_default();
+                        let envelope = serde_json::json!({
+                            "box": m.id,
+                            "policy_digest": m.policy_digest,
+                            "capture": outcome.capture_id,
+                            "exit_code": outcome.exit_code,
+                            "timed_out": outcome.timed_out,
+                            "wall_ms": outcome.wall_ms as u64,
+                            "cpu_ms": outcome.cpu_ms as u64,
+                            "max_rss_kb": outcome.max_rss_kb,
+                            "output": String::from_utf8_lossy(&raw),
+                            "record": outcome.receipt,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&envelope)?);
+                    } else {
+                        if let Ok(raw) = h5i_core::receipt::raw_bytes(&dir, &outcome.receipt.id) {
+                            print!("{}", String::from_utf8_lossy(&raw));
+                        }
+                        if outcome.timed_out {
+                            eprintln!(
+                                "{} run killed by the policy wall-clock limit",
+                                style("warning:").yellow().bold()
+                            );
+                        }
+                        let rss = outcome
+                            .max_rss_kb
+                            .map(|kb| format!(", rss {}MiB", kb / 1024))
+                            .unwrap_or_default();
                         eprintln!(
-                            "{} run killed by the policy wall-clock limit",
-                            style("warning:").yellow().bold()
+                            "{} receipt {} (box {}, policy {}) · exit {} · wall {}ms, cpu {}ms{}",
+                            LOOKING,
+                            style(&outcome.capture_id).magenta(),
+                            m.id,
+                            &m.policy_digest[..12],
+                            outcome
+                                .exit_code
+                                .map(|c| c.to_string())
+                                .unwrap_or_else(|| "signal".into()),
+                            outcome.wall_ms,
+                            outcome.cpu_ms,
+                            rss
                         );
                     }
-                    let rss = outcome
-                        .max_rss_kb
-                        .map(|kb| format!(", rss {}MiB", kb / 1024))
-                        .unwrap_or_default();
-                    eprintln!(
-                        "{} receipt {} (box {}, policy {}) · exit {} · wall {}ms, cpu {}ms{}",
-                        LOOKING,
-                        style(&outcome.capture_id).magenta(),
-                        m.id,
-                        &m.policy_digest[..12],
-                        outcome
-                            .exit_code
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| "signal".into()),
-                        outcome.wall_ms,
-                        outcome.cpu_ms,
-                        rss
-                    );
-                }
-                // A wall-clock kill is a failure, not success — the child
-                // was SIGKILLed so it has no exit code of its own. Use the
-                // conventional timeout code (124, as coreutils `timeout`).
-                if outcome.timed_out {
-                    std::process::exit(124);
-                }
-                // Transparent wrapper: pass the child's exit code through.
-                // A None code means the child died on a signal — surface it
-                // as a generic failure rather than a silent success.
-                match outcome.exit_code {
-                    Some(0) => {}
-                    Some(code) => std::process::exit(code),
-                    None => std::process::exit(1),
-                }
-            }
-
-            BoxCommands::Shell {
-                name,
-                readonly,
-                command,
-            } => {
-                // Lazy materialize: the eager shared-roster sync is skipped
-                // for `shell` (above). The common case is a local env that
-                // `find` resolves straight away; only on a miss do we pay the
-                // shared-ref sync and retry (never inside a sealed box, whose
-                // manifests are host-owned + read-only).
-                let mut m = match h5i_core::env::find(&h5i_root, &name) {
-                    Ok(m) => m,
-                    Err(e) if !in_env_box => {
-                        if let Err(sync_err) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
-                            eprintln!(
-                                "{} could not sync shared env manifests: {sync_err}",
-                                style("warning:").yellow()
-                            );
-                            return Err(e.into());
-                        }
-                        h5i_core::env::find(&h5i_root, &name)?
+                    // A wall-clock kill is a failure, not success — the child
+                    // was SIGKILLed so it has no exit code of its own. Use the
+                    // conventional timeout code (124, as coreutils `timeout`).
+                    if outcome.timed_out {
+                        std::process::exit(124);
                     }
-                    Err(e) => return Err(e.into()),
-                };
-                // An empty `command` means "default interactive shell";
-                // `env::shell` builds the argv (host bashrc is replaced with a
-                // generated plain rc by default — see `default_shell_argv`).
-                eprintln!(
+                    // Transparent wrapper: pass the child's exit code through.
+                    // A None code means the child died on a signal — surface it
+                    // as a generic failure rather than a silent success.
+                    match outcome.exit_code {
+                        Some(0) => {}
+                        Some(code) => std::process::exit(code),
+                        None => std::process::exit(1),
+                    }
+                }
+
+                BoxCommands::Shell {
+                    name,
+                    readonly,
+                    command,
+                } => {
+                    // Lazy materialize: the eager shared-roster sync is skipped
+                    // for `shell` (above). The common case is a local env that
+                    // `find` resolves straight away; only on a miss do we pay the
+                    // shared-ref sync and retry (never inside a sealed box, whose
+                    // manifests are host-owned + read-only).
+                    let mut m = match h5i_core::env::find(&h5i_root, &name) {
+                        Ok(m) => m,
+                        Err(e) if !in_env_box => {
+                            if let Err(sync_err) =
+                                h5i_core::env::materialize_from_ref(git, &h5i_root)
+                            {
+                                eprintln!(
+                                    "{} could not sync shared env manifests: {sync_err}",
+                                    style("warning:").yellow()
+                                );
+                                return Err(e.into());
+                            }
+                            h5i_core::env::find(&h5i_root, &name)?
+                        }
+                        Err(e) => return Err(e.into()),
+                    };
+                    // An empty `command` means "default interactive shell";
+                    // `env::shell` builds the argv (host bashrc is replaced with a
+                    // generated plain rc by default — see `default_shell_argv`).
+                    eprintln!(
                         "{} entering {} (isolation: {}, profile: {}{}) — confined session; exit to return",
                         LOOKING,
                         style(&m.id).magenta(),
@@ -924,354 +923,341 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             String::new()
                         }
                     );
-                if !h5i_core::sandbox::is_agent_profile(&m.profile) {
-                    eprintln!(
-                        "   note: this profile has no agent grants — claude/codex won't run \
+                    if !h5i_core::sandbox::is_agent_profile(&m.profile) {
+                        eprintln!(
+                            "   note: this profile has no agent grants — claude/codex won't run \
                              here (envs default to --profile agent where the host supports it)"
-                    );
+                        );
+                    }
+                    let code = h5i_core::env::shell(git, &h5i_root, &mut m, &command, readonly)?;
+                    match code {
+                        0 => {}
+                        c => std::process::exit(c),
+                    }
                 }
-                let code = h5i_core::env::shell(git, &h5i_root, &mut m, &command, readonly)?;
-                match code {
-                    0 => {}
-                    c => std::process::exit(c),
-                }
-            }
 
-            BoxCommands::Allow { rule, remove, json } => {
-                if json && (rule.is_some() || remove) {
-                    anyhow::bail!("--json can only be used when listing the allowlist");
-                }
-                match rule {
-                    None => {
-                        let rules = h5i_core::env::user_allow_list();
-                        let path = h5i_core::env::user_allow_path();
-                        if json {
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&serde_json::json!({
-                                    "path": path.map(|path| path.display().to_string()),
-                                    "rules": rules,
-                                }))?
-                            );
-                        } else {
-                            match path {
-                                Some(path) => {
-                                    println!("── user egress allowlist ({}) ──", path.display())
+                BoxCommands::Allow { rule, remove, json } => {
+                    if json && (rule.is_some() || remove) {
+                        anyhow::bail!("--json can only be used when listing the allowlist");
+                    }
+                    match rule {
+                        None => {
+                            let rules = h5i_core::env::user_allow_list();
+                            let path = h5i_core::env::user_allow_path();
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "path": path.map(|path| path.display().to_string()),
+                                        "rules": rules,
+                                    }))?
+                                );
+                            } else {
+                                match path {
+                                    Some(path) => println!("── user egress allowlist ({}) ──", path.display()),
+                                    None => println!("── user egress allowlist ──"),
                                 }
-                                None => println!("── user egress allowlist ──"),
-                            }
-                            if rules.is_empty() {
-                                println!("  (empty — add one with `h5i box allow <host>`)");
-                            }
-                            for r in &rules {
-                                println!("  {r}");
-                            }
-                            println!(
-                                "  applies to container-tier envs whose profile sets net.egress; \
+                                if rules.is_empty() {
+                                    println!("  (empty — add one with `h5i box allow <host>`)");
+                                }
+                                for r in &rules {
+                                    println!("  {r}");
+                                }
+                                println!(
+                                    "  applies to container-tier envs whose profile sets net.egress; \
                                      takes effect at the next env run/shell"
-                            );
-                        }
-                    }
-                    Some(raw) => {
-                        if remove {
-                            let (removed, path) = h5i_core::env::user_allow_remove(&raw)?;
-                            if removed {
-                                println!("✔  removed '{}' from {}", raw.trim(), path.display());
-                            } else {
-                                println!("   '{}' was not in {}", raw.trim(), path.display());
+                                );
                             }
-                        } else {
-                            let (added, path) = h5i_core::env::user_allow_add(&raw)?;
-                            if added {
-                                println!("✔  allowed '{}' ({})", raw.trim(), path.display());
-                                println!(
-                                    "   merged into container-tier envs whose profile sets \
+                        }
+                        Some(raw) => {
+                            if remove {
+                                let (removed, path) = h5i_core::env::user_allow_remove(&raw)?;
+                                if removed {
+                                    println!("✔  removed '{}' from {}", raw.trim(), path.display());
+                                } else {
+                                    println!("   '{}' was not in {}", raw.trim(), path.display());
+                                }
+                            } else {
+                                let (added, path) = h5i_core::env::user_allow_add(&raw)?;
+                                if added {
+                                    println!("✔  allowed '{}' ({})", raw.trim(), path.display());
+                                    println!(
+                                        "   merged into container-tier envs whose profile sets \
                                          net.egress, from the next env run/shell on"
-                                );
-                            } else {
-                                println!(
-                                    "   '{}' already allowed ({})",
-                                    raw.trim(),
-                                    path.display()
-                                );
+                                    );
+                                } else {
+                                    println!("   '{}' already allowed ({})", raw.trim(), path.display());
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            BoxCommands::Probe => {
-                // Diagnostics must report the live truth, not last run's
-                // verdict — bypass the per-boot podman probe cache.
-                let caps = h5i_core::sandbox::probe_host_fresh();
-                println!("── Host isolation capabilities ──");
-                println!("  os           = {}", caps.os);
-                println!("  mechanism    = {}", caps.confinement_mechanism());
-                // Report the primitives this OS actually has. Printing
-                // `landlock_abi = none` on a Mac reads as a broken host when
-                // the truth is that macOS confines with something else.
-                if caps.os == "macos" {
-                    println!("  seatbelt     = {}", caps.seatbelt);
-                    println!(
-                        "  {}",
-                        style(
-                            "note: no syscall filter and no memory cap at the macOS kernel \
+                BoxCommands::Probe => {
+                    // Diagnostics must report the live truth, not last run's
+                    // verdict — bypass the per-boot podman probe cache.
+                    let caps = h5i_core::sandbox::probe_host_fresh();
+                    println!("── Host isolation capabilities ──");
+                    println!("  os           = {}", caps.os);
+                    println!("  mechanism    = {}", caps.confinement_mechanism());
+                    // Report the primitives this OS actually has. Printing
+                    // `landlock_abi = none` on a Mac reads as a broken host when
+                    // the truth is that macOS confines with something else.
+                    if caps.os == "macos" {
+                        println!("  seatbelt     = {}", caps.seatbelt);
+                        println!(
+                            "  {}",
+                            style(
+                                "note: no syscall filter and no memory cap at the macOS kernel \
                                  tiers; use isolation=container for a memory cap"
-                        )
-                        .dim()
-                    );
-                } else {
-                    println!(
-                        "  landlock_abi = {}",
-                        caps.landlock_abi
-                            .map(|v| v.to_string())
-                            .unwrap_or_else(|| "none".into())
-                    );
-                    println!("  userns       = {}", caps.userns);
-                    println!("  seccomp      = {}", caps.seccomp);
-                }
-                // An interactive box shell shares the operator's terminal
-                // (that is what makes job control work), so whether the box
-                // can type into it is part of what this host enforces — and
-                // it is not h5i's to assert: on Linux it is the kernel's
-                // setting, the same at every tier; on macOS it is the
-                // Seatbelt profile, so it holds only where one is applied.
-                // Report both, because they can disagree on the same host.
-                let confined = h5i_core::sandbox::tty_input_injection(
-                    &caps,
-                    h5i_core::sandbox::IsolationClaim::Process,
-                );
-                let unconfined = h5i_core::sandbox::tty_input_injection(
-                    &caps,
-                    h5i_core::sandbox::IsolationClaim::Workspace,
-                );
-                println!(
-                    "  tty-injection= {}",
-                    match (confined, unconfined) {
-                        (false, false) => style("blocked at every tier".to_string()).green(),
-                        (false, true) => style(
-                            "blocked at the kernel tiers, possible at isolation=workspace"
-                                .to_string()
-                        )
-                        .yellow(),
-                        // Nothing subtracts it anywhere: a box shell can type
-                        // at the terminal you launched it from.
-                        (true, _) => style("possible at every tier".to_string()).red(),
+                            )
+                            .dim()
+                        );
+                    } else {
+                        println!(
+                            "  landlock_abi = {}",
+                            caps.landlock_abi
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "none".into())
+                        );
+                        println!("  userns       = {}", caps.userns);
+                        println!("  seccomp      = {}", caps.seccomp);
                     }
-                );
-                if confined {
+                    // An interactive box shell shares the operator's terminal
+                    // (that is what makes job control work), so whether the box
+                    // can type into it is part of what this host enforces — and
+                    // it is not h5i's to assert: on Linux it is the kernel's
+                    // setting, the same at every tier; on macOS it is the
+                    // Seatbelt profile, so it holds only where one is applied.
+                    // Report both, because they can disagree on the same host.
+                    let confined = h5i_core::sandbox::tty_input_injection(
+                        &caps,
+                        h5i_core::sandbox::IsolationClaim::Process,
+                    );
+                    let unconfined = h5i_core::sandbox::tty_input_injection(
+                        &caps,
+                        h5i_core::sandbox::IsolationClaim::Workspace,
+                    );
                     println!(
-                        "    {}",
-                        style(match caps.os.as_str() {
-                            "linux" =>
-                                "set dev.tty.legacy_tiocsti=0 (or build with \
+                        "  tty-injection= {}",
+                        match (confined, unconfined) {
+                            (false, false) => style("blocked at every tier".to_string()).green(),
+                            (false, true) => style(
+                                "blocked at the kernel tiers, possible at isolation=workspace"
+                                    .to_string()
+                            )
+                            .yellow(),
+                            // Nothing subtracts it anywhere: a box shell can type
+                            // at the terminal you launched it from.
+                            (true, _) => style("possible at every tier".to_string()).red(),
+                        }
+                    );
+                    if confined {
+                        println!(
+                            "    {}",
+                            style(match caps.os.as_str() {
+                                "linux" =>
+                                    "set dev.tty.legacy_tiocsti=0 (or build with \
                                      CONFIG_LEGACY_TIOCSTI=n) to close it; upstream defaults \
                                      it open",
-                            "macos" =>
-                                "no Seatbelt profile is applied on this host, so nothing \
+                                "macos" =>
+                                    "no Seatbelt profile is applied on this host, so nothing \
                                      subtracts the ioctl",
-                            _ =>
-                                "this host has no confinement backend, so nothing \
+                                _ => "this host has no confinement backend, so nothing \
                                       subtracts the ioctl",
-                        })
-                        .dim()
-                    );
-                }
-                println!(
-                    "  container    = {}",
-                    caps.container_runtime.as_deref().unwrap_or("none")
-                );
-                println!(
-                    "  microvm      = {}",
-                    caps.microvm_runtime.as_deref().unwrap_or("none")
-                );
-                println!();
-                for (claim, profile_net_deny) in [
-                    (h5i_core::sandbox::IsolationClaim::Workspace, false),
-                    (h5i_core::sandbox::IsolationClaim::Process, true),
-                ] {
-                    let mut p = h5i_core::sandbox::Profile::builtin("probe", claim);
-                    if !profile_net_deny {
-                        p.net_mode = h5i_core::sandbox::NetMode::Host;
+                            })
+                            .dim()
+                        );
                     }
-                    let ok = h5i_core::sandbox::resolve(&p, &caps).is_ok();
                     println!(
-                        "  claim {:<10} satisfiable = {}",
-                        claim.as_str(),
-                        if ok {
-                            style("yes").green()
-                        } else {
-                            style("no").red()
-                        }
+                        "  container    = {}",
+                        caps.container_runtime.as_deref().unwrap_or("none")
                     );
-                }
-                // Image-backed claims: each needs its own runtime plus a
-                // profile image; show whether the runtime half is there.
-                let container_ok = caps.container_runtime.is_some();
-                println!(
+                    println!(
+                        "  microvm      = {}",
+                        caps.microvm_runtime.as_deref().unwrap_or("none")
+                    );
+                    println!();
+                    for (claim, profile_net_deny) in [
+                        (h5i_core::sandbox::IsolationClaim::Workspace, false),
+                        (h5i_core::sandbox::IsolationClaim::Process, true),
+                    ] {
+                        let mut p = h5i_core::sandbox::Profile::builtin("probe", claim);
+                        if !profile_net_deny {
+                            p.net_mode = h5i_core::sandbox::NetMode::Host;
+                        }
+                        let ok = h5i_core::sandbox::resolve(&p, &caps).is_ok();
+                        println!(
+                            "  claim {:<10} satisfiable = {}",
+                            claim.as_str(),
+                            if ok {
+                                style("yes").green()
+                            } else {
+                                style("no").red()
+                            }
+                        );
+                    }
+                    // Image-backed claims: each needs its own runtime plus a
+                    // profile image; show whether the runtime half is there.
+                    let container_ok = caps.container_runtime.is_some();
+                    println!(
                         "  claim {:<10} satisfiable = {} (needs rootless Podman + profile container.image)",
                         "container",
                         if container_ok { style("yes").green() } else { style("no").red() }
                     );
-                let microvm_ok = caps.microvm_runtime.is_some();
-                // The prerequisite list is a hint for a reader who cannot
-                // run this tier; printing it next to "yes" would read as an
-                // unmet requirement on a host that already meets them all.
-                println!(
-                    "  claim {:<10} satisfiable = {}{}",
-                    "microvm",
-                    if microvm_ok {
-                        style("yes").green()
-                    } else {
-                        style("no").red()
-                    },
-                    if microvm_ok {
-                        " (profile needs container.image)"
-                    } else {
-                        " (needs microsandbox `msb` + host virtualization + profile container.image)"
-                    }
-                );
-                if !microvm_ok {
-                    // Which half is missing decides what the reader does
-                    // next: install a package, or turn on nested virt.
+                    let microvm_ok = caps.microvm_runtime.is_some();
+                    // The prerequisite list is a hint for a reader who cannot
+                    // run this tier; printing it next to "yes" would read as an
+                    // unmet requirement on a host that already meets them all.
                     println!(
-                        "    {}",
-                        style(h5i_core::sandbox::microvm_unavailable_detail()).dim()
-                    );
-                }
-                println!("  claim hardened-container: external backend (not in this build)");
-                // Functional self-test: bits can be present while a hardened
-                // kernel still denies exec under the full confinement stack.
-                let probe = h5i_core::sandbox::Profile::builtin(
-                    "probe",
-                    h5i_core::sandbox::IsolationClaim::Process,
-                );
-                match h5i_core::sandbox::resolve(&probe, &caps)
-                    .and_then(|pol| h5i_core::sandbox::verify_exec(&pol))
-                {
-                    Ok(()) => println!("  process tier runnable = {}", style("yes").green()),
-                    Err(e) => println!("  process tier runnable = {} ({e})", style("no").red()),
-                }
-            }
-
-            BoxCommands::Capabilities { json } => {
-                // Same as Probe: a capability report is a diagnostic —
-                // never serve it from the probe cache.
-                let report = h5i_core::sandbox::capabilities_report_fresh();
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&report)?);
-                } else {
-                    let yn = |b: bool| {
-                        if b {
-                            style("yes").green()
+                        "  claim {:<10} satisfiable = {}{}",
+                        "microvm",
+                        if microvm_ok { style("yes").green() } else { style("no").red() },
+                        if microvm_ok {
+                            " (profile needs container.image)"
                         } else {
-                            style("no").red()
+                            " (needs microsandbox `msb` + host virtualization + profile container.image)"
                         }
-                    };
-                    println!("── h5i host capabilities ──");
-                    println!("  os               = {}", report.os);
-                    println!("  mechanism        = {}", report.mechanism);
-                    if report.os == "macos" {
-                        println!("  seatbelt         = {}", yn(report.seatbelt));
-                    } else {
+                    );
+                    if !microvm_ok {
+                        // Which half is missing decides what the reader does
+                        // next: install a package, or turn on nested virt.
                         println!(
-                            "  landlock_abi     = {}",
-                            report
-                                .landlock_abi
-                                .map(|v| v.to_string())
-                                .unwrap_or_else(|| "none".into())
+                            "    {}",
+                            style(h5i_core::sandbox::microvm_unavailable_detail()).dim()
                         );
-                        println!("  userns           = {}", yn(report.userns));
-                        println!("  seccomp          = {}", yn(report.seccomp));
                     }
                     println!(
-                        "  container        = {}",
-                        report.container_runtime.as_deref().unwrap_or("none")
+                        "  claim hardened-container: external backend (not in this build)"
                     );
-                    println!(
-                        "  microvm          = {}",
-                        report.microvm_runtime.as_deref().unwrap_or("none")
+                    // Functional self-test: bits can be present while a hardened
+                    // kernel still denies exec under the full confinement stack.
+                    let probe = h5i_core::sandbox::Profile::builtin(
+                        "probe",
+                        h5i_core::sandbox::IsolationClaim::Process,
                     );
-                    println!("  egress_enforced  = {}", yn(report.egress_enforced));
-                    // The distinction that matters for untrusted code: an
-                    // L7 proxy stops `curl`, an L3 filter stops a raw socket.
-                    println!(
-                        "  egress_l3        = {} {}",
-                        yn(report.egress_enforced_l3),
-                        style(if report.egress_enforced_l3 {
-                            "(by address, microvm netstack)"
-                        } else if report.egress_enforced {
-                            "(allowlist is L7 proxy only)"
-                        } else {
-                            ""
-                        })
-                        .dim()
-                    );
-                    println!("  syscall_filter   = {}", yn(report.syscall_filter));
-                    println!("  resource_limits  = {}", yn(report.resource_limits));
-                    println!("  memory_limit     = {}", yn(report.memory_limit));
-                    println!(
-                        "  strongest_tier   = {}",
-                        style(report.strongest_tier).cyan().bold()
-                    );
-                    println!();
-                    for c in &report.claims {
-                        let runnable = match c.runnable {
-                            Some(true) => format!(" runnable = {}", style("yes").green()),
-                            Some(false) => format!(" runnable = {}", style("no").red()),
-                            None => String::new(),
-                        };
-                        let note = c
-                            .note
-                            .map(|n| format!("  {}", style(format!("({n})")).dim()))
-                            .unwrap_or_default();
-                        println!(
-                            "  claim {:<18} satisfiable = {}{}{}",
-                            c.claim,
-                            yn(c.satisfiable),
-                            runnable,
-                            note
-                        );
+                    match h5i_core::sandbox::resolve(&probe, &caps)
+                        .and_then(|pol| h5i_core::sandbox::verify_exec(&pol))
+                    {
+                        Ok(()) => println!("  process tier runnable = {}", style("yes").green()),
+                        Err(e) => println!("  process tier runnable = {} ({e})", style("no").red()),
                     }
                 }
-            }
 
-            BoxCommands::List { json } => {
-                let envs = h5i_core::env::list(&h5i_root);
-                if json {
-                    let rows: Vec<serde_json::Value> = envs
-                        .iter()
-                        .map(|m| {
-                            let mut v = serde_json::to_value(m).unwrap_or(serde_json::Value::Null);
-                            if let serde_json::Value::Object(ref mut map) = v {
-                                let d = h5i_core::env::drift(git, m);
-                                map.insert(
-                                    "drift".into(),
-                                    serde_json::to_value(&d).unwrap_or(serde_json::Value::Null),
-                                );
-                                // Live sessions (the pid registry) — runtime
-                                // state, so injected like drift rather than
-                                // stored in the manifest.
-                                let live = h5i_core::env::live_sessions(&m.dir(&h5i_root));
-                                map.insert(
-                                    "live".into(),
-                                    serde_json::to_value(&live).unwrap_or(serde_json::Value::Null),
-                                );
+                BoxCommands::Capabilities { json } => {
+                    // Same as Probe: a capability report is a diagnostic —
+                    // never serve it from the probe cache.
+                    let report = h5i_core::sandbox::capabilities_report_fresh();
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        let yn = |b: bool| {
+                            if b {
+                                style("yes").green()
+                            } else {
+                                style("no").red()
                             }
-                            v
-                        })
-                        .collect();
-                    println!("{}", serde_json::to_string_pretty(&rows)?);
-                } else {
-                    if envs.is_empty() {
-                        println!("No environments. Create one: h5i box create <name>");
+                        };
+                        println!("── h5i host capabilities ──");
+                        println!("  os               = {}", report.os);
+                        println!("  mechanism        = {}", report.mechanism);
+                        if report.os == "macos" {
+                            println!("  seatbelt         = {}", yn(report.seatbelt));
+                        } else {
+                            println!(
+                                "  landlock_abi     = {}",
+                                report
+                                    .landlock_abi
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "none".into())
+                            );
+                            println!("  userns           = {}", yn(report.userns));
+                            println!("  seccomp          = {}", yn(report.seccomp));
+                        }
+                        println!(
+                            "  container        = {}",
+                            report.container_runtime.as_deref().unwrap_or("none")
+                        );
+                        println!(
+                            "  microvm          = {}",
+                            report.microvm_runtime.as_deref().unwrap_or("none")
+                        );
+                        println!("  egress_enforced  = {}", yn(report.egress_enforced));
+                        // The distinction that matters for untrusted code: an
+                        // L7 proxy stops `curl`, an L3 filter stops a raw socket.
+                        println!(
+                            "  egress_l3        = {} {}",
+                            yn(report.egress_enforced_l3),
+                            style(if report.egress_enforced_l3 {
+                                "(by address, microvm netstack)"
+                            } else if report.egress_enforced {
+                                "(allowlist is L7 proxy only)"
+                            } else {
+                                ""
+                            })
+                            .dim()
+                        );
+                        println!("  syscall_filter   = {}", yn(report.syscall_filter));
+                        println!("  resource_limits  = {}", yn(report.resource_limits));
+                        println!("  memory_limit     = {}", yn(report.memory_limit));
+                        println!(
+                            "  strongest_tier   = {}",
+                            style(report.strongest_tier).cyan().bold()
+                        );
+                        println!();
+                        for c in &report.claims {
+                            let runnable = match c.runnable {
+                                Some(true) => format!(" runnable = {}", style("yes").green()),
+                                Some(false) => format!(" runnable = {}", style("no").red()),
+                                None => String::new(),
+                            };
+                            let note = c
+                                .note
+                                .map(|n| format!("  {}", style(format!("({n})")).dim()))
+                                .unwrap_or_default();
+                            println!(
+                                "  claim {:<18} satisfiable = {}{}{}",
+                                c.claim,
+                                yn(c.satisfiable),
+                                runnable,
+                                note
+                            );
+                        }
                     }
-                    for m in envs {
-                        let d = h5i_core::env::drift(git, &m);
-                        let drift_mark = if d.is_current() { "" } else { " ⚠drift" };
-                        let live = h5i_core::env::live_sessions(&m.dir(&h5i_root));
-                        let live_mark =
-                            match live.iter().find(|s| h5i_core::env::live_is_writer(&s.kind)) {
+                }
+
+                BoxCommands::List { json } => {
+                    let envs = h5i_core::env::list(&h5i_root);
+                    if json {
+                        let rows: Vec<serde_json::Value> = envs
+                            .iter()
+                            .map(|m| {
+                                let mut v = serde_json::to_value(m).unwrap_or(serde_json::Value::Null);
+                                if let serde_json::Value::Object(ref mut map) = v {
+                                    let d = h5i_core::env::drift(git, m);
+                                    map.insert("drift".into(), serde_json::to_value(&d).unwrap_or(serde_json::Value::Null));
+                                    // Live sessions (the pid registry) — runtime
+                                    // state, so injected like drift rather than
+                                    // stored in the manifest.
+                                    let live = h5i_core::env::live_sessions(&m.dir(&h5i_root));
+                                    map.insert("live".into(), serde_json::to_value(&live).unwrap_or(serde_json::Value::Null));
+                                }
+                                v
+                            })
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&rows)?);
+                    } else {
+                        if envs.is_empty() {
+                            println!("No environments. Create one: h5i box create <name>");
+                        }
+                        for m in envs {
+                            let d = h5i_core::env::drift(git, &m);
+                            let drift_mark = if d.is_current() { "" } else { " ⚠drift" };
+                            let live = h5i_core::env::live_sessions(&m.dir(&h5i_root));
+                            let live_mark = match live
+                                .iter()
+                                .find(|s| h5i_core::env::live_is_writer(&s.kind))
+                            {
                                 Some(s) => format!(" ●{} pid {}", s.kind, s.pid),
                                 None if m.status == "running" => " ⚠stale".to_string(),
                                 None if !live.is_empty() => {
@@ -1279,107 +1265,107 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                                 }
                                 None => String::new(),
                             };
-                        println!(
-                            "{:<28} {:<9} isolation={:<10} base={} captures={}{}{}",
-                            style(&m.id).magenta(),
-                            m.status,
-                            m.isolation_claim,
-                            &m.base_commit[..12],
-                            m.captures.len(),
-                            style(drift_mark).yellow(),
-                            style(&live_mark).green()
-                        );
+                            println!(
+                                "{:<28} {:<9} isolation={:<10} base={} captures={}{}{}",
+                                style(&m.id).magenta(),
+                                m.status,
+                                m.isolation_claim,
+                                &m.base_commit[..12],
+                                m.captures.len(),
+                                style(drift_mark).yellow(),
+                                style(&live_mark).green()
+                            );
+                        }
                     }
                 }
-            }
 
-            BoxCommands::Status { name, json } => {
-                let m = h5i_core::env::find(&h5i_root, &name)?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&m)?);
-                } else {
-                    print!("{}", h5i_core::env::status_report(git, &h5i_root, &m));
+                BoxCommands::Status { name, json } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&m)?);
+                    } else {
+                        print!("{}", h5i_core::env::status_report(git, &h5i_root, &m));
+                    }
                 }
-            }
 
-            BoxCommands::View {
-                name,
-                port,
-                term,
-                fps,
-                assume_graphics,
-            } => {
-                let m = h5i_core::env::find(&h5i_root, &name)?;
-                let dir = h5i_core::env::env_dir(&h5i_root, &m.agent, &m.slug);
-                if term {
-                    // The status line reports what the box may reach. It is
-                    // read from the *enforced* policy, not from the profile
-                    // as written, so it describes the box that is running.
-                    let enforced = h5i_core::env::load_policy(&h5i_root, &m);
-                    let egress = enforced
-                        .as_ref()
-                        .map(|p| egress_summary(&p.profile.net_egress))
-                        .unwrap_or_default();
-                    // Same source as the egress line, for the same reason:
-                    // what is running, not what was written.
-                    let engine = enforced
-                        .as_ref()
-                        .ok()
-                        .and_then(|p| p.profile.engine)
-                        .map(|e| e.as_str().to_string());
-                    h5i_core::termview::run(h5i_core::termview::Options {
-                        env_dir: dir,
-                        env_id: m.id.clone(),
-                        policy_digest: m.policy_digest.clone(),
-                        egress,
-                        engine,
-                        max_fps: fps,
-                        assume_graphics,
-                    })?;
-                } else {
-                    let forward =
-                        h5i_core::view::Forward::bind(&dir, &m.id, &m.policy_digest, port)?;
-                    let holder = h5i_core::control::read(&dir).holder;
-                    println!("{} viewer for {}", SUCCESS, m.id);
-                    println!("   open     {}", forward.url()?);
-                    println!("   control  {holder:?} — `h5i browser take {name}` to drive");
-                    println!("   stop     Ctrl-C");
-                    forward.serve()?;
+                BoxCommands::View {
+                    name,
+                    port,
+                    term,
+                    fps,
+                    assume_graphics,
+                } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    let dir = h5i_core::env::env_dir(&h5i_root, &m.agent, &m.slug);
+                    if term {
+                        // The status line reports what the box may reach. It is
+                        // read from the *enforced* policy, not from the profile
+                        // as written, so it describes the box that is running.
+                        let enforced = h5i_core::env::load_policy(&h5i_root, &m);
+                        let egress = enforced
+                            .as_ref()
+                            .map(|p| egress_summary(&p.profile.net_egress))
+                            .unwrap_or_default();
+                        // Same source as the egress line, for the same reason:
+                        // what is running, not what was written.
+                        let engine = enforced
+                            .as_ref()
+                            .ok()
+                            .and_then(|p| p.profile.engine)
+                            .map(|e| e.as_str().to_string());
+                        h5i_core::termview::run(h5i_core::termview::Options {
+                            env_dir: dir,
+                            env_id: m.id.clone(),
+                            policy_digest: m.policy_digest.clone(),
+                            egress,
+                            engine,
+                            max_fps: fps,
+                            assume_graphics,
+                        })?;
+                    } else {
+                        let forward =
+                            h5i_core::view::Forward::bind(&dir, &m.id, &m.policy_digest, port)?;
+                        let holder = h5i_core::control::read(&dir).holder;
+                        println!("{} viewer for {}", SUCCESS, m.id);
+                        println!("   open     {}", forward.url()?);
+                        println!("   control  {holder:?} — `h5i browser take {name}` to drive");
+                        println!("   stop     Ctrl-C");
+                        forward.serve()?;
+                    }
                 }
-            }
 
-            #[cfg(feature = "share-tunnel")]
-            BoxCommands::Share(args) => crate::cli::share::run(args)?,
+                #[cfg(feature = "share-tunnel")]
+                BoxCommands::Share(args) => crate::cli::share::run(args)?,
 
-            BoxCommands::Doctor { name, json } => {
-                let m = h5i_core::env::find(&h5i_root, &name)?;
-                let report = h5i_core::env::doctor(git, &h5i_root, &m);
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&report)?);
-                } else {
-                    print!("{}", h5i_core::env::render_doctor(&report));
+                BoxCommands::Doctor { name, json } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    let report = h5i_core::env::doctor(git, &h5i_root, &m);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        print!("{}", h5i_core::env::render_doctor(&report));
+                    }
+                    if !report.healthy {
+                        std::process::exit(1);
+                    }
                 }
-                if !report.healthy {
-                    std::process::exit(1);
-                }
-            }
 
-            BoxCommands::Secrets { name, json } => {
-                let m = h5i_core::env::find(&h5i_root, &name)?;
-                let policy = h5i_core::env::load_policy(&h5i_root, &m)?;
-                let rows = h5i_core::env::secrets_status(&h5i_root, &policy);
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&rows)?);
-                } else {
-                    print!("{}", h5i_core::env::render_secrets(&m.id, &rows));
+                BoxCommands::Secrets { name, json } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    let policy = h5i_core::env::load_policy(&h5i_root, &m)?;
+                    let rows = h5i_core::env::secrets_status(&h5i_root, &policy);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&rows)?);
+                    } else {
+                        print!("{}", h5i_core::env::render_secrets(&m.id, &rows));
+                    }
                 }
-            }
 
-            BoxCommands::Service { action } => match action {
-                EnvServiceCommands::Start { env, service } => {
-                    let m = h5i_core::env::find(&h5i_root, &env)?;
-                    let rec = h5i_core::env::service_start(git, &h5i_root, &m, &service)?;
-                    let port = rec
+                BoxCommands::Service { action } => match action {
+                    EnvServiceCommands::Start { env, service } => {
+                        let m = h5i_core::env::find(&h5i_root, &env)?;
+                        let rec = h5i_core::env::service_start(git, &h5i_root, &m, &service)?;
+                        let port = rec
                             .dynamic_port
                             .map(|p| {
                                 format!(
@@ -1387,187 +1373,181 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                                 )
                             })
                             .unwrap_or_default();
-                    println!(
-                        "{} service {} started (pid {}){}",
-                        SUCCESS, rec.name, rec.pid, port
-                    );
-                }
-                EnvServiceCommands::Stop { env, service } => {
-                    let m = h5i_core::env::find(&h5i_root, &env)?;
-                    let cap = h5i_core::env::service_stop(git, &h5i_root, &m, &service)?;
-                    match cap {
-                        Some(id) => println!(
-                            "{} service {} stopped (log captured: {})",
-                            SUCCESS, service, id
-                        ),
-                        None => println!("{} service {} stopped", SUCCESS, service),
+                        println!(
+                            "{} service {} started (pid {}){}",
+                            SUCCESS, rec.name, rec.pid, port
+                        );
+                    }
+                    EnvServiceCommands::Stop { env, service } => {
+                        let m = h5i_core::env::find(&h5i_root, &env)?;
+                        let cap = h5i_core::env::service_stop(git, &h5i_root, &m, &service)?;
+                        match cap {
+                            Some(id) => println!(
+                                "{} service {} stopped (log captured: {})",
+                                SUCCESS, service, id
+                            ),
+                            None => println!("{} service {} stopped", SUCCESS, service),
+                        }
+                    }
+                    EnvServiceCommands::Status { env, json } => {
+                        let m = h5i_core::env::find(&h5i_root, &env)?;
+                        let rows = h5i_core::env::service_status(&h5i_root, &m);
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&rows)?);
+                        } else {
+                            print!("{}", h5i_core::env::render_services(&m.id, &rows));
+                        }
+                    }
+                    EnvServiceCommands::Logs { env, service, tail } => {
+                        let m = h5i_core::env::find(&h5i_root, &env)?;
+                        println!("{}", h5i_core::env::service_logs(&h5i_root, &m, &service, tail)?);
+                    }
+                },
+
+                BoxCommands::Ports { name, json } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    let rows = h5i_core::env::service_status(&h5i_root, &m);
+                    if json {
+                        let ports: Vec<_> = rows
+                            .iter()
+                            .filter(|s| s.record.dynamic_port.is_some())
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&ports)?);
+                    } else {
+                        print!("{}", h5i_core::env::render_ports(&m.id, &rows));
                     }
                 }
-                EnvServiceCommands::Status { env, json } => {
-                    let m = h5i_core::env::find(&h5i_root, &env)?;
-                    let rows = h5i_core::env::service_status(&h5i_root, &m);
+
+                BoxCommands::Rebase { name } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let msg_out = h5i_core::env::rebase(git, &h5i_root, &mut m)?;
+                    println!("{} {}", SUCCESS, msg_out);
+                }
+
+                BoxCommands::Log { name, limit, json } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    let mut events = h5i_core::env::read_events(git, Some(&m.id));
+                    if limit > 0 && events.len() > limit {
+                        events.drain(..events.len() - limit);
+                    }
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&events)?);
+                    } else {
+                        for e in events {
+                            println!(
+                                "{}  {:<9} {}{}",
+                                e.ts,
+                                e.event,
+                                e.detail.unwrap_or_default(),
+                                e.capture
+                                    .map(|c| format!("  [capture {c}]"))
+                                    .unwrap_or_default()
+                            );
+                        }
+                    }
+                }
+
+                BoxCommands::Diff { name, stat, json } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    if json {
+                        let report = h5i_core::env::diffstat_report(git, &h5i_root, &m)?;
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        print!("{}", h5i_core::env::diff(git, &h5i_root, &m, stat)?);
+                        // On stderr, so `h5i box diff > x.patch` still yields a
+                        // clean patch while a human at a terminal is told what
+                        // was held back.
+                        let hidden = h5i_core::env::private_paths_excluded(&h5i_root, &m);
+                        if !hidden.is_empty() {
+                            eprintln!(
+                                "{}",
+                                style(format!(
+                                    "note: {} path(s) excluded as private ({})",
+                                    hidden.len(),
+                                    hidden.join(", ")
+                                ))
+                                .dim()
+                            );
+                        }
+                    }
+                }
+
+                BoxCommands::Inspect {
+                    name,
+                    capture,
+                    json,
+                } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    if json {
+                        let rec = h5i_core::env::inspect_manifest(&h5i_root, &m, &capture)?;
+                        println!("{}", serde_json::to_string_pretty(&rec)?);
+                    } else {
+                        print!("{}", h5i_core::env::inspect(&h5i_root, &m, &capture)?);
+                    }
+                }
+
+                BoxCommands::Compare { names, json } => {
+                    let rows = h5i_core::env::compare(git, &h5i_root, &names)?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&rows)?);
                     } else {
-                        print!("{}", h5i_core::env::render_services(&m.id, &rows));
+                        print!("{}", h5i_core::env::render_compare(&rows));
                     }
                 }
-                EnvServiceCommands::Logs { env, service, tail } => {
-                    let m = h5i_core::env::find(&h5i_root, &env)?;
+
+                BoxCommands::Cache { action } => run_cache(action, git, &h5i_root, &workdir)?,
+
+                BoxCommands::Export { name, out, force, json } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let out = out.unwrap_or_else(|| {
+                        workdir.join("h5i-export").join(&m.slug)
+                    });
+                    let s = h5i_core::export::export(git, &h5i_root, &mut m, &out, force)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&s)?);
+                        return Ok(());
+                    }
                     println!(
-                        "{}",
-                        h5i_core::env::service_logs(&h5i_root, &m, &service, tail)?
+                        "{} exported {} → {}",
+                        SUCCESS,
+                        s.env_id,
+                        style(s.dir.display()).cyan()
                     );
-                }
-            },
-
-            BoxCommands::Ports { name, json } => {
-                let m = h5i_core::env::find(&h5i_root, &name)?;
-                let rows = h5i_core::env::service_status(&h5i_root, &m);
-                if json {
-                    let ports: Vec<_> = rows
-                        .iter()
-                        .filter(|s| s.record.dynamic_port.is_some())
-                        .collect();
-                    println!("{}", serde_json::to_string_pretty(&ports)?);
-                } else {
-                    print!("{}", h5i_core::env::render_ports(&m.id, &rows));
-                }
-            }
-
-            BoxCommands::Rebase { name } => {
-                let mut m = h5i_core::env::find(&h5i_root, &name)?;
-                let msg_out = h5i_core::env::rebase(git, &h5i_root, &mut m)?;
-                println!("{} {}", SUCCESS, msg_out);
-            }
-
-            BoxCommands::Log { name, limit, json } => {
-                let m = h5i_core::env::find(&h5i_root, &name)?;
-                let mut events = h5i_core::env::read_events(git, Some(&m.id));
-                if limit > 0 && events.len() > limit {
-                    events.drain(..events.len() - limit);
-                }
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&events)?);
-                } else {
-                    for e in events {
+                    println!(
+                        "   changes  {} file(s), +{} -{} ({} bytes of patch)",
+                        s.files_changed, s.insertions, s.deletions, s.patch_bytes
+                    );
+                    println!("   receipts {} recorded", s.receipts);
+                    if s.egress_denied > 0 {
                         println!(
-                            "{}  {:<9} {}{}",
-                            e.ts,
-                            e.event,
-                            e.detail.unwrap_or_default(),
-                            e.capture
-                                .map(|c| format!("  [capture {c}]"))
-                                .unwrap_or_default()
+                            "   {}     {} denied egress attempt(s) — read report.md before applying",
+                            style("egress").yellow(),
+                            s.egress_denied
                         );
                     }
-                }
-            }
-
-            BoxCommands::Diff { name, stat, json } => {
-                let m = h5i_core::env::find(&h5i_root, &name)?;
-                if json {
-                    let report = h5i_core::env::diffstat_report(git, &h5i_root, &m)?;
-                    println!("{}", serde_json::to_string_pretty(&report)?);
-                } else {
-                    print!("{}", h5i_core::env::diff(git, &h5i_root, &m, stat)?);
-                    // On stderr, so `h5i box diff > x.patch` still yields a
-                    // clean patch while a human at a terminal is told what
-                    // was held back.
-                    let hidden = h5i_core::env::private_paths_excluded(&h5i_root, &m);
-                    if !hidden.is_empty() {
-                        eprintln!(
-                            "{}",
-                            style(format!(
-                                "note: {} path(s) excluded as private ({})",
-                                hidden.len(),
-                                hidden.join(", ")
-                            ))
-                            .dim()
-                        );
+                    if !s.redactions.is_empty() {
+                        println!("   redacted {}", s.redactions.join(", "));
                     }
-                }
-            }
-
-            BoxCommands::Inspect {
-                name,
-                capture,
-                json,
-            } => {
-                let m = h5i_core::env::find(&h5i_root, &name)?;
-                if json {
-                    let rec = h5i_core::env::inspect_manifest(&h5i_root, &m, &capture)?;
-                    println!("{}", serde_json::to_string_pretty(&rec)?);
-                } else {
-                    print!("{}", h5i_core::env::inspect(&h5i_root, &m, &capture)?);
-                }
-            }
-
-            BoxCommands::Compare { names, json } => {
-                let rows = h5i_core::env::compare(git, &h5i_root, &names)?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&rows)?);
-                } else {
-                    print!("{}", h5i_core::env::render_compare(&rows));
-                }
-            }
-
-            BoxCommands::Cache { action } => run_cache(action, git, &h5i_root, &workdir)?,
-
-            BoxCommands::Export {
-                name,
-                out,
-                force,
-                json,
-            } => {
-                let mut m = h5i_core::env::find(&h5i_root, &name)?;
-                let out = out.unwrap_or_else(|| workdir.join("h5i-export").join(&m.slug));
-                let s = h5i_core::export::export(git, &h5i_root, &mut m, &out, force)?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&s)?);
-                    return Ok(());
-                }
-                println!(
-                    "{} exported {} → {}",
-                    SUCCESS,
-                    s.env_id,
-                    style(s.dir.display()).cyan()
-                );
-                println!(
-                    "   changes  {} file(s), +{} -{} ({} bytes of patch)",
-                    s.files_changed, s.insertions, s.deletions, s.patch_bytes
-                );
-                println!("   receipts {} recorded", s.receipts);
-                if s.egress_denied > 0 {
                     println!(
-                        "   {}     {} denied egress attempt(s) — read report.md before applying",
-                        style("egress").yellow(),
-                        s.egress_denied
-                    );
-                }
-                if !s.redactions.is_empty() {
-                    println!("   redacted {}", s.redactions.join(", "));
-                }
-                println!(
                         "   next     review {}/patch.diff, then `git apply --3way` it where you want it",
                         s.dir.display()
                     );
-            }
+                }
 
-            BoxCommands::Propose { name } => {
-                let mut m = h5i_core::env::find(&h5i_root, &name)?;
-                let brief = h5i_core::env::propose(git, &h5i_root, &mut m)?;
-                println!("{brief}");
-            }
+                BoxCommands::Propose { name } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let brief = h5i_core::env::propose(git, &h5i_root, &mut m)?;
+                    println!("{brief}");
+                }
 
-            BoxCommands::Apply { name, patch } => {
-                let mut m = h5i_core::env::find(&h5i_root, &name)?;
-                let msg_out = h5i_core::env::apply(git, &h5i_root, &mut m, patch)?;
-                println!("{} {}", SUCCESS, msg_out);
-                // A PR env applied onto its local pr/<n> branch: tell the
-                // reviewer exactly how to send the result back to the PR.
-                if let Some(n) = m.pr {
-                    match (&m.pr_head_ref, m.parent_branch.as_str()) {
+                BoxCommands::Apply { name, patch } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let msg_out = h5i_core::env::apply(git, &h5i_root, &mut m, patch)?;
+                    println!("{} {}", SUCCESS, msg_out);
+                    // A PR env applied onto its local pr/<n> branch: tell the
+                    // reviewer exactly how to send the result back to the PR.
+                    if let Some(n) = m.pr {
+                        match (&m.pr_head_ref, m.parent_branch.as_str()) {
                             (Some(head), local) => println!(
                                 "   push back to PR #{n}:  git push origin {local}:{head}"
                             ),
@@ -1577,62 +1557,62 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                                  remote instead of origin)"
                             ),
                         }
+                    }
                 }
-            }
 
-            BoxCommands::Abort { name } => {
-                let mut m = h5i_core::env::find(&h5i_root, &name)?;
-                h5i_core::env::abort(git, &h5i_root, &mut m)?;
-                println!(
-                    "{} {} aborted (manifest preserved for forensics)",
-                    SUCCESS, m.id
-                );
-            }
+                BoxCommands::Abort { name } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    h5i_core::env::abort(git, &h5i_root, &mut m)?;
+                    println!(
+                        "{} {} aborted (manifest preserved for forensics)",
+                        SUCCESS, m.id
+                    );
+                }
 
-            BoxCommands::Rm { names, force } => {
-                let mut any_failed = false;
-                for name in &names {
-                    match h5i_core::env::find(&h5i_root, name) {
-                        Ok(m) => match h5i_core::env::rm(git, &h5i_root, &m, force) {
-                            Ok(()) => println!(
-                                "{} {} removed (workspace, branches, and manifest erased)",
-                                SUCCESS, m.id
-                            ),
+                BoxCommands::Rm { names, force } => {
+                    let mut any_failed = false;
+                    for name in &names {
+                        match h5i_core::env::find(&h5i_root, name) {
+                            Ok(m) => match h5i_core::env::rm(git, &h5i_root, &m, force) {
+                                Ok(()) => println!(
+                                    "{} {} removed (workspace, branches, and manifest erased)",
+                                    SUCCESS, m.id
+                                ),
+                                Err(e) => {
+                                    eprintln!(
+                                        "{} failed to remove {}: {e}",
+                                        style("error:").red().bold(),
+                                        name
+                                    );
+                                    any_failed = true;
+                                }
+                            },
                             Err(e) => {
                                 eprintln!(
-                                    "{} failed to remove {}: {e}",
+                                    "{} env '{}' not found: {e}",
                                     style("error:").red().bold(),
                                     name
                                 );
                                 any_failed = true;
                             }
-                        },
-                        Err(e) => {
-                            eprintln!(
-                                "{} env '{}' not found: {e}",
-                                style("error:").red().bold(),
-                                name
-                            );
-                            any_failed = true;
                         }
                     }
+                    if any_failed {
+                        std::process::exit(1);
+                    }
                 }
-                if any_failed {
-                    std::process::exit(1);
-                }
-            }
 
-            BoxCommands::Gc => {
-                let reclaimed = h5i_core::env::gc(git, &h5i_root)?;
-                if reclaimed.is_empty() {
-                    println!("Nothing to reclaim (only applied/aborted envs are gc'd).");
-                } else {
-                    for id in reclaimed {
-                        println!("{} reclaimed workspace of {}", SUCCESS, id);
+                BoxCommands::Gc => {
+                    let reclaimed = h5i_core::env::gc(git, &h5i_root)?;
+                    if reclaimed.is_empty() {
+                        println!("Nothing to reclaim (only applied/aborted envs are gc'd).");
+                    } else {
+                        for id in reclaimed {
+                            println!("{} reclaimed workspace of {}", SUCCESS, id);
+                        }
                     }
                 }
             }
         }
-    }
     Ok(())
 }

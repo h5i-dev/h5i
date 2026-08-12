@@ -182,9 +182,7 @@ impl Page {
         for _ in 0..=MAX_META_REFRESH_HOPS {
             let outcome = broker.fetch(&target, Initiator::Navigation);
             if let Some(error) = outcome.error {
-                return Err(H5iError::Metadata(format!(
-                    "could not open {target}: {error}"
-                )));
+                return Err(H5iError::Metadata(format!("could not open {target}: {error}")));
             }
 
             // Decoded as the document says it is written, not as UTF-8. A
@@ -419,7 +417,8 @@ impl Page {
         // mention it is a reading that quietly changed the subject.
         if unloadable_images && layout_failure.is_none() {
             layout_failure = Some(
-                "this page's images could not be loaded, so it was read without them".to_string(),
+                "this page's images could not be loaded, so it was read without them"
+                    .to_string(),
             );
         }
 
@@ -563,9 +562,10 @@ impl Page {
         // module never runs before a classic script that follows it in the
         // markup, and a page that relies on that ordering breaks if we run them
         // as they appear.
-        let (classic, modules): (Vec<Pending>, Vec<Pending>) = sources
-            .into_iter()
-            .partition(|(_, source)| matches!(source, Source::Inline(_) | Source::External(_)));
+        let (classic, modules): (Vec<Pending>, Vec<Pending>) =
+            sources.into_iter().partition(|(_, source)| {
+                matches!(source, Source::Inline(_) | Source::External(_))
+            });
 
         let phase_started = std::time::Instant::now();
         let mut skipped = 0usize;
@@ -759,10 +759,7 @@ impl Page {
 
     /// What the page logged, for the console pane and the receipt.
     pub fn console(&self) -> Vec<crate::script::host::ConsoleLine> {
-        self.script
-            .as_ref()
-            .map(|s| s.console())
-            .unwrap_or_default()
+        self.script.as_ref().map(|s| s.console()).unwrap_or_default()
     }
 
     pub fn has_script(&self) -> bool {
@@ -823,12 +820,7 @@ impl Page {
         // engine could not run — and which of those it is belongs in the
         // outline rather than in the agent's imagination.
         if snapshot.lines.is_empty() {
-            let scripts = self
-                .doc
-                .borrow()
-                .query_selector_all("script")
-                .map(|s| s.len())
-                .unwrap_or(0);
+            let scripts = self.doc.borrow().query_selector_all("script").map(|s| s.len()).unwrap_or(0);
             snapshot.notes.push(format!(
                 "this page produced no readable content. It has {scripts} script element(s) \
                  and this engine {}. If it needs JavaScript beyond what is listed above, the \
@@ -993,9 +985,11 @@ impl Page {
         // owner is found by walking up. That misses the `form=` attribute's
         // remote-owner case, which is rare enough to be a stated limit rather
         // than a reimplementation of the association algorithm.
-        let form_id = self.enclosing_form(node_id).ok_or_else(|| {
-            H5iError::Metadata("that control is not inside a form this page defines".into())
-        })?;
+        let form_id = self
+            .enclosing_form(node_id)
+            .ok_or_else(|| {
+                H5iError::Metadata("that control is not inside a form this page defines".into())
+            })?;
 
         self.doc.borrow_mut().submit_form(form_id, node_id);
 
@@ -1101,7 +1095,11 @@ impl Page {
             let node = doc.get_node(node_id)?;
             if let Some(href) = node
                 .attrs()
-                .and_then(|attrs| attrs.iter().find(|attr| attr.name.local.as_ref() == "href"))
+                .and_then(|attrs| {
+                    attrs
+                        .iter()
+                        .find(|attr| attr.name.local.as_ref() == "href")
+                })
                 .map(|attr| attr.value.as_str())
             {
                 return self.url.join(href).ok();
@@ -1305,10 +1303,7 @@ fn strip_image_sources(html: &str) -> String {
     let mut at = 0;
     while let Some(found) = lowered[at..].find("<img") {
         let start = at + found;
-        let end = lowered[start..]
-            .find('>')
-            .map(|e| start + e + 1)
-            .unwrap_or(html.len());
+        let end = lowered[start..].find('>').map(|e| start + e + 1).unwrap_or(html.len());
         out.push_str(&html[at..start]);
         // Keep the tag and everything except its source attributes, so `alt`
         // survives — which is the part an agent was going to read anyway.
@@ -1395,9 +1390,7 @@ fn challenge_marker(html: &str) -> Option<&'static str> {
     // Typographic apostrophes normalised to ASCII: pypi writes "couldn’t" with
     // U+2019, and a matcher that only knows `'` would miss it while looking
     // like it had checked.
-    let lowered = html
-        .to_ascii_lowercase()
-        .replace(['\u{2019}', '\u{02BC}'], "'");
+    let lowered = html.to_ascii_lowercase().replace(['\u{2019}', '\u{02BC}'], "'");
     CHALLENGE_MARKERS
         .into_iter()
         .find(|marker| lowered.contains(marker))
@@ -1517,7 +1510,12 @@ fn flatten_onto_white(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, H
     Ok(rgb)
 }
 
-fn encode_jpeg(rgba: &[u8], width: u32, height: u32, quality: u8) -> Result<Vec<u8>, H5iError> {
+fn encode_jpeg(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+) -> Result<Vec<u8>, H5iError> {
     use image::codecs::jpeg::JpegEncoder;
 
     let rgb = flatten_onto_white(rgba, width, height)?;
@@ -1589,14 +1587,8 @@ mod tests {
         let rendered = snapshot.render();
 
         assert_eq!(snapshot.title, "Docs");
-        assert!(
-            rendered.contains("heading1 \"Getting started\""),
-            "{rendered}"
-        );
-        assert!(
-            rendered.contains("paragraph \"Install it first.\""),
-            "{rendered}"
-        );
+        assert!(rendered.contains("heading1 \"Getting started\""), "{rendered}");
+        assert!(rendered.contains("paragraph \"Install it first.\""), "{rendered}");
         // The link is wrapped in div>span, but the outline should not make an
         // agent walk through anonymous containers to find it.
         assert!(rendered.contains("link \"Read the guide\""), "{rendered}");
@@ -1628,17 +1620,11 @@ mod tests {
 
         let rendered = snapshot.render();
         // The paragraph keeps its whole sentence...
-        assert!(
-            rendered.contains("paragraph \"See the guide for more.\""),
-            "{rendered}"
-        );
+        assert!(rendered.contains("paragraph \"See the guide for more.\""), "{rendered}");
         // ...and the link is addressable underneath it rather than lost in it.
         assert!(rendered.contains("link \"guide\" [ref=e1]"), "{rendered}");
         // An empty input is named by its placeholder, not left anonymous.
-        assert!(
-            rendered.contains("textbox \"you@example.com\""),
-            "{rendered}"
-        );
+        assert!(rendered.contains("textbox \"you@example.com\""), "{rendered}");
         // The hidden CSRF field is not something to act on, and its value is
         // not something to put in front of a model.
         assert!(!rendered.contains("secret-token"), "{rendered}");
@@ -1701,10 +1687,7 @@ mod tests {
             denied.iter().any(|u| u.contains("pixel.gif")),
             "the tracking pixel should be refused: {denied:?}"
         );
-        assert!(
-            sink.fetched_urls().is_empty(),
-            "nothing should reach the wire"
-        );
+        assert!(sink.fetched_urls().is_empty(), "nothing should reach the wire");
 
         assert!(page.snapshot().render().contains("Still here"));
 
@@ -1914,11 +1897,7 @@ mod input_tests {
         assert_eq!(submission.method, "GET");
         assert!(submission.body.is_empty(), "a GET carries no body");
         assert!(
-            submission
-                .url
-                .query()
-                .unwrap_or_default()
-                .contains("q=kelp+forests"),
+            submission.url.query().unwrap_or_default().contains("q=kelp+forests"),
             "{}",
             submission.url
         );
@@ -1926,8 +1905,7 @@ mod input_tests {
 
     #[test]
     fn a_control_outside_any_form_says_so_rather_than_submitting_nothing() {
-        let mut page =
-            page_with("<html><body><input type='text' placeholder='loose'></body></html>");
+        let mut page = page_with("<html><body><input type='text' placeholder='loose'></body></html>");
         let loose = ref_node(&page, "loose");
         let error = page.submit_form(loose).expect_err("nothing to submit");
         assert!(format!("{error}").contains("not inside a form"), "{error}");
@@ -1989,10 +1967,7 @@ mod network_tests {
         );
         // A short page is not a challenge. Saying otherwise would tell an agent
         // it was blocked by a site that simply had little to say.
-        assert_eq!(
-            challenge_marker("<html><body><p>Not found.</p></body></html>"),
-            None
-        );
+        assert_eq!(challenge_marker("<html><body><p>Not found.</p></body></html>"), None);
         assert_eq!(
             challenge_marker("<p>This article explains how to enable JavaScript.</p>"),
             None
@@ -2001,26 +1976,11 @@ mod network_tests {
 
     #[test]
     fn an_attribute_is_read_whichever_way_it_was_quoted() {
-        assert_eq!(
-            attribute_value(r#"<meta content="a b">"#, "content"),
-            Some("a b".into())
-        );
-        assert_eq!(
-            attribute_value(r#"<meta content='a b'>"#, "content"),
-            Some("a b".into())
-        );
-        assert_eq!(
-            attribute_value(r#"<meta content=ab>"#, "content"),
-            Some("ab".into())
-        );
+        assert_eq!(attribute_value(r#"<meta content="a b">"#, "content"), Some("a b".into()));
+        assert_eq!(attribute_value(r#"<meta content='a b'>"#, "content"), Some("a b".into()));
+        assert_eq!(attribute_value(r#"<meta content=ab>"#, "content"), Some("ab".into()));
         // Not the tail of another attribute: `data-content` is not `content`.
-        assert_eq!(
-            attribute_value(r#"<meta data-content="x">"#, "content"),
-            None
-        );
-        assert_eq!(
-            attribute_value(r#"<meta charset="utf-8">"#, "content"),
-            None
-        );
+        assert_eq!(attribute_value(r#"<meta data-content="x">"#, "content"), None);
+        assert_eq!(attribute_value(r#"<meta charset="utf-8">"#, "content"), None);
     }
 }

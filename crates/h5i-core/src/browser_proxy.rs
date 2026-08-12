@@ -470,7 +470,8 @@ pub fn spawn(
     use std::sync::{Arc, Mutex};
 
     if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| h5i_error::H5iError::with_path(e, parent))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| h5i_error::H5iError::with_path(e, parent))?;
     }
     // A stale socket file from a previous run would make bind fail with
     // EADDRINUSE even though nothing is listening.
@@ -622,7 +623,12 @@ pub fn actions_log(env_dir: &Path) -> std::path::PathBuf {
     env_dir.join("browser-actions.jsonl")
 }
 
-pub fn record_actions(env_dir: &Path, env_id: &str, policy_digest: &str, actions: &[ActionRecord]) {
+pub fn record_actions(
+    env_dir: &Path,
+    env_id: &str,
+    policy_digest: &str,
+    actions: &[ActionRecord],
+) {
     if actions.is_empty() {
         return;
     }
@@ -799,10 +805,7 @@ mod tests {
         assert_eq!(m.refused(), 1, "{:?}", m.actions);
         assert_eq!(m.actions[0].action, "click");
         assert!(!m.actions[0].forwarded);
-        assert!(
-            !to_daemon.contains("click"),
-            "the click must not reach the daemon"
-        );
+        assert!(!to_daemon.contains("click"), "the click must not reach the daemon");
 
         // Watching never collides, so reads are unaffected...
         assert!(to_daemon.contains("snapshot"), "reads must still pass");
@@ -965,11 +968,7 @@ mod tests {
     #[test]
     fn a_line_that_is_not_json_is_passed_through_rather_than_invented_upon() {
         let td = TempDir::new().unwrap();
-        let (m, _, to_daemon) = run(
-            &["not json at all".to_string()],
-            td.path(),
-            &ActionPolicy::default(),
-        );
+        let (m, _, to_daemon) = run(&["not json at all".to_string()], td.path(), &ActionPolicy::default());
         assert!(m.actions.is_empty(), "nothing to record about it");
         assert!(to_daemon.contains("not json"));
     }
@@ -1043,10 +1042,7 @@ mod tests {
             response
         };
 
-        assert!(
-            ask("snapshot").contains("from the daemon"),
-            "reads pass through"
-        );
+        assert!(ask("snapshot").contains("from the daemon"), "reads pass through");
         let refused = ask("evaluate");
         assert!(refused.contains("\"success\":false"), "{refused}");
         assert!(refused.contains("fail-closed"), "{refused}");
@@ -1055,15 +1051,11 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(150));
         let actions = handle.actions();
         assert!(
-            actions
-                .iter()
-                .any(|a| a.action == "snapshot" && a.forwarded),
+            actions.iter().any(|a| a.action == "snapshot" && a.forwarded),
             "{actions:?}"
         );
         assert!(
-            actions
-                .iter()
-                .any(|a| a.action == "evaluate" && !a.forwarded),
+            actions.iter().any(|a| a.action == "evaluate" && !a.forwarded),
             "{actions:?}"
         );
     }

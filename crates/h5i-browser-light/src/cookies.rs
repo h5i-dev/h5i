@@ -193,9 +193,7 @@ impl Jar {
             // Replacing by identity is what makes deletion work: a server
             // clears a cookie by re-sending it with an expiry in the past, so
             // the removal has to happen through the same door as the write.
-            jar.retain(|c| {
-                !(c.name == cookie.name && c.host == cookie.host && c.path == cookie.path)
-            });
+            jar.retain(|c| !(c.name == cookie.name && c.host == cookie.host && c.path == cookie.path));
 
             if cookie.is_expired(now) {
                 // Stored as a deletion, which is a real outcome and is counted
@@ -388,9 +386,7 @@ mod tests {
         let jar = Jar::new();
         assert_eq!(jar.store(&url("https://a.example/"), ["sid=abc"]), 1);
 
-        let (header, count) = jar
-            .header_for(&url("https://a.example/page"))
-            .expect("sent");
+        let (header, count) = jar.header_for(&url("https://a.example/page")).expect("sent");
         assert_eq!(header, "sid=abc");
         assert_eq!(count, 1);
     }
@@ -426,9 +422,7 @@ mod tests {
         assert!(jar.header_for(&url("https://a.example/admin")).is_some());
         assert!(jar.header_for(&url("https://a.example/admin/x")).is_some());
         // The classic off-by-one: /administrator is not under /admin.
-        assert!(jar
-            .header_for(&url("https://a.example/administrator"))
-            .is_none());
+        assert!(jar.header_for(&url("https://a.example/administrator")).is_none());
         assert!(jar.header_for(&url("https://a.example/other")).is_none());
     }
 
@@ -494,10 +488,7 @@ mod tests {
         // __Secure- without Secure, and __Host- with a path: both refused.
         assert_eq!(jar.store(&url("https://a.example/"), ["__Secure-s=1"]), 0);
         assert_eq!(
-            jar.store(
-                &url("https://a.example/"),
-                ["__Host-s=1; Secure; Path=/admin"]
-            ),
+            jar.store(&url("https://a.example/"), ["__Host-s=1; Secure; Path=/admin"]),
             0
         );
         assert_eq!(
@@ -523,10 +514,7 @@ mod tests {
     #[test]
     fn nonsense_is_dropped_rather_than_stored() {
         let jar = Jar::new();
-        assert_eq!(
-            jar.store(&url("https://a.example/"), ["", "=novalue", "novalue"]),
-            0
-        );
+        assert_eq!(jar.store(&url("https://a.example/"), ["", "=novalue", "novalue"]), 0);
         assert_eq!(jar.len(), 0);
     }
 
@@ -563,9 +551,7 @@ mod tests {
             !jar.retain_origin(&url("https://bank.example/account")),
             "a same-origin navigation drops nothing"
         );
-        assert!(jar
-            .header_for(&url("https://bank.example/account"))
-            .is_some());
+        assert!(jar.header_for(&url("https://bank.example/account")).is_some());
     }
 
     #[test]
@@ -604,14 +590,8 @@ mod http_only_tests {
         assert_eq!(count, 2);
 
         let visible = jar.document_cookie(&url("https://app.example/"));
-        assert!(
-            !visible.contains("secret"),
-            "script must not see it: {visible}"
-        );
-        assert!(
-            visible.contains("theme=dark"),
-            "but does see the rest: {visible}"
-        );
+        assert!(!visible.contains("secret"), "script must not see it: {visible}");
+        assert!(visible.contains("theme=dark"), "but does see the rest: {visible}");
     }
 
     #[test]

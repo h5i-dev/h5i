@@ -216,10 +216,7 @@ fn read_probe_cache(cache: &Path) -> Option<Runtime> {
         return None;
     }
     let bin = v.get("bin").and_then(|x| x.as_str())?.to_string();
-    Some(Runtime {
-        bin,
-        rootless: true,
-    })
+    Some(Runtime { bin, rootless: true })
 }
 
 /// Best-effort (a probe cache must never fail a run): tmp-file + rename so a
@@ -525,11 +522,7 @@ impl AllowList {
         }
         let mut out: Vec<std::net::SocketAddr> = Vec::new();
         for e in self.entries.iter().filter(|e| e.matches(&h, port)) {
-            out.extend(
-                e.pinned
-                    .iter()
-                    .map(|ip| std::net::SocketAddr::new(*ip, port)),
-            );
+            out.extend(e.pinned.iter().map(|ip| std::net::SocketAddr::new(*ip, port)));
         }
         if !out.is_empty() {
             out.sort();
@@ -792,9 +785,7 @@ pub const PROXY_WIRING_VARS: [&str; 8] = [
 /// Is `key` part of the proxy wiring (case-insensitively)?
 pub fn is_proxy_wiring_var(key: &str) -> bool {
     key.eq_ignore_ascii_case(EGRESS_PROXY_VAR)
-        || PROXY_WIRING_VARS
-            .iter()
-            .any(|v| key.eq_ignore_ascii_case(v))
+        || PROXY_WIRING_VARS.iter().any(|v| key.eq_ignore_ascii_case(v))
 }
 
 /// How long a connection may take to finish sending its request head. It bounds
@@ -1087,6 +1078,7 @@ fn prepare_managed_settings(work: &Path, content: &str) -> Option<PathBuf> {
     Some(path)
 }
 
+
 /// `/dev/shm` size in MiB for this profile: an eighth of the memory limit,
 /// floored at Podman's own 64 MiB default and capped at 1 GiB. Derived from
 /// existing policy rather than a new field, so the resolved policy's digest
@@ -1115,14 +1107,8 @@ mod shm_tests {
     fn shm_scales_with_the_memory_limit_but_stays_bounded() {
         // A browser profile's 12 GiB gives it room; the cap keeps a generous
         // limit from handing the box a gigabyte-plus of shared memory.
-        assert_eq!(
-            shm_size_mb(&profile_with_mem(Some(12 * 1024 * 1024 * 1024))),
-            1024
-        );
-        assert_eq!(
-            shm_size_mb(&profile_with_mem(Some(4 * 1024 * 1024 * 1024))),
-            512
-        );
+        assert_eq!(shm_size_mb(&profile_with_mem(Some(12 * 1024 * 1024 * 1024))), 1024);
+        assert_eq!(shm_size_mb(&profile_with_mem(Some(4 * 1024 * 1024 * 1024))), 512);
         // Small limits floor at Podman's own default rather than going below it.
         assert_eq!(shm_size_mb(&profile_with_mem(Some(64 * 1024 * 1024))), 64);
         assert_eq!(shm_size_mb(&profile_with_mem(None)), 64);
@@ -1486,10 +1472,7 @@ fn maybe_auth_proxy(
 
 /// Live proxies for a box's authenticated-egress grants, and the env the box
 /// is given to reach them.
-pub type AuthGrantEngagement = (
-    Vec<crate::auth_proxy::AuthProxyHandle>,
-    Vec<(String, String)>,
-);
+pub type AuthGrantEngagement = (Vec<crate::auth_proxy::AuthProxyHandle>, Vec<(String, String)>);
 
 /// Engage every profile-declared authenticated-egress grant.
 ///
@@ -1883,10 +1866,7 @@ mod tests {
             "podman_path": path, "podman_mtime": mtime + 1, "podman_size": size,
         });
         std::fs::write(&cache, stale.to_string()).unwrap();
-        assert!(
-            read_probe_cache(&cache).is_none(),
-            "drifted fingerprint must re-probe"
-        );
+        assert!(read_probe_cache(&cache).is_none(), "drifted fingerprint must re-probe");
 
         // A cached non-rootless verdict is never served (positive-only cache).
         let rootful = serde_json::json!({
@@ -1894,10 +1874,7 @@ mod tests {
             "podman_path": path, "podman_mtime": mtime, "podman_size": size,
         });
         std::fs::write(&cache, rootful.to_string()).unwrap();
-        assert!(
-            read_probe_cache(&cache).is_none(),
-            "non-rootless entry must be ignored"
-        );
+        assert!(read_probe_cache(&cache).is_none(), "non-rootless entry must be ignored");
 
         // Garbage/missing file → clean miss.
         std::fs::write(&cache, b"not json").unwrap();
@@ -1947,8 +1924,7 @@ mod tests {
             "github.com:443".into(),
             ".githubusercontent.com".into(),
             "*.pythonhosted.org".into(),
-        ])
-        .unwrap();
+        ]).unwrap();
         // Exact host, any port.
         assert!(a.allows("pypi.org", 443));
         assert!(a.allows("pypi.org", 80));
@@ -1992,9 +1968,7 @@ mod tests {
         let a = pinned("api.example.com", &["203.0.113.10", "203.0.113.11"]);
         let addrs = a.dial_addrs("api.example.com", 443);
         assert_eq!(addrs.len(), 2);
-        assert!(addrs
-            .iter()
-            .all(|x| x.ip().to_string().starts_with("203.0.113.")));
+        assert!(addrs.iter().all(|x| x.ip().to_string().starts_with("203.0.113.")));
         assert!(addrs.iter().all(|x| x.port() == 443));
     }
 
@@ -2022,17 +1996,14 @@ mod tests {
             "100.64.0.1", // CGNAT
             "0.0.0.0",
             "::1",
-            "fd00::1", // unique-local
-            "fe80::1", // link-local
+            "fd00::1",   // unique-local
+            "fe80::1",   // link-local
             "::ffff:127.0.0.1",
         ] {
             assert!(is_internal(&ip.parse().unwrap()), "{ip} should be internal");
         }
         for ip in ["93.184.216.34", "8.8.8.8", "2606:4700::1111"] {
-            assert!(
-                !is_internal(&ip.parse().unwrap()),
-                "{ip} should be routable"
-            );
+            assert!(!is_internal(&ip.parse().unwrap()), "{ip} should be routable");
         }
     }
 
@@ -2060,29 +2031,13 @@ mod tests {
             std::env::set_var("no_proxy", "*");
         }
         let argv = build_run_argv(
-            &rt(),
-            &p,
-            &[],
-            None,
-            tmp.path(),
-            "img",
-            "n",
-            &NetPlan::Proxy(9999),
-            &["true".into()],
-            &[],
-            None,
-            None,
-            &[],
-            None,
-            None,
-            None,
-            &[],
+            &rt(), &p, &[], None, tmp.path(), "img", "n", &NetPlan::Proxy(9999),
+            &["true".into()], &[], None, None, &[], None, None, None, &[],
         );
         // The wiring h5i pushed is present exactly once and is never re-passed
         // by name (a name-only `--env HTTPS_PROXY` would take the host value).
-        assert!(argv.iter().any(
-            |a| a == "HTTPS_PROXY=http://10.0.2.2:9999" || a.starts_with("HTTPS_PROXY=http://")
-        ));
+        assert!(argv.iter().any(|a| a == "HTTPS_PROXY=http://10.0.2.2:9999"
+            || a.starts_with("HTTPS_PROXY=http://")));
         assert!(!argv.iter().any(|a| a == "HTTPS_PROXY"), "{argv:?}");
         assert!(!argv.iter().any(|a| a == "no_proxy"), "{argv:?}");
         // Unrelated allowlist entries still pass.
@@ -2100,9 +2055,9 @@ mod tests {
         // An out-of-range port became an ANY-port rule — the opposite of the ask.
         for bad in [
             "example.com:99999",
-            "*.com",           // a whole TLD
-            "2001:db8::1",     // mangled into host "2001:db8:" port 1
-            "a,b.example.com", // reserved separator
+            "*.com",                  // a whole TLD
+            "2001:db8::1",            // mangled into host "2001:db8:" port 1
+            "a,b.example.com",        // reserved separator
             "user@example.com",
         ] {
             assert!(
@@ -2115,17 +2070,9 @@ mod tests {
             );
         }
         // And the well-formed shapes still parse on both.
-        for good in [
-            "example.com",
-            "example.com:443",
-            ".example.com",
-            "*.example.com",
-        ] {
+        for good in ["example.com", "example.com:443", ".example.com", "*.example.com"] {
             assert!(AllowList::parse(&[good.to_string()]).is_ok(), "{good}");
-            assert!(
-                crate::microvm::egress_rule_tokens(&[good.to_string()]).is_ok(),
-                "{good}"
-            );
+            assert!(crate::microvm::egress_rule_tokens(&[good.to_string()]).is_ok(), "{good}");
         }
     }
 
@@ -2136,14 +2083,8 @@ mod tests {
     fn a_literal_ip_entry_still_matches_itself() {
         let a = AllowList::parse(&["127.0.0.1:8080".into()]).unwrap();
         assert!(a.allows("127.0.0.1", 8080));
-        assert!(
-            !a.allows("127.0.0.1", 9090),
-            "the port on the entry still binds"
-        );
-        assert_eq!(
-            a.dial_addrs("127.0.0.1", 8080)[0].to_string(),
-            "127.0.0.1:8080"
-        );
+        assert!(!a.allows("127.0.0.1", 9090), "the port on the entry still binds");
+        assert_eq!(a.dial_addrs("127.0.0.1", 8080)[0].to_string(), "127.0.0.1:8080");
     }
 
     /// Wildcard matching stays anchored on a label boundary.
@@ -2296,15 +2237,9 @@ mod tests {
         std::fs::write(secret_dir.join("id_rsa"), "PRIVATE KEY").unwrap();
 
         // (a) the file itself is a symlink out of $WORK
-        std::os::unix::fs::symlink(
-            secret_dir.join("id_rsa"),
-            work.join(".claude/settings.json"),
-        )
-        .unwrap();
-        assert_eq!(
-            agent_config_mount_source(&work, ".claude/settings.json"),
-            None
-        );
+        std::os::unix::fs::symlink(secret_dir.join("id_rsa"), work.join(".claude/settings.json"))
+            .unwrap();
+        assert_eq!(agent_config_mount_source(&work, ".claude/settings.json"), None);
 
         // (b) a real file, but reached through a symlinked ancestor
         std::fs::create_dir_all(root.join("elsewhere/.codex")).unwrap();
@@ -2315,33 +2250,12 @@ mod tests {
         // Neither reaches the argv.
         let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
         let argv = build_run_argv(
-            &rt(),
-            &p,
-            &[],
-            None,
-            &work,
-            "img",
-            "n",
-            &NetPlan::None,
-            &["true".into()],
-            &[],
-            None,
-            None,
-            &[],
-            None,
-            None,
-            None,
-            &[],
+            &rt(), &p, &[], None, &work, "img", "n", &NetPlan::None,
+            &["true".into()], &[], None, None, &[], None, None, None, &[],
         );
         let joined = argv.join(" ");
-        assert!(
-            !joined.contains("id_rsa"),
-            "leaked the symlink target: {joined}"
-        );
-        assert!(
-            !joined.contains("elsewhere"),
-            "leaked through a symlinked parent: {joined}"
-        );
+        assert!(!joined.contains("id_rsa"), "leaked the symlink target: {joined}");
+        assert!(!joined.contains("elsewhere"), "leaked through a symlinked parent: {joined}");
         assert!(!joined.contains("target=/work/.claude/settings.json"));
         assert!(!joined.contains("target=/work/.codex/config.toml"));
 
@@ -2542,9 +2456,7 @@ mod tests {
             &[],
         );
         assert!(
-            !without
-                .join(" ")
-                .contains(crate::sandbox_policy::CLAUDE_MANAGED_SETTINGS_PATH),
+            !without.join(" ").contains(crate::sandbox_policy::CLAUDE_MANAGED_SETTINGS_PATH),
             "no managed-settings mount when not requested"
         );
     }
@@ -2554,14 +2466,8 @@ mod tests {
     #[test]
     fn codex_profile_is_detected_for_managed_settings_gating() {
         use crate::sandbox_policy::AgentRuntime;
-        assert_eq!(
-            AgentRuntime::from_profile_name("agent-codex"),
-            Some(AgentRuntime::Codex)
-        );
-        assert_eq!(
-            AgentRuntime::from_profile_name("agent-claude"),
-            Some(AgentRuntime::Claude)
-        );
+        assert_eq!(AgentRuntime::from_profile_name("agent-codex"), Some(AgentRuntime::Codex));
+        assert_eq!(AgentRuntime::from_profile_name("agent-claude"), Some(AgentRuntime::Claude));
         assert_eq!(AgentRuntime::from_profile_name("default"), None);
     }
 
@@ -3002,11 +2908,7 @@ mod tests {
             None,
             "hook-wrapped `h5i capture run …` passes through unrecorded"
         );
-        assert_eq!(
-            observe(&["-c", "h5i"], &[]),
-            None,
-            "a bare `h5i` passes through"
-        );
+        assert_eq!(observe(&["-c", "h5i"], &[]), None, "a bare `h5i` passes through");
         // …but a command that merely CONTAINS h5i as an argument is still ours.
         assert_eq!(
             observe(&["-c", "grep h5i log.txt"], &[]).as_deref(),

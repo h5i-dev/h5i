@@ -26,8 +26,9 @@ use h5i_browser_light::receipt::MemorySink;
 
 /// Load a fixture with script enabled and settle it, as `open --script` does.
 fn read(html: &str) -> Reading {
-    let broker =
-        Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"));
+    let broker = Arc::new(
+        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
+    );
     let fonts = h5i_browser_light::fonts::load(
         &[],
         &h5i_browser_light::fonts::default_font_dirs(),
@@ -753,10 +754,7 @@ fn document_write_puts_markup_where_the_script_is() {
     let before = outline.find("before").unwrap();
     let written = outline.find("written in place").unwrap();
     let after = outline.find("after").unwrap();
-    assert!(
-        before < written && written < after,
-        "order is wrong:\n{outline}"
-    );
+    assert!(before < written && written < after, "order is wrong:\n{outline}");
 }
 
 /// Called with no script running, a browser would implicitly `document.open()`
@@ -853,12 +851,7 @@ impl Driver {
             .iter()
             .find(|line| line.text.contains(text))
             .and_then(|line| line.reference.clone())
-            .unwrap_or_else(|| {
-                panic!(
-                    "nothing actionable says {text:?} in:\n{}",
-                    self.last.render()
-                )
-            })
+            .unwrap_or_else(|| panic!("nothing actionable says {text:?} in:\n{}", self.last.render()))
     }
 
     fn click(&mut self, reference: &str) -> h5i_browser_light::snapshot::Delta {
@@ -911,10 +904,7 @@ fn typing_and_submitting_adds_an_item_the_delta_reports() {
 
     assert!(!delta.is_empty(), "the page changed and the delta says so");
     assert!(
-        delta
-            .added
-            .iter()
-            .any(|line| line.text.contains("buy milk")),
+        delta.added.iter().any(|line| line.text.contains("buy milk")),
         "the new item is in the delta rather than only in the page: {:?}",
         delta.added
     );
@@ -958,10 +948,7 @@ fn clicking_a_filter_reports_only_what_changed() {
         "the footer did not change and must not appear in the delta: {:?}",
         delta.removed
     );
-    assert!(
-        !delta.replaced,
-        "one list changing is not the page being replaced"
-    );
+    assert!(!delta.replaced, "one list changing is not the page being replaced");
 }
 
 /// An inert control is a result an agent needs: it did nothing, and the reading

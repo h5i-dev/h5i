@@ -89,8 +89,7 @@ pub struct AppState {
     /// Bounded twice over — one entry per box *viewed*, each capped at
     /// [`STREAM_CAP`] events — and it is derived from files on disk, so losing
     /// it costs nothing but a re-read.
-    browser:
-        Arc<std::sync::Mutex<std::collections::HashMap<String, crate::browser_events::BoxStream>>>,
+    browser: Arc<std::sync::Mutex<std::collections::HashMap<String, crate::browser_events::BoxStream>>>,
     /// One live-view reader per box currently being watched. Separate from
     /// `browser` because their lifetimes differ: the event stream is cheap and
     /// kept, while a relay holds a socket into a box and is dropped as soon as
@@ -475,7 +474,8 @@ fn build_row(
 ) -> BoxRow {
     let drift = env::drift(git, m);
     let live = env::live_sessions(&m.dir(h5i_root));
-    let stale_running = m.status == "running" && !live.iter().any(|s| env::live_is_writer(&s.kind));
+    let stale_running =
+        m.status == "running" && !live.iter().any(|s| env::live_is_writer(&s.kind));
     let (files_changed, insertions, deletions) =
         env::diffstat_numbers(git, h5i_root, m).unwrap_or((0, 0, 0));
     BoxRow {
@@ -791,8 +791,7 @@ pub struct BrowserQuery {
     pub since: u64,
 }
 
-type Relays =
-    std::sync::Mutex<std::collections::HashMap<String, crate::browser_frames::FrameRelay>>;
+type Relays = std::sync::Mutex<std::collections::HashMap<String, crate::browser_frames::FrameRelay>>;
 
 /// Keep the live-view reader for one box in step with reality, and report what
 /// it has.
@@ -893,10 +892,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/box/:agent/:slug", get(api_box))
         .route("/api/box/:agent/:slug/receipts/:id", get(api_receipt))
         .route("/api/box/:agent/:slug/browser", get(api_browser))
-        .route(
-            "/api/box/:agent/:slug/browser/frame",
-            get(api_browser_frame),
-        )
+        .route("/api/box/:agent/:slug/browser/frame", get(api_browser_frame))
         .layer(axum::middleware::from_fn_with_state(state.clone(), gate))
         .with_state(state)
 }
@@ -944,14 +940,15 @@ impl Console {
     /// Serve until the process is interrupted. Builds its own runtime, so
     /// nothing above this module needs to know the console is async.
     pub fn serve(self) -> Result<(), H5iError> {
-        self.listener.set_nonblocking(true).map_err(H5iError::Io)?;
+        self.listener
+            .set_nonblocking(true)
+            .map_err(H5iError::Io)?;
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .map_err(H5iError::Io)?;
         rt.block_on(async move {
-            let listener =
-                tokio::net::TcpListener::from_std(self.listener).map_err(H5iError::Io)?;
+            let listener = tokio::net::TcpListener::from_std(self.listener).map_err(H5iError::Io)?;
             axum::serve(listener, router(self.state))
                 .await
                 .map_err(H5iError::Io)
@@ -1061,17 +1058,11 @@ mod tests {
         // badge used to say "somebody outside can reach port 3000 right now"
         // of it, for as long as that process took to write its receipt.
         std::fs::write(dir.path().join("share.json"), record("winding", false)).expect("write");
-        assert!(
-            shared_now(dir.path()).is_none(),
-            "a winding-up share is not admitting anyone"
-        );
+        assert!(shared_now(dir.path()).is_none(), "a winding-up share is not admitting anyone");
 
         // And so does one whose every grant has been revoked.
         std::fs::write(dir.path().join("share.json"), record("", true)).expect("write");
-        assert!(
-            shared_now(dir.path()).is_none(),
-            "no live grant is nobody admitted"
-        );
+        assert!(shared_now(dir.path()).is_none(), "no live grant is nobody admitted");
 
         // A record left by a process that is gone is not a share.
         std::fs::write(dir.path().join("share.json"), "{\"pid\":0}").expect("write");
@@ -1108,21 +1099,10 @@ mod tests {
     /// so comparing them proves nothing. The Host has to name loopback.
     #[test]
     fn the_gate_requires_a_loopback_host() {
-        for good in [
-            "127.0.0.1:8080",
-            "localhost:1",
-            "[::1]:9",
-            "LOCALHOST",
-            "127.0.0.1",
-        ] {
+        for good in ["127.0.0.1:8080", "localhost:1", "[::1]:9", "LOCALHOST", "127.0.0.1"] {
             assert!(is_loopback_host(good), "{good} should be accepted");
         }
-        for bad in [
-            "evil.test:8080",
-            "example.com",
-            "127.0.0.1.evil.test",
-            "10.0.0.1:80",
-        ] {
+        for bad in ["evil.test:8080", "example.com", "127.0.0.1.evil.test", "10.0.0.1:80"] {
             assert!(!is_loopback_host(bad), "{bad} should be refused");
         }
     }
@@ -1229,24 +1209,11 @@ mod tests {
         let tok = "0123456789abcdef";
         let me = "http://127.0.0.1:8765";
         assert_eq!(
-            authorize(
-                Some("token=0123456789abcdef"),
-                None,
-                Some("http://evil.test"),
-                tok,
-                me
-            ),
+            authorize(Some("token=0123456789abcdef"), None, Some("http://evil.test"), tok, me),
             Err(Refusal::ForeignOrigin)
         );
         // Same-origin XHR sends Origin too, and must still work.
-        assert!(authorize(
-            None,
-            Some("h5i_console=0123456789abcdef"),
-            Some(me),
-            tok,
-            me
-        )
-        .is_ok());
+        assert!(authorize(None, Some("h5i_console=0123456789abcdef"), Some(me), tok, me).is_ok());
     }
 
     #[test]

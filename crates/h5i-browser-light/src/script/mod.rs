@@ -379,9 +379,9 @@ impl Script {
                     // records — which is the whole reason for being on 0.21.
                     let text = boa_engine::JsError::from_opaque(reason).to_string();
                     crate::script::host::push_console(
-                        &mut self.host.console.borrow_mut(),
-                        ConsoleLine::engine("error", format!("{name}: module failed: {text}")),
-                    );
+                &mut self.host.console.borrow_mut(),
+                ConsoleLine::engine("error", format!("{name}: module failed: {text}")),
+            );
                 }
             }
         }
@@ -485,6 +485,7 @@ impl Script {
                 }
 
                 if self.pending_timers() == 0 {
+
                     // A reply that arrived in *this* pass resolved a promise,
                     // and the continuation it queued has not run yet. Returning
                     // here would report the page settled with its own `.then`
@@ -557,11 +558,7 @@ impl Script {
     ///
     /// Returns whether the deadline fired, so the page can be told it was cut
     /// off rather than left to look merely thin.
-    fn with_job_deadline<T>(
-        &mut self,
-        budget: Duration,
-        body: impl FnOnce(&mut Self) -> T,
-    ) -> (T, bool) {
+    fn with_job_deadline<T>(&mut self, budget: Duration, body: impl FnOnce(&mut Self) -> T) -> (T, bool) {
         let cancel = self.cancel.clone();
         let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let watching = finished.clone();
@@ -590,7 +587,8 @@ impl Script {
 
         // Boa clears the flag itself when it acts on it, but a deadline that
         // fired after the last job would leave it set for the next call.
-        self.cancel.store(false, portable_atomic::Ordering::Relaxed);
+        self.cancel
+            .store(false, portable_atomic::Ordering::Relaxed);
         (out, fired)
     }
 
@@ -609,7 +607,10 @@ impl Script {
 
     /// Resolve whatever has come back, and report how much is still owed.
     fn drain_fetches(&mut self) -> usize {
-        match self.context.eval(Source::from_bytes("__h5iDrainFetches()")) {
+        match self
+            .context
+            .eval(Source::from_bytes("__h5iDrainFetches()"))
+        {
             Ok(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
             Err(_) => 0,
         }
@@ -643,7 +644,10 @@ impl Script {
 
     /// When the earliest waiting timer is due, in virtual milliseconds.
     fn next_timer_due(&mut self) -> Option<u64> {
-        match self.context.eval(Source::from_bytes("__h5iNextTimerDue()")) {
+        match self
+            .context
+            .eval(Source::from_bytes("__h5iNextTimerDue()"))
+        {
             Ok(value) => match value.as_number() {
                 Some(due) if due >= 0.0 => Some(due as u64),
                 _ => None,
@@ -701,9 +705,9 @@ impl Script {
     pub fn note_error(&self, text: &str) {
         self.name_missing_global(text);
         crate::script::host::push_console(
-            &mut self.host.console.borrow_mut(),
-            ConsoleLine::engine("error", text.to_string()),
-        );
+                &mut self.host.console.borrow_mut(),
+                ConsoleLine::engine("error", text.to_string()),
+            );
     }
 
     /// Record the identifier behind a `ReferenceError` as an API we lack.
@@ -732,11 +736,7 @@ impl Script {
         };
         if let Some(first) = first {
             let and_others = if count > 1 {
-                format!(
-                    " (and {} other script{})",
-                    count - 1,
-                    if count > 2 { "s" } else { "" }
-                )
+                format!(" (and {} other script{})", count - 1, if count > 2 { "s" } else { "" })
             } else {
                 String::new()
             };

@@ -48,8 +48,8 @@
 pub mod image;
 pub mod input;
 pub mod kitty;
-pub mod panes;
 pub mod proto;
+pub mod panes;
 pub mod status;
 pub mod ws;
 
@@ -257,11 +257,8 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
     ws::verify_response(&head, &key)?;
 
     let mut writer = socket.try_clone().map_err(H5iError::Io)?;
-    ws::send_text(
-        &mut writer,
-        &proto::config_ack_pacing(opts.max_fps).to_string(),
-    )
-    .map_err(H5iError::Io)?;
+    ws::send_text(&mut writer, &proto::config_ack_pacing(opts.max_fps).to_string())
+        .map_err(H5iError::Io)?;
 
     let (tx, rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
@@ -856,11 +853,7 @@ mod tests {
         // The page starts below the status line and its separator. If this ever
         // became 0 the page would be drawn over the one row it must never be
         // able to touch.
-        assert_eq!(
-            panes::CHROME_ROWS,
-            2,
-            "row one is the status line, row two separates it"
-        );
+        assert_eq!(panes::CHROME_ROWS, 2, "row one is the status line, row two separates it");
     }
 
     #[test]
@@ -885,10 +878,7 @@ mod tests {
         // Ticks land on event boundaries and are rescheduled from where they
         // actually ran, so one second of 100 ms frames owes three or four of
         // them. The number is not the point. Zero was.
-        assert!(
-            (3..=4).contains(&ticks),
-            "one second of frames owed {ticks} ticks"
-        );
+        assert!((3..=4).contains(&ticks), "one second of frames owed {ticks} ticks");
     }
 
     #[test]
