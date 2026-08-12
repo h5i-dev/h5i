@@ -602,6 +602,12 @@ async fn handle(
         },
         // The visitor's origin is https, because Cloudflare terminates it.
         true,
+        // The tunnel front is on the *sharer's* machine, in front of their own
+        // box, reached over a public hostname with a cookie jar of its own.
+        // Nothing else has written to that jar, so there is nothing to tell
+        // apart — see `gate::AppCookies`, which exists for the one case where
+        // that is not true.
+        None,
     );
 
     let (head, req) = match next {
@@ -766,7 +772,7 @@ async fn handle(
         req: &req,
     };
     tokio::select! {
-        _ = http_front::proxy_one(sock, up_r, up_w, forwarded, &counts) => {}
+        _ = http_front::proxy_one(sock, up_r, up_w, forwarded, &counts, None) => {}
         _ = revoked(bridge.clone(), grant.id.clone()) => {}
         _ = bridge.shutting_down() => {}
     }

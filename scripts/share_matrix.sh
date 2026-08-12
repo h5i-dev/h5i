@@ -142,7 +142,11 @@ except Exception as e:
 
     ticket=$(grep -ao 'h5i1_[A-Za-z0-9_-]*' "$WORK/share.log" | head -1)
     PORT=$((PORT + 1))
-    "$H5I" join "$ticket" --port "$PORT" >"$WORK/join.log" 2>&1 &
+    # `--shared-jar` for the same reason the other harnesses pass it: where
+    # `127.0.0.1` is the only loopback address there is, `h5i join` refuses the
+    # shared cookie jar unless it is asked for, and every row would read BROKEN
+    # for a reason that has nothing to do with the tier under test.
+    "$H5I" join "$ticket" --port "$PORT" --shared-jar >"$WORK/join.log" 2>&1 &
     jp=$!
     sleep 7
     if ! grep -q "joined" "$WORK/join.log"; then

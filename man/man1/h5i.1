@@ -930,13 +930,20 @@ Open a box someone else is sharing, from a ticket they sent you
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBjoin\fR [\fB\-\-port\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITICKET\fR> 
+\fBjoin\fR [\fB\-\-port\fR] [\fB\-\-shared\-jar\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITICKET\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-\-port\fR \fI<PORT>\fR [default: 0]
 Local port to serve it on. 0 picks a free one and prints it
+.TP
+\fB\-\-shared\-jar\fR
+Join even when the only address left is `127.0.0.1`.
+
+Each join normally gets a loopback address of its own, because a browser\*(Aqs cookie jar is scoped by host and ignores the port. On `127.0.0.1` the jar is shared with every local service you run, so the token this proxy sets is sent to any of them you visit while joined \(em and that token reaches the box. macOS configures only `127.0.0.1` on `lo0`, so this is the macOS answer unless you add an address yourself (`sudo ifconfig lo0 alias 127.0.0.2`).
+
+Your own cookies are not the other half of this: they are filtered on a shared jar whether or not you pass this, and only cookies the box set itself are ever sent back to it.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)

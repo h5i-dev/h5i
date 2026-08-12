@@ -63,6 +63,66 @@ pub fn is_share_cookie_name(name: &str) -> bool {
 pub fn cookie_for_port(port: u16) -> String {
     format!("{COOKIE}_{port}")
 }
+
+/// How many names one box may teach this. A dev server has a handful; a box
+/// that emits a new cookie name per response is not a dev server, and this is
+/// the only structure here that a box could otherwise grow without limit.
+const MAX_APP_COOKIES: usize = 64;
+
+/// The cookie names the box has set for itself, learned from its own
+/// `Set-Cookie` headers as its responses go past.
+///
+/// **What it is for.** A cookie jar is scoped by host and ignores the port, so
+/// a proxy on `127.0.0.1` receives every cookie every *other* local service on
+/// this machine has set — and forwards them, because a share that logs the
+/// visitor out of the app being demonstrated is a broken share. On a jar of
+/// this share's own that rule costs nothing: nothing else has ever written
+/// there. On the shared `127.0.0.1` jar it means the joiner's own
+/// `session=<secret>`, from their own local app, arrives at agent-written code
+/// inside somebody else's box on the first request. The joiner is the person
+/// who did not choose that risk.
+///
+/// So on that jar, and only there, the rule is narrowed: a cookie goes upstream
+/// only if the box on the other end set it. Everything else in the jar belongs
+/// to somebody the box has never heard of.
+///
+/// **What it costs.** A cookie written by `document.cookie` never appears in a
+/// `Set-Cookie` this proxy can see, so the box does not get those back. That is
+/// a real loss of fidelity, said out loud at join time rather than discovered.
+/// It is the safe direction to be wrong in: an unlearned name is dropped, never
+/// forwarded, so a path that forgets to learn breaks an app rather than leaking
+/// a credential.
+#[derive(Default, Debug)]
+pub struct AppCookies {
+    names: std::sync::Mutex<std::collections::HashSet<String>>,
+}
+
+impl AppCookies {
+    /// Remember a name the box set. Ours are never learned: they are stripped
+    /// from the box's responses on the way out, so a box cannot talk its own
+    /// name onto the list and get the share credential forwarded back to it.
+    pub fn learn(&self, name: &str) {
+        if name.is_empty() || is_share_cookie_name(name) {
+            return;
+        }
+        let Ok(mut names) = self.names.lock() else {
+            return;
+        };
+        if names.len() >= MAX_APP_COOKIES && !names.contains(name) {
+            return;
+        }
+        names.insert(name.to_string());
+    }
+
+    /// Has the box set this name? Cookie names are case-sensitive, so this is
+    /// an exact match.
+    ///
+    /// A poisoned lock answers "no": the failure mode is an app that loses its
+    /// cookies, not a jar that goes upstream unfiltered.
+    pub fn knows(&self, name: &str) -> bool {
+        self.names.lock().map(|n| n.contains(name)).unwrap_or(false)
+    }
+}
 /// Where it travels on the first request, in the URL a human was sent.
 pub const QUERY_PARAM: &str = "h5i";
 /// Headers past this are refused. Generous for cookies, far below anything a
@@ -317,7 +377,12 @@ fn strip_param(target: &str) -> (String, Option<String>) {
 /// credentials in every request to either. Stripping only the exact name would
 /// leave one share handing the other's credential to the agent-written code it
 /// is showing somebody, which is the one thing this module exists to prevent.
-fn split_cookie(value: &str, name: &str) -> (Option<String>, String) {
+///
+/// `app` narrows what is kept from "everything that is not ours" to "what the
+/// box itself set", and is `Some` exactly when this proxy had to settle for a
+/// cookie jar it shares with the rest of the machine. See [`AppCookies`] for
+/// why that jar cannot be treated as the app's own.
+fn split_cookie(value: &str, name: &str, app: Option<&AppCookies>) -> (Option<String>, String) {
     let mut ours = None;
     let kept: Vec<&str> = value
         .split(';')
@@ -329,7 +394,7 @@ fn split_cookie(value: &str, name: &str) -> (Option<String>, String) {
                     if k == name {
                         ours = Some(v.trim().to_string());
                     }
-                    !is_share_cookie_name(k)
+                    !is_share_cookie_name(k) && app.is_none_or(|a| a.knows(k))
                 }
                 // A segment with no `=` at all. It cannot carry a token —
                 // there is nothing after an equals sign to carry it — so this
@@ -338,7 +403,12 @@ fn split_cookie(value: &str, name: &str) -> (Option<String>, String) {
                 // "the check ran on two of the three paths" defect this file
                 // has already had. Whatever is named like ours does not go to
                 // the box, however it is spelled.
-                None => !c.is_empty() && !is_share_cookie_name(c),
+                //
+                // The allowlist applies here too, and it can only ever say no:
+                // a `Set-Cookie` has a value, so nothing the box set can arrive
+                // spelled like this, and a name learned from the box can never
+                // match a segment that has no name.
+                None => !c.is_empty() && !is_share_cookie_name(c) && app.is_none(),
             }
         })
         .map(|c| c.trim())
@@ -465,9 +535,12 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
     // Every `Cookie` header, not just the first. A client is allowed to send
     // more than one, and reading only the first turned a legitimate visitor's
     // request into a `401` while the rewrite below stripped all of them anyway.
+    // `None`: this half reads *our* cookie by exact name, and which of the
+    // app's cookies may go upstream has no bearing on whether this visitor is
+    // admitted.
     let cookie_token = headers_named(&headers, "cookie")
         .into_iter()
-        .find_map(|c| split_cookie(c, cookie).0);
+        .find_map(|c| split_cookie(c, cookie, None).0);
     // The query only wins when it carries something usable. `/?h5i` and `/?h5i=`
     // used to shadow a perfectly good cookie and produce a `401` on a page the
     // visitor was entitled to — and an app with its own parameter called `h5i`
@@ -575,7 +648,9 @@ pub fn safe_location(target: &str) -> String {
 ///
 /// The `Cookie` header is rewritten rather than dropped, because the shared app
 /// may well have set cookies of its own and a share that silently logs the
-/// visitor out of the app being demonstrated is a broken share.
+/// visitor out of the app being demonstrated is a broken share. `app` is what
+/// narrows that to the box's own cookies on a jar this proxy does not have to
+/// itself — see [`AppCookies`].
 ///
 /// **`Connection: close` is an authorization control, not a performance
 /// choice.** A connection is authorized once, when its first request arrives.
@@ -632,7 +707,12 @@ const HIDE_FROM_BOX: &[&str] = &[
     "forwarded",
 ];
 
-pub fn rewrite_for_upstream(head: &str, req: &Request, cookie: &str) -> String {
+pub fn rewrite_for_upstream(
+    head: &str,
+    req: &Request,
+    cookie: &str,
+    app: Option<&AppCookies>,
+) -> String {
     let Some((request_line, _)) = lines(head) else {
         return head.to_string();
     };
@@ -654,7 +734,7 @@ pub fn rewrite_for_upstream(head: &str, req: &Request, cookie: &str) -> String {
             continue;
         };
         if k.trim().eq_ignore_ascii_case("cookie") {
-            let (_, kept) = split_cookie(v.trim(), cookie);
+            let (_, kept) = split_cookie(v.trim(), cookie, app);
             if !kept.is_empty() {
                 out.push_str(&format!("Cookie: {kept}\r\n"));
             }
@@ -738,13 +818,13 @@ mod cookie_shape_tests {
         // of the three paths" shape as several earlier defects here. It is not
         // a leak on its own (a segment with no `=` carries no value), but a
         // rule with a hole in it is a rule nobody can reason about.
-        let (ours, kept) = split_cookie("a=1; h5i_share_8899; b=2", "h5i_share_8899");
+        let (ours, kept) = split_cookie("a=1; h5i_share_8899; b=2", "h5i_share_8899", None);
         assert_eq!(ours, None);
         assert_eq!(kept, "a=1; b=2");
 
         // And the rule is about the *name*, not about the string appearing
         // anywhere: somebody else's cookie that merely contains ours is theirs.
-        let (_, kept) = split_cookie("999h5i_share=x; y=2", "h5i_share");
+        let (_, kept) = split_cookie("999h5i_share=x; y=2", "h5i_share", None);
         assert_eq!(kept, "999h5i_share=x; y=2");
     }
 
@@ -779,9 +859,100 @@ mod cookie_shape_tests {
         let (ours, kept) = split_cookie(
             "h5i_shared_theme=dark; h5i_share_8899=tok; h5i_shareable_session=s; h5i_share=t",
             "h5i_share_8899",
+            None,
         );
         assert_eq!(ours.as_deref(), Some("tok"));
         assert_eq!(kept, "h5i_shared_theme=dark; h5i_shareable_session=s");
+    }
+
+    /// On a jar this share does not have to itself, a cookie belongs to the
+    /// box only if the box set it.
+    ///
+    /// The joiner's browser sends every `127.0.0.1` cookie to every
+    /// `127.0.0.1` listener, so on the fallback address the `Cookie` header
+    /// arriving here is the whole machine's, not the app's. Forwarding it put
+    /// the joiner's own `session=<secret>` — from their own local app, on
+    /// their own machine — into agent-written code inside somebody else's box,
+    /// and it went on the *first* request, before the box had said anything at
+    /// all.
+    #[test]
+    fn on_a_shared_jar_only_the_boxs_own_cookies_go_upstream() {
+        let jar = AppCookies::default();
+        let sent = "session=joiners-own-secret; theme=dark; sid=9";
+
+        // The first request. Nothing has been learned, so nothing is the
+        // box's, so nothing goes.
+        let (_, kept) = split_cookie(sent, "h5i_share_8899", Some(&jar));
+        assert_eq!(kept, "", "a credential went upstream before the box spoke");
+
+        // The box sets one of its own. Now that one, and only that one,
+        // comes back to it.
+        jar.learn("sid");
+        let (_, kept) = split_cookie(sent, "h5i_share_8899", Some(&jar));
+        assert_eq!(kept, "sid=9");
+
+        // And the same header on a jar of this share's own is untouched: there
+        // is nobody else's cookie in it to tell apart.
+        let (_, kept) = split_cookie(sent, "h5i_share_8899", None);
+        assert_eq!(kept, sent);
+    }
+
+    /// A box cannot talk its way onto its own allowlist.
+    ///
+    /// The share credential is the one cookie in that jar the box must never
+    /// get back, and the box chooses the contents of its own `Set-Cookie`
+    /// headers. They are already deleted on the way out — but a name learned
+    /// from one would have survived that and been forwarded on every later
+    /// request, which is the leak this whole mechanism exists to close.
+    #[test]
+    fn the_box_cannot_learn_its_way_to_the_share_credential() {
+        let jar = AppCookies::default();
+        jar.learn("h5i_share");
+        jar.learn("h5i_share_8899");
+        assert!(!jar.knows("h5i_share"));
+        assert!(!jar.knows("h5i_share_8899"));
+
+        // Belt and braces: even if one were on the list, the name predicate
+        // still refuses it.
+        let (ours, kept) = split_cookie("h5i_share_8899=tok; a=1", "h5i_share_8899", Some(&jar));
+        assert_eq!(ours.as_deref(), Some("tok"), "our own is still read");
+        assert_eq!(kept, "");
+    }
+
+    /// Two shapes that must not slip past the narrowed rule.
+    #[test]
+    fn the_odd_shapes_are_dropped_on_a_shared_jar_too() {
+        let jar = AppCookies::default();
+        jar.learn("sid");
+
+        // A segment with no `=`. A `Set-Cookie` always has a value, so nothing
+        // the box set can arrive spelled like this, and there is no name here
+        // for the allowlist to match.
+        let (_, kept) = split_cookie("nameless; sid=9", "h5i_share", Some(&jar));
+        assert_eq!(kept, "sid=9");
+
+        // Cookie names are case-sensitive, and so is this.
+        let (_, kept) = split_cookie("SID=9", "h5i_share", Some(&jar));
+        assert_eq!(kept, "");
+    }
+
+    /// The list is bounded, because the box chooses what goes on it.
+    ///
+    /// A dev server sets a handful of cookies. A box that emits a new name per
+    /// response is not one, and this is the only structure on the joiner's
+    /// machine that the far end could otherwise grow without limit.
+    #[test]
+    fn a_box_cannot_grow_the_list_without_limit() {
+        let jar = AppCookies::default();
+        for i in 0..MAX_APP_COOKIES * 4 {
+            jar.learn(&format!("c{i}"));
+        }
+        assert!(jar.knows("c0"));
+        assert!(!jar.knows(&format!("c{}", MAX_APP_COOKIES * 4 - 1)));
+        // Full is not frozen: a name already on the list is still known, so a
+        // busy app does not start losing the cookies it had.
+        jar.learn("c0");
+        assert!(jar.knows("c0"));
     }
 }
 
@@ -1023,7 +1194,7 @@ mod fuzz_tests {
                     User-Agent: Mozilla/5.0\r\n\
                     Cookie: h5i_share=abc; sid=9\r\n\r\n";
         let req = parse(head, "h5i_share").expect("parses");
-        let out = rewrite_for_upstream(head, &req, "h5i_share");
+        let out = rewrite_for_upstream(head, &req, "h5i_share", None);
 
         // Nothing that names the visitor or where they are.
         assert!(!out.contains("203.0.113.7"), "{out}");
@@ -1072,6 +1243,9 @@ mod fuzz_tests {
         // both-framings shape exists: the parser's job is to refuse it.
         let mut both_framings = 0usize;
         let mut both_parsed = 0usize;
+        // A box that has said nothing, kept for the whole run: it is never
+        // written to, and one allocation is not worth doing per round.
+        let nothing_learned = AppCookies::default();
         for i in 0..rounds() {
             let seed = rng.next();
             let mut one = Rng::new(seed);
@@ -1121,7 +1295,7 @@ mod fuzz_tests {
             // property and was a tautology. The property is real and is
             // checked where it can fail, on the *rejection* side, below.
 
-            let out = rewrite_for_upstream(&head, &req, COOKIE);
+            let out = rewrite_for_upstream(&head, &req, COOKIE, None);
 
             // The box must never see the credential that admitted its
             // visitor. Scoped to the headers and the request target — the two
@@ -1146,6 +1320,27 @@ mod fuzz_tests {
                         ctx()
                     );
                 }
+            }
+
+            // The same head on a jar this share does not have to itself, where
+            // the rule is narrower: nothing goes upstream but what the box set,
+            // and this box has set nothing. So *no* cookie may survive, however
+            // the header is spelled — quoted values, stray whitespace, a
+            // segment with no `=`, a second `Cookie` header. That is the state
+            // of the very first request through a join on `127.0.0.1`, which is
+            // the one that used to carry the joiner's own `session=<secret>`
+            // into somebody else's box.
+            //
+            // Unfloored on purpose: it runs on every head that parses, and the
+            // `with_cookie` floor below already guarantees a supply of heads
+            // carrying real cookies for it to refuse.
+            let narrowed = rewrite_for_upstream(&head, &req, COOKIE, Some(&nothing_learned));
+            for line in header_lines(&narrowed) {
+                assert!(
+                    header_name_of(line) != "cookie",
+                    "a cookie the box never set went upstream on a shared jar: {} -> {line:?}",
+                    ctx()
+                );
             }
 
             // And not in the URL either. A token in the target lands in the
@@ -1373,7 +1568,7 @@ mod tests {
         );
         let r = parse_default(&raw).expect("parse");
         assert_eq!(r.clean_target, "/search?q=rust&page=2");
-        let up = rewrite_for_upstream(&raw, &r, COOKIE);
+        let up = rewrite_for_upstream(&raw, &r, COOKIE, None);
         assert!(up.contains("GET /search?q=rust&page=2 HTTP/1.1"));
         assert!(up.contains("Cookie: sid=xyz; theme=dark"));
     }
@@ -1388,7 +1583,7 @@ mod tests {
             &["Cookie: h5i_share=SECRETTOKEN"],
         );
         let r = parse_default(&raw).expect("parse");
-        let up = rewrite_for_upstream(&raw, &r, COOKIE);
+        let up = rewrite_for_upstream(&raw, &r, COOKIE, None);
         assert!(
             !up.contains("SECRETTOKEN"),
             "credential leaked upstream: {up}"
@@ -1526,7 +1721,7 @@ mod tests {
             ],
         );
         let r = parse_default(&raw).expect("parse");
-        let up = rewrite_for_upstream(&raw, &r, COOKIE);
+        let up = rewrite_for_upstream(&raw, &r, COOKIE, None);
         assert!(up.contains("Connection: close"), "{up}");
         assert!(!up.to_lowercase().contains("keep-alive"), "{up}");
     }
@@ -1545,7 +1740,7 @@ mod tests {
             ],
         );
         let r = parse_default(&raw).expect("parse");
-        let up = rewrite_for_upstream(&raw, &r, COOKIE);
+        let up = rewrite_for_upstream(&raw, &r, COOKIE, None);
         assert!(up.contains("Connection: Upgrade"), "{up}");
         assert!(!up.contains("Connection: close"), "{up}");
     }
@@ -1554,7 +1749,7 @@ mod tests {
     fn a_cookie_header_with_nothing_left_in_it_is_dropped_entirely() {
         let raw = head("GET / HTTP/1.1", &["Cookie: h5i_share=abc123"]);
         let r = parse_default(&raw).expect("parse");
-        let up = rewrite_for_upstream(&raw, &r, COOKIE);
+        let up = rewrite_for_upstream(&raw, &r, COOKIE, None);
         assert!(!up.to_lowercase().contains("cookie:"), "{up}");
     }
 
@@ -1563,7 +1758,7 @@ mod tests {
         let raw = head("GET / HTTP/1.1", &["COOKIE: h5i_share=abc123"]);
         let r = parse_default(&raw).expect("parse");
         assert_eq!(r.token.as_deref(), Some("abc123"));
-        assert!(!rewrite_for_upstream(&raw, &r, COOKIE).contains("abc123"));
+        assert!(!rewrite_for_upstream(&raw, &r, COOKIE, None).contains("abc123"));
     }
 
     #[test]
@@ -1640,7 +1835,7 @@ mod tests {
         );
         let r = parse(&raw, &a).expect("parse");
         assert_eq!(r.token.as_deref(), Some("mine1111"));
-        let up = rewrite_for_upstream(&raw, &r, &a);
+        let up = rewrite_for_upstream(&raw, &r, &a, None);
         assert!(!up.contains("mine1111"), "{up}");
         assert!(
             !up.contains("theirs2222"),
@@ -1684,7 +1879,7 @@ mod tests {
         );
         let r = parse_default(&raw).expect("parse");
         assert!(r.expects_continue);
-        let up = rewrite_for_upstream(&raw, &r, COOKIE);
+        let up = rewrite_for_upstream(&raw, &r, COOKIE, None);
         assert!(!up.to_lowercase().contains("expect:"), "{up}");
         assert!(up.contains("Content-Length: 5"), "{up}");
     }
@@ -1697,7 +1892,7 @@ mod tests {
         );
         let r = parse_default(&raw).expect("parse");
         assert_eq!(r.token.as_deref(), Some("abc123"));
-        assert!(!rewrite_for_upstream(&raw, &r, COOKIE).contains("abc123"));
+        assert!(!rewrite_for_upstream(&raw, &r, COOKIE, None).contains("abc123"));
     }
 
     #[test]
@@ -1780,7 +1975,7 @@ mod tests {
         );
         // And each strips only its own on the way to the box.
         let r = parse(&raw, &a).expect("parse");
-        let up = rewrite_for_upstream(&raw, &r, &a);
+        let up = rewrite_for_upstream(&raw, &r, &a, None);
         assert!(!up.contains("mine"), "{up}");
         assert!(!up.contains("theirs"), "{up}");
     }

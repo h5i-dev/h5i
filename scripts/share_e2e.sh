@@ -159,7 +159,11 @@ TICKET="$(grep -o 'h5i1_[A-Za-z0-9_-]*' "$WORK/share.log" | head -1)"
 [ -n "$TICKET" ] && pass "the share announced a ticket" || {
   fail "no ticket"; sed -n '1,6p' "$WORK/share.log"; exit 1; }
 
-"$H5I" join "$TICKET" --port 8899 > "$WORK/join.log" 2>&1 &
+# `--shared-jar` so this runs on a host whose only loopback address is
+# `127.0.0.1`. A join there shares its cookie jar with every local service, so
+# `h5i join` refuses it unless asked — which would read here as a share that
+# could not be joined. On Linux the flag changes nothing.
+"$H5I" join "$TICKET" --port 8899 --shared-jar > "$WORK/join.log" 2>&1 &
 JOIN_PID=$!
 sleep 8
 grep -q "joined" "$WORK/join.log" && pass "the joiner joined" || fail "the joiner did not join"
@@ -299,7 +303,7 @@ say "the sharer vanishes while somebody is downloading"
 setsid "$H5I" box share "$BOX" --port $PORT --expire 10m > "$WORK/v.log" 2>&1 &
 sleep 12
 VT=$(grep -o 'h5i1_[A-Za-z0-9_-]*' "$WORK/v.log" | head -1)
-"$H5I" join "$VT" --port 8951 > "$WORK/vjoin.log" 2>&1 &
+"$H5I" join "$VT" --port 8951 --shared-jar > "$WORK/vjoin.log" 2>&1 &
 VJ=$!
 sleep 8
 VTOK=$(grep -o 'h5i=[a-f0-9]*' "$WORK/vjoin.log" | head -1 | cut -d= -f2)

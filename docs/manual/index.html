@@ -574,6 +574,7 @@ h5i box share stop &lt;name&gt; --force            # delete the record, whatever
 <p>The other side runs:</p>
 <pre><code class="language-bash">h5i join h5i1_eyJ2IjoxLCJib3hf…
 h5i join -                            # the same, with the ticket on stdin
+h5i join - --shared-jar               # on a machine with only 127.0.0.1 to offer
 </code></pre>
 <p>The share needs a live session of the box to dial into, not a live dev server:
 starting one before the server is up warns and carries on, visitors get a <code>502</code>
@@ -591,8 +592,23 @@ join, because a cookie jar is scoped by <em>host</em> and ignores the port. On
 <code>127.0.0.1</code> that jar is shared with every local service you run, in both
 directions: the token this proxy sets would reach them, and every cookie they
 have set would be forwarded to the box. An address of its own gives this share a
-jar nothing else has written to. macOS configures only <code>127.0.0.1</code> on <code>lo0</code>, so
-there the bind falls back and <code>h5i join</code> says so. Service worker
+jar nothing else has written to.</p>
+<p>macOS configures only <code>127.0.0.1</code> on <code>lo0</code>, so there the bind falls back — and
+the two directions get different answers, because only one of them can be
+answered. Your cookies going <em>into</em> somebody else's box is closed outright: on a
+shared jar only cookies the box itself set are ever sent back to it, learned
+from its own <code>Set-Cookie</code> headers, so a <code>session=</code> belonging to your own local
+app stays here. (The cost is that a cookie the app wrote from JavaScript never
+reaches the box either — nothing in a <code>Set-Cookie</code> says so, and <code>h5i join</code> tells
+you when it applies.) The token going <em>out</em> to your other local services has no
+fix that does not need a cookie host of h5i's own, so it is not fixed, it is
+yours to decide: <code>h5i join</code> refuses that jar unless you pass <code>--shared-jar</code>. If
+you would rather not, <code>sudo ifconfig lo0 alias 127.0.0.2</code> gives h5i an address
+to take instead, which lasts until you reboot — keep that one for h5i, because
+an address you also run your own services on is a jar shared with them and h5i
+cannot tell why it is there. On Linux none of this arises: the
+whole of <code>127.0.0.0/8</code> is routed to <code>lo</code> and every join gets its own. Service
+worker
 registration is refused outright, because one would keep control of that address
 after the share ended, and a request that fetch metadata says came from another
 page is refused too — including one from another <code>h5i join</code> on the next port,

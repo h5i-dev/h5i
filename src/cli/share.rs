@@ -632,12 +632,12 @@ fn ticket_text(arg: &str) -> anyhow::Result<String> {
 /// --tunnel` and no `join`, which is the correct shape — the person on the
 /// other end of a tunnel opens a link in a browser and needs no h5i at all.
 #[cfg(feature = "share")]
-pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
+pub fn join(ticket: &str, port: u16, shared_jar: bool) -> anyhow::Result<()> {
     let ticket = h5i_share::ticket::Ticket::decode(&ticket_text(ticket)?)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let ending = runtime.block_on(h5i_share::join::run(ticket, port, |joined| {
+    let ending = runtime.block_on(h5i_share::join::run(ticket, port, shared_jar, |joined| {
         // Sanitised, because this string came out of a ticket somebody pasted.
         // `ticket::decode` validates the version, the base64, the JSON shape
         // and the secret's width, and nothing about `box_id` — so a `\r` or an
@@ -684,11 +684,20 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
         // unless the bind for one failed, which is the case worth a sentence.
         if joined.shared_jar {
             println!(
-                "             {} This join is on `127.0.0.1`, which shares one cookie jar with \
+                "             {} You asked for `127.0.0.1`, which shares one cookie jar with \
                  every local service you have. Cookies ignore the port, so this page's \
-                 credential reaches your other local services and theirs reach the box. \
-                 Prefer a private window with nothing else open in it.",
+                 credential is sent to any local service you visit while you are joined, and \
+                 it is enough to reach the box. Prefer a private window with nothing else \
+                 open in it.",
                 WARN
+            );
+            // The half that *is* handled, said here because it is the reason
+            // the app being shared may behave differently on this platform —
+            // and a person debugging that should not have to guess at us.
+            println!(
+                "             Your own cookies are not forwarded the other way: on this jar \
+                 only cookies the box set itself are sent back to it, so anything the app \
+                 stored from JavaScript will not reach it."
             );
         }
         println!(

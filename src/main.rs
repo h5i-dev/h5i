@@ -86,6 +86,21 @@ enum Commands {
         /// Local port to serve it on. 0 picks a free one and prints it.
         #[arg(long, default_value_t = 0)]
         port: u16,
+        /// Join even when the only address left is `127.0.0.1`.
+        ///
+        /// Each join normally gets a loopback address of its own, because a
+        /// browser's cookie jar is scoped by host and ignores the port. On
+        /// `127.0.0.1` the jar is shared with every local service you run, so
+        /// the token this proxy sets is sent to any of them you visit while
+        /// joined — and that token reaches the box. macOS configures only
+        /// `127.0.0.1` on `lo0`, so this is the macOS answer unless you add an
+        /// address yourself (`sudo ifconfig lo0 alias 127.0.0.2`).
+        ///
+        /// Your own cookies are not the other half of this: they are filtered
+        /// on a shared jar whether or not you pass this, and only cookies the
+        /// box set itself are ever sent back to it.
+        #[arg(long)]
+        shared_jar: bool,
     },
 
     /// Write or print the agent skill this binary carries.
@@ -251,7 +266,11 @@ fn main() -> anyhow::Result<()> {
         Commands::Ui { port, open } => cli::ui::run(port, open)?,
         Commands::Browser { action } => cli::browser::run(action)?,
         #[cfg(feature = "share")]
-        Commands::Join { ticket, port } => cli::share::join(&ticket, port)?,
+        Commands::Join {
+            ticket,
+            port,
+            shared_jar,
+        } => cli::share::join(&ticket, port, shared_jar)?,
         Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,
         Commands::Man => cli::man::run()?,

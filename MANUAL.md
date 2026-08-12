@@ -372,6 +372,7 @@ The other side runs:
 ```bash
 h5i join h5i1_eyJ2IjoxLCJib3hf…
 h5i join -                            # the same, with the ticket on stdin
+h5i join - --shared-jar               # on a machine with only 127.0.0.1 to offer
 ```
 
 The share needs a live session of the box to dial into, not a live dev server:
@@ -391,8 +392,24 @@ join, because a cookie jar is scoped by *host* and ignores the port. On
 `127.0.0.1` that jar is shared with every local service you run, in both
 directions: the token this proxy sets would reach them, and every cookie they
 have set would be forwarded to the box. An address of its own gives this share a
-jar nothing else has written to. macOS configures only `127.0.0.1` on `lo0`, so
-there the bind falls back and `h5i join` says so. Service worker
+jar nothing else has written to.
+
+macOS configures only `127.0.0.1` on `lo0`, so there the bind falls back — and
+the two directions get different answers, because only one of them can be
+answered. Your cookies going *into* somebody else's box is closed outright: on a
+shared jar only cookies the box itself set are ever sent back to it, learned
+from its own `Set-Cookie` headers, so a `session=` belonging to your own local
+app stays here. (The cost is that a cookie the app wrote from JavaScript never
+reaches the box either — nothing in a `Set-Cookie` says so, and `h5i join` tells
+you when it applies.) The token going *out* to your other local services has no
+fix that does not need a cookie host of h5i's own, so it is not fixed, it is
+yours to decide: `h5i join` refuses that jar unless you pass `--shared-jar`. If
+you would rather not, `sudo ifconfig lo0 alias 127.0.0.2` gives h5i an address
+to take instead, which lasts until you reboot — keep that one for h5i, because
+an address you also run your own services on is a jar shared with them and h5i
+cannot tell why it is there. On Linux none of this arises: the
+whole of `127.0.0.0/8` is routed to `lo` and every join gets its own. Service
+worker
 registration is refused outright, because one would keep control of that address
 after the share ended, and a request that fetch metadata says came from another
 page is refused too — including one from another `h5i join` on the next port,

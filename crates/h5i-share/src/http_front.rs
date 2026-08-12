@@ -239,6 +239,7 @@ pub fn decide(
     cookie: &str,
     authorize: impl FnOnce(&str) -> bool,
     secure: bool,
+    app: Option<&gate::AppCookies>,
 ) -> Next {
     let refuse = |r: gate::Refusal| Next::Respond(gate::refusal_response(r), Some(r));
     let Some(req) = gate::parse(head, cookie) else {
@@ -284,7 +285,7 @@ pub fn decide(
         );
     }
     Next::Proxy {
-        head: gate::rewrite_for_upstream(head, &req, cookie),
+        head: gate::rewrite_for_upstream(head, &req, cookie, app),
         req,
     }
 }
@@ -351,6 +352,7 @@ pub async fn proxy_one<UR, UW>(
     mut up_w: UW,
     request: Forwarded<'_>,
     counts: &Counters,
+    app: Option<&gate::AppCookies>,
 ) -> std::io::Result<()>
 where
     UR: tokio::io::AsyncRead + Unpin + Send,
@@ -615,6 +617,7 @@ where
         // head must keep its `Connection` (the answer has not started) but it
         // is still a place the box could set a cookie it has no business
         // setting.
+        learn_app_cookies(&head, app);
         let cleaned = strip_share_cookies(&head);
         write_timed(&mut peer_w, &cleaned).await?;
         to_peer.fetch_add(cleaned.len() as u64, Ordering::Relaxed);
@@ -626,6 +629,15 @@ where
             return Ok(());
         }
     };
+
+    // The head the visitor's browser will act on, whether it becomes a `101` or
+    // an ordinary response. Learned here, once, before either path relays it.
+    //
+    // A cookie set by *this* response is not yet known to a request already in
+    // flight beside it, so that request drops it and the next one carries it.
+    // Transient, self-correcting, and in the only direction this is allowed to
+    // be wrong in.
+    learn_app_cookies(&head, app);
 
     if req.upgrade {
         // Believe the box, not the client. Only a `101` earns a two-way pipe.
@@ -1847,33 +1859,60 @@ fn strip_share_cookies(head: &[u8]) -> Vec<u8> {
     rebuild_head(head, sets_a_share_cookie, b"")
 }
 
+/// The name a `Set-Cookie` line sets, or `None` for any other header.
+fn set_cookie_name(line: &[u8]) -> Option<String> {
+    if header_name(line) != "set-cookie" {
+        return None;
+    }
+    let colon = line.iter().position(|&b| b == b':')?;
+    let value = String::from_utf8_lossy(&line[colon + 1..]);
+    Some(
+        value
+            .trim_start()
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .split('=')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+    )
+}
+
+/// Note every cookie name this head sets, so the ones the visitor sends back
+/// can be told from the rest of a shared jar's contents.
+///
+/// Called on every response head that reaches the visitor, interim and final
+/// alike — not because a `1xx` is a likely place to set a cookie, but because
+/// "the rule ran on two of the three paths" is the defect this file keeps
+/// having. Missing one costs an app its cookie; it cannot leak anything.
+///
+/// `None` is the ordinary case: a share whose cookie jar is its own has nothing
+/// to tell apart. See [`gate::AppCookies`].
+fn learn_app_cookies(head: &[u8], app: Option<&gate::AppCookies>) {
+    let Some(app) = app else {
+        return;
+    };
+    for line in head.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if let Some(name) = set_cookie_name(line) {
+            app.learn(&name);
+        }
+    }
+}
+
 /// Is this header line a `Set-Cookie` for one of ours?
 ///
 /// The box cannot guess a token, so the worst it could do is clear one — but
 /// cookies ignore the port, so on the joining side one box could log a visitor
 /// out of a *different* share. Nothing legitimate sets a cookie by this name.
 fn sets_a_share_cookie(line: &[u8]) -> bool {
-    if header_name(line) != "set-cookie" {
-        return false;
-    }
-    let Some(colon) = line.iter().position(|&b| b == b':') else {
-        return false;
-    };
     // The *name*, by the one predicate both directions share. A raw
     // `starts_with` here deleted an app's `Set-Cookie: h5i_shared_theme=dark`
     // from every response, so the app lost state only when viewed through a
     // share — see `gate::is_share_cookie_name`.
-    let value = String::from_utf8_lossy(&line[colon + 1..]);
-    let name = value
-        .trim_start()
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .split('=')
-        .next()
-        .unwrap_or("")
-        .trim();
-    crate::gate::is_share_cookie_name(name)
+    set_cookie_name(line).is_some_and(|n| crate::gate::is_share_cookie_name(&n))
 }
 
 #[cfg(test)]
@@ -2588,6 +2627,40 @@ mod response_tests {
         assert!(text.contains("Set-Cookie: sid=9"), "{text}");
     }
 
+    /// Which cookies the box has set, read off its own responses.
+    ///
+    /// On the joining side's fallback address the visitor's `Cookie` header is
+    /// the whole machine's, and this is the only thing that can tell the box's
+    /// own cookies from the joiner's. It reads a head the same way the filters
+    /// beside it do, so the two cannot disagree about where a name ends.
+    #[test]
+    fn the_names_the_box_sets_are_learned_off_its_responses() {
+        let jar = gate::AppCookies::default();
+        let head = b"HTTP/1.1 200 OK\r\n\
+                     Set-Cookie: sid=9; Path=/; HttpOnly\r\n\
+                     Set-Cookie:   spaced =1\r\n\
+                     Set-Cookie: h5i_share_1234=junk\r\n\
+                     X-Not-A-Cookie: nope=1\r\n\r\n";
+        learn_app_cookies(head, Some(&jar));
+
+        assert!(jar.knows("sid"));
+        // The attributes are not names, and neither is a header that merely
+        // looks like one.
+        assert!(!jar.knows("Path"));
+        assert!(!jar.knows("HttpOnly"));
+        assert!(!jar.knows("nope"));
+        // Whitespace around the name is the server's formatting, not part of
+        // it: a browser sends `spaced=1` back and an untrimmed list would drop
+        // it on every request.
+        assert!(jar.knows("spaced"));
+        // Never ours, however it arrives.
+        assert!(!jar.knows("h5i_share_1234"));
+
+        // `None` is the ordinary case — a jar this share has to itself — and
+        // it must not fall over on a head it is not keeping.
+        learn_app_cookies(head, None);
+    }
+
     #[tokio::test]
     async fn an_interim_head_arriving_with_the_real_one_is_not_read_as_its_body() {
         // `100 Continue` and the answer behind it usually share a packet. Without
@@ -2674,7 +2747,7 @@ mod tests {
     #[test]
     fn the_first_visit_is_bounced_so_the_token_leaves_the_url() {
         let head = "GET /dash?h5i=abc123&tab=2 HTTP/1.1\r\nHost: x\r\n\r\n";
-        let Next::Respond(r, _) = decide(head, gate::COOKIE, yes, true) else {
+        let Next::Respond(r, _) = decide(head, gate::COOKIE, yes, true, None) else {
             panic!("a token in the URL must be redirected, not proxied");
         };
         assert!(r.contains("302"));
@@ -2685,7 +2758,7 @@ mod tests {
     #[test]
     fn a_request_with_the_cookie_is_proxied_without_it() {
         let head = "GET /app.js HTTP/1.1\r\nHost: x\r\nCookie: h5i_share=abc123; sid=9\r\n\r\n";
-        let Next::Proxy { head: up, req } = decide(head, gate::COOKIE, yes, true) else {
+        let Next::Proxy { head: up, req } = decide(head, gate::COOKIE, yes, true, None) else {
             panic!("an authorized request must be proxied");
         };
         assert!(!up.contains("abc123"), "credential reached the box: {up}");
@@ -2698,8 +2771,8 @@ mod tests {
         let none = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
         let wrong = "GET / HTTP/1.1\r\nHost: x\r\nCookie: h5i_share=nope\r\n\r\n";
         let (Next::Respond(a, _), Next::Respond(b, _)) = (
-            decide(none, gate::COOKIE, yes, true),
-            decide(wrong, gate::COOKIE, yes, true),
+            decide(none, gate::COOKIE, yes, true, None),
+            decide(wrong, gate::COOKIE, yes, true, None),
         ) else {
             panic!("neither may be proxied");
         };
@@ -2713,7 +2786,7 @@ mod tests {
         // updates is not a share of a dev server.
         let head = "GET /hmr HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n\
                     Connection: Upgrade\r\nCookie: h5i_share=abc123\r\n\r\n";
-        let Next::Proxy { req, .. } = decide(head, gate::COOKIE, yes, true) else {
+        let Next::Proxy { req, .. } = decide(head, gate::COOKIE, yes, true, None) else {
             panic!("an upgrade must be proxied");
         };
         assert!(req.upgrade);
@@ -2732,6 +2805,7 @@ mod tests {
                 true
             },
             true,
+            None,
         );
         assert!(matches!(out, Next::Respond(..)));
         assert!(!called, "malformed input must not reach the grant table");
@@ -2740,7 +2814,7 @@ mod tests {
     #[test]
     fn loopback_gets_a_cookie_a_loopback_browser_will_actually_store() {
         let head = "GET /?h5i=abc123 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
-        let Next::Respond(r, _) = decide(head, gate::COOKIE, yes, false) else {
+        let Next::Respond(r, _) = decide(head, gate::COOKIE, yes, false, None) else {
             panic!("redirect expected");
         };
         assert!(!r.contains("Secure"));

@@ -410,7 +410,15 @@ do_join() {
     fi
     # Through stdin on purpose: an argument would be readable by every other
     # user on this machine for as long as the join lasts.
-    printf '%s' "$TICKET" | "$H5I" join - >"$JOINLOG" 2>&1 &
+    #
+    # `--shared-jar` because this harness has to run on macOS, where the only
+    # loopback address is `127.0.0.1` and `h5i join` refuses that jar unless it
+    # is asked for — the token it sets there is sent to every other local
+    # service the joiner visits. On Linux the flag changes nothing: the join
+    # still takes an address of its own. It is passed here, in a diagnostic
+    # that fetches from nothing but this share, rather than being left out and
+    # reported as a broken join on half the platforms it supports.
+    printf '%s' "$TICKET" | "$H5I" join - --shared-jar >"$JOINLOG" 2>&1 &
     JOIN_PID=$!
     i=0
     LOCAL=""

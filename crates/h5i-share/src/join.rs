@@ -46,7 +46,8 @@ pub struct Joined {
     pub warning: Option<String>,
     /// This join had to fall back to `127.0.0.1`, so it shares a cookie jar
     /// with every other local service. See [`bind_loopback`] for what that
-    /// costs and why it is said out loud rather than assumed away.
+    /// costs. Reaching here at all means the joiner asked for it: `run` refuses
+    /// this case unless they said so on the command line.
     pub shared_jar: bool,
 }
 
@@ -78,9 +79,22 @@ pub struct Joined {
 /// this share has ever written to.
 ///
 /// Linux routes the whole `/8` by default and this simply works. macOS
-/// configures only `127.0.0.1` on `lo0`, so the bind fails there and this
-/// falls back — the fallback is reported rather than silent, because the two
-/// leaks above come back with it.
+/// configures only `127.0.0.1` on `lo0`, so the bind fails there and this falls
+/// back. What happens then is split in two, because the two leaks are not
+/// equally answerable:
+///
+/// * The **inward** one is closed on the fallback, portably, by
+///   [`crate::gate::AppCookies`]: only cookies the box itself set go upstream,
+///   and the rest of the jar — which is to say the joiner's own credentials —
+///   stops here. It costs the box any cookie the app set from JavaScript.
+///
+/// * The **outward** one has no fix that does not need a cookie host of our
+///   own, and macOS will not give one without `ifconfig lo0 alias` as root. So
+///   it is not fixed, it is *chosen*: the fallback is refused unless the joiner
+///   asked for it. Adding an alias to `lo0` is the way to get a private jar on
+///   macOS, and it is the joiner's own machine to decide about — but a CLI
+///   should not be asking for root, and a warning printed after the URL is not
+///   a decision by the person whose machine it is.
 async fn bind_loopback(port: u16) -> Result<(tokio::net::TcpListener, bool), H5iError> {
     // Random, so a local process cannot find this share's jar by guessing.
     // `x.0.0` and `x.255.255` are avoided only to stay clear of anything that
@@ -93,6 +107,29 @@ async fn bind_loopback(port: u16) -> Result<(tokio::net::TcpListener, bool), H5i
         // Never `127.0.0.1` itself: the whole point is a host nothing else has
         // written a cookie for.
         let addr = std::net::Ipv4Addr::new(127, b.clamp(1, 254), c, d);
+        if let Ok(l) = tokio::net::TcpListener::bind((addr, port)).await {
+            return Ok((l, false));
+        }
+    }
+    // Then the addresses somebody would have *configured*, which is the only
+    // way a macOS machine has one of these at all: `sudo ifconfig lo0 alias
+    // 127.0.0.2`. Eight guesses out of sixteen million will not find a single
+    // aliased address, so without this sweep the documented way to get a
+    // private jar on macOS would not work, and the loop above would be the
+    // reason. On Linux nothing reaches here — the whole `/8` is already routed.
+    //
+    // Predictable, unlike the addresses above, and that is not the property
+    // doing the work: the isolation is that the browser keeps a separate jar
+    // per host, not that the host is hard to guess. The random ones are random
+    // because they can be.
+    //
+    // Taken as private, with one caveat that belongs to whoever configured it:
+    // an address somebody aliased for their *own* services is a jar shared with
+    // those services, and h5i cannot tell the two reasons apart. An alias kept
+    // for this is a jar of this share's own; one that already has a dev server
+    // on it is not.
+    for d in 2..=9u8 {
+        let addr = std::net::Ipv4Addr::new(127, 0, 0, d);
         if let Ok(l) = tokio::net::TcpListener::bind((addr, port)).await {
             return Ok((l, false));
         }
@@ -111,12 +148,29 @@ async fn bind_loopback(port: u16) -> Result<(tokio::net::TcpListener, bool), H5i
 pub async fn run(
     ticket: Ticket,
     port: u16,
+    allow_shared_jar: bool,
     announce: impl FnOnce(&Joined),
 ) -> Result<String, H5iError> {
     let now = chrono::Utc::now().timestamp();
     if ticket.remaining(now).is_none() {
         return Err(H5iError::Metadata(expired_here(ticket.expires_at, now)));
     }
+
+    // Loopback only. Never an external address, on any code path: this proxy
+    // exists to give one browser on this machine a door, not to republish
+    // someone else's dev server.
+    //
+    // Before the dial, not after it, and that ordering is the whole point of
+    // putting it here: a joiner who is going to be told "not on this machine
+    // without saying so" should be told it without a connection having been
+    // made in their name. Reaching the sharer first would spend one of their
+    // share's slots and put a visitor on their receipt for a join that never
+    // happened.
+    let (listener, shared_jar) = bind_loopback(port).await?;
+    if shared_jar && !allow_shared_jar {
+        return Err(H5iError::Metadata(shared_jar_refusal()));
+    }
+    let local = listener.local_addr()?;
 
     let endpoint = crate::p2p::bind_joiner().await?;
     let conn = crate::p2p::dial(&endpoint, &ticket.addr).await?;
@@ -127,12 +181,6 @@ pub async fn run(
     // network, and it keeps a joiner who has not opened the page yet from being
     // hung up on thirty seconds later.
     let warning = check_outcome(crate::p2p::verify_ticket(&conn, &ticket.secret).await)?;
-
-    // Loopback only. Never an external address, on any code path: this proxy
-    // exists to give one browser on this machine a door, not to republish
-    // someone else's dev server.
-    let (listener, shared_jar) = bind_loopback(port).await?;
-    let local = listener.local_addr()?;
 
     // Minted here, and deliberately not the ticket secret. The browser gets a
     // credential for *this* proxy; the credential for the share never leaves
@@ -157,6 +205,12 @@ pub async fn run(
     // Named after the port this proxy bound, so two `h5i join` sessions on one
     // machine do not overwrite each other's cookie on `127.0.0.1`.
     let cookie = std::sync::Arc::new(crate::gate::cookie_for_port(local.port()));
+    // Only on the shared jar, because only there is there anything to tell
+    // apart: a `127.<x>.<y>.<z>` of this join's own holds nothing but what this
+    // share put in it, and filtering it would cost an app its `document.cookie`
+    // state for nothing. On `127.0.0.1` the jar is the whole machine's, and a
+    // cookie in it is the box's business only if the box set it.
+    let app_cookies = shared_jar.then(|| std::sync::Arc::new(crate::gate::AppCookies::default()));
     // Bounded like the sharer's front, and for a smaller but real reason: this
     // listener is reachable by every process on this machine.
     let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(256));
@@ -179,15 +233,17 @@ pub async fn run(
                 let Ok(slot) = slots.clone().try_acquire_owned() else {
                     continue;
                 };
-                let (secret, local_token, conn, cookie) = (
+                let (secret, local_token, conn, cookie, app_cookies) = (
                     secret.clone(),
                     local_token.clone(),
                     conn.clone(),
                     cookie.clone(),
+                    app_cookies.clone(),
                 );
                 tokio::spawn(async move {
                     let _slot = slot;
-                    if let Err(e) = handle(sock, &conn, &secret, &local_token, &cookie).await {
+                    let app = app_cookies.as_deref();
+                    if let Err(e) = handle(sock, &conn, &secret, &local_token, &cookie, app).await {
                         eprintln!("join: {e}");
                     }
                 });
@@ -238,6 +294,7 @@ async fn handle(
     secret: &str,
     local_token: &str,
     cookie: &str,
+    app: Option<&crate::gate::AppCookies>,
 ) -> Result<(), H5iError> {
     let Some((head, rest)) = http_front::read_head(&mut sock).await else {
         return Ok(());
@@ -249,6 +306,7 @@ async fn handle(
         // Loopback is http, and a `Secure` cookie there is one some browsers
         // decline to store.
         false,
+        app,
     );
     let (head, req) = match next {
         Next::Respond(body, _why) => {
@@ -283,7 +341,7 @@ async fn handle(
         rest: &rest,
         req: &req,
     };
-    let _ = http_front::proxy_one(sock, recv, send, forwarded, &counts).await;
+    let _ = http_front::proxy_one(sock, recv, send, forwarded, &counts, app).await;
     if counts.was_truncated() {
         // The joiner has no receipt of its own, so this is the only place a
         // person learns their download was cut off rather than finished.
@@ -323,6 +381,32 @@ fn check_outcome(r: Result<(), crate::p2p::OpenError>) -> Result<Option<String>,
         Err(e) => Ok(Some(format!("{e}"))),
     }
 }
+
+/// What to say to a joiner whose machine has only `127.0.0.1` to offer.
+///
+/// Its own function so the words can be tested, and because they are the whole
+/// of what this refusal is: there is nothing wrong with the ticket, the share,
+/// or the network. The one fact is that this machine cannot give the share a
+/// cookie jar of its own, and the person who would carry that is the person
+/// reading this — so it is theirs to answer rather than ours to assume.
+fn shared_jar_refusal() -> String {
+    format!(
+        "this machine has no loopback address to spare, so this join would land on 127.0.0.1 \
+         and share one cookie jar with every other local service you run. Cookies are scoped \
+         by host and ignore the port, so the token this proxy sets would be sent to any local \
+         service you visit while you are joined, and that is enough for it to reach the box. \
+         (The other direction — your own local cookies being forwarded into somebody else's \
+         box — is filtered either way: only cookies the box itself set are sent back to it.)\n\
+         \n    {}: join anyway, ideally in a private window with nothing else open in it.\
+         \n    Or give h5i an address of its own first: `sudo ifconfig lo0 alias 127.0.0.2`, \
+         which is a macOS-only step and lasts until you reboot.",
+        SHARED_JAR_FLAG
+    )
+}
+
+/// The flag that answers [`shared_jar_refusal`], named in one place so the
+/// message and the command line cannot drift apart.
+pub const SHARED_JAR_FLAG: &str = "--shared-jar";
 
 /// What to say about a ticket that looks expired *on this machine*.
 ///
@@ -634,11 +718,64 @@ mod tests {
         // Checked here as well as by the sharer. The joiner should be told
         // plainly rather than watching a connection fail for reasons that look
         // like a network problem.
-        let err = run(ticket(1), 0, |_| {
+        let err = run(ticket(1), 0, true, |_| {
             panic!("must not get as far as announcing")
         })
         .await
         .expect_err("expired");
         assert!(format!("{err}").contains("expired"));
+    }
+
+    /// The fallback is a decision, and it belongs to the person whose machine
+    /// it is.
+    ///
+    /// A join on `127.0.0.1` hands this proxy's token to every local service
+    /// the joiner visits while joined, because cookies ignore the port — and
+    /// unlike the other direction there is no fix for it that does not need a
+    /// cookie host of our own. So it is refused rather than warned about, and
+    /// the refusal has to come *before* the dial: reaching the sharer first
+    /// would spend a slot in their share and put a visitor on their receipt
+    /// for a join that never happened.
+    ///
+    /// This runs where the fallback is real. macOS configures only
+    /// `127.0.0.1` on `lo0` and is the whole reason this exists; a machine
+    /// that routes `127.0.0.0/8` never reaches the branch, and the assertion
+    /// that it does not is the one above.
+    #[tokio::test]
+    async fn a_shared_jar_is_refused_before_anything_is_dialled() {
+        let Ok((_l, true)) = bind_loopback(0).await else {
+            return;
+        };
+        // A ticket with an hour left on it: nothing about this refusal is
+        // about the ticket, and one that had expired would pass for the wrong
+        // reason — the expiry check runs first.
+        let good = ticket(chrono::Utc::now().timestamp() + 3600);
+        let err = run(good, 0, false, |_| {
+            panic!("a shared jar was announced instead of refused")
+        })
+        .await
+        .expect_err("a shared jar must not be joined unasked");
+        let said = format!("{err}");
+        assert!(said.contains(SHARED_JAR_FLAG), "{said}");
+        assert!(said.contains("127.0.0.1"), "{said}");
+    }
+
+    /// What the refusal has to say, in the words of the person reading it.
+    ///
+    /// It is the only thing standing between a joiner and a leak they did not
+    /// choose, so it names the flag that gets past it — spelled from the same
+    /// constant the command line uses — and the way out that does not need
+    /// one.
+    #[test]
+    fn the_refusal_says_what_to_do_about_it() {
+        let said = shared_jar_refusal();
+        assert!(said.contains(SHARED_JAR_FLAG), "{said}");
+        assert!(said.contains("ifconfig lo0 alias"), "{said}");
+        // The half that is handled is said too, so nobody reads this as a
+        // choice about their own cookies going into somebody else's box.
+        assert!(said.contains("only cookies the box itself set"), "{said}");
+        // No ANSI, no newline tricks: this is printed as an error.
+        assert!(!said.contains('\r'), "{said}");
+        assert!(!said.contains('\u{1b}'), "{said}");
     }
 }
