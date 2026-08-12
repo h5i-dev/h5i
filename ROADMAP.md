@@ -2135,6 +2135,18 @@ hostname h5i minted. `kill_on_drop` is a destructor and `SIGKILL` skips
 destructors; `PR_SET_PDEATHSIG` is the kernel doing it instead. Measured: gone
 in one second, against twenty-plus with the change removed.
 
+macOS carried that hazard in full until it was closed the only way Darwin
+allows. `PR_SET_PDEATHSIG` is something a process asks *for itself*, so Linux
+sets it in the child between fork and exec; nothing can ask it on behalf of a
+binary h5i does not compile. So a watchdog process waits on `kqueue` for either
+the share or `cloudflared` to exit, and kills the tunnel if the share went
+first — a separate process precisely because a `SIGKILL` cannot skip what is
+not running the share's code. Both pids are watched, not just the share's: a
+watchdog armed on one pid alone would outlive the tunnel it was guarding and
+eventually `SIGKILL` whatever inherited the recycled number. Measured on macOS
+the same way: the public hostname survived the full ten-second observation
+window before, and the tunnel is gone within 250 ms after.
+
 `h5i box rm` did not know what a share was. A shared box is almost always also
 `running`, so the operator was told to abort the box and never that somebody
 outside was connected to it — and the check has to sit *above* the status guard

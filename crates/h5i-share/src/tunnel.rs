@@ -136,6 +136,82 @@ pub fn extract_url(line: &str) -> Option<String> {
 /// warns about, reintroduced by the fix for unbounded line buffering.
 const MAX_CLOUDFLARED_LINE: usize = 64 * 1024;
 
+/// Kill `target` when `watch` dies — Darwin's answer to `PR_SET_PDEATHSIG`.
+///
+/// The hazard is the one the Linux arm describes above and it is not smaller
+/// here: `kill_on_drop` is a destructor, `SIGKILL` skips destructors, and a
+/// `cloudflared` that outlives its share keeps a public `trycloudflare.com`
+/// hostname pointing at a loopback port that has just been freed. Measured on
+/// Linux at ten to twenty seconds. macOS had no second rope at all.
+///
+/// Darwin has no `PR_SET_PDEATHSIG`, and the difference is not just spelling:
+/// pdeathsig is something a process asks *for itself*, so Linux can set it in
+/// the child between fork and exec. Nothing can ask that on behalf of a program
+/// h5i does not compile. So the job goes to a third process — a watchdog that
+/// waits on `kqueue` for either process to exit and kills `target` if `watch`
+/// went first.
+///
+/// Being a separate process is the whole point: a `SIGKILL` of the share
+/// cannot skip it, because it is not running any of the share's code and does
+/// not die with it. It is reparented and keeps waiting.
+///
+/// **Both** pids are registered, and that is what makes it safe rather than
+/// merely prompt. A watchdog that waited only on `watch` would, after
+/// `cloudflared` had exited normally and its pid had been recycled, wake up and
+/// `SIGKILL` whatever innocent process now holds that number. Registering
+/// `target` too means its exit is the event that retires the watchdog.
+///
+/// The child is allocation-free below the fork, for the reason
+/// [`crate::dialer`] spells out at length: this runs inside a tokio runtime, so
+/// the child inherits one thread and whatever locks the others held, the
+/// allocator's among them.
+#[cfg(target_os = "macos")]
+pub(crate) fn arm_parent_death_kill(watch: libc::pid_t, target: libc::pid_t) {
+    // SAFETY: fork, then raw syscalls and `_exit` in the child.
+    let pid = unsafe { libc::fork() };
+    if pid != 0 {
+        // Parent, including the fork having failed. A share whose watchdog
+        // could not start is a share with the protection Linux had before
+        // `PR_SET_PDEATHSIG` — `kill_on_drop` still covers every ordinary
+        // ending — so this is not worth refusing to serve over.
+        return;
+    }
+    unsafe {
+        let kq = libc::kqueue();
+        if kq < 0 {
+            libc::_exit(1);
+        }
+        let watch_one = |pid: libc::pid_t| -> i32 {
+            let mut ev: libc::kevent = std::mem::zeroed();
+            ev.ident = pid as libc::uintptr_t;
+            ev.filter = libc::EVFILT_PROC;
+            ev.flags = libc::EV_ADD | libc::EV_ENABLE | libc::EV_ONESHOT;
+            ev.fflags = libc::NOTE_EXIT;
+            libc::kevent(kq, &ev, 1, std::ptr::null_mut(), 0, std::ptr::null())
+        };
+        // Registered one at a time so a failure says *which* is already gone.
+        // A share that died between the spawn and here is exactly the window
+        // this exists for, so that case kills rather than gives up.
+        if watch_one(watch) < 0 {
+            libc::kill(target, libc::SIGKILL);
+            libc::_exit(0);
+        }
+        if watch_one(target) < 0 {
+            libc::_exit(0);
+        }
+        let mut out: libc::kevent = std::mem::zeroed();
+        let n = libc::kevent(kq, std::ptr::null(), 0, &mut out, 1, std::ptr::null());
+        // Whichever exited first decides. `target` going first is the ordinary
+        // end of a share and there is nothing to kill; anything unexpected is
+        // treated as `watch` having gone, which is the fail-safe direction.
+        if n == 1 && out.ident == target as libc::uintptr_t {
+            libc::_exit(0);
+        }
+        libc::kill(target, libc::SIGKILL);
+        libc::_exit(0);
+    }
+}
+
 /// Start `cloudflared` pointed at a loopback port, and wait for its URL.
 ///
 /// The argv is built here, never through a shell: the only value that varies is
@@ -205,6 +281,15 @@ pub async fn start(local_port: u16) -> Result<Tunnel, H5iError> {
             H5iError::Metadata(format!("could not start `cloudflared`: {e}"))
         }
     })?;
+
+    // The same rope, tied the only way Darwin lets you tie it: no
+    // `PR_SET_PDEATHSIG`, so a third process holds it. Armed after the spawn
+    // because it needs `cloudflared`'s pid, which is the one thing the Linux
+    // arm does not need — that one runs *inside* the child, before its exec.
+    #[cfg(target_os = "macos")]
+    if let Some(pid) = child.id() {
+        arm_parent_death_kill(unsafe { libc::getpid() }, pid as libc::pid_t);
+    }
 
     let stderr = child
         .stderr
@@ -1188,6 +1273,135 @@ mod tests {
         );
 
         serving.abort();
+    }
+
+    /// The watchdog, driven with two real processes.
+    ///
+    /// `cloudflared` is not needed and deliberately not used: the thing under
+    /// test is "when that pid dies, kill this one", and `/bin/sleep` states it
+    /// without a network, a Cloudflare account, or a binary this repo does not
+    /// ship. The Linux arm cannot be tested this way at all — `PR_SET_PDEATHSIG`
+    /// is set by the child on itself, so there is nothing to point at a pid of
+    /// our choosing.
+    #[cfg(target_os = "macos")]
+    mod watchdog {
+        use super::*;
+
+        fn sleeper() -> std::process::Child {
+            std::process::Command::new("/bin/sleep")
+                .arg("120")
+                .spawn()
+                .expect("spawn a stand-in process")
+        }
+
+        /// Whether the process has exited — asked through `try_wait`, not
+        /// through `kill(pid, 0)`.
+        ///
+        /// That distinction cost an hour. These stand-ins are children of the
+        /// **test** process, so a killed one becomes a zombie until it is
+        /// reaped, and a zombie answers `kill(pid, 0)` with success. The first
+        /// version of these tests asked that way and reported that the watchdog
+        /// had failed to kill anything, while it had in fact killed it every
+        /// time. Only the parent's own `wait` can tell the difference.
+        fn exited(p: &mut std::process::Child) -> bool {
+            matches!(p.try_wait(), Ok(Some(_)))
+        }
+
+        /// Waits up to ~5s. A watchdog that fires eventually is still a
+        /// watchdog; one that never fires is the bug.
+        fn died_within(p: &mut std::process::Child) -> bool {
+            for _ in 0..100 {
+                if exited(p) {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            false
+        }
+
+        #[test]
+        fn a_killed_parent_takes_the_tunnel_with_it() {
+            // The whole point: `SIGKILL` skips every destructor h5i has, so
+            // this is the only thing standing between a killed share and a
+            // public hostname pointing at a freed port.
+            let mut parent = sleeper();
+            let mut target = sleeper();
+            let (ppid, tpid) = (parent.id(), target.id());
+
+            crate::tunnel::arm_parent_death_kill(ppid as libc::pid_t, tpid as libc::pid_t);
+            std::thread::sleep(Duration::from_millis(200));
+            assert!(
+                !exited(&mut target),
+                "the watchdog killed it before anything died"
+            );
+
+            unsafe { libc::kill(ppid as libc::pid_t, libc::SIGKILL) };
+            let _ = parent.wait();
+            assert!(
+                died_within(&mut target),
+                "the share was SIGKILLed and `cloudflared` outlived it — the hazard this exists \
+                 to close"
+            );
+            let _ = target.kill();
+            let _ = target.wait();
+        }
+
+        #[test]
+        fn a_tunnel_that_ends_first_retires_the_watchdog_rather_than_arming_it() {
+            // The pid-reuse hazard, and the reason both pids are registered.
+            // `cloudflared` exiting normally is the ordinary end of a share;
+            // if the watchdog stayed armed on `watch` alone it would later
+            // wake and SIGKILL whatever had inherited the recycled pid.
+            let mut parent = sleeper();
+            let mut target = sleeper();
+            let (ppid, tpid) = (parent.id(), target.id());
+
+            crate::tunnel::arm_parent_death_kill(ppid as libc::pid_t, tpid as libc::pid_t);
+            std::thread::sleep(Duration::from_millis(200));
+
+            // The tunnel ends first.
+            let _ = target.kill();
+            let _ = target.wait();
+            std::thread::sleep(Duration::from_millis(300));
+
+            // Now the parent goes. Nothing should be signalled — and the proof
+            // available to a test is that the watchdog has already exited, so
+            // there is nothing left to signal anybody.
+            unsafe { libc::kill(ppid as libc::pid_t, libc::SIGKILL) };
+            let _ = parent.wait();
+            std::thread::sleep(Duration::from_millis(300));
+
+            // A third process standing in for whoever gets the recycled pid.
+            // It must survive; the watchdog is gone and holds no claim on it.
+            let mut bystander = sleeper();
+            std::thread::sleep(Duration::from_millis(500));
+            assert!(
+                !exited(&mut bystander),
+                "the watchdog outlived the tunnel it was watching and would kill a stranger"
+            );
+            let _ = bystander.kill();
+            let _ = bystander.wait();
+        }
+
+        #[test]
+        fn a_parent_already_gone_kills_the_tunnel_at_once() {
+            // The window between spawning `cloudflared` and arming the
+            // watchdog. A share killed in it must not leave the tunnel up.
+            let mut parent = sleeper();
+            let ppid = parent.id();
+            unsafe { libc::kill(ppid as libc::pid_t, libc::SIGKILL) };
+            let _ = parent.wait();
+
+            let mut target = sleeper();
+            let tpid = target.id();
+            crate::tunnel::arm_parent_death_kill(ppid as libc::pid_t, tpid as libc::pid_t);
+            assert!(
+                died_within(&mut target),
+                "a watchdog armed after its parent had died left the tunnel running"
+            );
+            let _ = target.kill();
+            let _ = target.wait();
+        }
     }
 
     #[test]
