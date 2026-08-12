@@ -19,7 +19,6 @@ workspace, shell, dependencies, dev server, and browser all run together
 inside the sandbox, while your host files and credentials stay outside. 
 You can securely share web apps running inside the sandbox with others over
 an end-to-end encrypted P2P connection or a browser-ready demo link.
-When the work is done, h5i exports a reviewable patch and execution logs.
 
 h5i gives you:
 
