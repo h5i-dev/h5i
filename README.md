@@ -102,6 +102,16 @@ h5i box propose <name>           # freeze the worktree into a reviewable snapsho
 h5i box apply   <name>           # merge that snapshot onto the parent branch
 ```
 
+- **Share the web app running inside the box**
+
+```bash
+h5i box share <name> --port 3000 # end-to-end encrypted P2P sharing
+h5i box share <name> --port 3000 --tunnel # browser-ready demo link
+
+# For P2P sharing, the recipient connects with the generated ticket:
+h5i join <ticket>
+```
+
 - **Keep the record of what happened**
 
 ```bash
