@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Point the engine at real sites and let them choose what to build next.
 
-ROADMAP_BROWSER §8. This is a **development tool, not a test**: it needs the
+ROADMAP.md §B8. This is a **development tool, not a test**: it needs the
 network, the sites change under it, and a run takes minutes. The regression gate
 that CI runs is `tests/corpus.rs`, which exercises the same patterns against
 local fixtures and needs nothing outside the repository.

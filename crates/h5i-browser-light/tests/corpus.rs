@@ -15,7 +15,7 @@
 //!      that was refused or the script that threw.
 //!
 //! An empty ask list beside an unattributable error is the failure mode this
-//! whole apparatus exists to prevent (ROADMAP_BROWSER §8.3).
+//! whole apparatus exists to prevent (ROADMAP.md §B8.3).
 
 use std::sync::Arc;
 
@@ -404,7 +404,7 @@ fn an_empty_page_distinguishes_no_script_from_script_disabled() {
 
 /// A page this engine's *parser* cannot read must still say so, by name.
 ///
-/// This construct is valid JavaScript and Boa rejects it — see ROADMAP_BROWSER
+/// This construct is valid JavaScript and Boa rejects it — see ROADMAP.md
 /// §8.11. Minified bundles that keep `/*! @license */` comments between
 /// declarators produce it, which is how lit.dev fails. Nothing here can fix
 /// that; what this pins is that the failure is *attributed* rather than silent,

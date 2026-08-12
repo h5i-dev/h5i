@@ -18,7 +18,7 @@
 //!
 //! Same broker, same policy, same receipts, and the same document origin, so a
 //! module cannot reach the box's dev server from a page the web served
-//! (`ROADMAP_BROWSER.md` §3.1). A private HTTP client here would be the one
+//! (`ROADMAP.md` §B3.1). A private HTTP client here would be the one
 //! request class in the engine with no record.
 
 use std::cell::RefCell;

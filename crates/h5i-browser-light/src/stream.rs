@@ -718,7 +718,7 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 
         // Hand the page to the human for as long as it takes to log in.
         //
-        // §9 of ROADMAP_BROWSER listed this as overdue rather than pending: it
+        // §B10 of ROADMAP.md listed this as overdue rather than pending: it
         // was supposed to arrive with the cookie jar, because a jar is what
         // makes logging in worth doing and a readable page is what makes it
         // unsafe.
